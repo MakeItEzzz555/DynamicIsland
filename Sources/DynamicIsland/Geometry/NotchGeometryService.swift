@@ -69,8 +69,8 @@ public final class NotchGeometryService {
         let notchRect = inferNotchRect(from: snapshot)
         let topY = snapshot.frame.maxY
         let expandedCenterX = snapshot.frame.midX
-        let resolvedExpandedWidth = min(860, max(680, snapshot.frame.width - 360))
-        let resolvedExpandedHeight: CGFloat = 292
+        let resolvedExpandedWidth = min(760, max(620, snapshot.frame.width - 520))
+        let resolvedExpandedHeight: CGFloat = 260
 
         let collapsedFrame: CGRect
         if let notchRect {

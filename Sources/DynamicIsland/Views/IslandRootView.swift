@@ -5,7 +5,6 @@ struct IslandRootView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var islandState: IslandStateStore
     let modules: IslandModules
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         IslandSurface(isExpanded: islandState.state == .expanded) {
@@ -19,17 +18,8 @@ struct IslandRootView: View {
             loadDroppedFiles(from: providers)
             return true
         }
-        .animation(animation, value: islandState.state)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("DynamicIsland")
-    }
-
-    private var animation: Animation {
-        if reduceMotion {
-            .easeInOut(duration: 0.12)
-        } else {
-            .spring(response: 0.30, dampingFraction: settings.animationIntensity, blendDuration: 0.06)
-        }
     }
 
     private func loadDroppedFiles(from providers: [NSItemProvider]) {
@@ -106,16 +96,16 @@ struct ExpandedIslandView: View {
     let modules: IslandModules
 
     var body: some View {
-        HStack(spacing: 20) {
+        HStack(spacing: 16) {
             MediaModuleView(media: modules.media)
-                .frame(width: 372, alignment: .leading)
+                .frame(width: 300, alignment: .leading)
 
             Divider()
                 .frame(height: 220)
                 .overlay(.white.opacity(0.10))
 
             ShortcutsModuleView(shortcuts: modules.shortcuts)
-                .frame(width: 190)
+                .frame(width: 148)
 
             Divider()
                 .frame(height: 220)
@@ -125,7 +115,7 @@ struct ExpandedIslandView: View {
                 TimerModuleView(timer: modules.timer)
                 FileShelfModuleView(fileShelf: modules.fileShelf)
             }
-            .frame(width: 210)
+            .frame(width: 168)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }

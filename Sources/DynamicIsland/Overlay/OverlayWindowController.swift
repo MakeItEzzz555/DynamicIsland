@@ -60,7 +60,7 @@ final class OverlayWindowController {
         islandState.$state
             .sink { [weak self] state in
                 self?.panel.orderFrontRegardless()
-                self?.reposition(animated: true)
+                self?.reposition(animated: false)
                 self?.updateMouseContainmentTimer(for: state)
             }
             .store(in: &cancellables)
@@ -70,7 +70,7 @@ final class OverlayWindowController {
                 DispatchQueue.main.async {
                     guard let self else { return }
                     self.setVisible(self.settings.overlayEnabled)
-                    self.reposition(animated: true)
+                    self.reposition(animated: false)
                 }
             }
             .store(in: &cancellables)
@@ -100,25 +100,17 @@ final class OverlayWindowController {
         }
     }
 
-    func reposition(animated: Bool = true) {
+    func reposition(animated: Bool = false) {
         let geometry = geometryService.geometry(
             collapsedSize: settings.collapsedSize,
             expandedSize: settings.expandedSize
         )
         let targetFrame = islandState.state == .collapsed ? geometry.collapsedFrame : geometry.expandedFrame
-        panel.contentView?.frame = NSRect(origin: .zero, size: targetFrame.size)
 
-        if animated {
-            panel.contentView?.layer?.removeAllAnimations()
-            panel.animations.removeAll()
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = islandState.state == .expanded ? 0.30 : 0.18
-                context.timingFunction = CAMediaTimingFunction(controlPoints: 0.18, 0.92, 0.22, 1.00)
-                panel.animator().setFrame(targetFrame, display: true)
-            }
-        } else {
-            panel.setFrame(targetFrame, display: true)
-        }
+        panel.contentView?.layer?.removeAllAnimations()
+        panel.animations.removeAll()
+        panel.setFrame(targetFrame, display: true)
+        panel.contentView?.frame = NSRect(origin: .zero, size: targetFrame.size)
     }
 
     private func updateMouseContainmentTimer(for state: IslandPresentationState) {
