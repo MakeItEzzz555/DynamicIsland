@@ -11,6 +11,9 @@ final class OverlayWindowController {
     private let panel: NSPanel
     private var cancellables: Set<AnyCancellable> = []
     private var mouseContainmentTimer: Timer?
+    private var localMouseDownMonitor: Any?
+    private var globalMouseDownMonitor: Any?
+    private var targetCollapsedFrame: NSRect?
     private var targetExpandedFrame: NSRect?
     private weak var hostingView: IslandHostingView<IslandRootView>?
 
@@ -59,6 +62,9 @@ final class OverlayWindowController {
         hostingView.visibleSurfaceFrame = { [weak self] in
             self?.visibleSurfaceFrame() ?? .zero
         }
+        hostingView.shouldHandleSurfaceClick = { [weak islandState] in
+            islandState?.state == .collapsed
+        }
         panel.contentView = hostingView
         self.hostingView = hostingView
 
@@ -93,6 +99,8 @@ final class OverlayWindowController {
                 self?.reposition(animated: false)
             }
             .store(in: &cancellables)
+
+        installMouseDownMonitors()
     }
 
     func show() {
@@ -114,6 +122,7 @@ final class OverlayWindowController {
             expandedSize: settings.expandedSize
         )
         layoutStore.update(canvas: geometry.canvas)
+        targetCollapsedFrame = geometry.collapsedFrame
         targetExpandedFrame = geometry.expandedFrame
         applyFrame(geometry.canvas.frame)
         hostingView?.needsLayout = true
@@ -133,6 +142,7 @@ final class OverlayWindowController {
             )
             if !animated {
                 self.layoutStore.update(canvas: correctedGeometry.canvas)
+                self.targetCollapsedFrame = correctedGeometry.collapsedFrame
                 self.targetExpandedFrame = correctedGeometry.expandedFrame
                 self.applyFrame(correctedGeometry.canvas.frame)
                 self.hostingView?.needsLayout = true
@@ -175,11 +185,35 @@ final class OverlayWindowController {
             layoutStore.expandedSurfaceFrame
         }
     }
+
+    private func installMouseDownMonitors() {
+        localMouseDownMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] event in
+            guard let self else { return event }
+            return self.expandIfCollapsedClick(at: NSEvent.mouseLocation) ? nil : event
+        }
+
+        globalMouseDownMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] _ in
+            Task { @MainActor in
+                _ = self?.expandIfCollapsedClick(at: NSEvent.mouseLocation)
+            }
+        }
+    }
+
+    private func expandIfCollapsedClick(at screenPoint: NSPoint) -> Bool {
+        guard islandState.state == .collapsed,
+              let targetCollapsedFrame,
+              targetCollapsedFrame.insetBy(dx: -4, dy: -4).contains(screenPoint) else {
+            return false
+        }
+        islandState.toggleExpanded()
+        return true
+    }
 }
 
 private final class IslandHostingView<Content: View>: NSHostingView<Content> {
     var onMouseDown: (() -> Bool)?
     var visibleSurfaceFrame: (() -> CGRect)?
+    var shouldHandleSurfaceClick: (() -> Bool)?
     private var trackingAreaReference: NSTrackingArea?
 
     override func updateTrackingAreas() {
@@ -207,19 +241,19 @@ private final class IslandHostingView<Content: View>: NSHostingView<Content> {
         guard let surfaceFrame = visibleSurfaceFrame?() else {
             return nil
         }
-        let localSurfaceFrame: CGRect
-        if isFlipped {
-            localSurfaceFrame = CGRect(
-                x: surfaceFrame.minX,
-                y: bounds.height - surfaceFrame.maxY,
-                width: surfaceFrame.width,
-                height: surfaceFrame.height
-            )
-        } else {
-            localSurfaceFrame = surfaceFrame
-        }
-        guard localSurfaceFrame.insetBy(dx: -2, dy: -2).contains(point) else {
+        let flippedSurfaceFrame = CGRect(
+            x: surfaceFrame.minX,
+            y: bounds.height - surfaceFrame.maxY,
+            width: surfaceFrame.width,
+            height: surfaceFrame.height
+        )
+        let acceptsPoint = surfaceFrame.insetBy(dx: -2, dy: -2).contains(point) ||
+            flippedSurfaceFrame.insetBy(dx: -2, dy: -2).contains(point)
+        guard acceptsPoint else {
             return nil
+        }
+        if shouldHandleSurfaceClick?() == true {
+            return self
         }
         return super.hitTest(point)
     }
