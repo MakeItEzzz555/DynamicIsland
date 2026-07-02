@@ -5,13 +5,20 @@ struct IslandRootView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var islandState: IslandStateStore
     let modules: IslandModules
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var isExpanded: Bool {
+        islandState.state == .expanded
+    }
 
     var body: some View {
-        IslandSurface(isExpanded: islandState.state == .expanded) {
-            if islandState.state == .collapsed {
-                CompactIslandView(modules: modules)
-            } else {
+        IslandSurface(isExpanded: isExpanded) {
+            if isExpanded {
                 ExpandedIslandView(modules: modules)
+                    .transition(.blurBounce)
+            } else {
+                CompactIslandView(modules: modules)
+                    .transition(.blurBounce)
             }
         }
         .onDrop(of: [.fileURL], isTargeted: nil) { providers in
@@ -20,6 +27,15 @@ struct IslandRootView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("DynamicIsland")
+        .animation(contentAnimation, value: islandState.state)
+    }
+
+    private var contentAnimation: Animation {
+        if reduceMotion {
+            .easeInOut(duration: 0.12)
+        } else {
+            .interpolatingSpring(mass: 0.82, stiffness: 290, damping: 24, initialVelocity: 0.18)
+        }
     }
 
     private func loadDroppedFiles(from providers: [NSItemProvider]) {
@@ -42,6 +58,34 @@ struct IslandRootView: View {
                 }
             }
         }
+    }
+}
+
+private struct BlurBounceModifier: ViewModifier {
+    let blur: CGFloat
+    let scale: CGFloat
+    let opacity: Double
+
+    func body(content: Content) -> some View {
+        content
+            .blur(radius: blur)
+            .scaleEffect(scale)
+            .opacity(opacity)
+    }
+}
+
+private extension AnyTransition {
+    static var blurBounce: AnyTransition {
+        .asymmetric(
+            insertion: .modifier(
+                active: BlurBounceModifier(blur: 12, scale: 0.90, opacity: 0.0),
+                identity: BlurBounceModifier(blur: 0, scale: 1.0, opacity: 1.0)
+            ),
+            removal: .modifier(
+                active: BlurBounceModifier(blur: 10, scale: 0.94, opacity: 0.0),
+                identity: BlurBounceModifier(blur: 0, scale: 1.0, opacity: 1.0)
+            )
+        )
     }
 }
 

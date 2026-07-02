@@ -5,7 +5,7 @@ struct CompactMediaView: View {
     @ObservedObject var media: MediaController
 
     var body: some View {
-        AlbumArtworkView(image: media.artworkImage, size: 32)
+        AlbumArtworkView(image: media.artworkImage, size: 28)
         .accessibilityLabel("Media \(media.title)")
     }
 }
@@ -14,24 +14,24 @@ struct AudioVisualizerView: View {
     let isPlaying: Bool
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 0.18, paused: !isPlaying)) { timeline in
+        TimelineView(.animation(minimumInterval: 0.12, paused: !isPlaying)) { timeline in
             let tick = timeline.date.timeIntervalSinceReferenceDate
-            HStack(spacing: 4) {
+            HStack(alignment: .center, spacing: 3) {
                 ForEach(0..<3, id: \.self) { index in
-                    RoundedRectangle(cornerRadius: 2, style: .continuous)
-                        .fill(Color.white.opacity(isPlaying ? 0.86 : 0.44))
+                    Capsule(style: .continuous)
+                        .fill(Color.white.opacity(isPlaying ? 0.88 : 0.48))
                         .frame(width: 4, height: barHeight(index: index, tick: tick))
                 }
             }
         }
-        .frame(width: 26, height: 26)
+        .frame(width: 20, height: 24)
         .accessibilityLabel(isPlaying ? "Audio playing" : "Audio paused")
     }
 
     private func barHeight(index: Int, tick: TimeInterval) -> CGFloat {
-        guard isPlaying else { return CGFloat([8, 18, 12][index]) }
-        let wave = sin((tick * 6.4) + Double(index) * 1.12)
-        return 7 + CGFloat((wave + 1) * 8)
+        guard isPlaying else { return CGFloat([7, 17, 11][index]) }
+        let wave = sin((tick * 7.6) + Double(index) * 1.35)
+        return 6 + CGFloat((wave + 1) * 8)
     }
 }
 

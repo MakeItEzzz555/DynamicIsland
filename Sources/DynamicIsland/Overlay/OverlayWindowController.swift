@@ -86,6 +86,7 @@ final class OverlayWindowController {
     }
 
     func show() {
+        islandState.collapse()
         reposition(animated: false)
         panel.orderFrontRegardless()
     }
