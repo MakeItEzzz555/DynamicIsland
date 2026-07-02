@@ -22,7 +22,7 @@ final class NotchGeometryServiceTests: XCTestCase {
         XCTAssertTrue(geometry.hasHardwareNotch)
         XCTAssertEqual(geometry.notchRect, CGRect(x: 635, y: 944, width: 242, height: 38))
         XCTAssertEqual(geometry.collapsedFrame.midX, 756, accuracy: 0.5)
-        XCTAssertEqual(geometry.collapsedFrame.width, 242, accuracy: 0.5)
+        XCTAssertEqual(geometry.collapsedFrame.width, 254, accuracy: 0.5)
         XCTAssertEqual(geometry.collapsedFrame.height, 40, accuracy: 0.5)
         XCTAssertEqual(geometry.collapsedFrame.maxY, 982, accuracy: 0.5)
         XCTAssertEqual(geometry.expandedFrame.midX, 756, accuracy: 0.5)
@@ -33,7 +33,7 @@ final class NotchGeometryServiceTests: XCTestCase {
         XCTAssertEqual(geometry.canvas.frame.maxY, snapshot.frame.maxY, accuracy: 0.5)
         XCTAssertTrue(geometry.canvas.frame.contains(geometry.collapsedFrame))
         XCTAssertTrue(geometry.canvas.frame.contains(geometry.expandedFrame))
-        XCTAssertEqual(geometry.canvas.collapsedSurfaceFrame, CGRect(x: 259, y: 220, width: 242, height: 40))
+        XCTAssertEqual(geometry.canvas.collapsedSurfaceFrame, CGRect(x: 253, y: 220, width: 254, height: 40))
         XCTAssertEqual(geometry.canvas.expandedSurfaceFrame, CGRect(x: 0, y: 0, width: 760, height: 260))
     }
 
@@ -55,9 +55,9 @@ final class NotchGeometryServiceTests: XCTestCase {
 
         XCTAssertEqual(geometry.collapsedFrame.midX, 756, accuracy: 0.5)
         XCTAssertEqual(geometry.collapsedFrame.maxY, 982, accuracy: 0.5)
-        XCTAssertEqual(geometry.collapsedFrame.width, 242, accuracy: 0.5)
+        XCTAssertEqual(geometry.collapsedFrame.width, 254, accuracy: 0.5)
         XCTAssertEqual(geometry.collapsedFrame.height, 40, accuracy: 0.5)
-        XCTAssertTrue((215...242).contains(geometry.collapsedFrame.width))
+        XCTAssertTrue((226...254).contains(geometry.collapsedFrame.width))
         XCTAssertEqual(
             geometry.canvas.collapsedSurfaceFrame,
             geometry.collapsedFrame.offsetBy(dx: -geometry.canvas.frame.minX, dy: -geometry.canvas.frame.minY)

@@ -46,9 +46,9 @@ struct IslandRootView: View {
 
     private var contentAnimation: Animation {
         if reduceMotion {
-            .easeInOut(duration: 0.12)
+            .easeInOut(duration: 0.20)
         } else {
-            .interpolatingSpring(mass: 0.82, stiffness: 290, damping: 24, initialVelocity: 0.18)
+            .spring(response: 0.58, dampingFraction: 0.76, blendDuration: 0.14)
         }
     }
 
@@ -109,8 +109,8 @@ struct IslandSurface<Content: View>: View {
 
     var body: some View {
         content
-            .padding(.horizontal, isExpanded ? 22 : 14)
-            .padding(.top, isExpanded ? 18 : 0)
+            .padding(.horizontal, isExpanded ? 22 : 8)
+            .padding(.top, isExpanded ? 42 : 0)
             .padding(.bottom, isExpanded ? 20 : 6)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background {
