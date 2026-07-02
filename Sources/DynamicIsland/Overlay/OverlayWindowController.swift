@@ -48,12 +48,9 @@ final class OverlayWindowController {
         hostingView.wantsLayer = true
         hostingView.layer?.backgroundColor = NSColor.clear.cgColor
         hostingView.onMouseDown = { [weak islandState] in
-            guard islandState?.state == .collapsed else { return }
+            guard islandState?.state == .collapsed else { return true }
             islandState?.toggleExpanded()
-        }
-        hostingView.onMouseExited = { [weak islandState] in
-            guard islandState?.state == .expanded else { return }
-            islandState?.collapse()
+            return false
         }
         panel.contentView = hostingView
 
@@ -107,10 +104,25 @@ final class OverlayWindowController {
         )
         let targetFrame = islandState.state == .collapsed ? geometry.collapsedFrame : geometry.expandedFrame
 
+        applyFrame(targetFrame)
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            let correctedGeometry = self.geometryService.geometry(
+                collapsedSize: self.settings.collapsedSize,
+                expandedSize: self.settings.expandedSize
+            )
+            let correctedFrame = self.islandState.state == .collapsed ? correctedGeometry.collapsedFrame : correctedGeometry.expandedFrame
+            self.applyFrame(correctedFrame)
+        }
+    }
+
+    private func applyFrame(_ frame: NSRect) {
         panel.contentView?.layer?.removeAllAnimations()
         panel.animations.removeAll()
-        panel.setFrame(targetFrame, display: true)
-        panel.contentView?.frame = NSRect(origin: .zero, size: targetFrame.size)
+        panel.disableScreenUpdatesUntilFlush()
+        panel.setFrame(frame, display: true)
+        panel.contentView?.frame = NSRect(origin: .zero, size: frame.size)
+        panel.orderFrontRegardless()
     }
 
     private func updateMouseContainmentTimer(for state: IslandPresentationState) {
@@ -118,21 +130,22 @@ final class OverlayWindowController {
         mouseContainmentTimer = nil
 
         guard state == .expanded else { return }
-        mouseContainmentTimer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 0.08, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.islandState.state == .expanded else { return }
-                let expandedHitFrame = self.panel.frame.insetBy(dx: -3, dy: -3)
+                let expandedHitFrame = self.panel.frame.insetBy(dx: -8, dy: -8)
                 if !expandedHitFrame.contains(NSEvent.mouseLocation) {
                     self.islandState.collapse()
                 }
             }
         }
+        RunLoop.main.add(timer, forMode: .common)
+        mouseContainmentTimer = timer
     }
 }
 
 private final class IslandHostingView<Content: View>: NSHostingView<Content> {
-    var onMouseDown: (() -> Void)?
-    var onMouseExited: (() -> Void)?
+    var onMouseDown: (() -> Bool)?
     private var trackingAreaReference: NSTrackingArea?
 
     override func updateTrackingAreas() {
@@ -150,14 +163,10 @@ private final class IslandHostingView<Content: View>: NSHostingView<Content> {
         super.updateTrackingAreas()
     }
 
-    override func mouseExited(with event: NSEvent) {
-        onMouseExited?()
-        super.mouseExited(with: event)
-    }
-
     override func mouseDown(with event: NSEvent) {
-        onMouseDown?()
-        super.mouseDown(with: event)
+        if onMouseDown?() ?? true {
+            super.mouseDown(with: event)
+        }
     }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {

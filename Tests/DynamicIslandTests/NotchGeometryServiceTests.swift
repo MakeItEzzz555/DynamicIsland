@@ -22,8 +22,8 @@ final class NotchGeometryServiceTests: XCTestCase {
         XCTAssertTrue(geometry.hasHardwareNotch)
         XCTAssertEqual(geometry.notchRect, CGRect(x: 635, y: 944, width: 242, height: 38))
         XCTAssertEqual(geometry.collapsedFrame.midX, 756, accuracy: 0.5)
-        XCTAssertEqual(geometry.collapsedFrame.width, 430, accuracy: 0.5)
-        XCTAssertEqual(geometry.collapsedFrame.height, 54, accuracy: 0.5)
+        XCTAssertEqual(geometry.collapsedFrame.width, 300, accuracy: 0.5)
+        XCTAssertEqual(geometry.collapsedFrame.height, 49, accuracy: 0.5)
         XCTAssertEqual(geometry.collapsedFrame.maxY, 982, accuracy: 0.5)
         XCTAssertEqual(geometry.expandedFrame.midX, 756, accuracy: 0.5)
         XCTAssertEqual(geometry.expandedFrame.maxY, 982, accuracy: 0.5)
@@ -50,9 +50,9 @@ final class NotchGeometryServiceTests: XCTestCase {
 
         XCTAssertEqual(geometry.collapsedFrame.midX, 756, accuracy: 0.5)
         XCTAssertEqual(geometry.collapsedFrame.maxY, 982, accuracy: 0.5)
-        XCTAssertEqual(geometry.collapsedFrame.width, 430, accuracy: 0.5)
-        XCTAssertEqual(geometry.collapsedFrame.height, 54, accuracy: 0.5)
-        XCTAssertTrue((380...430).contains(geometry.collapsedFrame.width))
+        XCTAssertEqual(geometry.collapsedFrame.width, 300, accuracy: 0.5)
+        XCTAssertEqual(geometry.collapsedFrame.height, 49, accuracy: 0.5)
+        XCTAssertTrue((266...300).contains(geometry.collapsedFrame.width))
     }
 
     func testExpandedFrameStaysScreenCenteredWhenNotchIsOffCenter() {
