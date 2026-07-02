@@ -14,22 +14,31 @@ struct AudioVisualizerView: View {
     let isPlaying: Bool
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: !isPlaying)) { timeline in
-            let tick = timeline.date.timeIntervalSinceReferenceDate
-            HStack(alignment: .center, spacing: 2) {
-                ForEach(0..<3, id: \.self) { index in
-                    Capsule(style: .continuous)
-                        .fill(Color.white.opacity(isPlaying ? 0.88 : 0.48))
-                        .frame(width: 2, height: barHeight(index: index, tick: tick))
+        Group {
+            if isPlaying {
+                TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { timeline in
+                    bars(tick: timeline.date.timeIntervalSinceReferenceDate, opacity: 0.88)
                 }
+            } else {
+                bars(tick: nil, opacity: 0.48)
             }
         }
         .frame(width: 10, height: 12)
         .accessibilityLabel(isPlaying ? "Audio playing" : "Audio paused")
     }
 
-    private func barHeight(index: Int, tick: TimeInterval) -> CGFloat {
-        guard isPlaying else { return Self.pausedHeights[index] }
+    private func bars(tick: TimeInterval?, opacity: Double) -> some View {
+        HStack(alignment: .center, spacing: 2) {
+            ForEach(0..<3, id: \.self) { index in
+                Capsule(style: .continuous)
+                    .fill(Color.white.opacity(opacity))
+                    .frame(width: 2, height: barHeight(index: index, tick: tick))
+            }
+        }
+    }
+
+    private func barHeight(index: Int, tick: TimeInterval?) -> CGFloat {
+        guard let tick else { return Self.pausedHeights[index] }
 
         let samples = Self.playingHeights[index]
         let phase = tick.truncatingRemainder(dividingBy: Self.loopDuration) / Self.loopDuration
@@ -42,7 +51,7 @@ struct AudioVisualizerView: View {
         return samples[lowerIndex] + ((samples[upperIndex] - samples[lowerIndex]) * easedProgress)
     }
 
-    private static let loopDuration: TimeInterval = 0.92
+    private static let loopDuration: TimeInterval = 0.46
     private static let pausedHeights: [CGFloat] = [3.5, 8.5, 5.5]
     private static let playingHeights: [[CGFloat]] = [
         [4.0, 11.5, 6.5, 10.0, 3.5, 8.0],
