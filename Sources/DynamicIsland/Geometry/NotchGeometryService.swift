@@ -68,19 +68,20 @@ public final class NotchGeometryService {
     ) -> IslandGeometry {
         let notchRect = inferNotchRect(from: snapshot)
         let topY = snapshot.frame.maxY
-        let centerX = notchRect?.midX ?? snapshot.frame.midX
+        let collapsedCenterX = notchRect?.midX ?? snapshot.frame.midX
+        let expandedCenterX = snapshot.frame.midX
         let collapsedY = topY - collapsedSize.height - (notchRect == nil ? 8 : 0)
         let expandedY = topY - expandedSize.height - (notchRect == nil ? 10 : 4)
 
         let collapsedFrame = CGRect(
-            x: centerX - collapsedSize.width / 2,
+            x: collapsedCenterX - collapsedSize.width / 2,
             y: collapsedY,
             width: collapsedSize.width,
             height: collapsedSize.height
         )
 
         let expandedFrame = CGRect(
-            x: centerX - expandedSize.width / 2,
+            x: expandedCenterX - expandedSize.width / 2,
             y: expandedY,
             width: expandedSize.width,
             height: expandedSize.height

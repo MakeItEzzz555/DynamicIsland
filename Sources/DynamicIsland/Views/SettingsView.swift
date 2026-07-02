@@ -18,10 +18,6 @@ struct SettingsView: View {
                     Slider(value: $settings.islandScale, in: 0.82...1.22)
                         .frame(width: 220)
                 }
-                LabeledContent("Hover delay") {
-                    Slider(value: $settings.hoverDelay, in: 0.0...0.6)
-                        .frame(width: 220)
-                }
                 LabeledContent("Auto-collapse") {
                     Slider(value: $settings.autoCollapseDelay, in: 1.0...10.0)
                         .frame(width: 220)

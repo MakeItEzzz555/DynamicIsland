@@ -49,6 +49,11 @@ public final class IslandStateStore: ObservableObject {
         }
     }
 
+    public func scheduleAutoCollapseIfNeeded(after delay: TimeInterval) {
+        guard state == .expanded else { return }
+        scheduleCollapse(after: delay)
+    }
+
     public func collapseFromOutsideClick() {
         guard state != .pinned else { return }
         state = .collapsed

@@ -17,12 +17,12 @@ It is inspired by the interaction model of Apple Dynamic Island and third-party 
 - Borderless floating overlay aligned to the hardware notch when `NSScreen` exposes notch safe-area data.
 - Floating centered island fallback for external or notchless displays.
 - Collapsed, peek, expanded, drag-receiving, and pinned presentation states.
-- Hover and click interaction model.
-- Apple Music media status and playback controls through permission-gated Apple Events.
+- Click-to-expand interaction model.
+- Spotify-first media detection with Apple Music fallback through permission-gated Apple Events.
 - Temporary file shelf with drag-in and drag-out support.
 - Configurable launcher shortcuts for apps, files, and URLs.
 - Menu bar controls for settings, show/hide, and quit.
-- Settings window for size, hover delay, auto-collapse delay, animation feel, startup behavior, and enabled modules.
+- Settings window for size, auto-collapse delay, animation feel, startup behavior, and enabled modules.
 - Launch-at-login toggle through `ServiceManagement`.
 - Reduce Motion-aware animations.
 - VoiceOver labels for core controls.
@@ -123,6 +123,6 @@ Native macOS SwiftUI/AppKit Dynamic Island-style notch overlay with media contro
 ## Current Limitations
 
 - macOS has no official Dynamic Island API, so the app uses an overlay window.
-- Media controls currently focus on Apple Music through Apple Events.
+- Media controls currently use Apple Events for Spotify and Apple Music, so macOS may ask for automation permission the first time controls or track detection run.
 - The packaged app is ad-hoc signed unless `DEVELOPER_ID_APP` is supplied to the packaging script.
 - Notarization is documented but not automated in v0.1.

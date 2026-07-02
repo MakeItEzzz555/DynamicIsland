@@ -12,6 +12,10 @@ struct CompactMediaView: View {
                 .font(.system(size: 12, weight: .semibold))
                 .lineLimit(1)
                 .foregroundStyle(.white)
+            Text(media.sourceName)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(.white.opacity(0.45))
+                .lineLimit(1)
         }
         .accessibilityLabel("Media \(media.title)")
     }
@@ -53,6 +57,10 @@ struct MediaModuleView: View {
                     Text(media.artist)
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(.white.opacity(0.62))
+                        .lineLimit(1)
+                    Text(media.sourceName)
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.42))
                         .lineLimit(1)
                 }
                 Spacer(minLength: 0)

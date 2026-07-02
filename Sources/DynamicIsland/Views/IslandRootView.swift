@@ -23,15 +23,9 @@ struct IslandRootView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onHover { hovering in
-            if hovering {
-                islandState.hoverEntered(delay: settings.hoverDelay)
-            } else {
-                islandState.hoverExited(autoCollapseDelay: settings.autoCollapseDelay)
-            }
-        }
         .onTapGesture {
             islandState.toggleExpanded()
+            islandState.scheduleAutoCollapseIfNeeded(after: settings.autoCollapseDelay)
         }
         .onDrop(of: [.fileURL], isTargeted: nil) { providers in
             islandState.dragEntered()
@@ -82,12 +76,26 @@ struct IslandSurface<Content: View>: View {
 
     var body: some View {
         content
-            .padding(isExpanded ? 14 : 8)
+            .padding(.horizontal, isExpanded ? 16 : 14)
+            .padding(.top, isExpanded ? 12 : 7)
+            .padding(.bottom, isExpanded ? 16 : 10)
             .background {
-                RoundedRectangle(cornerRadius: isExpanded ? 34 : 24, style: .continuous)
+                UnevenRoundedRectangle(
+                    topLeadingRadius: isExpanded ? 20 : 10,
+                    bottomLeadingRadius: isExpanded ? 34 : 18,
+                    bottomTrailingRadius: isExpanded ? 34 : 18,
+                    topTrailingRadius: isExpanded ? 20 : 10,
+                    style: .continuous
+                )
                     .fill(Color.black.opacity(0.94))
                     .overlay(
-                        RoundedRectangle(cornerRadius: isExpanded ? 34 : 24, style: .continuous)
+                        UnevenRoundedRectangle(
+                            topLeadingRadius: isExpanded ? 20 : 10,
+                            bottomLeadingRadius: isExpanded ? 34 : 18,
+                            bottomTrailingRadius: isExpanded ? 34 : 18,
+                            topTrailingRadius: isExpanded ? 20 : 10,
+                            style: .continuous
+                        )
                             .stroke(Color.white.opacity(0.12), lineWidth: 1)
                     )
                     .shadow(color: .black.opacity(0.32), radius: isExpanded ? 22 : 10, y: isExpanded ? 12 : 4)

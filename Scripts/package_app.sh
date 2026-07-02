@@ -39,7 +39,7 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <key>LSUIElement</key>
   <true/>
   <key>NSAppleEventsUsageDescription</key>
-  <string>DynamicIsland can control Music playback when you use the media module.</string>
+  <string>DynamicIsland can read and control Spotify or Music playback when you use the media module.</string>
 </dict>
 </plist>
 PLIST
