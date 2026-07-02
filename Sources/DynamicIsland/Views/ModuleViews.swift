@@ -12,45 +12,45 @@ struct CompactMediaView: View {
 
 struct AudioVisualizerView: View {
     let isPlaying: Bool
-    @State private var frameIndex = 0
 
     var body: some View {
         Group {
             if isPlaying {
-                bars(frameIndex: frameIndex, opacity: 0.88)
-                    .animation(.easeInOut(duration: 0.07), value: frameIndex)
-                    .task(id: isPlaying) {
-                        frameIndex = 0
-                        while isPlaying, !Task.isCancelled {
-                            try? await Task.sleep(nanoseconds: 77_000_000)
-                            frameIndex = (frameIndex + 1) % Self.keyframeCount
-                        }
-                    }
+                TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { timeline in
+                    bars(tick: timeline.date.timeIntervalSinceReferenceDate, opacity: 0.88)
+                }
             } else {
-                bars(frameIndex: nil, opacity: 0.48)
+                bars(tick: nil, opacity: 0.48)
             }
         }
         .frame(width: 10, height: 12)
         .accessibilityLabel(isPlaying ? "Audio playing" : "Audio paused")
     }
 
-    private func bars(frameIndex: Int?, opacity: Double) -> some View {
+    private func bars(tick: TimeInterval?, opacity: Double) -> some View {
         HStack(alignment: .center, spacing: 2) {
             ForEach(0..<3, id: \.self) { index in
                 Capsule(style: .continuous)
                     .fill(Color.white.opacity(opacity))
-                    .frame(width: 2, height: barHeight(index: index, frameIndex: frameIndex))
+                    .frame(width: 2, height: barHeight(index: index, tick: tick))
             }
         }
     }
 
-    private func barHeight(index: Int, frameIndex: Int?) -> CGFloat {
-        guard let frameIndex else { return Self.pausedHeights[index] }
+    private func barHeight(index: Int, tick: TimeInterval?) -> CGFloat {
+        guard let tick else { return Self.pausedHeights[index] }
         let samples = Self.playingHeights[index]
-        return samples[frameIndex % samples.count]
+        let phase = tick.truncatingRemainder(dividingBy: Self.loopDuration) / Self.loopDuration
+        let samplePosition = phase * Double(samples.count)
+        let lowerIndex = Int(floor(samplePosition)) % samples.count
+        let upperIndex = (lowerIndex + 1) % samples.count
+        let progress = CGFloat(samplePosition - floor(samplePosition))
+        let easedProgress = progress * progress * (3 - 2 * progress)
+
+        return samples[lowerIndex] + ((samples[upperIndex] - samples[lowerIndex]) * easedProgress)
     }
 
-    private static let keyframeCount = 6
+    private static let loopDuration: TimeInterval = 0.46
     private static let pausedHeights: [CGFloat] = [3.5, 8.5, 5.5]
     private static let playingHeights: [[CGFloat]] = [
         [4.0, 11.5, 6.5, 10.0, 3.5, 8.0],

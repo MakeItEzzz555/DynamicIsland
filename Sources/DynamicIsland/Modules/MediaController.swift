@@ -14,6 +14,8 @@ final class MediaController: ObservableObject {
     private var activePlayer: MediaPlayer = .spotify
     private var refreshTimer: Timer?
     private var currentArtworkURL: String?
+    private var lastPlaybackIdentity: String?
+    private var lastPlaybackPosition: Double?
     private var isScrubbing = false
 
     private enum MediaPlayer: String, CaseIterable {
@@ -56,6 +58,8 @@ final class MediaController: ObservableObject {
         sourceName = "Media"
         artworkImage = nil
         currentArtworkURL = nil
+        lastPlaybackIdentity = nil
+        lastPlaybackPosition = nil
         playbackPosition = 0
         duration = 1
     }
@@ -105,12 +109,19 @@ final class MediaController: ObservableObject {
             if parts.count >= 4 {
                 title = parts[0]
                 artist = parts[1]
-                isPlaying = parts[2] == "playing"
+                let reportedPlaybackState = parts[2]
                 sourceName = parts[3]
                 activePlayer = player
+                let parsedPlaybackPosition = Double(parts[safe: 4] ?? "") ?? playbackPosition
+                let playbackIdentity = "\(player.rawValue)||\(title)||\(artist)"
+                let playbackPositionAdvanced = lastPlaybackIdentity == playbackIdentity &&
+                    parsedPlaybackPosition > ((lastPlaybackPosition ?? parsedPlaybackPosition) + 0.25)
+                isPlaying = reportedPlaybackState == "playing" || playbackPositionAdvanced
                 if !isScrubbing {
-                    playbackPosition = Double(parts[safe: 4] ?? "") ?? playbackPosition
+                    playbackPosition = parsedPlaybackPosition
                 }
+                lastPlaybackIdentity = playbackIdentity
+                lastPlaybackPosition = parsedPlaybackPosition
                 duration = max(1, Double(parts[safe: 5] ?? "") ?? duration)
                 if parts.count > 6 {
                     loadArtwork(from: parts[6])
