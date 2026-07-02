@@ -106,60 +106,26 @@ struct ExpandedIslandView: View {
     let modules: IslandModules
 
     var body: some View {
-        GeometryReader { proxy in
-            if proxy.size.width >= 1_040 {
-                wideLayout(width: proxy.size.width)
-            } else {
-                compactLayout(width: proxy.size.width)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-    }
-
-    private func wideLayout(width: CGFloat) -> some View {
-        let availableWidth = max(0, width - 48)
-        let mediaWidth = min(460, availableWidth * 0.40)
-        let shortcutsWidth = min(270, availableWidth * 0.24)
-        let utilityWidth = min(320, availableWidth * 0.28)
-
-        return HStack(spacing: 24) {
+        HStack(spacing: 20) {
             MediaModuleView(media: modules.media)
-                .frame(width: mediaWidth, alignment: .leading)
+                .frame(width: 372, alignment: .leading)
 
             Divider()
-                .frame(height: 248)
+                .frame(height: 220)
                 .overlay(.white.opacity(0.10))
 
             ShortcutsModuleView(shortcuts: modules.shortcuts)
-                .frame(width: shortcutsWidth)
+                .frame(width: 190)
 
             Divider()
-                .frame(height: 248)
+                .frame(height: 220)
                 .overlay(.white.opacity(0.10))
 
             VStack(spacing: 14) {
                 TimerModuleView(timer: modules.timer)
                 FileShelfModuleView(fileShelf: modules.fileShelf)
             }
-            .frame(width: utilityWidth)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-    }
-
-    private func compactLayout(width: CGFloat) -> some View {
-        HStack(spacing: 18) {
-            MediaModuleView(media: modules.media)
-                .frame(width: min(420, width * 0.58), alignment: .leading)
-
-            Divider()
-                .frame(height: 248)
-                .overlay(.white.opacity(0.10))
-
-            VStack(spacing: 14) {
-                TimerModuleView(timer: modules.timer)
-                FileShelfModuleView(fileShelf: modules.fileShelf)
-            }
-            .frame(maxWidth: .infinity)
+            .frame(width: 210)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }

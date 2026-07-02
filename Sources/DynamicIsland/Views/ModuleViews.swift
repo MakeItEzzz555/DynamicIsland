@@ -77,23 +77,23 @@ struct MediaModuleView: View {
     @ObservedObject var media: MediaController
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack(alignment: .top, spacing: 16) {
-                AlbumArtworkView(image: media.artworkImage, size: 136)
-                VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 14) {
+                AlbumArtworkView(image: media.artworkImage, size: 112)
+                VStack(alignment: .leading, spacing: 4) {
                     Text(media.title)
-                        .font(.system(size: 25, weight: .bold, design: .rounded))
+                        .font(.system(size: 21, weight: .bold, design: .rounded))
                         .foregroundStyle(.white)
                         .lineLimit(1)
                     Text(media.artist)
-                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .font(.system(size: 16, weight: .bold, design: .rounded))
                         .foregroundStyle(.white.opacity(0.66))
                         .lineLimit(1)
                     Text(media.sourceName)
-                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
                         .foregroundStyle(.white.opacity(0.48))
                         .lineLimit(1)
-                    HStack(spacing: 24) {
+                    HStack(spacing: 18) {
                         MediaButton(symbol: "backward.fill", label: "Previous track", action: media.previousTrack)
                         MediaButton(symbol: media.isPlaying ? "pause.fill" : "play.fill", label: "Play or pause", action: media.playPause)
                         MediaButton(symbol: "forward.fill", label: "Next track", action: media.nextTrack)
@@ -171,9 +171,9 @@ struct FileShelfModuleView: View {
                 }
             }
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, minHeight: 92, maxHeight: 112)
-        .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .padding(12)
+        .frame(maxWidth: .infinity, minHeight: 82, maxHeight: 94)
+        .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 }
 
@@ -183,9 +183,9 @@ struct TimerModuleView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label("Timer", systemImage: "timer")
-                .font(.system(size: 16, weight: .bold, design: .rounded))
+                .font(.system(size: 15, weight: .bold, design: .rounded))
             Text(timer.isRunning ? timer.displayText : "Start a timer")
-                .font(.system(size: 25, weight: .bold, design: .rounded))
+                .font(.system(size: 20, weight: .bold, design: .rounded))
                 .lineLimit(1)
             HStack {
                 Button("5m") { timer.start(minutes: 5) }
@@ -197,9 +197,9 @@ struct TimerModuleView: View {
             .buttonStyle(.borderless)
         }
         .foregroundStyle(.white)
-        .padding(14)
-        .frame(maxWidth: .infinity, minHeight: 128, alignment: .leading)
-        .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .padding(12)
+        .frame(maxWidth: .infinity, minHeight: 106, alignment: .leading)
+        .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
 }
 
@@ -234,24 +234,24 @@ struct ShortcutsModuleView: View {
     @ObservedObject var shortcuts: ShortcutsStore
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 12) {
             Label("Shortcuts", systemImage: "bolt.fill")
-                .font(.system(size: 16, weight: .bold, design: .rounded))
+                .font(.system(size: 14, weight: .bold, design: .rounded))
                 .foregroundStyle(.white)
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 2), spacing: 10) {
-                ForEach(shortcuts.shortcuts.prefix(6)) { shortcut in
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 2), spacing: 8) {
+                ForEach(shortcuts.shortcuts.prefix(4)) { shortcut in
                     Button {
                         shortcuts.open(shortcut)
                     } label: {
                         VStack(spacing: 6) {
                             Image(systemName: shortcut.symbolName)
-                                .font(.system(size: 18, weight: .semibold))
+                                .font(.system(size: 17, weight: .semibold))
                             Text(shortcut.title)
-                                .font(.system(size: 12, weight: .bold, design: .rounded))
+                                .font(.system(size: 11, weight: .bold, design: .rounded))
                                 .lineLimit(1)
                         }
-                        .frame(maxWidth: .infinity, minHeight: 66)
-                        .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .frame(maxWidth: .infinity, minHeight: 58)
+                        .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.white)
@@ -259,7 +259,7 @@ struct ShortcutsModuleView: View {
                 }
             }
         }
-        .padding(14)
+        .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(.white.opacity(0.075), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
     }

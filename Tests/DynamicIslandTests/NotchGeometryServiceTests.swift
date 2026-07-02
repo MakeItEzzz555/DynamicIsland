@@ -27,8 +27,9 @@ final class NotchGeometryServiceTests: XCTestCase {
         XCTAssertEqual(geometry.collapsedFrame.maxY, 982, accuracy: 0.5)
         XCTAssertEqual(geometry.expandedFrame.midX, 756, accuracy: 0.5)
         XCTAssertEqual(geometry.expandedFrame.maxY, 982, accuracy: 0.5)
-        XCTAssertEqual(geometry.expandedFrame.width, 1180, accuracy: 0.5)
-        XCTAssertEqual(geometry.expandedFrame.height, 326, accuracy: 0.5)
+        XCTAssertEqual(geometry.expandedFrame.width, 860, accuracy: 0.5)
+        XCTAssertEqual(geometry.expandedFrame.height, 292, accuracy: 0.5)
+        XCTAssertLessThan(geometry.expandedFrame.width / snapshot.frame.width, 0.60)
     }
 
     func testProductionCollapsedSizeIsIgnoredOnNotchedScreen() {
@@ -73,7 +74,7 @@ final class NotchGeometryServiceTests: XCTestCase {
         XCTAssertEqual(geometry.collapsedFrame.midX, 725, accuracy: 0.5)
         XCTAssertEqual(geometry.expandedFrame.midX, 756, accuracy: 0.5)
         XCTAssertEqual(geometry.expandedFrame.maxY, 982, accuracy: 0.5)
-        XCTAssertLessThanOrEqual(geometry.expandedFrame.width, 1180)
+        XCTAssertLessThanOrEqual(geometry.expandedFrame.width, 860)
     }
 
     func testExpandedFrameKeepsSideMarginsOnNarrowScreens() {
@@ -92,10 +93,10 @@ final class NotchGeometryServiceTests: XCTestCase {
             expandedSize: CGSize(width: 1180, height: 210)
         )
 
-        XCTAssertEqual(geometry.expandedFrame.minX, 70, accuracy: 0.5)
-        XCTAssertEqual(geometry.expandedFrame.maxX, 830, accuracy: 0.5)
+        XCTAssertEqual(geometry.expandedFrame.minX, 110, accuracy: 0.5)
+        XCTAssertEqual(geometry.expandedFrame.maxX, 790, accuracy: 0.5)
         XCTAssertEqual(geometry.expandedFrame.midX, 450, accuracy: 0.5)
-        XCTAssertEqual(geometry.expandedFrame.width, 760, accuracy: 0.5)
+        XCTAssertEqual(geometry.expandedFrame.width, 680, accuracy: 0.5)
     }
 
     func testUsesFloatingIslandWhenNoNotchExists() {
@@ -119,7 +120,7 @@ final class NotchGeometryServiceTests: XCTestCase {
         XCTAssertEqual(geometry.collapsedFrame.midX, 960, accuracy: 0.5)
         XCTAssertEqual(geometry.collapsedFrame.maxY, 1072, accuracy: 0.5)
         XCTAssertEqual(geometry.expandedFrame.maxY, 1070, accuracy: 0.5)
-        XCTAssertEqual(geometry.expandedFrame.width, 1180, accuracy: 0.5)
-        XCTAssertEqual(geometry.expandedFrame.height, 326, accuracy: 0.5)
+        XCTAssertEqual(geometry.expandedFrame.width, 860, accuracy: 0.5)
+        XCTAssertEqual(geometry.expandedFrame.height, 292, accuracy: 0.5)
     }
 }
