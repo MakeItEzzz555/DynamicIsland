@@ -30,6 +30,11 @@ final class NotchGeometryServiceTests: XCTestCase {
         XCTAssertEqual(geometry.expandedFrame.width, 760, accuracy: 0.5)
         XCTAssertEqual(geometry.expandedFrame.height, 260, accuracy: 0.5)
         XCTAssertLessThan(geometry.expandedFrame.width / snapshot.frame.width, 0.52)
+        XCTAssertEqual(geometry.canvas.frame.maxY, snapshot.frame.maxY, accuracy: 0.5)
+        XCTAssertTrue(geometry.canvas.frame.contains(geometry.collapsedFrame))
+        XCTAssertTrue(geometry.canvas.frame.contains(geometry.expandedFrame))
+        XCTAssertEqual(geometry.canvas.collapsedSurfaceFrame, CGRect(x: 259, y: 220, width: 242, height: 40))
+        XCTAssertEqual(geometry.canvas.expandedSurfaceFrame, CGRect(x: 0, y: 0, width: 760, height: 260))
     }
 
     func testProductionCollapsedSizeIsIgnoredOnNotchedScreen() {
@@ -53,6 +58,14 @@ final class NotchGeometryServiceTests: XCTestCase {
         XCTAssertEqual(geometry.collapsedFrame.width, 242, accuracy: 0.5)
         XCTAssertEqual(geometry.collapsedFrame.height, 40, accuracy: 0.5)
         XCTAssertTrue((215...242).contains(geometry.collapsedFrame.width))
+        XCTAssertEqual(
+            geometry.canvas.collapsedSurfaceFrame,
+            geometry.collapsedFrame.offsetBy(dx: -geometry.canvas.frame.minX, dy: -geometry.canvas.frame.minY)
+        )
+        XCTAssertEqual(
+            geometry.canvas.expandedSurfaceFrame,
+            geometry.expandedFrame.offsetBy(dx: -geometry.canvas.frame.minX, dy: -geometry.canvas.frame.minY)
+        )
     }
 
     func testExpandedFrameStaysScreenCenteredWhenNotchIsOffCenter() {
@@ -122,5 +135,8 @@ final class NotchGeometryServiceTests: XCTestCase {
         XCTAssertEqual(geometry.expandedFrame.maxY, 1070, accuracy: 0.5)
         XCTAssertEqual(geometry.expandedFrame.width, 760, accuracy: 0.5)
         XCTAssertEqual(geometry.expandedFrame.height, 260, accuracy: 0.5)
+        XCTAssertEqual(geometry.canvas.frame, CGRect(x: 580, y: 810, width: 760, height: 270))
+        XCTAssertEqual(geometry.canvas.collapsedSurfaceFrame, CGRect(x: 268, y: 220, width: 224, height: 42))
+        XCTAssertEqual(geometry.canvas.expandedSurfaceFrame, CGRect(x: 0, y: 0, width: 760, height: 260))
     }
 }

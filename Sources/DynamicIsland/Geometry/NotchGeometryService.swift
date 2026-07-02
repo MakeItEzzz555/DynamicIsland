@@ -38,7 +38,14 @@ public struct IslandGeometry: Equatable {
     public let notchRect: CGRect?
     public let collapsedFrame: CGRect
     public let expandedFrame: CGRect
+    public let canvas: IslandCanvasGeometry
     public let hasHardwareNotch: Bool
+}
+
+public struct IslandCanvasGeometry: Equatable {
+    public let frame: CGRect
+    public let collapsedSurfaceFrame: CGRect
+    public let expandedSurfaceFrame: CGRect
 }
 
 public final class NotchGeometryService {
@@ -98,12 +105,40 @@ public final class NotchGeometryService {
             height: resolvedExpandedHeight
         )
 
+        let integralCollapsedFrame = collapsedFrame.integral
+        let integralExpandedFrame = expandedFrame.integral
+        let canvas = Self.canvasGeometry(
+            topY: topY,
+            collapsedFrame: integralCollapsedFrame,
+            expandedFrame: integralExpandedFrame
+        )
+
         return IslandGeometry(
             screenFrame: snapshot.frame,
             notchRect: notchRect,
-            collapsedFrame: collapsedFrame.integral,
-            expandedFrame: expandedFrame.integral,
+            collapsedFrame: integralCollapsedFrame,
+            expandedFrame: integralExpandedFrame,
+            canvas: canvas,
             hasHardwareNotch: notchRect != nil
+        )
+    }
+
+    private static func canvasGeometry(
+        topY: CGFloat,
+        collapsedFrame: CGRect,
+        expandedFrame: CGRect
+    ) -> IslandCanvasGeometry {
+        let surfaceBounds = collapsedFrame.union(expandedFrame).integral
+        let canvasFrame = CGRect(
+            x: surfaceBounds.minX,
+            y: surfaceBounds.minY,
+            width: surfaceBounds.width,
+            height: topY - surfaceBounds.minY
+        ).integral
+        return IslandCanvasGeometry(
+            frame: canvasFrame,
+            collapsedSurfaceFrame: collapsedFrame.offsetBy(dx: -canvasFrame.minX, dy: -canvasFrame.minY).integral,
+            expandedSurfaceFrame: expandedFrame.offsetBy(dx: -canvasFrame.minX, dy: -canvasFrame.minY).integral
         )
     }
 

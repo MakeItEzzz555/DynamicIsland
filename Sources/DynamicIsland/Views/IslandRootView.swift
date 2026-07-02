@@ -13,7 +13,7 @@ struct IslandRootView: View {
     }
 
     var body: some View {
-        ZStack(alignment: .top) {
+        ZStack(alignment: .topLeading) {
             IslandSurface(isExpanded: isExpanded) {
                 if isExpanded {
                     ExpandedIslandView(modules: modules)
@@ -24,8 +24,9 @@ struct IslandRootView: View {
                 }
             }
             .frame(width: surfaceSize.width, height: surfaceSize.height)
+            .position(x: surfaceFrame.midX, y: layoutStore.canvasSize.height - surfaceFrame.midY)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .frame(width: layoutStore.canvasSize.width, height: layoutStore.canvasSize.height, alignment: .topLeading)
         .onDrop(of: [.fileURL], isTargeted: nil) { providers in
             loadDroppedFiles(from: providers)
             return true
@@ -36,7 +37,11 @@ struct IslandRootView: View {
     }
 
     private var surfaceSize: CGSize {
-        isExpanded ? layoutStore.expandedSize : layoutStore.collapsedSize
+        surfaceFrame.size
+    }
+
+    private var surfaceFrame: CGRect {
+        isExpanded ? layoutStore.expandedSurfaceFrame : layoutStore.collapsedSurfaceFrame
     }
 
     private var contentAnimation: Animation {

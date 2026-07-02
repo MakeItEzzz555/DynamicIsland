@@ -11,8 +11,8 @@ final class OverlayWindowController {
     private let panel: NSPanel
     private var cancellables: Set<AnyCancellable> = []
     private var mouseContainmentTimer: Timer?
-    private var collapseFrameWorkItem: DispatchWorkItem?
     private var targetExpandedFrame: NSRect?
+    private weak var hostingView: IslandHostingView<IslandRootView>?
 
     init(
         settings: AppSettings,
@@ -56,7 +56,11 @@ final class OverlayWindowController {
             islandState?.toggleExpanded()
             return false
         }
+        hostingView.visibleSurfaceFrame = { [weak self] in
+            self?.visibleSurfaceFrame() ?? .zero
+        }
         panel.contentView = hostingView
+        self.hostingView = hostingView
 
         islandState.$state
             .sink { [weak self] state in
@@ -109,40 +113,18 @@ final class OverlayWindowController {
             collapsedSize: settings.collapsedSize,
             expandedSize: settings.expandedSize
         )
-        layoutStore.update(
-            collapsedSize: geometry.collapsedFrame.size,
-            expandedSize: geometry.expandedFrame.size
-        )
+        layoutStore.update(canvas: geometry.canvas)
         targetExpandedFrame = geometry.expandedFrame
+        applyFrame(geometry.canvas.frame)
+        hostingView?.needsLayout = true
 
         switch islandState.state {
         case .expanded:
-            collapseFrameWorkItem?.cancel()
-            applyFrame(geometry.expandedFrame)
             updateMouseContainmentTimer(for: .expanded)
         case .collapsed:
             updateMouseContainmentTimer(for: .collapsed)
-            let targetFrame = geometry.collapsedFrame
-            if animated, panel.frame.size != targetFrame.size {
-                collapseFrameWorkItem?.cancel()
-                let workItem = DispatchWorkItem { [weak self] in
-                    Task { @MainActor in
-                        guard let self, self.islandState.state == .collapsed else { return }
-                        self.applyFrame(targetFrame)
-                    }
-                }
-                collapseFrameWorkItem = workItem
-                DispatchQueue.main.asyncAfter(deadline: .now() + collapseDelay, execute: workItem)
-            } else {
-                collapseFrameWorkItem?.cancel()
-                applyFrame(targetFrame)
-            }
         }
 
-        if !animated {
-            let targetFrame = islandState.state == .collapsed ? geometry.collapsedFrame : geometry.expandedFrame
-            applyFrame(targetFrame)
-        }
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             let correctedGeometry = self.geometryService.geometry(
@@ -150,12 +132,10 @@ final class OverlayWindowController {
                 expandedSize: self.settings.expandedSize
             )
             if !animated {
-                self.layoutStore.update(
-                    collapsedSize: correctedGeometry.collapsedFrame.size,
-                    expandedSize: correctedGeometry.expandedFrame.size
-                )
-                let correctedFrame = self.islandState.state == .collapsed ? correctedGeometry.collapsedFrame : correctedGeometry.expandedFrame
-                self.applyFrame(correctedFrame)
+                self.layoutStore.update(canvas: correctedGeometry.canvas)
+                self.targetExpandedFrame = correctedGeometry.expandedFrame
+                self.applyFrame(correctedGeometry.canvas.frame)
+                self.hostingView?.needsLayout = true
             }
         }
     }
@@ -186,12 +166,20 @@ final class OverlayWindowController {
         RunLoop.main.add(timer, forMode: .common)
         mouseContainmentTimer = timer
     }
-}
 
-private let collapseDelay: TimeInterval = 0.24
+    private func visibleSurfaceFrame() -> CGRect {
+        switch islandState.state {
+        case .collapsed:
+            layoutStore.collapsedSurfaceFrame
+        case .expanded:
+            layoutStore.expandedSurfaceFrame
+        }
+    }
+}
 
 private final class IslandHostingView<Content: View>: NSHostingView<Content> {
     var onMouseDown: (() -> Bool)?
+    var visibleSurfaceFrame: (() -> CGRect)?
     private var trackingAreaReference: NSTrackingArea?
 
     override func updateTrackingAreas() {
@@ -213,6 +201,27 @@ private final class IslandHostingView<Content: View>: NSHostingView<Content> {
         if onMouseDown?() ?? true {
             super.mouseDown(with: event)
         }
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let surfaceFrame = visibleSurfaceFrame?() else {
+            return nil
+        }
+        let localSurfaceFrame: CGRect
+        if isFlipped {
+            localSurfaceFrame = CGRect(
+                x: surfaceFrame.minX,
+                y: bounds.height - surfaceFrame.maxY,
+                width: surfaceFrame.width,
+                height: surfaceFrame.height
+            )
+        } else {
+            localSurfaceFrame = surfaceFrame
+        }
+        guard localSurfaceFrame.insetBy(dx: -2, dy: -2).contains(point) else {
+            return nil
+        }
+        return super.hitTest(point)
     }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
