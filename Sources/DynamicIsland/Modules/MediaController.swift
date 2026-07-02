@@ -8,10 +8,13 @@ final class MediaController: ObservableObject {
     @Published private(set) var isPlaying = false
     @Published private(set) var sourceName = "Media"
     @Published private(set) var artworkImage: NSImage?
+    @Published private(set) var playbackPosition: Double = 0
+    @Published private(set) var duration: Double = 1
 
     private var activePlayer: MediaPlayer = .spotify
     private var refreshTimer: Timer?
     private var currentArtworkURL: String?
+    private var isScrubbing = false
 
     private enum MediaPlayer: String, CaseIterable {
         case spotify = "Spotify"
@@ -53,6 +56,8 @@ final class MediaController: ObservableObject {
         sourceName = "Media"
         artworkImage = nil
         currentArtworkURL = nil
+        playbackPosition = 0
+        duration = 1
     }
 
     func playPause() {
@@ -70,14 +75,26 @@ final class MediaController: ObservableObject {
         refresh()
     }
 
+    func updateScrubPosition(_ position: Double) {
+        isScrubbing = true
+        playbackPosition = min(max(0, position), duration)
+    }
+
+    func seek(to position: Double) {
+        let clampedPosition = min(max(0, position), duration)
+        send(command: "set player position to \(clampedPosition)", to: activePlayer)
+        isScrubbing = false
+        refresh()
+    }
+
     private func readPlayer(_ player: MediaPlayer) -> Bool {
         let script = """
         tell application "\(player.rawValue)"
             if it is running then
                 if player state is playing then
-                    return (name of current track) & "||" & (artist of current track) & "||playing||\(player.displayName)" & "||" & \(artworkExpression(for: player))
+                    return (name of current track) & "||" & (artist of current track) & "||playing||\(player.displayName)" & "||" & (player position as text) & "||" & (\(durationExpression(for: player)) as text) & "||" & \(artworkExpression(for: player))
                 else if player state is paused then
-                    return (name of current track) & "||" & (artist of current track) & "||paused||\(player.displayName)" & "||" & \(artworkExpression(for: player))
+                    return (name of current track) & "||" & (artist of current track) & "||paused||\(player.displayName)" & "||" & (player position as text) & "||" & (\(durationExpression(for: player)) as text) & "||" & \(artworkExpression(for: player))
                 end if
             end if
         end tell
@@ -91,8 +108,12 @@ final class MediaController: ObservableObject {
                 isPlaying = parts[2] == "playing"
                 sourceName = parts[3]
                 activePlayer = player
-                if parts.count > 4 {
-                    loadArtwork(from: parts[4])
+                if !isScrubbing {
+                    playbackPosition = Double(parts[safe: 4] ?? "") ?? playbackPosition
+                }
+                duration = max(1, Double(parts[safe: 5] ?? "") ?? duration)
+                if parts.count > 6 {
+                    loadArtwork(from: parts[6])
                 }
                 return true
             }
@@ -106,6 +127,15 @@ final class MediaController: ObservableObject {
             "artwork url of current track"
         case .music:
             "\"\""
+        }
+    }
+
+    private func durationExpression(for player: MediaPlayer) -> String {
+        switch player {
+        case .spotify:
+            "duration of current track"
+        case .music:
+            "duration of current track"
         }
     }
 
@@ -140,5 +170,11 @@ final class MediaController: ObservableObject {
         let script = NSAppleScript(source: source)
         let output = script?.executeAndReturnError(&error)
         return output?.stringValue
+    }
+}
+
+private extension Array {
+    subscript(safe index: Index) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }

@@ -10,6 +10,7 @@ final class OverlayWindowController {
     private let panel: NSPanel
     private var cancellables: Set<AnyCancellable> = []
     private var mouseContainmentTimer: Timer?
+    private var frameAnimationTimer: Timer?
 
     init(
         settings: AppSettings,
@@ -57,7 +58,7 @@ final class OverlayWindowController {
         islandState.$state
             .sink { [weak self] state in
                 self?.panel.orderFrontRegardless()
-                self?.reposition(animated: false)
+                self?.reposition(animated: true)
                 self?.updateMouseContainmentTimer(for: state)
             }
             .store(in: &cancellables)
@@ -105,7 +106,11 @@ final class OverlayWindowController {
         )
         let targetFrame = islandState.state == .collapsed ? geometry.collapsedFrame : geometry.expandedFrame
 
-        applyFrame(targetFrame)
+        if animated {
+            animateFrame(to: targetFrame, duration: islandState.state == .expanded ? 0.28 : 0.22)
+        } else {
+            applyFrame(targetFrame)
+        }
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             let correctedGeometry = self.geometryService.geometry(
@@ -113,12 +118,49 @@ final class OverlayWindowController {
                 expandedSize: self.settings.expandedSize
             )
             let correctedFrame = self.islandState.state == .collapsed ? correctedGeometry.collapsedFrame : correctedGeometry.expandedFrame
-            self.applyFrame(correctedFrame)
+            if !animated {
+                self.applyFrame(correctedFrame)
+            }
         }
     }
 
+    private func animateFrame(to targetFrame: NSRect, duration: TimeInterval) {
+        frameAnimationTimer?.invalidate()
+        let startFrame = panel.frame
+        let startDate = Date()
+
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else {
+                    return
+                }
+
+                let progress = min(1, Date().timeIntervalSince(startDate) / duration)
+                let eased = self.easeInOut(progress)
+                let frame = NSRect(
+                    x: startFrame.origin.x + (targetFrame.origin.x - startFrame.origin.x) * eased,
+                    y: startFrame.origin.y + (targetFrame.origin.y - startFrame.origin.y) * eased,
+                    width: startFrame.width + (targetFrame.width - startFrame.width) * eased,
+                    height: startFrame.height + (targetFrame.height - startFrame.height) * eased
+                ).integral
+                self.applyFrame(frame)
+
+                if progress >= 1 {
+                    self.frameAnimationTimer?.invalidate()
+                    self.frameAnimationTimer = nil
+                    self.applyFrame(targetFrame)
+                }
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        frameAnimationTimer = timer
+    }
+
+    private func easeInOut(_ progress: Double) -> Double {
+        progress * progress * (3 - 2 * progress)
+    }
+
     private func applyFrame(_ frame: NSRect) {
-        panel.contentView?.layer?.removeAllAnimations()
         panel.animations.removeAll()
         panel.disableScreenUpdatesUntilFlush()
         panel.setFrame(frame, display: true)

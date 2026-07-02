@@ -103,19 +103,35 @@ struct MediaModuleView: View {
                 Spacer(minLength: 0)
             }
             VStack(spacing: 10) {
-                Slider(value: .constant(0.62))
+                Slider(
+                    value: Binding(
+                        get: { media.playbackPosition },
+                        set: { media.updateScrubPosition($0) }
+                    ),
+                    in: 0...max(media.duration, 1),
+                    onEditingChanged: { isEditing in
+                        if !isEditing {
+                            media.seek(to: media.playbackPosition)
+                        }
+                    }
+                )
                     .tint(.white.opacity(0.70))
-                    .disabled(true)
                 HStack {
-                    Text("2:03")
+                    Text(formatTime(media.playbackPosition))
                     Spacer()
-                    Text("2:55")
+                    Text(formatTime(media.duration))
                 }
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(.white.opacity(0.58))
             }
         }
         .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+    }
+
+    private func formatTime(_ seconds: Double) -> String {
+        guard seconds.isFinite else { return "0:00" }
+        let wholeSeconds = max(0, Int(seconds.rounded()))
+        return "\(wholeSeconds / 60):\(String(format: "%02d", wholeSeconds % 60))"
     }
 }
 
