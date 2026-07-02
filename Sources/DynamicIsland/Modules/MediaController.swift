@@ -16,6 +16,7 @@ final class MediaController: ObservableObject {
     private var currentArtworkURL: String?
     private var lastPlaybackIdentity: String?
     private var lastPlaybackPosition: Double?
+    private var lastPlaybackAdvancedAt: Date?
     private var isScrubbing = false
 
     private enum MediaPlayer: String, CaseIterable {
@@ -38,7 +39,7 @@ final class MediaController: ObservableObject {
 
     init() {
         refresh()
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 0.75, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.refresh()
             }
@@ -60,6 +61,7 @@ final class MediaController: ObservableObject {
         currentArtworkURL = nil
         lastPlaybackIdentity = nil
         lastPlaybackPosition = nil
+        lastPlaybackAdvancedAt = nil
         playbackPosition = 0
         duration = 1
     }
@@ -93,15 +95,17 @@ final class MediaController: ObservableObject {
 
     private func readPlayer(_ player: MediaPlayer) -> Bool {
         let script = """
-        tell application "\(player.rawValue)"
-            if it is running then
-                if player state is playing then
-                    return (name of current track) & "||" & (artist of current track) & "||playing||\(player.displayName)" & "||" & (player position as text) & "||" & (\(durationExpression(for: player)) as text) & "||" & \(artworkExpression(for: player))
-                else if player state is paused then
-                    return (name of current track) & "||" & (artist of current track) & "||paused||\(player.displayName)" & "||" & (player position as text) & "||" & (\(durationExpression(for: player)) as text) & "||" & \(artworkExpression(for: player))
+        with timeout of 1 seconds
+            tell application "\(player.rawValue)"
+                if it is running then
+                    if player state is playing then
+                        return (name of current track) & "||" & (artist of current track) & "||playing||\(player.displayName)" & "||" & (player position as text) & "||" & (\(durationExpression(for: player)) as text) & "||" & \(artworkExpression(for: player))
+                    else if player state is paused then
+                        return (name of current track) & "||" & (artist of current track) & "||paused||\(player.displayName)" & "||" & (player position as text) & "||" & (\(durationExpression(for: player)) as text) & "||" & \(artworkExpression(for: player))
+                    end if
                 end if
-            end if
-        end tell
+            end tell
+        end timeout
         return ""
         """
         if let result = runAppleScript(script), !result.isEmpty {
@@ -114,9 +118,17 @@ final class MediaController: ObservableObject {
                 activePlayer = player
                 let parsedPlaybackPosition = Double(parts[safe: 4] ?? "") ?? playbackPosition
                 let playbackIdentity = "\(player.rawValue)||\(title)||\(artist)"
+                if lastPlaybackIdentity != playbackIdentity {
+                    lastPlaybackAdvancedAt = nil
+                }
                 let playbackPositionAdvanced = lastPlaybackIdentity == playbackIdentity &&
-                    parsedPlaybackPosition > ((lastPlaybackPosition ?? parsedPlaybackPosition) + 0.25)
-                isPlaying = reportedPlaybackState == "playing" || playbackPositionAdvanced
+                    parsedPlaybackPosition > ((lastPlaybackPosition ?? parsedPlaybackPosition) + 0.08)
+                if playbackPositionAdvanced {
+                    lastPlaybackAdvancedAt = Date()
+                }
+                let recentlyAdvanced = lastPlaybackIdentity == playbackIdentity &&
+                    lastPlaybackAdvancedAt.map { Date().timeIntervalSince($0) < 1.6 } == true
+                isPlaying = reportedPlaybackState == "playing" || playbackPositionAdvanced || recentlyAdvanced
                 if !isScrubbing {
                     playbackPosition = parsedPlaybackPosition
                 }
