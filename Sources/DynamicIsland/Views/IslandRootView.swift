@@ -13,8 +13,6 @@ struct IslandRootView: View {
                 Group {
                     if islandState.state == .collapsed {
                         CompactIslandView(settings: settings, modules: modules)
-                    } else if islandState.state == .dragReceiving {
-                        DragReceivingView()
                     } else {
                         ExpandedIslandView(settings: settings, islandState: islandState, modules: modules)
                     }
@@ -26,10 +24,8 @@ struct IslandRootView: View {
         .onTapGesture {
             guard islandState.state == .collapsed else { return }
             islandState.toggleExpanded()
-            islandState.scheduleAutoCollapseIfNeeded(after: settings.autoCollapseDelay)
         }
         .onDrop(of: [.fileURL], isTargeted: nil) { providers in
-            islandState.dragEntered()
             loadDroppedFiles(from: providers)
             return true
         }
@@ -63,7 +59,6 @@ struct IslandRootView: View {
                 if let url {
                     Task { @MainActor in
                         modules.fileShelf.add([url])
-                        islandState.dragEnded()
                     }
                 }
             }
@@ -78,23 +73,23 @@ struct IslandSurface<Content: View>: View {
     var body: some View {
         content
             .padding(.horizontal, isExpanded ? 16 : 14)
-            .padding(.top, isExpanded ? 12 : 7)
+            .padding(.top, isExpanded ? 14 : 5)
             .padding(.bottom, isExpanded ? 16 : 10)
             .background {
                 UnevenRoundedRectangle(
-                    topLeadingRadius: isExpanded ? 6 : 4,
+                    topLeadingRadius: isExpanded ? 8 : 1,
                     bottomLeadingRadius: isExpanded ? 34 : 18,
                     bottomTrailingRadius: isExpanded ? 34 : 18,
-                    topTrailingRadius: isExpanded ? 6 : 4,
+                    topTrailingRadius: isExpanded ? 8 : 1,
                     style: .continuous
                 )
                     .fill(Color(red: 0.001, green: 0.001, blue: 0.002))
                     .overlay(
                         UnevenRoundedRectangle(
-                            topLeadingRadius: isExpanded ? 6 : 4,
+                            topLeadingRadius: isExpanded ? 8 : 1,
                             bottomLeadingRadius: isExpanded ? 34 : 18,
                             bottomTrailingRadius: isExpanded ? 34 : 18,
-                            topTrailingRadius: isExpanded ? 6 : 4,
+                            topTrailingRadius: isExpanded ? 8 : 1,
                             style: .continuous
                         )
                             .stroke(Color.white.opacity(isExpanded ? 0.08 : 0.04), lineWidth: 1)
@@ -111,21 +106,11 @@ struct CompactIslandView: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            if settings.mediaEnabled {
-                CompactMediaView(media: modules.media)
-            }
+            CompactMediaView(media: modules.media)
             Spacer(minLength: 6)
-            if settings.fileShelfEnabled {
-                CompactShelfBadge(fileShelf: modules.fileShelf)
-            }
-            if settings.shortcutsEnabled {
-                Image(systemName: "sparkles")
-                    .foregroundStyle(.white.opacity(0.72))
-                    .font(.system(size: 13, weight: .semibold))
-                    .accessibilityHidden(true)
-            }
+            AudioVisualizerView(isPlaying: modules.media.isPlaying)
         }
-        .frame(height: 26)
+        .frame(height: 42)
     }
 }
 
@@ -138,23 +123,48 @@ struct ExpandedIslandView: View {
     @State private var contentSettled = false
 
     var body: some View {
-        VStack(spacing: 12) {
-            HStack(spacing: 12) {
-                if settings.mediaEnabled {
-                    MediaModuleView(media: modules.media)
-                        .islandContentEntrance(isSettled: contentSettled, isUnblurred: contentUnblurred, order: 0, reduceMotion: reduceMotion)
-                }
-                if settings.shortcutsEnabled {
-                    ShortcutsModuleView(shortcuts: modules.shortcuts)
-                        .islandContentEntrance(isSettled: contentSettled, isUnblurred: contentUnblurred, order: 1, reduceMotion: reduceMotion)
-                }
+        VStack(spacing: 16) {
+            HStack {
+                Label("Nook", systemImage: "sparkle.magnifyingglass")
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(.white.opacity(0.12), in: Capsule())
+                Label("Tray", systemImage: "tray.full")
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.42))
+                Spacer()
+                Image(systemName: "gearshape.fill")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.82))
             }
-            if settings.fileShelfEnabled {
-                FileShelfModuleView(fileShelf: modules.fileShelf)
-                    .islandContentEntrance(isSettled: contentSettled, isUnblurred: contentUnblurred, order: 2, reduceMotion: reduceMotion)
+
+            HStack(spacing: 22) {
+                MediaModuleView(media: modules.media)
+                    .islandContentEntrance(isSettled: contentSettled, isUnblurred: contentUnblurred, order: 0, reduceMotion: reduceMotion)
+
+                Divider()
+                    .frame(height: 250)
+                    .overlay(.white.opacity(0.10))
+
+                MirrorModuleView(camera: modules.camera)
+                    .islandContentEntrance(isSettled: contentSettled, isUnblurred: contentUnblurred, order: 1, reduceMotion: reduceMotion)
+
+                Divider()
+                    .frame(height: 250)
+                    .overlay(.white.opacity(0.10))
+
+                VStack(spacing: 14) {
+                    TimerModuleView(timer: modules.timer)
+                    FileShelfModuleView(fileShelf: modules.fileShelf)
+                }
+                .frame(width: 330)
+                .islandContentEntrance(isSettled: contentSettled, isUnblurred: contentUnblurred, order: 2, reduceMotion: reduceMotion)
             }
-            Spacer(minLength: 0)
+            .frame(maxHeight: .infinity)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .onAppear {
             contentUnblurred = false
             contentSettled = false
@@ -203,18 +213,5 @@ private struct IslandContentEntranceModifier: ViewModifier {
                 .easeOut(duration: reduceMotion ? 0.10 : 0.16).delay(blurDelay),
                 value: isUnblurred
             )
-    }
-}
-
-struct DragReceivingView: View {
-    var body: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "tray.and.arrow.down.fill")
-                .font(.system(size: 26, weight: .semibold))
-            Text("Drop files into shelf")
-                .font(.system(size: 15, weight: .semibold))
-        }
-        .foregroundStyle(.white)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

@@ -14,31 +14,6 @@ struct SettingsView: View {
                     settings.launchAtLogin = enabled
                     LaunchAtLoginController.setEnabled(enabled)
                 })
-                LabeledContent("Auto-collapse") {
-                    Slider(value: $settings.autoCollapseDelay, in: 1.0...10.0)
-                        .frame(width: 220)
-                }
-            }
-
-            Section("Modules") {
-                Toggle("Media", isOn: $settings.mediaEnabled)
-                Toggle("File Shelf", isOn: $settings.fileShelfEnabled)
-                Toggle("Shortcuts", isOn: $settings.shortcutsEnabled)
-            }
-
-            Section("Shortcuts") {
-                ForEach(shortcuts.shortcuts) { shortcut in
-                    ShortcutEditorRow(
-                        shortcut: shortcut,
-                        onUpdate: shortcuts.update,
-                        onRemove: shortcuts.remove
-                    )
-                }
-                Button {
-                    shortcuts.addDefault()
-                } label: {
-                    Label("Add Shortcut", systemImage: "plus")
-                }
             }
         }
         .formStyle(.grouped)

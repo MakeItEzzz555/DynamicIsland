@@ -1,23 +1,74 @@
+import AVFoundation
+import AppKit
 import SwiftUI
 
 struct CompactMediaView: View {
     @ObservedObject var media: MediaController
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: media.isPlaying ? "waveform" : "play.fill")
-                .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(media.isPlaying ? Color.green : Color.white.opacity(0.85))
-            Text(media.title)
-                .font(.system(size: 12, weight: .semibold))
-                .lineLimit(1)
-                .foregroundStyle(.white)
-            Text(media.sourceName)
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(.white.opacity(0.45))
-                .lineLimit(1)
+        HStack(spacing: 12) {
+            AlbumArtworkView(image: media.artworkImage, size: 34)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(media.title)
+                    .font(.system(size: 14, weight: .bold))
+                    .lineLimit(1)
+                    .foregroundStyle(.white)
+                Text(media.sourceName)
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.50))
+                    .lineLimit(1)
+            }
         }
         .accessibilityLabel("Media \(media.title)")
+    }
+}
+
+struct AudioVisualizerView: View {
+    let isPlaying: Bool
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 0.18, paused: !isPlaying)) { timeline in
+            let tick = timeline.date.timeIntervalSinceReferenceDate
+            HStack(spacing: 3) {
+                ForEach(0..<5, id: \.self) { index in
+                    RoundedRectangle(cornerRadius: 2, style: .continuous)
+                        .fill(isPlaying ? Color.green : Color.white.opacity(0.48))
+                        .frame(width: 3, height: barHeight(index: index, tick: tick))
+                }
+            }
+        }
+        .frame(width: 28, height: 24)
+        .accessibilityLabel(isPlaying ? "Audio playing" : "Audio paused")
+    }
+
+    private func barHeight(index: Int, tick: TimeInterval) -> CGFloat {
+        guard isPlaying else { return CGFloat([8, 14, 18, 12, 9][index]) }
+        let wave = sin((tick * 5.0) + Double(index) * 0.85)
+        return 8 + CGFloat((wave + 1) * 8)
+    }
+}
+
+struct AlbumArtworkView: View {
+    let image: NSImage?
+    let size: CGFloat
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                LinearGradient(colors: [.green, .cyan, .blue], startPoint: .topLeading, endPoint: .bottomTrailing)
+                    .overlay {
+                        Image(systemName: "music.note")
+                            .font(.system(size: size * 0.38, weight: .bold))
+                            .foregroundStyle(.black.opacity(0.62))
+                    }
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
     }
 }
 
@@ -39,50 +90,45 @@ struct MediaModuleView: View {
     @ObservedObject var media: MediaController
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 12) {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(LinearGradient(colors: [.green, .mint, .blue], startPoint: .topLeading, endPoint: .bottomTrailing))
-                    .frame(width: 54, height: 54)
-                    .overlay {
-                        Image(systemName: "music.note")
-                            .font(.system(size: 24, weight: .bold))
-                            .foregroundStyle(.black.opacity(0.68))
-                    }
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top, spacing: 18) {
+                AlbumArtworkView(image: media.artworkImage, size: 132)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(media.title)
-                        .font(.system(size: 15, weight: .bold))
+                        .font(.system(size: 24, weight: .bold))
                         .foregroundStyle(.white)
                         .lineLimit(1)
                     Text(media.artist)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.62))
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.66))
                         .lineLimit(1)
                     Text(media.sourceName)
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(.white.opacity(0.42))
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.48))
                         .lineLimit(1)
+                    HStack(spacing: 22) {
+                        MediaButton(symbol: "backward.fill", label: "Previous track", action: media.previousTrack)
+                        MediaButton(symbol: media.isPlaying ? "pause.fill" : "play.fill", label: "Play or pause", action: media.playPause)
+                        MediaButton(symbol: "forward.fill", label: "Next track", action: media.nextTrack)
+                    }
+                    .padding(.top, 12)
                 }
                 Spacer(minLength: 0)
             }
-            HStack(spacing: 16) {
-                MediaButton(symbol: "backward.fill", label: "Previous track", action: media.previousTrack)
-                MediaButton(symbol: media.isPlaying ? "pause.fill" : "play.fill", label: "Play or pause", action: media.playPause)
-                MediaButton(symbol: "forward.fill", label: "Next track", action: media.nextTrack)
-                Spacer()
-                Button {
-                    media.refresh()
-                } label: {
-                    Image(systemName: "arrow.clockwise")
+            VStack(spacing: 10) {
+                Slider(value: .constant(0.62))
+                    .tint(.white.opacity(0.70))
+                    .disabled(true)
+                HStack {
+                    Text("2:03")
+                    Spacer()
+                    Text("2:55")
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.white.opacity(0.72))
-                .accessibilityLabel("Refresh media")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(.white.opacity(0.58))
             }
         }
-        .padding(14)
-        .frame(width: 292, height: 126)
-        .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .frame(width: 440)
     }
 }
 
@@ -95,8 +141,7 @@ struct MediaButton: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 15, weight: .bold))
-                .frame(width: 30, height: 30)
-                .background(.white.opacity(0.12), in: Circle())
+                .frame(width: 36, height: 36)
         }
         .buttonStyle(.plain)
         .foregroundStyle(.white)
@@ -142,6 +187,78 @@ struct FileShelfModuleView: View {
         .padding(12)
         .frame(maxWidth: .infinity, minHeight: 58)
         .background(.white.opacity(0.075), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+}
+
+struct MirrorModuleView: View {
+    @ObservedObject var camera: CameraMirrorController
+
+    var body: some View {
+        Button {
+            camera.toggle()
+        } label: {
+            ZStack {
+                Circle()
+                    .fill(.white.opacity(0.13))
+                if camera.isRunning {
+                    CameraPreviewView(session: camera.session)
+                        .clipShape(Circle())
+                } else {
+                    VStack(spacing: 8) {
+                        Image(systemName: "web.camera.fill")
+                            .font(.system(size: 32, weight: .bold))
+                        Text(camera.permissionDenied ? "Camera Blocked" : "Mirror")
+                            .font(.system(size: 18, weight: .bold))
+                    }
+                    .foregroundStyle(.white.opacity(0.58))
+                }
+            }
+            .frame(width: 250, height: 250)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Toggle camera mirror")
+    }
+}
+
+struct CameraPreviewView: NSViewRepresentable {
+    let session: AVCaptureSession
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        let layer = AVCaptureVideoPreviewLayer(session: session)
+        layer.videoGravity = .resizeAspectFill
+        view.layer = layer
+        view.wantsLayer = true
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        (nsView.layer as? AVCaptureVideoPreviewLayer)?.session = session
+    }
+}
+
+struct TimerModuleView: View {
+    @ObservedObject var timer: TimerController
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Timer", systemImage: "timer")
+                .font(.system(size: 16, weight: .bold))
+            Text(timer.isRunning ? timer.displayText : "Start a timer")
+                .font(.system(size: 30, weight: .bold, design: .rounded))
+            HStack {
+                Button("5m") { timer.start(minutes: 5) }
+                Button("10m") { timer.start(minutes: 10) }
+                Button(timer.isRunning ? "Stop" : "15m") {
+                    timer.isRunning ? timer.stop() : timer.start(minutes: 15)
+                }
+            }
+            .buttonStyle(.borderless)
+        }
+        .foregroundStyle(.white)
+        .padding(18)
+        .frame(maxWidth: .infinity, minHeight: 142, alignment: .leading)
+        .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
 }
 

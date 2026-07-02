@@ -19,6 +19,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let fileShelf = FileShelfStore()
     private let shortcuts = ShortcutsStore()
     private let media = MediaController()
+    private let timer = TimerController()
+    private let camera = CameraMirrorController()
     private let geometryService = NotchGeometryService()
 
     private var overlayController: OverlayWindowController?
@@ -32,7 +34,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let modules = IslandModules(
             media: media,
             fileShelf: fileShelf,
-            shortcuts: shortcuts
+            shortcuts: shortcuts,
+            timer: timer,
+            camera: camera
         )
 
         let overlayController = OverlayWindowController(

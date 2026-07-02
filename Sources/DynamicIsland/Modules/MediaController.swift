@@ -7,6 +7,7 @@ final class MediaController: ObservableObject {
     @Published private(set) var artist = "Open Spotify or Music"
     @Published private(set) var isPlaying = false
     @Published private(set) var sourceName = "Media"
+    @Published private(set) var artworkImage: NSImage?
 
     private var activePlayer: MediaPlayer = .spotify
 
@@ -43,6 +44,7 @@ final class MediaController: ObservableObject {
         artist = "Open Spotify or Music"
         isPlaying = false
         sourceName = "Media"
+        artworkImage = nil
     }
 
     func playPause() {
@@ -65,9 +67,9 @@ final class MediaController: ObservableObject {
         tell application "\(player.rawValue)"
             if it is running then
                 if player state is playing then
-                    return (name of current track) & "||" & (artist of current track) & "||playing||\(player.displayName)"
+                    return (name of current track) & "||" & (artist of current track) & "||playing||\(player.displayName)" & "||" & \(artworkExpression(for: player))
                 else if player state is paused then
-                    return (name of current track) & "||" & (artist of current track) & "||paused||\(player.displayName)"
+                    return (name of current track) & "||" & (artist of current track) & "||paused||\(player.displayName)" & "||" & \(artworkExpression(for: player))
                 end if
             end if
         end tell
@@ -75,16 +77,47 @@ final class MediaController: ObservableObject {
         """
         if let result = runAppleScript(script), !result.isEmpty {
             let parts = result.components(separatedBy: "||")
-            if parts.count == 4 {
+            if parts.count >= 4 {
                 title = parts[0]
                 artist = parts[1]
                 isPlaying = parts[2] == "playing"
                 sourceName = parts[3]
                 activePlayer = player
+                if parts.count > 4 {
+                    loadArtwork(from: parts[4])
+                }
                 return true
             }
         }
         return false
+    }
+
+    private func artworkExpression(for player: MediaPlayer) -> String {
+        switch player {
+        case .spotify:
+            "artwork url of current track"
+        case .music:
+            "\"\""
+        }
+    }
+
+    private func loadArtwork(from rawValue: String) {
+        guard let url = URL(string: rawValue), !rawValue.isEmpty else {
+            artworkImage = nil
+            return
+        }
+
+        Task {
+            guard
+                let (data, _) = try? await URLSession.shared.data(from: url),
+                let image = NSImage(data: data)
+            else {
+                return
+            }
+            await MainActor.run {
+                self.artworkImage = image
+            }
+        }
     }
 
     private func send(command: String, to player: MediaPlayer) {

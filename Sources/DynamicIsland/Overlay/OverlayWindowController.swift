@@ -9,7 +9,6 @@ final class OverlayWindowController {
     private let geometryService: NotchGeometryService
     private let panel: NSPanel
     private var cancellables: Set<AnyCancellable> = []
-    private var animationGeneration = 0
 
     init(
         settings: AppSettings,
@@ -75,43 +74,20 @@ final class OverlayWindowController {
     }
 
     func reposition(animated: Bool = true) {
-        animationGeneration += 1
-        let generation = animationGeneration
         let expandedSize = islandState.isExpandedSurfaceVisible ? settings.expandedSize : settings.peekSize
         let geometry = geometryService.geometry(
             collapsedSize: settings.collapsedSize,
             expandedSize: expandedSize
         )
-        let targetState = islandState.state
         let targetFrame = islandState.state == .collapsed ? geometry.collapsedFrame : geometry.expandedFrame
 
         if animated {
-            let currentFrame = panel.frame
-            let isExpanding = targetFrame.width > currentFrame.width || targetFrame.height > currentFrame.height
-
-            if isExpanding {
-                let overshootFrame = targetFrame.insetBy(dx: -14, dy: -7)
-                let panel = panel
-                NSAnimationContext.runAnimationGroup { context in
-                    context.duration = 0.22
-                    context.timingFunction = CAMediaTimingFunction(controlPoints: 0.16, 0.92, 0.24, 1.18)
-                    panel.animator().setFrame(overshootFrame, display: true)
-                } completionHandler: {
-                    Task { @MainActor [weak panel] in
-                        guard generation == self.animationGeneration, targetState == self.islandState.state else { return }
-                        NSAnimationContext.runAnimationGroup { context in
-                            context.duration = 0.16
-                            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.20, 0.80, 0.22, 1.00)
-                            panel?.animator().setFrame(targetFrame, display: true)
-                        }
-                    }
-                }
-            } else {
-                NSAnimationContext.runAnimationGroup { context in
-                    context.duration = 0.20
-                    context.timingFunction = CAMediaTimingFunction(controlPoints: 0.32, 0.00, 0.20, 1.00)
-                    panel.animator().setFrame(targetFrame, display: true)
-                }
+            panel.contentView?.layer?.removeAllAnimations()
+            panel.animations.removeAll()
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = islandState.state == .expanded ? 0.30 : 0.18
+                context.timingFunction = CAMediaTimingFunction(controlPoints: 0.18, 0.92, 0.22, 1.00)
+                panel.animator().setFrame(targetFrame, display: true)
             }
         } else {
             panel.setFrame(targetFrame, display: true)

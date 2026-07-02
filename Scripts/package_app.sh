@@ -40,6 +40,8 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <true/>
   <key>NSAppleEventsUsageDescription</key>
   <string>DynamicIsland can read and control Spotify or Music playback when you use the media module.</string>
+  <key>NSCameraUsageDescription</key>
+  <string>DynamicIsland uses the camera only when you turn on the mirror module.</string>
 </dict>
 </plist>
 PLIST

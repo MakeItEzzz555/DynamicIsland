@@ -16,13 +16,15 @@ It is inspired by the interaction model of Apple Dynamic Island and third-party 
 
 - Borderless floating overlay aligned to the hardware notch when `NSScreen` exposes notch safe-area data.
 - Floating centered island fallback for external or notchless displays.
-- Collapsed, peek, expanded, drag-receiving, and pinned presentation states.
+- Two presentation states only: idle notch pill and expanded Nook panel.
 - Click-to-expand interaction model.
 - Spotify-first media detection with Apple Music fallback through permission-gated Apple Events.
+- Idle pill album artwork and animated audio visualizer.
+- Expanded music controls, timer, camera mirror, and file tray.
 - Temporary file shelf with drag-in and drag-out support.
 - Configurable launcher shortcuts for apps, files, and URLs.
 - Menu bar controls for settings, show/hide, and quit.
-- Settings window for size, auto-collapse delay, animation feel, startup behavior, and enabled modules.
+- Settings window for overlay enable/disable and startup behavior.
 - Launch-at-login toggle through `ServiceManagement`.
 - Reduce Motion-aware animations.
 - VoiceOver labels for core controls.
@@ -113,7 +115,6 @@ Native macOS SwiftUI/AppKit Dynamic Island-style notch overlay with media contro
 ## Roadmap
 
 - Calendar widget.
-- Camera mirror widget.
 - Better now-playing integration beyond Apple Music.
 - AirDrop action from the file shelf.
 - Custom theme presets.
@@ -124,5 +125,6 @@ Native macOS SwiftUI/AppKit Dynamic Island-style notch overlay with media contro
 
 - macOS has no official Dynamic Island API, so the app uses an overlay window.
 - Media controls currently use Apple Events for Spotify and Apple Music, so macOS may ask for automation permission the first time controls or track detection run.
+- Camera mirror requires macOS camera permission and only starts when you click the mirror control.
 - The packaged app is ad-hoc signed unless `DEVELOPER_ID_APP` is supplied to the packaging script.
 - Notarization is documented but not automated in v0.1.

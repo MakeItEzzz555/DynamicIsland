@@ -11,28 +11,17 @@ final class IslandStateStoreTests: XCTestCase {
         XCTAssertEqual(store.state, .expanded)
 
         store.toggleExpanded()
-        XCTAssertEqual(store.state, .pinned)
-
-        store.toggleExpanded()
         XCTAssertEqual(store.state, .collapsed)
     }
 
-    func testDragStateReturnsToExpanded() {
+    func testOutsideClickCollapsesExpandedState() {
         let store = IslandStateStore()
 
-        store.dragEntered()
-        XCTAssertEqual(store.state, .dragReceiving)
-
-        store.dragEnded()
+        store.toggleExpanded()
         XCTAssertEqual(store.state, .expanded)
-    }
 
-    func testPinnedIgnoresOutsideClick() {
-        let store = IslandStateStore()
-
-        store.pin()
         store.collapseFromOutsideClick()
 
-        XCTAssertEqual(store.state, .pinned)
+        XCTAssertEqual(store.state, .collapsed)
     }
 }
