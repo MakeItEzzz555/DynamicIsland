@@ -10,6 +10,8 @@ final class MediaController: ObservableObject {
     @Published private(set) var artworkImage: NSImage?
 
     private var activePlayer: MediaPlayer = .spotify
+    private var refreshTimer: Timer?
+    private var currentArtworkURL: String?
 
     private enum MediaPlayer: String, CaseIterable {
         case spotify = "Spotify"
@@ -31,6 +33,11 @@ final class MediaController: ObservableObject {
 
     init() {
         refresh()
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.refresh()
+            }
+        }
     }
 
     func refresh() {
@@ -45,6 +52,7 @@ final class MediaController: ObservableObject {
         isPlaying = false
         sourceName = "Media"
         artworkImage = nil
+        currentArtworkURL = nil
     }
 
     func playPause() {
@@ -104,8 +112,11 @@ final class MediaController: ObservableObject {
     private func loadArtwork(from rawValue: String) {
         guard let url = URL(string: rawValue), !rawValue.isEmpty else {
             artworkImage = nil
+            currentArtworkURL = nil
             return
         }
+        guard rawValue != currentArtworkURL else { return }
+        currentArtworkURL = rawValue
 
         Task {
             guard

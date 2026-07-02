@@ -69,30 +69,30 @@ struct IslandSurface<Content: View>: View {
 
     var body: some View {
         content
-            .padding(.horizontal, isExpanded ? 18 : 12)
-            .padding(.top, isExpanded ? 14 : 0)
-            .padding(.bottom, isExpanded ? 16 : 6)
+            .padding(.horizontal, isExpanded ? 22 : 14)
+            .padding(.top, isExpanded ? 18 : 0)
+            .padding(.bottom, isExpanded ? 20 : 6)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background {
                 UnevenRoundedRectangle(
-                    topLeadingRadius: isExpanded ? 8 : 0,
-                    bottomLeadingRadius: isExpanded ? 30 : 22,
-                    bottomTrailingRadius: isExpanded ? 30 : 22,
-                    topTrailingRadius: isExpanded ? 8 : 0,
+                    topLeadingRadius: 0,
+                    bottomLeadingRadius: isExpanded ? 36 : 22,
+                    bottomTrailingRadius: isExpanded ? 36 : 22,
+                    topTrailingRadius: 0,
                     style: .continuous
                 )
                 .fill(Color(red: 0.001, green: 0.001, blue: 0.002))
                 .overlay {
                     UnevenRoundedRectangle(
-                        topLeadingRadius: isExpanded ? 8 : 0,
-                        bottomLeadingRadius: isExpanded ? 30 : 22,
-                        bottomTrailingRadius: isExpanded ? 30 : 22,
-                        topTrailingRadius: isExpanded ? 8 : 0,
+                        topLeadingRadius: 0,
+                        bottomLeadingRadius: isExpanded ? 36 : 22,
+                        bottomTrailingRadius: isExpanded ? 36 : 22,
+                        topTrailingRadius: 0,
                         style: .continuous
                     )
-                    .stroke(Color.white.opacity(isExpanded ? 0.08 : 0.04), lineWidth: 1)
+                    .stroke(Color.white.opacity(isExpanded ? 0.07 : 0.035), lineWidth: 1)
                 }
-                .shadow(color: .black.opacity(0.28), radius: isExpanded ? 18 : 8, y: isExpanded ? 8 : 3)
+                .shadow(color: .black.opacity(0.34), radius: isExpanded ? 22 : 8, y: isExpanded ? 10 : 3)
             }
     }
 }
@@ -114,15 +114,55 @@ struct ExpandedIslandView: View {
     let modules: IslandModules
 
     var body: some View {
-        HStack(spacing: 22) {
+        GeometryReader { proxy in
+            if proxy.size.width >= 1_040 {
+                wideLayout
+            } else {
+                compactLayout(width: proxy.size.width)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+    }
+
+    private var wideLayout: some View {
+        HStack(spacing: 24) {
             MediaModuleView(media: modules.media)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(width: 440, alignment: .leading)
+
+            Divider()
+                .frame(height: 248)
+                .overlay(.white.opacity(0.10))
+
+            ShortcutsModuleView(shortcuts: modules.shortcuts)
+                .frame(width: 250)
+
+            Divider()
+                .frame(height: 248)
+                .overlay(.white.opacity(0.10))
 
             VStack(spacing: 14) {
                 TimerModuleView(timer: modules.timer)
                 FileShelfModuleView(fileShelf: modules.fileShelf)
             }
-            .frame(width: 270)
+            .frame(width: 300)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+    }
+
+    private func compactLayout(width: CGFloat) -> some View {
+        HStack(spacing: 18) {
+            MediaModuleView(media: modules.media)
+                .frame(width: min(420, width * 0.58), alignment: .leading)
+
+            Divider()
+                .frame(height: 248)
+                .overlay(.white.opacity(0.10))
+
+            VStack(spacing: 14) {
+                TimerModuleView(timer: modules.timer)
+                FileShelfModuleView(fileShelf: modules.fileShelf)
+            }
+            .frame(maxWidth: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }

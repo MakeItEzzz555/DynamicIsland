@@ -32,6 +32,7 @@ final class OverlayWindowController {
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.sharingType = .readOnly
+        panel.isReleasedWhenClosed = false
         panel.hasShadow = false
         panel.hidesOnDeactivate = false
         panel.ignoresMouseEvents = false
@@ -41,14 +42,19 @@ final class OverlayWindowController {
             islandState: islandState,
             modules: modules
         )
-        let hostingView = NSHostingView(rootView: rootView)
+        let hostingView = IslandHostingView(rootView: rootView)
         hostingView.autoresizingMask = [.width, .height]
         hostingView.wantsLayer = true
         hostingView.layer?.backgroundColor = NSColor.clear.cgColor
+        hostingView.onMouseExited = { [weak islandState] in
+            guard islandState?.state == .expanded else { return }
+            islandState?.collapse()
+        }
         panel.contentView = hostingView
 
         islandState.$state
             .sink { [weak self] _ in
+                self?.panel.orderFrontRegardless()
                 self?.reposition(animated: true)
             }
             .store(in: &cancellables)
@@ -60,6 +66,18 @@ final class OverlayWindowController {
                     self.setVisible(self.settings.overlayEnabled)
                     self.reposition(animated: true)
                 }
+            }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)
+            .sink { [weak self] _ in
+                self?.reposition(animated: false)
+            }
+            .store(in: &cancellables)
+
+        NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)
+            .sink { [weak self] _ in
+                self?.reposition(animated: false)
             }
             .store(in: &cancellables)
     }
@@ -79,6 +97,7 @@ final class OverlayWindowController {
             expandedSize: settings.expandedSize
         )
         let targetFrame = islandState.state == .collapsed ? geometry.collapsedFrame : geometry.expandedFrame
+        panel.contentView?.frame = NSRect(origin: .zero, size: targetFrame.size)
 
         if animated {
             panel.contentView?.layer?.removeAllAnimations()
@@ -91,6 +110,34 @@ final class OverlayWindowController {
         } else {
             panel.setFrame(targetFrame, display: true)
         }
-        panel.contentView?.frame = NSRect(origin: .zero, size: targetFrame.size)
+    }
+}
+
+private final class IslandHostingView<Content: View>: NSHostingView<Content> {
+    var onMouseExited: (() -> Void)?
+    private var trackingAreaReference: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        if let trackingAreaReference {
+            removeTrackingArea(trackingAreaReference)
+        }
+        let trackingArea = NSTrackingArea(
+            rect: bounds,
+            options: [.activeAlways, .inVisibleRect, .mouseEnteredAndExited],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(trackingArea)
+        trackingAreaReference = trackingArea
+        super.updateTrackingAreas()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        onMouseExited?()
+        super.mouseExited(with: event)
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
     }
 }
