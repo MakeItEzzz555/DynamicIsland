@@ -9,6 +9,7 @@ final class OverlayWindowController {
     private let geometryService: NotchGeometryService
     private let panel: NSPanel
     private var cancellables: Set<AnyCancellable> = []
+    private var mouseContainmentTimer: Timer?
 
     init(
         settings: AppSettings,
@@ -46,6 +47,10 @@ final class OverlayWindowController {
         hostingView.autoresizingMask = [.width, .height]
         hostingView.wantsLayer = true
         hostingView.layer?.backgroundColor = NSColor.clear.cgColor
+        hostingView.onMouseDown = { [weak islandState] in
+            guard islandState?.state == .collapsed else { return }
+            islandState?.toggleExpanded()
+        }
         hostingView.onMouseExited = { [weak islandState] in
             guard islandState?.state == .expanded else { return }
             islandState?.collapse()
@@ -53,9 +58,10 @@ final class OverlayWindowController {
         panel.contentView = hostingView
 
         islandState.$state
-            .sink { [weak self] _ in
+            .sink { [weak self] state in
                 self?.panel.orderFrontRegardless()
                 self?.reposition(animated: true)
+                self?.updateMouseContainmentTimer(for: state)
             }
             .store(in: &cancellables)
 
@@ -89,6 +95,9 @@ final class OverlayWindowController {
 
     func setVisible(_ visible: Bool) {
         visible ? show() : panel.orderOut(nil)
+        if !visible {
+            updateMouseContainmentTimer(for: .collapsed)
+        }
     }
 
     func reposition(animated: Bool = true) {
@@ -111,9 +120,26 @@ final class OverlayWindowController {
             panel.setFrame(targetFrame, display: true)
         }
     }
+
+    private func updateMouseContainmentTimer(for state: IslandPresentationState) {
+        mouseContainmentTimer?.invalidate()
+        mouseContainmentTimer = nil
+
+        guard state == .expanded else { return }
+        mouseContainmentTimer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.islandState.state == .expanded else { return }
+                let expandedHitFrame = self.panel.frame.insetBy(dx: -3, dy: -3)
+                if !expandedHitFrame.contains(NSEvent.mouseLocation) {
+                    self.islandState.collapse()
+                }
+            }
+        }
+    }
 }
 
 private final class IslandHostingView<Content: View>: NSHostingView<Content> {
+    var onMouseDown: (() -> Void)?
     var onMouseExited: (() -> Void)?
     private var trackingAreaReference: NSTrackingArea?
 
@@ -135,6 +161,11 @@ private final class IslandHostingView<Content: View>: NSHostingView<Content> {
     override func mouseExited(with event: NSEvent) {
         onMouseExited?()
         super.mouseExited(with: event)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        onMouseDown?()
+        super.mouseDown(with: event)
     }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {

@@ -15,14 +15,6 @@ struct IslandRootView: View {
                 ExpandedIslandView(modules: modules)
             }
         }
-        .onTapGesture {
-            guard islandState.state == .collapsed else { return }
-            islandState.toggleExpanded()
-        }
-        .onHover { isHovering in
-            guard islandState.state == .expanded, !isHovering else { return }
-            islandState.collapse()
-        }
         .onDrop(of: [.fileURL], isTargeted: nil) { providers in
             loadDroppedFiles(from: providers)
             return true
@@ -116,7 +108,7 @@ struct ExpandedIslandView: View {
     var body: some View {
         GeometryReader { proxy in
             if proxy.size.width >= 1_040 {
-                wideLayout
+                wideLayout(width: proxy.size.width)
             } else {
                 compactLayout(width: proxy.size.width)
             }
@@ -124,17 +116,22 @@ struct ExpandedIslandView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
 
-    private var wideLayout: some View {
-        HStack(spacing: 24) {
+    private func wideLayout(width: CGFloat) -> some View {
+        let availableWidth = max(0, width - 48)
+        let mediaWidth = min(460, availableWidth * 0.40)
+        let shortcutsWidth = min(270, availableWidth * 0.24)
+        let utilityWidth = min(320, availableWidth * 0.28)
+
+        return HStack(spacing: 24) {
             MediaModuleView(media: modules.media)
-                .frame(width: 440, alignment: .leading)
+                .frame(width: mediaWidth, alignment: .leading)
 
             Divider()
                 .frame(height: 248)
                 .overlay(.white.opacity(0.10))
 
             ShortcutsModuleView(shortcuts: modules.shortcuts)
-                .frame(width: 250)
+                .frame(width: shortcutsWidth)
 
             Divider()
                 .frame(height: 248)
@@ -144,7 +141,7 @@ struct ExpandedIslandView: View {
                 TimerModuleView(timer: modules.timer)
                 FileShelfModuleView(fileShelf: modules.fileShelf)
             }
-            .frame(width: 300)
+            .frame(width: utilityWidth)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
