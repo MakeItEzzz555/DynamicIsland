@@ -13,6 +13,8 @@ final class OverlayWindowController {
     private var mouseContainmentTimer: Timer?
     private var localMouseDownMonitor: Any?
     private var globalMouseDownMonitor: Any?
+    private var localMouseMovedMonitor: Any?
+    private var globalMouseMovedMonitor: Any?
     private var targetCollapsedFrame: NSRect?
     private var targetExpandedFrame: NSRect?
     private weak var hostingView: IslandHostingView<IslandRootView>?
@@ -64,6 +66,9 @@ final class OverlayWindowController {
         }
         hostingView.shouldHandleSurfaceClick = { [weak islandState] in
             islandState?.state == .collapsed
+        }
+        hostingView.onMouseExited = { [weak self] in
+            self?.collapseIfExpandedMouseOutside()
         }
         panel.contentView = hostingView
         self.hostingView = hostingView
@@ -163,14 +168,9 @@ final class OverlayWindowController {
         mouseContainmentTimer = nil
 
         guard state == .expanded else { return }
-        let hitFrame = targetExpandedFrame ?? panel.frame
         let timer = Timer(timeInterval: 0.08, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                guard let self, self.islandState.state == .expanded else { return }
-                let expandedHitFrame = hitFrame.insetBy(dx: -8, dy: -8)
-                if !expandedHitFrame.contains(NSEvent.mouseLocation) {
-                    self.islandState.collapse()
-                }
+                self?.collapseIfExpandedMouseOutside()
             }
         }
         RunLoop.main.add(timer, forMode: .common)
@@ -197,6 +197,21 @@ final class OverlayWindowController {
                 _ = self?.expandIfCollapsedClick(at: NSEvent.mouseLocation)
             }
         }
+
+        localMouseMovedMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged]
+        ) { [weak self] event in
+            self?.collapseIfExpandedMouseOutside()
+            return event
+        }
+
+        globalMouseMovedMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged]
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.collapseIfExpandedMouseOutside()
+            }
+        }
     }
 
     private func expandIfCollapsedClick(at screenPoint: NSPoint) -> Bool {
@@ -208,10 +223,21 @@ final class OverlayWindowController {
         islandState.toggleExpanded()
         return true
     }
+
+    private func collapseIfExpandedMouseOutside() {
+        guard islandState.state == .expanded,
+              let targetExpandedFrame else {
+            return
+        }
+        if !targetExpandedFrame.insetBy(dx: -8, dy: -8).contains(NSEvent.mouseLocation) {
+            islandState.collapse()
+        }
+    }
 }
 
 private final class IslandHostingView<Content: View>: NSHostingView<Content> {
     var onMouseDown: (() -> Bool)?
+    var onMouseExited: (() -> Void)?
     var visibleSurfaceFrame: (() -> CGRect)?
     var shouldHandleSurfaceClick: (() -> Bool)?
     private var trackingAreaReference: NSTrackingArea?
@@ -235,6 +261,11 @@ private final class IslandHostingView<Content: View>: NSHostingView<Content> {
         if onMouseDown?() ?? true {
             super.mouseDown(with: event)
         }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        onMouseExited?()
+        super.mouseExited(with: event)
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
