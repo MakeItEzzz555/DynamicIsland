@@ -82,10 +82,31 @@ final class OverlayWindowController {
         let targetFrame = islandState.state == .collapsed ? geometry.collapsedFrame : geometry.expandedFrame
 
         if animated {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.24
-                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-                panel.animator().setFrame(targetFrame, display: true)
+            let currentFrame = panel.frame
+            let isExpanding = targetFrame.width > currentFrame.width || targetFrame.height > currentFrame.height
+
+            if isExpanding {
+                let overshootFrame = targetFrame.insetBy(dx: -14, dy: -7)
+                let panel = panel
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = 0.22
+                    context.timingFunction = CAMediaTimingFunction(controlPoints: 0.16, 0.92, 0.24, 1.18)
+                    panel.animator().setFrame(overshootFrame, display: true)
+                } completionHandler: {
+                    Task { @MainActor [weak panel] in
+                        NSAnimationContext.runAnimationGroup { context in
+                            context.duration = 0.16
+                            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.20, 0.80, 0.22, 1.00)
+                            panel?.animator().setFrame(targetFrame, display: true)
+                        }
+                    }
+                }
+            } else {
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = 0.20
+                    context.timingFunction = CAMediaTimingFunction(controlPoints: 0.32, 0.00, 0.20, 1.00)
+                    panel.animator().setFrame(targetFrame, display: true)
+                }
             }
         } else {
             panel.setFrame(targetFrame, display: true)

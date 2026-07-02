@@ -133,7 +133,7 @@ struct ExpandedIslandView: View {
     @ObservedObject var islandState: IslandStateStore
     let modules: IslandModules
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var contentVisible = false
+    @State private var contentUnblurred = false
     @State private var contentSettled = false
 
     var body: some View {
@@ -141,16 +141,16 @@ struct ExpandedIslandView: View {
             HStack(spacing: 12) {
                 if settings.mediaEnabled {
                     MediaModuleView(media: modules.media)
-                        .islandContentEntrance(isSettled: contentSettled, isVisible: contentVisible, order: 0, reduceMotion: reduceMotion)
+                        .islandContentEntrance(isSettled: contentSettled, isUnblurred: contentUnblurred, order: 0, reduceMotion: reduceMotion)
                 }
                 if settings.shortcutsEnabled {
                     ShortcutsModuleView(shortcuts: modules.shortcuts)
-                        .islandContentEntrance(isSettled: contentSettled, isVisible: contentVisible, order: 1, reduceMotion: reduceMotion)
+                        .islandContentEntrance(isSettled: contentSettled, isUnblurred: contentUnblurred, order: 1, reduceMotion: reduceMotion)
                 }
             }
             if settings.fileShelfEnabled {
                 FileShelfModuleView(fileShelf: modules.fileShelf)
-                    .islandContentEntrance(isSettled: contentSettled, isVisible: contentVisible, order: 2, reduceMotion: reduceMotion)
+                    .islandContentEntrance(isSettled: contentSettled, isUnblurred: contentUnblurred, order: 2, reduceMotion: reduceMotion)
             }
             HStack {
                 Button {
@@ -173,43 +173,44 @@ struct ExpandedIslandView: View {
             }
             .font(.system(size: 12, weight: .semibold))
             .foregroundStyle(.white.opacity(0.68))
-            .islandContentEntrance(isSettled: contentSettled, isVisible: contentVisible, order: 3, reduceMotion: reduceMotion)
+            .islandContentEntrance(isSettled: contentSettled, isUnblurred: contentUnblurred, order: 3, reduceMotion: reduceMotion)
         }
         .onAppear {
-            contentVisible = false
+            contentUnblurred = false
             contentSettled = false
             Task { @MainActor in
                 try? await Task.sleep(for: reduceMotion ? .milliseconds(30) : .milliseconds(90))
                 contentSettled = true
-                try? await Task.sleep(for: reduceMotion ? .milliseconds(35) : .milliseconds(150))
-                contentVisible = true
+                try? await Task.sleep(for: reduceMotion ? .milliseconds(35) : .milliseconds(170))
+                contentUnblurred = true
             }
         }
         .onDisappear {
-            contentVisible = false
+            contentUnblurred = false
             contentSettled = false
         }
     }
 }
 
 private extension View {
-    func islandContentEntrance(isSettled: Bool, isVisible: Bool, order: Int, reduceMotion: Bool) -> some View {
-        modifier(IslandContentEntranceModifier(isSettled: isSettled, isVisible: isVisible, order: order, reduceMotion: reduceMotion))
+    func islandContentEntrance(isSettled: Bool, isUnblurred: Bool, order: Int, reduceMotion: Bool) -> some View {
+        modifier(IslandContentEntranceModifier(isSettled: isSettled, isUnblurred: isUnblurred, order: order, reduceMotion: reduceMotion))
     }
 }
 
 private struct IslandContentEntranceModifier: ViewModifier {
     let isSettled: Bool
-    let isVisible: Bool
+    let isUnblurred: Bool
     let order: Int
     let reduceMotion: Bool
 
     func body(content: Content) -> some View {
         let bounceDelay = reduceMotion ? 0.0 : Double(order) * 0.025
-        let fadeDelay = reduceMotion ? 0.0 : Double(order) * 0.02
+        let blurDelay = reduceMotion ? 0.0 : Double(order) * 0.018
 
         content
-            .opacity(isVisible ? 1 : 0)
+            .opacity(1)
+            .blur(radius: isUnblurred || reduceMotion ? 0 : 9)
             .scaleEffect(isSettled ? 1 : 0.78, anchor: .top)
             .offset(y: isSettled ? 0 : -12)
             .animation(
@@ -219,8 +220,8 @@ private struct IslandContentEntranceModifier: ViewModifier {
                 value: isSettled
             )
             .animation(
-                .easeOut(duration: reduceMotion ? 0.12 : 0.18).delay(fadeDelay),
-                value: isVisible
+                .easeOut(duration: reduceMotion ? 0.10 : 0.16).delay(blurDelay),
+                value: isUnblurred
             )
     }
 }
