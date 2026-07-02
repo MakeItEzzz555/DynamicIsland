@@ -7,10 +7,11 @@ final class OverlayWindowController {
     private let settings: AppSettings
     private let islandState: IslandStateStore
     private let geometryService: NotchGeometryService
+    private let layoutStore = IslandLayoutStore()
     private let panel: NSPanel
     private var cancellables: Set<AnyCancellable> = []
     private var mouseContainmentTimer: Timer?
-    private var frameAnimationTimer: Timer?
+    private var collapseFrameWorkItem: DispatchWorkItem?
     private var targetExpandedFrame: NSRect?
 
     init(
@@ -43,6 +44,7 @@ final class OverlayWindowController {
         let rootView = IslandRootView(
             settings: settings,
             islandState: islandState,
+            layoutStore: layoutStore,
             modules: modules
         )
         let hostingView = IslandHostingView(rootView: rootView)
@@ -107,14 +109,39 @@ final class OverlayWindowController {
             collapsedSize: settings.collapsedSize,
             expandedSize: settings.expandedSize
         )
-        let targetFrame = islandState.state == .collapsed ? geometry.collapsedFrame : geometry.expandedFrame
+        layoutStore.update(
+            collapsedSize: geometry.collapsedFrame.size,
+            expandedSize: geometry.expandedFrame.size
+        )
         targetExpandedFrame = geometry.expandedFrame
 
-        if animated {
-            animateFrame(to: targetFrame, duration: islandState.state == .expanded ? 0.28 : 0.22)
-        } else {
+        switch islandState.state {
+        case .expanded:
+            collapseFrameWorkItem?.cancel()
+            applyFrame(geometry.expandedFrame)
+            updateMouseContainmentTimer(for: .expanded)
+        case .collapsed:
+            updateMouseContainmentTimer(for: .collapsed)
+            let targetFrame = geometry.collapsedFrame
+            if animated, panel.frame.size != targetFrame.size {
+                collapseFrameWorkItem?.cancel()
+                let workItem = DispatchWorkItem { [weak self] in
+                    Task { @MainActor in
+                        guard let self, self.islandState.state == .collapsed else { return }
+                        self.applyFrame(targetFrame)
+                    }
+                }
+                collapseFrameWorkItem = workItem
+                DispatchQueue.main.asyncAfter(deadline: .now() + collapseDelay, execute: workItem)
+            } else {
+                collapseFrameWorkItem?.cancel()
+                applyFrame(targetFrame)
+            }
+        }
+
+        if !animated {
+            let targetFrame = islandState.state == .collapsed ? geometry.collapsedFrame : geometry.expandedFrame
             applyFrame(targetFrame)
-            updateMouseContainmentTimer(for: islandState.state)
         }
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
@@ -122,56 +149,15 @@ final class OverlayWindowController {
                 collapsedSize: self.settings.collapsedSize,
                 expandedSize: self.settings.expandedSize
             )
-            let correctedFrame = self.islandState.state == .collapsed ? correctedGeometry.collapsedFrame : correctedGeometry.expandedFrame
             if !animated {
+                self.layoutStore.update(
+                    collapsedSize: correctedGeometry.collapsedFrame.size,
+                    expandedSize: correctedGeometry.expandedFrame.size
+                )
+                let correctedFrame = self.islandState.state == .collapsed ? correctedGeometry.collapsedFrame : correctedGeometry.expandedFrame
                 self.applyFrame(correctedFrame)
             }
         }
-    }
-
-    private func animateFrame(to targetFrame: NSRect, duration: TimeInterval) {
-        frameAnimationTimer?.invalidate()
-        let startFrame = panel.frame
-        let startDate = Date()
-        let startTop = startFrame.maxY
-        let targetTop = targetFrame.maxY
-        let startCenterX = startFrame.midX
-        let targetCenterX = targetFrame.midX
-
-        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                guard let self else {
-                    return
-                }
-
-                let progress = min(1, Date().timeIntervalSince(startDate) / duration)
-                let eased = self.easeInOut(progress)
-                let width = startFrame.width + (targetFrame.width - startFrame.width) * eased
-                let height = startFrame.height + (targetFrame.height - startFrame.height) * eased
-                let centerX = startCenterX + (targetCenterX - startCenterX) * eased
-                let top = startTop + (targetTop - startTop) * eased
-                let frame = NSRect(
-                    x: centerX - width / 2,
-                    y: top - height,
-                    width: width,
-                    height: height
-                ).integral
-                self.applyFrame(frame)
-
-                if progress >= 1 {
-                    self.frameAnimationTimer?.invalidate()
-                    self.frameAnimationTimer = nil
-                    self.applyFrame(targetFrame)
-                    self.updateMouseContainmentTimer(for: self.islandState.state)
-                }
-            }
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        frameAnimationTimer = timer
-    }
-
-    private func easeInOut(_ progress: Double) -> Double {
-        progress * progress * (3 - 2 * progress)
     }
 
     private func applyFrame(_ frame: NSRect) {
@@ -201,6 +187,8 @@ final class OverlayWindowController {
         mouseContainmentTimer = timer
     }
 }
+
+private let collapseDelay: TimeInterval = 0.24
 
 private final class IslandHostingView<Content: View>: NSHostingView<Content> {
     var onMouseDown: (() -> Bool)?

@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 struct IslandRootView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var islandState: IslandStateStore
+    @ObservedObject var layoutStore: IslandLayoutStore
     let modules: IslandModules
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -12,15 +13,19 @@ struct IslandRootView: View {
     }
 
     var body: some View {
-        IslandSurface(isExpanded: isExpanded) {
-            if isExpanded {
-                ExpandedIslandView(modules: modules)
-                    .transition(.blurBounce)
-            } else {
-                CompactIslandView(modules: modules)
-                    .transition(.blurBounce)
+        ZStack(alignment: .top) {
+            IslandSurface(isExpanded: isExpanded) {
+                if isExpanded {
+                    ExpandedIslandView(modules: modules)
+                        .transition(.blurBounce)
+                } else {
+                    CompactIslandView(modules: modules)
+                        .transition(.blurBounce)
+                }
             }
+            .frame(width: surfaceSize.width, height: surfaceSize.height)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .onDrop(of: [.fileURL], isTargeted: nil) { providers in
             loadDroppedFiles(from: providers)
             return true
@@ -28,6 +33,10 @@ struct IslandRootView: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("DynamicIsland")
         .animation(contentAnimation, value: islandState.state)
+    }
+
+    private var surfaceSize: CGSize {
+        isExpanded ? layoutStore.expandedSize : layoutStore.collapsedSize
     }
 
     private var contentAnimation: Animation {
