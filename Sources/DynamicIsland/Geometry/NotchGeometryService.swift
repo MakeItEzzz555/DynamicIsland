@@ -46,11 +46,11 @@ public final class NotchGeometryService {
 
     @MainActor
     public func geometry(
-        for screen: NSScreen? = NSScreen.main,
+        for screen: NSScreen? = nil,
         collapsedSize: CGSize,
         expandedSize: CGSize
     ) -> IslandGeometry {
-        let screen = screen ?? NSScreen.main ?? NSScreen.screens.first
+        let screen = screen ?? Self.preferredScreen()
         let snapshot = screen.map(Self.snapshot) ?? ScreenSnapshot(
             frame: CGRect(x: 0, y: 0, width: 1440, height: 900),
             visibleFrame: CGRect(x: 0, y: 0, width: 1440, height: 875),
@@ -120,6 +120,13 @@ public final class NotchGeometryService {
             width: fallbackWidth,
             height: snapshot.safeAreaInsets.top
         ).integral
+    }
+
+    @MainActor
+    private static func preferredScreen() -> NSScreen? {
+        NSScreen.screens.first { screen in
+            screen.safeAreaInsets.top > 0
+        } ?? NSScreen.main ?? NSScreen.screens.first
     }
 
     @MainActor

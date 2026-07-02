@@ -1,6 +1,6 @@
 import Foundation
 
-public enum IslandPresentationState: String, Equatable {
+public enum IslandPresentationState: String, Equatable, Sendable {
     case collapsed
     case peek
     case expanded

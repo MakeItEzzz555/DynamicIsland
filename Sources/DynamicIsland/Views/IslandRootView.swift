@@ -24,6 +24,7 @@ struct IslandRootView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onTapGesture {
+            guard islandState.state == .collapsed else { return }
             islandState.toggleExpanded()
             islandState.scheduleAutoCollapseIfNeeded(after: settings.autoCollapseDelay)
         }
@@ -152,28 +153,7 @@ struct ExpandedIslandView: View {
                 FileShelfModuleView(fileShelf: modules.fileShelf)
                     .islandContentEntrance(isSettled: contentSettled, isUnblurred: contentUnblurred, order: 2, reduceMotion: reduceMotion)
             }
-            HStack {
-                Button {
-                    islandState.pin()
-                } label: {
-                    Label("Pin", systemImage: "pin")
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Pin DynamicIsland open")
-
-                Spacer()
-
-                Button {
-                    islandState.collapse()
-                } label: {
-                    Label("Close", systemImage: "xmark.circle.fill")
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Close DynamicIsland")
-            }
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundStyle(.white.opacity(0.68))
-            .islandContentEntrance(isSettled: contentSettled, isUnblurred: contentUnblurred, order: 3, reduceMotion: reduceMotion)
+            Spacer(minLength: 0)
         }
         .onAppear {
             contentUnblurred = false

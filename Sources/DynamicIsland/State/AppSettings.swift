@@ -9,9 +9,6 @@ public final class AppSettings: ObservableObject {
     @Published public var launchAtLogin: Bool {
         didSet { save(launchAtLogin, for: "launchAtLogin") }
     }
-    @Published public var islandScale: Double {
-        didSet { save(islandScale, for: "islandScale") }
-    }
     @Published public var hoverDelay: Double {
         didSet { save(hoverDelay, for: "hoverDelay") }
     }
@@ -34,7 +31,6 @@ public final class AppSettings: ObservableObject {
     public init(defaults: UserDefaults = .standard) {
         overlayEnabled = defaults.object(forKey: "overlayEnabled") as? Bool ?? true
         launchAtLogin = defaults.object(forKey: "launchAtLogin") as? Bool ?? false
-        islandScale = defaults.object(forKey: "islandScale") as? Double ?? 1.0
         hoverDelay = defaults.object(forKey: "hoverDelay") as? Double ?? 0.12
         autoCollapseDelay = defaults.object(forKey: "autoCollapseDelay") as? Double ?? 4.0
         animationIntensity = defaults.object(forKey: "animationIntensity") as? Double ?? 0.82
@@ -44,15 +40,15 @@ public final class AppSettings: ObservableObject {
     }
 
     public var collapsedSize: CGSize {
-        CGSize(width: 224 * islandScale, height: 42 * islandScale)
+        CGSize(width: 520, height: 58)
     }
 
     public var peekSize: CGSize {
-        CGSize(width: 360 * islandScale, height: 76 * islandScale)
+        collapsedSize
     }
 
     public var expandedSize: CGSize {
-        CGSize(width: 1180 * islandScale, height: 210 * islandScale)
+        CGSize(width: 900, height: 410)
     }
 
     private func save(_ value: Any, for key: String) {

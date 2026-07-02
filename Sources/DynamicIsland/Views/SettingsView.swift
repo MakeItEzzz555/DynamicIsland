@@ -14,16 +14,8 @@ struct SettingsView: View {
                     settings.launchAtLogin = enabled
                     LaunchAtLoginController.setEnabled(enabled)
                 })
-                LabeledContent("Island size") {
-                    Slider(value: $settings.islandScale, in: 0.82...1.22)
-                        .frame(width: 220)
-                }
                 LabeledContent("Auto-collapse") {
                     Slider(value: $settings.autoCollapseDelay, in: 1.0...10.0)
-                        .frame(width: 220)
-                }
-                LabeledContent("Animation") {
-                    Slider(value: $settings.animationIntensity, in: 0.62...0.95)
                         .frame(width: 220)
                 }
             }
