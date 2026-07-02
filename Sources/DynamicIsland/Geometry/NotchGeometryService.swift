@@ -75,11 +75,12 @@ public final class NotchGeometryService {
         let collapsedFrame: CGRect
         if let notchRect {
             let resolvedCollapsedWidth = min(max(notchRect.width + 210, 390), 460)
+            let resolvedCollapsedHeight = min(max(notchRect.height + 18, 46), 54)
             collapsedFrame = CGRect(
                 x: notchRect.midX - resolvedCollapsedWidth / 2,
-                y: topY - notchRect.height,
+                y: topY - resolvedCollapsedHeight,
                 width: resolvedCollapsedWidth,
-                height: notchRect.height
+                height: resolvedCollapsedHeight
             )
         } else {
             collapsedFrame = CGRect(

@@ -71,13 +71,13 @@ struct IslandSurface<Content: View>: View {
         content
             .padding(.horizontal, isExpanded ? 18 : 12)
             .padding(.top, isExpanded ? 14 : 0)
-            .padding(.bottom, isExpanded ? 16 : 8)
+            .padding(.bottom, isExpanded ? 16 : 6)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background {
                 UnevenRoundedRectangle(
                     topLeadingRadius: isExpanded ? 8 : 0,
-                    bottomLeadingRadius: isExpanded ? 30 : 18,
-                    bottomTrailingRadius: isExpanded ? 30 : 18,
+                    bottomLeadingRadius: isExpanded ? 30 : 22,
+                    bottomTrailingRadius: isExpanded ? 30 : 22,
                     topTrailingRadius: isExpanded ? 8 : 0,
                     style: .continuous
                 )
@@ -85,8 +85,8 @@ struct IslandSurface<Content: View>: View {
                 .overlay {
                     UnevenRoundedRectangle(
                         topLeadingRadius: isExpanded ? 8 : 0,
-                        bottomLeadingRadius: isExpanded ? 30 : 18,
-                        bottomTrailingRadius: isExpanded ? 30 : 18,
+                        bottomLeadingRadius: isExpanded ? 30 : 22,
+                        bottomTrailingRadius: isExpanded ? 30 : 22,
                         topTrailingRadius: isExpanded ? 8 : 0,
                         style: .continuous
                     )

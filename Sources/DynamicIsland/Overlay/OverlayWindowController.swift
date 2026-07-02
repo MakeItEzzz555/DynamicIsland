@@ -27,10 +27,11 @@ final class OverlayWindowController {
             defer: false
         )
         panel.isFloatingPanel = true
-        panel.level = .statusBar
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        panel.level = .popUpMenu
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         panel.backgroundColor = .clear
         panel.isOpaque = false
+        panel.sharingType = .readOnly
         panel.hasShadow = false
         panel.hidesOnDeactivate = false
         panel.ignoresMouseEvents = false
@@ -40,7 +41,11 @@ final class OverlayWindowController {
             islandState: islandState,
             modules: modules
         )
-        panel.contentView = NSHostingView(rootView: rootView)
+        let hostingView = NSHostingView(rootView: rootView)
+        hostingView.autoresizingMask = [.width, .height]
+        hostingView.wantsLayer = true
+        hostingView.layer?.backgroundColor = NSColor.clear.cgColor
+        panel.contentView = hostingView
 
         islandState.$state
             .sink { [weak self] _ in
@@ -86,5 +91,6 @@ final class OverlayWindowController {
         } else {
             panel.setFrame(targetFrame, display: true)
         }
+        panel.contentView?.frame = NSRect(origin: .zero, size: targetFrame.size)
     }
 }
