@@ -23,6 +23,7 @@ final class NotchGeometryServiceTests: XCTestCase {
         XCTAssertEqual(geometry.notchRect, CGRect(x: 635, y: 944, width: 242, height: 38))
         XCTAssertEqual(geometry.collapsedFrame.midX, 756, accuracy: 0.5)
         XCTAssertEqual(geometry.expandedFrame.midX, 756, accuracy: 0.5)
+        XCTAssertEqual(geometry.expandedFrame.maxY, 982, accuracy: 0.5)
     }
 
     func testExpandedFrameStaysScreenCenteredWhenNotchIsOffCenter() {
@@ -43,6 +44,28 @@ final class NotchGeometryServiceTests: XCTestCase {
 
         XCTAssertEqual(geometry.collapsedFrame.midX, 725, accuracy: 0.5)
         XCTAssertEqual(geometry.expandedFrame.midX, 756, accuracy: 0.5)
+        XCTAssertEqual(geometry.expandedFrame.maxY, 982, accuracy: 0.5)
+    }
+
+    func testExpandedFrameKeepsSideMarginsOnNarrowScreens() {
+        let service = NotchGeometryService()
+        let snapshot = ScreenSnapshot(
+            frame: CGRect(x: 0, y: 0, width: 900, height: 700),
+            visibleFrame: CGRect(x: 0, y: 0, width: 900, height: 662),
+            safeAreaInsets: NSEdgeInsets(top: 38, left: 0, bottom: 0, right: 0),
+            auxiliaryTopLeftArea: CGRect(x: 0, y: 662, width: 340, height: 38),
+            auxiliaryTopRightArea: CGRect(x: 560, y: 662, width: 340, height: 38)
+        )
+
+        let geometry = service.geometry(
+            for: snapshot,
+            collapsedSize: CGSize(width: 224, height: 42),
+            expandedSize: CGSize(width: 1180, height: 210)
+        )
+
+        XCTAssertEqual(geometry.expandedFrame.minX, 32, accuracy: 0.5)
+        XCTAssertEqual(geometry.expandedFrame.maxX, 868, accuracy: 0.5)
+        XCTAssertEqual(geometry.expandedFrame.midX, 450, accuracy: 0.5)
     }
 
     func testUsesFloatingIslandWhenNoNotchExists() {
@@ -65,5 +88,6 @@ final class NotchGeometryServiceTests: XCTestCase {
         XCTAssertNil(geometry.notchRect)
         XCTAssertEqual(geometry.collapsedFrame.midX, 960, accuracy: 0.5)
         XCTAssertEqual(geometry.collapsedFrame.maxY, 1072, accuracy: 0.5)
+        XCTAssertEqual(geometry.expandedFrame.maxY, 1070, accuracy: 0.5)
     }
 }

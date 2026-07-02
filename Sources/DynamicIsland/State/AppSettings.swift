@@ -52,7 +52,7 @@ public final class AppSettings: ObservableObject {
     }
 
     public var expandedSize: CGSize {
-        CGSize(width: 620 * islandScale, height: 210 * islandScale)
+        CGSize(width: 1180 * islandScale, height: 210 * islandScale)
     }
 
     private func save(_ value: Any, for key: String) {

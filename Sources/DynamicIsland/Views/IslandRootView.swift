@@ -81,22 +81,22 @@ struct IslandSurface<Content: View>: View {
             .padding(.bottom, isExpanded ? 16 : 10)
             .background {
                 UnevenRoundedRectangle(
-                    topLeadingRadius: isExpanded ? 20 : 10,
+                    topLeadingRadius: isExpanded ? 6 : 4,
                     bottomLeadingRadius: isExpanded ? 34 : 18,
                     bottomTrailingRadius: isExpanded ? 34 : 18,
-                    topTrailingRadius: isExpanded ? 20 : 10,
+                    topTrailingRadius: isExpanded ? 6 : 4,
                     style: .continuous
                 )
-                    .fill(Color.black.opacity(0.94))
+                    .fill(Color(red: 0.001, green: 0.001, blue: 0.002))
                     .overlay(
                         UnevenRoundedRectangle(
-                            topLeadingRadius: isExpanded ? 20 : 10,
+                            topLeadingRadius: isExpanded ? 6 : 4,
                             bottomLeadingRadius: isExpanded ? 34 : 18,
                             bottomTrailingRadius: isExpanded ? 34 : 18,
-                            topTrailingRadius: isExpanded ? 20 : 10,
+                            topTrailingRadius: isExpanded ? 6 : 4,
                             style: .continuous
                         )
-                            .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                            .stroke(Color.white.opacity(isExpanded ? 0.08 : 0.04), lineWidth: 1)
                     )
                     .shadow(color: .black.opacity(0.32), radius: isExpanded ? 22 : 10, y: isExpanded ? 12 : 4)
             }

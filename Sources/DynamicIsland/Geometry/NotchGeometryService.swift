@@ -71,7 +71,8 @@ public final class NotchGeometryService {
         let collapsedCenterX = notchRect?.midX ?? snapshot.frame.midX
         let expandedCenterX = snapshot.frame.midX
         let collapsedY = topY - collapsedSize.height - (notchRect == nil ? 8 : 0)
-        let expandedY = topY - expandedSize.height - (notchRect == nil ? 10 : 4)
+        let expandedY = topY - expandedSize.height - (notchRect == nil ? 10 : 0)
+        let resolvedExpandedWidth = min(expandedSize.width, max(360, snapshot.frame.width - 64))
 
         let collapsedFrame = CGRect(
             x: collapsedCenterX - collapsedSize.width / 2,
@@ -81,9 +82,9 @@ public final class NotchGeometryService {
         )
 
         let expandedFrame = CGRect(
-            x: expandedCenterX - expandedSize.width / 2,
+            x: expandedCenterX - resolvedExpandedWidth / 2,
             y: expandedY,
-            width: expandedSize.width,
+            width: resolvedExpandedWidth,
             height: expandedSize.height
         )
 
