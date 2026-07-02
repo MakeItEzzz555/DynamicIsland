@@ -1,0 +1,177 @@
+import SwiftUI
+import UniformTypeIdentifiers
+
+struct IslandRootView: View {
+    @ObservedObject var settings: AppSettings
+    @ObservedObject var islandState: IslandStateStore
+    let modules: IslandModules
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        ZStack {
+            IslandSurface(isExpanded: islandState.state != .collapsed) {
+                Group {
+                    if islandState.state == .collapsed {
+                        CompactIslandView(settings: settings, modules: modules)
+                    } else if islandState.state == .dragReceiving {
+                        DragReceivingView()
+                    } else {
+                        ExpandedIslandView(settings: settings, islandState: islandState, modules: modules)
+                    }
+                }
+                .animation(animation, value: islandState.state)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onHover { hovering in
+            if hovering {
+                islandState.hoverEntered(delay: settings.hoverDelay)
+            } else {
+                islandState.hoverExited(autoCollapseDelay: settings.autoCollapseDelay)
+            }
+        }
+        .onTapGesture {
+            islandState.toggleExpanded()
+        }
+        .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+            islandState.dragEntered()
+            loadDroppedFiles(from: providers)
+            return true
+        }
+        .focusable()
+        .focusEffectDisabled()
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("DynamicIsland")
+    }
+
+    private var animation: Animation {
+        if reduceMotion {
+            .easeInOut(duration: 0.12)
+        } else {
+            .spring(response: 0.32, dampingFraction: settings.animationIntensity, blendDuration: 0.08)
+        }
+    }
+
+    private func loadDroppedFiles(from providers: [NSItemProvider]) {
+        for provider in providers where provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                let url: URL?
+                if let data = item as? Data,
+                   let fileURL = URL(dataRepresentation: data, relativeTo: nil) {
+                    url = fileURL
+                } else if let fileURL = item as? URL {
+                    url = fileURL
+                } else {
+                    url = nil
+                }
+
+                if let url {
+                    Task { @MainActor in
+                        modules.fileShelf.add([url])
+                        islandState.dragEnded()
+                    }
+                }
+            }
+        }
+    }
+}
+
+struct IslandSurface<Content: View>: View {
+    let isExpanded: Bool
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        content
+            .padding(isExpanded ? 14 : 8)
+            .background {
+                RoundedRectangle(cornerRadius: isExpanded ? 34 : 24, style: .continuous)
+                    .fill(Color.black.opacity(0.94))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: isExpanded ? 34 : 24, style: .continuous)
+                            .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                    )
+                    .shadow(color: .black.opacity(0.32), radius: isExpanded ? 22 : 10, y: isExpanded ? 12 : 4)
+            }
+            .padding(1)
+    }
+}
+
+struct CompactIslandView: View {
+    @ObservedObject var settings: AppSettings
+    let modules: IslandModules
+
+    var body: some View {
+        HStack(spacing: 10) {
+            if settings.mediaEnabled {
+                CompactMediaView(media: modules.media)
+            }
+            Spacer(minLength: 6)
+            if settings.fileShelfEnabled {
+                CompactShelfBadge(fileShelf: modules.fileShelf)
+            }
+            if settings.shortcutsEnabled {
+                Image(systemName: "sparkles")
+                    .foregroundStyle(.white.opacity(0.72))
+                    .font(.system(size: 13, weight: .semibold))
+                    .accessibilityHidden(true)
+            }
+        }
+        .frame(height: 26)
+    }
+}
+
+struct ExpandedIslandView: View {
+    @ObservedObject var settings: AppSettings
+    @ObservedObject var islandState: IslandStateStore
+    let modules: IslandModules
+
+    var body: some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 12) {
+                if settings.mediaEnabled {
+                    MediaModuleView(media: modules.media)
+                }
+                if settings.shortcutsEnabled {
+                    ShortcutsModuleView(shortcuts: modules.shortcuts)
+                }
+            }
+            if settings.fileShelfEnabled {
+                FileShelfModuleView(fileShelf: modules.fileShelf)
+            }
+            HStack {
+                Button {
+                    islandState.pin()
+                } label: {
+                    Label("Pin", systemImage: "pin")
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Pin DynamicIsland open")
+
+                Spacer()
+
+                Button {
+                    islandState.collapse()
+                } label: {
+                    Label("Close", systemImage: "xmark.circle.fill")
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close DynamicIsland")
+            }
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(.white.opacity(0.68))
+        }
+    }
+}
+
+struct DragReceivingView: View {
+    var body: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "tray.and.arrow.down.fill")
+                .font(.system(size: 26, weight: .semibold))
+            Text("Drop files into shelf")
+                .font(.system(size: 15, weight: .semibold))
+        }
+        .foregroundStyle(.white)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
