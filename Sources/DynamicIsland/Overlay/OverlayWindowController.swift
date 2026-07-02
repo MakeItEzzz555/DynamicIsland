@@ -11,6 +11,7 @@ final class OverlayWindowController {
     private var cancellables: Set<AnyCancellable> = []
     private var mouseContainmentTimer: Timer?
     private var frameAnimationTimer: Timer?
+    private var targetExpandedFrame: NSRect?
 
     init(
         settings: AppSettings,
@@ -59,7 +60,9 @@ final class OverlayWindowController {
             .sink { [weak self] state in
                 self?.panel.orderFrontRegardless()
                 self?.reposition(animated: true)
-                self?.updateMouseContainmentTimer(for: state)
+                if state == .collapsed {
+                    self?.updateMouseContainmentTimer(for: state)
+                }
             }
             .store(in: &cancellables)
 
@@ -105,11 +108,13 @@ final class OverlayWindowController {
             expandedSize: settings.expandedSize
         )
         let targetFrame = islandState.state == .collapsed ? geometry.collapsedFrame : geometry.expandedFrame
+        targetExpandedFrame = geometry.expandedFrame
 
         if animated {
             animateFrame(to: targetFrame, duration: islandState.state == .expanded ? 0.28 : 0.22)
         } else {
             applyFrame(targetFrame)
+            updateMouseContainmentTimer(for: islandState.state)
         }
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
@@ -128,6 +133,10 @@ final class OverlayWindowController {
         frameAnimationTimer?.invalidate()
         let startFrame = panel.frame
         let startDate = Date()
+        let startTop = startFrame.maxY
+        let targetTop = targetFrame.maxY
+        let startCenterX = startFrame.midX
+        let targetCenterX = targetFrame.midX
 
         let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
@@ -137,11 +146,15 @@ final class OverlayWindowController {
 
                 let progress = min(1, Date().timeIntervalSince(startDate) / duration)
                 let eased = self.easeInOut(progress)
+                let width = startFrame.width + (targetFrame.width - startFrame.width) * eased
+                let height = startFrame.height + (targetFrame.height - startFrame.height) * eased
+                let centerX = startCenterX + (targetCenterX - startCenterX) * eased
+                let top = startTop + (targetTop - startTop) * eased
                 let frame = NSRect(
-                    x: startFrame.origin.x + (targetFrame.origin.x - startFrame.origin.x) * eased,
-                    y: startFrame.origin.y + (targetFrame.origin.y - startFrame.origin.y) * eased,
-                    width: startFrame.width + (targetFrame.width - startFrame.width) * eased,
-                    height: startFrame.height + (targetFrame.height - startFrame.height) * eased
+                    x: centerX - width / 2,
+                    y: top - height,
+                    width: width,
+                    height: height
                 ).integral
                 self.applyFrame(frame)
 
@@ -149,6 +162,7 @@ final class OverlayWindowController {
                     self.frameAnimationTimer?.invalidate()
                     self.frameAnimationTimer = nil
                     self.applyFrame(targetFrame)
+                    self.updateMouseContainmentTimer(for: self.islandState.state)
                 }
             }
         }
@@ -173,10 +187,11 @@ final class OverlayWindowController {
         mouseContainmentTimer = nil
 
         guard state == .expanded else { return }
+        let hitFrame = targetExpandedFrame ?? panel.frame
         let timer = Timer(timeInterval: 0.08, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.islandState.state == .expanded else { return }
-                let expandedHitFrame = self.panel.frame.insetBy(dx: -8, dy: -8)
+                let expandedHitFrame = hitFrame.insetBy(dx: -8, dy: -8)
                 if !expandedHitFrame.contains(NSEvent.mouseLocation) {
                     self.islandState.collapse()
                 }

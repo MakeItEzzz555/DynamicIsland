@@ -133,7 +133,7 @@ final class MediaController: ObservableObject {
     private func durationExpression(for player: MediaPlayer) -> String {
         switch player {
         case .spotify:
-            "duration of current track"
+            "((duration of current track) / 1000)"
         case .music:
             "duration of current track"
         }

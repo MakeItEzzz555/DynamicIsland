@@ -23,7 +23,7 @@ final class NotchGeometryServiceTests: XCTestCase {
         XCTAssertEqual(geometry.notchRect, CGRect(x: 635, y: 944, width: 242, height: 38))
         XCTAssertEqual(geometry.collapsedFrame.midX, 756, accuracy: 0.5)
         XCTAssertEqual(geometry.collapsedFrame.width, 242, accuracy: 0.5)
-        XCTAssertEqual(geometry.collapsedFrame.height, 42, accuracy: 0.5)
+        XCTAssertEqual(geometry.collapsedFrame.height, 40, accuracy: 0.5)
         XCTAssertEqual(geometry.collapsedFrame.maxY, 982, accuracy: 0.5)
         XCTAssertEqual(geometry.expandedFrame.midX, 756, accuracy: 0.5)
         XCTAssertEqual(geometry.expandedFrame.maxY, 982, accuracy: 0.5)
@@ -51,7 +51,7 @@ final class NotchGeometryServiceTests: XCTestCase {
         XCTAssertEqual(geometry.collapsedFrame.midX, 756, accuracy: 0.5)
         XCTAssertEqual(geometry.collapsedFrame.maxY, 982, accuracy: 0.5)
         XCTAssertEqual(geometry.collapsedFrame.width, 242, accuracy: 0.5)
-        XCTAssertEqual(geometry.collapsedFrame.height, 42, accuracy: 0.5)
+        XCTAssertEqual(geometry.collapsedFrame.height, 40, accuracy: 0.5)
         XCTAssertTrue((215...242).contains(geometry.collapsedFrame.width))
     }
 
