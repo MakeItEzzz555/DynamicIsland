@@ -79,14 +79,14 @@ struct MediaModuleView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top, spacing: 16) {
-                AlbumArtworkView(image: media.artworkImage, size: 112)
+                AlbumArtworkView(image: media.artworkImage, size: 104)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(media.title)
-                        .font(.system(size: 22, weight: .bold))
+                        .font(.system(size: 20, weight: .bold))
                         .foregroundStyle(.white)
                         .lineLimit(1)
                     Text(media.artist)
-                        .font(.system(size: 17, weight: .bold))
+                        .font(.system(size: 16, weight: .bold))
                         .foregroundStyle(.white.opacity(0.66))
                         .lineLimit(1)
                     Text(media.sourceName)
@@ -172,7 +172,7 @@ struct FileShelfModuleView: View {
             }
         }
         .padding(12)
-        .frame(maxWidth: .infinity, minHeight: 58)
+        .frame(maxWidth: .infinity, minHeight: 58, maxHeight: 110)
         .background(.white.opacity(0.075), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
 }

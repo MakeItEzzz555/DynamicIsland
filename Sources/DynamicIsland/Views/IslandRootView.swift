@@ -122,7 +122,7 @@ struct ExpandedIslandView: View {
                 TimerModuleView(timer: modules.timer)
                 FileShelfModuleView(fileShelf: modules.fileShelf)
             }
-            .frame(width: 300)
+            .frame(width: 270)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }

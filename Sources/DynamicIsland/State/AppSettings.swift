@@ -36,7 +36,7 @@ public final class AppSettings: ObservableObject {
     }
 
     public var expandedSize: CGSize {
-        CGSize(width: 900, height: 300)
+        CGSize(width: 860, height: 286)
     }
 
     private func save(_ value: Any, for key: String) {
