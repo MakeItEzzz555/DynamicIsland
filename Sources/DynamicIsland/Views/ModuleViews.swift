@@ -50,7 +50,7 @@ struct AudioVisualizerView: View {
         return samples[lowerIndex] + ((samples[upperIndex] - samples[lowerIndex]) * easedProgress)
     }
 
-    private static let loopDuration: TimeInterval = 0.92
+    private static let loopDuration: TimeInterval = 1.84
     private static let pausedHeights: [CGFloat] = [3.5, 8.5, 5.5]
     private static let playingHeights: [[CGFloat]] = [
         [4.0, 11.5, 6.5, 10.0, 3.5, 8.0],

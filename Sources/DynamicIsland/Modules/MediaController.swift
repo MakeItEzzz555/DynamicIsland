@@ -1,4 +1,5 @@
 import AppKit
+import CoreAudio
 import Foundation
 
 @MainActor
@@ -47,15 +48,18 @@ final class MediaController: ObservableObject {
     }
 
     func refresh() {
+        let systemAudioIsActive = Self.isDefaultOutputDeviceRunning()
         if readPlayer(.spotify) {
+            isPlaying = isPlaying || systemAudioIsActive
             return
         }
         if readPlayer(.music) {
+            isPlaying = isPlaying || systemAudioIsActive
             return
         }
         title = "Nothing Playing"
         artist = "Open Spotify or Music"
-        isPlaying = false
+        isPlaying = systemAudioIsActive
         sourceName = "Media"
         artworkImage = nil
         currentArtworkURL = nil
@@ -193,6 +197,38 @@ final class MediaController: ObservableObject {
         let script = NSAppleScript(source: source)
         let output = script?.executeAndReturnError(&error)
         return output?.stringValue
+    }
+
+    private static func isDefaultOutputDeviceRunning() -> Bool {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var deviceID = AudioObjectID(kAudioObjectUnknown)
+        var dataSize = UInt32(MemoryLayout<AudioObjectID>.size)
+        guard AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &address,
+            0,
+            nil,
+            &dataSize,
+            &deviceID
+        ) == noErr, deviceID != kAudioObjectUnknown else {
+            return false
+        }
+
+        address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var isRunning: UInt32 = 0
+        dataSize = UInt32(MemoryLayout<UInt32>.size)
+        guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &dataSize, &isRunning) == noErr else {
+            return false
+        }
+        return isRunning != 0
     }
 }
 
