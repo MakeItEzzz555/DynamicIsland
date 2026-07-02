@@ -1,5 +1,4 @@
 import AppKit
-import CoreAudio
 import Foundation
 
 @MainActor
@@ -48,18 +47,18 @@ final class MediaController: ObservableObject {
     }
 
     func refresh() {
-        let systemAudioIsActive = Self.isDefaultOutputDeviceRunning()
         if readPlayer(.spotify) {
-            isPlaying = isPlaying || systemAudioIsActive
             return
         }
         if readPlayer(.music) {
-            isPlaying = isPlaying || systemAudioIsActive
+            return
+        }
+        if readBrowserAudio() {
             return
         }
         title = "Nothing Playing"
         artist = "Open Spotify or Music"
-        isPlaying = systemAudioIsActive
+        isPlaying = false
         sourceName = "Media"
         artworkImage = nil
         currentArtworkURL = nil
@@ -148,6 +147,74 @@ final class MediaController: ObservableObject {
         return false
     }
 
+    private func readBrowserAudio() -> Bool {
+        let browserScripts = [
+            browserScript(applicationName: "Safari", usesChromeScripting: false),
+            browserScript(applicationName: "Google Chrome", usesChromeScripting: true),
+            browserScript(applicationName: "Microsoft Edge", usesChromeScripting: true),
+            browserScript(applicationName: "Brave Browser", usesChromeScripting: true)
+        ]
+
+        for script in browserScripts {
+            if runAppleScript(script) == "playing" {
+                title = "Browser Audio"
+                artist = "Safari, Chrome, Edge, or Brave"
+                isPlaying = true
+                sourceName = "Browser"
+                artworkImage = nil
+                currentArtworkURL = nil
+                lastPlaybackIdentity = nil
+                lastPlaybackPosition = nil
+                lastPlaybackAdvancedAt = nil
+                playbackPosition = 0
+                duration = 1
+                return true
+            }
+        }
+        return false
+    }
+
+    private func browserScript(applicationName: String, usesChromeScripting: Bool) -> String {
+        let mediaCheck = """
+        (() => Array.from(document.querySelectorAll('video,audio')).some(element => !element.paused && !element.muted && element.readyState > 1))()
+        """
+        if usesChromeScripting {
+            return """
+            with timeout of 1 seconds
+                tell application "\(applicationName)"
+                    if it is running then
+                        repeat with browserWindow in windows
+                            repeat with browserTab in tabs of browserWindow
+                                try
+                                    if execute browserTab javascript "\(Self.appleScriptEscaped(mediaCheck))" is true then return "playing"
+                                end try
+                            end repeat
+                        end repeat
+                    end if
+                end tell
+            end timeout
+            return ""
+            """
+        }
+
+        return """
+        with timeout of 1 seconds
+            tell application "\(applicationName)"
+                if it is running then
+                    repeat with browserWindow in windows
+                        repeat with browserTab in tabs of browserWindow
+                            try
+                                if do JavaScript "\(Self.appleScriptEscaped(mediaCheck))" in browserTab is true then return "playing"
+                            end try
+                        end repeat
+                    end repeat
+                end if
+            end tell
+        end timeout
+        return ""
+        """
+    }
+
     private func artworkExpression(for player: MediaPlayer) -> String {
         switch player {
         case .spotify:
@@ -199,36 +266,10 @@ final class MediaController: ObservableObject {
         return output?.stringValue
     }
 
-    private static func isDefaultOutputDeviceRunning() -> Bool {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var deviceID = AudioObjectID(kAudioObjectUnknown)
-        var dataSize = UInt32(MemoryLayout<AudioObjectID>.size)
-        guard AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject),
-            &address,
-            0,
-            nil,
-            &dataSize,
-            &deviceID
-        ) == noErr, deviceID != kAudioObjectUnknown else {
-            return false
-        }
-
-        address = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var isRunning: UInt32 = 0
-        dataSize = UInt32(MemoryLayout<UInt32>.size)
-        guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &dataSize, &isRunning) == noErr else {
-            return false
-        }
-        return isRunning != 0
+    private static func appleScriptEscaped(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
     }
 }
 
