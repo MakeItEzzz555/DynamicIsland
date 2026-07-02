@@ -14,7 +14,7 @@ struct AudioVisualizerView: View {
     let isPlaying: Bool
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 0.12, paused: !isPlaying)) { timeline in
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: !isPlaying)) { timeline in
             let tick = timeline.date.timeIntervalSinceReferenceDate
             HStack(alignment: .center, spacing: 2) {
                 ForEach(0..<3, id: \.self) { index in
@@ -29,10 +29,26 @@ struct AudioVisualizerView: View {
     }
 
     private func barHeight(index: Int, tick: TimeInterval) -> CGFloat {
-        guard isPlaying else { return CGFloat([3.5, 8.5, 5.5][index]) }
-        let wave = sin((tick * 7.6) + Double(index) * 1.35)
-        return 3 + CGFloat((wave + 1) * 4)
+        guard isPlaying else { return Self.pausedHeights[index] }
+
+        let samples = Self.playingHeights[index]
+        let phase = tick.truncatingRemainder(dividingBy: Self.loopDuration) / Self.loopDuration
+        let samplePosition = phase * Double(samples.count)
+        let lowerIndex = Int(floor(samplePosition)) % samples.count
+        let upperIndex = (lowerIndex + 1) % samples.count
+        let progress = CGFloat(samplePosition - floor(samplePosition))
+        let easedProgress = progress * progress * (3 - 2 * progress)
+
+        return samples[lowerIndex] + ((samples[upperIndex] - samples[lowerIndex]) * easedProgress)
     }
+
+    private static let loopDuration: TimeInterval = 0.92
+    private static let pausedHeights: [CGFloat] = [3.5, 8.5, 5.5]
+    private static let playingHeights: [[CGFloat]] = [
+        [4.0, 11.5, 6.5, 10.0, 3.5, 8.0],
+        [10.5, 4.0, 12.0, 6.0, 9.5, 5.0],
+        [6.0, 9.5, 3.5, 11.0, 7.0, 10.5]
+    ]
 }
 
 struct AlbumArtworkView: View {
