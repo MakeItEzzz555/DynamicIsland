@@ -68,16 +68,10 @@ final class OverlayWindowController {
         visible ? show() : panel.orderOut(nil)
     }
 
-    func collapseFromOutsideClick() {
-        guard !panel.frame.contains(NSEvent.mouseLocation) else { return }
-        islandState.collapseFromOutsideClick()
-    }
-
     func reposition(animated: Bool = true) {
-        let expandedSize = islandState.isExpandedSurfaceVisible ? settings.expandedSize : settings.peekSize
         let geometry = geometryService.geometry(
             collapsedSize: settings.collapsedSize,
-            expandedSize: expandedSize
+            expandedSize: settings.expandedSize
         )
         let targetFrame = islandState.state == .collapsed ? geometry.collapsedFrame : geometry.expandedFrame
 

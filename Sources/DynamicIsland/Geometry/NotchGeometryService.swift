@@ -68,24 +68,33 @@ public final class NotchGeometryService {
     ) -> IslandGeometry {
         let notchRect = inferNotchRect(from: snapshot)
         let topY = snapshot.frame.maxY
-        let collapsedCenterX = notchRect?.midX ?? snapshot.frame.midX
         let expandedCenterX = snapshot.frame.midX
-        let collapsedY = topY - collapsedSize.height - (notchRect == nil ? 8 : 0)
-        let expandedY = topY - expandedSize.height - (notchRect == nil ? 10 : 0)
-        let resolvedExpandedWidth = min(expandedSize.width, max(360, snapshot.frame.width - 64))
+        let resolvedExpandedWidth = min(900, max(360, snapshot.frame.width - 160))
+        let resolvedExpandedHeight: CGFloat = 300
 
-        let collapsedFrame = CGRect(
-            x: collapsedCenterX - collapsedSize.width / 2,
-            y: collapsedY,
-            width: collapsedSize.width,
-            height: collapsedSize.height
-        )
+        let collapsedFrame: CGRect
+        if let notchRect {
+            let resolvedCollapsedWidth = min(max(notchRect.width + 36, 170), 290)
+            collapsedFrame = CGRect(
+                x: notchRect.midX - resolvedCollapsedWidth / 2,
+                y: topY - notchRect.height,
+                width: resolvedCollapsedWidth,
+                height: notchRect.height
+            )
+        } else {
+            collapsedFrame = CGRect(
+                x: snapshot.frame.midX - collapsedSize.width / 2,
+                y: topY - collapsedSize.height - 8,
+                width: collapsedSize.width,
+                height: collapsedSize.height
+            )
+        }
 
         let expandedFrame = CGRect(
             x: expandedCenterX - resolvedExpandedWidth / 2,
-            y: expandedY,
+            y: topY - resolvedExpandedHeight - (notchRect == nil ? 10 : 0),
             width: resolvedExpandedWidth,
-            height: expandedSize.height
+            height: resolvedExpandedHeight
         )
 
         return IslandGeometry(

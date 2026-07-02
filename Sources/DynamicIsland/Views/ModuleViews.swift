@@ -1,4 +1,3 @@
-import AVFoundation
 import AppKit
 import SwiftUI
 
@@ -6,19 +5,7 @@ struct CompactMediaView: View {
     @ObservedObject var media: MediaController
 
     var body: some View {
-        HStack(spacing: 12) {
-            AlbumArtworkView(image: media.artworkImage, size: 34)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(media.title)
-                    .font(.system(size: 14, weight: .bold))
-                    .lineLimit(1)
-                    .foregroundStyle(.white)
-                Text(media.sourceName)
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.50))
-                    .lineLimit(1)
-            }
-        }
+        AlbumArtworkView(image: media.artworkImage, size: 30)
         .accessibilityLabel("Media \(media.title)")
     }
 }
@@ -29,22 +16,22 @@ struct AudioVisualizerView: View {
     var body: some View {
         TimelineView(.animation(minimumInterval: 0.18, paused: !isPlaying)) { timeline in
             let tick = timeline.date.timeIntervalSinceReferenceDate
-            HStack(spacing: 3) {
-                ForEach(0..<5, id: \.self) { index in
+            HStack(spacing: 4) {
+                ForEach(0..<3, id: \.self) { index in
                     RoundedRectangle(cornerRadius: 2, style: .continuous)
-                        .fill(isPlaying ? Color.green : Color.white.opacity(0.48))
+                        .fill(Color.white.opacity(isPlaying ? 0.82 : 0.46))
                         .frame(width: 3, height: barHeight(index: index, tick: tick))
                 }
             }
         }
-        .frame(width: 28, height: 24)
+        .frame(width: 20, height: 22)
         .accessibilityLabel(isPlaying ? "Audio playing" : "Audio paused")
     }
 
     private func barHeight(index: Int, tick: TimeInterval) -> CGFloat {
-        guard isPlaying else { return CGFloat([8, 14, 18, 12, 9][index]) }
-        let wave = sin((tick * 5.0) + Double(index) * 0.85)
-        return 8 + CGFloat((wave + 1) * 8)
+        guard isPlaying else { return CGFloat([8, 16, 11][index]) }
+        let wave = sin((tick * 5.8) + Double(index) * 0.9)
+        return 7 + CGFloat((wave + 1) * 7)
     }
 }
 
@@ -91,19 +78,19 @@ struct MediaModuleView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .top, spacing: 18) {
-                AlbumArtworkView(image: media.artworkImage, size: 132)
+            HStack(alignment: .top, spacing: 16) {
+                AlbumArtworkView(image: media.artworkImage, size: 112)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(media.title)
-                        .font(.system(size: 24, weight: .bold))
+                        .font(.system(size: 22, weight: .bold))
                         .foregroundStyle(.white)
                         .lineLimit(1)
                     Text(media.artist)
-                        .font(.system(size: 20, weight: .bold))
+                        .font(.system(size: 17, weight: .bold))
                         .foregroundStyle(.white.opacity(0.66))
                         .lineLimit(1)
                     Text(media.sourceName)
-                        .font(.system(size: 17, weight: .bold))
+                        .font(.system(size: 14, weight: .bold))
                         .foregroundStyle(.white.opacity(0.48))
                         .lineLimit(1)
                     HStack(spacing: 22) {
@@ -128,7 +115,7 @@ struct MediaModuleView: View {
                 .foregroundStyle(.white.opacity(0.58))
             }
         }
-        .frame(width: 440)
+        .frame(minWidth: 0, maxWidth: .infinity)
     }
 }
 
@@ -190,53 +177,6 @@ struct FileShelfModuleView: View {
     }
 }
 
-struct MirrorModuleView: View {
-    @ObservedObject var camera: CameraMirrorController
-
-    var body: some View {
-        Button {
-            camera.toggle()
-        } label: {
-            ZStack {
-                Circle()
-                    .fill(.white.opacity(0.13))
-                if camera.isRunning {
-                    CameraPreviewView(session: camera.session)
-                        .clipShape(Circle())
-                } else {
-                    VStack(spacing: 8) {
-                        Image(systemName: "web.camera.fill")
-                            .font(.system(size: 32, weight: .bold))
-                        Text(camera.permissionDenied ? "Camera Blocked" : "Mirror")
-                            .font(.system(size: 18, weight: .bold))
-                    }
-                    .foregroundStyle(.white.opacity(0.58))
-                }
-            }
-            .frame(width: 250, height: 250)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Toggle camera mirror")
-    }
-}
-
-struct CameraPreviewView: NSViewRepresentable {
-    let session: AVCaptureSession
-
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        let layer = AVCaptureVideoPreviewLayer(session: session)
-        layer.videoGravity = .resizeAspectFill
-        view.layer = layer
-        view.wantsLayer = true
-        return view
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) {
-        (nsView.layer as? AVCaptureVideoPreviewLayer)?.session = session
-    }
-}
-
 struct TimerModuleView: View {
     @ObservedObject var timer: TimerController
 
@@ -245,7 +185,8 @@ struct TimerModuleView: View {
             Label("Timer", systemImage: "timer")
                 .font(.system(size: 16, weight: .bold))
             Text(timer.isRunning ? timer.displayText : "Start a timer")
-                .font(.system(size: 30, weight: .bold, design: .rounded))
+                .font(.system(size: 24, weight: .bold, design: .rounded))
+                .lineLimit(1)
             HStack {
                 Button("5m") { timer.start(minutes: 5) }
                 Button("10m") { timer.start(minutes: 10) }
@@ -256,8 +197,8 @@ struct TimerModuleView: View {
             .buttonStyle(.borderless)
         }
         .foregroundStyle(.white)
-        .padding(18)
-        .frame(maxWidth: .infinity, minHeight: 142, alignment: .leading)
+        .padding(14)
+        .frame(maxWidth: .infinity, minHeight: 118, alignment: .leading)
         .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
 }

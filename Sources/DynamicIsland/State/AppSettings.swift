@@ -32,15 +32,11 @@ public final class AppSettings: ObservableObject {
     }
 
     public var collapsedSize: CGSize {
-        CGSize(width: 520, height: 58)
-    }
-
-    public var peekSize: CGSize {
-        collapsedSize
+        CGSize(width: 190, height: 44)
     }
 
     public var expandedSize: CGSize {
-        CGSize(width: 1240, height: 340)
+        CGSize(width: 900, height: 300)
     }
 
     private func save(_ value: Any, for key: String) {

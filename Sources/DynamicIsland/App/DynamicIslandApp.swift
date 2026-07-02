@@ -20,7 +20,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let shortcuts = ShortcutsStore()
     private let media = MediaController()
     private let timer = TimerController()
-    private let camera = CameraMirrorController()
     private let geometryService = NotchGeometryService()
 
     private var overlayController: OverlayWindowController?
@@ -35,8 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             media: media,
             fileShelf: fileShelf,
             shortcuts: shortcuts,
-            timer: timer,
-            camera: camera
+            timer: timer
         )
 
         let overlayController = OverlayWindowController(
@@ -55,12 +53,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onToggleOverlay: { [weak self] in self?.toggleOverlay() },
             onQuit: { NSApp.terminate(nil) }
         )
-
-        eventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-            Task { @MainActor in
-                self?.overlayController?.collapseFromOutsideClick()
-            }
-        }
 
         NotificationCenter.default.addObserver(
             self,

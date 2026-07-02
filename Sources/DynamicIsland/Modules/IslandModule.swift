@@ -20,5 +20,4 @@ struct IslandModules {
     let fileShelf: FileShelfStore
     let shortcuts: ShortcutsStore
     let timer: TimerController
-    let camera: CameraMirrorController
 }
