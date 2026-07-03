@@ -8,7 +8,7 @@ final class OverlayWindowController {
     private let islandState: IslandStateStore
     private let geometryService: NotchGeometryService
     private let layoutStore = IslandLayoutStore()
-    private let panel: NSPanel
+    private let panel: IslandOverlayPanel
     private var cancellables: Set<AnyCancellable> = []
     private var mouseContainmentTimer: Timer?
     private var localMouseDownMonitor: Any?
@@ -29,9 +29,9 @@ final class OverlayWindowController {
         self.islandState = islandState
         self.geometryService = geometryService
 
-        panel = NSPanel(
+        panel = IslandOverlayPanel(
             contentRect: .zero,
-            styleMask: [.borderless, .nonactivatingPanel],
+            styleMask: [.borderless],
             backing: .buffered,
             defer: false
         )
@@ -45,6 +45,7 @@ final class OverlayWindowController {
         panel.hasShadow = false
         panel.hidesOnDeactivate = false
         panel.ignoresMouseEvents = false
+        panel.acceptsMouseMovedEvents = true
 
         let rootView = IslandRootView(
             settings: settings,
@@ -167,7 +168,11 @@ final class OverlayWindowController {
     }
 
     private func updateMouseEventRouting() {
-        panel.ignoresMouseEvents = islandState.state == .collapsed
+        let isCollapsed = islandState.state == .collapsed
+        panel.ignoresMouseEvents = isCollapsed
+        if !isCollapsed {
+            panel.makeKeyAndOrderFront(nil)
+        }
     }
 
     private func updateMouseContainmentTimer(for state: IslandPresentationState) {
@@ -228,7 +233,7 @@ final class OverlayWindowController {
             return false
         }
         panel.ignoresMouseEvents = false
-        panel.orderFrontRegardless()
+        panel.makeKeyAndOrderFront(nil)
         islandState.toggleExpanded()
         return true
     }
@@ -241,6 +246,16 @@ final class OverlayWindowController {
         if !targetExpandedFrame.insetBy(dx: -8, dy: -8).contains(NSEvent.mouseLocation) {
             islandState.collapse()
         }
+    }
+}
+
+private final class IslandOverlayPanel: NSPanel {
+    override var canBecomeKey: Bool {
+        true
+    }
+
+    override var canBecomeMain: Bool {
+        false
     }
 }
 
