@@ -92,14 +92,14 @@ final class OverlayWindowController {
         self.hostingView = hostingView
 
         let collapsedHitView = CollapsedHitView()
-        collapsedHitView.onMouseDown = { [weak self] in
-            self?.expandFromCollapsedHitPanel()
+        collapsedHitView.onMouseDown = { [weak islandState] in
+            guard islandState?.state == .collapsed else { return }
+            islandState?.toggleExpanded()
         }
         collapsedHitPanel.contentView = collapsedHitView
 
         islandState.$state
             .sink { [weak self] state in
-                self?.updateMouseEventRouting()
                 self?.panel.orderFrontRegardless()
                 self?.reposition(animated: true)
                 if state == .collapsed {
@@ -196,11 +196,9 @@ final class OverlayWindowController {
         panel.ignoresMouseEvents = isCollapsed
 
         if isCollapsed, let targetCollapsedFrame {
-            collapsedHitPanel.ignoresMouseEvents = false
             collapsedHitPanel.setFrame(targetCollapsedFrame, display: true)
             collapsedHitPanel.orderFrontRegardless()
         } else {
-            collapsedHitPanel.ignoresMouseEvents = true
             collapsedHitPanel.orderOut(nil)
         }
     }
@@ -264,15 +262,6 @@ final class OverlayWindowController {
         }
         islandState.toggleExpanded()
         return true
-    }
-
-    private func expandFromCollapsedHitPanel() {
-        guard islandState.state == .collapsed else { return }
-        collapsedHitPanel.ignoresMouseEvents = true
-        collapsedHitPanel.orderOut(nil)
-        panel.ignoresMouseEvents = false
-        panel.orderFrontRegardless()
-        islandState.toggleExpanded()
     }
 
     private func collapseIfExpandedMouseOutside() {
