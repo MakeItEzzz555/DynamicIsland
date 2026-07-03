@@ -9,6 +9,7 @@ final class OverlayWindowController {
     private let geometryService: NotchGeometryService
     private let layoutStore = IslandLayoutStore()
     private let panel: NSPanel
+    private let collapsedHitPanel: NSPanel
     private var cancellables: Set<AnyCancellable> = []
     private var mouseContainmentTimer: Timer?
     private var localMouseDownMonitor: Any?
@@ -35,6 +36,12 @@ final class OverlayWindowController {
             backing: .buffered,
             defer: false
         )
+        collapsedHitPanel = NSPanel(
+            contentRect: .zero,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
         panel.isFloatingPanel = true
         panel.level = .popUpMenu
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
@@ -45,6 +52,17 @@ final class OverlayWindowController {
         panel.hasShadow = false
         panel.hidesOnDeactivate = false
         panel.ignoresMouseEvents = false
+
+        collapsedHitPanel.isFloatingPanel = true
+        collapsedHitPanel.level = .popUpMenu
+        collapsedHitPanel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        collapsedHitPanel.backgroundColor = .clear
+        collapsedHitPanel.isOpaque = false
+        collapsedHitPanel.sharingType = .readOnly
+        collapsedHitPanel.isReleasedWhenClosed = false
+        collapsedHitPanel.hasShadow = false
+        collapsedHitPanel.hidesOnDeactivate = false
+        collapsedHitPanel.ignoresMouseEvents = false
 
         let rootView = IslandRootView(
             settings: settings,
@@ -72,6 +90,12 @@ final class OverlayWindowController {
         }
         panel.contentView = hostingView
         self.hostingView = hostingView
+
+        let collapsedHitView = CollapsedHitView()
+        collapsedHitView.onMouseDown = { [weak self] in
+            self?.expandFromCollapsedHitPanel()
+        }
+        collapsedHitPanel.contentView = collapsedHitView
 
         islandState.$state
             .sink { [weak self] state in
@@ -118,6 +142,7 @@ final class OverlayWindowController {
     func setVisible(_ visible: Bool) {
         visible ? show() : panel.orderOut(nil)
         if !visible {
+            collapsedHitPanel.orderOut(nil)
             updateMouseContainmentTimer(for: .collapsed)
         }
     }
@@ -167,7 +192,17 @@ final class OverlayWindowController {
     }
 
     private func updateMouseEventRouting() {
-        panel.ignoresMouseEvents = islandState.state == .collapsed
+        let isCollapsed = islandState.state == .collapsed
+        panel.ignoresMouseEvents = isCollapsed
+
+        if isCollapsed, let targetCollapsedFrame {
+            collapsedHitPanel.ignoresMouseEvents = false
+            collapsedHitPanel.setFrame(targetCollapsedFrame, display: true)
+            collapsedHitPanel.orderFrontRegardless()
+        } else {
+            collapsedHitPanel.ignoresMouseEvents = true
+            collapsedHitPanel.orderOut(nil)
+        }
     }
 
     private func updateMouseContainmentTimer(for state: IslandPresentationState) {
@@ -227,10 +262,17 @@ final class OverlayWindowController {
               targetCollapsedFrame.insetBy(dx: -4, dy: -4).contains(screenPoint) else {
             return false
         }
+        islandState.toggleExpanded()
+        return true
+    }
+
+    private func expandFromCollapsedHitPanel() {
+        guard islandState.state == .collapsed else { return }
+        collapsedHitPanel.ignoresMouseEvents = true
+        collapsedHitPanel.orderOut(nil)
         panel.ignoresMouseEvents = false
         panel.orderFrontRegardless()
         islandState.toggleExpanded()
-        return true
     }
 
     private func collapseIfExpandedMouseOutside() {
@@ -296,6 +338,18 @@ private final class IslandHostingView<Content: View>: NSHostingView<Content> {
             return self
         }
         return super.hitTest(point)
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+}
+
+private final class CollapsedHitView: NSView {
+    var onMouseDown: (() -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        onMouseDown?()
     }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
