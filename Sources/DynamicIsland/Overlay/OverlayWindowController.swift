@@ -92,14 +92,14 @@ final class OverlayWindowController {
         self.hostingView = hostingView
 
         let collapsedHitView = CollapsedHitView()
-        collapsedHitView.onMouseDown = { [weak islandState] in
-            guard islandState?.state == .collapsed else { return }
-            islandState?.toggleExpanded()
+        collapsedHitView.onMouseDown = { [weak self] in
+            self?.expandFromCollapsedHitPanel()
         }
         collapsedHitPanel.contentView = collapsedHitView
 
         islandState.$state
             .sink { [weak self] state in
+                self?.updateMouseEventRouting()
                 self?.panel.orderFrontRegardless()
                 self?.reposition(animated: true)
                 if state == .collapsed {
@@ -196,9 +196,11 @@ final class OverlayWindowController {
         panel.ignoresMouseEvents = isCollapsed
 
         if isCollapsed, let targetCollapsedFrame {
+            collapsedHitPanel.ignoresMouseEvents = false
             collapsedHitPanel.setFrame(targetCollapsedFrame, display: true)
             collapsedHitPanel.orderFrontRegardless()
         } else {
+            collapsedHitPanel.ignoresMouseEvents = true
             collapsedHitPanel.orderOut(nil)
         }
     }
@@ -264,6 +266,15 @@ final class OverlayWindowController {
         return true
     }
 
+    private func expandFromCollapsedHitPanel() {
+        guard islandState.state == .collapsed else { return }
+        collapsedHitPanel.ignoresMouseEvents = true
+        collapsedHitPanel.orderOut(nil)
+        panel.ignoresMouseEvents = false
+        panel.orderFrontRegardless()
+        islandState.toggleExpanded()
+    }
+
     private func collapseIfExpandedMouseOutside() {
         guard islandState.state == .expanded,
               let targetExpandedFrame else {
@@ -309,6 +320,9 @@ private final class IslandHostingView<Content: View>: NSHostingView<Content> {
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
+        guard shouldHandleSurfaceClick?() == true else {
+            return super.hitTest(point)
+        }
         guard let surfaceFrame = visibleSurfaceFrame?() else {
             return nil
         }
@@ -323,10 +337,7 @@ private final class IslandHostingView<Content: View>: NSHostingView<Content> {
         guard acceptsPoint else {
             return nil
         }
-        if shouldHandleSurfaceClick?() == true {
-            return self
-        }
-        return super.hitTest(point)
+        return self
     }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
