@@ -1187,6 +1187,36 @@ For every requested feature phase:
   - `swift build`
   - `swift test`
   - `Scripts/package_app.sh`
+
+### 2026-07-04 - Phase 5H.2 Shoulder Tuning And Expanded Ellipse Blend
+
+- Tuned collapsed shoulder constants to make the shoulder subtler:
+  - `collapsedShoulderWidth = 32`
+  - `collapsedShoulderHeight = 25`
+  - `collapsedShoulderSideInset = 8`
+  - `collapsedShoulderYOffset = -10`
+  - `collapsedShoulderOpacity = 0.92`
+- Kept the same safe ellipse-layer approach:
+  - Main shell remains the normal rounded `UnevenRoundedRectangle`.
+  - No custom path, masking, subtraction, or clipping was introduced.
+  - `notchShoulderDebugTint = false` remains the default, with red/blue tint available for manual tuning only.
+- Enabled expanded shoulders using the same procedural ellipse layer:
+  - `expandedShoulderEnabled = true`
+  - `expandedShoulderWidth = 48`
+  - `expandedShoulderHeight = 30`
+  - `expandedShoulderSideInset = 18`
+  - `expandedShoulderYOffset = -10`
+  - `expandedShoulderOpacity = 0.94`
+- Preserved:
+  - Asset-backed rendering remains disabled for the active path: `notchShoulderUseAssets = false`.
+  - OverlayWindowController, hit panel frames, click-through behavior, collapse timer logic, NotchGeometryService geometry, IslandStateStore, media, visualizer, timer, stats, tray/AirDrop/files, shortcuts, settings, and gestures were not changed.
+- Changed files:
+  - `Sources/DynamicIsland/Views/NotchShoulderBlend.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
 - Validation passed:
   - `swift build`
   - `swift test`

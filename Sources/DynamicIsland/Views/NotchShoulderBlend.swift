@@ -29,7 +29,10 @@ struct NotchShoulderBlend: View {
     }
 
     private var shoulderTint: Color {
-        notchShoulderDebugTint ? .red.opacity(0.65) : shellColor.opacity(shoulderOpacity)
+        if notchShoulderDebugTint {
+            return isExpanded ? .blue.opacity(0.55) : .red.opacity(0.55)
+        }
+        return shellColor.opacity(shoulderOpacity)
     }
 
     private var shoulderOpacity: Double {
@@ -76,20 +79,26 @@ struct NotchShoulderBlend: View {
 let notchShoulderBlendEnabled = true
 let notchShoulderUseAssets = false
 let collapsedShoulderEnabled = true
-let expandedShoulderEnabled = false
+let expandedShoulderEnabled = true
 let notchShoulderDebugTint = false
 
-let collapsedShoulderWidth: CGFloat = 34
-let collapsedShoulderHeight: CGFloat = 28
-let collapsedShoulderSideInset: CGFloat = 10
-let collapsedShoulderYOffset: CGFloat = -9
-let collapsedShoulderOpacity: Double = 1.0
+// Width/height control the shoulder blob size.
+let collapsedShoulderWidth: CGFloat = 32
+let collapsedShoulderHeight: CGFloat = 25
+// Side inset controls horizontal placement near the shell side.
+let collapsedShoulderSideInset: CGFloat = 8
+// Y offset controls how far upward the shoulder protrudes.
+let collapsedShoulderYOffset: CGFloat = -10
+let collapsedShoulderOpacity: Double = 0.92
 
-let expandedShoulderWidth: CGFloat = 44
-let expandedShoulderHeight: CGFloat = 28
-let expandedShoulderSideInset: CGFloat = 24
+// Width/height control the shoulder blob size.
+let expandedShoulderWidth: CGFloat = 48
+let expandedShoulderHeight: CGFloat = 30
+// Side inset controls horizontal placement near the shell side.
+let expandedShoulderSideInset: CGFloat = 18
+// Y offset controls how far upward the shoulder protrudes.
 let expandedShoulderYOffset: CGFloat = -10
-let expandedShoulderOpacity: Double = 1.0
+let expandedShoulderOpacity: Double = 0.94
 
 private struct NotchIntegratedShellEnvironmentKey: EnvironmentKey {
     static let defaultValue = true
