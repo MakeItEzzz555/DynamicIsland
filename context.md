@@ -1099,18 +1099,21 @@ For every requested feature phase:
 ### 2026-07-04 - Phase 5H Correction Remove Inward Cut
 
 - Removed the broken inward-cut shell path:
-  - `NotchMergedIslandShape` no longer creates a concave top shoulder path.
-  - Main collapsed and expanded shells are restored to the normal top-attached rounded shape.
+  - Removed the custom shell path from the final rendering path.
+  - Main collapsed and expanded shells use the normal `UnevenRoundedRectangle` top-attached rounded shape again.
   - No inward scoop/bite remains in the shell path.
 - Replaced with safer outward shoulder layering:
-  - Added `NotchShoulderBlendView`, which draws subtle outward circular shoulder blends behind the main shell.
+  - Added `NotchShoulderBlend`, which draws subtle outward ellipses behind the main shell.
+  - Collapsed shoulder starting size is 28x22 with side inset/offset of 14 and y offset -8.
+  - Expanded shoulder starting size is 44x28 with side inset/offset of 24 and y offset -10.
   - Shoulders are decorative only and do not alter hit testing, panel frames, layout, or content clipping.
+  - Shoulder layer uses `.allowsHitTesting(false)`.
   - Added `notchShoulderBlendEnabled`; setting it to `false` restores the plain rounded shell immediately.
-  - Shoulder radius/offset/opacity constants are isolated for quick tuning.
+  - Shoulder size/offset/opacity constants are isolated for quick tuning.
 - Preserved:
   - Collapsed hit panel frame, expanded panel frame, click-through architecture, collapse timer logic, NotchGeometryService geometry, media, visualizer, timer, stats, tray/AirDrop/files, shortcuts, settings, and gestures were not changed.
 - Changed files:
-  - `Sources/DynamicIsland/Views/NotchMergedIslandShape.swift`
+  - `Sources/DynamicIsland/Views/NotchShoulderBlend.swift`
   - `Sources/DynamicIsland/Views/IslandRootView.swift`
   - `context.md`
 - Known limitations:

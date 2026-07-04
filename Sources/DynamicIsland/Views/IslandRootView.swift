@@ -197,7 +197,13 @@ struct IslandSurface<Content: View>: View {
 
     var body: some View {
         let shellColor = Color(red: 0.001, green: 0.001, blue: 0.002)
-        let shellShape = NotchMergedIslandShape(isExpanded: isExpanded)
+        let shellShape = UnevenRoundedRectangle(
+            topLeadingRadius: 0,
+            bottomLeadingRadius: isExpanded ? 36 : 22,
+            bottomTrailingRadius: isExpanded ? 36 : 22,
+            topTrailingRadius: 0,
+            style: .continuous
+        )
         let shouldShowShoulderBlend = notchShoulderBlendEnabled && isNotchIntegratedShell
 
         content
@@ -208,7 +214,7 @@ struct IslandSurface<Content: View>: View {
             .background {
                 ZStack {
                     if shouldShowShoulderBlend {
-                        NotchShoulderBlendView(isExpanded: isExpanded, color: shellColor)
+                        NotchShoulderBlend(isExpanded: isExpanded, color: shellColor)
                     }
 
                     shellShape
