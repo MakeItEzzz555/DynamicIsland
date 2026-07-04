@@ -109,7 +109,11 @@ final class OverlayWindowController {
         collapsedHitPanel.contentView = collapsedHitView
 
         let expandedHostingView = IslandHostingView(
-            rootView: ExpandedIslandPanelView(modules: modules, islandState: islandState)
+            rootView: ExpandedIslandPanelView(
+                modules: modules,
+                islandState: islandState,
+                layoutStore: layoutStore
+            )
         )
         expandedHostingView.autoresizingMask = [.width, .height]
         expandedHostingView.wantsLayer = true
@@ -205,7 +209,7 @@ final class OverlayWindowController {
             expandedSize: settings.expandedSize,
             collapsedMediaActive: modules.media.hasActiveMediaSource
         )
-        layoutStore.update(canvas: geometry.canvas)
+        layoutStore.update(canvas: geometry.canvas, hasHardwareNotch: geometry.hasHardwareNotch)
         targetCollapsedFrame = geometry.collapsedFrame
         targetExpandedFrame = geometry.expandedFrame
         applyFrame(geometry.canvas.frame, to: panel)
@@ -224,7 +228,10 @@ final class OverlayWindowController {
                 collapsedMediaActive: self.modules.media.hasActiveMediaSource
             )
             if !animated {
-                self.layoutStore.update(canvas: correctedGeometry.canvas)
+                self.layoutStore.update(
+                    canvas: correctedGeometry.canvas,
+                    hasHardwareNotch: correctedGeometry.hasHardwareNotch
+                )
                 self.targetCollapsedFrame = correctedGeometry.collapsedFrame
                 self.targetExpandedFrame = correctedGeometry.expandedFrame
                 self.applyFrame(correctedGeometry.canvas.frame, to: self.panel)
@@ -578,6 +585,7 @@ private final class CollapsedHitView: NSView {
 private struct ExpandedIslandPanelView: View {
     let modules: IslandModules
     @ObservedObject var islandState: IslandStateStore
+    @ObservedObject var layoutStore: IslandLayoutStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var shellVisible = false
@@ -591,6 +599,7 @@ private struct ExpandedIslandPanelView: View {
                 onShortcutLaunched: { islandState.collapse() }
             )
         }
+        .notchIntegrated(layoutStore.hasHardwareNotch)
         .scaleEffect(shellVisible ? 1.0 : 0.72, anchor: .top)
         .blur(radius: shellVisible ? 0 : 12)
         .opacity(shellVisible ? 1 : 0)

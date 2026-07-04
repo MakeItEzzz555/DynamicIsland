@@ -7,12 +7,14 @@ final class IslandLayoutStore: ObservableObject {
     @Published var expandedSurfaceFrame: CGRect = CGRect(x: 0, y: 0, width: 760, height: 260)
     @Published var collapsedSize: CGSize = CGSize(width: 216, height: 34)
     @Published var expandedSize: CGSize = CGSize(width: 760, height: 260)
+    @Published var hasHardwareNotch = true
 
-    func update(canvas: IslandCanvasGeometry) {
+    func update(canvas: IslandCanvasGeometry, hasHardwareNotch: Bool) {
         canvasSize = canvas.frame.size
         collapsedSurfaceFrame = canvas.collapsedSurfaceFrame
         expandedSurfaceFrame = canvas.expandedSurfaceFrame
         collapsedSize = canvas.collapsedSurfaceFrame.size
         expandedSize = canvas.expandedSurfaceFrame.size
+        self.hasHardwareNotch = hasHardwareNotch
     }
 }
