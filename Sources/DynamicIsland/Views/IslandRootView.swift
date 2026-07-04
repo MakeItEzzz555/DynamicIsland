@@ -5,6 +5,19 @@ private let collapseHandoffDebug = false
 private let disableCollapsedArtworkDuringHandoff = false
 private let disableCollapsedVisualizerDuringHandoff = false
 
+private enum IslandContentPhase {
+    case compact
+    case shellExpanding
+    case expandedContentVisible
+    case contentCollapsing
+    case shellCollapsing
+}
+
+private enum RenderedContentMode {
+    case compact
+    case expanded
+}
+
 private enum IslandShellLayout {
     static let collapsedHorizontalPadding: CGFloat = 8
     static let collapsedTopPadding: CGFloat = 0
@@ -52,14 +65,21 @@ struct IslandRootView: View {
     let modules: IslandModules
     let rendersExpandedVisualContent: Bool
     let onRequestExpand: () -> Void
+    let onRequestCollapse: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var contentPhase: IslandContentPhase = .compact
+    @State private var renderedContentMode: RenderedContentMode = .compact
+    @State private var contentVisible = false
+    @State private var expandedContentMounted = false
+    @State private var isContentRemoving = false
+    @State private var sequenceGeneration = 0
 
     private var isExpanded: Bool {
         islandState.state == .expanded
     }
 
     private var showsExpandedContent: Bool {
-        isExpanded || layoutStore.isCollapseShellOnly
+        renderedContentMode == .expanded
     }
 
     private var shellAnimation: Animation {
@@ -97,8 +117,10 @@ struct IslandRootView: View {
                 if showsExpandedContent {
                     ExpandedIslandView(
                         modules: modules,
-                        isPresented: isExpanded,
-                        onShortcutLaunched: { islandState.collapse() },
+                        contentVisible: contentVisible,
+                        shouldRenderContent: expandedContentMounted,
+                        isContentRemoving: isContentRemoving,
+                        onShortcutLaunched: onRequestCollapse,
                         rendersExpandedVisualContent: rendersExpandedVisualContent
                     )
                 } else {
@@ -118,6 +140,22 @@ struct IslandRootView: View {
         .shellMorphing(layoutStore.isShellMorphing)
         .collapseShellOnly(layoutStore.isCollapseShellOnly)
         .frame(width: layoutStore.canvasSize.width, height: layoutStore.canvasSize.height, alignment: .topLeading)
+        .onAppear {
+            synchronizePresentationForCurrentState()
+        }
+        .onChange(of: islandState.state) { _, newValue in
+            handleStateChange(newValue)
+        }
+        .onChange(of: layoutStore.isExpandedContentExiting) { _, newValue in
+            if newValue {
+                beginContentExitSequence()
+            }
+        }
+        .onChange(of: layoutStore.isCollapseShellOnly) { _, newValue in
+            if !newValue, islandState.state == .collapsed {
+                finalizeCompactPresentation()
+            }
+        }
         .onDrop(of: [.fileURL], isTargeted: fileDropTargetBinding) { providers in
             loadDroppedFiles(from: providers)
             return true
@@ -172,6 +210,77 @@ struct IslandRootView: View {
             }
         }
     }
+
+    private func synchronizePresentationForCurrentState() {
+        if islandState.state == .expanded {
+            startExpansionSequence()
+        } else {
+            finalizeCompactPresentation()
+        }
+    }
+
+    private func handleStateChange(_ state: IslandPresentationState) {
+        switch state {
+        case .expanded:
+            startExpansionSequence()
+        case .collapsed:
+            beginShellCollapseSequence()
+        }
+    }
+
+    private func startExpansionSequence() {
+        sequenceGeneration += 1
+        let generation = sequenceGeneration
+        renderedContentMode = .expanded
+        expandedContentMounted = false
+        contentVisible = false
+        isContentRemoving = false
+        contentPhase = .shellExpanding
+
+        let mountDelay: DispatchTimeInterval = reduceMotion ? .milliseconds(40) : .milliseconds(240)
+        DispatchQueue.main.asyncAfter(deadline: .now() + mountDelay) {
+            guard generation == sequenceGeneration else { return }
+            guard islandState.state == .expanded else { return }
+            guard !layoutStore.isExpandedContentExiting else { return }
+            expandedContentMounted = true
+            contentVisible = false
+            isContentRemoving = false
+            let revealDelay: DispatchTimeInterval = reduceMotion ? .milliseconds(0) : .milliseconds(20)
+            DispatchQueue.main.asyncAfter(deadline: .now() + revealDelay) {
+                guard generation == sequenceGeneration else { return }
+                guard islandState.state == .expanded else { return }
+                guard expandedContentMounted else { return }
+                guard !layoutStore.isExpandedContentExiting else { return }
+                contentVisible = true
+                isContentRemoving = false
+                contentPhase = .expandedContentVisible
+            }
+        }
+    }
+
+    private func beginContentExitSequence() {
+        sequenceGeneration += 1
+        renderedContentMode = .expanded
+        contentVisible = false
+        isContentRemoving = expandedContentMounted
+        contentPhase = .contentCollapsing
+    }
+
+    private func beginShellCollapseSequence() {
+        sequenceGeneration += 1
+        renderedContentMode = .expanded
+        contentVisible = false
+        isContentRemoving = expandedContentMounted
+        contentPhase = .shellCollapsing
+    }
+
+    private func finalizeCompactPresentation() {
+        renderedContentMode = .compact
+        expandedContentMounted = false
+        contentVisible = false
+        isContentRemoving = false
+        contentPhase = .compact
+    }
 }
 
 private struct BlurBounceModifier: ViewModifier {
@@ -199,30 +308,35 @@ private struct InnerBlurScaleCleanModifier: ViewModifier {
     private var scale: CGFloat {
         if reduceMotion { return 1.0 }
         if isVisible { return 1.0 }
-        return isRemoval ? 0.92 : 0.90
+        return isRemoval ? 0.97 : 0.955
     }
 
     private var blur: CGFloat {
         if reduceMotion { return 0 }
         if isVisible { return 0 }
-        return isRemoval ? 8 : 10
+        return isRemoval ? 6 : 8
+    }
+
+    private var opacity: Double {
+        if isVisible { return 1 }
+        return isRemoval ? 0 : 1
     }
 
     func body(content: Content) -> some View {
         content
             .blur(radius: blur)
             .scaleEffect(scale, anchor: .center)
-            .opacity(isVisible ? 1 : 0)
+            .opacity(opacity)
             .animation(animation, value: isVisible)
     }
 
     private var animation: Animation {
         if isVisible {
-            return .easeOut(duration: reduceMotion ? 0.22 : 0.38)
+            return .easeOut(duration: reduceMotion ? 0.10 : 0.22)
                 .delay(reduceMotion ? 0 : delay)
         }
 
-        return .easeIn(duration: reduceMotion ? 0.22 : 0.28)
+        return .easeIn(duration: reduceMotion ? 0.10 : 0.18)
             .delay(reduceMotion ? 0 : max(0, delay * 0.35))
     }
 }
@@ -238,7 +352,7 @@ static var blurBounce: AnyTransition {
                 anchor: .top
             ),
             identity: BlurBounceModifier(
-                blur: 50,
+                blur: 0,
                 scale: 1.0,
                 opacity: 1.0,
                 anchor: .top
@@ -246,7 +360,7 @@ static var blurBounce: AnyTransition {
         ),
         removal: .modifier(
             active: BlurBounceModifier(
-                blur: 0,
+                blur: 50,
                 scale: 0.16,
                 opacity: 1.0,
                 anchor: .top
@@ -336,30 +450,30 @@ struct IslandSurface<Content: View>: View {
         let shadowRadius = collapsedShadowRadius + ((expandedShadowRadius - collapsedShadowRadius) * visualProgress)
         let shadowY = collapsedShadowY + ((expandedShadowY - collapsedShadowY) * visualProgress)
 
-        content
-            .padding(.horizontal, usesExpandedContentPadding ? 0 : IslandShellLayout.collapsedHorizontalPadding)
-            .padding(.top, usesExpandedContentPadding ? 0 : IslandShellLayout.collapsedTopPadding)
-            .padding(.bottom, usesExpandedContentPadding ? 0 : IslandShellLayout.collapsedBottomPadding)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background {
-                ZStack {
-                    if shouldShowShoulderBlend {
-                        NotchShoulderBlend(isExpanded: isExpanded, shellColor: shellColor)
-                    }
-
-                    shellShape
-                        .fill(shellColor)
-                        .overlay {
-                            shellShape
-                                .stroke(Color.white.opacity(strokeOpacity), lineWidth: 1)
-                        }
-                        .shadow(
-                            color: .black.opacity(shadowOpacity),
-                            radius: shadowRadius,
-                            y: shadowY
-                        )
-                }
+        ZStack {
+            if shouldShowShoulderBlend {
+                NotchShoulderBlend(isExpanded: isExpanded, shellColor: shellColor)
             }
+
+            shellShape
+                .fill(shellColor)
+                .overlay {
+                    shellShape
+                        .stroke(Color.white.opacity(strokeOpacity), lineWidth: 1)
+                }
+                .shadow(
+                    color: .black.opacity(shadowOpacity),
+                    radius: shadowRadius,
+                    y: shadowY
+                )
+
+            content
+                .padding(.horizontal, usesExpandedContentPadding ? 0 : IslandShellLayout.collapsedHorizontalPadding)
+                .padding(.top, usesExpandedContentPadding ? 0 : IslandShellLayout.collapsedTopPadding)
+                .padding(.bottom, usesExpandedContentPadding ? 0 : IslandShellLayout.collapsedBottomPadding)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .clipShape(shellShape)
+        }
     }
 }
 
@@ -464,30 +578,30 @@ struct CompactIslandView: View {
 
 struct ExpandedIslandView: View {
     let modules: IslandModules
-    let isPresented: Bool
+    let contentVisible: Bool
+    let shouldRenderContent: Bool
+    let isContentRemoving: Bool
     let onShortcutLaunched: () -> Void
     let rendersExpandedVisualContent: Bool
     @ObservedObject private var navigation: IslandNavigationStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.isShellMorphing) private var isShellMorphing
     @Environment(\.isCollapseShellOnly) private var isCollapseShellOnly
 
-    @State private var showInnerContent = false
-    @State private var isRemovingInnerContent = false
-    @State private var showCollapseGhost = false
-    @State private var presentationGeneration: Int = 0
-    @State private var collapseGhostGeneration: Int = 0
     @State private var isAirDropTargeted = false
     @State private var isFilesTargeted = false
 
     init(
         modules: IslandModules,
-        isPresented: Bool,
+        contentVisible: Bool,
+        shouldRenderContent: Bool,
+        isContentRemoving: Bool,
         onShortcutLaunched: @escaping () -> Void,
         rendersExpandedVisualContent: Bool = true
     ) {
         self.modules = modules
-        self.isPresented = isPresented
+        self.contentVisible = contentVisible
+        self.shouldRenderContent = shouldRenderContent
+        self.isContentRemoving = isContentRemoving
         self.onShortcutLaunched = onShortcutLaunched
         self.rendersExpandedVisualContent = rendersExpandedVisualContent
         navigation = modules.navigation
@@ -498,21 +612,21 @@ struct ExpandedIslandView: View {
             let metrics = ExpandedIslandLayoutMetrics(containerSize: proxy.size)
 
             VStack(alignment: .leading, spacing: metrics.tabToPageSpacing) {
-                if rendersExpandedVisualContent && !isCollapseShellOnly {
-                    ExpandedIslandPageSwitcher(navigation: navigation)
-                        .frame(height: metrics.tabSwitcherHeight)
-                        .opacity(showInnerContent ? 1 : 0)
-                        .animation(
-                            .easeOut(duration: reduceMotion ? 0.10 : 0.20),
-                            value: showInnerContent
-                        )
+                ZStack(alignment: .leading) {
+                    if rendersExpandedVisualContent && shouldRenderContent && !isCollapseShellOnly {
+                        ExpandedIslandPageSwitcher(navigation: navigation)
+                            .innerBlurScaleClean(
+                                isVisible: contentVisible,
+                                isRemoval: isContentRemoving,
+                                index: 0,
+                                reduceMotion: reduceMotion
+                            )
+                    }
                 }
+                .frame(height: metrics.tabSwitcherHeight)
 
-                Group {
-                    if showCollapseGhost {
-                        CompactHandoffGhostView(modules: modules)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                    } else if !rendersExpandedVisualContent {
+                ZStack(alignment: .topLeading) {
+                    if !rendersExpandedVisualContent || !shouldRenderContent {
                         Color.clear
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
@@ -542,15 +656,6 @@ struct ExpandedIslandView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .onAppear {
-            updateInnerPresentation(isPresented)
-        }
-        .onChange(of: isPresented) { _, newValue in
-            updateInnerPresentation(newValue)
-        }
-        .onChange(of: isCollapseShellOnly) { _, newValue in
-            updateCollapseGhostPresentation(newValue)
-        }
     }
 
     private func islandPage(metrics: ExpandedIslandLayoutMetrics) -> some View {
@@ -564,21 +669,16 @@ struct ExpandedIslandView: View {
                 .frame(width: metrics.mediaColumnWidth, height: metrics.mediaMaxHeight, alignment: .topLeading)
                 .clipped()
                 .innerBlurScaleClean(
-                    isVisible: showInnerContent,
-                    isRemoval: isRemovingInnerContent,
-                    index: 0,
+                    isVisible: contentVisible,
+                    isRemoval: isContentRemoving,
+                    index: 1,
                     reduceMotion: reduceMotion
                 )
 
             Divider()
                 .frame(height: metrics.dividerHeight)
                 .overlay(.white.opacity(0.10))
-                .opacity(showInnerContent ? 1 : 0)
-                .animation(
-                    .easeOut(duration: reduceMotion ? 0.10 : 0.22)
-                        .delay(reduceMotion ? 0 : 0.075),
-                    value: showInnerContent
-                )
+                .opacity(contentVisible ? 1 : 0)
 
             ShortcutsModuleView(
                 shortcuts: modules.shortcuts,
@@ -587,9 +687,9 @@ struct ExpandedIslandView: View {
                 .frame(width: metrics.shortcutsColumnWidth, height: metrics.shortcutsMaxHeight, alignment: .topLeading)
                 .clipped()
                 .innerBlurScaleClean(
-                    isVisible: showInnerContent,
-                    isRemoval: isRemovingInnerContent,
-                    index: 1,
+                    isVisible: contentVisible,
+                    isRemoval: isContentRemoving,
+                    index: 2,
                     reduceMotion: reduceMotion
                 )
         }
@@ -609,9 +709,9 @@ struct ExpandedIslandView: View {
                     return true
                 }
                 .innerBlurScaleClean(
-                    isVisible: showInnerContent,
-                    isRemoval: isRemovingInnerContent,
-                    index: 0,
+                    isVisible: contentVisible,
+                    isRemoval: isContentRemoving,
+                    index: 1,
                     reduceMotion: reduceMotion
                 )
 
@@ -627,9 +727,9 @@ struct ExpandedIslandView: View {
                         return true
                     }
                     .innerBlurScaleClean(
-                        isVisible: showInnerContent,
-                        isRemoval: isRemovingInnerContent,
-                        index: 1,
+                        isVisible: contentVisible,
+                        isRemoval: isContentRemoving,
+                        index: 2,
                         reduceMotion: reduceMotion
                     )
             }
@@ -645,9 +745,9 @@ struct ExpandedIslandView: View {
             pageHeight: metrics.pageHeight
         )
             .innerBlurScaleClean(
-                isVisible: showInnerContent,
-                isRemoval: isRemovingInnerContent,
-                index: 0,
+                isVisible: contentVisible,
+                isRemoval: isContentRemoving,
+                index: 1,
                 reduceMotion: reduceMotion
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -656,9 +756,9 @@ struct ExpandedIslandView: View {
     private func statsPage(metrics: ExpandedIslandLayoutMetrics) -> some View {
         StatsPageView(stats: modules.stats, metrics: metrics)
             .innerBlurScaleClean(
-                isVisible: showInnerContent,
-                isRemoval: isRemovingInnerContent,
-                index: 0,
+                isVisible: contentVisible,
+                isRemoval: isContentRemoving,
+                index: 1,
                 reduceMotion: reduceMotion
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -767,16 +867,16 @@ struct ExpandedIslandView: View {
 
     private var pageTransition: AnyTransition {
         if reduceMotion {
-            return .opacity
+            return .identity
         }
 
         return .asymmetric(
             insertion: .modifier(
-                active: BlurBounceModifier(blur: 8, scale: 0.96, opacity: 0),
+                active: BlurBounceModifier(blur: 8, scale: 0.96, opacity: 1),
                 identity: BlurBounceModifier(blur: 0, scale: 1, opacity: 1)
             ),
             removal: .modifier(
-                active: BlurBounceModifier(blur: 6, scale: 0.97, opacity: 0),
+                active: BlurBounceModifier(blur: 6, scale: 0.97, opacity: 1),
                 identity: BlurBounceModifier(blur: 0, scale: 1, opacity: 1)
             )
         )
@@ -784,53 +884,6 @@ struct ExpandedIslandView: View {
 
     private var pageAnimation: Animation {
         reduceMotion ? .easeInOut(duration: 0.12) : .easeInOut(duration: 0.20)
-    }
-
-    private func updateInnerPresentation(_ presented: Bool) {
-        presentationGeneration += 1
-        let generation = presentationGeneration
-
-        if presented {
-            showCollapseGhost = false
-            isRemovingInnerContent = false
-            showInnerContent = false
-
-            let delay: DispatchTimeInterval = reduceMotion ? .milliseconds(0) : .milliseconds(170)
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                guard generation == presentationGeneration, isPresented else { return }
-                isRemovingInnerContent = false
-                showInnerContent = true
-            }
-        } else {
-            isRemovingInnerContent = rendersExpandedVisualContent
-            showInnerContent = false
-
-            let removalDelay: DispatchTimeInterval = reduceMotion ? .milliseconds(0) : .milliseconds(180)
-            DispatchQueue.main.asyncAfter(deadline: .now() + removalDelay) {
-                guard generation == presentationGeneration, !isPresented else { return }
-                isRemovingInnerContent = false
-            }
-        }
-    }
-
-    private func updateCollapseGhostPresentation(_ collapseShellOnly: Bool) {
-        collapseGhostGeneration += 1
-        let generation = collapseGhostGeneration
-
-        guard rendersExpandedVisualContent else {
-            showCollapseGhost = collapseShellOnly
-            return
-        }
-
-        if collapseShellOnly {
-            let delay: DispatchTimeInterval = reduceMotion ? .milliseconds(0) : .milliseconds(150)
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                guard generation == collapseGhostGeneration, isCollapseShellOnly else { return }
-                showCollapseGhost = true
-            }
-        } else {
-            showCollapseGhost = false
-        }
     }
 }
 

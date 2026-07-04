@@ -1912,3 +1912,113 @@ For every requested feature phase:
   - `swift build`
   - `swift test`
   - `Scripts/package_app.sh`
+
+### 2026-07-04 - Phase 6B.3 Remove Expansion Fade Perception
+
+- Found the remaining expansion-fade perception in direct opacity modifiers inside `IslandRootView.swift`, not in the shell itself:
+  - `InnerBlurScaleCleanModifier` was still driving hidden expanded content to `.opacity(0)`.
+  - The expanded tab switcher was still using `.opacity(showInnerContent ? 1 : 0)`.
+  - The Island-page divider was also fading from `0`.
+  - Page insertion transition still used insertion `opacity: 0`.
+- Kept the shell fully opaque:
+  - `IslandSurface` shell fill/stroke/shadow rendering was left unchanged.
+  - No shell opacity fade or shell blur was added.
+- Removed expansion opacity staging from inner reveal:
+  - `InnerBlurScaleCleanModifier` now keeps insertion opacity at `1` and uses blur/scale only for expansion staging.
+  - Collapse removal can still fade out to `0`, preserving the current collapse feel.
+- Removed expansion fade from the expanded top bar and page insertion:
+  - `ExpandedIslandPageSwitcher` no longer fades in from `0` during expansion; it only fades out during removal.
+  - The Island-page divider follows the same removal-only opacity behavior.
+  - Expanded page transition insertion now keeps `opacity: 1`, so initial expansion reads as blur/scale settling rather than a whole-page fade-in.
+- Preserved:
+  - Stable single-panel host architecture.
+  - Window-level click-through behavior from Phase 6B.2.
+  - One-surface morph path, shell no-fade rule, and all media/tray/timer/stats logic.
+- Changed files:
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+  - `pkill -9 DynamicIsland`
+  - `open dist/DynamicIsland.app`
+
+### 2026-07-04 - Phase 6B.4 Strict Shell/Content Sequencing
+
+- Added explicit shell/content sequencing state in `IslandRootView.swift`:
+  - Added local rendered-content sequencing state so the expanded visual tree no longer mounts directly from `islandState.state`.
+  - Expansion now immediately switches the rendered branch to expanded shell mode, keeps inner content unmounted, and delays visible expanded modules until the shell morph is mostly complete.
+  - Expansion reveal delay was increased to `310ms` by default, with a shorter Reduce Motion delay.
+- Prevented expanded modules from rendering during early shell expansion:
+  - `ExpandedIslandView` now receives explicit content-rendering inputs from `IslandRootView` instead of running its own ad-hoc on-appear timing.
+  - The tab switcher renders only after content is actually visible.
+  - Early expansion no longer mounts the expanded page content behind blur/opacity while the shell is still growing.
+- Added strict collapse sequencing through the controller:
+  - `OverlayWindowController.swift` now owns `requestCollapseWithSequencing()`.
+  - Mouse-leave collapse, timer collapse, Escape, shortcut launch collapse, and media launcher/source-open collapse now route through the same controller-owned sequenced collapse path.
+  - The controller sets a transient `isExpandedContentExiting` flag first, waits about `180ms`, and only then commits `islandState.collapse()` so content exits before the shell shrinks.
+- Clipped content to the shell shape without clipping the shell shadow:
+  - `IslandSurface` now renders shell fill/stroke/shadow separately from content.
+  - The content layer is clipped with the same shell shape, preventing modules from appearing outside the island during morphs.
+- Removed remaining expansion fade behavior from the active staging path:
+  - Expansion content is now unmounted until the delayed reveal point instead of being shown through early opacity staging.
+  - Reduce Motion page insertion no longer uses `.opacity`.
+- Disabled the compact handoff ghost from the active collapse path:
+  - `CompactHandoffGhostView` remains in the file, but the active collapse path no longer mounts it during the shell/content sequence.
+- Changed files:
+  - `Sources/DynamicIsland/Overlay/IslandLayoutStore.swift`
+  - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+  - `pkill -9 DynamicIsland`
+  - `open dist/DynamicIsland.app`
+
+### 2026-07-04 - Phase 6B.5 Stable Inner Content Staging
+
+- Fixed the mounted-and-visible same-frame bug in `IslandRootView.swift`:
+  - Expansion content no longer mounts and becomes visible in the same async block.
+  - Expansion now uses a two-step reveal:
+    - after the shell is mostly expanded, content mounts in its hidden blurred/scaled state
+    - on the next short delayed tick, `contentVisible` flips to `true`, which gives the inner reveal animation a real state transition to animate
+- Reduced expansion reveal latency:
+  - Expansion content delay was reduced from the prior longer delay to about `240ms`.
+  - A short follow-up reveal delay of about `20ms` is then used so the mounted content can animate into place instead of spawning already settled.
+- Stabilized the expanded layout during collapse:
+  - The tab switcher now sits inside a fixed-height reserved slot while `ExpandedIslandView` is mounted.
+  - The page content area also stays inside a stable `ZStack` frame.
+  - `contentVisible` now drives only visual state, not layout insertion/removal of those containers.
+  - This prevents the previous upward reflow/jump during collapse.
+- Tightened inner staging timing and motion:
+  - `InnerBlurScaleCleanModifier` now uses a lighter expansion hidden state and a tighter removal state:
+    - expansion hidden scale about `0.955`
+    - expansion hidden blur about `8`
+    - removal scale about `0.97`
+    - removal blur about `6`
+  - Stagger spacing was reduced by lowering the delay multiplier from `0.035` to `0.025`.
+  - Tab switcher now uses stagger index `0`, first content block `1`, second content block `2`.
+- Aligned controller collapse timing with the inner exit animation:
+  - `collapseContentExitDelay` in `OverlayWindowController.swift` was increased to about `205ms` so shell collapse starts just after inner removal finishes.
+- Removed remaining page-transition fade from the active expansion path:
+  - Page transition insertion remains opacity-free.
+  - Removal also no longer uses opacity fade in the page transition, so navigation/collapse page staging relies on blur/scale only in this path.
+- Preserved:
+  - Stable host panel architecture.
+  - Window-level click-through.
+  - One-surface shell morph.
+  - `IslandLayoutStore.updateLocal(...)`.
+  - Media/tray/timer/stats business logic and notch shoulder state.
+- Changed files:
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+  - `pkill -9 DynamicIsland`
+  - `open dist/DynamicIsland.app`

@@ -10,6 +10,7 @@ final class IslandLayoutStore: ObservableObject {
     @Published var hasHardwareNotch = true
     @Published var isShellMorphing = false
     @Published var isCollapseShellOnly = false
+    @Published var isExpandedContentExiting = false
     @Published var panelFrame: CGRect = .zero
 
     func update(canvas: IslandCanvasGeometry, hasHardwareNotch: Bool) {

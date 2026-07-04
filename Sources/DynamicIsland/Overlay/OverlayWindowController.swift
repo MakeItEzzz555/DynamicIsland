@@ -7,6 +7,7 @@ import SwiftUI
 final class OverlayWindowController {
     private let expandedHoverTolerance: CGFloat = 2
     private let collapsedHoverTolerance: CGFloat = 4
+    private let collapseContentExitDelay: DispatchTimeInterval = .milliseconds(205)
     private let settings: AppSettings
     private let islandState: IslandStateStore
     private let modules: IslandModules
@@ -22,6 +23,7 @@ final class OverlayWindowController {
     private var targetExpandedFrame: NSRect?
     private var visibilityGeneration: Int = 0
     private var morphGeneration: Int = 0
+    private var collapseSequenceGeneration: Int = 0
     private var expandedAt: CFTimeInterval = 0
     #if DEBUG
     private var lastCollapseDebugLogAt: CFTimeInterval = 0
@@ -61,6 +63,9 @@ final class OverlayWindowController {
             rendersExpandedVisualContent: true,
             onRequestExpand: { [weak self] in
                 self?.expandFromCollapsedPreparingGeometry()
+            },
+            onRequestCollapse: { [weak self] in
+                self?.requestCollapseWithSequencing()
             }
         )
         let hostingView = IslandHostingView(rootView: rootView)
@@ -83,6 +88,9 @@ final class OverlayWindowController {
                     let state = self.islandState.state
                     self.debugLog("state committed as \(state)")
                     self.debugLog("state changed to \(state)")
+                    if state == .expanded {
+                        self.layoutStore.isExpandedContentExiting = false
+                    }
                     self.beginVisualMorph(for: state)
                     if state == .expanded {
                         self.expandedAt = CACurrentMediaTime()
@@ -312,9 +320,8 @@ final class OverlayWindowController {
             guard event.keyCode == 53, self.islandState.state == .expanded else {
                 return event
             }
-            self.debugLog("Escape pressed while expanded; calling collapse")
-            self.stopMouseContainmentTimer()
-            self.islandState.collapse()
+            self.debugLog("Escape pressed while expanded; requesting sequenced collapse")
+            self.requestCollapseWithSequencing()
             return nil
         }
     }
@@ -353,18 +360,16 @@ final class OverlayWindowController {
         debugLog("collapse hover contains=\(containsMouse)")
 
         if source == "timer", isMouseFarBelowTop(mouseLocation) {
-            debugLog("timer hard test triggered; mouse is more than 350px below screen top; calling collapse")
-            stopMouseContainmentTimer()
+            debugLog("timer hard test triggered; mouse is more than 350px below screen top; requesting sequenced collapse")
             updateMousePassthrough(at: mouseLocation)
-            islandState.collapse()
+            requestCollapseWithSequencing()
             return
         }
 
         if !containsMouse {
-            debugLog("mouse outside padded hover rect; calling collapse")
-            stopMouseContainmentTimer()
+            debugLog("mouse outside padded hover rect; requesting sequenced collapse")
             updateMousePassthrough(at: mouseLocation)
-            islandState.collapse()
+            requestCollapseWithSequencing()
         }
     }
 
@@ -476,6 +481,9 @@ final class OverlayWindowController {
             guard generation == self.morphGeneration else { return }
             self.layoutStore.isShellMorphing = false
             self.layoutStore.isCollapseShellOnly = false
+            if state == .collapsed {
+                self.layoutStore.isExpandedContentExiting = false
+            }
             self.updateWindowVisibility()
         }
     }
@@ -505,6 +513,27 @@ final class OverlayWindowController {
         updateMousePassthrough()
 
         islandState.expand()
+    }
+
+    private func requestCollapseWithSequencing() {
+        guard islandState.state == .expanded else { return }
+        guard !layoutStore.isExpandedContentExiting else { return }
+
+        collapseSequenceGeneration += 1
+        let generation = collapseSequenceGeneration
+
+        debugLog("requestCollapseWithSequencing started generation=\(generation)")
+        stopMouseContainmentTimer()
+        layoutStore.isExpandedContentExiting = true
+        updateMousePassthrough()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + collapseContentExitDelay) { [weak self] in
+            guard let self else { return }
+            guard generation == self.collapseSequenceGeneration else { return }
+            guard self.islandState.state == .expanded else { return }
+            self.debugLog("requestCollapseWithSequencing committing collapse generation=\(generation)")
+            self.islandState.collapse()
+        }
     }
 
     private func currentInteractiveRegion() -> NSRect {
