@@ -5,23 +5,23 @@ import SwiftUI
 
 @MainActor
 final class OverlayWindowController {
+    private let expandedHoverTolerance: CGFloat = 2
+    private let collapsedHoverTolerance: CGFloat = 4
     private let settings: AppSettings
     private let islandState: IslandStateStore
     private let modules: IslandModules
     private let geometryService: NotchGeometryService
     private let layoutStore = IslandLayoutStore()
-    private let panel: IslandOverlayPanel
-    private let collapsedHitPanel: IslandOverlayPanel
-    private let expandedPanel: IslandOverlayPanel
+    private let islandPanel: IslandOverlayPanel
     private var cancellables: Set<AnyCancellable> = []
     private var mouseContainmentTimer: Timer?
-    private var localMouseDownMonitor: Any?
-    private var globalMouseDownMonitor: Any?
     private var localMouseMovedMonitor: Any?
     private var globalMouseMovedMonitor: Any?
     private var localKeyDownMonitor: Any?
     private var targetCollapsedFrame: NSRect?
     private var targetExpandedFrame: NSRect?
+    private var visibilityGeneration: Int = 0
+    private var morphGeneration: Int = 0
     private var expandedAt: CFTimeInterval = 0
     #if DEBUG
     private var lastCollapseDebugLogAt: CFTimeInterval = 0
@@ -45,34 +45,23 @@ final class OverlayWindowController {
         )
         #endif
 
-        panel = IslandOverlayPanel(
+        islandPanel = IslandOverlayPanel(
             contentRect: .zero,
             styleMask: [.borderless],
             backing: .buffered,
             defer: false
         )
-        collapsedHitPanel = IslandOverlayPanel(
-            contentRect: .zero,
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false
-        )
-        expandedPanel = IslandOverlayPanel(
-            contentRect: .zero,
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false
-        )
-        Self.configure(panel)
-        Self.configure(collapsedHitPanel)
-        Self.configure(expandedPanel)
-        panel.ignoresMouseEvents = true
+        Self.configure(islandPanel)
 
         let rootView = IslandRootView(
             settings: settings,
             islandState: islandState,
             layoutStore: layoutStore,
-            modules: modules
+            modules: modules,
+            rendersExpandedVisualContent: true,
+            onRequestExpand: { [weak self] in
+                self?.expandFromCollapsedPreparingGeometry()
+            }
         )
         let hostingView = IslandHostingView(rootView: rootView)
         hostingView.autoresizingMask = [.width, .height]
@@ -81,47 +70,11 @@ final class OverlayWindowController {
         hostingView.onMouseExited = { [weak self] in
             self?.collapseIfExpandedMouseOutsideAfterGrace()
         }
-        panel.contentView = hostingView
+        hostingView.interactiveRegionProvider = { [weak self] in
+            self?.currentInteractiveRegion() ?? .zero
+        }
+        islandPanel.contentView = hostingView
         self.hostingView = hostingView
-
-        let collapsedHitView = CollapsedHitView()
-        collapsedHitView.onMouseDown = { [weak islandState] in
-            guard islandState?.state == .collapsed else { return }
-            islandState?.toggleExpanded()
-        }
-        collapsedHitView.onFileDragEntered = { [weak islandState, weak navigation = modules.navigation] in
-            guard islandState?.state == .collapsed else { return }
-            navigation?.showTrayForFileDrag()
-            islandState?.expand()
-        }
-        collapsedHitView.onFileDragExited = { [weak islandState, weak navigation = modules.navigation] in
-            // If entering the collapsed pill expanded the island, AppKit can send a synthetic
-            // exit/end to the collapsed drag view as it is ordered out. Do not clear the Tray
-            // highlight in that handoff; the expanded SwiftUI drop destination now owns the
-            // target state until the drag leaves, drops, or cancels.
-            guard islandState?.state == .collapsed else { return }
-            navigation?.setFileDropTargeted(false)
-        }
-        collapsedHitView.onFileDrop = { [weak fileShelf = modules.fileShelf, weak navigation = modules.navigation] urls in
-            fileShelf?.add(urls)
-            navigation?.setFileDropTargeted(false)
-        }
-        collapsedHitPanel.contentView = collapsedHitView
-
-        let expandedHostingView = IslandHostingView(
-            rootView: ExpandedIslandPanelView(
-                modules: modules,
-                islandState: islandState,
-                layoutStore: layoutStore
-            )
-        )
-        expandedHostingView.autoresizingMask = [.width, .height]
-        expandedHostingView.wantsLayer = true
-        expandedHostingView.layer?.backgroundColor = NSColor.clear.cgColor
-        expandedHostingView.onMouseExited = { [weak self] in
-            self?.collapseIfExpandedMouseOutsideAfterGrace()
-        }
-        expandedPanel.contentView = expandedHostingView
 
         islandState.$state
             .sink { [weak self] _ in
@@ -130,6 +83,7 @@ final class OverlayWindowController {
                     let state = self.islandState.state
                     self.debugLog("state committed as \(state)")
                     self.debugLog("state changed to \(state)")
+                    self.beginVisualMorph(for: state)
                     if state == .expanded {
                         self.expandedAt = CACurrentMediaTime()
                         self.debugLog("expandedAt set to \(self.expandedAt)")
@@ -137,7 +91,6 @@ final class OverlayWindowController {
                     } else {
                         self.stopMouseContainmentTimer()
                     }
-                    self.reposition(animated: true)
                     self.updateWindowVisibility()
                 }
             }
@@ -194,9 +147,8 @@ final class OverlayWindowController {
         if visible {
             show()
         } else {
-            panel.orderOut(nil)
-            collapsedHitPanel.orderOut(nil)
-            expandedPanel.orderOut(nil)
+            islandPanel.ignoresMouseEvents = true
+            islandPanel.orderOut(nil)
         }
         if !visible {
             stopMouseContainmentTimer()
@@ -209,14 +161,18 @@ final class OverlayWindowController {
             expandedSize: settings.expandedSize,
             collapsedMediaActive: modules.media.hasActiveMediaSource
         )
-        layoutStore.update(canvas: geometry.canvas, hasHardwareNotch: geometry.hasHardwareNotch)
         targetCollapsedFrame = geometry.collapsedFrame
         targetExpandedFrame = geometry.expandedFrame
-        applyFrame(geometry.canvas.frame, to: panel)
-        applyFrame(geometry.collapsedFrame, to: collapsedHitPanel)
-        applyFrame(geometry.expandedFrame, to: expandedPanel)
+        updateLayoutWithoutAnimation(
+            panelFrame: geometry.expandedFrame,
+            collapsedFrame: geometry.collapsedFrame,
+            expandedFrame: geometry.expandedFrame,
+            hasHardwareNotch: geometry.hasHardwareNotch
+        )
+        applyFrame(geometry.expandedFrame, to: islandPanel)
         hostingView?.needsLayout = true
         updateWindowVisibility()
+        updateMousePassthrough()
 
         updateMouseContainmentTimer()
 
@@ -228,17 +184,18 @@ final class OverlayWindowController {
                 collapsedMediaActive: self.modules.media.hasActiveMediaSource
             )
             if !animated {
-                self.layoutStore.update(
-                    canvas: correctedGeometry.canvas,
-                    hasHardwareNotch: correctedGeometry.hasHardwareNotch
-                )
                 self.targetCollapsedFrame = correctedGeometry.collapsedFrame
                 self.targetExpandedFrame = correctedGeometry.expandedFrame
-                self.applyFrame(correctedGeometry.canvas.frame, to: self.panel)
-                self.applyFrame(correctedGeometry.collapsedFrame, to: self.collapsedHitPanel)
-                self.applyFrame(correctedGeometry.expandedFrame, to: self.expandedPanel)
+                self.updateLayoutWithoutAnimation(
+                    panelFrame: correctedGeometry.expandedFrame,
+                    collapsedFrame: correctedGeometry.collapsedFrame,
+                    expandedFrame: correctedGeometry.expandedFrame,
+                    hasHardwareNotch: correctedGeometry.hasHardwareNotch
+                )
+                self.applyFrame(correctedGeometry.expandedFrame, to: self.islandPanel)
                 self.hostingView?.needsLayout = true
                 self.updateWindowVisibility()
+                self.updateMousePassthrough()
             }
         }
     }
@@ -265,25 +222,37 @@ final class OverlayWindowController {
         panel.contentView?.frame = NSRect(origin: .zero, size: frame.size)
     }
 
-    private func updateWindowVisibility() {
-        panel.ignoresMouseEvents = true
+    private func updateLayoutWithoutAnimation(
+        panelFrame: NSRect,
+        collapsedFrame: NSRect,
+        expandedFrame: NSRect,
+        hasHardwareNotch: Bool
+    ) {
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
 
-        switch islandState.state {
-        case .collapsed:
-            debugLog("updateWindowVisibility received collapsed")
-            expandedPanel.orderOut(nil)
-            collapsedHitPanel.ignoresMouseEvents = false
-            collapsedHitPanel.orderFrontRegardless()
-            panel.orderFrontRegardless()
-            collapsedHitPanel.orderFrontRegardless()
-            stopMouseContainmentTimer()
-        case .expanded:
-            collapsedHitPanel.orderOut(nil)
-            panel.orderOut(nil)
-            expandedPanel.ignoresMouseEvents = false
-            expandedPanel.makeKeyAndOrderFront(nil)
-            startMouseContainmentTimer()
+        withTransaction(transaction) {
+            layoutStore.updateLocal(
+                panelFrame: panelFrame,
+                collapsedScreenFrame: collapsedFrame,
+                expandedScreenFrame: expandedFrame,
+                hasHardwareNotch: hasHardwareNotch
+            )
         }
+    }
+
+    private func updateWindowVisibility() {
+        visibilityGeneration += 1
+
+        if islandState.state == .expanded {
+            islandPanel.makeKeyAndOrderFront(nil)
+            startMouseContainmentTimer()
+        } else {
+            debugLog("updateWindowVisibility received collapsed")
+            islandPanel.orderFrontRegardless()
+            stopMouseContainmentTimer()
+        }
+        updateMousePassthrough()
     }
 
     private func updateMouseContainmentTimer() {
@@ -304,6 +273,7 @@ final class OverlayWindowController {
         let timer = Timer(timeInterval: 0.06, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.debugLog("timer fired state=\(self?.islandState.state.rawValue ?? "nil") mouse=\(String(describing: self?.currentMouseScreenLocation()))")
+                self?.updateMousePassthrough()
                 self?.collapseIfExpandedMouseOutsideAfterGrace(source: "timer")
             }
         }
@@ -320,20 +290,10 @@ final class OverlayWindowController {
     }
 
     private func installMouseDownMonitors() {
-        localMouseDownMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] event in
-            guard let self else { return event }
-            return self.expandIfCollapsedClick(at: NSEvent.mouseLocation) ? nil : event
-        }
-
-        globalMouseDownMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] _ in
-            Task { @MainActor in
-                _ = self?.expandIfCollapsedClick(at: NSEvent.mouseLocation)
-            }
-        }
-
         localMouseMovedMonitor = NSEvent.addLocalMonitorForEvents(
             matching: [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged]
         ) { [weak self] event in
+            self?.updateMousePassthrough()
             self?.collapseIfExpandedMouseOutsideAfterGrace(source: "localMouseMonitor")
             return event
         }
@@ -342,6 +302,7 @@ final class OverlayWindowController {
             matching: [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged]
         ) { [weak self] _ in
             Task { @MainActor in
+                self?.updateMousePassthrough()
                 self?.collapseIfExpandedMouseOutsideAfterGrace(source: "globalMouseMonitor")
             }
         }
@@ -356,16 +317,6 @@ final class OverlayWindowController {
             self.islandState.collapse()
             return nil
         }
-    }
-
-    private func expandIfCollapsedClick(at screenPoint: NSPoint) -> Bool {
-        guard islandState.state == .collapsed,
-              let targetCollapsedFrame,
-              targetCollapsedFrame.insetBy(dx: -4, dy: -4).contains(screenPoint) else {
-            return false
-        }
-        islandState.toggleExpanded()
-        return true
     }
 
     private func currentMouseScreenLocation() -> NSPoint {
@@ -386,8 +337,11 @@ final class OverlayWindowController {
         debugLog("collapse check grace passed elapsed=\(elapsedSinceExpansion)")
 
         let mouseLocation = currentMouseScreenLocation()
-        let canonicalFrame = targetExpandedFrame ?? expandedPanel.frame
-        let paddedExpandedFrame = canonicalFrame.insetBy(dx: -10, dy: -10)
+        let canonicalFrame = visibleExpandedShellScreenFrame()
+        let paddedExpandedFrame = canonicalFrame.insetBy(
+            dx: -expandedHoverTolerance,
+            dy: -expandedHoverTolerance
+        )
         let containsMouse = paddedExpandedFrame.contains(mouseLocation)
         logCollapseBoundaryCheck(
             source: source,
@@ -401,6 +355,7 @@ final class OverlayWindowController {
         if source == "timer", isMouseFarBelowTop(mouseLocation) {
             debugLog("timer hard test triggered; mouse is more than 350px below screen top; calling collapse")
             stopMouseContainmentTimer()
+            updateMousePassthrough(at: mouseLocation)
             islandState.collapse()
             return
         }
@@ -408,13 +363,60 @@ final class OverlayWindowController {
         if !containsMouse {
             debugLog("mouse outside padded hover rect; calling collapse")
             stopMouseContainmentTimer()
+            updateMousePassthrough(at: mouseLocation)
             islandState.collapse()
         }
     }
 
     private func isMouseFarBelowTop(_ mouseLocation: NSPoint) -> Bool {
-        let screenTop = targetExpandedFrame?.maxY ?? expandedPanel.frame.maxY
+        let screenTop = visibleExpandedShellScreenFrame().maxY
         return screenTop - mouseLocation.y > 350
+    }
+
+    private func visibleExpandedShellScreenFrame() -> NSRect {
+        let visibleFrame = screenRect(for: layoutStore.expandedSurfaceFrame)
+        return visibleFrame.isEmpty ? (targetExpandedFrame ?? islandPanel.frame) : visibleFrame
+    }
+
+    private func screenRect(for localRect: CGRect) -> NSRect {
+        guard !localRect.isEmpty else { return .zero }
+        return NSRect(
+            x: islandPanel.frame.minX + localRect.minX,
+            y: islandPanel.frame.minY + localRect.minY,
+            width: localRect.width,
+            height: localRect.height
+        ).integral
+    }
+
+    private var currentVisibleIslandScreenRect: NSRect {
+        let localRect: CGRect
+        let tolerance: CGFloat
+
+        if islandState.state == .expanded || layoutStore.isCollapseShellOnly {
+            localRect = layoutStore.expandedSurfaceFrame
+            tolerance = expandedHoverTolerance
+        } else {
+            localRect = layoutStore.collapsedSurfaceFrame
+            tolerance = collapsedHoverTolerance
+        }
+
+        let visibleRect = screenRect(for: localRect)
+        guard !visibleRect.isEmpty else { return .zero }
+        return visibleRect.insetBy(dx: -tolerance, dy: -tolerance)
+    }
+
+    private func updateMousePassthrough(at screenPoint: NSPoint = NSEvent.mouseLocation) {
+        guard settings.overlayEnabled else {
+            islandPanel.ignoresMouseEvents = true
+            return
+        }
+
+        // Window-level passthrough is the primary click-through control. Returning nil from the
+        // hosting view hit-test is kept only as a secondary safeguard because the NSPanel itself
+        // can still block clicks for other apps when its frame covers the screen.
+        let interactiveRect = currentVisibleIslandScreenRect
+        let shouldReceiveMouse = !interactiveRect.isEmpty && interactiveRect.contains(screenPoint)
+        islandPanel.ignoresMouseEvents = !shouldReceiveMouse
     }
 
     private func logCollapseBoundaryCheck(
@@ -435,8 +437,9 @@ final class OverlayWindowController {
             "source=\(source)",
             "state=\(islandState.state)",
             "mouseLocation=\(mouseLocation)",
-            "expandedPanel.frame=\(expandedPanel.frame)",
+            "islandPanel.frame=\(islandPanel.frame)",
             "targetExpandedFrame=\(String(describing: targetExpandedFrame))",
+            "expandedHoverTolerance=\(expandedHoverTolerance)",
             "canonicalFrame=\(canonicalFrame)",
             "paddedFrame=\(paddedFrame)",
             "contains=\(containsMouse)"
@@ -460,6 +463,65 @@ final class OverlayWindowController {
         }
         #endif
     }
+
+    private func beginVisualMorph(for state: IslandPresentationState) {
+        morphGeneration += 1
+        let generation = morphGeneration
+        layoutStore.isShellMorphing = true
+        layoutStore.isCollapseShellOnly = (state == .collapsed)
+
+        let clearDelay: DispatchTimeInterval = .milliseconds(state == .collapsed ? 340 : 380)
+        DispatchQueue.main.asyncAfter(deadline: .now() + clearDelay) { [weak self] in
+            guard let self else { return }
+            guard generation == self.morphGeneration else { return }
+            self.layoutStore.isShellMorphing = false
+            self.layoutStore.isCollapseShellOnly = false
+            self.updateWindowVisibility()
+        }
+    }
+
+    private func expandFromCollapsedPreparingGeometry() {
+        guard islandState.state == .collapsed else { return }
+
+        let geometry = geometryService.geometry(
+            collapsedSize: settings.collapsedSize,
+            expandedSize: settings.expandedSize,
+            collapsedMediaActive: modules.media.hasActiveMediaSource
+        )
+
+        targetCollapsedFrame = geometry.collapsedFrame
+        targetExpandedFrame = geometry.expandedFrame
+
+        updateLayoutWithoutAnimation(
+            panelFrame: geometry.expandedFrame,
+            collapsedFrame: geometry.collapsedFrame,
+            expandedFrame: geometry.expandedFrame,
+            hasHardwareNotch: geometry.hasHardwareNotch
+        )
+
+        applyFrame(geometry.expandedFrame, to: islandPanel)
+        islandPanel.orderFrontRegardless()
+        hostingView?.needsLayout = true
+        updateMousePassthrough()
+
+        islandState.expand()
+    }
+
+    private func currentInteractiveRegion() -> NSRect {
+        let baseRegion: NSRect
+        let tolerance: CGFloat
+
+        if islandState.state == .expanded || layoutStore.isCollapseShellOnly {
+            baseRegion = layoutStore.expandedSurfaceFrame.integral
+            tolerance = 2
+        } else {
+            baseRegion = layoutStore.collapsedSurfaceFrame.integral
+            tolerance = 4
+        }
+
+        guard !baseRegion.isEmpty else { return .zero }
+        return baseRegion.insetBy(dx: -tolerance, dy: -tolerance)
+    }
 }
 
 private final class IslandOverlayPanel: NSPanel {
@@ -474,6 +536,7 @@ private final class IslandOverlayPanel: NSPanel {
 
 private final class IslandHostingView<Content: View>: NSHostingView<Content> {
     var onMouseExited: (() -> Void)?
+    var interactiveRegionProvider: (() -> NSRect)?
     private var trackingAreaReference: NSTrackingArea?
 
     override var intrinsicContentSize: NSSize {
@@ -500,146 +563,17 @@ private final class IslandHostingView<Content: View>: NSHostingView<Content> {
         super.mouseExited(with: event)
     }
 
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
-        true
-    }
-}
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        if let interactiveRegion = interactiveRegionProvider?(),
+           !interactiveRegion.isEmpty,
+           !interactiveRegion.contains(point) {
+            return nil
+        }
 
-private final class CollapsedHitView: NSView {
-    var onMouseDown: (() -> Void)?
-    var onFileDragEntered: (() -> Void)?
-    var onFileDragExited: (() -> Void)?
-    var onFileDrop: (([URL]) -> Void)?
-
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        registerForDraggedTypes(Self.supportedDragTypes)
-    }
-
-    required init?(coder: NSCoder) {
-        super.init(coder: coder)
-        registerForDraggedTypes(Self.supportedDragTypes)
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        onMouseDown?()
+        return super.hitTest(point)
     }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
         true
-    }
-
-    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        guard hasFileURLs(sender.draggingPasteboard) else { return [] }
-        onFileDragEntered?()
-        return .copy
-    }
-
-    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-        hasFileURLs(sender.draggingPasteboard) ? .copy : []
-    }
-
-    override func draggingExited(_ sender: NSDraggingInfo?) {
-        onFileDragExited?()
-    }
-
-    override func draggingEnded(_ sender: NSDraggingInfo) {
-        onFileDragExited?()
-    }
-
-    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        let urls = fileURLs(from: sender.draggingPasteboard)
-        guard !urls.isEmpty else {
-            onFileDragExited?()
-            return false
-        }
-        onFileDrop?(urls)
-        return true
-    }
-
-    private func hasFileURLs(_ pasteboard: NSPasteboard) -> Bool {
-        !fileURLs(from: pasteboard).isEmpty
-    }
-
-    private func fileURLs(from pasteboard: NSPasteboard) -> [URL] {
-        if let urls = pasteboard.readObjects(
-            forClasses: [NSURL.self],
-            options: [.urlReadingFileURLsOnly: true]
-        ) as? [URL], !urls.isEmpty {
-            return urls
-        }
-
-        let filenamesType = NSPasteboard.PasteboardType("NSFilenamesPboardType")
-        guard let filenames = pasteboard.propertyList(forType: filenamesType) as? [String] else {
-            return []
-        }
-        return filenames.map(URL.init(fileURLWithPath:))
-    }
-
-    private static let supportedDragTypes: [NSPasteboard.PasteboardType] = [
-        .fileURL,
-        NSPasteboard.PasteboardType("NSFilenamesPboardType")
-    ]
-}
-
-private struct ExpandedIslandPanelView: View {
-    let modules: IslandModules
-    @ObservedObject var islandState: IslandStateStore
-    @ObservedObject var layoutStore: IslandLayoutStore
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    @State private var shellVisible = false
-    @State private var shellGeneration = 0
-
-    var body: some View {
-        IslandSurface(isExpanded: true) {
-            ExpandedIslandView(
-                modules: modules,
-                isPresented: islandState.state == .expanded,
-                onShortcutLaunched: { islandState.collapse() }
-            )
-        }
-        .notchIntegrated(layoutStore.hasHardwareNotch)
-        .scaleEffect(shellVisible ? 1.0 : 0.72, anchor: .top)
-        .blur(radius: shellVisible ? 0 : 12)
-        .opacity(shellVisible ? 1 : 0)
-        .animation(shellAnimation, value: shellVisible)
-        .onAppear {
-            updateShellPresentation(islandState.state == .expanded)
-        }
-        .onChange(of: islandState.state) { _, newState in
-            updateShellPresentation(newState == .expanded)
-        }
-    }
-
-    private var shellAnimation: Animation {
-        if reduceMotion {
-            return .easeInOut(duration: 0.18)
-        }
-
-        return .spring(
-            response: 0.72,
-            dampingFraction: 0.58,
-            blendDuration: 0.08
-        )
-    }
-
-    private func updateShellPresentation(_ presented: Bool) {
-        shellGeneration += 1
-        let generation = shellGeneration
-
-        if presented {
-            shellVisible = false
-
-            DispatchQueue.main.async {
-                guard generation == shellGeneration, islandState.state == .expanded else {
-                    return
-                }
-
-                shellVisible = true
-            }
-        } else {
-            shellVisible = false
-        }
     }
 }

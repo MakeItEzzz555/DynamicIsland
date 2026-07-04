@@ -1,36 +1,122 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+private let collapseHandoffDebug = false
+private let disableCollapsedArtworkDuringHandoff = false
+private let disableCollapsedVisualizerDuringHandoff = false
+
+private enum IslandShellLayout {
+    static let collapsedHorizontalPadding: CGFloat = 8
+    static let collapsedTopPadding: CGFloat = 0
+    static let collapsedBottomPadding: CGFloat = 6
+
+    static let expandedHorizontalPadding: CGFloat = 22
+    static let expandedTopPadding: CGFloat = 14
+    static let expandedBottomPadding: CGFloat = 20
+}
+
+private struct ExpandedIslandLayoutMetrics {
+    let containerSize: CGSize
+
+    let horizontalPadding: CGFloat = IslandShellLayout.expandedHorizontalPadding
+    let topPadding: CGFloat = IslandShellLayout.expandedTopPadding
+    let bottomPadding: CGFloat = IslandShellLayout.expandedBottomPadding
+    let tabSwitcherHeight: CGFloat = 34
+    let tabToPageSpacing: CGFloat = 10
+    let pageColumnSpacing: CGFloat = 10
+    let cardSpacing: CGFloat = 10
+
+    var innerWidth: CGFloat { max(containerSize.width - (horizontalPadding * 2), 0) }
+    var innerHeight: CGFloat { max(containerSize.height - topPadding - bottomPadding, 0) }
+    var pageHeight: CGFloat { max(innerHeight - tabSwitcherHeight - tabToPageSpacing, 0) }
+
+    var mediaColumnWidth: CGFloat { min(max(innerWidth * 0.52, 228), 272) }
+    var shortcutsColumnWidth: CGFloat { min(max(innerWidth * 0.28, 150), 176) }
+    var dividerHeight: CGFloat { min(max(pageHeight - 10, 100), pageHeight) }
+    var trayAirDropWidth: CGFloat { min(max(innerWidth * 0.29, 150), 188) }
+    var timerHeaderHeight: CGFloat { 24 }
+    var timerControlsHeight: CGFloat { pageHeight < 150 ? 24 : 28 }
+    var timerVerticalSpacingTotal: CGFloat { pageHeight < 150 ? 18 : 20 }
+    var timerReservedHeight: CGFloat { timerHeaderHeight + timerControlsHeight + timerVerticalSpacingTotal }
+    var timerRingSize: CGFloat { min(max(pageHeight - timerReservedHeight, 86), 118) }
+    var mediaMaxHeight: CGFloat { pageHeight }
+    var shortcutsMaxHeight: CGFloat { pageHeight }
+    var statsCardWidth: CGFloat { max((innerWidth - (cardSpacing * 2)) / 3, 0) }
+    var statsCardHeight: CGFloat { min(max((pageHeight - cardSpacing) / 2, 64), 74) }
+}
+
 struct IslandRootView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var islandState: IslandStateStore
     @ObservedObject var layoutStore: IslandLayoutStore
     let modules: IslandModules
+    let rendersExpandedVisualContent: Bool
+    let onRequestExpand: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var isExpanded: Bool {
         islandState.state == .expanded
     }
 
+    private var showsExpandedContent: Bool {
+        isExpanded || layoutStore.isCollapseShellOnly
+    }
+
+    private var shellAnimation: Animation {
+        if reduceMotion {
+            return .easeInOut(duration: 0.24)
+        }
+        return .smooth(duration: 0.40)
+    }
+
+    private var shellMorphProgress: CGFloat {
+        let collapsedHeight = max(layoutStore.collapsedSize.height, 1)
+        let expandedHeight = max(layoutStore.expandedSize.height, collapsedHeight + 1)
+        let progress = (surfaceFrame.height - collapsedHeight) / (expandedHeight - collapsedHeight)
+        return min(max(progress, 0), 1)
+    }
+
+    private var shellBottomRadius: CGFloat {
+        let collapsedRadius: CGFloat = 22
+        let expandedRadius: CGFloat = 36
+        let interpolated = collapsedRadius + ((expandedRadius - collapsedRadius) * shellMorphProgress)
+        return min(interpolated, surfaceFrame.height / 2)
+    }
+
+    private var shellVisualProgress: CGFloat {
+        shellMorphProgress
+    }
+
     var body: some View {
         ZStack(alignment: .topLeading) {
-            IslandSurface(isExpanded: isExpanded) {
-                if isExpanded {
+            IslandSurface(
+                isExpanded: isExpanded,
+                bottomRadius: shellBottomRadius,
+                visualProgress: shellVisualProgress
+            ) {
+                if showsExpandedContent {
                     ExpandedIslandView(
                         modules: modules,
                         isPresented: isExpanded,
-                        onShortcutLaunched: { islandState.collapse() }
+                        onShortcutLaunched: { islandState.collapse() },
+                        rendersExpandedVisualContent: rendersExpandedVisualContent
                     )
-                        .transition(.blurBounce)
                 } else {
                     CompactIslandView(modules: modules)
-                        .transition(.blurBounce)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            onRequestExpand()
+                        }
                 }
             }
             .notchIntegrated(layoutStore.hasHardwareNotch)
+            .shellMorphing(layoutStore.isShellMorphing)
+            .collapseShellOnly(layoutStore.isCollapseShellOnly)
             .frame(width: surfaceSize.width, height: surfaceSize.height)
             .position(x: surfaceFrame.midX, y: layoutStore.canvasSize.height - surfaceFrame.midY)
         }
+        .shellMorphing(layoutStore.isShellMorphing)
+        .collapseShellOnly(layoutStore.isCollapseShellOnly)
         .frame(width: layoutStore.canvasSize.width, height: layoutStore.canvasSize.height, alignment: .topLeading)
         .onDrop(of: [.fileURL], isTargeted: fileDropTargetBinding) { providers in
             loadDroppedFiles(from: providers)
@@ -38,9 +124,8 @@ struct IslandRootView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("DynamicIsland")
-        .animation(contentAnimation, value: islandState.state)
-        .animation(contentAnimation, value: layoutStore.collapsedSize)
-        .animation(contentAnimation, value: layoutStore.collapsedSurfaceFrame)
+        .animation(shellAnimation, value: islandState.state)
+        .animation(shellAnimation, value: layoutStore.isShellMorphing)
     }
 
     private var surfaceSize: CGSize {
@@ -51,20 +136,17 @@ struct IslandRootView: View {
         isExpanded ? layoutStore.expandedSurfaceFrame : layoutStore.collapsedSurfaceFrame
     }
 
-    /// Keep the main tray/container elastic. This is intentionally separate from
-    /// the inner module animation below.
-    private var contentAnimation: Animation {
-        if reduceMotion {
-            .easeInOut(duration: 0.75)
-        } else {
-            .spring(response: 0.58, dampingFraction: 0.76, blendDuration: 0.25)
-        }
-    }
-
     private var fileDropTargetBinding: Binding<Bool> {
         Binding(
             get: { modules.navigation.isFileDropTargeted },
-            set: { modules.navigation.setFileDropTargeted($0) }
+            set: { isTargeted in
+                if isTargeted {
+                    modules.navigation.showTrayForFileDrag()
+                    onRequestExpand()
+                } else {
+                    modules.navigation.setFileDropTargeted(false)
+                }
+            }
         )
     }
 
@@ -96,11 +178,12 @@ private struct BlurBounceModifier: ViewModifier {
     let blur: CGFloat
     let scale: CGFloat
     let opacity: Double
+    var anchor: UnitPoint = .top
 
     func body(content: Content) -> some View {
         content
             .blur(radius: blur)
-            .scaleEffect(scale)
+            .scaleEffect(scale, anchor: anchor)
             .opacity(opacity)
     }
 }
@@ -116,13 +199,13 @@ private struct InnerBlurScaleCleanModifier: ViewModifier {
     private var scale: CGFloat {
         if reduceMotion { return 1.0 }
         if isVisible { return 1.0 }
-        return isRemoval ? 0.86 : 0.74
+        return isRemoval ? 0.92 : 0.90
     }
 
     private var blur: CGFloat {
         if reduceMotion { return 0 }
         if isVisible { return 0 }
-        return isRemoval ? 10 : 16
+        return isRemoval ? 8 : 10
     }
 
     func body(content: Content) -> some View {
@@ -135,41 +218,81 @@ private struct InnerBlurScaleCleanModifier: ViewModifier {
 
     private var animation: Animation {
         if isVisible {
-            return .easeOut(duration: reduceMotion ? 0.25 : 0.5)
+            return .easeOut(duration: reduceMotion ? 0.22 : 0.38)
                 .delay(reduceMotion ? 0 : delay)
         }
 
-        return .easeIn(duration: reduceMotion ? 0.25 : 0.5)
+        return .easeIn(duration: reduceMotion ? 0.22 : 0.28)
             .delay(reduceMotion ? 0 : max(0, delay * 0.35))
     }
 }
 
 private extension AnyTransition {
-    static var blurBounce: AnyTransition {
-        .asymmetric(
-            insertion: .modifier(
-                active: BlurBounceModifier(blur: 100, scale: 0.1, opacity: 0.0),
-                identity: BlurBounceModifier(blur: 0, scale: 1.0, opacity: 1.0)
+static var blurBounce: AnyTransition {
+    .asymmetric(
+        insertion: .modifier(
+            active: BlurBounceModifier(
+                blur: 50,
+                scale: 0.18,
+                opacity: 1.0,
+                anchor: .top
             ),
-            removal: .modifier(
-                active: BlurBounceModifier(blur: 100, scale: 0.1, opacity: 0.0),
-                identity: BlurBounceModifier(blur: 0, scale: 1.0, opacity: 1.0)
+            identity: BlurBounceModifier(
+                blur: 50,
+                scale: 1.0,
+                opacity: 1.0,
+                anchor: .top
+            )
+        ),
+        removal: .modifier(
+            active: BlurBounceModifier(
+                blur: 0,
+                scale: 0.16,
+                opacity: 1.0,
+                anchor: .top
+            ),
+            identity: BlurBounceModifier(
+                blur: 0,
+                scale: 1.0,
+                opacity: 1.0,
+                anchor: .top
             )
         )
-    }
+    )
+}
 
     static var compactMediaContent: AnyTransition {
-        .asymmetric(
-            insertion: .modifier(
-                active: BlurBounceModifier(blur: 10, scale: 0.72, opacity: 0.0),
-                identity: BlurBounceModifier(blur: 0, scale: 1.0, opacity: 1.0)
+    .asymmetric(
+        insertion: .modifier(
+            active: BlurBounceModifier(
+                blur: 50,
+                scale: 0.10,
+                opacity: 1.0,
+                anchor: .top
             ),
-            removal: .modifier(
-                active: BlurBounceModifier(blur: 8, scale: 0.82, opacity: 0.0),
-                identity: BlurBounceModifier(blur: 0, scale: 1.0, opacity: 1.0)
+            identity: BlurBounceModifier(
+                blur: 0,
+                scale: 1.0,
+                opacity: 1.0,
+                anchor: .top
+            )
+        ),
+        removal: .modifier(
+            active: BlurBounceModifier(
+                blur: 50,
+                scale: 0.10,
+                opacity: 1.0,
+                anchor: .top
+            ),
+            identity: BlurBounceModifier(
+                blur: 0,
+                scale: 1.0,
+                opacity: 1.0,
+                anchor: .top
             )
         )
-    }
+    )
+}
 }
 
 private extension View {
@@ -192,24 +315,31 @@ private extension View {
 
 struct IslandSurface<Content: View>: View {
     let isExpanded: Bool
+    let bottomRadius: CGFloat
+    let visualProgress: CGFloat
     @ViewBuilder var content: Content
     @Environment(\.isNotchIntegratedShell) private var isNotchIntegratedShell
+    @Environment(\.isShellMorphing) private var isShellMorphing
+    @Environment(\.isCollapseShellOnly) private var isCollapseShellOnly
 
     var body: some View {
         let shellColor = Color(red: 0.001, green: 0.001, blue: 0.002)
-        let shellShape = UnevenRoundedRectangle(
-            topLeadingRadius: 0,
-            bottomLeadingRadius: isExpanded ? 36 : 22,
-            bottomTrailingRadius: isExpanded ? 36 : 22,
-            topTrailingRadius: 0,
-            style: .continuous
-        )
+        let shellShape = IslandShellShape(bottomRadius: bottomRadius)
         let shouldShowShoulderBlend = notchShoulderBlendEnabled && isNotchIntegratedShell
+        let usesExpandedContentPadding = isExpanded || isCollapseShellOnly
+        let strokeOpacity = 0.035 + ((0.07 - 0.035) * Double(visualProgress))
+        let shadowOpacity = isShellMorphing ? 0.22 : 0.34
+        let collapsedShadowRadius: CGFloat = isShellMorphing ? 5 : 8
+        let expandedShadowRadius: CGFloat = isShellMorphing ? 14 : 22
+        let collapsedShadowY: CGFloat = isShellMorphing ? 2 : 3
+        let expandedShadowY: CGFloat = isShellMorphing ? 6 : 10
+        let shadowRadius = collapsedShadowRadius + ((expandedShadowRadius - collapsedShadowRadius) * visualProgress)
+        let shadowY = collapsedShadowY + ((expandedShadowY - collapsedShadowY) * visualProgress)
 
         content
-            .padding(.horizontal, isExpanded ? 22 : 8)
-            .padding(.top, isExpanded ? 14 : 0)
-            .padding(.bottom, isExpanded ? 20 : 6)
+            .padding(.horizontal, usesExpandedContentPadding ? 0 : IslandShellLayout.collapsedHorizontalPadding)
+            .padding(.top, usesExpandedContentPadding ? 0 : IslandShellLayout.collapsedTopPadding)
+            .padding(.bottom, usesExpandedContentPadding ? 0 : IslandShellLayout.collapsedBottomPadding)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background {
                 ZStack {
@@ -221,11 +351,45 @@ struct IslandSurface<Content: View>: View {
                         .fill(shellColor)
                         .overlay {
                             shellShape
-                                .stroke(Color.white.opacity(isExpanded ? 0.07 : 0.035), lineWidth: 1)
+                                .stroke(Color.white.opacity(strokeOpacity), lineWidth: 1)
                         }
+                        .shadow(
+                            color: .black.opacity(shadowOpacity),
+                            radius: shadowRadius,
+                            y: shadowY
+                        )
                 }
-                .shadow(color: .black.opacity(0.34), radius: isExpanded ? 22 : 8, y: isExpanded ? 10 : 3)
             }
+    }
+}
+
+private struct IslandShellShape: Shape {
+    var bottomRadius: CGFloat
+
+    var animatableData: CGFloat {
+        get { bottomRadius }
+        set { bottomRadius = newValue }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        let radius = min(bottomRadius, min(rect.width, rect.height) / 2)
+
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - radius))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.maxX - radius, y: rect.maxY),
+            control: CGPoint(x: rect.maxX, y: rect.maxY)
+        )
+        path.addLine(to: CGPoint(x: rect.minX + radius, y: rect.maxY))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.minX, y: rect.maxY - radius),
+            control: CGPoint(x: rect.minX, y: rect.maxY)
+        )
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.closeSubpath()
+        return path
     }
 }
 
@@ -274,7 +438,7 @@ struct CompactIslandView: View {
     }
 
     private var compactContentAnimation: Animation {
-        reduceMotion ? .easeInOut(duration: 0.16) : .easeInOut(duration: 0.24)
+        reduceMotion ? .easeInOut(duration: 0.16) : .easeInOut(duration: 0.28)
     }
 
     private static func debugRender(
@@ -302,70 +466,103 @@ struct ExpandedIslandView: View {
     let modules: IslandModules
     let isPresented: Bool
     let onShortcutLaunched: () -> Void
+    let rendersExpandedVisualContent: Bool
     @ObservedObject private var navigation: IslandNavigationStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.isShellMorphing) private var isShellMorphing
+    @Environment(\.isCollapseShellOnly) private var isCollapseShellOnly
 
     @State private var showInnerContent = false
     @State private var isRemovingInnerContent = false
+    @State private var showCollapseGhost = false
     @State private var presentationGeneration: Int = 0
+    @State private var collapseGhostGeneration: Int = 0
     @State private var isAirDropTargeted = false
     @State private var isFilesTargeted = false
 
     init(
         modules: IslandModules,
         isPresented: Bool,
-        onShortcutLaunched: @escaping () -> Void
+        onShortcutLaunched: @escaping () -> Void,
+        rendersExpandedVisualContent: Bool = true
     ) {
         self.modules = modules
         self.isPresented = isPresented
         self.onShortcutLaunched = onShortcutLaunched
+        self.rendersExpandedVisualContent = rendersExpandedVisualContent
         navigation = modules.navigation
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ExpandedIslandPageSwitcher(navigation: navigation)
-                .opacity(showInnerContent ? 1 : 0)
-                .animation(
-                    .easeOut(duration: reduceMotion ? 0.10 : 0.20),
-                    value: showInnerContent
-                )
+        GeometryReader { proxy in
+            let metrics = ExpandedIslandLayoutMetrics(containerSize: proxy.size)
 
-            Group {
-                switch navigation.selectedPage {
-                case .island:
-                    islandPage
-                        .transition(pageTransition)
-                case .tray:
-                    trayPage
-                        .transition(pageTransition)
-                case .timer:
-                    timerPage
-                        .transition(pageTransition)
-                case .stats:
-                    statsPage
-                        .transition(pageTransition)
+            VStack(alignment: .leading, spacing: metrics.tabToPageSpacing) {
+                if rendersExpandedVisualContent && !isCollapseShellOnly {
+                    ExpandedIslandPageSwitcher(navigation: navigation)
+                        .frame(height: metrics.tabSwitcherHeight)
+                        .opacity(showInnerContent ? 1 : 0)
+                        .animation(
+                            .easeOut(duration: reduceMotion ? 0.10 : 0.20),
+                            value: showInnerContent
+                        )
                 }
+
+                Group {
+                    if showCollapseGhost {
+                        CompactHandoffGhostView(modules: modules)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    } else if !rendersExpandedVisualContent {
+                        Color.clear
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        switch navigation.selectedPage {
+                        case .island:
+                            islandPage(metrics: metrics)
+                                .transition(pageTransition)
+                        case .tray:
+                            trayPage(metrics: metrics)
+                                .transition(pageTransition)
+                        case .timer:
+                            timerPage(metrics: metrics)
+                                .transition(pageTransition)
+                        case .stats:
+                            statsPage(metrics: metrics)
+                                .transition(pageTransition)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: metrics.pageHeight, alignment: .topLeading)
+                .clipped()
+                .animation(pageAnimation, value: navigation.selectedPage)
             }
-            .animation(pageAnimation, value: navigation.selectedPage)
+            .padding(.horizontal, metrics.horizontalPadding)
+            .padding(.top, metrics.topPadding)
+            .padding(.bottom, metrics.bottomPadding)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear {
             updateInnerPresentation(isPresented)
         }
         .onChange(of: isPresented) { _, newValue in
             updateInnerPresentation(newValue)
         }
+        .onChange(of: isCollapseShellOnly) { _, newValue in
+            updateCollapseGhostPresentation(newValue)
+        }
     }
 
-    private var islandPage: some View {
-        HStack(spacing: 16) {
+    private func islandPage(metrics: ExpandedIslandLayoutMetrics) -> some View {
+        HStack(spacing: metrics.pageColumnSpacing) {
             MediaModuleView(
                 media: modules.media,
+                availableHeight: metrics.mediaMaxHeight,
                 onLauncherActivated: onShortcutLaunched,
                 onMediaSourceOpened: onShortcutLaunched
             )
-                .frame(width: 300, alignment: .leading)
+                .frame(width: metrics.mediaColumnWidth, height: metrics.mediaMaxHeight, alignment: .topLeading)
+                .clipped()
                 .innerBlurScaleClean(
                     isVisible: showInnerContent,
                     isRemoval: isRemovingInnerContent,
@@ -374,7 +571,7 @@ struct ExpandedIslandView: View {
                 )
 
             Divider()
-                .frame(height: 220)
+                .frame(height: metrics.dividerHeight)
                 .overlay(.white.opacity(0.10))
                 .opacity(showInnerContent ? 1 : 0)
                 .animation(
@@ -387,7 +584,8 @@ struct ExpandedIslandView: View {
                 shortcuts: modules.shortcuts,
                 onShortcutLaunched: onShortcutLaunched
             )
-                .frame(width: 190)
+                .frame(width: metrics.shortcutsColumnWidth, height: metrics.shortcutsMaxHeight, alignment: .topLeading)
+                .clipped()
                 .innerBlurScaleClean(
                     isVisible: showInnerContent,
                     isRemoval: isRemovingInnerContent,
@@ -398,14 +596,14 @@ struct ExpandedIslandView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    private var trayPage: some View {
+    private func trayPage(metrics: ExpandedIslandLayoutMetrics) -> some View {
         GeometryReader { proxy in
-            HStack(alignment: .top, spacing: 14) {
+            HStack(alignment: .top, spacing: metrics.pageColumnSpacing) {
                 AirDropDropZoneView(
                     isTargeted: isAirDropTargeted,
                     reduceMotion: reduceMotion
                 )
-                .frame(width: max(180, proxy.size.width * 0.32), height: proxy.size.height, alignment: .topLeading)
+                .frame(width: min(max(metrics.trayAirDropWidth, 142), proxy.size.width * 0.36), height: proxy.size.height, alignment: .topLeading)
                 .onDrop(of: [.fileURL], isTargeted: airDropTargetBinding) { providers in
                     shareDroppedFiles(from: providers)
                     return true
@@ -440,8 +638,12 @@ struct ExpandedIslandView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    private var timerPage: some View {
-        DedicatedTimerPageView(timer: modules.timer)
+    private func timerPage(metrics: ExpandedIslandLayoutMetrics) -> some View {
+        DedicatedTimerPageView(
+            timer: modules.timer,
+            ringSize: metrics.timerRingSize,
+            pageHeight: metrics.pageHeight
+        )
             .innerBlurScaleClean(
                 isVisible: showInnerContent,
                 isRemoval: isRemovingInnerContent,
@@ -451,8 +653,8 @@ struct ExpandedIslandView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    private var statsPage: some View {
-        StatsPageView(stats: modules.stats)
+    private func statsPage(metrics: ExpandedIslandLayoutMetrics) -> some View {
+        StatsPageView(stats: modules.stats, metrics: metrics)
             .innerBlurScaleClean(
                 isVisible: showInnerContent,
                 isRemoval: isRemovingInnerContent,
@@ -570,18 +772,18 @@ struct ExpandedIslandView: View {
 
         return .asymmetric(
             insertion: .modifier(
-                active: BlurBounceModifier(blur: 0, scale: 0.985, opacity: 0),
+                active: BlurBounceModifier(blur: 8, scale: 0.96, opacity: 0),
                 identity: BlurBounceModifier(blur: 0, scale: 1, opacity: 1)
             ),
             removal: .modifier(
-                active: BlurBounceModifier(blur: 0, scale: 0.992, opacity: 0),
+                active: BlurBounceModifier(blur: 6, scale: 0.97, opacity: 0),
                 identity: BlurBounceModifier(blur: 0, scale: 1, opacity: 1)
             )
         )
     }
 
     private var pageAnimation: Animation {
-        reduceMotion ? .easeInOut(duration: 0.12) : .easeInOut(duration: 0.16)
+        reduceMotion ? .easeInOut(duration: 0.12) : .easeInOut(duration: 0.20)
     }
 
     private func updateInnerPresentation(_ presented: Bool) {
@@ -589,19 +791,104 @@ struct ExpandedIslandView: View {
         let generation = presentationGeneration
 
         if presented {
+            showCollapseGhost = false
             isRemovingInnerContent = false
             showInnerContent = false
 
-            let delay: DispatchTimeInterval = reduceMotion ? .milliseconds(0) : .milliseconds(75)
+            let delay: DispatchTimeInterval = reduceMotion ? .milliseconds(0) : .milliseconds(170)
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
                 guard generation == presentationGeneration, isPresented else { return }
                 isRemovingInnerContent = false
                 showInnerContent = true
             }
         } else {
-            isRemovingInnerContent = true
+            isRemovingInnerContent = rendersExpandedVisualContent
             showInnerContent = false
+
+            let removalDelay: DispatchTimeInterval = reduceMotion ? .milliseconds(0) : .milliseconds(180)
+            DispatchQueue.main.asyncAfter(deadline: .now() + removalDelay) {
+                guard generation == presentationGeneration, !isPresented else { return }
+                isRemovingInnerContent = false
+            }
         }
+    }
+
+    private func updateCollapseGhostPresentation(_ collapseShellOnly: Bool) {
+        collapseGhostGeneration += 1
+        let generation = collapseGhostGeneration
+
+        guard rendersExpandedVisualContent else {
+            showCollapseGhost = collapseShellOnly
+            return
+        }
+
+        if collapseShellOnly {
+            let delay: DispatchTimeInterval = reduceMotion ? .milliseconds(0) : .milliseconds(150)
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                guard generation == collapseGhostGeneration, isCollapseShellOnly else { return }
+                showCollapseGhost = true
+            }
+        } else {
+            showCollapseGhost = false
+        }
+    }
+}
+
+private struct CompactHandoffGhostView: View {
+    let modules: IslandModules
+    @ObservedObject private var media: MediaController
+    @ObservedObject private var accentCache = ArtworkAccentColorCache.shared
+
+    init(modules: IslandModules) {
+        self.modules = modules
+        media = modules.media
+    }
+
+    var body: some View {
+        let accentColor = accentCache.color(for: media.artworkKey, image: media.artworkImage)
+
+        ZStack {
+            if media.hasActiveMediaSource {
+                HStack(spacing: 10) {
+                    if disableCollapsedArtworkDuringHandoff {
+                        Color.clear
+                            .frame(width: 14, height: 14)
+                    } else {
+                        CompactMediaView(media: media)
+                    }
+
+                    Spacer(minLength: 0)
+
+                    if disableCollapsedVisualizerDuringHandoff {
+                        Color.clear
+                            .frame(width: AudioVisualizerVariant.compact.size.width, height: AudioVisualizerVariant.compact.size.height)
+                    } else {
+                        AudioVisualizerView(
+                            isPlaying: media.isPlaying,
+                            isActive: media.hasActiveMediaSource,
+                            accentColor: accentColor,
+                            variant: .compact
+                        )
+                    }
+                }
+            } else {
+                Color.clear
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.bottom, 6)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .overlay {
+            if collapseHandoffDebug {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(Color.red.opacity(0.9), lineWidth: 2)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(Color.green.opacity(0.22))
+                    )
+            }
+        }
+        .allowsHitTesting(false)
     }
 }
 
@@ -668,6 +955,7 @@ private struct ExpandedIslandPageSwitcher: View {
 
 private struct StatsPageView: View {
     @ObservedObject var stats: SystemStatsController
+    let metrics: ExpandedIslandLayoutMetrics
 
     var body: some View {
         let snapshot = stats.snapshot
@@ -675,7 +963,7 @@ private struct StatsPageView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
                 Label("Stats", systemImage: "chart.xyaxis.line")
-                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                    .font(.system(size: 16, weight: .bold, design: .rounded))
                     .foregroundStyle(.white)
                 LiveStatusIndicator()
                 Spacer(minLength: 0)
@@ -684,8 +972,8 @@ private struct StatsPageView: View {
                     .foregroundStyle(.white.opacity(0.62))
             }
 
-            VStack(spacing: 12) {
-                HStack(spacing: 12) {
+            VStack(spacing: metrics.cardSpacing) {
+                HStack(spacing: metrics.cardSpacing) {
                     StatsMetricCard(
                         title: "CPU",
                         symbol: "cpu",
@@ -693,7 +981,9 @@ private struct StatsPageView: View {
                         detail: "System load",
                         accent: .cyan,
                         fraction: snapshot.cpuUsage,
-                        history: snapshot.cpuHistory
+                        history: snapshot.cpuHistory,
+                        width: metrics.statsCardWidth,
+                        height: metrics.statsCardHeight
                     )
 
                     StatsMetricCard(
@@ -704,7 +994,9 @@ private struct StatsPageView: View {
                         secondary: "Cached \(SystemStatsFormatting.formatBytes(snapshot.memoryCachedBytes))",
                         accent: .purple,
                         fraction: fraction(used: snapshot.memoryUsedBytes, total: snapshot.memoryTotalBytes),
-                        history: snapshot.memoryHistory
+                        history: snapshot.memoryHistory,
+                        width: metrics.statsCardWidth,
+                        height: metrics.statsCardHeight
                     )
 
                     StatsMetricCard(
@@ -714,11 +1006,13 @@ private struct StatsPageView: View {
                         detail: "No reliable API",
                         accent: .orange,
                         fraction: nil,
-                        history: []
+                        history: [],
+                        width: metrics.statsCardWidth,
+                        height: metrics.statsCardHeight
                     )
                 }
 
-                HStack(spacing: 12) {
+                HStack(spacing: metrics.cardSpacing) {
                     StatsMetricCard(
                         title: "Network",
                         symbol: "network",
@@ -728,7 +1022,9 @@ private struct StatsPageView: View {
                         accent: .green,
                         fraction: nil,
                         history: snapshot.networkDownloadHistory,
-                        secondaryHistory: snapshot.networkUploadHistory
+                        secondaryHistory: snapshot.networkUploadHistory,
+                        width: metrics.statsCardWidth,
+                        height: metrics.statsCardHeight
                     )
 
                     StatsMetricCard(
@@ -739,7 +1035,9 @@ private struct StatsPageView: View {
                         secondary: "Startup volume",
                         accent: .blue,
                         fraction: fraction(used: snapshot.diskUsedBytes, total: snapshot.diskTotalBytes),
-                        history: snapshot.diskHistory
+                        history: snapshot.diskHistory,
+                        width: metrics.statsCardWidth,
+                        height: metrics.statsCardHeight
                     )
 
                     StatsMetricCard(
@@ -750,7 +1048,9 @@ private struct StatsPageView: View {
                         secondary: "Uptime \(uptimeText(snapshot.uptimeSeconds))",
                         accent: .mint,
                         fraction: snapshot.batteryPercent,
-                        history: batteryHistory(snapshot)
+                        history: batteryHistory(snapshot),
+                        width: metrics.statsCardWidth,
+                        height: metrics.statsCardHeight
                     )
                 }
             }
@@ -819,6 +1119,8 @@ private struct StatsMetricCard: View {
     let fraction: Double?
     let history: [Double]
     var secondaryHistory: [Double] = []
+    let width: CGFloat
+    let height: CGFloat
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -863,7 +1165,7 @@ private struct StatsMetricCard: View {
             .minimumScaleFactor(0.72)
         }
         .padding(8)
-        .frame(width: 208, height: 76, alignment: .topLeading)
+        .frame(width: width, height: height, alignment: .topLeading)
         .background(.white.opacity(0.085), in: RoundedRectangle(cornerRadius: 15, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 15, style: .continuous)
@@ -876,19 +1178,27 @@ private struct StatsLineChart: View {
     let values: [Double]
     var secondaryValues: [Double] = []
     let accent: Color
+    @Environment(\.isShellMorphing) private var isShellMorphing
 
     var body: some View {
         GeometryReader { proxy in
             ZStack {
-                chartPath(values: values, size: proxy.size)
+                chartPath(values: chartSamples(values), size: proxy.size)
                     .stroke(accent.opacity(0.86), style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
-                if !secondaryValues.isEmpty {
-                    chartPath(values: secondaryValues, size: proxy.size)
+                if !isShellMorphing, !secondaryValues.isEmpty {
+                    chartPath(values: chartSamples(secondaryValues), size: proxy.size)
                         .stroke(.white.opacity(0.42), style: StrokeStyle(lineWidth: 1.2, lineCap: .round, lineJoin: .round))
                 }
             }
         }
         .accessibilityHidden(true)
+    }
+
+    private func chartSamples(_ values: [Double]) -> [Double] {
+        guard isShellMorphing, values.count > 12 else { return values }
+        return values.enumerated().compactMap { index, value in
+            index.isMultiple(of: 2) ? value : nil
+        }
     }
 
     private func chartPath(values: [Double], size: CGSize) -> Path {
@@ -922,6 +1232,36 @@ private struct LiveStatusIndicator: View {
         .padding(.horizontal, 7)
         .padding(.vertical, 4)
         .background(.white.opacity(0.08), in: Capsule(style: .continuous))
+    }
+}
+
+private struct ShellMorphingEnvironmentKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+private struct CollapseShellOnlyEnvironmentKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var isShellMorphing: Bool {
+        get { self[ShellMorphingEnvironmentKey.self] }
+        set { self[ShellMorphingEnvironmentKey.self] = newValue }
+    }
+
+    var isCollapseShellOnly: Bool {
+        get { self[CollapseShellOnlyEnvironmentKey.self] }
+        set { self[CollapseShellOnlyEnvironmentKey.self] = newValue }
+    }
+}
+
+extension View {
+    func shellMorphing(_ isShellMorphing: Bool) -> some View {
+        environment(\.isShellMorphing, isShellMorphing)
+    }
+
+    func collapseShellOnly(_ isCollapseShellOnly: Bool) -> some View {
+        environment(\.isCollapseShellOnly, isCollapseShellOnly)
     }
 }
 
@@ -988,12 +1328,30 @@ private struct FileDropHighlightView: View {
 
 private struct DedicatedTimerPageView: View {
     @ObservedObject var timer: TimerController
+    let ringSize: CGFloat
+    let pageHeight: CGFloat
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    private var usesCompactLayout: Bool {
+        pageHeight < 150 || ringSize < 96
+    }
+
+    private var controlsFontSize: CGFloat {
+        usesCompactLayout ? 11 : 12
+    }
+
+    private var controlsSpacing: CGFloat {
+        usesCompactLayout ? 6 : 8
+    }
+
+    private var titleFontSize: CGFloat {
+        usesCompactLayout ? 16 : 18
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
+        VStack(alignment: .leading, spacing: usesCompactLayout ? 7 : 8) {
             Label("Timer", systemImage: "timer")
-                .font(.system(size: 18, weight: .bold, design: .rounded))
+                .font(.system(size: titleFontSize, weight: .bold, design: .rounded))
                 .foregroundStyle(.white)
 
             TimerProgressRingView(
@@ -1002,19 +1360,55 @@ private struct DedicatedTimerPageView: View {
                     totalSeconds: timer.totalSeconds
                 ),
                 remainingText: timer.displayText,
-                isRunning: timer.isRunning
+                isRunning: timer.isRunning,
+                ringSize: ringSize
             )
             .frame(maxWidth: .infinity)
 
-            HStack(spacing: 10) {
+            ViewThatFits(in: .horizontal) {
+                timerControlRow
+                timerControlStack
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.top, 0)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var timerControlRow: some View {
+        HStack(spacing: controlsSpacing) {
+            Button("5m") { timer.start(minutes: 5) }
+            Button("10m") { timer.start(minutes: 10) }
+            Button("15m") { timer.start(minutes: 15) }
+
+            Divider()
+                .frame(height: usesCompactLayout ? 18 : 20)
+                .overlay(.white.opacity(0.12))
+
+            Button(timer.isRunning ? "Pause" : "Resume") {
+                timer.isRunning ? timer.pause() : timer.resume()
+            }
+            .disabled(timer.remainingSeconds <= 0)
+
+            Button("Reset") { timer.reset() }
+                .disabled(timer.remainingSeconds <= 0)
+        }
+        .buttonStyle(.borderless)
+        .font(.system(size: controlsFontSize, weight: .bold, design: .rounded))
+        .lineLimit(1)
+        .minimumScaleFactor(0.85)
+    }
+
+    private var timerControlStack: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: controlsSpacing) {
                 Button("5m") { timer.start(minutes: 5) }
                 Button("10m") { timer.start(minutes: 10) }
                 Button("15m") { timer.start(minutes: 15) }
+            }
 
-                Divider()
-                    .frame(height: 24)
-                    .overlay(.white.opacity(0.12))
-
+            HStack(spacing: controlsSpacing) {
                 Button(timer.isRunning ? "Pause" : "Resume") {
                     timer.isRunning ? timer.pause() : timer.resume()
                 }
@@ -1023,13 +1417,9 @@ private struct DedicatedTimerPageView: View {
                 Button("Reset") { timer.reset() }
                     .disabled(timer.remainingSeconds <= 0)
             }
-            .buttonStyle(.borderless)
-            .font(.system(size: 13, weight: .bold, design: .rounded))
-
-            Spacer(minLength: 0)
         }
-        .padding(.top, 0)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .buttonStyle(.borderless)
+        .font(.system(size: controlsFontSize, weight: .bold, design: .rounded))
     }
 }
 
@@ -1037,6 +1427,7 @@ private struct TimerProgressRingView: View {
     let progress: Double
     let remainingText: String
     let isRunning: Bool
+    let ringSize: CGFloat
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var clampedProgress: Double {
@@ -1050,21 +1441,29 @@ private struct TimerProgressRingView: View {
         TimerRingColor.color(for: clampedProgress)
     }
 
+    private var lineWidth: CGFloat {
+        ringSize < 100 ? 9 : 11
+    }
+
+    private var timerFontSize: CGFloat {
+        ringSize < 100 ? max(24, ringSize * 0.24) : max(28, ringSize * 0.28)
+    }
+
     var body: some View {
         ZStack {
             Circle()
-                .stroke(.white.opacity(0.10), style: StrokeStyle(lineWidth: 13, lineCap: .round))
+                .stroke(.white.opacity(0.10), style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
 
             Circle()
                 .trim(from: 0, to: clampedProgress)
-                .stroke(ringColor, style: StrokeStyle(lineWidth: 13, lineCap: .round, lineJoin: .round))
+                .stroke(ringColor, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round))
                 .rotationEffect(.degrees(-90))
                 .shadow(color: ringColor.opacity(reduceMotion ? 0 : 0.32), radius: reduceMotion ? 0 : 10)
                 .animation(reduceMotion ? nil : .easeInOut(duration: 0.42), value: clampedProgress)
 
             VStack(spacing: 3) {
                 Text(remainingText)
-                    .font(.system(size: 42, weight: .heavy, design: .rounded))
+                    .font(.system(size: timerFontSize, weight: .heavy, design: .rounded))
                     .monospacedDigit()
                     .foregroundStyle(.white)
                     .lineLimit(1)
@@ -1076,7 +1475,7 @@ private struct TimerProgressRingView: View {
             }
             .padding(.horizontal, 18)
         }
-        .frame(width: 150, height: 150)
+        .frame(width: ringSize, height: ringSize)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Timer")
         .accessibilityValue(remainingText)

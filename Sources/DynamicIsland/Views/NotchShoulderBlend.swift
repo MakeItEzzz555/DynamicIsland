@@ -30,7 +30,7 @@ struct NotchShoulderBlend: View {
 
     private var shoulderTint: Color {
         if notchShoulderDebugTint {
-            return isExpanded ? .blue.opacity(0.55) : .red.opacity(0.55)
+            return isExpanded ? .blue.opacity(0.80) : .red.opacity(0.80)
         }
         return shellColor.opacity(shoulderOpacity)
     }
@@ -54,6 +54,9 @@ struct NotchShoulderBlend: View {
             }
         }
         .allowsHitTesting(false)
+        .onAppear {
+            debugRender()
+        }
     }
 
     @ViewBuilder
@@ -76,20 +79,20 @@ struct NotchShoulderBlend: View {
     }
 }
 
-let notchShoulderBlendEnabled = true
+let notchShoulderBlendEnabled = false
 let notchShoulderUseAssets = false
-let collapsedShoulderEnabled = true
-let expandedShoulderEnabled = true
+let collapsedShoulderEnabled = false
+let expandedShoulderEnabled = false
 let notchShoulderDebugTint = false
 
 // Width/height control the shoulder blob size.
-let collapsedShoulderWidth: CGFloat = 32
-let collapsedShoulderHeight: CGFloat = 25
+let collapsedShoulderWidth: CGFloat = 70
+let collapsedShoulderHeight: CGFloat = 48
 // Side inset controls horizontal placement near the shell side.
-let collapsedShoulderSideInset: CGFloat = 8
+let collapsedShoulderSideInset: CGFloat = 0
 // Y offset controls how far upward the shoulder protrudes.
-let collapsedShoulderYOffset: CGFloat = -10
-let collapsedShoulderOpacity: Double = 0.92
+let collapsedShoulderYOffset: CGFloat = -22
+let collapsedShoulderOpacity: Double = 0.8
 
 // Width/height control the shoulder blob size.
 let expandedShoulderWidth: CGFloat = 48
@@ -99,6 +102,25 @@ let expandedShoulderSideInset: CGFloat = 18
 // Y offset controls how far upward the shoulder protrudes.
 let expandedShoulderYOffset: CGFloat = -10
 let expandedShoulderOpacity: Double = 0.94
+
+private extension NotchShoulderBlend {
+    func debugRender() {
+        #if DEBUG
+        guard notchShoulderDebugTint else { return }
+        debugPrint(
+            "DynamicIsland shoulder debug render",
+            "mode=\(isExpanded ? "expanded" : "collapsed")",
+            "assets=\(notchShoulderUseAssets)",
+            "collapsedEnabled=\(collapsedShoulderEnabled)",
+            "expandedEnabled=\(expandedShoulderEnabled)",
+            "width=\(shoulderWidth)",
+            "height=\(shoulderHeight)",
+            "sideInset=\(shoulderSideInset)",
+            "yOffset=\(shoulderOffsetY)"
+        )
+        #endif
+    }
+}
 
 private struct NotchIntegratedShellEnvironmentKey: EnvironmentKey {
     static let defaultValue = true

@@ -1221,3 +1221,694 @@ For every requested feature phase:
   - `swift build`
   - `swift test`
   - `Scripts/package_app.sh`
+
+### 2026-07-04 - Phase 5H Paused For Later Visual Polish
+
+- Parked notch shoulder merge work for now:
+  - `notchShoulderBlendEnabled = false`
+  - The normal clean rounded shell is now the default active shell again for both collapsed and expanded states.
+  - Existing shoulder code remains in the codebase for later visual polish and is currently inactive by default.
+- Parked related visual refinement work:
+  - Expansion morph transition polish is also parked for later visual work.
+- Preserved:
+  - OverlayWindowController, hit panels, click-through behavior, collapse logic, media, tray, timer, stats, and visualizer were not changed.
+- Changed files:
+  - `Sources/DynamicIsland/Views/NotchShoulderBlend.swift`
+  - `context.md`
+
+### 2026-07-04 - Phase 5I Unified Expansion Morph Transition
+
+- Improved the expanded visual handoff so expansion reads as one continuous component:
+  - The expanded shell now starts from collapsed-like width and height scale anchored at the top.
+  - The expanded shell no longer starts from the previous oversized blurred pop-in state.
+  - Shell opacity now stays nearly solid during the first expansion frames so there is no obvious full-size flash.
+- Added a visual-only collapsed ghost during early expansion:
+  - The expanded panel briefly renders a compact ghost pill centered at the top while the expanded shell grows underneath it.
+  - The ghost is removed shortly after the shell begins expanding.
+  - This is visual-only and does not affect layout, hit testing, or panel frames.
+- Preserved the clean inner-content timing:
+  - Expanded inner content still uses the existing clean blur/scale/opacity treatment.
+  - Inner content reveal is delayed slightly longer so the shell establishes itself before pages and controls appear.
+- Preserved existing behavior:
+  - OverlayWindowController split-panel architecture was not rewritten.
+  - Collapsed hit panel frame, expanded panel frame, click-through behavior, collapse timer logic, mouse containment logic, drag/drop behavior, Island/Tray/Timer/Stats tabs, media, tray, timer, stats, settings, gestures, and notch shoulder disablement were not changed.
+- Changed files:
+  - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `context.md`
+- Known limitations:
+  - True `matchedGeometryEffect` across separate `NSPanel` windows is not possible here, so the collapsed-to-expanded morph is simulated with shell scaling and a short-lived compact ghost.
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+
+### 2026-07-04 - Phase 5I.1 Expansion Collapse Motion Polish
+
+- Polished shell motion curves:
+  - Expansion shell animation now uses a more damped spring so the end-of-expansion wobble is removed.
+  - Collapse shell animation now uses a tighter critically damped spring so the shell shrinks cleanly toward the top-center anchor instead of feeling detached first.
+  - Inner content reveal was delayed slightly more so the shell morph establishes first and the page content still arrives cleanly without bounce.
+- Adjusted collapse panel handoff timing:
+  - `OverlayWindowController` now keeps the expanded visual panel alive briefly during collapse before ordering it out.
+  - The collapsed visual panel and collapsed hit panel still return immediately.
+  - This gives the expanded shell time to visually shrink back into the notch area instead of disappearing too early during the split-panel handoff.
+- Performance/scope:
+  - No per-frame logging, extra timers, geometry rewrites, or page-content rewrites were added.
+  - Only the active tab content is still rendered.
+- Preserved:
+  - OverlayWindowController architecture was not rewritten.
+  - Panel frames, hit testing, click-through behavior, collapse timer logic, drag/drop behavior, Island/Tray/Timer/Stats tabs, last-active-tab restore, media, tray AirDrop/files, timer, stats, settings, gestures, and parked notch shoulder disablement were not changed.
+- Changed files:
+  - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `context.md`
+- Known limitations:
+  - The collapsed-to-expanded and expanded-to-collapsed morph remains a simulated handoff across separate `NSPanel` windows, so tuning is timing-based rather than true matched geometry.
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+
+### 2026-07-04 - Phase 5I.2 Animation Performance Polish
+
+- Added a transient shell-morph performance flag:
+  - `IslandLayoutStore` now carries `isShellMorphing`.
+  - This remains view-local/transient behavior only; `IslandStateStore` still only has `collapsed` and `expanded`.
+  - The flag turns on at shell morph start and clears shortly after the shell animation window ends.
+- Deferred heavy inner content until the shell is established:
+  - Expanded active page content is no longer built during the earliest shell-morph frames while it is still fully hidden.
+  - Inner content reveal is delayed slightly more so the shell morph gets priority before Island/Tray/Timer/Stats page content is created.
+- Simplified expensive visuals during shell morph only:
+  - Audio visualizer pauses its `TimelineView` animation and shows static bars temporarily.
+  - Stats charts temporarily render a lighter path set and skip the secondary line while the shell is morphing.
+  - Tray file thumbnail loading is deferred until the shell morph completes instead of starting immediately on tile appearance.
+  - Shell shadow is temporarily reduced during shell morph to cut rendering cost without changing the final look.
+- Tightened debug logging defaults:
+  - `FileShelfActions` DEBUG logging is now gated behind `DYNAMIC_ISLAND_VERBOSE_UI_LOGS=1`.
+- Preserved:
+  - Phase 5I / 5I.1 visual result was kept intact.
+  - OverlayWindowController architecture, panel frames, click-through behavior, collapse timer logic, collapse behavior, tabs/pages/features, media/tray/timer/stats logic, artwork extraction/caching, file drop handoff, AirDrop behavior, settings, gestures, and parked notch shoulder disablement were not changed.
+- Changed files:
+  - `Sources/DynamicIsland/Overlay/IslandLayoutStore.swift`
+  - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `Sources/DynamicIsland/Views/ModuleViews.swift`
+  - `context.md`
+- Known limitations:
+  - Performance smoothing remains timing-based within the existing split-panel simulated morph; it does not turn separate panels into true matched geometry.
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+
+### 2026-07-04 - Phase 5I.3 Collapse Shell-Only Performance Fix
+
+- Added collapse-specific transient shell state:
+  - `IslandLayoutStore` now also carries `isCollapseShellOnly`.
+  - This remains visual/transient only; `IslandStateStore` still only has `collapsed` and `expanded`.
+  - Collapse sets shell-only mode immediately when the shrink starts and clears it after the collapse morph window ends.
+- Collapse now removes heavy expanded content while the shell shrinks:
+  - The expanded page switcher is not rendered during collapse shell-only mode.
+  - Island/Tray/Timer/Stats active page content is not built during collapse shell-only mode.
+  - This means the shrinking expanded shell no longer carries media controls, tray files, timer ring, stats charts, or other active tab content through the collapse animation.
+- Preserved the current visual handoff:
+  - The expanded shell still stays alive briefly so it can shrink toward the top-center/notch area.
+  - The collapse direction and simulated morph behavior from Phase 5I / 5I.1 were preserved.
+  - Expansion behavior was not changed.
+- Changed files:
+  - `Sources/DynamicIsland/Overlay/IslandLayoutStore.swift`
+  - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `context.md`
+- Known limitations:
+  - The morph remains a simulated handoff across separate `NSPanel` windows rather than true matched geometry.
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+
+### 2026-07-04 - Phase 5I.4 Symmetric Reverse Morph
+
+- Made collapse use the same shell morph as expansion in reverse:
+  - Expanded shell and collapsed shell now use the same shell animation curve for both directions.
+  - Collapse no longer uses a separate tighter curve; it now follows the same smooth morph timing as expansion.
+- Added reverse compact-pill ghost timing for collapse:
+  - Expansion still starts with the compact ghost visible and fades it out after the shell grows.
+  - Collapse now does the inverse: the compact ghost fades back in during the later part of the shrink.
+  - This makes the expanded-to-collapsed transition read more like the exact reverse of the collapsed-to-expanded morph.
+- Preserved:
+  - Collapse still uses shell-only mode for performance while shrinking.
+  - Expanded panel handoff timing, split-panel architecture, click-through behavior, collapse logic, tabs/pages, media/tray/timer/stats logic, and parked notch shoulder disablement were not changed.
+- Changed files:
+  - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
+  - `context.md`
+- Known limitations:
+  - The morph remains a simulated handoff across separate `NSPanel` windows rather than true matched geometry.
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+
+### 2026-07-04 - Atoll Reference-Guided Morph Cleanup
+
+- Reference notes only, no GPL code copied:
+  - Reviewed Atoll only for architectural lessons.
+  - No GPL source was copied or ported into this project.
+  - Key lesson: visually, the island should read like one top-centered shell surface changing size and shape in place.
+- Future notch-hugging direction clarified:
+  - Notch shoulder ellipses remain parked/disabled: `notchShoulderBlendEnabled = false`.
+  - Shoulder debug tint was also returned to its normal disabled state.
+  - Future physical-notch polish should prefer an Atoll-like top-attached asymmetric shell:
+    - small top corner radius
+    - larger bottom corner radius
+    - top edge flush to the top/notch area
+  - Future notch polish should not use ellipse wings, inward bites, masks, or subtractions.
+- Collapse handoff adjusted to better mimic a single-surface morph:
+  - The compact ghost layer now stays mounted from the start of collapse instead of appearing only near the final frame.
+  - Its opacity ramps in during the later part of collapse while the expanded shell shrinks out.
+  - This keeps collapsed compact media content warmed ahead of the final handoff and avoids a last-frame album art / visualizer spawn hitch.
+  - Because shell morph mode is already active, the compact visualizer stays static during the morph and does not start `TimelineView` animation during the critical collapse frame.
+- Preserved:
+  - OverlayWindowController split-panel architecture was not rewritten.
+  - Click-through behavior, collapse logic, media arbitration, artwork publishing stability, timer/stats/tray logic, settings, gestures, and the current expansion behavior were not changed.
+- Changed files:
+  - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
+  - `Sources/DynamicIsland/Views/NotchShoulderBlend.swift`
+  - `context.md`
+- Known limitations:
+  - The morph is still a simulated handoff across separate `NSPanel` windows rather than a true one-window Atoll-style surface.
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+
+### 2026-07-04 - Phase 5I.5 Collapse Handoff Debug And Isolation
+
+- Added temporary collapse handoff debug/isolation flags, defaulting off:
+  - `collapseHandoffDebug = false`
+  - `disableCollapsedArtworkDuringHandoff = false`
+  - `disableCollapsedVisualizerDuringHandoff = false`
+  - These are temporary local SwiftUI debug controls for visually proving the compact handoff layer and isolating whether artwork or the visualizer is responsible for a hitch.
+- Moved the collapse compact handoff layer into the real expanded SwiftUI render path:
+  - The collapse shell-only path in `ExpandedIslandView` now renders a `CompactHandoffGhostView` instead of an empty clear placeholder.
+  - This handoff view uses the actual compact media path ingredients:
+    - current already-published artwork
+    - compact layout
+    - compact visualizer path
+  - During shell morph, the compact visualizer remains static because shell-morph mode is still active.
+- Removed the old collapse-only ghost dependency from `OverlayWindowController`:
+  - The overlay-controller ghost is no longer relied on for collapse.
+  - Collapse handoff now comes from the same SwiftUI visual tree that renders the shrinking expanded shell.
+- What real fix was applied:
+  - The collapse compact content is now created inside the expanded shell-only collapse path early enough to be warmed before final panel handoff.
+  - This directly addresses the previous issue where compact album art/visualizer could still appear like a late final-frame spawn.
+- Preserved:
+  - Split-panel click-through architecture was not rewritten.
+  - OverlayWindowController collapse timing, panel frames, media arbitration, artwork stability, timer/stats/tray logic, settings, gestures, and parked notch shoulder disablement were not changed beyond removing the obsolete collapse ghost dependency.
+- Changed files:
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
+  - `context.md`
+- Known limitations:
+  - The morph remains a simulated handoff across separate `NSPanel` windows rather than true matched geometry.
+  - The debug flags are implemented for local visual proof and isolation, but remain disabled by default.
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+
+### 2026-07-04 - Phase 5J Single Visual Surface Morph
+
+- Used Atoll only as architectural reference, with no GPL code copied:
+  - The lesson applied here is one visual shell surface changing state in place, while input/hit areas can remain separate.
+  - No GPL source was copied or ported.
+- Visual shell ownership moved to one visual-only panel:
+  - The existing visual `panel` now remains active for both collapsed and expanded states.
+  - `IslandRootView` in that visual-only panel now renders:
+    - full collapsed pill visuals when collapsed
+    - expanded shell-only visuals when expanded
+  - The visual shell/morph no longer hands off between a collapsed-only visual panel and an expanded visual panel.
+- `expandedPanel` is now a transparent interactive overlay:
+  - `expandedPanel` no longer owns/draws the black shell background.
+  - It now hosts only `ExpandedIslandView` content/controls as an overlay aligned over the visual shell underneath.
+  - During collapse it can disappear without taking the shell/morph with it.
+- `collapsedHitPanel` remains the small collapsed click target:
+  - Collapsed click-through safety was preserved.
+  - The visual panel still ignores mouse events.
+  - `expandedPanel` remains the interactive layer for expanded controls.
+- Morph timing is now driven centrally from `OverlayWindowController`:
+  - `isShellMorphing` and `isCollapseShellOnly` are now driven by state changes in the controller again.
+  - This keeps the single visual surface and the interactive overlay in sync without giving shell ownership back to `expandedPanel`.
+- Preserved:
+  - Split-panel click-through architecture still exists.
+  - No giant interactive transparent panel was introduced.
+  - `collapsedHitPanel` was not removed.
+  - Expanded controls, sliders, tabs, timer controls, tray interactions, drag-hover Tray behavior, media logic, timer logic, stats logic, settings, gestures, and parked notch shoulder disablement were not rewritten.
+- Changed files:
+  - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `context.md`
+- Known limitations:
+  - This is still a simulated one-surface morph across separate AppKit panels, not a literal one-window design.
+  - Future notch hugging should still prefer a top-attached asymmetric shell shape, not ellipse shoulder blobs.
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+
+### 2026-07-04 - Phase 5J.1 Visual Surface Layout Refactor
+
+- Added shared expanded layout metrics in `IslandRootView.swift`:
+  - Centralized shell content paddings for collapsed and expanded states.
+  - Added `ExpandedIslandLayoutMetrics` to define:
+    - expanded horizontal/top/bottom padding
+    - tab switcher height
+    - spacing between tabs and page content
+    - page height
+    - adaptive Island/Tray/Timer/Stats sizing values
+  - `IslandSurface` and the expanded interactive overlay now use the same layout contract instead of separate magic numbers.
+- Aligned `expandedPanel` interactive content to the visual shell content rect:
+  - `ExpandedIslandView` now wraps its content in the same expanded padding box as the visual shell.
+  - Page content is clipped to the available content region so controls do not draw outside the shell.
+  - This keeps the transparent interactive overlay aligned to the visible black shell underneath.
+- Retuned expanded page layouts for the real shell height:
+  - Island page:
+    - adaptive media/shortcuts widths
+    - reduced column spacing
+    - divider height now scales from available page height instead of fixed `220`
+  - Tray page:
+    - AirDrop width now uses adaptive metrics
+    - file area stays within the shell content region
+  - Timer page:
+    - timer ring size is now adaptive to available height
+  - Stats page:
+    - compact adaptive card widths/heights now derive from available content size
+    - card spacing remains compact for the real expanded shell height
+- Delayed inner content until the shell is ready:
+  - Expanded content reveal delay was increased so tabs and page content appear near the end of shell expansion instead of floating early.
+- Removed remaining broad bounce sources:
+  - Root shell/content animation now uses a shared `easeInOut` timing instead of the previous broad spring.
+  - The old aggressive `blurBounce` transition was reduced to subtle blur/scale values instead of `blur 100 / scale 0.1`.
+- Preserved:
+  - Split-panel click-through architecture remains intact.
+  - The visual panel still owns the shell.
+  - `expandedPanel` remains the transparent interactive overlay.
+  - `collapsedHitPanel` remains the small collapsed click target.
+  - Media logic, artwork stability, YouTube/native provider logic, timer engine, stats polling, tray logic, AirDrop, settings, gestures, and parked notch shoulder disablement were not rewritten.
+- Changed files:
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `context.md`
+- Known limitations:
+  - This still relies on the simulated one-surface morph architecture from Phase 5J rather than a literal one-window shell.
+
+### 2026-07-04 - Phase 5J.2 Expanded Page Fit And Internal Component Scaling
+
+- Fixed expanded page fit for the smaller shared shell content rect:
+  - Kept page clipping in place, but reduced internal component sizing so important controls fit before reaching the clip boundary.
+- Updated expanded layout metrics in `IslandRootView.swift`:
+  - Added explicit timer space reservation values:
+    - `timerHeaderHeight`
+    - `timerControlsHeight`
+    - `timerVerticalSpacingTotal`
+    - `timerReservedHeight`
+  - Retuned `timerRingSize` to reserve real title/control space before sizing the ring.
+  - Added explicit `mediaMaxHeight` and `shortcutsMaxHeight` derived from `pageHeight`.
+  - Reduced `dividerHeight` so it cannot overrun the actual page region.
+- Fixed Island page child sizing:
+  - `MediaModuleView` now receives `availableHeight: metrics.pageHeight`.
+  - Media and Shortcuts columns now both receive explicit `height: metrics.pageHeight` frames and remain top-aligned/clipped inside the page region.
+- Fixed Timer page clipping:
+  - Timer ring now scales from reserved space instead of using nearly the full page height.
+  - Timer controls were compacted with smaller spacing/font sizing.
+  - Added a `ViewThatFits` fallback so controls can split into two rows on tighter widths without hiding controls.
+  - Ring stroke/text scale down slightly on smaller ring sizes.
+  - Timer page no longer clips its bottom controls in the intended compact shell layout.
+- Fixed Media module vertical fit in `ModuleViews.swift`:
+  - Added a constrained expanded layout path activated when `availableHeight` is supplied.
+  - Reduced artwork size, metadata fonts, vertical spacing, transport button size, and slider/time spacing for the constrained expanded layout.
+  - Kept media logic, source-open artwork behavior, playback controls, progress, and volume slider intact.
+  - Media player no longer relies on clipping to hide bottom controls in the intended compact shell layout.
+- Changed files:
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `Sources/DynamicIsland/Views/ModuleViews.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+- Validation passed:
+  - `swift build`
+
+### 2026-07-04 - Phase 5J.3 Center Constrained Expanded Media Layout
+
+- Centered constrained expanded media content inside the allocated Island-page media column:
+  - `MediaModuleView` now vertically centers its constrained expanded content when `availableHeight` is supplied.
+  - The media group uses flexible top and bottom spacers so artwork, metadata, transport controls, progress, and volume stay grouped together while sitting inside the actual available height.
+  - The constrained content is fixed to its intrinsic vertical size before centering so clipping remains a safety net instead of the visible layout solution.
+- Slightly tightened constrained media spacing:
+  - Reduced constrained artwork size and a few internal spacing values by small amounts so the bottom controls no longer graze the clipping boundary.
+  - No controls were removed.
+- Preserved:
+  - Island page column frames and top-level HStack alignment remain unchanged.
+  - Timer, Stats, Tray, shell morph animation, collapse behavior, media logic, artwork/source-open behavior, click-through architecture, and parked notch shoulder behavior were not changed.
+- Changed files:
+  - `Sources/DynamicIsland/Views/ModuleViews.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+
+### 2026-07-04 - Phase 5J.4 Final Media Fit And Mouse Leave Rect Fix
+
+- Made constrained expanded media layout structurally shorter in `ModuleViews.swift`:
+  - The constrained Island media path now uses a dedicated compact layout instead of only shrinking the old expanded stack.
+  - Visualizer moved into the header metadata row using the compact visualizer variant.
+  - Transport controls, progress/time section, and volume row were tightened into a smaller vertical budget.
+  - Added a compact volume row with a small speaker icon and minimal slider padding.
+  - Added `minimumScaleFactor` to constrained title/artist/source labels.
+  - Added `ViewThatFits(in: .vertical)` so an even tighter compact variant is used automatically if the first compact layout would still exceed the available height.
+  - Volume slider no longer depends on clipping and remains inside the constrained media column.
+- Fixed expanded mouse-leave collapse containment in `OverlayWindowController.swift`:
+  - Collapse hover detection no longer uses the full expanded overlay/canvas panel frame.
+  - Added `visibleExpandedShellScreenFrame()` to derive the actual visible expanded shell rect from:
+    - visual canvas panel frame
+    - `layoutStore.expandedSurfaceFrame`
+  - Mouse-leave containment and the far-below-top fallback now use the visible expanded shell rect with the existing hover tolerance.
+  - This restores expected collapse when the mouse leaves the visible black expanded island.
+- Preserved:
+  - Visual surface architecture, split-panel click-through behavior, collapse smoothness, expansion morph behavior, media logic, timer, stats, tray, app launch logic, and parked notch shoulder behavior were not redesigned.
+- Changed files:
+  - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
+  - `Sources/DynamicIsland/Views/ModuleViews.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+
+### 2026-07-04 - Phase 5J.5 Final Expanded Hover Tolerance Tightening
+
+- Tightened the final expanded mouse-leave tolerance in `OverlayWindowController.swift`:
+  - Added `expandedHoverTolerance`.
+  - Reduced the visible expanded shell hover margin from `10` px to `2` px.
+  - Collapse containment still uses `visibleExpandedShellScreenFrame()`, but now only adds a minimal safety margin around the visible shell.
+  - Existing collapse grace timing and far-below-top fallback behavior were preserved.
+- DEBUG boundary logging now includes:
+  - `expandedHoverTolerance`
+- Preserved:
+  - Expanded layout, media fit, panel frames, split-panel architecture, morph timing, collapse grace logic, click-through behavior, and all module logic were not changed.
+- Changed files:
+  - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+
+### 2026-07-04 - Phase 5J.6 Premium Motion Re-Polish
+
+- Retuned shell/container timing in `IslandRootView.swift`:
+  - Normal shell/content timing was slowed from `0.26s` to `0.38s` ease-in-out.
+  - Reduce Motion still uses the simpler `0.24s` ease-in-out path.
+  - This restores a more visible grow/shrink without reintroducing end wobble or collapse detachment.
+- Made shell scale/blur transitions more visible so the morph reads less like a fade:
+  - `blurBounce` insertion now uses:
+    - blur `7`
+    - scale `0.95`
+  - `blurBounce` removal now uses:
+    - blur `6`
+    - scale `0.955`
+  - This keeps the shell visibly growing/shrinking while staying conservative enough to avoid jumpiness.
+- Retuned inner content materialization timing:
+  - Expanded inner-content reveal delay was reduced from `240ms` to `170ms`.
+  - `InnerBlurScaleCleanModifier` insertion/removal timing was tightened to:
+    - insertion duration `0.38s`
+    - removal duration `0.28s`
+  - Inner inactive scales/blur are now more moderate:
+    - insertion scale `0.90`
+    - removal scale `0.92`
+    - insertion blur `10`
+    - removal blur `8`
+  - This keeps shell-first staging while avoiding the overly late empty-tray feel.
+- Retuned page and compact-content transitions:
+  - Expanded page transition now uses moderate blur and scale:
+    - insertion blur `8`, scale `0.96`
+    - removal blur `6`, scale `0.97`
+  - Page animation duration increased from `0.16s` to `0.20s`.
+  - Compact collapsed content animation increased from `0.24s` to `0.28s`.
+- Preserved:
+  - Phase 5I.1 fixes remain preserved:
+    - no final expansion wobble
+    - no collapse detachment
+    - shrink still reads toward the top-center/notch
+  - Phase 5I.2 performance protections remain preserved:
+    - shell-morph performance gating
+    - only active page rendered
+    - reduced shell shadow during morph
+    - lightweight visualizer/stats behavior during morph
+  - Media fit/layout refactors from Phase 5J.4 were not undone.
+- Changed files:
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+  - Packaging required the documented xattr cleanup recovery once:
+    - `xattr -cr dist/DynamicIsland.app`
+    - `Scripts/package_app.sh`
+
+### 2026-07-04 - Phase 5J.7 Ghost Border Removal And Staged Motion Fix
+
+- Removed the visible expanded ghost border/canvas artifact:
+  - `IslandSurface` now applies fill, stroke, and shadow to the actual shell shape only.
+  - The larger visual canvas no longer carries the shell shadow as a parent-group effect.
+  - This removes the inappropriate semi-transparent outer rounded corners around the expanded island while preserving the intended shell shadow.
+- Restored actual staged inner-content sequencing in `ExpandedIslandView`:
+  - Active expanded page content now stays mounted in the real expanded render path instead of being skipped until the last visibility flip.
+  - `showInnerContent` now genuinely controls staged inner reveal after shell expansion starts.
+  - Collapse keeps real inner content alive briefly for its removal animation before handing off to the compact ghost.
+  - Fixed delayed collapse-ghost generation tracking so stale delayed work cannot re-show the handoff ghost incorrectly.
+- Kept parked notch shoulder work visually inactive:
+  - `notchShoulderBlendEnabled = false`
+  - `collapsedShoulderEnabled = false`
+  - `expandedShoulderEnabled = false`
+  - No shoulder blend/debug layer renders by default in collapsed or expanded mode.
+- Preserved:
+  - OverlayWindowController architecture, split-panel click-through behavior, expanded hover tolerance, collapse grace logic, morph architecture, media/tray/timer/stats feature logic, and parked notch shoulder work were not redesigned.
+- Changed files:
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `Sources/DynamicIsland/Views/NotchShoulderBlend.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+
+### 2026-07-04 - Phase 6A Single Adaptive Island Panel
+
+- Replaced the split visual/hit/expanded overlay ownership with one adaptive `islandPanel`:
+  - `OverlayWindowController.swift` now uses a single transparent borderless `NSPanel`.
+  - The panel hosts one `IslandRootView` with `rendersExpandedVisualContent: true`.
+  - Old separate collapsed-hit and expanded interactive panel ownership was removed from the active path.
+- Final panel sizing now matches the visible island state:
+  - Final collapsed `islandPanel` frame matches the collapsed pill.
+  - Final expanded `islandPanel` frame matches the expanded island tray.
+  - During collapse morph only, the panel temporarily stays expanded-sized so the shell can shrink without clipping.
+- Added panel-local adaptive layout conversion in `IslandLayoutStore.swift`:
+  - Added `updateLocal(panelFrame:collapsedScreenFrame:expandedScreenFrame:hasHardwareNotch:)`.
+  - The layout store now converts screen-space collapsed/expanded geometry into panel-local surface frames for one-surface morphing.
+- Collapsed click and file drag are now handled by the single hosting root:
+  - `IslandRootView.swift` handles collapsed tap-to-expand on the compact content directly.
+  - Root file-drag targeting now expands to Tray through the existing navigation/state stores instead of a separate AppKit collapsed-hit view.
+  - Expanded Tray drop behavior remains intact.
+- Main shell transition no longer depends on separate collapsed/expanded shell transitions:
+  - The shell stays as one `IslandSurface`.
+  - Compact and expanded content branches no longer apply the old shell-scale transition.
+  - Collapse keeps the expanded branch alive during shell-only morph long enough for staged inner removal instead of switching to the compact branch too early.
+- Motion sequencing was aligned to the one-panel model:
+  - Expansion now uses one panel prepared at expanded size while the shell grows from the collapsed local frame.
+  - Collapse now keeps the panel expanded-sized briefly, lets inner content stage out, then shrinks the shell into the collapsed local frame before the panel returns to collapsed size.
+  - Main shell transition still avoids opacity fade; inner content keeps blur/scale/opacity staging.
+- Hover and visual cleanup:
+  - Expanded mouse-leave containment still uses the visible expanded shell rect with the existing `2` px tolerance.
+  - The prior outer ghost border/layer remains removed because only `IslandSurface` draws shell fill, stroke, and shadow.
+  - Parked notch shoulder work remains visually disabled by default.
+- Changed files:
+  - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
+  - `Sources/DynamicIsland/Overlay/IslandLayoutStore.swift`
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `context.md`
+
+### 2026-07-04 - Phase 6B Stable Host Panel And Shape-Aware Hit Testing
+
+- Kept one stable expanded-sized host panel:
+  - `OverlayWindowController.swift` now keeps `islandPanel` on the expanded host frame for both collapsed and expanded states.
+  - The panel no longer swaps down to the collapsed frame after collapse.
+  - Geometry refreshes still update collapsed and expanded surface targets, but panel sizing now stays stable during expand/collapse morphs.
+- Restored stable local surface coordinates:
+  - `IslandLayoutStore.updateLocal(...)` continues to receive the expanded host frame, so collapsed and expanded local surface frames stay in the same coordinate space.
+  - This keeps the collapsed pill centered inside the host panel and removes state-change coordinate rebasing.
+- Added shape-aware hit gating on the hosting view:
+  - `IslandHostingView` now accepts an `interactiveRegionProvider`.
+  - `hitTest(_:)` returns `nil` outside the visible local island region so invisible host-panel areas click through.
+  - Collapsed mode uses the collapsed surface rect with a `4` px tolerance.
+  - Expanded mode uses the expanded surface rect with a `2` px tolerance.
+- Simplified resize-era panel logic:
+  - Removed the previous expansion-preparation/final collapsed frame swap path used to avoid panel rebase while resizing.
+  - Expand requests still flow through `onRequestExpand()` and controller-owned state changes.
+- Preserved:
+  - One always-mounted SwiftUI shell surface remains in `IslandRootView`.
+  - Expanded mouse-leave containment still uses the visible expanded shell frame with the existing `2` px hover tolerance.
+  - Media, tray, timer, stats, settings, gestures, click-through expectations, and parked notch shoulder disablement were not rewritten.
+- Changed files:
+  - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+
+### 2026-07-04 - Phase 6A.2 Single-Panel Native Morph Correction
+
+- Kept the one-panel architecture and corrected the shell morph path instead of reintroducing split panels:
+  - `OverlayWindowController.swift` still uses one transparent adaptive `islandPanel`.
+  - `IslandLayoutStore.updateLocal(...)` remains the source of truth for panel-local collapsed and expanded shell frames.
+- Preserved centered local-frame invariants and added DEBUG-only diagnostics:
+  - `collapsedSurfaceFrame` and `expandedSurfaceFrame` continue to be derived from screen-space frames relative to the current panel frame.
+  - Added verbose DEBUG logging for panel frame, local frames, and their midpoints so top-left-origin regressions can be verified without production log spam.
+- Switched the shell shape to animatable radius morphing in `IslandRootView.swift`:
+  - Replaced the hard `isExpanded ? 22/36` shell-corner switch with `IslandShellShape(bottomRadius:)`.
+  - `bottomRadius` now interpolates from current shell height progress between collapsed and expanded sizes.
+  - This removes the visible final corner/border snap at the end of collapse.
+- Kept the shell as one continuously animated surface:
+  - `IslandSurface` remains alive as the only shell.
+  - The shell is still positioned by `surfaceFrame.midX` / converted `surfaceFrame.midY`, so expansion starts from the collapsed pill midpoint under the notch instead of top-left.
+  - Compact/expanded content branches do not own shell transitions.
+- Updated shell animation style to native SwiftUI frame/radius morphing:
+  - Shell frame/position/radius now animate with `.smooth(duration: 0.40)` by default.
+  - Reduce Motion still uses a simpler `.easeInOut(duration: 0.24)` path.
+  - Main shell still does not use opacity fade.
+- Preserved inner-content staging:
+  - Inner expanded content continues to use blur/scale/opacity staging only.
+  - Expanded content still stays alive during collapse shell-only mode long enough for staged removal before the compact branch returns.
+- Changed files:
+  - `Sources/DynamicIsland/Overlay/IslandLayoutStore.swift`
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+
+### 2026-07-04 - Phase 6A.3 Pre-Expansion Geometry And Shell Style Continuity
+
+- `IslandRootView` no longer directly mutates `islandState` to expand from the collapsed state:
+  - Added `onRequestExpand`.
+  - Collapsed tap expansion now requests expansion through the controller.
+  - Collapsed file-drag expansion now also requests controller-owned expansion after switching to Tray.
+- `OverlayWindowController` now owns pre-expansion geometry preparation:
+  - Added `expandFromCollapsedPreparingGeometry()`.
+  - Before `islandState.expand()`, the controller now:
+    - computes current collapsed/expanded geometry
+    - sets `targetCollapsedFrame` and `targetExpandedFrame`
+    - updates `layoutStore` using `panelFrame: expandedFrame`
+    - applies the expanded panel frame
+    - orders the panel front and invalidates layout
+  - This ensures SwiftUI starts expansion from a collapsed local frame centered inside the already-expanded panel.
+- Prevented the first expanded state sink from undoing prepared geometry:
+  - Added `didPrepareExpansionGeometry`.
+  - When expansion was controller-prepared and the panel is already at `targetExpandedFrame`, the first expanded-state sink now skips the redundant initial `reposition(animated: true)` pass.
+  - This removes the layout bounce that could still make expansion read like a top-left-origin start.
+- Improved shell style continuity at collapse end:
+  - `IslandSurface` now interpolates shell stroke opacity and shadow radius/y by morph progress instead of switching those values by `isExpanded`.
+  - This removes the visible last-frame border/shadow style snap when the shell finishes collapsing.
+- Kept DEBUG-only local-frame invariant verification:
+  - Existing `updateLocal(...)` diagnostics remain behind `DYNAMIC_ISLAND_VERBOSE_UI_LOGS=1`.
+  - Added a DEBUG warning when collapsed and expanded local `midX` differ by more than 1pt.
+- Preserved:
+  - Single adaptive one-panel architecture.
+  - No reintroduction of split panels or extra hit panels.
+  - No main shell opacity fade.
+  - Existing inner blur/scale/opacity staging remains intact.
+- Changed files:
+  - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
+  - `Sources/DynamicIsland/Overlay/IslandLayoutStore.swift`
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+
+### 2026-07-04 - Phase 6A.4 Stop Animating Panel-Local Coordinate Rebases
+
+- Removed shell animation triggers from panel-local frame rebases in `IslandRootView.swift`:
+  - Deleted direct shell animation bindings on:
+    - `layoutStore.expandedSurfaceFrame`
+    - `layoutStore.collapsedSurfaceFrame`
+  - The shell now morphs primarily from `islandState.state`, with `layoutStore.isShellMorphing` available for the broader morph window.
+- Added controller-owned non-animated layout rebasing in `OverlayWindowController.swift`:
+  - Added `updateLayoutWithoutAnimation(panelFrame:collapsedFrame:expandedFrame:hasHardwareNotch:)`.
+  - This wraps `layoutStore.updateLocal(...)` in a `Transaction(animation: nil)` with animations disabled.
+  - Panel-local coordinate rebases are now applied instantly instead of being animated by SwiftUI.
+- Applied non-animated rebasing in the required places:
+  - Pre-expansion geometry preparation now rebases local frames without animation before `islandState.expand()`.
+  - `reposition(animated: false)` paths now use the no-animation layout update helper.
+  - Final collapsed-panel restore now uses `finalizeCollapsedPanelFrameWithoutAnimation()` so the end-of-collapse panel/frame rebase is silent.
+- Preserved the intended morph order:
+  - Controller expands panel and rebases layout first.
+  - Then `islandState.expand()` drives the visible shell morph.
+  - Final collapse panel resize/rebase happens without shell-position animation.
+- Preserved prior shell-style continuity fixes:
+  - Animatable bottom radius remains progress-based.
+  - Stroke/shadow remain interpolated by morph progress.
+  - No shell opacity fade was added.
+- Changed files:
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+
+### 2026-07-04 - Phase 6B.2 Window-Level Click-Through And Expanded Padding Ownership
+
+- Fixed the stable-host invisible click blocker in `OverlayWindowController.swift`:
+  - Kept the one stable expanded-sized `islandPanel`.
+  - Added screen-space visible-island helpers derived from `layoutStore` local surface frames and `islandPanel.frame`.
+  - Added `updateMousePassthrough(...)`, which toggles `islandPanel.ignoresMouseEvents` from the currently visible island rect instead of the full stable panel frame.
+  - Collapsed mode now uses only the visible pill plus `4` px tolerance for interaction.
+  - Expanded mode now uses only the visible expanded island plus `2` px tolerance for interaction.
+  - Mouse passthrough updates now run after reposition/layout updates, window-visibility updates, expansion preparation, mouse-move monitors, and the expanded containment timer.
+  - `NSHostingView.hitTest` remains only a secondary safeguard; the primary click-through fix is now window-level passthrough because the NSPanel itself can still block clicks.
+- Preserved collapse behavior while removing invisible blocking:
+  - Expanded containment still uses the visible expanded shell rect, not the stable panel frame.
+  - When the mouse leaves the visible expanded island, collapse still runs after the existing grace logic and the panel is allowed to become click-through outside the visible surface.
+- Fixed expanded content clipping from the stable-host refactor in `IslandRootView.swift`:
+  - `IslandSurface` no longer adds expanded-state content padding on top of `ExpandedIslandView` metrics padding.
+  - Collapsed compact padding remains owned by `IslandSurface`.
+  - Expanded and collapse-shell-only content now use zero shell padding so the existing expanded metrics own the content inset budget.
+- Preserved:
+  - One-panel Atoll-style morph architecture.
+  - No split panels, no collapsed hit panel, no expanded panel, and no panel resize on every expand/collapse.
+  - Media, tray, timer, stats, settings, gestures, and parked notch shoulder behavior were not rewritten.
+- Changed files:
+  - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`

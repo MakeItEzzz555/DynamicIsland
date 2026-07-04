@@ -17,10 +17,11 @@ struct AudioVisualizerView: View {
     var accentColor: Color = ArtworkAccentColorExtractor.fallbackColor
     var variant: AudioVisualizerVariant = .compact
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.isShellMorphing) private var isShellMorphing
 
     var body: some View {
         Group {
-            if isPlaying && isActive && !reduceMotion {
+            if isPlaying && isActive && !reduceMotion && !isShellMorphing {
                 TimelineView(.animation(minimumInterval: 1.0 / 24.0)) { timeline in
                     bars(tick: timeline.date.timeIntervalSinceReferenceDate, opacity: 0.92)
                 }
@@ -148,18 +149,77 @@ struct CompactShelfBadge: View {
 
 struct MediaModuleView: View {
     @ObservedObject var media: MediaController
+    let availableHeight: CGFloat?
     let onLauncherActivated: () -> Void
     let onMediaSourceOpened: () -> Void
     @ObservedObject private var accentCache = ArtworkAccentColorCache.shared
 
     init(
         media: MediaController,
+        availableHeight: CGFloat? = nil,
         onLauncherActivated: @escaping () -> Void = {},
         onMediaSourceOpened: @escaping () -> Void = {}
     ) {
         self.media = media
+        self.availableHeight = availableHeight
         self.onLauncherActivated = onLauncherActivated
         self.onMediaSourceOpened = onMediaSourceOpened
+    }
+
+    private var usesCompactExpandedLayout: Bool {
+        availableHeight != nil
+    }
+
+    private var artworkSize: CGFloat {
+        usesCompactExpandedLayout ? 44 : 112
+    }
+
+    private var moduleSpacing: CGFloat {
+        usesCompactExpandedLayout ? 6 : 14
+    }
+
+    private var headerSpacing: CGFloat {
+        usesCompactExpandedLayout ? 9 : 14
+    }
+
+    private var metadataSpacing: CGFloat {
+        usesCompactExpandedLayout ? 2 : 4
+    }
+
+    private var titleFontSize: CGFloat {
+        usesCompactExpandedLayout ? 15 : 21
+    }
+
+    private var artistFontSize: CGFloat {
+        usesCompactExpandedLayout ? 12 : 16
+    }
+
+    private var sourceFontSize: CGFloat {
+        usesCompactExpandedLayout ? 10 : 14
+    }
+
+    private var visualizerTopPadding: CGFloat {
+        usesCompactExpandedLayout ? 2 : 4
+    }
+
+    private var transportControlsSpacing: CGFloat {
+        usesCompactExpandedLayout ? 10 : 18
+    }
+
+    private var transportControlsTopPadding: CGFloat {
+        usesCompactExpandedLayout ? 5 : 12
+    }
+
+    private var sliderStackSpacing: CGFloat {
+        usesCompactExpandedLayout ? 5 : 10
+    }
+
+    private var timeFontSize: CGFloat {
+        usesCompactExpandedLayout ? 9 : 13
+    }
+
+    private var placeholderProgressHeight: CGFloat {
+        usesCompactExpandedLayout ? 4 : 5
     }
 
     var body: some View {
@@ -172,40 +232,67 @@ struct MediaModuleView: View {
             branch: activeBranch ? "active player" : "empty launcher"
         )
 
-        Group {
+        let content = Group {
             if activeBranch {
                 activePlayerView
             } else {
                 EmptyMediaLauncherView(media: media, onLauncherActivated: onLauncherActivated)
             }
         }
-        .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+
+        if let availableHeight {
+            VStack(spacing: 0) {
+                Spacer(minLength: 0)
+                content
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+            .frame(
+                minWidth: 0,
+                maxWidth: .infinity,
+                minHeight: availableHeight,
+                maxHeight: availableHeight,
+                alignment: .center
+            )
+        } else {
+            content
+                .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
     }
 
     @ViewBuilder
     private var activePlayerView: some View {
+        if usesCompactExpandedLayout {
+            constrainedActivePlayerView
+        } else {
+            regularActivePlayerView
+        }
+    }
+
+    @ViewBuilder
+    private var regularActivePlayerView: some View {
         let visualizerColor = accentCache.color(for: media.artworkKey, image: media.artworkImage)
 
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 14) {
-                ClickableAlbumArtworkButton(media: media, size: 112) {
+        VStack(alignment: .leading, spacing: moduleSpacing) {
+            HStack(alignment: .top, spacing: headerSpacing) {
+                ClickableAlbumArtworkButton(media: media, size: artworkSize) {
                     let opened = media.openActiveMediaSource()
                     Self.debugMediaSourceOpenCollapse(opened: opened)
                     if opened {
                         onMediaSourceOpened()
                     }
                 }
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: metadataSpacing) {
                     Text(media.title)
-                        .font(.system(size: 21, weight: .bold, design: .rounded))
+                        .font(.system(size: titleFontSize, weight: .bold, design: .rounded))
                         .foregroundStyle(.white)
                         .lineLimit(1)
                     Text(media.artist)
-                        .font(.system(size: 16, weight: .bold, design: .rounded))
+                        .font(.system(size: artistFontSize, weight: .bold, design: .rounded))
                         .foregroundStyle(.white.opacity(0.66))
                         .lineLimit(1)
                     Text(media.sourceName)
-                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                        .font(.system(size: sourceFontSize, weight: .bold, design: .rounded))
                         .foregroundStyle(.white.opacity(0.48))
                         .lineLimit(1)
                     AudioVisualizerView(
@@ -214,32 +301,38 @@ struct MediaModuleView: View {
                         accentColor: visualizerColor,
                         variant: .expanded
                     )
-                    .padding(.top, 4)
-                    HStack(spacing: 18) {
+                    .padding(.top, visualizerTopPadding)
+                    HStack(spacing: transportControlsSpacing) {
                         MediaButton(
                             symbol: "backward.fill",
                             label: "Previous track",
+                            symbolSize: usesCompactExpandedLayout ? 13 : 15,
+                            buttonSize: usesCompactExpandedLayout ? 30 : 36,
                             isEnabled: media.isTransportControlAvailable,
                             action: media.previousTrack
                         )
                         MediaButton(
                             symbol: media.isPlaying ? "pause.fill" : "play.fill",
                             label: "Play or pause",
+                            symbolSize: usesCompactExpandedLayout ? 13 : 15,
+                            buttonSize: usesCompactExpandedLayout ? 30 : 36,
                             isEnabled: media.isTransportControlAvailable,
                             action: media.playPause
                         )
                         MediaButton(
                             symbol: "forward.fill",
                             label: "Next track",
+                            symbolSize: usesCompactExpandedLayout ? 13 : 15,
+                            buttonSize: usesCompactExpandedLayout ? 30 : 36,
                             isEnabled: media.isTransportControlAvailable,
                             action: media.nextTrack
                         )
                     }
-                    .padding(.top, 12)
+                    .padding(.top, transportControlsTopPadding)
                 }
                 Spacer(minLength: 0)
             }
-            VStack(spacing: 10) {
+            VStack(spacing: sliderStackSpacing) {
                 if media.hasPlaybackProgress {
                     Slider(
                         value: Binding(
@@ -261,20 +354,185 @@ struct MediaModuleView: View {
                         Spacer()
                         Text(formatTime(media.duration))
                     }
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.system(size: timeFontSize, weight: .bold))
                     .foregroundStyle(.white.opacity(0.58))
                 } else {
                     Capsule(style: .continuous)
                         .fill(.white.opacity(0.16))
-                        .frame(height: 5)
+                        .frame(height: placeholderProgressHeight)
                     HStack {
                         Text("--:--")
                         Spacer()
                         Text("--:--")
                     }
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.system(size: timeFontSize, weight: .bold))
                     .foregroundStyle(.white.opacity(0.36))
                 }
+                Slider(
+                    value: Binding(
+                        get: { media.volume },
+                        set: { media.setVolume($0) }
+                    ),
+                    in: 0...1
+                )
+                .tint(.white.opacity(0.70))
+                .opacity(media.isVolumeControlAvailable ? 1 : 0.38)
+                .disabled(!media.isVolumeControlAvailable)
+                .accessibilityLabel("Media volume")
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    @ViewBuilder
+    private var constrainedActivePlayerView: some View {
+        ViewThatFits(in: .vertical) {
+            constrainedActivePlayerLayout(
+                artworkSize: artworkSize,
+                transportButtonSize: 28,
+                transportSymbolSize: 12,
+                sectionSpacing: 4,
+                headerSpacing: 8,
+                inlineVisualizerTopPadding: 1
+            )
+            constrainedActivePlayerLayout(
+                artworkSize: 40,
+                transportButtonSize: 26,
+                transportSymbolSize: 11,
+                sectionSpacing: 3,
+                headerSpacing: 7,
+                inlineVisualizerTopPadding: 0
+            )
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+
+    private func constrainedActivePlayerLayout(
+        artworkSize: CGFloat,
+        transportButtonSize: CGFloat,
+        transportSymbolSize: CGFloat,
+        sectionSpacing: CGFloat,
+        headerSpacing: CGFloat,
+        inlineVisualizerTopPadding: CGFloat
+    ) -> some View {
+        let visualizerColor = accentCache.color(for: media.artworkKey, image: media.artworkImage)
+
+        return VStack(alignment: .leading, spacing: sectionSpacing) {
+            HStack(alignment: .top, spacing: headerSpacing) {
+                ClickableAlbumArtworkButton(media: media, size: artworkSize) {
+                    let opened = media.openActiveMediaSource()
+                    Self.debugMediaSourceOpenCollapse(opened: opened)
+                    if opened {
+                        onMediaSourceOpened()
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(media.title)
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.78)
+
+                    Text(media.artist)
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.66))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.78)
+
+                    HStack(alignment: .center, spacing: 6) {
+                        Text(media.sourceName)
+                            .font(.system(size: 9, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.48))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.78)
+
+                        AudioVisualizerView(
+                            isPlaying: media.isPlaying,
+                            isActive: media.hasActiveMediaSource,
+                            accentColor: visualizerColor,
+                            variant: .compact
+                        )
+                        .padding(.top, inlineVisualizerTopPadding)
+                    }
+                }
+
+                Spacer(minLength: 0)
+            }
+
+            HStack(spacing: 9) {
+                MediaButton(
+                    symbol: "backward.fill",
+                    label: "Previous track",
+                    symbolSize: transportSymbolSize,
+                    buttonSize: transportButtonSize,
+                    isEnabled: media.isTransportControlAvailable,
+                    action: media.previousTrack
+                )
+                MediaButton(
+                    symbol: media.isPlaying ? "pause.fill" : "play.fill",
+                    label: "Play or pause",
+                    symbolSize: transportSymbolSize,
+                    buttonSize: transportButtonSize,
+                    isEnabled: media.isTransportControlAvailable,
+                    action: media.playPause
+                )
+                MediaButton(
+                    symbol: "forward.fill",
+                    label: "Next track",
+                    symbolSize: transportSymbolSize,
+                    buttonSize: transportButtonSize,
+                    isEnabled: media.isTransportControlAvailable,
+                    action: media.nextTrack
+                )
+            }
+
+            VStack(spacing: 3) {
+                if media.hasPlaybackProgress {
+                    Slider(
+                        value: Binding(
+                            get: { media.playbackPosition },
+                            set: { media.updateScrubPosition($0) }
+                        ),
+                        in: 0...max(media.duration, 1),
+                        onEditingChanged: { isEditing in
+                            if !isEditing {
+                                media.seek(to: media.playbackPosition)
+                            }
+                        }
+                    )
+                    .tint(.white.opacity(0.70))
+                    .opacity(media.isSeekControlAvailable ? 1 : 0.38)
+                    .disabled(!media.isSeekControlAvailable)
+
+                    HStack {
+                        Text(formatTime(media.playbackPosition))
+                        Spacer()
+                        Text(formatTime(media.duration))
+                    }
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.58))
+                } else {
+                    Capsule(style: .continuous)
+                        .fill(.white.opacity(0.16))
+                        .frame(height: 4)
+
+                    HStack {
+                        Text("--:--")
+                        Spacer()
+                        Text("--:--")
+                    }
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.36))
+                }
+            }
+
+            HStack(spacing: 6) {
+                Image(systemName: media.isVolumeControlAvailable ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.white.opacity(media.isVolumeControlAvailable ? 0.50 : 0.32))
+                    .frame(width: 12)
+
                 Slider(
                     value: Binding(
                         get: { media.volume },
@@ -420,14 +678,16 @@ private struct MediaLauncherButton: View {
 struct MediaButton: View {
     let symbol: String
     let label: String
+    var symbolSize: CGFloat = 15
+    var buttonSize: CGFloat = 36
     var isEnabled = true
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 15, weight: .bold))
-                .frame(width: 36, height: 36)
+                .font(.system(size: symbolSize, weight: .bold))
+                .frame(width: buttonSize, height: buttonSize)
         }
         .buttonStyle(.plain)
         .foregroundStyle(.white.opacity(isEnabled ? 1 : 0.38))
@@ -612,6 +872,7 @@ enum FileShelfActions {
 
     private static func debugLog(_ message: String) {
         #if DEBUG
+        guard ProcessInfo.processInfo.environment["DYNAMIC_ISLAND_VERBOSE_UI_LOGS"] == "1" else { return }
         print("[DynamicIsland][FileShelfActions] \(message)")
         #endif
     }
@@ -623,6 +884,7 @@ struct ShelfFileTile: View {
     let onRemove: () -> Void
 
     @State private var isHovering = false
+    @Environment(\.isShellMorphing) private var isShellMorphing
 
     var body: some View {
         VStack(spacing: 6) {
@@ -670,7 +932,12 @@ struct ShelfFileTile: View {
             }
         }
         .onAppear {
-            thumbnailCache.loadIfNeeded(for: url)
+            loadThumbnailIfNeeded()
+        }
+        .onChange(of: isShellMorphing) { _, newValue in
+            if !newValue {
+                loadThumbnailIfNeeded()
+            }
         }
         .contextMenu {
             Button("Open") {
@@ -732,6 +999,11 @@ struct ShelfFileTile: View {
             return "photo.fill"
         }
         return "doc.fill"
+    }
+
+    private func loadThumbnailIfNeeded() {
+        guard !isShellMorphing else { return }
+        thumbnailCache.loadIfNeeded(for: url)
     }
 }
 
