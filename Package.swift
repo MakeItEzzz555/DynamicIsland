@@ -13,7 +13,10 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "DynamicIsland",
-            path: "Sources/DynamicIsland"
+            path: "Sources/DynamicIsland",
+            resources: [
+                .process("Assets.xcassets")
+            ]
         ),
         .testTarget(
             name: "DynamicIslandTests",

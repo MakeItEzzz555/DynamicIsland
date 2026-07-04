@@ -214,7 +214,7 @@ struct IslandSurface<Content: View>: View {
             .background {
                 ZStack {
                     if shouldShowShoulderBlend {
-                        NotchShoulderBlend(isExpanded: isExpanded, color: shellColor)
+                        NotchShoulderBlend(isExpanded: isExpanded)
                     }
 
                     shellShape

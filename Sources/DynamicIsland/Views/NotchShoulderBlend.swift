@@ -2,46 +2,50 @@ import SwiftUI
 
 struct NotchShoulderBlend: View {
     let isExpanded: Bool
-    let color: Color
 
-    private var shoulderSize: CGSize {
-        isExpanded
-            ? CGSize(width: 44, height: 28)
-            : CGSize(width: 28, height: 22)
+    private var assetName: String {
+        isExpanded ? "notch_shoulder_expanded" : "notch_shoulder_collapsed"
     }
 
-    private var shoulderOffsetX: CGFloat {
-        isExpanded ? 24 : 14
+    private var shoulderWidth: CGFloat {
+        isExpanded
+            ? expandedShoulderWidth
+            : collapsedShoulderWidth
+    }
+
+    private var shoulderHeight: CGFloat {
+        isExpanded
+            ? expandedShoulderHeight
+            : collapsedShoulderHeight
     }
 
     private var shoulderOffsetY: CGFloat {
-        isExpanded ? -10 : -8
-    }
-
-    private var shoulderOpacity: Double {
-        1.0
+        isExpanded
+            ? expandedShoulderYOffset
+            : collapsedShoulderYOffset
     }
 
     var body: some View {
         GeometryReader { proxy in
-            let shoulderCenterY = shoulderOffsetY + shoulderSize.height / 2
-            let insetFromSide = shoulderOffsetX
-
-            ZStack(alignment: .topLeading) {
-                Ellipse()
-                    .fill(color.opacity(shoulderOpacity))
-                    .frame(width: shoulderSize.width, height: shoulderSize.height)
-                    .position(x: insetFromSide, y: shoulderCenterY)
-
-                Ellipse()
-                    .fill(color.opacity(shoulderOpacity))
-                    .frame(width: shoulderSize.width, height: shoulderSize.height)
-                    .position(x: proxy.size.width - insetFromSide, y: shoulderCenterY)
-            }
+            Image(assetName, bundle: .module)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: shoulderWidth, height: shoulderHeight)
+                .position(
+                    x: proxy.size.width / 2,
+                    y: shoulderOffsetY + (shoulderHeight / 2)
+                )
         }
         .allowsHitTesting(false)
     }
 }
+
+let collapsedShoulderYOffset: CGFloat = -8
+let collapsedShoulderWidth: CGFloat = 28
+let collapsedShoulderHeight: CGFloat = 22
+let expandedShoulderYOffset: CGFloat = -10
+let expandedShoulderWidth: CGFloat = 44
+let expandedShoulderHeight: CGFloat = 28
 
 private struct NotchIntegratedShellEnvironmentKey: EnvironmentKey {
     static let defaultValue = true

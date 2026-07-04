@@ -1123,3 +1123,36 @@ For every requested feature phase:
   - `swift build`
   - `swift test`
   - `Scripts/package_app.sh`
+
+### 2026-07-04 - Phase 5H Asset-Backed Shoulder Blend
+
+- Replaced procedural shoulder rendering with asset-backed rendering:
+  - Main collapsed and expanded shells remain the normal rounded `UnevenRoundedRectangle`.
+  - Added `NotchShoulderBlend` as a visual-only background layer that renders:
+    - `notch_shoulder_collapsed`
+    - `notch_shoulder_expanded`
+  - Shoulder layer is centered at the top of the shell with fixed sizing/offset constants and `.allowsHitTesting(false)`.
+  - `notchShoulderBlendEnabled` still disables the entire shoulder layer and restores the plain shell immediately.
+- Added SwiftPM resource wiring:
+  - Added `Sources/DynamicIsland/Assets.xcassets`.
+  - Added placeholder image sets for `notch_shoulder_collapsed` and `notch_shoulder_expanded`.
+  - Updated `Package.swift` to process `Assets.xcassets`.
+  - Updated `Scripts/package_app.sh` to copy the generated SwiftPM resource bundle into the packaged app and clear xattrs before signing.
+- Important current limitation:
+  - The image sets are present but currently empty placeholders in this workspace.
+  - Until actual image files are added to those two image sets, no shoulder artwork will appear even though the rendering and packaging path is now correct.
+- Changed files:
+  - `Package.swift`
+  - `Scripts/package_app.sh`
+  - `Sources/DynamicIsland/Assets.xcassets/Contents.json`
+  - `Sources/DynamicIsland/Assets.xcassets/notch_shoulder_collapsed.imageset/Contents.json`
+  - `Sources/DynamicIsland/Assets.xcassets/notch_shoulder_expanded.imageset/Contents.json`
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `Sources/DynamicIsland/Views/NotchShoulderBlend.swift`
+  - `context.md`
+- Preserved:
+  - OverlayWindowController architecture, hit panel frames, click-through behavior, collapse timer logic, NotchGeometryService geometry, media, tray, timer, stats, shortcuts, settings, and gestures were not changed.
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
