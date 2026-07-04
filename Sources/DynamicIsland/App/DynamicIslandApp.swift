@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let shortcuts = ShortcutsStore()
     private let media = MediaController()
     private let timer = TimerController()
+    private let stats = SystemStatsController()
     private let navigation = IslandNavigationStore()
     private let geometryService = NotchGeometryService()
 
@@ -36,6 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             fileShelf: fileShelf,
             shortcuts: shortcuts,
             timer: timer,
+            stats: stats,
             navigation: navigation
         )
         #if DEBUG

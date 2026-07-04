@@ -3,6 +3,8 @@ import Foundation
 enum ExpandedIslandPage: CaseIterable {
     case island
     case tray
+    case timer
+    case stats
 
     var title: String {
         switch self {
@@ -10,6 +12,10 @@ enum ExpandedIslandPage: CaseIterable {
             "Island"
         case .tray:
             "Tray"
+        case .timer:
+            "Timer"
+        case .stats:
+            "Stats"
         }
     }
 
@@ -18,7 +24,11 @@ enum ExpandedIslandPage: CaseIterable {
         case .island:
             "sparkles"
         case .tray:
-            "tray.full"
+            "tray.fill"
+        case .timer:
+            "timer"
+        case .stats:
+            "chart.xyaxis.line"
         }
     }
 
@@ -41,6 +51,18 @@ final class IslandNavigationStore: ObservableObject {
     func showTray() {
         guard selectedPage != .tray else { return }
         selectedPage = .tray
+        logPageChange()
+    }
+
+    func showTimer() {
+        guard selectedPage != .timer else { return }
+        selectedPage = .timer
+        logPageChange()
+    }
+
+    func showStats() {
+        guard selectedPage != .stats else { return }
+        selectedPage = .stats
         logPageChange()
     }
 
