@@ -1156,3 +1156,38 @@ For every requested feature phase:
   - `swift build`
   - `swift test`
   - `Scripts/package_app.sh`
+
+### 2026-07-04 - Phase 5H.1 Collapsed Outward Ellipse Shoulder Tuning
+
+- Disabled asset-backed shoulder rendering for the active path:
+  - `notchShoulderUseAssets = false`
+  - Procedural ellipses are now the active rendering path.
+  - Asset-backed shoulder support remains inactive and is not used for the current visual.
+- Tuned collapsed shoulder rendering to procedural outward ellipses only:
+  - Main shell remains the normal rounded `UnevenRoundedRectangle`.
+  - Added two visual-only black ellipses behind the shell for collapsed mode.
+  - Collapsed tuning constants are centralized:
+    - `collapsedShoulderWidth = 34`
+    - `collapsedShoulderHeight = 28`
+    - `collapsedShoulderSideInset = 10`
+    - `collapsedShoulderYOffset = -9`
+    - `collapsedShoulderOpacity = 1.0`
+  - `notchShoulderDebugTint = false` was added for visual placement checks.
+- Expanded shoulder intentionally remains disabled:
+  - `expandedShoulderEnabled = false`
+  - Expanded shell stays normal/unchanged until collapsed tuning is visually correct.
+- Preserved:
+  - No custom inward-cut shape path is used.
+  - OverlayWindowController, hit panel frames, click-through behavior, collapse timer logic, NotchGeometryService geometry, media, visualizer, timer, stats, tray/AirDrop/files, shortcuts, settings, and gestures were not changed.
+- Changed files:
+  - `Sources/DynamicIsland/Views/NotchShoulderBlend.swift`
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
