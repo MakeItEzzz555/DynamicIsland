@@ -797,3 +797,326 @@ For every requested feature phase:
     - `swift build`
     - `swift test`
     - `Scripts/package_app.sh`
+
+### 2026-07-04 - Phase 5A Scalable Tabs And Dedicated Timer Tab
+
+- Updated expanded page navigation:
+  - Tabs now include Island, Tray, and Timer.
+  - Reused the existing `IslandNavigationStore`; no competing navigation store was added.
+  - `IslandStateStore` still only has `collapsed` and `expanded`.
+  - Normal click expansion still opens on the Island tab by default.
+  - Drag-hover file behavior still switches directly to Tray through `showTrayForFileDrag()`.
+- Updated expanded tab rendering:
+  - Only the selected tab content is rendered.
+  - Island tab now contains media and shortcuts only.
+  - Timer was moved out of the Island tab into a dedicated Timer tab.
+  - Tray tab remains unchanged and still uses the existing `FileShelfModuleView` and `FileShelfStore`.
+  - Tab transition remains lightweight with opacity and tiny scale, preserving the shell expansion animation.
+- Updated Timer page:
+  - Dedicated Timer page shows a larger timer display.
+  - Uses the existing single `TimerController` instance and one-timer model.
+  - Added minimal pause, resume, and reset controller methods for the dedicated timer controls.
+- Preserved:
+  - Media launcher collapse.
+  - Album artwork source-open collapse.
+  - Shortcut launch collapse.
+  - Tray drag/drop behavior.
+  - Tray file context menu actions.
+  - OverlayWindowController, split-panel click-through behavior, collapse timer logic, collapsedHitPanel behavior, expandedPanel behavior, NotchGeometryService geometry, media provider arbitration, YouTube metadata enrichment, artwork cache/stability logic, AppLaunchService, shortcut launch behavior, settings, and gestures.
+- Known limitations:
+  - AirDrop field is not implemented.
+  - Stats tab is not implemented.
+  - Visualizer upgrade is not implemented.
+  - Full live activities are not implemented.
+  - Notes are not implemented.
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+
+### 2026-07-04 - Corrected Phase 5B Last Active Tab And Top-Aligned Layout
+
+- Updated expanded tab behavior:
+  - Normal expansion now restores the last selected in-memory tab.
+  - Drag-hover file expansion still overrides the remembered tab and opens Tray.
+  - App relaunch still defaults to Island because tab persistence across launches was not added.
+- Updated expanded layout:
+  - Tab switcher moved closer to the top-left by reducing only excessive expanded top padding.
+  - Spacing between the tab switcher and active page content was reduced.
+  - Island page content now aligns top-leading instead of vertically centering.
+  - Timer page top inset was removed so controls sit closer under the tab bar.
+- Size correction:
+  - Aggressive 35% expanded island size reduction was avoided/reverted.
+  - `NotchGeometryService` expanded dimensions remain unchanged at the comfortable adaptive size.
+  - Media controls, sliders, Shortcuts, Tray tiles, and Timer controls remain at their existing usable sizes.
+- Changed files:
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `Sources/DynamicIsland/Views/ModuleViews.swift`
+  - `context.md`
+- Preserved:
+  - `IslandNavigationStore` remains the only expanded tab navigation store.
+  - `IslandStateStore` still only has `collapsed` and `expanded`.
+  - Only the active tab content is rendered.
+  - OverlayWindowController, split-panel click-through behavior, collapse timer logic, collapsedHitPanel behavior, expandedPanel behavior, NotchGeometryService geometry, media stack, artwork cache/stability logic, AppLaunchService, file drop handoff, file context menu actions, file thumbnail cache logic, shortcuts launch behavior, timer engine, settings, and gestures were not rewritten.
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+
+### 2026-07-04 - Phase 5C Tray Split AirDrop And Files Layout
+
+- Updated Tray tab layout:
+  - Tray now uses a horizontal split layout.
+  - AirDrop zone sits on the left and takes about one third of the Tray width.
+  - Files zone sits on the right and takes about two thirds of the Tray width.
+  - Existing Finder-style file tiles remain in the Files zone.
+- Added AirDrop drop behavior:
+  - Added `AirDropService.share(urls:)`.
+  - AirDrop drops use `NSSharingService(named: .sendViaAirDrop)` when available.
+  - If AirDrop sharing service is unavailable, dropped files are revealed in Finder as a safe fallback.
+  - AirDrop-dropped files are not added to `FileShelfStore`.
+- Preserved Files behavior:
+  - Dropping files on the Files zone still adds them through `FileShelfStore`.
+  - Duplicate prevention and 12-file cap remain unchanged.
+  - Existing file context menu actions remain unchanged: Open, Reveal in Finder, Copy Path, Copy File Name, and Remove from Tray.
+  - Existing drag-out behavior remains unchanged.
+- Preserved drag and tab behavior:
+  - Drag-hover over the collapsed island still forces Tray.
+  - Last-active-tab restore for normal click expansion remains unchanged.
+  - AirDrop is a zone inside Tray, not a new top-level tab.
+  - Only active tab content is rendered.
+- Changed files:
+  - `Sources/DynamicIsland/Modules/AirDropService.swift`
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `context.md`
+- Known limitations:
+  - AirDrop depends on macOS `NSSharingService` availability.
+  - Stats tab is not implemented.
+  - Visualizer upgrade is not implemented.
+  - Full live activities are not implemented.
+  - Persistent tray storage is not implemented.
+  - Rename is not implemented.
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+
+### 2026-07-04 - Phase 5D Stats Tab
+
+- Added expanded Stats tab:
+  - Expanded navigation now includes Island, Tray, Timer, and Stats.
+  - Reused the existing `IslandNavigationStore` and `ExpandedIslandPage` enum.
+  - Stats is a tab/page only; `IslandStateStore` still only has `collapsed` and `expanded`.
+  - Normal expansion still restores the last active tab.
+  - Drag-hover file expansion still forces Tray.
+- Added `SystemStatsController`:
+  - App owns one shared stats controller through `IslandModules`.
+  - Polls every 2 seconds.
+  - Uses lightweight macOS APIs without shelling out to `top`.
+  - Publishes CPU, memory, disk, network, battery, and uptime/system summary values when available.
+- Added Stats UI:
+  - Stats page shows compact cards for CPU, Memory, Disk, Network, Battery, and Uptime.
+  - Cards use simple text and progress bars with the existing dark translucent island style.
+  - Stats content is rendered only when the Stats tab is selected.
+- Added tests:
+  - `SystemStatsFormattingTests` covers byte formatting and percent/fraction clamping.
+- Changed files:
+  - `Sources/DynamicIsland/Modules/SystemStatsController.swift`
+  - `Sources/DynamicIsland/Modules/IslandModule.swift`
+  - `Sources/DynamicIsland/App/DynamicIslandApp.swift`
+  - `Sources/DynamicIsland/State/IslandNavigationStore.swift`
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `Tests/DynamicIslandTests/SystemStatsFormattingTests.swift`
+  - `context.md`
+- Known limitations:
+  - Visualizer upgrade is not implemented.
+  - Full live activities are not implemented.
+  - Network and battery values may be unavailable on some systems.
+  - Persistent tray storage is not implemented.
+  - Rename is not implemented.
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+
+### 2026-07-04 - Phase 5E Stats Visual Redesign And Memory Fix
+
+- Updated expanded navigation:
+  - Top tab switcher now uses compact icon-only buttons.
+  - Accessibility labels and hover help still expose Island, Tray, Timer, and Stats names.
+  - Compact navigation keeps the Stats tab away from the notch without changing expanded island size or collapsed geometry.
+- Redesigned Stats page:
+  - Stats now uses a compact dashboard layout with dark translucent cards.
+  - Cards use colored SF Symbol icons, large values, compact detail text, and lightweight line charts.
+  - Cards shown: CPU, Memory, GPU, Network, Disk, and Battery.
+  - GPU card is graceful unavailable state because no reliable lightweight GPU API is implemented.
+  - Network shows download and upload rates with separate mini chart lines.
+  - Battery card includes uptime as secondary detail when battery data is available.
+- Corrected memory display:
+  - Memory "used" now uses active + wired + compressed memory.
+  - Reclaimable inactive/speculative pages are no longer counted as hard used.
+  - Cached/reclaimable memory is shown separately in the Memory card detail.
+  - Added code comment documenting the macOS memory formula.
+- Added stats history:
+  - Stats controller keeps short capped history buffers for CPU, memory, disk, network download, and network upload.
+  - Histories update at the existing 2 second polling interval.
+  - Charts are simple SwiftUI `Path` lines with no heavy animation.
+- Added tests:
+  - Memory used helper excludes cache inputs.
+  - Stats history caps samples and clamps values.
+- Changed files:
+  - `Sources/DynamicIsland/Modules/SystemStatsController.swift`
+  - `Sources/DynamicIsland/State/IslandNavigationStore.swift`
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `Tests/DynamicIslandTests/SystemStatsFormattingTests.swift`
+  - `context.md`
+- Known limitations:
+  - GPU usage may be unavailable because no reliable lightweight GPU metric API is implemented.
+  - Full live activities are not implemented.
+  - Visualizer upgrade is not implemented.
+  - Network and battery values may be unavailable on some systems.
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+
+### 2026-07-04 - Phase 5F Timer Ring And Stats Layout Polish
+
+- Redesigned Timer tab:
+  - Timer now uses a centered animated circular countdown ring.
+  - Ring starts full for a new timer and depletes as remaining time decreases.
+  - Ring starts at the top and uses smooth trim animation unless Reduce Motion is enabled.
+  - Ring color transitions from green toward orange/red as remaining progress approaches zero.
+  - Large monospaced timer text is centered inside the ring.
+  - Existing timer controls remain available: 5m, 10m, 15m, Pause/Resume, and Reset.
+- Added minimal timer visual state:
+  - `TimerController` now publishes `totalSeconds` so progress can be derived as remaining/total.
+  - Reset returns the current timer back to its starting duration and stops it.
+  - Countdown task behavior was not rewritten.
+- Polished Stats card layout:
+  - Increased spacing between Stats cards.
+  - Moved card detail/secondary text into an internal footer row.
+  - Reduced internal chart/text sizing slightly so subtitles stay inside rounded card bounds.
+  - CPU, Memory, GPU, Network, Disk, and Battery cards use the same internal structure.
+- Added tests:
+  - Timer progress clamps below 0 and above 1.
+  - Timer progress defaults to full when no total duration is available.
+  - Timer progress color stages cover high, mid, and low progress.
+- Changed files:
+  - `Sources/DynamicIsland/Modules/TimerController.swift`
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `Tests/DynamicIslandTests/TimerProgressFormattingTests.swift`
+  - `context.md`
+- Preserved:
+  - Expanded island size was not changed.
+  - Tab navigation position and last-active-tab behavior were not changed.
+  - Only active tab content is rendered.
+  - OverlayWindowController, split-panel click-through behavior, collapse timer logic, collapsedHitPanel behavior, expandedPanel behavior, NotchGeometryService geometry, media provider arbitration, YouTube metadata enrichment, artwork cache/stability logic, AppLaunchService, file drop handoff, Tray AirDrop/files logic, shortcut launch logic, settings, and gestures were not touched.
+- Known limitations:
+  - Visualizer upgrade is not implemented.
+  - Full live activities are not implemented.
+  - Persistent tray storage is not implemented.
+  - Rename is not implemented.
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+
+### 2026-07-04 - Phase 5G Native Visualizer And Artwork Color
+
+- Upgraded media visualizer:
+  - Replaced the simple 3-bar visualizer with a compact 12-bar native-style spectrum.
+  - Bars animate smoothly while media is playing using a lightweight SwiftUI timeline.
+  - Paused media, inactive media, and Reduce Motion use static/dimmed bars.
+  - Collapsed island uses the compact visualizer.
+  - Expanded media module also shows the upgraded visualizer in the active media layout.
+- Added artwork accent color extraction:
+  - Added `ArtworkAccentColorExtractor` to downsample artwork and choose a visually usable accent color.
+  - Extraction ignores transparent, near-black, near-white, and low-saturation pixels when better candidates exist.
+  - Added `ArtworkAccentColorCache` so extraction is cached by artwork key and not repeated every media poll.
+  - Color extraction runs off the main actor from image data and falls back to white/gray if unavailable.
+- Integrated with media state:
+  - `MediaController` now exposes the current artwork key read-only for visual color caching.
+  - Color extraction is read-only with respect to artwork and media selection.
+  - Existing artwork assignment, provider arbitration, and artwork flicker safeguards were not rewritten.
+- Added tests:
+  - Dominant color extraction ignores black/white/transparent samples.
+  - Extraction returns nil for unusable samples.
+  - Accent color cache stores a color for an artwork key.
+- Changed files:
+  - `Sources/DynamicIsland/Modules/ArtworkAccentColorExtractor.swift`
+  - `Sources/DynamicIsland/Modules/MediaController.swift`
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `Sources/DynamicIsland/Views/ModuleViews.swift`
+  - `Tests/DynamicIslandTests/ArtworkAccentColorExtractorTests.swift`
+  - `context.md`
+- Preserved:
+  - Visualizer remains simulated and does not use audio capture, microphone input, screen recording, or real audio analysis.
+  - OverlayWindowController, split-panel click-through behavior, collapse timer logic, collapsedHitPanel behavior, expandedPanel behavior, NotchGeometryService geometry, IslandStateStore presentation cases, AppLaunchService, file context menu actions, file thumbnail cache, file drop handoff, Tray AirDrop/files logic, TimerController engine, SystemStatsController polling, shortcut launch logic, settings, gestures, and shell animation were not touched.
+- Known limitations:
+  - Visualizer is simulated, not real audio analysis.
+  - Full live activities are not implemented.
+  - Persistent tray storage is not implemented.
+  - Rename is not implemented.
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+
+### 2026-07-04 - Phase 5H Notch-Integrated Island Shape
+
+- Added notch-integrated shell shape:
+  - Added `NotchMergedIslandShape` as a lightweight SwiftUI `Shape`.
+  - Shape adds subtle curved top shoulders so the shell visually blends toward the physical notch.
+  - Collapsed and expanded shells both use the same shape with different conservative shoulder constants.
+  - Existing bottom rounded shell treatment is preserved.
+- Added notchless fallback:
+  - `IslandLayoutStore` now carries the existing `NotchGeometryService` hardware-notch signal.
+  - Notched displays use the shoulder shape.
+  - Notchless/external displays fall back to the normal top-attached rounded shell.
+- Kept behavior visual-only:
+  - Surface frames, collapsed hit panel frame, expanded panel frame, and click-through architecture were not resized or rewritten.
+  - Existing bouncy shell animation and inner blur/scale/opacity transitions remain unchanged.
+  - Content layout was not changed for this phase.
+  - The only `OverlayWindowController` change passes the existing notch flag into the expanded SwiftUI shell host; panel architecture, collapse logic, and hit testing were not changed.
+- Changed files:
+  - `Sources/DynamicIsland/Views/NotchMergedIslandShape.swift`
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `Sources/DynamicIsland/Overlay/IslandLayoutStore.swift`
+  - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
+  - `context.md`
+- Preserved:
+  - Media, tray, AirDrop/files, timer, stats, shortcuts, settings, gestures, app launch, media providers, artwork stability, file thumbnail cache, and system stats polling were not changed.
+  - `IslandStateStore` still only has `collapsed` and `expanded`.
+- Known limitations:
+  - Curve constants may need tuning per Mac model.
+  - This is visual-only shell integration, not a full hardware notch mask.
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+
+### 2026-07-04 - Phase 5H Correction Remove Inward Cut
+
+- Removed the broken inward-cut shell path:
+  - `NotchMergedIslandShape` no longer creates a concave top shoulder path.
+  - Main collapsed and expanded shells are restored to the normal top-attached rounded shape.
+  - No inward scoop/bite remains in the shell path.
+- Replaced with safer outward shoulder layering:
+  - Added `NotchShoulderBlendView`, which draws subtle outward circular shoulder blends behind the main shell.
+  - Shoulders are decorative only and do not alter hit testing, panel frames, layout, or content clipping.
+  - Added `notchShoulderBlendEnabled`; setting it to `false` restores the plain rounded shell immediately.
+  - Shoulder radius/offset/opacity constants are isolated for quick tuning.
+- Preserved:
+  - Collapsed hit panel frame, expanded panel frame, click-through architecture, collapse timer logic, NotchGeometryService geometry, media, visualizer, timer, stats, tray/AirDrop/files, shortcuts, settings, and gestures were not changed.
+- Changed files:
+  - `Sources/DynamicIsland/Views/NotchMergedIslandShape.swift`
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `context.md`
+- Known limitations:
+  - Shoulder constants may still need visual tuning per Mac model.
+  - This remains visual-only shell blending, not a hardware notch mask.
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
