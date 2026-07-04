@@ -55,7 +55,8 @@ public final class NotchGeometryService {
     public func geometry(
         for screen: NSScreen? = nil,
         collapsedSize: CGSize,
-        expandedSize: CGSize
+        expandedSize: CGSize,
+        collapsedMediaActive: Bool = true
     ) -> IslandGeometry {
         let screen = screen ?? Self.preferredScreen()
         let snapshot = screen.map(Self.snapshot) ?? ScreenSnapshot(
@@ -65,13 +66,19 @@ public final class NotchGeometryService {
             auxiliaryTopLeftArea: nil,
             auxiliaryTopRightArea: nil
         )
-        return geometry(for: snapshot, collapsedSize: collapsedSize, expandedSize: expandedSize)
+        return geometry(
+            for: snapshot,
+            collapsedSize: collapsedSize,
+            expandedSize: expandedSize,
+            collapsedMediaActive: collapsedMediaActive
+        )
     }
 
     public func geometry(
         for snapshot: ScreenSnapshot,
         collapsedSize: CGSize,
-        expandedSize: CGSize
+        expandedSize: CGSize,
+        collapsedMediaActive: Bool = true
     ) -> IslandGeometry {
         let notchRect = inferNotchRect(from: snapshot)
         let topY = snapshot.frame.maxY
@@ -81,7 +88,9 @@ public final class NotchGeometryService {
 
         let collapsedFrame: CGRect
         if let notchRect {
-            let resolvedCollapsedWidth = min(max((notchRect.width + 50) * 1.05, 226), 254)
+            let activeCollapsedWidth = min(max((notchRect.width + 50) * 1.05, 226), 254)
+            let inactiveCollapsedWidth = min(activeCollapsedWidth - 28, max(172, notchRect.width * 0.94))
+            let resolvedCollapsedWidth = collapsedMediaActive ? activeCollapsedWidth : inactiveCollapsedWidth
             let resolvedCollapsedHeight = min(max(notchRect.height + 5, 33), 40)
             collapsedFrame = CGRect(
                 x: notchRect.midX - resolvedCollapsedWidth / 2,
@@ -90,10 +99,11 @@ public final class NotchGeometryService {
                 height: resolvedCollapsedHeight
             )
         } else {
+            let resolvedCollapsedWidth = collapsedMediaActive ? collapsedSize.width : max(126, collapsedSize.width * 0.70)
             collapsedFrame = CGRect(
-                x: snapshot.frame.midX - collapsedSize.width / 2,
+                x: snapshot.frame.midX - resolvedCollapsedWidth / 2,
                 y: topY - collapsedSize.height - 8,
-                width: collapsedSize.width,
+                width: resolvedCollapsedWidth,
                 height: collapsedSize.height
             )
         }

@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let shortcuts = ShortcutsStore()
     private let media = MediaController()
     private let timer = TimerController()
+    private let navigation = IslandNavigationStore()
     private let geometryService = NotchGeometryService()
 
     private var overlayController: OverlayWindowController?
@@ -34,8 +35,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             media: media,
             fileShelf: fileShelf,
             shortcuts: shortcuts,
-            timer: timer
+            timer: timer,
+            navigation: navigation
         )
+        #if DEBUG
+        debugPrint(
+            "DynamicIsland AppDelegate modules",
+            "mediaInstance=\(ObjectIdentifier(media))"
+        )
+        #endif
 
         let overlayController = OverlayWindowController(
             settings: settings,

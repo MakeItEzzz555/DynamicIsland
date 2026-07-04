@@ -16,7 +16,7 @@ It is inspired by the interaction model of Apple Dynamic Island and third-party 
 
 - Borderless floating overlay aligned to the hardware notch when `NSScreen` exposes notch safe-area data.
 - Floating centered island fallback for external or notchless displays.
-- Two presentation states only: idle notch pill and expanded Nook panel.
+- Two presentation states only: idle notch pill and expanded Island panel.
 - Click-to-expand interaction model.
 - Spotify-first media detection with Apple Music fallback through permission-gated Apple Events.
 - Idle pill album artwork and animated audio visualizer.
