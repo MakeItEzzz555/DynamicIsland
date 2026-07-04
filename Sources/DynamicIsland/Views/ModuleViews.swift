@@ -13,51 +13,99 @@ struct CompactMediaView: View {
 
 struct AudioVisualizerView: View {
     let isPlaying: Bool
+    var isActive = true
+    var accentColor: Color = ArtworkAccentColorExtractor.fallbackColor
+    var variant: AudioVisualizerVariant = .compact
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Group {
-            if isPlaying {
-                TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { timeline in
-                    bars(tick: timeline.date.timeIntervalSinceReferenceDate, opacity: 0.88)
+            if isPlaying && isActive && !reduceMotion {
+                TimelineView(.animation(minimumInterval: 1.0 / 24.0)) { timeline in
+                    bars(tick: timeline.date.timeIntervalSinceReferenceDate, opacity: 0.92)
                 }
             } else {
-                bars(tick: nil, opacity: 0.48)
+                bars(tick: nil, opacity: isActive ? 0.48 : 0.28)
             }
         }
-        .frame(width: 10, height: 12)
+        .frame(width: variant.size.width, height: variant.size.height)
         .accessibilityLabel(isPlaying ? "Audio playing" : "Audio paused")
     }
 
     private func bars(tick: TimeInterval?, opacity: Double) -> some View {
-        HStack(alignment: .center, spacing: 2) {
-            ForEach(0..<3, id: \.self) { index in
+        HStack(alignment: .center, spacing: variant.spacing) {
+            ForEach(0..<Self.barCount, id: \.self) { index in
                 Capsule(style: .continuous)
-                    .fill(Color.white.opacity(opacity))
-                    .frame(width: 2, height: barHeight(index: index, tick: tick))
+                    .fill(accentColor.opacity(opacity))
+                    .frame(width: variant.barWidth, height: barHeight(index: index, tick: tick))
+                    .shadow(color: accentColor.opacity(tick == nil || reduceMotion ? 0 : 0.22), radius: 3)
             }
         }
     }
 
     private func barHeight(index: Int, tick: TimeInterval?) -> CGFloat {
-        guard let tick else { return Self.pausedHeights[index] }
-        let samples = Self.playingHeights[index]
+        guard let tick else {
+            return variant.maximumBarHeight * Self.pausedFractions[index % Self.pausedFractions.count]
+        }
+
+        let samples = Self.playingFractions[index % Self.playingFractions.count]
         let phase = tick.truncatingRemainder(dividingBy: Self.loopDuration) / Self.loopDuration
-        let samplePosition = phase * Double(samples.count)
+        let offsetPhase = (phase + (Double(index) * 0.047)).truncatingRemainder(dividingBy: 1)
+        let samplePosition = offsetPhase * Double(samples.count)
         let lowerIndex = Int(floor(samplePosition)) % samples.count
         let upperIndex = (lowerIndex + 1) % samples.count
         let progress = CGFloat(samplePosition - floor(samplePosition))
         let easedProgress = progress * progress * (3 - 2 * progress)
 
-        return samples[lowerIndex] + ((samples[upperIndex] - samples[lowerIndex]) * easedProgress)
+        let fraction = samples[lowerIndex] + ((samples[upperIndex] - samples[lowerIndex]) * easedProgress)
+        return variant.maximumBarHeight * min(max(fraction, 0.14), 1)
     }
 
-    private static let loopDuration: TimeInterval = 1.84
-    private static let pausedHeights: [CGFloat] = [3.5, 8.5, 5.5]
-    private static let playingHeights: [[CGFloat]] = [
-        [4.0, 11.5, 6.5, 10.0, 3.5, 8.0],
-        [10.5, 4.0, 12.0, 6.0, 9.5, 5.0],
-        [6.0, 9.5, 3.5, 11.0, 7.0, 10.5]
+    private static let barCount = 12
+    private static let loopDuration: TimeInterval = 1.72
+    private static let pausedFractions: [CGFloat] = [0.24, 0.36, 0.28, 0.46, 0.31, 0.40, 0.27, 0.34, 0.44, 0.30, 0.38, 0.26]
+    private static let playingFractions: [[CGFloat]] = [
+        [0.28, 0.80, 0.42, 0.92, 0.33, 0.62],
+        [0.64, 0.34, 0.96, 0.46, 0.74, 0.38],
+        [0.40, 0.88, 0.30, 0.70, 0.52, 0.95],
+        [0.76, 0.42, 0.58, 0.98, 0.36, 0.66]
     ]
+}
+
+enum AudioVisualizerVariant {
+    case compact
+    case expanded
+
+    var size: CGSize {
+        switch self {
+        case .compact:
+            CGSize(width: 30, height: 14)
+        case .expanded:
+            CGSize(width: 76, height: 28)
+        }
+    }
+
+    var barWidth: CGFloat {
+        switch self {
+        case .compact:
+            1.55
+        case .expanded:
+            3.2
+        }
+    }
+
+    var spacing: CGFloat {
+        switch self {
+        case .compact:
+            1.05
+        case .expanded:
+            2.2
+        }
+    }
+
+    var maximumBarHeight: CGFloat {
+        size.height
+    }
 }
 
 struct AlbumArtworkView: View {
@@ -102,6 +150,7 @@ struct MediaModuleView: View {
     @ObservedObject var media: MediaController
     let onLauncherActivated: () -> Void
     let onMediaSourceOpened: () -> Void
+    @ObservedObject private var accentCache = ArtworkAccentColorCache.shared
 
     init(
         media: MediaController,
@@ -133,7 +182,10 @@ struct MediaModuleView: View {
         .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
 
+    @ViewBuilder
     private var activePlayerView: some View {
+        let visualizerColor = accentCache.color(for: media.artworkKey, image: media.artworkImage)
+
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 14) {
                 ClickableAlbumArtworkButton(media: media, size: 112) {
@@ -156,6 +208,13 @@ struct MediaModuleView: View {
                         .font(.system(size: 14, weight: .bold, design: .rounded))
                         .foregroundStyle(.white.opacity(0.48))
                         .lineLimit(1)
+                    AudioVisualizerView(
+                        isPlaying: media.isPlaying,
+                        isActive: media.hasActiveMediaSource,
+                        accentColor: visualizerColor,
+                        variant: .expanded
+                    )
+                    .padding(.top, 4)
                     HStack(spacing: 18) {
                         MediaButton(
                             symbol: "backward.fill",
@@ -598,7 +657,8 @@ struct ShelfFileTile: View {
                 .lineLimit(2)
                 .truncationMode(.middle)
                 .frame(width: 78, alignment: .top)
-                .frame(minHeight: 24)        }
+                .frame(minHeight: 24)
+        }
         .padding(.horizontal, 5)
         .padding(.vertical, 7)
         .frame(width: 84, alignment: .top)

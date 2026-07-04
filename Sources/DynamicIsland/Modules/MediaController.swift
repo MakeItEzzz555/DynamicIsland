@@ -18,6 +18,7 @@ final class MediaController: ObservableObject {
     @Published private(set) var hasPlaybackProgress = false
     @Published private(set) var sourceKind: MediaSourceKind = .unknown
     @Published private(set) var sourceBundleIdentifier: String?
+    @Published private(set) var artworkKey: String?
 
     private let systemNowPlayingProvider = NowPlayingMediaProvider()
     private let youtubeMetadataProvider = YouTubeMetadataProvider()
@@ -774,6 +775,7 @@ final class MediaController: ObservableObject {
             }
 
             currentArtworkKey = key
+            artworkKey = key
             currentArtworkSourceIdentity = candidate.identity
             currentArtworkURL = artworkURL
             loadArtwork(
@@ -812,6 +814,7 @@ final class MediaController: ObservableObject {
         }
 
         currentArtworkKey = placeholderKey
+        artworkKey = placeholderKey
         currentArtworkSourceIdentity = candidate.identity
         currentArtworkURL = nil
         artworkImage = nil
@@ -848,6 +851,7 @@ final class MediaController: ObservableObject {
 
         artworkCache[key] = image
         currentArtworkKey = key
+        artworkKey = key
         currentArtworkSourceIdentity = sourceIdentity
         currentArtworkURL = key.hasPrefix("url:") ? String(key.dropFirst(4)) : currentArtworkURL
         artworkImage = image
@@ -865,6 +869,7 @@ final class MediaController: ObservableObject {
         artworkImage = nil
         currentArtworkURL = nil
         currentArtworkKey = nil
+        artworkKey = nil
         currentArtworkSourceIdentity = nil
         logArtworkAssignment(
             reason: reason,
