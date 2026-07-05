@@ -175,6 +175,19 @@ public final class AppSettings: ObservableObject {
     @Published public var notchShoulderBlendEnabledSetting: Bool { didSet { save(notchShoulderBlendEnabledSetting, for: Key.notchShoulderBlendEnabledSetting) } }
     @Published public var showCollapsedVisualizer: Bool { didSet { save(showCollapsedVisualizer, for: Key.showCollapsedVisualizer) } }
     @Published public var showExpandedVisualizer: Bool { didSet { save(showExpandedVisualizer, for: Key.showExpandedVisualizer) } }
+    @Published public var collapsedHoverPreviewEnabled: Bool { didSet { save(collapsedHoverPreviewEnabled, for: Key.collapsedHoverPreviewEnabled) } }
+    @Published public var collapsedHoverPreviewMediaEnabled: Bool { didSet { save(collapsedHoverPreviewMediaEnabled, for: Key.collapsedHoverPreviewMediaEnabled) } }
+    @Published public var collapsedHoverPreviewHeight: Double {
+        didSet { normalizeCollapsedHoverPreviewHeight(oldValue: oldValue) }
+    }
+    @Published public var collapsedHoverPreviewDelay: Double {
+        didSet { normalizeCollapsedHoverPreviewDelay(oldValue: oldValue) }
+    }
+    @Published public var collapsedHoverPreviewShowTitle: Bool { didSet { save(collapsedHoverPreviewShowTitle, for: Key.collapsedHoverPreviewShowTitle) } }
+    @Published public var collapsedHoverPreviewShowsArtist: Bool { didSet { save(collapsedHoverPreviewShowsArtist, for: Key.collapsedHoverPreviewShowsArtist) } }
+    @Published public var collapsedHoverPreviewShowsSource: Bool { didSet { save(collapsedHoverPreviewShowsSource, for: Key.collapsedHoverPreviewShowsSource) } }
+    @Published public var collapsedHoverPreviewTitleIconName: String { didSet { save(collapsedHoverPreviewTitleIconName, for: Key.collapsedHoverPreviewTitleIconName) } }
+    @Published public var collapsedHoverPreviewArtistIconName: String { didSet { save(collapsedHoverPreviewArtistIconName, for: Key.collapsedHoverPreviewArtistIconName) } }
 
     @Published public var animationPreset: AnimationPreset { didSet { save(animationPreset.rawValue, for: Key.animationPreset) } }
     @Published public var reduceExtraMotion: Bool { didSet { save(reduceExtraMotion, for: Key.reduceExtraMotion) } }
@@ -365,6 +378,15 @@ public final class AppSettings: ObservableObject {
         notchShoulderBlendEnabledSetting = Self.bool(defaults, Key.notchShoulderBlendEnabledSetting, false)
         showCollapsedVisualizer = Self.bool(defaults, Key.showCollapsedVisualizer, true)
         showExpandedVisualizer = Self.bool(defaults, Key.showExpandedVisualizer, true)
+        collapsedHoverPreviewEnabled = Self.bool(defaults, Key.collapsedHoverPreviewEnabled, true)
+        collapsedHoverPreviewMediaEnabled = Self.bool(defaults, Key.collapsedHoverPreviewMediaEnabled, true)
+        collapsedHoverPreviewHeight = Self.double(defaults, Key.collapsedHoverPreviewHeight, 58)
+        collapsedHoverPreviewDelay = Self.double(defaults, Key.collapsedHoverPreviewDelay, 0.08)
+        collapsedHoverPreviewShowTitle = Self.bool(defaults, Key.collapsedHoverPreviewShowTitle, true)
+        collapsedHoverPreviewShowsArtist = Self.bool(defaults, Key.collapsedHoverPreviewShowsArtist, true)
+        collapsedHoverPreviewShowsSource = Self.bool(defaults, Key.collapsedHoverPreviewShowsSource, false)
+        collapsedHoverPreviewTitleIconName = Self.string(defaults, Key.collapsedHoverPreviewTitleIconName, "music.mic")
+        collapsedHoverPreviewArtistIconName = Self.string(defaults, Key.collapsedHoverPreviewArtistIconName, "person.fill")
 
         animationPreset = Self.enumValue(defaults, Key.animationPreset, .normal)
         reduceExtraMotion = Self.bool(defaults, Key.reduceExtraMotion, false)
@@ -543,6 +565,8 @@ public final class AppSettings: ObservableObject {
         reset(keys: [
             Key.collapsedWidth, Key.collapsedHeight, Key.expandedWidth, Key.expandedHeight,
             Key.useAdaptiveNotchSizing, Key.respectHardwareNotch,
+            Key.collapsedHoverPreviewEnabled, Key.collapsedHoverPreviewHeight,
+            Key.collapsedHoverPreviewDelay,
             Key.animationPreset, Key.reduceExtraMotion, Key.shellAnimationSpeed,
             Key.contentAnimationEnabled, Key.contentStaggerEnabled, Key.contentStaggerAmount,
             Key.useBlurTransitions, Key.useScaleTransitions, Key.useOpacityTransitions
@@ -556,6 +580,8 @@ public final class AppSettings: ObservableObject {
             Key.mediaEnabled, Key.showMediaWhenPaused, Key.showMediaWhenNoSource,
             Key.showAlbumArtwork, Key.showMediaTitle, Key.showMediaArtist, Key.showMediaSourceName,
             Key.showPlaybackControls, Key.showProgressSlider, Key.showVolumeSlider, Key.showVisualizer,
+            Key.collapsedHoverPreviewMediaEnabled, Key.collapsedHoverPreviewShowTitle,
+            Key.collapsedHoverPreviewShowsArtist, Key.collapsedHoverPreviewShowsSource,
             Key.trayEnabled, Key.fileShelfEnabled, Key.airDropZoneEnabled,
             Key.timerEnabled, Key.timerPresetsEnabled, Key.timerPreset1Minutes, Key.timerPreset2Minutes, Key.timerPreset3Minutes,
             Key.statsEnabled, Key.showCPU, Key.showMemory, Key.showGPU, Key.showNetwork, Key.showDisk, Key.showBattery, Key.showUptime
@@ -588,6 +614,15 @@ public final class AppSettings: ObservableObject {
         notchShoulderBlendEnabledSetting = Self.bool(defaults, Key.notchShoulderBlendEnabledSetting, false)
         showCollapsedVisualizer = Self.bool(defaults, Key.showCollapsedVisualizer, true)
         showExpandedVisualizer = Self.bool(defaults, Key.showExpandedVisualizer, true)
+        collapsedHoverPreviewEnabled = Self.bool(defaults, Key.collapsedHoverPreviewEnabled, true)
+        collapsedHoverPreviewMediaEnabled = Self.bool(defaults, Key.collapsedHoverPreviewMediaEnabled, true)
+        collapsedHoverPreviewHeight = Self.double(defaults, Key.collapsedHoverPreviewHeight, 58)
+        collapsedHoverPreviewDelay = Self.double(defaults, Key.collapsedHoverPreviewDelay, 0.08)
+        collapsedHoverPreviewShowTitle = Self.bool(defaults, Key.collapsedHoverPreviewShowTitle, true)
+        collapsedHoverPreviewShowsArtist = Self.bool(defaults, Key.collapsedHoverPreviewShowsArtist, true)
+        collapsedHoverPreviewShowsSource = Self.bool(defaults, Key.collapsedHoverPreviewShowsSource, false)
+        collapsedHoverPreviewTitleIconName = Self.string(defaults, Key.collapsedHoverPreviewTitleIconName, "music.mic")
+        collapsedHoverPreviewArtistIconName = Self.string(defaults, Key.collapsedHoverPreviewArtistIconName, "person.fill")
         animationPreset = Self.enumValue(defaults, Key.animationPreset, .normal)
         reduceExtraMotion = Self.bool(defaults, Key.reduceExtraMotion, false)
         shellAnimationSpeed = Self.double(defaults, Key.shellAnimationSpeed, 1.0)
@@ -718,6 +753,8 @@ public final class AppSettings: ObservableObject {
         expandedWidth = normalizedDouble(expandedWidth, fallback: 860, range: 520...920)
         expandedHeight = normalizedDouble(expandedHeight, fallback: 286, range: 180...360)
         shellOpacity = normalizedDouble(shellOpacity, fallback: 1.0, range: 0.35...1.0)
+        collapsedHoverPreviewHeight = normalizedDouble(collapsedHoverPreviewHeight, fallback: 58, range: 44...96)
+        collapsedHoverPreviewDelay = normalizedDouble(collapsedHoverPreviewDelay, fallback: 0.08, range: 0...0.4)
         shellAnimationSpeed = normalizedDouble(shellAnimationSpeed, fallback: 1.0, range: 0.25...2.0)
         contentStaggerAmount = normalizedDouble(contentStaggerAmount, fallback: 1.0, range: 0...2.0)
         maxShelfFiles = normalizedInt(maxShelfFiles, fallback: 12, range: 1...48)
@@ -755,6 +792,14 @@ public final class AppSettings: ObservableObject {
 
     private func normalizeShellOpacity(oldValue: Double) {
         normalizeAndSaveDouble(\.shellOpacity, oldValue: oldValue, fallback: 1.0, range: 0.35...1.0, key: Key.shellOpacity)
+    }
+
+    private func normalizeCollapsedHoverPreviewHeight(oldValue: Double) {
+        normalizeAndSaveDouble(\.collapsedHoverPreviewHeight, oldValue: oldValue, fallback: 58, range: 44...96, key: Key.collapsedHoverPreviewHeight)
+    }
+
+    private func normalizeCollapsedHoverPreviewDelay(oldValue: Double) {
+        normalizeAndSaveDouble(\.collapsedHoverPreviewDelay, oldValue: oldValue, fallback: 0.08, range: 0...0.4, key: Key.collapsedHoverPreviewDelay)
     }
 
     private func normalizeShellAnimationSpeed(oldValue: Double) {
@@ -865,6 +910,8 @@ public final class AppSettings: ObservableObject {
         save(expandedWidth, for: Key.expandedWidth)
         save(expandedHeight, for: Key.expandedHeight)
         save(shellOpacity, for: Key.shellOpacity)
+        save(collapsedHoverPreviewHeight, for: Key.collapsedHoverPreviewHeight)
+        save(collapsedHoverPreviewDelay, for: Key.collapsedHoverPreviewDelay)
         save(shellAnimationSpeed, for: Key.shellAnimationSpeed)
         save(contentStaggerAmount, for: Key.contentStaggerAmount)
         save(maxShelfFiles, for: Key.maxShelfFiles)
@@ -897,6 +944,13 @@ public final class AppSettings: ObservableObject {
 
     private static func int(_ defaults: UserDefaults, _ key: String, _ fallback: Int) -> Int {
         defaults.object(forKey: key) as? Int ?? fallback
+    }
+
+    private static func string(_ defaults: UserDefaults, _ key: String, _ fallback: String) -> String {
+        guard let value = defaults.string(forKey: key), !value.isEmpty else {
+            return fallback
+        }
+        return value
     }
 
     private static func enumValue<T: RawRepresentable>(_ defaults: UserDefaults, _ key: String, _ fallback: T) -> T where T.RawValue == String {
@@ -932,6 +986,15 @@ private enum Key {
     static let notchShoulderBlendEnabledSetting = "notchShoulderBlendEnabledSetting"
     static let showCollapsedVisualizer = "showCollapsedVisualizer"
     static let showExpandedVisualizer = "showExpandedVisualizer"
+    static let collapsedHoverPreviewEnabled = "collapsedHoverPreviewEnabled"
+    static let collapsedHoverPreviewMediaEnabled = "collapsedHoverPreviewMediaEnabled"
+    static let collapsedHoverPreviewHeight = "collapsedHoverPreviewHeight"
+    static let collapsedHoverPreviewDelay = "collapsedHoverPreviewDelay"
+    static let collapsedHoverPreviewShowTitle = "collapsedHoverPreviewShowTitle"
+    static let collapsedHoverPreviewShowsArtist = "collapsedHoverPreviewShowsArtist"
+    static let collapsedHoverPreviewShowsSource = "collapsedHoverPreviewShowsSource"
+    static let collapsedHoverPreviewTitleIconName = "collapsedHoverPreviewTitleIconName"
+    static let collapsedHoverPreviewArtistIconName = "collapsedHoverPreviewArtistIconName"
     static let animationPreset = "animationPreset"
     static let reduceExtraMotion = "reduceExtraMotion"
     static let shellAnimationSpeed = "shellAnimationSpeed"
@@ -1056,7 +1119,10 @@ private enum Key {
         collapsedWidth, collapsedHeight, expandedWidth, expandedHeight, useAdaptiveNotchSizing,
         respectHardwareNotch, islandTheme, shellOpacity, shellStrokeEnabled, shellShadowEnabled,
         useArtworkAccentColor, visualizerAccentMode, notchShoulderBlendEnabledSetting,
-        showCollapsedVisualizer, showExpandedVisualizer, animationPreset, reduceExtraMotion,
+        showCollapsedVisualizer, showExpandedVisualizer, collapsedHoverPreviewEnabled,
+        collapsedHoverPreviewMediaEnabled, collapsedHoverPreviewHeight, collapsedHoverPreviewDelay,
+        collapsedHoverPreviewShowTitle, collapsedHoverPreviewShowsArtist, collapsedHoverPreviewShowsSource,
+        collapsedHoverPreviewTitleIconName, collapsedHoverPreviewArtistIconName, animationPreset, reduceExtraMotion,
         shellAnimationSpeed, contentAnimationEnabled, contentStaggerEnabled, contentStaggerAmount,
         useBlurTransitions, useScaleTransitions, useOpacityTransitions, showIslandTab, showTrayTab,
         showTimerTab, showStatsTab, showActivitiesTab, showLiveActivitiesTab, showGesturesTab,

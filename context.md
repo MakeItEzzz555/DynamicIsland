@@ -2197,3 +2197,161 @@ For every requested feature phase:
   - `pkill -9 DynamicIsland`
   - `open -n dist/DynamicIsland.app`
   - `pgrep -fl DynamicIsland`
+
+### 2026-07-05 - Phase 8A File Shelf Tray Polish
+
+- Added persistent File Shelf behavior:
+  - `FileShelfStore` now supports bookmark-backed persistence through `UserDefaults` when `persistFileShelfAcrossLaunches` is enabled.
+  - Persistence remains off when the setting is disabled, preserving runtime-only shelf behavior.
+  - Restores only file URLs that still exist and silently drops missing/corrupt entries.
+  - Add/remove/clear/max-file trimming now update persisted storage when enabled.
+  - Duplicate files from the same drop are de-duplicated and `maxShelfFiles` is respected.
+- Polished File Shelf UI:
+  - Added a subtle file-count badge in the shelf header when `showFileCountBadge` is enabled.
+  - Added clear-shelf confirmation when `confirmBeforeClearShelf` is enabled.
+  - Empty state now explains whether files are temporary, saved across launches, or drops are disabled in Settings.
+  - Existing thumbnail behavior now continues to respect `showFileThumbnails` and `deferThumbnailsDuringMorph`.
+- File tile actions:
+  - Context menu and hover remove continue respecting:
+    - `openFileActionEnabled`
+    - `revealInFinderActionEnabled`
+    - `copyPathActionEnabled`
+    - `removeFileActionEnabled`
+  - Added a Preview/Quick Look entry and double-click behavior using the safe system-open fallback for this phase because direct `QLPreviewPanel` integration was not available cleanly under the current SDK/import surface.
+  - Remove actions only remove files from the shelf and do not delete disk files.
+- AirDrop polish:
+  - `AirDropService.share` now respects `airDropFallbackRevealInFinder`.
+  - When the fallback is disabled and AirDrop service is unavailable, the app no longer reveals files in Finder automatically.
+  - AirDrop zone copy reflects the fallback behavior.
+- Drag/drop settings:
+  - Existing collapsed and expanded drop gates remain in place for `allowFileDropsOnCollapsedIsland`, `allowFileDropsOnExpandedTray`, `trayEnabled`, `fileShelfEnabled`, and `airDropZoneEnabled`.
+  - Drop-state highlights remain view-local and do not change shell sequencing.
+- Added tests:
+  - File shelf de-duplicates and respects `maxShelfFiles`.
+  - Persistence restores existing files when enabled.
+  - Persistence-disabled shelves do not restore on relaunch.
+  - Missing persisted files are silently removed.
+- Preserved:
+  - OverlayWindowController stable host panel architecture, IslandLayoutStore local-frame model, shell/content sequencing, click-through passthrough behavior, media/timer/stats logic, and settings architecture were not changed.
+- Changed files:
+  - `Sources/DynamicIsland/Modules/FileShelfStore.swift`
+  - `Sources/DynamicIsland/Modules/AirDropService.swift`
+  - `Sources/DynamicIsland/Views/ModuleViews.swift`
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `Tests/DynamicIslandTests/FileShelfStoreTests.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+  - Packaging required the documented xattr cleanup recovery once:
+    - `xattr -cr dist/DynamicIsland.app`
+    - `Scripts/package_app.sh`
+  - `pkill -9 DynamicIsland`
+  - `open -n dist/DynamicIsland.app`
+  - `pgrep -fl DynamicIsland`
+
+### 2026-07-05 - Settings Window Activation Fix
+
+- Fixed the Settings window appearing inactive/greyed out:
+  - DynamicIsland runs as an accessory app by default.
+  - `SettingsWindowController.show()` now temporarily switches the app activation policy to `.regular`, activates the app, and makes the Settings window key.
+  - Closing the Settings window restores the app to `.accessory`.
+- Re-enabled Tray settings that now have Phase 8A behavior:
+  - `Confirm before clearing shelf`
+  - `Persist shelf across launches`
+  - `AirDrop fallback reveal in Finder`
+- Preserved:
+  - Overlay architecture, click-through behavior, shell morphing, media, timer, stats, tray logic, file shelf behavior, and notch shoulder state were not changed.
+- Changed files:
+  - `Sources/DynamicIsland/App/SettingsWindowController.swift`
+  - `Sources/DynamicIsland/Views/SettingsView.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+  - `pkill -9 DynamicIsland`
+  - `open -n dist/DynamicIsland.app`
+  - `pgrep -fl DynamicIsland`
+
+### 2026-07-05 - Phase 8A Collapsed Hover Preview Foundation
+
+- Added a generic collapsed hover preview model:
+  - `CollapsedPreviewContent`
+  - `CollapsedPreviewKind`
+  - Media is the only real content provider in this phase.
+  - The model is intentionally generic so a future Live Activities provider can reuse the same collapsed preview surface.
+- Added collapsed-only hover preview behavior:
+  - Hovering the collapsed pill can expand the visible shell downward after a short configurable delay.
+  - The normal collapsed frame remains unchanged; the preview uses a SwiftUI-only visual frame derived from `layoutStore.collapsedSurfaceFrame`.
+  - The panel is not resized for hover preview.
+  - Preview is disabled while expanded, during shell morph/collapse handoff, or while file drag targeting is active.
+- Added media preview content:
+  - Active media can show the current title and artist/source in the taller collapsed pill.
+  - Preview respects existing media visibility settings such as media enablement, paused-media visibility, title/artist/source toggles, album artwork visibility, and visualizer visibility.
+  - No fake preview content is shown when there is no active media session.
+- Added click-through safety for the taller preview:
+  - `IslandLayoutStore` now publishes `collapsedPreviewActive` and `collapsedPreviewSurfaceFrame`.
+  - `OverlayWindowController` includes the preview frame in the collapsed interactive region only while the preview is active.
+  - Outside the visible collapsed/preview shape remains click-through.
+- Added settings:
+  - `collapsedHoverPreviewEnabled`
+  - `collapsedHoverPreviewMediaEnabled`
+  - `collapsedHoverPreviewHeight`
+  - `collapsedHoverPreviewDelay`
+  - `collapsedHoverPreviewShowsArtist`
+  - `collapsedHoverPreviewShowsSource`
+  - Height and delay are normalized using the existing guarded settings pattern.
+- Preserved:
+  - Stable single-panel host architecture, `IslandLayoutStore` local-frame model, expanded shell/content sequencing, media controller internals, file shelf behavior, timer/stats behavior, drag/drop expansion, settings architecture, and parked notch shoulder behavior were not rewritten.
+- Changed files:
+  - `Sources/DynamicIsland/State/AppSettings.swift`
+  - `Sources/DynamicIsland/Views/SettingsView.swift`
+  - `Sources/DynamicIsland/Overlay/IslandLayoutStore.swift`
+  - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+  - `pkill -9 DynamicIsland`
+  - `open -n dist/DynamicIsland.app`
+  - `pgrep -fl DynamicIsland`
+
+### 2026-07-05 - Phase 8A.1 Collapsed Hover Preview Layout Polish
+
+- Refined collapsed hover preview layout:
+  - The hover preview row now sits along the bottom of the expanded collapsed pill.
+  - Song title and artist/source are rendered as separate horizontal groups.
+  - When both are visible, the title group aligns toward the center from the left side and the artist group aligns toward the center from the right side.
+  - When only one field is enabled/available, that field is centered along the bottom row.
+- Added preview icons:
+  - Title uses `collapsedHoverPreviewTitleIconName`, defaulting to `music.mic`.
+  - Artist/source uses `collapsedHoverPreviewArtistIconName`, defaulting to `person.fill`.
+  - Invalid/unavailable SF Symbols fall back safely to `music.note` or `person.fill`.
+- Removed blur from hover preview text/icons:
+  - The bottom row now uses clean opacity and small vertical offset animation only.
+  - The expanded island content staging and shell morph transitions were not changed.
+- Added/updated settings:
+  - Added `collapsedHoverPreviewShowTitle`.
+  - Added internal icon-name settings for title and artist defaults.
+  - Reused `collapsedHoverPreviewShowsArtist` for artist visibility.
+  - Reused `collapsedHoverPreviewShowsSource` as "Use source name if artist missing".
+  - Increased normalized hover preview height range to `44...96`.
+  - Settings UI now includes song name, artist, and source-fallback controls with dependent disabling.
+- Preserved:
+  - Stable single-panel host architecture, `OverlayWindowController` panel model, `IslandLayoutStore` local-frame model, hover-preview hit region behavior, expanded shell/content sequencing, click-through architecture, media controller internals, file shelf behavior, timer/stats behavior, and notch shoulder state were not rewritten.
+- Changed files:
+  - `Sources/DynamicIsland/State/AppSettings.swift`
+  - `Sources/DynamicIsland/Views/SettingsView.swift`
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+  - `pkill -9 DynamicIsland`
+  - `open -n dist/DynamicIsland.app`
+  - `pgrep -fl DynamicIsland`

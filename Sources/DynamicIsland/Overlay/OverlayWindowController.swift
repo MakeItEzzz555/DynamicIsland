@@ -116,6 +116,15 @@ final class OverlayWindowController {
             }
             .store(in: &cancellables)
 
+        layoutStore.$collapsedPreviewActive
+            .combineLatest(layoutStore.$collapsedPreviewSurfaceFrame)
+            .sink { [weak self] _, _ in
+                DispatchQueue.main.async {
+                    self?.updateMousePassthrough()
+                }
+            }
+            .store(in: &cancellables)
+
         modules.media.$hasActiveMediaSource
             .removeDuplicates()
             .sink { [weak self] hasActiveMediaSource in
@@ -413,7 +422,7 @@ final class OverlayWindowController {
             localRect = layoutStore.expandedSurfaceFrame
             tolerance = expandedHoverTolerance
         } else {
-            localRect = layoutStore.collapsedSurfaceFrame
+            localRect = collapsedInteractiveSurfaceFrame
             tolerance = collapsedHoverTolerance
         }
 
@@ -576,12 +585,20 @@ final class OverlayWindowController {
             baseRegion = layoutStore.expandedSurfaceFrame.integral
             tolerance = 2
         } else {
-            baseRegion = layoutStore.collapsedSurfaceFrame.integral
+            baseRegion = collapsedInteractiveSurfaceFrame.integral
             tolerance = 4
         }
 
         guard !baseRegion.isEmpty else { return .zero }
         return baseRegion.insetBy(dx: -tolerance, dy: -tolerance)
+    }
+
+    private var collapsedInteractiveSurfaceFrame: CGRect {
+        if layoutStore.collapsedPreviewActive,
+           !layoutStore.collapsedPreviewSurfaceFrame.isEmpty {
+            return layoutStore.collapsedPreviewSurfaceFrame
+        }
+        return layoutStore.collapsedSurfaceFrame
     }
 }
 

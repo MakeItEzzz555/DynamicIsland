@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -16,6 +17,22 @@ private enum IslandContentPhase {
 private enum RenderedContentMode {
     case compact
     case expanded
+}
+
+enum CollapsedPreviewKind: String {
+    case none
+    case media
+    case timer
+    case fileDrop
+    case liveActivity
+}
+
+struct CollapsedPreviewContent: Equatable {
+    let title: String?
+    let artist: String?
+    let titleIconName: String
+    let artistIconName: String
+    let kind: CollapsedPreviewKind
 }
 
 private enum IslandShellLayout {
@@ -67,6 +84,8 @@ struct IslandRootView: View {
     let onRequestExpand: () -> Void
     let onRequestCollapse: () -> Void
     let onOpenSettings: () -> Void
+    @ObservedObject private var media: MediaController
+    @ObservedObject private var navigation: IslandNavigationStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var contentPhase: IslandContentPhase = .compact
     @State private var renderedContentMode: RenderedContentMode = .compact
@@ -74,6 +93,31 @@ struct IslandRootView: View {
     @State private var expandedContentMounted = false
     @State private var isContentRemoving = false
     @State private var sequenceGeneration = 0
+    @State private var isCollapsedHovering = false
+    @State private var collapsedPreviewVisible = false
+    @State private var collapsedPreviewGeneration = 0
+
+    init(
+        settings: AppSettings,
+        islandState: IslandStateStore,
+        layoutStore: IslandLayoutStore,
+        modules: IslandModules,
+        rendersExpandedVisualContent: Bool,
+        onRequestExpand: @escaping () -> Void,
+        onRequestCollapse: @escaping () -> Void,
+        onOpenSettings: @escaping () -> Void
+    ) {
+        self.settings = settings
+        self.islandState = islandState
+        self.layoutStore = layoutStore
+        self.modules = modules
+        self.rendersExpandedVisualContent = rendersExpandedVisualContent
+        self.onRequestExpand = onRequestExpand
+        self.onRequestCollapse = onRequestCollapse
+        self.onOpenSettings = onOpenSettings
+        media = modules.media
+        navigation = modules.navigation
+    }
 
     private var isExpanded: Bool {
         islandState.state == .expanded
@@ -136,10 +180,17 @@ struct IslandRootView: View {
                         onOpenSettings: onOpenSettings
                     )
                 } else {
-                    CompactIslandView(settings: settings, modules: modules)
+                    CompactIslandView(
+                        settings: settings,
+                        modules: modules,
+                        previewContent: collapsedPreviewContent,
+                        previewActive: isCollapsedPreviewActive
+                    )
                         .contentShape(Rectangle())
+                        .onHover(perform: handleCollapsedHover)
                         .onTapGesture {
                             guard settings.expandOnClick else { return }
+                            deactivateCollapsedPreview()
                             onRequestExpand()
                         }
                 }
@@ -156,9 +207,28 @@ struct IslandRootView: View {
         .onAppear {
             modules.navigation.ensureValidSelection(using: settings)
             synchronizePresentationForCurrentState()
+            updateCollapsedPreviewLayout()
         }
         .onChange(of: islandState.state) { _, newValue in
             handleStateChange(newValue)
+        }
+        .onChange(of: isCollapsedPreviewActive) { _, _ in
+            updateCollapsedPreviewLayout()
+        }
+        .onChange(of: collapsedPreviewSurfaceFrame) { _, _ in
+            updateCollapsedPreviewLayout()
+        }
+        .onChange(of: navigation.isFileDropTargeted) { _, _ in
+            if !isCollapsedPreviewAllowed {
+                deactivateCollapsedPreview()
+            } else {
+                updateCollapsedPreviewLayout()
+            }
+        }
+        .onChange(of: media.hasActiveMediaSource) { _, _ in
+            if !isCollapsedPreviewAllowed {
+                deactivateCollapsedPreview()
+            }
         }
         .onChange(of: layoutStore.isExpandedContentExiting) { _, newValue in
             if newValue {
@@ -183,6 +253,7 @@ struct IslandRootView: View {
         .accessibilityLabel("DynamicIsland")
         .animation(shellAnimation, value: islandState.state)
         .animation(shellAnimation, value: layoutStore.isShellMorphing)
+        .animation(collapsedPreviewAnimation, value: isCollapsedPreviewActive)
     }
 
     private var surfaceSize: CGSize {
@@ -190,7 +261,89 @@ struct IslandRootView: View {
     }
 
     private var surfaceFrame: CGRect {
-        isExpanded ? layoutStore.expandedSurfaceFrame : layoutStore.collapsedSurfaceFrame
+        if isExpanded {
+            return layoutStore.expandedSurfaceFrame
+        }
+        if isCollapsedPreviewActive {
+            return collapsedPreviewSurfaceFrame
+        }
+        return layoutStore.collapsedSurfaceFrame
+    }
+
+    private var collapsedPreviewSurfaceFrame: CGRect {
+        let base = layoutStore.collapsedSurfaceFrame
+        let previewHeight = max(base.height, CGFloat(settings.collapsedHoverPreviewHeight))
+        return CGRect(
+            x: base.minX,
+            y: base.maxY - previewHeight,
+            width: base.width,
+            height: previewHeight
+        ).integral
+    }
+
+    private var collapsedPreviewContent: CollapsedPreviewContent? {
+        mediaCollapsedPreviewContent
+    }
+
+    private var isCollapsedPreviewAllowed: Bool {
+        islandState.state == .collapsed &&
+            settings.collapsedHoverPreviewEnabled &&
+            collapsedPreviewContent != nil &&
+            !navigation.isFileDropTargeted &&
+            !layoutStore.isShellMorphing &&
+            !layoutStore.isCollapseShellOnly &&
+            !layoutStore.isExpandedContentExiting &&
+            contentPhase == .compact
+    }
+
+    private var isCollapsedPreviewActive: Bool {
+        collapsedPreviewVisible && isCollapsedPreviewAllowed
+    }
+
+    private var collapsedPreviewAnimation: Animation {
+        if reduceMotion || settings.reduceExtraMotion || settings.animationPreset == .instant {
+            return .easeInOut(duration: 0.01)
+        }
+        let duration = settings.contentAnimationEnabled ? 0.18 / max(settings.shellAnimationSpeed, 0.25) : 0.01
+        return .smooth(duration: min(max(duration, 0.12), 0.24))
+    }
+
+    private var mediaCollapsedPreviewContent: CollapsedPreviewContent? {
+        guard settings.mediaEnabled,
+              settings.collapsedHoverPreviewMediaEnabled,
+              media.hasActiveMediaSource,
+              settings.showMediaWhenPaused || media.isPlaying else {
+            return nil
+        }
+
+        let title = settings.collapsedHoverPreviewShowTitle && settings.showMediaTitle
+            ? media.title.trimmedForCollapsedPreview
+            : nil
+        let artist: String?
+        if settings.collapsedHoverPreviewShowsArtist {
+            let artistCandidate = settings.showMediaArtist
+                ? media.artist.trimmedForCollapsedPreview
+                : nil
+            artist = artistCandidate ?? (
+                settings.collapsedHoverPreviewShowsSource && settings.showMediaSourceName
+                    ? media.sourceName.trimmedForCollapsedPreview
+                    : nil
+            )
+        } else {
+            artist = nil
+        }
+
+        guard title != nil || artist != nil else {
+            return nil
+        }
+
+        return CollapsedPreviewContent(
+            title: title,
+            artist: artist,
+            titleIconName: settings.collapsedHoverPreviewTitleIconName,
+            artistIconName: settings.collapsedHoverPreviewArtistIconName,
+            kind: .media
+        )
     }
 
     private var fileDropTargetBinding: Binding<Bool> {
@@ -245,8 +398,10 @@ struct IslandRootView: View {
     private func handleStateChange(_ state: IslandPresentationState) {
         switch state {
         case .expanded:
+            deactivateCollapsedPreview()
             startExpansionSequence()
         case .collapsed:
+            deactivateCollapsedPreview()
             beginShellCollapseSequence()
         }
     }
@@ -321,6 +476,62 @@ struct IslandRootView: View {
         contentVisible = false
         isContentRemoving = false
         contentPhase = .compact
+        updateCollapsedPreviewLayout()
+    }
+
+    private func handleCollapsedHover(_ isHovering: Bool) {
+        isCollapsedHovering = isHovering
+        collapsedPreviewGeneration += 1
+        let generation = collapsedPreviewGeneration
+
+        guard isHovering else {
+            collapsedPreviewVisible = false
+            updateCollapsedPreviewLayout()
+            return
+        }
+
+        guard isCollapsedPreviewAllowed else {
+            collapsedPreviewVisible = false
+            updateCollapsedPreviewLayout()
+            return
+        }
+
+        let delay = reduceMotion || settings.reduceExtraMotion || settings.animationPreset == .instant
+            ? 0
+            : settings.collapsedHoverPreviewDelay
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            guard generation == collapsedPreviewGeneration else { return }
+            guard isCollapsedHovering, isCollapsedPreviewAllowed else { return }
+            collapsedPreviewVisible = true
+            updateCollapsedPreviewLayout()
+        }
+    }
+
+    private func deactivateCollapsedPreview() {
+        isCollapsedHovering = false
+        collapsedPreviewVisible = false
+        collapsedPreviewGeneration += 1
+        updateCollapsedPreviewLayout()
+    }
+
+    private func updateCollapsedPreviewLayout() {
+        let active = isCollapsedPreviewActive
+        layoutStore.updateCollapsedPreview(
+            active: active,
+            frame: active ? collapsedPreviewSurfaceFrame : .zero
+        )
+    }
+}
+
+private extension String {
+    var trimmedForCollapsedPreview: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              trimmed != "Nothing Playing",
+              trimmed != "Open Spotify or Music" else {
+            return nil
+        }
+        return trimmed
     }
 }
 
@@ -581,13 +792,22 @@ private struct IslandShellShape: Shape {
 struct CompactIslandView: View {
     @ObservedObject var settings: AppSettings
     let modules: IslandModules
+    let previewContent: CollapsedPreviewContent?
+    let previewActive: Bool
     @ObservedObject private var media: MediaController
     @ObservedObject private var accentCache = ArtworkAccentColorCache.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    init(settings: AppSettings, modules: IslandModules) {
+    init(
+        settings: AppSettings,
+        modules: IslandModules,
+        previewContent: CollapsedPreviewContent? = nil,
+        previewActive: Bool = false
+    ) {
         self.settings = settings
         self.modules = modules
+        self.previewContent = previewContent
+        self.previewActive = previewActive
         media = modules.media
     }
 
@@ -602,6 +822,26 @@ struct CompactIslandView: View {
             branch: activeBranch ? "active compact" : "inactive compact"
         )
 
+        ZStack(alignment: .bottom) {
+            compactContentRow(activeBranch: activeBranch, visualizerColor: visualizerColor)
+                .frame(height: 16)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: previewActive ? .top : .center)
+                .padding(.top, previewActive ? 2 : 0)
+
+            if let previewContent {
+                CollapsedPreviewRow(content: previewContent)
+                    .opacity(previewActive ? 1 : 0)
+                    .offset(y: previewActive ? 0 : 4)
+                    .animation(previewRowAnimation, value: previewActive)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .animation(compactContentAnimation, value: media.hasActiveMediaSource)
+        .animation(compactContentAnimation, value: previewActive)
+    }
+
+    @ViewBuilder
+    private func compactContentRow(activeBranch: Bool, visualizerColor: Color) -> some View {
         ZStack {
             if activeBranch {
                 HStack(spacing: 10) {
@@ -624,12 +864,26 @@ struct CompactIslandView: View {
                     .transition(.opacity)
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .animation(compactContentAnimation, value: media.hasActiveMediaSource)
     }
 
     private var compactContentAnimation: Animation {
         reduceMotion ? .easeInOut(duration: 0.16) : .easeInOut(duration: 0.28)
+    }
+
+    private var previewRowAnimation: Animation {
+        guard !reduceMotion, settings.contentAnimationEnabled else {
+            return .easeInOut(duration: 0.01)
+        }
+        switch settings.animationPreset {
+        case .instant:
+            return .easeInOut(duration: 0.01)
+        case .subtle:
+            return .easeInOut(duration: 0.12)
+        case .normal:
+            return .easeInOut(duration: 0.16)
+        case .slow:
+            return .easeInOut(duration: 0.24)
+        }
     }
 
     private var shouldShowMediaSession: Bool {
@@ -670,6 +924,76 @@ struct CompactIslandView: View {
             "branch=\(branch)"
         )
         #endif
+    }
+}
+
+private struct CollapsedPreviewRow: View {
+    let content: CollapsedPreviewContent
+
+    var body: some View {
+        let hasTitle = content.title != nil
+        let hasArtist = content.artist != nil
+
+        HStack(alignment: .center, spacing: 16) {
+            if let title = content.title {
+                CollapsedPreviewLabel(
+                    text: title,
+                    symbolName: content.titleIconName,
+                    fallbackSymbolName: "music.note"
+                )
+                .frame(maxWidth: .infinity, alignment: hasArtist ? .trailing : .center)
+            }
+
+            if let artist = content.artist {
+                CollapsedPreviewLabel(
+                    text: artist,
+                    symbolName: content.artistIconName,
+                    fallbackSymbolName: "person.fill"
+                )
+                .frame(maxWidth: .infinity, alignment: hasTitle ? .leading : .center)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+        .padding(.horizontal, 10)
+        .padding(.bottom, 1)
+    }
+}
+
+private struct CollapsedPreviewLabel: View {
+    let text: String
+    let symbolName: String
+    let fallbackSymbolName: String
+
+    var body: some View {
+        HStack(spacing: 4) {
+            SafeSystemImage(symbolName: symbolName, fallbackSymbolName: fallbackSymbolName)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.white.opacity(0.58))
+                .frame(width: 11, height: 11)
+
+            Text(text)
+                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.86))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(minWidth: 0)
+    }
+}
+
+private struct SafeSystemImage: View {
+    let symbolName: String
+    let fallbackSymbolName: String
+
+    var body: some View {
+        Image(systemName: resolvedSymbolName)
+    }
+
+    private var resolvedSymbolName: String {
+        NSImage(systemSymbolName: symbolName, accessibilityDescription: nil) == nil
+            ? fallbackSymbolName
+            : symbolName
     }
 }
 
@@ -844,6 +1168,7 @@ struct ExpandedIslandView: View {
             HStack(alignment: .top, spacing: metrics.pageColumnSpacing) {
                 if settings.airDropZoneEnabled {
                     AirDropDropZoneView(
+                        settings: settings,
                         isTargeted: isAirDropTargeted,
                         reduceMotion: reduceMotion
                     )
@@ -988,7 +1313,10 @@ struct ExpandedIslandView: View {
         loadFileURLs(from: providers) { urls in
             Task { @MainActor in
                 if !urls.isEmpty {
-                    AirDropService.share(urls: urls)
+                    AirDropService.share(
+                        urls: urls,
+                        fallbackRevealInFinder: settings.airDropFallbackRevealInFinder
+                    )
                 }
                 isAirDropTargeted = false
                 navigation.setFileDropTargeted(false)
@@ -1534,6 +1862,7 @@ extension View {
 }
 
 private struct AirDropDropZoneView: View {
+    @ObservedObject var settings: AppSettings
     let isTargeted: Bool
     let reduceMotion: Bool
 
@@ -1549,7 +1878,7 @@ private struct AirDropDropZoneView: View {
                 Text("AirDrop")
                     .font(.system(size: 17, weight: .bold, design: .rounded))
                     .foregroundStyle(.white)
-                Text("Drop files here to share")
+                Text(subtitle)
                     .font(.system(size: 12, weight: .semibold, design: .rounded))
                     .foregroundStyle(.white.opacity(0.52))
                     .fixedSize(horizontal: false, vertical: true)
@@ -1569,6 +1898,12 @@ private struct AirDropDropZoneView: View {
         .animation(.easeOut(duration: reduceMotion ? 0.01 : 0.14), value: isTargeted)
         .accessibilityLabel("AirDrop")
         .accessibilityHint("Drop files here to share with AirDrop")
+    }
+
+    private var subtitle: String {
+        settings.airDropFallbackRevealInFinder
+            ? "Drop files here to share"
+            : "Drop files here to share if available"
     }
 }
 

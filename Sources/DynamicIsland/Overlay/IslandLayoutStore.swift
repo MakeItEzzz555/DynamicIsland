@@ -11,6 +11,8 @@ final class IslandLayoutStore: ObservableObject {
     @Published var isShellMorphing = false
     @Published var isCollapseShellOnly = false
     @Published var isExpandedContentExiting = false
+    @Published var collapsedPreviewActive = false
+    @Published var collapsedPreviewSurfaceFrame: CGRect = .zero
     @Published var panelFrame: CGRect = .zero
 
     func update(canvas: IslandCanvasGeometry, hasHardwareNotch: Bool) {
@@ -18,6 +20,8 @@ final class IslandLayoutStore: ObservableObject {
         canvasSize = canvas.frame.size
         collapsedSurfaceFrame = canvas.collapsedSurfaceFrame
         expandedSurfaceFrame = canvas.expandedSurfaceFrame
+        collapsedPreviewActive = false
+        collapsedPreviewSurfaceFrame = .zero
         collapsedSize = canvas.collapsedSurfaceFrame.size
         expandedSize = canvas.expandedSurfaceFrame.size
         self.hasHardwareNotch = hasHardwareNotch
@@ -47,6 +51,9 @@ final class IslandLayoutStore: ObservableObject {
         canvasSize = integralPanelFrame.size
         collapsedSurfaceFrame = localCollapsedFrame
         expandedSurfaceFrame = localExpandedFrame
+        if !collapsedPreviewActive {
+            collapsedPreviewSurfaceFrame = .zero
+        }
         collapsedSize = localCollapsedFrame.size
         expandedSize = localExpandedFrame.size
         self.hasHardwareNotch = hasHardwareNotch
@@ -85,5 +92,15 @@ final class IslandLayoutStore: ObservableObject {
             )
         }
         #endif
+    }
+
+    func updateCollapsedPreview(active: Bool, frame: CGRect) {
+        let nextFrame = active ? frame.integral : .zero
+        if collapsedPreviewActive != active {
+            collapsedPreviewActive = active
+        }
+        if collapsedPreviewSurfaceFrame != nextFrame {
+            collapsedPreviewSurfaceFrame = nextFrame
+        }
     }
 }

@@ -803,9 +803,18 @@ struct FileShelfModuleView: View {
             HStack {
                 Label("File Shelf", systemImage: "tray.full")
                     .font(.system(size: 14, weight: .bold, design: .rounded))
+                if settings.showFileCountBadge, !fileShelf.files.isEmpty {
+                    Text("\(fileShelf.files.count)")
+                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .foregroundStyle(.cyan.opacity(0.92))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(.cyan.opacity(0.12), in: Capsule(style: .continuous))
+                        .accessibilityLabel("\(fileShelf.files.count) files")
+                }
                 Spacer()
                 Button("Clear") {
-                    fileShelf.clear()
+                    clearShelf()
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.white.opacity(fileShelf.files.isEmpty ? 0.34 : 0.66))
@@ -821,7 +830,7 @@ struct FileShelfModuleView: View {
                     Text("Drop files here")
                         .font(.system(size: 13, weight: .bold, design: .rounded))
                         .foregroundStyle(.white.opacity(0.62))
-                    Text("They stay here temporarily until you clear them.")
+                    Text(emptyShelfSubtitle)
                         .font(.system(size: 11, weight: .medium, design: .rounded))
                         .foregroundStyle(.white.opacity(0.42))
                         .lineLimit(1)
@@ -848,6 +857,32 @@ struct FileShelfModuleView: View {
         .padding(12)
         .frame(maxWidth: .infinity, minHeight: 154, maxHeight: 214, alignment: .topLeading)
         .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+
+    private var emptyShelfSubtitle: String {
+        if !settings.allowFileDropsOnExpandedTray {
+            return "File drops disabled in Settings"
+        }
+        if settings.persistFileShelfAcrossLaunches {
+            return "Files stay in your shelf and are saved across launches"
+        }
+        return "Files stay in your shelf for quick access"
+    }
+
+    private func clearShelf() {
+        guard !fileShelf.files.isEmpty else { return }
+        if settings.confirmBeforeClearShelf {
+            let alert = NSAlert()
+            alert.messageText = "Clear File Shelf?"
+            alert.informativeText = "This removes files from the shelf only. It does not delete anything from disk."
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "Clear")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else {
+                return
+            }
+        }
+        fileShelf.clear()
     }
 }
 
@@ -960,6 +995,17 @@ enum FileShelfActions {
         debugLog("FileShelfActions.copyName name=\(url.lastPathComponent)")
     }
 
+    @discardableResult
+    static func quickLook(_ url: URL) -> Bool {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            debugLog("FileShelfActions.quickLook skipped missing file path=\(url.path)")
+            return false
+        }
+        let didPreview = open(url)
+        debugLog("FileShelfActions.quickLook path=\(url.path) success=\(didPreview)")
+        return didPreview
+    }
+
     private static func copy(_ string: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(string, forType: .string)
@@ -1022,6 +1068,9 @@ struct ShelfFileTile: View {
         .frame(width: 84, alignment: .top)
         .background(.white.opacity(isHovering ? 0.12 : 0.045), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .onTapGesture(count: 2) {
+            FileShelfActions.quickLook(url)
+        }
         .onHover { hovering in
             if isHovering != hovering {
                 isHovering = hovering
@@ -1036,7 +1085,13 @@ struct ShelfFileTile: View {
             }
         }
         .contextMenu {
+            Button("Quick Look") {
+                FileShelfActions.quickLook(url)
+            }
+
             if settings.openFileActionEnabled {
+                Divider()
+
                 Button("Open") {
                     FileShelfActions.open(url)
                 }

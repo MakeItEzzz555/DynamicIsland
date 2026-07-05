@@ -145,6 +145,33 @@ struct SettingsView: View {
                 Toggle("Show collapsed visualizer", isOn: $settings.showCollapsedVisualizer)
                 Toggle("Show expanded visualizer", isOn: $settings.showExpandedVisualizer)
             }
+
+            SettingsGroup("Collapsed Preview") {
+                Toggle("Enable hover preview", isOn: $settings.collapsedHoverPreviewEnabled)
+                Toggle("Use media preview", isOn: $settings.collapsedHoverPreviewMediaEnabled)
+                    .disabled(!settings.collapsedHoverPreviewEnabled)
+                SliderRow(
+                    title: "Preview height",
+                    value: $settings.collapsedHoverPreviewHeight,
+                    range: 44...96,
+                    format: "%.0f pt",
+                    disabled: !settings.collapsedHoverPreviewEnabled
+                )
+                SliderRow(
+                    title: "Preview delay",
+                    value: $settings.collapsedHoverPreviewDelay,
+                    range: 0...0.4,
+                    format: "%.2fs",
+                    disabled: !settings.collapsedHoverPreviewEnabled
+                )
+                Toggle("Show song name", isOn: $settings.collapsedHoverPreviewShowTitle)
+                    .disabled(!settings.collapsedHoverPreviewEnabled || !settings.collapsedHoverPreviewMediaEnabled)
+                Toggle("Show artist", isOn: $settings.collapsedHoverPreviewShowsArtist)
+                    .disabled(!settings.collapsedHoverPreviewEnabled || !settings.collapsedHoverPreviewMediaEnabled)
+                Toggle("Use source name if artist missing", isOn: $settings.collapsedHoverPreviewShowsSource)
+                    .disabled(!settings.collapsedHoverPreviewEnabled || !settings.collapsedHoverPreviewMediaEnabled || !settings.collapsedHoverPreviewShowsArtist)
+                HelpText("Hover preview expands the collapsed pill visually without resizing the overlay panel.")
+            }
         }
     }
 
@@ -259,10 +286,8 @@ struct SettingsView: View {
                 Toggle("Show file extensions", isOn: $settings.showFileExtensions)
                 Toggle("Show file count badge", isOn: $settings.showFileCountBadge)
                 Toggle("Confirm before clearing shelf", isOn: $settings.confirmBeforeClearShelf)
-                    .disabled(true)
                 Toggle("Persist shelf across launches", isOn: $settings.persistFileShelfAcrossLaunches)
-                    .disabled(true)
-                HelpText("Shelf persistence and clear confirmation are stored now and intentionally left for later behavior work.")
+                HelpText("Persistence restores existing files on launch and silently drops missing files.")
             }
 
             SettingsGroup("Actions") {
@@ -271,7 +296,6 @@ struct SettingsView: View {
                 Toggle("Copy path actions", isOn: $settings.copyPathActionEnabled)
                 Toggle("Remove file action", isOn: $settings.removeFileActionEnabled)
                 Toggle("AirDrop fallback reveal in Finder", isOn: $settings.airDropFallbackRevealInFinder)
-                    .disabled(true)
             }
         }
     }
