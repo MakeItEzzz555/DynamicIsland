@@ -34,7 +34,8 @@ final class OverlayWindowController {
         settings: AppSettings,
         islandState: IslandStateStore,
         modules: IslandModules,
-        geometryService: NotchGeometryService
+        geometryService: NotchGeometryService,
+        onOpenSettings: @escaping () -> Void = {}
     ) {
         self.settings = settings
         self.islandState = islandState
@@ -66,7 +67,8 @@ final class OverlayWindowController {
             },
             onRequestCollapse: { [weak self] in
                 self?.requestCollapseWithSequencing()
-            }
+            },
+            onOpenSettings: onOpenSettings
         )
         let hostingView = IslandHostingView(rootView: rootView)
         hostingView.autoresizingMask = [.width, .height]
@@ -167,8 +169,11 @@ final class OverlayWindowController {
         let geometry = geometryService.geometry(
             collapsedSize: settings.collapsedSize,
             expandedSize: settings.expandedSize,
-            collapsedMediaActive: modules.media.hasActiveMediaSource
+            collapsedMediaActive: modules.media.hasActiveMediaSource,
+            useAdaptiveNotchSizing: settings.useAdaptiveNotchSizing,
+            respectHardwareNotch: settings.respectHardwareNotch
         )
+        debugGeometryRefresh(geometry)
         targetCollapsedFrame = geometry.collapsedFrame
         targetExpandedFrame = geometry.expandedFrame
         updateLayoutWithoutAnimation(
@@ -189,9 +194,12 @@ final class OverlayWindowController {
             let correctedGeometry = self.geometryService.geometry(
                 collapsedSize: self.settings.collapsedSize,
                 expandedSize: self.settings.expandedSize,
-                collapsedMediaActive: self.modules.media.hasActiveMediaSource
+                collapsedMediaActive: self.modules.media.hasActiveMediaSource,
+                useAdaptiveNotchSizing: self.settings.useAdaptiveNotchSizing,
+                respectHardwareNotch: self.settings.respectHardwareNotch
             )
             if !animated {
+                self.debugGeometryRefresh(correctedGeometry)
                 self.targetCollapsedFrame = correctedGeometry.collapsedFrame
                 self.targetExpandedFrame = correctedGeometry.expandedFrame
                 self.updateLayoutWithoutAnimation(
@@ -336,8 +344,12 @@ final class OverlayWindowController {
             debugLog("collapse check ignored; state is not expanded")
             return
         }
+        guard settings.collapseOnMouseLeave, settings.autoCollapseEnabled else {
+            debugLog("collapse check ignored; auto collapse disabled")
+            return
+        }
         let elapsedSinceExpansion = CACurrentMediaTime() - expandedAt
-        guard elapsedSinceExpansion >= 0.18 else {
+        guard elapsedSinceExpansion >= settings.effectiveAutoCollapseGraceSeconds else {
             debugLog("collapse check grace failed elapsed=\(elapsedSinceExpansion)")
             return
         }
@@ -469,6 +481,23 @@ final class OverlayWindowController {
         #endif
     }
 
+    private func debugGeometryRefresh(_ geometry: IslandGeometry) {
+        #if DEBUG
+        guard ProcessInfo.processInfo.environment["DYNAMIC_ISLAND_VERBOSE_UI_LOGS"] == "1" else { return }
+        debugPrint(
+            "DynamicIsland geometry refresh",
+            "collapsedSize=\(settings.collapsedSize)",
+            "expandedSize=\(settings.expandedSize)",
+            "collapsedFrame=\(geometry.collapsedFrame)",
+            "expandedFrame=\(geometry.expandedFrame)",
+            "panelFrame=\(geometry.expandedFrame)",
+            "canvasSize=\(geometry.canvas.frame.size)",
+            "useAdaptiveNotchSizing=\(settings.useAdaptiveNotchSizing)",
+            "respectHardwareNotch=\(settings.respectHardwareNotch)"
+        )
+        #endif
+    }
+
     private func beginVisualMorph(for state: IslandPresentationState) {
         morphGeneration += 1
         let generation = morphGeneration
@@ -494,9 +523,12 @@ final class OverlayWindowController {
         let geometry = geometryService.geometry(
             collapsedSize: settings.collapsedSize,
             expandedSize: settings.expandedSize,
-            collapsedMediaActive: modules.media.hasActiveMediaSource
+            collapsedMediaActive: modules.media.hasActiveMediaSource,
+            useAdaptiveNotchSizing: settings.useAdaptiveNotchSizing,
+            respectHardwareNotch: settings.respectHardwareNotch
         )
 
+        debugGeometryRefresh(geometry)
         targetCollapsedFrame = geometry.collapsedFrame
         targetExpandedFrame = geometry.expandedFrame
 

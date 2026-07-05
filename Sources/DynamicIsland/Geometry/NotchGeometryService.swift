@@ -56,7 +56,9 @@ public final class NotchGeometryService {
         for screen: NSScreen? = nil,
         collapsedSize: CGSize,
         expandedSize: CGSize,
-        collapsedMediaActive: Bool = true
+        collapsedMediaActive: Bool = true,
+        useAdaptiveNotchSizing: Bool = true,
+        respectHardwareNotch: Bool = true
     ) -> IslandGeometry {
         let screen = screen ?? Self.preferredScreen()
         let snapshot = screen.map(Self.snapshot) ?? ScreenSnapshot(
@@ -70,7 +72,9 @@ public final class NotchGeometryService {
             for: snapshot,
             collapsedSize: collapsedSize,
             expandedSize: expandedSize,
-            collapsedMediaActive: collapsedMediaActive
+            collapsedMediaActive: collapsedMediaActive,
+            useAdaptiveNotchSizing: useAdaptiveNotchSizing,
+            respectHardwareNotch: respectHardwareNotch
         )
     }
 
@@ -78,20 +82,28 @@ public final class NotchGeometryService {
         for snapshot: ScreenSnapshot,
         collapsedSize: CGSize,
         expandedSize: CGSize,
-        collapsedMediaActive: Bool = true
+        collapsedMediaActive: Bool = true,
+        useAdaptiveNotchSizing: Bool = true,
+        respectHardwareNotch: Bool = true
     ) -> IslandGeometry {
-        let notchRect = inferNotchRect(from: snapshot)
+        let inferredNotchRect = inferNotchRect(from: snapshot)
+        let notchRect = respectHardwareNotch ? inferredNotchRect : nil
         let topY = snapshot.frame.maxY
         let expandedCenterX = snapshot.frame.midX
-        let resolvedExpandedWidth = min(760, max(620, snapshot.frame.width - 520))
-        let resolvedExpandedHeight: CGFloat = 260
+        let screenSafeExpandedWidth = min(expandedSize.width, max(520, snapshot.frame.width - 280))
+        let resolvedExpandedWidth = max(min(screenSafeExpandedWidth, expandedSize.width), 1)
+        let resolvedExpandedHeight = max(expandedSize.height, 1)
 
         let collapsedFrame: CGRect
-        if let notchRect {
-            let activeCollapsedWidth = min(max((notchRect.width + 50) * 1.05, 226), 254)
-            let inactiveCollapsedWidth = min(activeCollapsedWidth - 28, max(172, notchRect.width * 0.94))
-            let resolvedCollapsedWidth = collapsedMediaActive ? activeCollapsedWidth : inactiveCollapsedWidth
-            let resolvedCollapsedHeight = min(max(notchRect.height + 5, 33), 40)
+        if let notchRect, useAdaptiveNotchSizing {
+            let notchMinimumActiveWidth = min(max((notchRect.width + 50) * 1.05, 226), 254)
+            let notchMinimumInactiveWidth = min(notchMinimumActiveWidth - 28, max(172, notchRect.width * 0.94))
+            let preferredCollapsedWidth = collapsedMediaActive ? collapsedSize.width : max(126, collapsedSize.width * 0.70)
+            let resolvedCollapsedWidth = max(
+                preferredCollapsedWidth,
+                collapsedMediaActive ? notchMinimumActiveWidth : notchMinimumInactiveWidth
+            )
+            let resolvedCollapsedHeight = max(collapsedSize.height, min(max(notchRect.height + 5, 33), 40))
             collapsedFrame = CGRect(
                 x: notchRect.midX - resolvedCollapsedWidth / 2,
                 y: topY - resolvedCollapsedHeight,
@@ -129,7 +141,7 @@ public final class NotchGeometryService {
             collapsedFrame: integralCollapsedFrame,
             expandedFrame: integralExpandedFrame,
             canvas: canvas,
-            hasHardwareNotch: notchRect != nil
+            hasHardwareNotch: inferredNotchRect != nil
         )
     }
 

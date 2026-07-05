@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 @main
@@ -16,7 +17,7 @@ struct DynamicIslandApp {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let settings = AppSettings()
     private let islandState = IslandStateStore()
-    private let fileShelf = FileShelfStore()
+    private lazy var fileShelf = FileShelfStore(settings: settings)
     private let shortcuts = ShortcutsStore()
     private let media = MediaController()
     private let timer = TimerController()
@@ -28,6 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var menuController: MenuBarController?
     private var settingsController: SettingsWindowController?
     private var eventMonitor: Any?
+    private var cancellables: Set<AnyCancellable> = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         shortcuts.seedDefaultsIfNeeded()
@@ -51,11 +53,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             settings: settings,
             islandState: islandState,
             modules: modules,
-            geometryService: geometryService
+            geometryService: geometryService,
+            onOpenSettings: { [weak self] in
+                self?.openSettings()
+            }
         )
         self.overlayController = overlayController
         overlayController.show()
-        LaunchAtLoginController.setEnabled(settings.launchAtLogin)
+        LaunchAtLoginController.setEnabled(settings.launchAtLoginEnabled)
+
+        settings.$launchAtLoginEnabled
+            .removeDuplicates()
+            .sink { enabled in
+                LaunchAtLoginController.setEnabled(enabled)
+            }
+            .store(in: &cancellables)
+
+        settings.$statsRefreshIntervalSeconds
+            .removeDuplicates()
+            .sink { [weak self] interval in
+                self?.stats.setRefreshInterval(interval)
+            }
+            .store(in: &cancellables)
 
         menuController = MenuBarController(
             settings: settings,

@@ -78,6 +78,7 @@ final class SystemStatsController: ObservableObject {
 
     private let provider = SystemStatsProvider()
     private var timer: Timer?
+    private var refreshInterval: TimeInterval = 2.0
     private var cpuHistory = SystemStatsHistory()
     private var memoryHistory = SystemStatsHistory()
     private var diskHistory = SystemStatsHistory()
@@ -91,13 +92,22 @@ final class SystemStatsController: ObservableObject {
 
     func startPolling() {
         guard timer == nil else { return }
-        let timer = Timer(timeInterval: 2.0, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: refreshInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.refresh()
             }
         }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
+    }
+
+    func setRefreshInterval(_ seconds: Double) {
+        let normalized = min(max(seconds, 0.5), 10.0)
+        guard abs(refreshInterval - normalized) > 0.001 else { return }
+        refreshInterval = normalized
+        timer?.invalidate()
+        timer = nil
+        startPolling()
     }
 
     func refresh() {

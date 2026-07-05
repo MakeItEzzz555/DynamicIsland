@@ -7,7 +7,7 @@ final class SettingsWindowController {
 
     init(settings: AppSettings, shortcuts: ShortcutsStore) {
         window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 500, height: 520),
+            contentRect: NSRect(x: 0, y: 0, width: 920, height: 700),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
@@ -19,6 +19,9 @@ final class SettingsWindowController {
     }
 
     func show() {
+        if !window.isVisible {
+            window.center()
+        }
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
     }

@@ -148,6 +148,7 @@ struct CompactShelfBadge: View {
 }
 
 struct MediaModuleView: View {
+    @ObservedObject var settings: AppSettings
     @ObservedObject var media: MediaController
     let availableHeight: CGFloat?
     let onLauncherActivated: () -> Void
@@ -155,11 +156,13 @@ struct MediaModuleView: View {
     @ObservedObject private var accentCache = ArtworkAccentColorCache.shared
 
     init(
+        settings: AppSettings,
         media: MediaController,
         availableHeight: CGFloat? = nil,
         onLauncherActivated: @escaping () -> Void = {},
         onMediaSourceOpened: @escaping () -> Void = {}
     ) {
+        self.settings = settings
         self.media = media
         self.availableHeight = availableHeight
         self.onLauncherActivated = onLauncherActivated
@@ -223,7 +226,7 @@ struct MediaModuleView: View {
     }
 
     var body: some View {
-        let activeBranch = media.hasActiveMediaSource
+        let activeBranch = shouldShowActivePlayer
         let _ = Self.debugRender(
             hasActiveMediaSource: media.hasActiveMediaSource,
             isPlaying: media.isPlaying,
@@ -235,8 +238,10 @@ struct MediaModuleView: View {
         let content = Group {
             if activeBranch {
                 activePlayerView
+            } else if shouldShowLauncher {
+                EmptyMediaLauncherView(settings: settings, media: media, onLauncherActivated: onLauncherActivated)
             } else {
-                EmptyMediaLauncherView(media: media, onLauncherActivated: onLauncherActivated)
+                disabledState
             }
         }
 
@@ -260,6 +265,42 @@ struct MediaModuleView: View {
         }
     }
 
+    private var shouldShowActivePlayer: Bool {
+        guard settings.mediaEnabled else { return false }
+        guard media.hasActiveMediaSource else { return false }
+        return settings.showMediaWhenPaused || media.isPlaying
+    }
+
+    private var shouldShowLauncher: Bool {
+        settings.mediaEnabled && settings.showMediaWhenNoSource && settings.mediaLauncherEnabled
+    }
+
+    private var visualizerColor: Color {
+        switch settings.visualizerAccentMode {
+        case .artwork:
+            if settings.useArtworkAccentColor {
+                return accentCache.color(for: media.artworkKey, image: media.artworkImage)
+            }
+            return .white
+        case .white:
+            return .white
+        case .system:
+            return .accentColor
+        }
+    }
+
+    private var disabledState: some View {
+        VStack(alignment: .center, spacing: 8) {
+            Image(systemName: "music.note.slash")
+                .font(.system(size: usesCompactExpandedLayout ? 20 : 28, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.42))
+            Text(settings.mediaEnabled ? "No media visible" : "Media disabled")
+                .font(.system(size: usesCompactExpandedLayout ? 12 : 14, weight: .bold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.60))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+    }
+
     @ViewBuilder
     private var activePlayerView: some View {
         if usesCompactExpandedLayout {
@@ -271,69 +312,83 @@ struct MediaModuleView: View {
 
     @ViewBuilder
     private var regularActivePlayerView: some View {
-        let visualizerColor = accentCache.color(for: media.artworkKey, image: media.artworkImage)
-
         VStack(alignment: .leading, spacing: moduleSpacing) {
             HStack(alignment: .top, spacing: headerSpacing) {
-                ClickableAlbumArtworkButton(media: media, size: artworkSize) {
-                    let opened = media.openActiveMediaSource()
-                    Self.debugMediaSourceOpenCollapse(opened: opened)
-                    if opened {
-                        onMediaSourceOpened()
+                if settings.showAlbumArtwork {
+                    ClickableAlbumArtworkButton(
+                        settings: settings,
+                        media: media,
+                        size: artworkSize
+                    ) {
+                        let opened = media.openActiveMediaSource()
+                        Self.debugMediaSourceOpenCollapse(opened: opened)
+                        if opened {
+                            onMediaSourceOpened()
+                        }
                     }
                 }
                 VStack(alignment: .leading, spacing: metadataSpacing) {
-                    Text(media.title)
-                        .font(.system(size: titleFontSize, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
-                        .lineLimit(1)
-                    Text(media.artist)
-                        .font(.system(size: artistFontSize, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.66))
-                        .lineLimit(1)
-                    Text(media.sourceName)
-                        .font(.system(size: sourceFontSize, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.48))
-                        .lineLimit(1)
-                    AudioVisualizerView(
-                        isPlaying: media.isPlaying,
-                        isActive: media.hasActiveMediaSource,
-                        accentColor: visualizerColor,
-                        variant: .expanded
-                    )
-                    .padding(.top, visualizerTopPadding)
-                    HStack(spacing: transportControlsSpacing) {
-                        MediaButton(
-                            symbol: "backward.fill",
-                            label: "Previous track",
-                            symbolSize: usesCompactExpandedLayout ? 13 : 15,
-                            buttonSize: usesCompactExpandedLayout ? 30 : 36,
-                            isEnabled: media.isTransportControlAvailable,
-                            action: media.previousTrack
-                        )
-                        MediaButton(
-                            symbol: media.isPlaying ? "pause.fill" : "play.fill",
-                            label: "Play or pause",
-                            symbolSize: usesCompactExpandedLayout ? 13 : 15,
-                            buttonSize: usesCompactExpandedLayout ? 30 : 36,
-                            isEnabled: media.isTransportControlAvailable,
-                            action: media.playPause
-                        )
-                        MediaButton(
-                            symbol: "forward.fill",
-                            label: "Next track",
-                            symbolSize: usesCompactExpandedLayout ? 13 : 15,
-                            buttonSize: usesCompactExpandedLayout ? 30 : 36,
-                            isEnabled: media.isTransportControlAvailable,
-                            action: media.nextTrack
-                        )
+                    if settings.showMediaTitle {
+                        Text(media.title)
+                            .font(.system(size: titleFontSize, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
                     }
-                    .padding(.top, transportControlsTopPadding)
+                    if settings.showMediaArtist {
+                        Text(media.artist)
+                            .font(.system(size: artistFontSize, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.66))
+                            .lineLimit(1)
+                    }
+                    if settings.showMediaSourceName {
+                        Text(media.sourceName)
+                            .font(.system(size: sourceFontSize, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.48))
+                            .lineLimit(1)
+                    }
+                    if settings.showVisualizer && settings.showExpandedVisualizer {
+                        AudioVisualizerView(
+                            isPlaying: media.isPlaying,
+                            isActive: media.hasActiveMediaSource,
+                            accentColor: visualizerColor,
+                            variant: .expanded
+                        )
+                        .padding(.top, visualizerTopPadding)
+                    }
+                    if settings.showPlaybackControls {
+                        HStack(spacing: transportControlsSpacing) {
+                            MediaButton(
+                                symbol: "backward.fill",
+                                label: "Previous track",
+                                symbolSize: usesCompactExpandedLayout ? 13 : 15,
+                                buttonSize: usesCompactExpandedLayout ? 30 : 36,
+                                isEnabled: media.isTransportControlAvailable,
+                                action: media.previousTrack
+                            )
+                            MediaButton(
+                                symbol: media.isPlaying ? "pause.fill" : "play.fill",
+                                label: "Play or pause",
+                                symbolSize: usesCompactExpandedLayout ? 13 : 15,
+                                buttonSize: usesCompactExpandedLayout ? 30 : 36,
+                                isEnabled: media.isTransportControlAvailable,
+                                action: media.playPause
+                            )
+                            MediaButton(
+                                symbol: "forward.fill",
+                                label: "Next track",
+                                symbolSize: usesCompactExpandedLayout ? 13 : 15,
+                                buttonSize: usesCompactExpandedLayout ? 30 : 36,
+                                isEnabled: media.isTransportControlAvailable,
+                                action: media.nextTrack
+                            )
+                        }
+                        .padding(.top, transportControlsTopPadding)
+                    }
                 }
                 Spacer(minLength: 0)
             }
             VStack(spacing: sliderStackSpacing) {
-                if media.hasPlaybackProgress {
+                if settings.showProgressSlider, media.hasPlaybackProgress {
                     Slider(
                         value: Binding(
                             get: { media.playbackPosition },
@@ -356,7 +411,7 @@ struct MediaModuleView: View {
                     }
                     .font(.system(size: timeFontSize, weight: .bold))
                     .foregroundStyle(.white.opacity(0.58))
-                } else {
+                } else if settings.showProgressSlider {
                     Capsule(style: .continuous)
                         .fill(.white.opacity(0.16))
                         .frame(height: placeholderProgressHeight)
@@ -368,17 +423,19 @@ struct MediaModuleView: View {
                     .font(.system(size: timeFontSize, weight: .bold))
                     .foregroundStyle(.white.opacity(0.36))
                 }
-                Slider(
-                    value: Binding(
-                        get: { media.volume },
-                        set: { media.setVolume($0) }
-                    ),
-                    in: 0...1
-                )
-                .tint(.white.opacity(0.70))
-                .opacity(media.isVolumeControlAvailable ? 1 : 0.38)
-                .disabled(!media.isVolumeControlAvailable)
-                .accessibilityLabel("Media volume")
+                if settings.showVolumeSlider {
+                    Slider(
+                        value: Binding(
+                            get: { media.volume },
+                            set: { media.setVolume($0) }
+                        ),
+                        in: 0...1
+                    )
+                    .tint(.white.opacity(0.70))
+                    .opacity(media.isVolumeControlAvailable ? 1 : 0.38)
+                    .disabled(!media.isVolumeControlAvailable)
+                    .accessibilityLabel("Media volume")
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -415,135 +472,153 @@ struct MediaModuleView: View {
         headerSpacing: CGFloat,
         inlineVisualizerTopPadding: CGFloat
     ) -> some View {
-        let visualizerColor = accentCache.color(for: media.artworkKey, image: media.artworkImage)
-
         return VStack(alignment: .leading, spacing: sectionSpacing) {
             HStack(alignment: .top, spacing: headerSpacing) {
-                ClickableAlbumArtworkButton(media: media, size: artworkSize) {
-                    let opened = media.openActiveMediaSource()
-                    Self.debugMediaSourceOpenCollapse(opened: opened)
-                    if opened {
-                        onMediaSourceOpened()
+                if settings.showAlbumArtwork {
+                    ClickableAlbumArtworkButton(
+                        settings: settings,
+                        media: media,
+                        size: artworkSize
+                    ) {
+                        let opened = media.openActiveMediaSource()
+                        Self.debugMediaSourceOpenCollapse(opened: opened)
+                        if opened {
+                            onMediaSourceOpened()
+                        }
                     }
                 }
 
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(media.title)
-                        .font(.system(size: 14, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.78)
-
-                    Text(media.artist)
-                        .font(.system(size: 11, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.66))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.78)
-
-                    HStack(alignment: .center, spacing: 6) {
-                        Text(media.sourceName)
-                            .font(.system(size: 9, weight: .bold, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.48))
+                    if settings.showMediaTitle {
+                        Text(media.title)
+                            .font(.system(size: 14, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white)
                             .lineLimit(1)
                             .minimumScaleFactor(0.78)
+                    }
 
-                        AudioVisualizerView(
-                            isPlaying: media.isPlaying,
-                            isActive: media.hasActiveMediaSource,
-                            accentColor: visualizerColor,
-                            variant: .compact
-                        )
-                        .padding(.top, inlineVisualizerTopPadding)
+                    if settings.showMediaArtist {
+                        Text(media.artist)
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.66))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.78)
+                    }
+
+                    HStack(alignment: .center, spacing: 6) {
+                        if settings.showMediaSourceName {
+                            Text(media.sourceName)
+                                .font(.system(size: 9, weight: .bold, design: .rounded))
+                                .foregroundStyle(.white.opacity(0.48))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.78)
+                        }
+
+                        if settings.showVisualizer && settings.showExpandedVisualizer {
+                            AudioVisualizerView(
+                                isPlaying: media.isPlaying,
+                                isActive: media.hasActiveMediaSource,
+                                accentColor: visualizerColor,
+                                variant: .compact
+                            )
+                            .padding(.top, inlineVisualizerTopPadding)
+                        }
                     }
                 }
 
                 Spacer(minLength: 0)
             }
 
-            HStack(spacing: 9) {
-                MediaButton(
-                    symbol: "backward.fill",
-                    label: "Previous track",
-                    symbolSize: transportSymbolSize,
-                    buttonSize: transportButtonSize,
-                    isEnabled: media.isTransportControlAvailable,
-                    action: media.previousTrack
-                )
-                MediaButton(
-                    symbol: media.isPlaying ? "pause.fill" : "play.fill",
-                    label: "Play or pause",
-                    symbolSize: transportSymbolSize,
-                    buttonSize: transportButtonSize,
-                    isEnabled: media.isTransportControlAvailable,
-                    action: media.playPause
-                )
-                MediaButton(
-                    symbol: "forward.fill",
-                    label: "Next track",
-                    symbolSize: transportSymbolSize,
-                    buttonSize: transportButtonSize,
-                    isEnabled: media.isTransportControlAvailable,
-                    action: media.nextTrack
-                )
-            }
-
-            VStack(spacing: 3) {
-                if media.hasPlaybackProgress {
-                    Slider(
-                        value: Binding(
-                            get: { media.playbackPosition },
-                            set: { media.updateScrubPosition($0) }
-                        ),
-                        in: 0...max(media.duration, 1),
-                        onEditingChanged: { isEditing in
-                            if !isEditing {
-                                media.seek(to: media.playbackPosition)
-                            }
-                        }
+            if settings.showPlaybackControls {
+                HStack(spacing: 9) {
+                    MediaButton(
+                        symbol: "backward.fill",
+                        label: "Previous track",
+                        symbolSize: transportSymbolSize,
+                        buttonSize: transportButtonSize,
+                        isEnabled: media.isTransportControlAvailable,
+                        action: media.previousTrack
                     )
-                    .tint(.white.opacity(0.70))
-                    .opacity(media.isSeekControlAvailable ? 1 : 0.38)
-                    .disabled(!media.isSeekControlAvailable)
-
-                    HStack {
-                        Text(formatTime(media.playbackPosition))
-                        Spacer()
-                        Text(formatTime(media.duration))
-                    }
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.58))
-                } else {
-                    Capsule(style: .continuous)
-                        .fill(.white.opacity(0.16))
-                        .frame(height: 4)
-
-                    HStack {
-                        Text("--:--")
-                        Spacer()
-                        Text("--:--")
-                    }
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.36))
+                    MediaButton(
+                        symbol: media.isPlaying ? "pause.fill" : "play.fill",
+                        label: "Play or pause",
+                        symbolSize: transportSymbolSize,
+                        buttonSize: transportButtonSize,
+                        isEnabled: media.isTransportControlAvailable,
+                        action: media.playPause
+                    )
+                    MediaButton(
+                        symbol: "forward.fill",
+                        label: "Next track",
+                        symbolSize: transportSymbolSize,
+                        buttonSize: transportButtonSize,
+                        isEnabled: media.isTransportControlAvailable,
+                        action: media.nextTrack
+                    )
                 }
             }
 
-            HStack(spacing: 6) {
-                Image(systemName: media.isVolumeControlAvailable ? "speaker.wave.2.fill" : "speaker.slash.fill")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.white.opacity(media.isVolumeControlAvailable ? 0.50 : 0.32))
-                    .frame(width: 12)
+            if settings.showProgressSlider {
+                VStack(spacing: 3) {
+                    if media.hasPlaybackProgress {
+                        Slider(
+                            value: Binding(
+                                get: { media.playbackPosition },
+                                set: { media.updateScrubPosition($0) }
+                            ),
+                            in: 0...max(media.duration, 1),
+                            onEditingChanged: { isEditing in
+                                if !isEditing {
+                                    media.seek(to: media.playbackPosition)
+                                }
+                            }
+                        )
+                        .tint(.white.opacity(0.70))
+                        .opacity(media.isSeekControlAvailable ? 1 : 0.38)
+                        .disabled(!media.isSeekControlAvailable)
 
-                Slider(
-                    value: Binding(
-                        get: { media.volume },
-                        set: { media.setVolume($0) }
-                    ),
-                    in: 0...1
-                )
-                .tint(.white.opacity(0.70))
-                .opacity(media.isVolumeControlAvailable ? 1 : 0.38)
-                .disabled(!media.isVolumeControlAvailable)
-                .accessibilityLabel("Media volume")
+                        HStack {
+                            Text(formatTime(media.playbackPosition))
+                            Spacer()
+                            Text(formatTime(media.duration))
+                        }
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.58))
+                    } else {
+                        Capsule(style: .continuous)
+                            .fill(.white.opacity(0.16))
+                            .frame(height: 4)
+
+                        HStack {
+                            Text("--:--")
+                            Spacer()
+                            Text("--:--")
+                        }
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.36))
+                    }
+                }
+            }
+
+            if settings.showVolumeSlider {
+                HStack(spacing: 6) {
+                    Image(systemName: media.isVolumeControlAvailable ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.white.opacity(media.isVolumeControlAvailable ? 0.50 : 0.32))
+                        .frame(width: 12)
+
+                    Slider(
+                        value: Binding(
+                            get: { media.volume },
+                            set: { media.setVolume($0) }
+                        ),
+                        in: 0...1
+                    )
+                    .tint(.white.opacity(0.70))
+                    .opacity(media.isVolumeControlAvailable ? 1 : 0.38)
+                    .disabled(!media.isVolumeControlAvailable)
+                    .accessibilityLabel("Media volume")
+                }
             }
         }
     }
@@ -586,6 +661,7 @@ struct MediaModuleView: View {
 }
 
 private struct ClickableAlbumArtworkButton: View {
+    @ObservedObject var settings: AppSettings
     @ObservedObject var media: MediaController
     let size: CGFloat
     let action: () -> Void
@@ -593,20 +669,31 @@ private struct ClickableAlbumArtworkButton: View {
     @State private var isHovering = false
 
     var body: some View {
-        Button(action: action) {
-            AlbumArtworkView(image: media.artworkImage, size: size)
-                .scaleEffect(isHovering ? 1.028 : 1)
-                .brightness(isHovering ? 0.035 : 0)
-                .animation(.easeOut(duration: 0.16), value: isHovering)
+        Group {
+            if settings.openSourceOnArtworkClick {
+                Button(action: action) {
+                    artwork
+                }
+                .buttonStyle(.plain)
+            } else {
+                artwork
+            }
         }
-        .buttonStyle(.plain)
         .onHover { isHovering = $0 }
         .accessibilityLabel("Open media source")
         .accessibilityHint("Opens the app currently playing this media")
     }
+
+    private var artwork: some View {
+        AlbumArtworkView(image: media.artworkImage, size: size)
+            .scaleEffect(isHovering ? 1.028 : 1)
+            .brightness(isHovering ? 0.035 : 0)
+            .animation(.easeOut(duration: 0.16), value: isHovering)
+    }
 }
 
 private struct EmptyMediaLauncherView: View {
+    @ObservedObject var settings: AppSettings
     @ObservedObject var media: MediaController
     let onLauncherActivated: () -> Void
 
@@ -624,17 +711,23 @@ private struct EmptyMediaLauncherView: View {
             }
 
             HStack(spacing: 10) {
-                MediaLauncherButton(title: "Apple Music", symbol: "music.note", tint: .pink) {
-                    media.openMusicApp()
-                    onLauncherActivated()
+                if settings.showAppleMusicLauncher {
+                    MediaLauncherButton(title: "Apple Music", symbol: "music.note", tint: .pink) {
+                        media.openMusicApp()
+                        onLauncherActivated()
+                    }
                 }
-                MediaLauncherButton(title: "Spotify", symbol: "dot.radiowaves.left.and.right", tint: .green) {
-                    media.openSpotifyApp()
-                    onLauncherActivated()
+                if settings.showSpotifyLauncher {
+                    MediaLauncherButton(title: "Spotify", symbol: "dot.radiowaves.left.and.right", tint: .green) {
+                        media.openSpotifyApp()
+                        onLauncherActivated()
+                    }
                 }
-                MediaLauncherButton(title: "YouTube", symbol: "play.rectangle.fill", tint: .red) {
-                    media.openYouTube()
-                    onLauncherActivated()
+                if settings.showYouTubeLauncher {
+                    MediaLauncherButton(title: "YouTube", symbol: "play.rectangle.fill", tint: .red) {
+                        media.openYouTube()
+                        onLauncherActivated()
+                    }
                 }
             }
         }
@@ -697,6 +790,7 @@ struct MediaButton: View {
 }
 
 struct FileShelfModuleView: View {
+    @ObservedObject var settings: AppSettings
     @ObservedObject var fileShelf: FileShelfStore
     @StateObject private var thumbnailCache = FileThumbnailCache()
 
@@ -738,6 +832,7 @@ struct FileShelfModuleView: View {
                     LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
                         ForEach(fileShelf.files, id: \.self) { url in
                             ShelfFileTile(
+                                settings: settings,
                                 url: url,
                                 thumbnailCache: thumbnailCache,
                                 onRemove: { fileShelf.remove(url) }
@@ -879,6 +974,7 @@ enum FileShelfActions {
 }
 
 struct ShelfFileTile: View {
+    @ObservedObject var settings: AppSettings
     let url: URL
     @ObservedObject var thumbnailCache: FileThumbnailCache
     let onRemove: () -> Void
@@ -898,7 +994,7 @@ struct ShelfFileTile: View {
                     }
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
 
-                if isHovering {
+                if isHovering && settings.removeFileActionEnabled {
                     Button(action: onRemove) {
                         Image(systemName: "xmark.circle.fill")
                             .font(.system(size: 13, weight: .bold))
@@ -912,7 +1008,7 @@ struct ShelfFileTile: View {
                 }
             }
 
-            Text(url.lastPathComponent)
+            Text(displayName)
                 .font(.system(size: 10.5, weight: .semibold, design: .rounded))
                 .foregroundStyle(.white.opacity(0.86))
                 .multilineTextAlignment(.center)
@@ -940,28 +1036,36 @@ struct ShelfFileTile: View {
             }
         }
         .contextMenu {
-            Button("Open") {
-                FileShelfActions.open(url)
+            if settings.openFileActionEnabled {
+                Button("Open") {
+                    FileShelfActions.open(url)
+                }
             }
 
-            Button("Reveal in Finder") {
-                FileShelfActions.revealInFinder(url)
+            if settings.revealInFinderActionEnabled {
+                Button("Reveal in Finder") {
+                    FileShelfActions.revealInFinder(url)
+                }
             }
 
-            Divider()
+            if settings.copyPathActionEnabled {
+                Divider()
 
-            Button("Copy Path") {
-                FileShelfActions.copyPath(url)
+                Button("Copy Path") {
+                    FileShelfActions.copyPath(url)
+                }
+
+                Button("Copy File Name") {
+                    FileShelfActions.copyName(url)
+                }
             }
 
-            Button("Copy File Name") {
-                FileShelfActions.copyName(url)
-            }
+            if settings.removeFileActionEnabled {
+                Divider()
 
-            Divider()
-
-            Button("Remove from Tray", role: .destructive) {
-                onRemove()
+                Button("Remove from Tray", role: .destructive) {
+                    onRemove()
+                }
             }
         }
         .accessibilityLabel("File \(url.lastPathComponent)")
@@ -973,7 +1077,7 @@ struct ShelfFileTile: View {
 
     @ViewBuilder
     private var fileImage: some View {
-        if let image = thumbnailCache.image(for: url) {
+        if settings.showFileThumbnails, let image = thumbnailCache.image(for: url) {
             Image(nsImage: image)
                 .resizable()
                 .scaledToFit()
@@ -1002,8 +1106,15 @@ struct ShelfFileTile: View {
     }
 
     private func loadThumbnailIfNeeded() {
-        guard !isShellMorphing else { return }
+        guard settings.showFileThumbnails else { return }
+        guard !isShellMorphing || !settings.deferThumbnailsDuringMorph else { return }
         thumbnailCache.loadIfNeeded(for: url)
+    }
+
+    private var displayName: String {
+        settings.showFileExtensions
+            ? url.lastPathComponent
+            : url.deletingPathExtension().lastPathComponent
     }
 }
 

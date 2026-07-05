@@ -1746,6 +1746,91 @@ For every requested feature phase:
   - `Sources/DynamicIsland/Views/IslandRootView.swift`
   - `context.md`
 
+### 2026-07-04 - Phase 7A Comprehensive Settings Foundation
+
+- Added comprehensive persisted settings groups in `AppSettings.swift`:
+  - General / Island
+  - Appearance
+  - Motion
+  - Modules / Tabs
+  - Media
+  - File Shelf / Tray
+  - Timer
+  - Stats / Activities
+  - Live Activities
+  - Gestures
+  - Advanced / Debug
+- Added island/layout/motion settings:
+  - Added persisted collapsed/expanded width and height with clamping.
+  - Added adaptive sizing and hardware-notch respect toggles.
+  - Added animation preset, shell speed, content animation, stagger, blur, scale, and opacity-transition settings.
+  - Existing Phase 6B single-panel host, one-surface shell morph, click-through behavior, and content sequencing were preserved.
+- Added tab/module visibility settings:
+  - Added persisted visibility fields for Island/Tray/Timer/Stats and placeholder future tabs.
+  - `IslandNavigationStore` now filters visible implemented tabs from settings and safely falls back when the selected tab becomes disabled.
+  - Drag-hover Tray routing now respects Tray/file-shelf enablement before forcing the Tray page.
+- Added media settings including safe UI visibility wiring:
+  - Media module and compact island now respect existing safe settings such as:
+    - album artwork visibility
+    - title/artist/source visibility
+    - playback controls visibility
+    - progress slider visibility
+    - volume slider visibility
+    - visualizer visibility
+    - launcher button visibility
+    - source-open artwork click enablement
+    - collapse-after-launch / collapse-after-open behavior
+  - Provider preference settings were added as persisted future-facing fields only and were not wired into arbitration in this phase.
+- Added tray/file shelf settings:
+  - Added tray, file shelf, AirDrop zone, drop-allowance, thumbnail, file-extension, and action visibility settings.
+  - `FileShelfStore` now uses the persisted max-file cap.
+  - Expanded Tray drop and collapsed drag-expansion now respect enablement settings.
+  - File tile context-menu actions and thumbnail/file-name presentation now respect settings where safely supported.
+  - Persistent shelf storage remains a stored placeholder and was not implemented.
+- Added timer settings:
+  - Added persisted timer presets and timer visibility/settings fields.
+  - Dedicated Timer tab now uses the stored preset minute values.
+  - Timer ring visibility and ring animation visibility are wired.
+  - Collapse-after-starting-timer is wired through the existing collapse request path.
+  - Timer sound/notification/collapsed timer settings remain placeholders only.
+- Added stats/activities settings:
+  - Added persisted stats card visibility and refresh interval settings.
+  - Stats refresh interval is now wired into `SystemStatsController`.
+  - Stats page card visibility respects CPU/Memory/GPU/Network/Disk/Battery/Uptime settings.
+  - Activities settings were added as future-facing placeholders only.
+- Added future Live Activities and Gesture settings:
+  - Added persisted fields and settings UI sections for both categories.
+  - Both sections are clearly marked coming soon and remain unwired by design in Phase 7A.
+- Added advanced/debug settings:
+  - Added reset helpers for all settings, layout settings, and module settings.
+  - Added stored advanced/debug flags for later work.
+  - Only safe existing behavior remains active by default; noisy debug behavior was not enabled.
+- Added settings UI foundation:
+  - Replaced the previous minimal settings form with a larger categorized settings UI using `NavigationSplitView`.
+  - Wired implemented settings directly where safe.
+  - Placeholder settings are shown disabled with short explanatory help text.
+- Geometry compatibility note:
+  - `NotchGeometryService` now supports adaptive-size and notch-respect flags while preserving existing default geometry behavior when those flags stay at their defaults.
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+  - `pkill -9 DynamicIsland`
+  - `open dist/DynamicIsland.app`
+- Changed files:
+  - `Sources/DynamicIsland/State/AppSettings.swift`
+  - `Sources/DynamicIsland/App/DynamicIslandApp.swift`
+  - `Sources/DynamicIsland/App/SettingsWindowController.swift`
+  - `Sources/DynamicIsland/Geometry/NotchGeometryService.swift`
+  - `Sources/DynamicIsland/Modules/FileShelfStore.swift`
+  - `Sources/DynamicIsland/Modules/SystemStatsController.swift`
+  - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
+  - `Sources/DynamicIsland/State/IslandNavigationStore.swift`
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `Sources/DynamicIsland/Views/ModuleViews.swift`
+  - `Sources/DynamicIsland/Views/SettingsView.swift`
+  - `context.md`
+
 ### 2026-07-04 - Phase 6B Stable Host Panel And Shape-Aware Hit Testing
 
 - Kept one stable expanded-sized host panel:
@@ -2022,3 +2107,93 @@ For every requested feature phase:
   - `Scripts/package_app.sh`
   - `pkill -9 DynamicIsland`
   - `open dist/DynamicIsland.app`
+
+### 2026-07-04 - Phase 7A.1 AppSettings Normalization Crash Fix
+
+- Fixed the Phase 7A launch crash in `AppSettings.swift`:
+  - Removed the recursive `didSet` normalization path where clamped numeric values reassigned through `inout` helpers and could re-enter the same property observer indefinitely.
+  - Added guarded normalization suppression with `isNormalizingSettings`.
+  - Replaced unsafe `inout` numeric normalization helpers with guarded key-path normalization helpers for `Double` and `Int` settings.
+  - `normalizeAll()` now runs under the suppression guard, clamps values directly, and explicitly saves normalized values instead of relying on `didSet`.
+- Covered all normalized numeric settings:
+  - Auto-collapse grace, collapsed/expanded dimensions, shell opacity, shell animation speed, content stagger, shelf limit, timer presets, stats/activity refresh intervals, live activity dismiss time, and gesture sensitivity/cooldown.
+- Confirmed enum raw-value reads remain safe:
+  - Enum settings still use `Self.enumValue(..., fallback:)`.
+- Preserved:
+  - No new settings UI or unrelated settings behavior was added.
+  - Overlay architecture, shell morphing, media, tray, timer, stats, gestures, and notch shoulder state were not changed.
+- Changed files:
+  - `Sources/DynamicIsland/State/AppSettings.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+  - `pkill -9 DynamicIsland`
+  - `.build/debug/DynamicIsland`
+  - `pkill -9 DynamicIsland`
+  - `open dist/DynamicIsland.app`
+  - `pgrep -fl DynamicIsland`
+
+### 2026-07-04 - Phase 7A.2 Expanded Island Settings Entry
+
+- Added a Settings entry point to the expanded island:
+  - Added a small top-right gear button in the expanded island header row.
+  - The gear uses the existing dark translucent island button style and exposes hover help plus an `Open Settings` accessibility label.
+  - The header row keeps a stable reserved height so the tab switcher/page content layout does not reflow during content staging or collapse.
+- Wired Settings through the existing app-owned controller:
+  - `AppDelegate` passes an `onOpenSettings` callback into `OverlayWindowController`.
+  - `OverlayWindowController` passes the callback into `IslandRootView`.
+  - `IslandRootView` passes it into `ExpandedIslandView`, where the gear invokes it.
+  - The existing `SettingsWindowController` is reused, so the Settings window edits the same shared `AppSettings` instance used by the overlay.
+- Settings window behavior:
+  - Repeated gear clicks reuse/raise the existing settings window instead of creating duplicate windows.
+  - The window recenters only when first shown after being hidden.
+- Preserved:
+  - Phase 6B stable host panel architecture, shell morph/click-through behavior, media/tray/timer/stats logic, file drag behavior, and notch shoulder state were not changed.
+  - No new settings were added.
+- Changed files:
+  - `Sources/DynamicIsland/App/DynamicIslandApp.swift`
+  - `Sources/DynamicIsland/App/SettingsWindowController.swift`
+  - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+  - `pkill -9 DynamicIsland`
+  - `open dist/DynamicIsland.app`
+  - `pgrep -fl DynamicIsland`
+
+### 2026-07-05 - Phase 7A.4 Island Size Settings Wiring
+
+- Wired island width/height settings into active overlay geometry:
+  - `AppSettings.collapsedSize` and `expandedSize` now return normalized/clamped setting values instead of raw stored values.
+  - `NotchGeometryService` now uses the user-selected expanded width/height as the preferred expanded geometry instead of replacing it with hardcoded adaptive `760x260` sizing.
+  - Notched collapsed geometry now uses the user-selected collapsed width/height as the preferred size, with adaptive notch sizing only raising the size to notch-safe minimums when needed.
+  - Notchless/floating geometry continues to use the user-selected collapsed and expanded sizes.
+- Live updates:
+  - Existing shared `AppSettings` wiring and overlay settings observation now cause `OverlayWindowController.reposition(animated: false)` to apply size changes live.
+  - Reposition still updates `IslandLayoutStore.updateLocal(...)` and mouse passthrough/hit regions after geometry changes.
+  - Added DEBUG-only verbose geometry refresh logging behind `DYNAMIC_ISLAND_VERBOSE_UI_LOGS=1`.
+- Settings window:
+  - The size controls continue binding to the same shared `AppSettings` instance used by the overlay.
+  - No second settings instance or new settings UI structure was added.
+- Tests:
+  - Updated notch geometry tests to assert that user-provided collapsed and expanded sizes affect the final frames while preserving notch/screen safety behavior.
+- Preserved:
+  - Phase 6B stable single-panel host architecture, window-level click-through logic, shell/content sequencing, media/tray/timer/stats logic, and settings UI structure were not changed.
+- Changed files:
+  - `Sources/DynamicIsland/State/AppSettings.swift`
+  - `Sources/DynamicIsland/Geometry/NotchGeometryService.swift`
+  - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
+  - `Tests/DynamicIslandTests/NotchGeometryServiceTests.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+  - `pkill -9 DynamicIsland`
+  - `open -n dist/DynamicIsland.app`
+  - `pgrep -fl DynamicIsland`
