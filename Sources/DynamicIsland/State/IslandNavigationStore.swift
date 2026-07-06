@@ -92,6 +92,14 @@ final class IslandNavigationStore: ObservableObject {
         logPageChange()
     }
 
+    func selectNextPage(using settings: AppSettings) {
+        selectAdjacentPage(offset: 1, using: settings)
+    }
+
+    func selectPreviousPage(using settings: AppSettings) {
+        selectAdjacentPage(offset: -1, using: settings)
+    }
+
     func showTrayForFileDrag(using settings: AppSettings) {
         guard settings.trayEnabled, settings.fileShelfEnabled, settings.showTrayTab else { return }
         let changedPage = selectedPage != .tray
@@ -114,6 +122,21 @@ final class IslandNavigationStore: ObservableObject {
         guard ProcessInfo.processInfo.environment["DYNAMIC_ISLAND_VERBOSE_UI_LOGS"] == "1" else { return }
         debugPrint("DynamicIsland expanded page changed", "page=\(selectedPage.title)", "reason=\(reason)")
         #endif
+    }
+
+    private func selectAdjacentPage(offset: Int, using settings: AppSettings) {
+        let pages = availablePages(using: settings)
+        guard pages.count > 1 else { return }
+        guard let currentIndex = pages.firstIndex(of: selectedPage) else {
+            selectedPage = resolvedDefaultPage(using: settings, availablePages: pages)
+            logPageChange(reason: "gesture fallback")
+            return
+        }
+
+        let nextIndex = (currentIndex + offset + pages.count) % pages.count
+        guard pages[nextIndex] != selectedPage else { return }
+        selectedPage = pages[nextIndex]
+        logPageChange(reason: "gesture")
     }
 
     private func resolvedDefaultPage(using settings: AppSettings, availablePages: [ExpandedIslandPage]) -> ExpandedIslandPage {

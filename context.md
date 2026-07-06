@@ -2355,3 +2355,411 @@ For every requested feature phase:
   - `pkill -9 DynamicIsland`
   - `open -n dist/DynamicIsland.app`
   - `pgrep -fl DynamicIsland`
+
+### 2026-07-05 - Phase 8B.1 Visualizer Smoothness Fix
+
+- Fixed visualizer rhythm stutter without redesigning the visualizer:
+  - Kept the existing premium visualizer design, colors, and layout.
+  - Follow-up tuning keeps 12 bars in expanded mode and uses 7 bars in the collapsed pill / compact handoff path.
+  - No new visualizer settings or UI layout changes were added.
+- Decoupled visual rhythm from brief media polling flickers:
+  - `AudioVisualizerView` now keeps a local visual playback state.
+  - Brief `isPlaying` / active-media false ticks are held for about `0.34s` before the visualizer settles to paused.
+  - This prevents split-second stops when media polling or metadata updates briefly report a non-playing state.
+- Preserved phase continuity:
+  - The visualizer stays mounted in a paused-capable `TimelineView` instead of switching between animated and static view trees.
+  - Bar heights continue deriving from timeline date rather than metadata, title, artwork, progress, or volume updates.
+  - No `.id(...)` or metadata-tied identity reset was added.
+- Settings behavior:
+  - Existing `disableVisualizerDuringMorph` is now passed into the visualizer call sites.
+  - Reduce Motion still stops continuous animation.
+- Preserved:
+  - Phase 6B stable host panel architecture, `IslandRootView` shell/content sequencing, collapsed hover preview layout, media source arbitration, file shelf, timer/stats, settings architecture, click-through behavior, and visualizer style were not rewritten.
+- Changed files:
+  - `Sources/DynamicIsland/Views/ModuleViews.swift`
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+  - `pkill -9 DynamicIsland`
+  - `open -n dist/DynamicIsland.app`
+  - `pgrep -fl DynamicIsland`
+
+### 2026-07-05 - Phase 8C Gesture Infrastructure Foundation
+
+- Added safe gesture infrastructure without implementing camera or full custom gesture behavior:
+  - Added `IslandGestureAction` for future action targets.
+  - Added `IslandPointerGesture` for pointer/trackpad gesture types.
+  - Added `IslandGestureContext` and `IslandGestureCallbacks` so gesture handling can use existing safe app paths.
+  - Added `IslandGestureCoordinator` with settings gates, pointer-source filtering, cooldown handling, morph/drop guards, and conservative default mapping.
+- Default gesture behavior remains conservative:
+  - Double-click maps to `toggleExpanded`, but only works when gestures are enabled, input source is pointer/trackpad, and the relevant expand/collapse gesture toggle is enabled.
+  - Swipe left/right/up/down and long press are modeled but map to `none` for now.
+  - Require-confirmation mode blocks gesture actions because no confirmation UI exists yet.
+- Added visible-surface pointer detection in `IslandRootView.swift`:
+  - Gesture detection is attached only to the visible island surface, not the whole stable host panel.
+  - Disabled/non-pointer gesture settings do not attach the high-priority double-click handler.
+  - Swipe detection uses final drag translation and the persisted sensitivity threshold.
+  - Gesture actions use existing `onRequestExpand` and sequenced `onRequestCollapse` callbacks.
+  - Next/previous tab callbacks use `IslandNavigationStore` helpers that respect disabled tabs.
+- Updated gesture settings:
+  - Pointer/trackpad controls are now active.
+  - Camera gestures remain clearly marked Coming Soon.
+  - No camera permission, capture session, AVCapture usage, or hand recognition was added.
+- Added tests:
+  - Disabled gestures do nothing.
+  - Cooldown blocks repeated actions.
+  - Low sensitivity requires a larger swipe.
+  - Next/previous page helpers skip disabled tabs.
+- Preserved:
+  - Stable single-panel host architecture, OverlayWindowController click-through behavior, IslandLayoutStore local-frame model, shell/content sequencing, collapsed hover preview layout, visualizer style, media controller internals, file shelf behavior, timer/stats logic, and camera/privacy behavior were not rewritten.
+- Changed files:
+  - `Sources/DynamicIsland/State/IslandGestureCoordinator.swift`
+  - `Sources/DynamicIsland/State/AppSettings.swift`
+  - `Sources/DynamicIsland/State/IslandNavigationStore.swift`
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `Sources/DynamicIsland/Views/SettingsView.swift`
+  - `Tests/DynamicIslandTests/IslandGestureCoordinatorTests.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+  - `pkill -9 DynamicIsland`
+  - `open -n dist/DynamicIsland.app`
+  - `pgrep -fl DynamicIsland`
+
+### 2026-07-05 - Phase 8C.1 Exact Gesture Actions
+
+- Wired configurable collapsed and expanded gesture mappings:
+  - Added persisted action settings for collapsed double-click, swipes, and long press.
+  - Added persisted action settings for expanded double-click, swipes, and long press.
+  - Gesture action raw values are loaded safely; invalid stored values fall back to defaults.
+- Default mappings:
+  - Collapsed double-click: media play/pause, falling back to toggle expanded when media transport is unavailable.
+  - Collapsed swipe down: expand.
+  - Collapsed swipe up/left/right: none.
+  - Collapsed long press: open Settings.
+  - Expanded swipe up: collapse through the existing sequenced collapse callback.
+  - Expanded swipe left/right: next/previous enabled tab.
+  - Expanded double-click/down swipe: none.
+  - Expanded long press: open Settings.
+- Updated safe action execution:
+  - Expand uses the existing safe expand callback.
+  - Collapse and toggle collapse use the existing sequenced collapse callback.
+  - Next/previous tab actions use `IslandNavigationStore` helpers and skip disabled tabs.
+  - Media play/pause requires media to be enabled and transport controls to be available.
+  - Timer start/stop requires timer settings to be enabled and an active/resumable timer.
+  - Open Settings uses the existing Settings window callback.
+- Added Gesture settings UI polish:
+  - Added compact action pickers for Collapsed Island Gestures.
+  - Added compact action pickers for Expanded Island Gestures.
+  - Camera gestures remain clearly marked Coming Soon.
+- Preserved interaction safety:
+  - Gesture detection remains attached to the visible island surface only.
+  - Parent double-click handling no longer uses high-priority gesture priority.
+  - Existing shell/content sequencing, click-through/passthrough behavior, hover preview, visualizer design, media arbitration, file shelf behavior, timer engine, and stable host panel architecture were not rewritten.
+- Added tests:
+  - Configured collapsed gestures return the configured action.
+  - Configured expanded gestures return the configured action.
+  - Collapsed double-click falls back from media play/pause to toggle when media transport is unavailable.
+  - Disabled gestures still do nothing.
+  - Cooldown still blocks repeated gestures.
+  - Next/previous tab helpers skip disabled tabs.
+  - Invalid stored gesture action raw values fall back safely.
+- Changed files:
+  - `Sources/DynamicIsland/State/AppSettings.swift`
+  - `Sources/DynamicIsland/State/IslandGestureCoordinator.swift`
+  - `Sources/DynamicIsland/State/IslandNavigationStore.swift`
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `Sources/DynamicIsland/Views/SettingsView.swift`
+  - `Tests/DynamicIslandTests/IslandGestureCoordinatorTests.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+  - `pkill -9 DynamicIsland`
+  - `open -n dist/DynamicIsland.app`
+  - `pgrep -fl DynamicIsland`
+
+### 2026-07-05 - Phase 8C.2 Collapsed Media Pill Gestures
+
+- Corrected the intended collapsed media pill gesture behavior:
+  - Two-finger swipe left maps to next track.
+  - Two-finger swipe right maps to previous track.
+  - Two-finger swipe down maps to expand island, matching collapsed click expansion.
+  - Swipe up remains configurable and defaults to no-op.
+- Added AppKit-level two-finger swipe detection:
+  - `IslandHostingView` now forwards precise `scrollWheel` events only when the pointer is inside the collapsed visible pill or collapsed hover-preview frame.
+  - The scroll gesture path is collapsed-only and does not run while expanded.
+  - Gesture handling is ignored while shell morphing, collapse handoff, expanded content exit, or file drag/drop targeting is active.
+  - Trackpad scroll deltas are accumulated per gesture, thresholded using `gestureSensitivity`, and gated by `gestureCooldownSeconds`.
+- Updated media gesture actions:
+  - Added `mediaNextTrack`.
+  - Added `mediaPreviousTrack`.
+  - Media next/previous no-op safely when media is disabled or transport controls are unavailable.
+  - Swipe down expansion still works without active media.
+- Updated gesture defaults and settings UI:
+  - Collapsed swipe-left default is now next track.
+  - Collapsed swipe-right default is now previous track.
+  - The settings section is now labeled `Collapsed Media Pill Gestures`.
+  - Collapsed media pill pickers show media-relevant actions instead of tab-focused actions.
+  - Expanded gesture settings remain separate and unchanged.
+- Preserved:
+  - Stable single-panel host architecture, click-through architecture, IslandLayoutStore local-frame model, expanded content sequencing, collapsed hover preview layout, visualizer style, file shelf behavior, timer/stats behavior, media source arbitration, and camera gesture behavior were not rewritten.
+- Added tests:
+  - Default collapsed media pill swipe mappings use next/previous track and expand.
+  - Media next/previous gesture callbacks fire only when media transport is available.
+  - Media next/previous gestures no-op safely when media is unavailable.
+- Changed files:
+  - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
+  - `Sources/DynamicIsland/State/AppSettings.swift`
+  - `Sources/DynamicIsland/State/IslandGestureCoordinator.swift`
+  - `Sources/DynamicIsland/Views/SettingsView.swift`
+  - `Tests/DynamicIslandTests/IslandGestureCoordinatorTests.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+  - `pkill -9 DynamicIsland`
+  - `open -n dist/DynamicIsland.app`
+  - `pgrep -fl DynamicIsland`
+
+### 2026-07-05 - Phase 8C.3 Trackpad Scroll Gesture Capture
+
+- Fixed collapsed media pill two-finger gestures not firing reliably:
+  - The existing view-level `scrollWheel` handler could be bypassed when the single host panel was still in click-through mode.
+  - Added a global AppKit scroll-wheel monitor that observes real two-finger trackpad scroll/swipe events when the cursor is over the visible collapsed pill or collapsed hover-preview pill.
+  - The monitor converts the current mouse screen location into island-panel local coordinates and uses the same collapsed/preview gesture region as the hosting view.
+- Kept gesture handling narrowly scoped:
+  - Scroll gestures only run while the island is collapsed.
+  - Gestures are ignored while shell morphing, collapse handoff, expanded content exit, or file drag/drop targeting is active.
+  - Expanded island controls, sliders, settings windows, and areas outside the visible island are not intercepted.
+  - The existing view-level `scrollWheel` path remains for events already delivered to the island panel.
+- Preserved configured mappings:
+  - Two-finger swipe left uses the configured collapsed left action, defaulting to next track.
+  - Two-finger swipe right uses the configured collapsed right action, defaulting to previous track.
+  - Two-finger swipe down uses the configured collapsed down action, defaulting to expand.
+  - Media next/previous no-op safely when media is disabled or transport controls are unavailable.
+- Tightened action routing:
+  - Added the missing media next/previous callbacks to the SwiftUI gesture callback path.
+  - Removed the extra expand-gesture toggle gate from the collapsed scroll-wheel action path so swipe-down expand follows the configured collapsed media pill action.
+- Added verbose DEBUG-only gesture diagnostics behind `DYNAMIC_ISLAND_VERBOSE_UI_LOGS=1`:
+  - scroll-wheel source
+  - screen/local point
+  - collapsed gesture region
+  - accumulated deltas
+  - resolved direction/action
+  - cooldown blocks
+- Preserved:
+  - Stable single-panel host architecture, click-through behavior, IslandLayoutStore local-frame model, expanded shell/content sequencing, collapsed hover preview layout, visualizer style, media arbitration, file shelf behavior, timer/stats behavior, and settings design were not rewritten.
+- Changed files:
+  - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+  - `pkill -9 DynamicIsland`
+  - `open -n dist/DynamicIsland.app`
+  - `pgrep -fl DynamicIsland`
+
+### 2026-07-05 - Phase 8C.4 Trackpad Gesture Diagnostics And Fix
+
+- Added unavoidable DEBUG diagnostics for the collapsed media pill trackpad gesture path:
+  - `scrollWheel` receipt now logs directly with delta, phase, momentum phase, and precise-delta state.
+  - The custom `IslandHostingView.scrollWheel` override logs before any filtering.
+  - Overlay setup logs `Island hosting view installed` so the active content view can be verified during direct debug launch.
+  - Region logs include raw local point, resolved point, flipped-y fallback usage, collapsed frame, preview frame, active frame, panel frame, and inside/outside result.
+  - Settings/state logs include `gesturesEnabled`, input source, collapsed left/right/down mappings, island state, morph flags, preview state, and file-drop targeting.
+  - Direction/action logs include accumulated deltas, threshold, resolved gesture, executed action, and explicit block reasons.
+- Fixed likely event-delivery and threshold failure points:
+  - Added a local `.scrollWheel` monitor for diagnostic coverage of app-local scroll events.
+  - The local monitor does not process events already delivered to the island panel, avoiding double-counting with the hosting view override.
+  - Kept the global `.scrollWheel` monitor for the click-through case where the panel is still ignoring mouse events and the event goes to another app.
+  - Lowered `collapsedScrollBaseThreshold` from `24` to `12`; at sensitivity `0.5`, the effective threshold is now about `24` instead of `48`, which is more realistic for precise trackpad deltas.
+- Added coordinate verification:
+  - The handler now checks the raw local point first.
+  - If that misses, it checks a flipped-y local point and logs whether the fallback was used.
+  - This keeps screen/local coordinate mismatches visible during manual testing without changing the stable panel architecture.
+- Preserved:
+  - Stable single-panel host architecture, click-through behavior, expanded shell/content sequencing, collapsed hover preview layout, visualizer, media arbitration, settings UI design, file shelf, timer, and stats were not rewritten.
+- Changed files:
+  - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+  - `pkill -9 DynamicIsland`
+  - `.build/debug/DynamicIsland`
+
+### 2026-07-05 - Phase 8C.6 Scroll Gesture Resolution Fix
+
+- Fixed the diagnosed collapsed media pill scroll pipeline failure:
+  - Trackpad `scrollWheel` events were being received, but real events arrived as `phase=0` with `momentumPhase=4`.
+  - The handler rejected non-empty momentum phases before hit-testing, accumulation, direction resolution, or action execution.
+  - The handler now treats any precise scroll-wheel event with meaningful `scrollingDeltaX` or `scrollingDeltaY` as usable input when collapsed and inside the visible pill/preview region.
+- Removed silent pre-filtering:
+  - `IslandHostingView.scrollWheel` now forwards every scroll event to the shared handler instead of checking the local region first.
+  - The shared handler logs entry, settings, state, screen hit-test, delta accumulation, resolved direction, action execution, and explicit block reasons.
+  - Momentum/phase-zero events are no longer silently dropped.
+- Switched collapsed scroll hit-testing to screen space:
+  - Uses `NSEvent.mouseLocation`.
+  - Converts `layoutStore.collapsedSurfaceFrame` and `collapsedPreviewSurfaceFrame` to screen-space frames.
+  - Adds an 8 px tolerance around the active collapsed/hover-preview frame.
+  - Logs collapsed screen frame, preview screen frame, active hit frame, screen point, local point, and inside result.
+- Retuned resolution threshold:
+  - `collapsedScrollBaseThreshold` is now `8`.
+  - At sensitivity `0.5`, the effective threshold is about `16`, so uploaded deltas like `deltaY=-48` resolve immediately.
+  - Direction resolution uses raw dominant-axis deltas; negative Y resolves to swipe down, so collapsed swipe down can expand the island.
+- Preserved action behavior:
+  - Swipe down expand does not require active or playing media.
+  - Swipe left/right use the configured collapsed media pill actions and call media next/previous only when transport controls are available.
+  - Cooldown still prevents repeated momentum events from firing multiple actions after the first action executes.
+- Preserved:
+  - Stable host panel architecture, click-through behavior, expanded shell/content sequencing, collapsed hover preview layout, visualizer, file shelf, timer/stats, media arbitration, and gesture settings UI were not rewritten.
+- Changed files:
+  - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+  - `pkill -9 DynamicIsland`
+  - `.build/debug/DynamicIsland`
+
+### 2026-07-05 - Phase 8C.7 Collapsed Media Gesture Polish
+
+- Fixed one physical swipe causing multiple track skips:
+  - Collapsed media scroll gestures now keep a per-swipe one-shot lockout after an action fires.
+  - Remaining duration/momentum events in the same physical swipe are ignored with a DEBUG log instead of executing another action.
+  - The lockout resets only after a `0.28s` quiet period with no scroll-wheel events.
+  - Accumulated deltas are cleared after execution, but the fired flag remains set until the quiet reset.
+- Corrected physical swipe-down mapping:
+  - Vertical direction resolution now treats positive accumulated Y as `.swipeDown`.
+  - Physical top-to-bottom swipe is intended to expand the island.
+  - DEBUG logs include `vertical rawY` and interpreted physical direction for validation.
+- Preserved horizontal gesture behavior:
+  - Physical swipe left/right continue to use the configured collapsed media pill left/right actions.
+  - Media next/previous still require media to be enabled and transport controls to be available.
+  - Paused Spotify/Music can still receive next/previous as long as transport is available.
+- Improved media refresh after track gestures:
+  - Gesture-triggered next/previous now schedules immediate, `0.35s`, and `0.90s` media refreshes.
+  - This gives Spotify/Music time to publish new metadata/artwork and prevents the collapsed artwork from staying stale after a skip.
+  - DEBUG logs record refresh scheduling and delayed refresh firing.
+- Preserved:
+  - Stable host panel architecture, click-through behavior, expanded shell/content sequencing, collapsed hover preview layout, visualizer, file shelf, timer/stats, media arbitration rules, and gesture settings UI were not rewritten.
+- Changed files:
+  - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+  - `pkill -9 DynamicIsland`
+  - `.build/debug/DynamicIsland`
+
+### 2026-07-05 - Phase 8C.8 Media Gesture One-Shot Lockout
+
+- Added a hard collapsed media next/previous gesture lockout:
+  - Media track gestures now use a dedicated lockout separate from the scroll quiet reset.
+  - The lockout duration is `max(0.85, settings.gestureCooldownSeconds)` so user settings cannot reduce track gestures below the one-shot safety window.
+  - After next/previous fires, horizontal scroll events and momentum tails are consumed until the media lockout expires.
+- Separated scroll session reset from media transport lockout:
+  - The existing `0.28s` quiet reset can still clear accumulated scroll deltas.
+  - It no longer unlocks media next/previous early enough for a long physical swipe to skip multiple songs.
+- Hardened duplicate event-path behavior:
+  - Local/global monitor and hosting-view duplicate scroll paths now see the same media lockout state.
+  - Duplicate/momentum events after a track action clear stale accumulated deltas and no-op with DEBUG logs.
+- Preserved:
+  - Swipe-down expansion remains outside the media-track lockout path unless a media action has already fired.
+  - Stable host panel architecture, click-through behavior, expanded shell/content sequencing, collapsed hover preview layout, visualizer, media arbitration, file shelf, timer/stats, settings UI, and app launch behavior were not changed.
+- Changed files:
+  - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+- Validation note:
+  - Packaging still reports the existing `FileThumbnailCache` non-Sendable capture warning in `ModuleViews.swift`; it was not introduced or changed by this phase.
+
+### 2026-07-05 - Phase 8C.9 End-of-Swipe Media Gesture Resolution
+
+- Changed collapsed horizontal media gestures from threshold-immediate execution to end-of-swipe resolution:
+  - Scroll-wheel events inside the collapsed media pill now update one shared media swipe session.
+  - The session accumulates the full physical swipe stream and reschedules a finish callback after each event.
+  - Next/previous is resolved only after a `0.22s` quiet period with no new scroll events.
+- Enforced one media command per continuous physical swipe:
+  - `finishCollapsedMediaSwipeSession()` copies the final accumulated deltas, resets the session immediately, resolves the final dominant horizontal direction once, then sends exactly one media command.
+  - Long/strong swipes and momentum tails remain part of the same swipe stream instead of triggering at the first threshold crossing.
+  - A short `0.60s` post-command lockout remains only as duplicate-path/tail protection.
+- Preserved:
+  - Physical swipe left still maps to next track.
+  - Physical swipe right still maps to previous track.
+  - Swipe-down expansion remains immediate and separate from the horizontal media finish path.
+  - Album artwork/media refresh after next/previous remains scheduled at immediate, `0.35s`, and `0.90s`.
+  - Stable host panel architecture, click-through behavior, expanded shell/content sequencing, collapsed hover preview layout, visualizer, settings UI, media arbitration, file shelf, timer/stats, and app launch behavior were not changed.
+- Changed files:
+  - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+- Validation note:
+  - Packaging still reports the existing `FileThumbnailCache` non-Sendable capture warning in `ModuleViews.swift`; it was not introduced or changed by this phase.
+
+### 2026-07-05 - Phase 8C.10 Gesture Responsiveness And Artwork Flip
+
+- Improved collapsed horizontal media gesture responsiveness:
+  - Reduced the end-of-swipe quiet period from `0.22s` to `0.12s`.
+  - Preserved end-of-swipe resolution so horizontal media commands still execute only from `finishCollapsedMediaSwipeSession()`.
+  - Kept the `0.60s` post-command lockout as duplicate-path/momentum-tail protection.
+- Preserved one-swipe-one-song behavior and settings consistency:
+  - Long/strong left/right swipes still collect into one session and resolve once after the scroll stream goes quiet.
+  - The final action still uses the configured collapsed left/right gesture mapping.
+  - Gestures remain gated by `gesturesEnabled`, trackpad input source, collapsed state, visible pill/preview hit testing, shell morph state, and file drag/drop state.
+  - Swipe-down expansion remains immediate and separate.
+- Restored stronger media refresh sequencing after gesture next/previous:
+  - Gesture transport now schedules refreshes immediately, at `0.25s`, at `0.75s`, and at `1.20s`.
+  - Added DEBUG logs for gesture refresh sequencing and artwork refresh requests.
+- Added directional album artwork flip support:
+  - `MediaController` now publishes a short-lived gesture artwork flip request with direction `.next` or `.previous`.
+  - Gesture next requests a leftward flip; gesture previous requests a rightward flip.
+  - `FlippingAlbumArtworkView` preserves the existing artwork shape/size and swaps from old artwork to new artwork at the midpoint of a two-phase 3D horizontal flip.
+  - The flip waits for a real new artwork image and skips placeholder/old-image flashes when the new artwork has not arrived yet.
+  - Reduce Motion displays the new artwork without the 3D flip.
+- Preserved:
+  - Stable host panel architecture, click-through behavior, expanded shell/content sequencing, collapsed hover preview layout, visualizer style, settings UI layout, media source arbitration, file shelf, timer/stats, and app launch behavior were not rewritten.
+- Changed files:
+  - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
+  - `Sources/DynamicIsland/Modules/MediaController.swift`
+  - `Sources/DynamicIsland/Views/ModuleViews.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+  - `pkill -9 DynamicIsland`
+  - `.build/debug/DynamicIsland`
+- Validation note:
+  - Packaging still reports the existing `FileThumbnailCache` non-Sendable capture warning in `ModuleViews.swift`; the line number shifted because this phase added artwork view code above it.
+
+
+### 2026-07-05 - Phase 8C.12 Final Gesture And Artwork Repair
+
+- Repaired latest manual-patch state without rewriting the stable overlay architecture.
+- Preserved collapsed media-pill end-of-swipe resolution so one continuous left/right swipe still sends exactly one track command.
+- Fixed the album-cover stale-image bug by separating the selected artwork key from the actual displayed image key in `MediaController`.
+- Added `artworkImageRevision` so SwiftUI can detect when the real new `NSImage` has been assigned.
+- Updated `FlippingAlbumArtworkView` to wait for the real new artwork image/revision before starting the directional flip.
+- Preserved next = left flip and previous = right flip with midpoint image swap.
+- Added expanded swipe-up fallback collapse for stale saved settings where `expandedSwipeUpAction` may still be `.none`.
+- Preserved gesture settings gates for enabled/input/action mappings and media/collapse availability.

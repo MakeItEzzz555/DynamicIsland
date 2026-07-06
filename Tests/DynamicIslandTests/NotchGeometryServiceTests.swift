@@ -23,21 +23,21 @@ final class NotchGeometryServiceTests: XCTestCase {
         XCTAssertEqual(geometry.notchRect, CGRect(x: 635, y: 944, width: 242, height: 38))
         XCTAssertEqual(geometry.collapsedFrame.midX, 756, accuracy: 0.5)
         XCTAssertEqual(geometry.collapsedFrame.width, 254, accuracy: 0.5)
-        XCTAssertEqual(geometry.collapsedFrame.height, 40, accuracy: 0.5)
+        XCTAssertEqual(geometry.collapsedFrame.height, 42, accuracy: 0.5)
         XCTAssertEqual(geometry.collapsedFrame.maxY, 982, accuracy: 0.5)
         XCTAssertEqual(geometry.expandedFrame.midX, 756, accuracy: 0.5)
         XCTAssertEqual(geometry.expandedFrame.maxY, 982, accuracy: 0.5)
-        XCTAssertEqual(geometry.expandedFrame.width, 760, accuracy: 0.5)
-        XCTAssertEqual(geometry.expandedFrame.height, 260, accuracy: 0.5)
+        XCTAssertEqual(geometry.expandedFrame.width, 620, accuracy: 0.5)
+        XCTAssertEqual(geometry.expandedFrame.height, 210, accuracy: 0.5)
         XCTAssertLessThan(geometry.expandedFrame.width / snapshot.frame.width, 0.52)
         XCTAssertEqual(geometry.canvas.frame.maxY, snapshot.frame.maxY, accuracy: 0.5)
         XCTAssertTrue(geometry.canvas.frame.contains(geometry.collapsedFrame))
         XCTAssertTrue(geometry.canvas.frame.contains(geometry.expandedFrame))
-        XCTAssertEqual(geometry.canvas.collapsedSurfaceFrame, CGRect(x: 253, y: 220, width: 254, height: 40))
-        XCTAssertEqual(geometry.canvas.expandedSurfaceFrame, CGRect(x: 0, y: 0, width: 760, height: 260))
+        XCTAssertEqual(geometry.canvas.collapsedSurfaceFrame, CGRect(x: 183, y: 168, width: 254, height: 42))
+        XCTAssertEqual(geometry.canvas.expandedSurfaceFrame, CGRect(x: 0, y: 0, width: 620, height: 210))
     }
 
-    func testProductionCollapsedSizeIsIgnoredOnNotchedScreen() {
+    func testProductionCollapsedSizeIsUsedOnNotchedScreenAboveNotchMinimum() {
         let service = NotchGeometryService()
         let snapshot = ScreenSnapshot(
             frame: CGRect(x: 0, y: 0, width: 1512, height: 982),
@@ -55,9 +55,10 @@ final class NotchGeometryServiceTests: XCTestCase {
 
         XCTAssertEqual(geometry.collapsedFrame.midX, 756, accuracy: 0.5)
         XCTAssertEqual(geometry.collapsedFrame.maxY, 982, accuracy: 0.5)
-        XCTAssertEqual(geometry.collapsedFrame.width, 254, accuracy: 0.5)
-        XCTAssertEqual(geometry.collapsedFrame.height, 40, accuracy: 0.5)
-        XCTAssertTrue((226...254).contains(geometry.collapsedFrame.width))
+        XCTAssertEqual(geometry.collapsedFrame.width, 520, accuracy: 0.5)
+        XCTAssertEqual(geometry.collapsedFrame.height, 58, accuracy: 0.5)
+        XCTAssertEqual(geometry.expandedFrame.width, 900, accuracy: 0.5)
+        XCTAssertEqual(geometry.expandedFrame.height, 300, accuracy: 0.5)
         XCTAssertEqual(
             geometry.canvas.collapsedSurfaceFrame,
             geometry.collapsedFrame.offsetBy(dx: -geometry.canvas.frame.minX, dy: -geometry.canvas.frame.minY)
@@ -123,7 +124,7 @@ final class NotchGeometryServiceTests: XCTestCase {
         XCTAssertEqual(geometry.collapsedFrame.midX, 725, accuracy: 0.5)
         XCTAssertEqual(geometry.expandedFrame.midX, 756, accuracy: 0.5)
         XCTAssertEqual(geometry.expandedFrame.maxY, 982, accuracy: 0.5)
-        XCTAssertLessThanOrEqual(geometry.expandedFrame.width, 760)
+        XCTAssertEqual(geometry.expandedFrame.width, 620, accuracy: 0.5)
     }
 
     func testExpandedFrameKeepsSideMarginsOnNarrowScreens() {
@@ -169,10 +170,10 @@ final class NotchGeometryServiceTests: XCTestCase {
         XCTAssertEqual(geometry.collapsedFrame.midX, 960, accuracy: 0.5)
         XCTAssertEqual(geometry.collapsedFrame.maxY, 1072, accuracy: 0.5)
         XCTAssertEqual(geometry.expandedFrame.maxY, 1070, accuracy: 0.5)
-        XCTAssertEqual(geometry.expandedFrame.width, 760, accuracy: 0.5)
-        XCTAssertEqual(geometry.expandedFrame.height, 260, accuracy: 0.5)
-        XCTAssertEqual(geometry.canvas.frame, CGRect(x: 580, y: 810, width: 760, height: 270))
-        XCTAssertEqual(geometry.canvas.collapsedSurfaceFrame, CGRect(x: 268, y: 220, width: 224, height: 42))
-        XCTAssertEqual(geometry.canvas.expandedSurfaceFrame, CGRect(x: 0, y: 0, width: 760, height: 260))
+        XCTAssertEqual(geometry.expandedFrame.width, 620, accuracy: 0.5)
+        XCTAssertEqual(geometry.expandedFrame.height, 210, accuracy: 0.5)
+        XCTAssertEqual(geometry.canvas.frame, CGRect(x: 650, y: 860, width: 620, height: 220))
+        XCTAssertEqual(geometry.canvas.collapsedSurfaceFrame, CGRect(x: 198, y: 170, width: 224, height: 42))
+        XCTAssertEqual(geometry.canvas.expandedSurfaceFrame, CGRect(x: 0, y: 0, width: 620, height: 210))
     }
 }

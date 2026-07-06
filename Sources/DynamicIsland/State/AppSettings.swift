@@ -130,8 +130,8 @@ public enum GestureInputSource: String, CaseIterable, Identifiable {
 
     public var displayName: String {
         switch self {
-        case .camera: "Camera"
-        case .trackpad: "Trackpad"
+        case .camera: "Camera (Coming Soon)"
+        case .trackpad: "Pointer / Trackpad"
         case .keyboardShortcut: "Keyboard Shortcut"
         case .none: "None"
         }
@@ -331,6 +331,18 @@ public final class AppSettings: ObservableObject {
     @Published public var previousTabGestureEnabled: Bool { didSet { save(previousTabGestureEnabled, for: Key.previousTabGestureEnabled) } }
     @Published public var mediaPlayPauseGestureEnabled: Bool { didSet { save(mediaPlayPauseGestureEnabled, for: Key.mediaPlayPauseGestureEnabled) } }
     @Published public var timerStartStopGestureEnabled: Bool { didSet { save(timerStartStopGestureEnabled, for: Key.timerStartStopGestureEnabled) } }
+    @Published public var collapsedDoubleClickAction: IslandGestureAction { didSet { save(collapsedDoubleClickAction.rawValue, for: Key.collapsedDoubleClickAction) } }
+    @Published public var collapsedSwipeDownAction: IslandGestureAction { didSet { save(collapsedSwipeDownAction.rawValue, for: Key.collapsedSwipeDownAction) } }
+    @Published public var collapsedSwipeUpAction: IslandGestureAction { didSet { save(collapsedSwipeUpAction.rawValue, for: Key.collapsedSwipeUpAction) } }
+    @Published public var collapsedSwipeLeftAction: IslandGestureAction { didSet { save(collapsedSwipeLeftAction.rawValue, for: Key.collapsedSwipeLeftAction) } }
+    @Published public var collapsedSwipeRightAction: IslandGestureAction { didSet { save(collapsedSwipeRightAction.rawValue, for: Key.collapsedSwipeRightAction) } }
+    @Published public var collapsedLongPressAction: IslandGestureAction { didSet { save(collapsedLongPressAction.rawValue, for: Key.collapsedLongPressAction) } }
+    @Published public var expandedDoubleClickAction: IslandGestureAction { didSet { save(expandedDoubleClickAction.rawValue, for: Key.expandedDoubleClickAction) } }
+    @Published public var expandedSwipeDownAction: IslandGestureAction { didSet { save(expandedSwipeDownAction.rawValue, for: Key.expandedSwipeDownAction) } }
+    @Published public var expandedSwipeUpAction: IslandGestureAction { didSet { save(expandedSwipeUpAction.rawValue, for: Key.expandedSwipeUpAction) } }
+    @Published public var expandedSwipeLeftAction: IslandGestureAction { didSet { save(expandedSwipeLeftAction.rawValue, for: Key.expandedSwipeLeftAction) } }
+    @Published public var expandedSwipeRightAction: IslandGestureAction { didSet { save(expandedSwipeRightAction.rawValue, for: Key.expandedSwipeRightAction) } }
+    @Published public var expandedLongPressAction: IslandGestureAction { didSet { save(expandedLongPressAction.rawValue, for: Key.expandedLongPressAction) } }
     @Published public var gestureSensitivity: Double {
         didSet { normalizeGestureSensitivity(oldValue: oldValue) }
     }
@@ -496,12 +508,24 @@ public final class AppSettings: ObservableObject {
 
         gesturesEnabled = Self.bool(defaults, Key.gesturesEnabled, false)
         gestureInputSource = Self.enumValue(defaults, Key.gestureInputSource, .none)
-        expandGestureEnabled = Self.bool(defaults, Key.expandGestureEnabled, false)
-        collapseGestureEnabled = Self.bool(defaults, Key.collapseGestureEnabled, false)
-        nextTabGestureEnabled = Self.bool(defaults, Key.nextTabGestureEnabled, false)
-        previousTabGestureEnabled = Self.bool(defaults, Key.previousTabGestureEnabled, false)
-        mediaPlayPauseGestureEnabled = Self.bool(defaults, Key.mediaPlayPauseGestureEnabled, false)
-        timerStartStopGestureEnabled = Self.bool(defaults, Key.timerStartStopGestureEnabled, false)
+        expandGestureEnabled = Self.bool(defaults, Key.expandGestureEnabled, true)
+        collapseGestureEnabled = Self.bool(defaults, Key.collapseGestureEnabled, true)
+        nextTabGestureEnabled = Self.bool(defaults, Key.nextTabGestureEnabled, true)
+        previousTabGestureEnabled = Self.bool(defaults, Key.previousTabGestureEnabled, true)
+        mediaPlayPauseGestureEnabled = Self.bool(defaults, Key.mediaPlayPauseGestureEnabled, true)
+        timerStartStopGestureEnabled = Self.bool(defaults, Key.timerStartStopGestureEnabled, true)
+        collapsedDoubleClickAction = Self.enumValue(defaults, Key.collapsedDoubleClickAction, .mediaPlayPause)
+        collapsedSwipeDownAction = Self.enumValue(defaults, Key.collapsedSwipeDownAction, .expand)
+        collapsedSwipeUpAction = Self.enumValue(defaults, Key.collapsedSwipeUpAction, .none)
+        collapsedSwipeLeftAction = Self.enumValue(defaults, Key.collapsedSwipeLeftAction, .mediaNextTrack)
+        collapsedSwipeRightAction = Self.enumValue(defaults, Key.collapsedSwipeRightAction, .mediaPreviousTrack)
+        collapsedLongPressAction = Self.enumValue(defaults, Key.collapsedLongPressAction, .openSettings)
+        expandedDoubleClickAction = Self.enumValue(defaults, Key.expandedDoubleClickAction, .none)
+        expandedSwipeDownAction = Self.enumValue(defaults, Key.expandedSwipeDownAction, .none)
+        expandedSwipeUpAction = Self.enumValue(defaults, Key.expandedSwipeUpAction, .collapse)
+        expandedSwipeLeftAction = Self.enumValue(defaults, Key.expandedSwipeLeftAction, .nextTab)
+        expandedSwipeRightAction = Self.enumValue(defaults, Key.expandedSwipeRightAction, .previousTab)
+        expandedLongPressAction = Self.enumValue(defaults, Key.expandedLongPressAction, .openSettings)
         gestureSensitivity = Self.double(defaults, Key.gestureSensitivity, 0.5)
         gestureCooldownSeconds = Self.double(defaults, Key.gestureCooldownSeconds, 0.75)
         showGestureHints = Self.bool(defaults, Key.showGestureHints, true)
@@ -724,12 +748,24 @@ public final class AppSettings: ObservableObject {
         liveActivityAnimationEnabled = Self.bool(defaults, Key.liveActivityAnimationEnabled, true)
         gesturesEnabled = Self.bool(defaults, Key.gesturesEnabled, false)
         gestureInputSource = Self.enumValue(defaults, Key.gestureInputSource, .none)
-        expandGestureEnabled = Self.bool(defaults, Key.expandGestureEnabled, false)
-        collapseGestureEnabled = Self.bool(defaults, Key.collapseGestureEnabled, false)
-        nextTabGestureEnabled = Self.bool(defaults, Key.nextTabGestureEnabled, false)
-        previousTabGestureEnabled = Self.bool(defaults, Key.previousTabGestureEnabled, false)
-        mediaPlayPauseGestureEnabled = Self.bool(defaults, Key.mediaPlayPauseGestureEnabled, false)
-        timerStartStopGestureEnabled = Self.bool(defaults, Key.timerStartStopGestureEnabled, false)
+        expandGestureEnabled = Self.bool(defaults, Key.expandGestureEnabled, true)
+        collapseGestureEnabled = Self.bool(defaults, Key.collapseGestureEnabled, true)
+        nextTabGestureEnabled = Self.bool(defaults, Key.nextTabGestureEnabled, true)
+        previousTabGestureEnabled = Self.bool(defaults, Key.previousTabGestureEnabled, true)
+        mediaPlayPauseGestureEnabled = Self.bool(defaults, Key.mediaPlayPauseGestureEnabled, true)
+        timerStartStopGestureEnabled = Self.bool(defaults, Key.timerStartStopGestureEnabled, true)
+        collapsedDoubleClickAction = Self.enumValue(defaults, Key.collapsedDoubleClickAction, .mediaPlayPause)
+        collapsedSwipeDownAction = Self.enumValue(defaults, Key.collapsedSwipeDownAction, .expand)
+        collapsedSwipeUpAction = Self.enumValue(defaults, Key.collapsedSwipeUpAction, .none)
+        collapsedSwipeLeftAction = Self.enumValue(defaults, Key.collapsedSwipeLeftAction, .mediaNextTrack)
+        collapsedSwipeRightAction = Self.enumValue(defaults, Key.collapsedSwipeRightAction, .mediaPreviousTrack)
+        collapsedLongPressAction = Self.enumValue(defaults, Key.collapsedLongPressAction, .openSettings)
+        expandedDoubleClickAction = Self.enumValue(defaults, Key.expandedDoubleClickAction, .none)
+        expandedSwipeDownAction = Self.enumValue(defaults, Key.expandedSwipeDownAction, .none)
+        expandedSwipeUpAction = Self.enumValue(defaults, Key.expandedSwipeUpAction, .collapse)
+        expandedSwipeLeftAction = Self.enumValue(defaults, Key.expandedSwipeLeftAction, .nextTab)
+        expandedSwipeRightAction = Self.enumValue(defaults, Key.expandedSwipeRightAction, .previousTab)
+        expandedLongPressAction = Self.enumValue(defaults, Key.expandedLongPressAction, .openSettings)
         gestureSensitivity = Self.double(defaults, Key.gestureSensitivity, 0.5)
         gestureCooldownSeconds = Self.double(defaults, Key.gestureCooldownSeconds, 0.75)
         showGestureHints = Self.bool(defaults, Key.showGestureHints, true)
@@ -1102,6 +1138,18 @@ private enum Key {
     static let previousTabGestureEnabled = "previousTabGestureEnabled"
     static let mediaPlayPauseGestureEnabled = "mediaPlayPauseGestureEnabled"
     static let timerStartStopGestureEnabled = "timerStartStopGestureEnabled"
+    static let collapsedDoubleClickAction = "collapsedDoubleClickAction"
+    static let collapsedSwipeDownAction = "collapsedSwipeDownAction"
+    static let collapsedSwipeUpAction = "collapsedSwipeUpAction"
+    static let collapsedSwipeLeftAction = "collapsedSwipeLeftAction"
+    static let collapsedSwipeRightAction = "collapsedSwipeRightAction"
+    static let collapsedLongPressAction = "collapsedLongPressAction"
+    static let expandedDoubleClickAction = "expandedDoubleClickAction"
+    static let expandedSwipeDownAction = "expandedSwipeDownAction"
+    static let expandedSwipeUpAction = "expandedSwipeUpAction"
+    static let expandedSwipeLeftAction = "expandedSwipeLeftAction"
+    static let expandedSwipeRightAction = "expandedSwipeRightAction"
+    static let expandedLongPressAction = "expandedLongPressAction"
     static let gestureSensitivity = "gestureSensitivity"
     static let gestureCooldownSeconds = "gestureCooldownSeconds"
     static let showGestureHints = "showGestureHints"
@@ -1150,7 +1198,11 @@ private enum Key {
         liveActivityAutoDismissEnabled, liveActivityAutoDismissSeconds, liveActivityAnimationEnabled,
         gesturesEnabled, gestureInputSource, expandGestureEnabled, collapseGestureEnabled,
         nextTabGestureEnabled, previousTabGestureEnabled, mediaPlayPauseGestureEnabled,
-        timerStartStopGestureEnabled, gestureSensitivity, gestureCooldownSeconds,
+        timerStartStopGestureEnabled, collapsedDoubleClickAction, collapsedSwipeDownAction,
+        collapsedSwipeUpAction, collapsedSwipeLeftAction, collapsedSwipeRightAction,
+        collapsedLongPressAction, expandedDoubleClickAction, expandedSwipeDownAction,
+        expandedSwipeUpAction, expandedSwipeLeftAction, expandedSwipeRightAction,
+        expandedLongPressAction, gestureSensitivity, gestureCooldownSeconds,
         showGestureHints, requireGestureConfirmation, gesturePrivacyMode, verboseUILogsEnabled,
         showDebugFrames, showHitTestRegionDebug, disableVisualizerDuringMorph,
         disableThumbnailsDuringMorph

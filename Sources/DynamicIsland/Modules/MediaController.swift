@@ -1,6 +1,24 @@
 import AppKit
 import Foundation
 
+enum MediaArtworkFlipDirection: String {
+    case next
+    case previous
+}
+
+struct MediaArtworkFlipRequest: Identifiable {
+    let id = UUID()
+    let direction: MediaArtworkFlipDirection
+    let sourceArtworkKey: String?
+    let sourceTitle: String
+    let requestedAt: Date
+    let expiresAt: Date
+
+    var isExpired: Bool {
+        Date() > expiresAt
+    }
+}
+
 @MainActor
 final class MediaController: ObservableObject {
     @Published private(set) var title = "Nothing Playing"
@@ -19,6 +37,9 @@ final class MediaController: ObservableObject {
     @Published private(set) var sourceKind: MediaSourceKind = .unknown
     @Published private(set) var sourceBundleIdentifier: String?
     @Published private(set) var artworkKey: String?
+    @Published private(set) var artworkImageKey: String?
+    @Published private(set) var artworkImageRevision = 0
+    @Published private(set) var artworkFlipRequest: MediaArtworkFlipRequest?
 
     private let systemNowPlayingProvider = NowPlayingMediaProvider()
     private let youtubeMetadataProvider = YouTubeMetadataProvider()
@@ -26,6 +47,7 @@ final class MediaController: ObservableObject {
     private var refreshTimer: Timer?
     private var currentArtworkURL: String?
     private var currentArtworkKey: String?
+    private var currentArtworkImageKey: String?
     private var currentArtworkSourceIdentity: MediaSourceIdentity?
     private var artworkCache: [String: NSImage] = [:]
     private var currentYouTubeVideoID: String?
@@ -154,14 +176,77 @@ final class MediaController: ObservableObject {
 
     func nextTrack() {
         guard isTransportControlAvailable else { return }
+        requestArtworkFlip(direction: .next, reason: "nextTrack command")
         send(command: "next track", to: activePlayer)
-        refresh()
+        refreshAfterTransportCommand(reason: "next track")
     }
 
     func previousTrack() {
         guard isTransportControlAvailable else { return }
+        requestArtworkFlip(direction: .previous, reason: "previousTrack command")
         send(command: "previous track", to: activePlayer)
+        refreshAfterTransportCommand(reason: "previous track")
+    }
+
+    private func refreshAfterTransportCommand(reason: String) {
+        debugArtworkFlip("transport refresh sequence started reason=\(reason)")
+
         refresh()
+
+        let delays: [TimeInterval] = [
+            0.08,
+            0.18,
+            0.32,
+            0.55,
+            0.85,
+            1.25
+        ]
+
+        for delay in delays {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self else { return }
+                self.debugArtworkFlip(
+                    "transport refresh tick reason=\(reason) delay=\(String(format: "%.2f", delay))"
+                )
+                self.refresh()
+            }
+        }
+    }
+
+    func requestGestureArtworkFlip(direction: MediaArtworkFlipDirection) {
+        requestArtworkFlip(direction: direction, reason: "gesture")
+    }
+
+    private func requestArtworkFlipIfNeeded(direction: MediaArtworkFlipDirection, reason: String) {
+        if let existingRequest = artworkFlipRequest, !existingRequest.isExpired {
+            debugArtworkFlip(
+                "kept pending flip direction=\(existingRequest.direction.rawValue) reason=\(reason)"
+            )
+            return
+        }
+
+        requestArtworkFlip(direction: direction, reason: reason)
+    }
+
+    private func requestArtworkFlip(direction: MediaArtworkFlipDirection, reason: String) {
+        let request = MediaArtworkFlipRequest(
+            direction: direction,
+            sourceArtworkKey: artworkImageKey ?? artworkKey,
+            sourceTitle: title,
+            requestedAt: Date(),
+            expiresAt: Date().addingTimeInterval(6.0)
+        )
+
+        artworkFlipRequest = request
+
+        debugArtworkFlip(
+            "pending direction=\(direction.rawValue) reason=\(reason) sourceArtworkKey=\(request.sourceArtworkKey ?? "nil") sourceTitle=\(title)"
+        )
+    }
+
+    func consumeArtworkFlipRequest(id: UUID) {
+        guard artworkFlipRequest?.id == id else { return }
+        artworkFlipRequest = nil
     }
 
     func updateScrubPosition(_ position: Double) {
@@ -576,8 +661,16 @@ final class MediaController: ObservableObject {
         let publishGeneration = selectedPublishGeneration
         let sameYouTubeVideo = candidate.youtubeVideoID != nil &&
             candidate.youtubeVideoID == previousYouTubeVideoID
+        let hadDisplayedArtwork = artworkImage != nil && artworkImageKey != nil
 
         logSelectedCandidatePublish(candidate, reason: reason, identityChanged: identityChanged)
+
+        if identityChanged, previousIdentity != nil, hadDisplayedArtwork {
+            requestArtworkFlipIfNeeded(
+                direction: .next,
+                reason: "detected selected media identity change"
+            )
+        }
 
         title = snapshot.title
         if sameYouTubeVideo,
@@ -815,9 +908,12 @@ final class MediaController: ObservableObject {
 
         currentArtworkKey = placeholderKey
         artworkKey = placeholderKey
+        currentArtworkImageKey = nil
+        artworkImageKey = nil
         currentArtworkSourceIdentity = candidate.identity
         currentArtworkURL = nil
         artworkImage = nil
+        artworkImageRevision += 1
         logArtworkAssignment(
             reason: sourceChanged ? "source changed with no artwork; using placeholder" : "using placeholder fallback",
             sourceIdentity: candidate.identity,
@@ -838,6 +934,7 @@ final class MediaController: ObservableObject {
         if !force,
            currentArtworkSourceIdentity == sourceIdentity,
            currentArtworkKey == key,
+           currentArtworkImageKey == key,
            artworkImage != nil {
             logArtworkAssignment(
                 reason: "skipped unchanged artwork",
@@ -852,9 +949,13 @@ final class MediaController: ObservableObject {
         artworkCache[key] = image
         currentArtworkKey = key
         artworkKey = key
+        currentArtworkImageKey = key
+        artworkImageKey = key
         currentArtworkSourceIdentity = sourceIdentity
         currentArtworkURL = key.hasPrefix("url:") ? String(key.dropFirst(4)) : currentArtworkURL
         artworkImage = image
+        artworkImageRevision += 1
+        debugArtworkFlip("artwork image assigned key=\(key) revision=\(artworkImageRevision) reason=\(reason)")
         logArtworkAssignment(
             reason: reason,
             sourceIdentity: sourceIdentity,
@@ -867,8 +968,11 @@ final class MediaController: ObservableObject {
     private func clearArtwork(reason: String) {
         let oldKey = currentArtworkKey
         artworkImage = nil
+        artworkImageRevision += 1
         currentArtworkURL = nil
         currentArtworkKey = nil
+        currentArtworkImageKey = nil
+        artworkImageKey = nil
         artworkKey = nil
         currentArtworkSourceIdentity = nil
         logArtworkAssignment(
@@ -955,6 +1059,12 @@ final class MediaController: ObservableObject {
             "duration=\(hasPlaybackProgress ? String(duration) : "unknown")",
             "currentTime=\(hasPlaybackProgress ? String(playbackPosition) : "unknown")"
         )
+        #endif
+    }
+
+    private func debugArtworkFlip(_ message: String) {
+        #if DEBUG
+        print("[ArtworkFlip] \(message)")
         #endif
     }
 

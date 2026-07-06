@@ -6,8 +6,8 @@ struct CompactMediaView: View {
     @ObservedObject var media: MediaController
 
     var body: some View {
-        AlbumArtworkView(image: media.artworkImage, size: 14)
-        .accessibilityLabel("Media \(media.title)")
+        FlippingAlbumArtworkView(media: media, size: 14)
+            .accessibilityLabel("Media \(media.title)")
     }
 }
 
@@ -16,26 +16,68 @@ struct AudioVisualizerView: View {
     var isActive = true
     var accentColor: Color = ArtworkAccentColorExtractor.fallbackColor
     var variant: AudioVisualizerVariant = .compact
+    var barCount = 12
+    var pauseDuringShellMorph = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.isShellMorphing) private var isShellMorphing
+    @State private var isPlaybackVisuallyActive = false
+    @State private var playbackHoldGeneration = 0
 
     var body: some View {
-        Group {
-            if isPlaying && isActive && !reduceMotion && !isShellMorphing {
-                TimelineView(.animation(minimumInterval: 1.0 / 24.0)) { timeline in
-                    bars(tick: timeline.date.timeIntervalSinceReferenceDate, opacity: 0.92)
-                }
-            } else {
-                bars(tick: nil, opacity: isActive ? 0.48 : 0.28)
-            }
+        TimelineView(.animation(minimumInterval: 1.0 / 24.0, paused: !shouldAnimateContinuously)) { timeline in
+            bars(
+                tick: shouldAnimateContinuously ? timeline.date.timeIntervalSinceReferenceDate : nil,
+                opacity: visualizerOpacity
+            )
         }
         .frame(width: variant.size.width, height: variant.size.height)
         .accessibilityLabel(isPlaying ? "Audio playing" : "Audio paused")
+        .onAppear {
+            updatePlaybackHold()
+        }
+        .onChange(of: isPlaying) { _, _ in
+            updatePlaybackHold()
+        }
+        .onChange(of: isActive) { _, _ in
+            updatePlaybackHold()
+        }
+    }
+
+    private var shouldAnimateContinuously: Bool {
+        isPlaybackVisuallyActive &&
+            !reduceMotion &&
+            !(pauseDuringShellMorph && isShellMorphing)
+    }
+
+    private var visualizerOpacity: Double {
+        if isPlaybackVisuallyActive {
+            return 0.92
+        }
+        return isActive ? 0.48 : 0.28
+    }
+
+    private func updatePlaybackHold() {
+        playbackHoldGeneration += 1
+        let generation = playbackHoldGeneration
+
+        guard isPlaying && isActive else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.playbackHoldDuration) {
+                guard generation == playbackHoldGeneration else { return }
+                guard !(isPlaying && isActive) else {
+                    isPlaybackVisuallyActive = true
+                    return
+                }
+                isPlaybackVisuallyActive = false
+            }
+            return
+        }
+
+        isPlaybackVisuallyActive = true
     }
 
     private func bars(tick: TimeInterval?, opacity: Double) -> some View {
         HStack(alignment: .center, spacing: variant.spacing) {
-            ForEach(0..<Self.barCount, id: \.self) { index in
+            ForEach(0..<barCount, id: \.self) { index in
                 Capsule(style: .continuous)
                     .fill(accentColor.opacity(opacity))
                     .frame(width: variant.barWidth, height: barHeight(index: index, tick: tick))
@@ -62,7 +104,7 @@ struct AudioVisualizerView: View {
         return variant.maximumBarHeight * min(max(fraction, 0.14), 1)
     }
 
-    private static let barCount = 12
+    private static let playbackHoldDuration: TimeInterval = 0.34
     private static let loopDuration: TimeInterval = 1.72
     private static let pausedFractions: [CGFloat] = [0.24, 0.36, 0.28, 0.46, 0.31, 0.40, 0.27, 0.34, 0.44, 0.30, 0.38, 0.26]
     private static let playingFractions: [[CGFloat]] = [
@@ -130,6 +172,240 @@ struct AlbumArtworkView: View {
         }
         .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
+    }
+}
+
+struct FlippingAlbumArtworkView: View {
+    @ObservedObject var media: MediaController
+    let size: CGFloat
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    @State private var displayedArtwork: NSImage?
+    @State private var displayedIdentity: String?
+    @State private var displayedFingerprint: String?
+    @State private var rotationDegrees: Double = 0
+    @State private var isFlipping = false
+    @State private var flipGeneration = 0
+
+    var body: some View {
+        AlbumArtworkView(image: displayedArtwork ?? media.artworkImage, size: size)
+            .rotation3DEffect(
+                .degrees(rotationDegrees),
+                axis: (x: 0, y: 1, z: 0),
+                perspective: 0.72
+            )
+            .onAppear {
+                initializeDisplayedArtworkIfNeeded()
+            }
+            .onChange(of: media.title) { _, _ in
+                handleArtworkChange(reason: "title changed")
+            }
+            .onChange(of: media.artist) { _, _ in
+                handleArtworkChange(reason: "artist changed")
+            }
+            .onChange(of: media.sourceName) { _, _ in
+                handleArtworkChange(reason: "source changed")
+            }
+            .onChange(of: media.artworkKey) { _, _ in
+                handleArtworkChange(reason: "artwork key changed")
+            }
+            .onChange(of: media.artworkImageRevision) { _, _ in
+                handleArtworkChange(reason: "artwork image revision changed")
+            }
+            .onReceive(media.$artworkImage) { _ in
+                handleArtworkChange(reason: "artwork image changed")
+            }
+    }
+
+    private var currentTrackIdentity: String {
+        [
+            media.sourceName,
+            media.title,
+            media.artist,
+            media.artworkKey ?? "nil"
+        ]
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        .joined(separator: "|")
+    }
+
+    private func initializeDisplayedArtworkIfNeeded() {
+        guard displayedIdentity == nil else { return }
+
+        displayedArtwork = media.artworkImage
+        displayedIdentity = currentTrackIdentity
+        displayedFingerprint = fingerprint(for: media.artworkImage)
+
+        debugArtworkFlip(
+            "initialized identity=\(displayedIdentity ?? "nil") fingerprint=\(displayedFingerprint ?? "nil")"
+        )
+    }
+
+    private func handleArtworkChange(reason: String) {
+        let newIdentity = currentTrackIdentity
+        let newArtwork = media.artworkImage
+        let newFingerprint = fingerprint(for: newArtwork)
+
+        initializeDisplayedArtworkIfNeeded()
+
+        guard let newArtwork else {
+            debugArtworkFlip("waiting reason=\(reason) no new artwork identity=\(newIdentity)")
+            return
+        }
+
+        guard let oldIdentity = displayedIdentity else {
+            displayedArtwork = newArtwork
+            displayedIdentity = newIdentity
+            displayedFingerprint = newFingerprint
+            debugArtworkFlip("assigned reason=no old identity new=\(newIdentity)")
+            return
+        }
+
+        guard let oldArtwork = displayedArtwork else {
+            displayedArtwork = newArtwork
+            displayedIdentity = newIdentity
+            displayedFingerprint = newFingerprint
+            debugArtworkFlip("assigned reason=no old artwork new=\(newIdentity)")
+            return
+        }
+
+        let identityChanged = newIdentity != oldIdentity
+        let fingerprintChanged = newFingerprint != nil && newFingerprint != displayedFingerprint
+
+        guard identityChanged || fingerprintChanged else {
+            return
+        }
+
+        /*
+         Important:
+         MediaController may publish a new artworkKey before the actual downloaded
+         NSImage has arrived. In that moment media.artworkImage can still be the
+         old image. If we flip there, the animation flips old cover -> old cover.
+
+         So:
+         - If identity changed but the image fingerprint is still the same,
+           wait for the later artworkImage publish.
+         - If the fingerprint changed, we now have the real new cover.
+         */
+        if identityChanged && !fingerprintChanged {
+            debugArtworkFlip(
+                "waiting reason=\(reason) identity changed but artwork image still stale old=\(oldIdentity) new=\(newIdentity)"
+            )
+            return
+        }
+
+        guard let request = media.artworkFlipRequest,
+              !request.isExpired,
+              !reduceMotion else {
+            displayedArtwork = newArtwork
+            displayedIdentity = newIdentity
+            displayedFingerprint = newFingerprint
+
+            if let request = media.artworkFlipRequest, request.isExpired {
+                media.consumeArtworkFlipRequest(id: request.id)
+                debugArtworkFlip("assigned without flip reason=request expired new=\(newIdentity)")
+            } else if reduceMotion {
+                debugArtworkFlip("assigned without flip reason=reduce motion new=\(newIdentity)")
+            } else {
+                debugArtworkFlip("assigned without flip reason=no request new=\(newIdentity)")
+            }
+
+            return
+        }
+
+        startFlip(
+            from: oldIdentity,
+            to: newIdentity,
+            oldArtwork: oldArtwork,
+            newArtwork: newArtwork,
+            newFingerprint: newFingerprint,
+            direction: request.direction,
+            requestID: request.id
+        )
+    }
+
+    private func startFlip(
+        from oldIdentity: String,
+        to newIdentity: String,
+        oldArtwork: NSImage,
+        newArtwork: NSImage,
+        newFingerprint: String?,
+        direction: MediaArtworkFlipDirection,
+        requestID: UUID
+    ) {
+        if isFlipping {
+            displayedArtwork = newArtwork
+            displayedIdentity = newIdentity
+            displayedFingerprint = newFingerprint
+            media.consumeArtworkFlipRequest(id: requestID)
+            debugArtworkFlip("forced assign reason=already flipping new=\(newIdentity)")
+            return
+        }
+
+        isFlipping = true
+        flipGeneration += 1
+
+        let generation = flipGeneration
+        let firstHalfDegrees = direction == .next ? -90.0 : 90.0
+        let secondHalfStartDegrees = -firstHalfDegrees
+        let halfDuration = 0.19
+
+        debugArtworkFlip(
+            "starting flip old=\(oldIdentity) new=\(newIdentity) direction=\(direction.rawValue)"
+        )
+
+        media.consumeArtworkFlipRequest(id: requestID)
+
+        withAnimation(.easeInOut(duration: halfDuration)) {
+            rotationDegrees = firstHalfDegrees
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + halfDuration) {
+            guard generation == flipGeneration else { return }
+
+            displayedArtwork = newArtwork
+            displayedIdentity = newIdentity
+            displayedFingerprint = newFingerprint
+            rotationDegrees = secondHalfStartDegrees
+
+            debugArtworkFlip("midpoint swap new=\(newIdentity)")
+
+            withAnimation(.easeInOut(duration: halfDuration)) {
+                rotationDegrees = 0
+            }
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + halfDuration) {
+                guard generation == flipGeneration else { return }
+
+                isFlipping = false
+                debugArtworkFlip("completed new=\(newIdentity)")
+            }
+        }
+    }
+
+    private func fingerprint(for image: NSImage?) -> String? {
+        guard let image else { return nil }
+
+        let size = image.size
+        let representations = image.representations
+        let pixelDescription = representations
+            .map { "\($0.pixelsWide)x\($0.pixelsHigh)" }
+            .joined(separator: ",")
+
+        let dataHash: Int
+        if let data = image.tiffRepresentation {
+            dataHash = data.hashValue
+        } else {
+            dataHash = ObjectIdentifier(image).hashValue
+        }
+
+        return "rev=\(media.artworkImageRevision)|\(Int(size.width))x\(Int(size.height))|\(pixelDescription)|\(dataHash)"
+    }
+
+    private func debugArtworkFlip(_ message: String) {
+        #if DEBUG
+        print("[ArtworkFlip] \(message)")
+        #endif
     }
 }
 
@@ -279,7 +555,7 @@ struct MediaModuleView: View {
         switch settings.visualizerAccentMode {
         case .artwork:
             if settings.useArtworkAccentColor {
-                return accentCache.color(for: media.artworkKey, image: media.artworkImage)
+                return accentCache.color(for: media.artworkImageKey, image: media.artworkImage)
             }
             return .white
         case .white:
@@ -351,7 +627,8 @@ struct MediaModuleView: View {
                             isPlaying: media.isPlaying,
                             isActive: media.hasActiveMediaSource,
                             accentColor: visualizerColor,
-                            variant: .expanded
+                            variant: .expanded,
+                            pauseDuringShellMorph: settings.disableVisualizerDuringMorph
                         )
                         .padding(.top, visualizerTopPadding)
                     }
@@ -519,7 +796,8 @@ struct MediaModuleView: View {
                                 isPlaying: media.isPlaying,
                                 isActive: media.hasActiveMediaSource,
                                 accentColor: visualizerColor,
-                                variant: .compact
+                                variant: .compact,
+                                pauseDuringShellMorph: settings.disableVisualizerDuringMorph
                             )
                             .padding(.top, inlineVisualizerTopPadding)
                         }
@@ -685,7 +963,7 @@ private struct ClickableAlbumArtworkButton: View {
     }
 
     private var artwork: some View {
-        AlbumArtworkView(image: media.artworkImage, size: size)
+        FlippingAlbumArtworkView(media: media, size: size)
             .scaleEffect(isHovering ? 1.028 : 1)
             .brightness(isHovering ? 0.035 : 0)
             .animation(.easeOut(duration: 0.16), value: isHovering)

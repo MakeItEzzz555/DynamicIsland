@@ -8,6 +8,10 @@ final class OverlayWindowController {
     private let expandedHoverTolerance: CGFloat = 2
     private let collapsedHoverTolerance: CGFloat = 4
     private let collapseContentExitDelay: DispatchTimeInterval = .milliseconds(205)
+    private let collapsedScrollBaseThreshold: CGFloat = 8
+    private let collapsedScrollQuietResetDelay: TimeInterval = 0.28
+    private let mediaSwipeQuietPeriod: TimeInterval = 0.045
+    private let mediaSwipePostCommandLockoutSeconds: TimeInterval = 0.60
     private let settings: AppSettings
     private let islandState: IslandStateStore
     private let modules: IslandModules
@@ -18,6 +22,8 @@ final class OverlayWindowController {
     private var mouseContainmentTimer: Timer?
     private var localMouseMovedMonitor: Any?
     private var globalMouseMovedMonitor: Any?
+    private var localScrollWheelMonitor: Any?
+    private var globalScrollWheelMonitor: Any?
     private var localKeyDownMonitor: Any?
     private var targetCollapsedFrame: NSRect?
     private var targetExpandedFrame: NSRect?
@@ -25,6 +31,24 @@ final class OverlayWindowController {
     private var morphGeneration: Int = 0
     private var collapseSequenceGeneration: Int = 0
     private var expandedAt: CFTimeInterval = 0
+    private var collapsedScrollDelta: CGSize = .zero
+    private var collapsedScrollGestureHandled = false
+    private var collapsedScrollLastActionAt: CFTimeInterval?
+    private var expandedScrollDelta: CGSize = .zero
+    private var expandedScrollGestureHandled = false
+    private var expandedScrollLastActionAt: CFTimeInterval?
+    private var expandedScrollGestureResetWorkItem: DispatchWorkItem?
+    private var collapsedScrollGestureResetWorkItem: DispatchWorkItem?
+    private var mediaSwipeSessionActive = false
+    private var mediaSwipeAccumulatedX: CGFloat = 0
+    private var mediaSwipeAccumulatedY: CGFloat = 0
+    private var mediaSwipeStartedAt: Date?
+    private var mediaSwipeLastEventAt: Date?
+    private var mediaSwipeFinishWorkItem: DispatchWorkItem?
+    private var mediaSwipeCommandInFlight = false
+    private var mediaSwipeLockedUntil: Date = .distantPast
+    private var mediaSwipeUnlockWorkItem: DispatchWorkItem?
+    private var expandedScrollLockedUntil: Date = .distantPast
     #if DEBUG
     private var lastCollapseDebugLogAt: CFTimeInterval = 0
     #endif
@@ -80,8 +104,15 @@ final class OverlayWindowController {
         hostingView.interactiveRegionProvider = { [weak self] in
             self?.currentInteractiveRegion() ?? .zero
         }
+        hostingView.collapsedScrollGestureRegionProvider = { [weak self] in
+            self?.currentCollapsedGestureRegion() ?? .zero
+        }
+        hostingView.onCollapsedScrollWheel = { [weak self] event, localPoint in
+            self?.handleIslandScrollWheel(event, localPoint: localPoint, source: "hostingView") ?? false
+        }
         islandPanel.contentView = hostingView
         self.hostingView = hostingView
+        debugGesture("Island hosting view installed")
 
         islandState.$state
             .sink { [weak self] _ in
@@ -331,6 +362,40 @@ final class OverlayWindowController {
                 self?.collapseIfExpandedMouseOutsideAfterGrace(source: "globalMouseMonitor")
             }
         }
+
+        localScrollWheelMonitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel]) { [weak self] event in
+    guard let self else { return event }
+
+    self.debugScrollWheelReceived(event, source: "localScrollMonitor")
+
+    if self.handleExpandedScrollWheelFromMonitor(event, source: "localScrollMonitor") {
+        return nil
+    }
+
+    if event.window === self.islandPanel {
+        return event
+    }
+
+    if self.handleCollapsedScrollWheelFromMonitor(event, source: "localScrollMonitor") {
+        return nil
+    }
+
+    return event
+}
+
+globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollWheel]) { [weak self] event in
+    Task { @MainActor in
+        guard let self else { return }
+
+        self.debugScrollWheelReceived(event, source: "globalScrollMonitor")
+
+        if self.handleExpandedScrollWheelFromMonitor(event, source: "globalScrollMonitor") {
+            return
+        }
+
+        _ = self.handleCollapsedScrollWheelFromMonitor(event, source: "globalScrollMonitor")
+    }
+}
 
         localKeyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
             guard let self else { return event }
@@ -600,6 +665,759 @@ final class OverlayWindowController {
         }
         return layoutStore.collapsedSurfaceFrame
     }
+
+    private var collapsedGestureCandidateRegion: NSRect {
+        collapsedInteractiveSurfaceFrame.integral
+    }
+
+    private var collapsedGestureCandidateScreenRegion: NSRect {
+        let localRect = collapsedInteractiveSurfaceFrame
+        let screenFrame = screenRect(for: localRect)
+        guard !screenFrame.isEmpty else { return .zero }
+        return screenFrame.insetBy(dx: -8, dy: -8)
+    }
+
+    private func currentCollapsedGestureRegion() -> NSRect {
+        guard islandState.state == .collapsed,
+              !layoutStore.isShellMorphing,
+              !layoutStore.isCollapseShellOnly,
+              !layoutStore.isExpandedContentExiting,
+              !modules.navigation.isFileDropTargeted else {
+            return .zero
+        }
+        return collapsedGestureCandidateRegion
+    }
+
+    private func handleIslandScrollWheelFromMonitor(_ event: NSEvent, source: String) -> Bool {
+        switch islandState.state {
+        case .collapsed:
+            return handleCollapsedScrollWheelFromMonitor(event, source: source)
+        case .expanded:
+            return handleExpandedScrollWheelFromMonitor(event, source: source)
+        }
+    }
+
+    private func handleIslandScrollWheel(_ event: NSEvent, localPoint: NSPoint, source: String) -> Bool {
+        switch islandState.state {
+        case .collapsed:
+            return handleCollapsedScrollWheel(event, localPoint: localPoint, source: source)
+        case .expanded:
+            return handleExpandedScrollWheel(event, source: source)
+        }
+    }
+
+    private func handleExpandedScrollWheelFromMonitor(_ event: NSEvent, source: String) -> Bool {
+        guard settings.gesturesEnabled,
+              settings.gestureInputSource == .trackpad,
+              islandState.state == .expanded,
+              !layoutStore.isShellMorphing,
+              !layoutStore.isCollapseShellOnly,
+              !layoutStore.isExpandedContentExiting else {
+            resetExpandedScrollTrackingIfNeeded(for: event)
+            return false
+        }
+
+        let screenPoint = NSEvent.mouseLocation
+        let hitFrame = visibleExpandedShellScreenFrame().insetBy(dx: -8, dy: -8)
+        guard !hitFrame.isEmpty, hitFrame.contains(screenPoint) else {
+            resetExpandedScrollTrackingIfNeeded(for: event)
+            return false
+        }
+
+        updateMousePassthrough(at: screenPoint)
+        return handleExpandedScrollWheel(event, source: source)
+    }
+
+    private func handleExpandedScrollWheel(_ event: NSEvent, source: String) -> Bool {
+        guard settings.gesturesEnabled,
+              settings.gestureInputSource == .trackpad,
+              islandState.state == .expanded,
+              event.hasPreciseScrollingDeltas,
+              abs(event.scrollingDeltaX) > 0 || abs(event.scrollingDeltaY) > 0 else {
+            resetExpandedScrollTrackingIfNeeded(for: event)
+            return false
+        }
+
+        // Prevent the momentum/tail of the collapsed swipe-down expansion gesture
+        // from being interpreted immediately as an expanded swipe-up collapse before
+        // the expanded content has appeared.
+        guard CACurrentMediaTime() - expandedAt >= 0.42 else {
+            resetExpandedScrollTracking()
+            debugGesture("expanded scroll blocked reason=recent-expansion-tail source=\(source)")
+            return true
+        }
+
+        guard expandedScrollCooldownAllowsAction() else {
+            return true
+        }
+
+        scheduleExpandedScrollGestureReset()
+
+        expandedScrollDelta.width += event.scrollingDeltaX
+        expandedScrollDelta.height += event.scrollingDeltaY
+
+        guard !expandedScrollGestureHandled,
+              let gesture = collapsedScrollGesture(from: expandedScrollDelta) else {
+            return true
+        }
+
+        var action = expandedAction(for: gesture)
+        if gesture == .swipeUp, action == .none {
+            debugGesture("expanded swipe up fallback collapse because saved action is none")
+            action = .collapse
+        }
+        debugGesture("expanded scroll resolved gesture=\(gesture.rawValue) action=\(action.rawValue) source=\(source)")
+
+        guard !settings.requireGestureConfirmation else {
+            debugGesture("expanded scroll blocked reason=require-confirmation")
+            return true
+        }
+
+        switch action {
+        case .collapse:
+            requestCollapseWithSequencing()
+            expandedScrollGestureHandled = true
+            expandedScrollLastActionAt = CACurrentMediaTime()
+            expandedScrollDelta = .zero
+            return true
+        case .toggleExpanded:
+            requestCollapseWithSequencing()
+            expandedScrollGestureHandled = true
+            expandedScrollLastActionAt = CACurrentMediaTime()
+            expandedScrollDelta = .zero
+            return true
+        case .nextTab:
+            guard settings.nextTabGestureEnabled else { return true }
+            modules.navigation.selectNextPage(using: settings)
+            expandedScrollGestureHandled = true
+            expandedScrollLastActionAt = CACurrentMediaTime()
+            expandedScrollDelta = .zero
+            return true
+        case .previousTab:
+            guard settings.previousTabGestureEnabled else { return true }
+            modules.navigation.selectPreviousPage(using: settings)
+            expandedScrollGestureHandled = true
+            expandedScrollLastActionAt = CACurrentMediaTime()
+            expandedScrollDelta = .zero
+            return true
+        case .mediaPlayPause:
+            guard settings.mediaEnabled,
+                  settings.mediaPlayPauseGestureEnabled,
+                  modules.media.isTransportControlAvailable else { return true }
+            modules.media.playPause()
+            expandedScrollGestureHandled = true
+            expandedScrollLastActionAt = CACurrentMediaTime()
+            expandedScrollDelta = .zero
+            return true
+        case .timerStartStop:
+            guard settings.timerEnabled,
+                  settings.timerStartStopGestureEnabled else { return true }
+            if modules.timer.isRunning {
+                modules.timer.pause()
+            } else if modules.timer.remainingSeconds > 0 {
+                modules.timer.resume()
+            }
+            expandedScrollGestureHandled = true
+            expandedScrollLastActionAt = CACurrentMediaTime()
+            expandedScrollDelta = .zero
+            return true
+        case .mediaNextTrack:
+            guard settings.mediaEnabled,
+                  modules.media.isTransportControlAvailable else { return true }
+            modules.media.requestGestureArtworkFlip(direction: .next)
+            modules.media.nextTrack()
+            scheduleMediaRefreshAfterTransportGesture(reason: "expandedGestureNext")
+            expandedScrollGestureHandled = true
+            expandedScrollLastActionAt = CACurrentMediaTime()
+            expandedScrollDelta = .zero
+            return true
+        case .mediaPreviousTrack:
+            guard settings.mediaEnabled,
+                  modules.media.isTransportControlAvailable else { return true }
+            modules.media.requestGestureArtworkFlip(direction: .previous)
+            modules.media.previousTrack()
+            scheduleMediaRefreshAfterTransportGesture(reason: "expandedGesturePrevious")
+            expandedScrollGestureHandled = true
+            expandedScrollLastActionAt = CACurrentMediaTime()
+            expandedScrollDelta = .zero
+            return true
+        case .openSettings:
+            onOpenSettingsFromGesture()
+            expandedScrollGestureHandled = true
+            expandedScrollLastActionAt = CACurrentMediaTime()
+            expandedScrollDelta = .zero
+            return true
+        case .expand, .none:
+            return true
+        }
+    }
+
+    private func expandedAction(for gesture: IslandPointerGesture) -> IslandGestureAction {
+        switch gesture {
+        case .swipeLeft:
+            return settings.expandedSwipeLeftAction
+        case .swipeRight:
+            return settings.expandedSwipeRightAction
+        case .swipeDown:
+            return settings.expandedSwipeDownAction
+        case .swipeUp:
+            return settings.expandedSwipeUpAction
+        case .doubleClick:
+            return settings.expandedDoubleClickAction
+        case .longPress:
+            return settings.expandedLongPressAction
+        }
+    }
+
+    private func onOpenSettingsFromGesture() {
+        // OverlayWindowController does not own the settings window callback directly outside IslandRootView.
+        // Keep this as a no-op safety fallback for scroll gestures; long press in SwiftUI still opens Settings.
+        debugGesture("expanded scroll openSettings ignored: no overlay callback owner")
+    }
+
+    private func expandedScrollCooldownAllowsAction() -> Bool {
+        guard let expandedScrollLastActionAt else { return true }
+        return CACurrentMediaTime() - expandedScrollLastActionAt >= settings.gestureCooldownSeconds
+    }
+
+    private func resetExpandedScrollTrackingIfNeeded(for event: NSEvent) {
+        if event.phase.contains(.ended) || event.phase.contains(.cancelled) || event.phase.contains(.began) {
+            resetExpandedScrollTracking()
+        }
+    }
+
+    private func resetExpandedScrollTracking() {
+        expandedScrollGestureResetWorkItem?.cancel()
+        expandedScrollGestureResetWorkItem = nil
+        expandedScrollDelta = .zero
+        expandedScrollGestureHandled = false
+    }
+
+    private func scheduleExpandedScrollGestureReset() {
+        expandedScrollGestureResetWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            Task { @MainActor in
+                self?.expandedScrollDelta = .zero
+                self?.expandedScrollGestureHandled = false
+                self?.expandedScrollGestureResetWorkItem = nil
+                self?.debugGesture("expanded scroll quiet reset fired")
+            }
+        }
+        expandedScrollGestureResetWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.28, execute: workItem)
+    }
+
+    private func handleCollapsedScrollWheelFromMonitor(_ event: NSEvent, source: String) -> Bool {
+        debugGesture("entering collapsed scroll handler source=\(source)")
+        logCollapsedScrollSettingsAndState()
+        debugCollapsedScrollRegion(screenPoint: NSEvent.mouseLocation)
+
+        guard settings.gesturesEnabled,
+              settings.gestureInputSource == .trackpad,
+              islandState.state == .collapsed,
+              !layoutStore.isShellMorphing,
+              !layoutStore.isCollapseShellOnly,
+              !layoutStore.isExpandedContentExiting,
+              !modules.navigation.isFileDropTargeted else {
+            debugGesture("blocked reason=settings-or-state source=\(source)")
+            resetCollapsedScrollTrackingIfNeeded(for: event)
+            return false
+        }
+
+        let screenPoint = NSEvent.mouseLocation
+        let hitResult = collapsedScrollScreenHitResult(screenPoint: screenPoint)
+        debugCollapsedScrollRegion(screenPoint: screenPoint, hitResult: hitResult)
+
+        guard hitResult.inside else {
+            debugGesture("blocked reason=outside-collapsed-region source=\(source)")
+            resetCollapsedScrollTrackingIfNeeded(for: event)
+            return false
+        }
+
+        updateMousePassthrough(at: screenPoint)
+        return handleCollapsedScrollWheel(event, localPoint: hitResult.localPoint, source: source)
+    }
+
+    private func handleCollapsedScrollWheel(_ event: NSEvent, localPoint: NSPoint, source: String) -> Bool {
+        debugGesture("entering collapsed scroll handler source=\(source)")
+        debugScrollWheelReceived(event, source: source)
+        logCollapsedScrollSettingsAndState()
+
+        guard settings.gesturesEnabled else {
+            debugGesture("blocked reason=gestures-disabled")
+            resetCollapsedScrollTrackingIfNeeded(for: event)
+            return false
+        }
+        guard settings.gestureInputSource == .trackpad else {
+            debugGesture("blocked reason=input-source-\(settings.gestureInputSource.rawValue)")
+            resetCollapsedScrollTrackingIfNeeded(for: event)
+            return false
+        }
+        guard islandState.state == .collapsed else {
+            debugGesture("blocked reason=state-\(islandState.state.rawValue)")
+            resetCollapsedScrollTrackingIfNeeded(for: event)
+            return false
+        }
+        guard event.hasPreciseScrollingDeltas else {
+            debugGesture("blocked reason=non-precise-scroll")
+            resetCollapsedScrollTrackingIfNeeded(for: event)
+            return false
+        }
+        guard abs(event.scrollingDeltaX) > 0 || abs(event.scrollingDeltaY) > 0 else {
+            debugGesture("blocked reason=zero-delta")
+            resetCollapsedScrollTrackingIfNeeded(for: event)
+            return false
+        }
+        scheduleCollapsedScrollGestureReset()
+
+        let hitResult = collapsedScrollScreenHitResult(screenPoint: NSEvent.mouseLocation)
+        debugCollapsedScrollRegion(screenPoint: NSEvent.mouseLocation, rawLocalPoint: localPoint, hitResult: hitResult)
+        guard hitResult.inside else {
+            debugGesture("blocked reason=outside-collapsed-region")
+            resetCollapsedScrollTrackingIfNeeded(for: event)
+            return false
+        }
+
+        if mediaSwipeLockoutIsActive() {
+            collapsedScrollDelta = .zero
+            debugGesture("media swipe ignored: post-command lockout active remaining=\(String(format: "%.2f", mediaSwipeLockoutRemaining()))")
+            return true
+        }
+
+        if collapsedScrollGestureHandled {
+            debugGesture("ignored duplicate/momentum event after action fired")
+            return true
+        }
+
+        if event.phase.contains(.began) {
+            collapsedScrollDelta = .zero
+            collapsedScrollGestureHandled = false
+            resetMediaSwipeSession()
+        }
+
+        guard collapsedScrollCooldownAllowsAction() || mediaSwipeSessionActive else {
+            debugGesture("blocked reason=cooldown-before-accumulation")
+            return true
+        }
+
+        collapsedScrollDelta.width += event.scrollingDeltaX
+        collapsedScrollDelta.height += event.scrollingDeltaY
+        updateMediaSwipeSession(with: event, source: source)
+        let resolvedGesture = collapsedScrollGesture(from: collapsedScrollDelta)
+        if abs(collapsedScrollDelta.height) >= abs(collapsedScrollDelta.width),
+           abs(collapsedScrollDelta.height) >= collapsedScrollThreshold {
+            debugGesture(
+                "vertical rawY=\(collapsedScrollDelta.height) interpretedPhysicalDirection=\(resolvedGesture == .swipeDown ? "down" : "up")"
+            )
+        }
+        debugGesture(
+            "accumulatedX=\(collapsedScrollDelta.width) accumulatedY=\(collapsedScrollDelta.height) threshold=\(collapsedScrollThreshold) resolved=\(resolvedGesture?.rawValue ?? "nil")"
+        )
+
+        if !collapsedScrollGestureHandled,
+           let gesture = resolvedGesture {
+            let action = collapsedMediaPillAction(for: gesture)
+            if isHorizontalMediaTrackAction(action), abs(collapsedScrollDelta.width) >= abs(collapsedScrollDelta.height) {
+                debugGesture("horizontal media swipe threshold reached; waiting for quiet finish action=\(action.rawValue)")
+                return true
+            }
+
+            if gesture == .swipeDown || gesture == .swipeUp {
+                resetMediaSwipeSession()
+            }
+
+            let handled = handleCollapsedMediaPillGesture(gesture)
+            collapsedScrollGestureHandled = handled
+            debugGesture("resolved=\(gesture.rawValue) handled=\(handled)")
+            if handled {
+                collapsedScrollDelta = .zero
+                return true
+            }
+        }
+
+        if event.phase.contains(.ended) || event.phase.contains(.cancelled) {
+            if mediaSwipeSessionActive {
+                scheduleMediaSwipeFinish()
+            } else {
+                resetCollapsedScrollTracking()
+            }
+        }
+
+        return true
+    }
+
+    private func resetCollapsedScrollTrackingIfNeeded(for event: NSEvent) {
+        if event.phase.contains(.ended) || event.phase.contains(.cancelled) || event.phase.contains(.began) {
+            resetCollapsedScrollTracking()
+        }
+    }
+
+    private func resetCollapsedScrollTracking() {
+        collapsedScrollGestureResetWorkItem?.cancel()
+        collapsedScrollGestureResetWorkItem = nil
+        collapsedScrollDelta = .zero
+        collapsedScrollGestureHandled = false
+    }
+
+    private func scheduleCollapsedScrollGestureReset() {
+        collapsedScrollGestureResetWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            Task { @MainActor in
+                self?.collapsedScrollDelta = .zero
+                self?.collapsedScrollGestureHandled = false
+                self?.collapsedScrollGestureResetWorkItem = nil
+                self?.debugGesture("quiet reset fired")
+            }
+        }
+        collapsedScrollGestureResetWorkItem = workItem
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + collapsedScrollQuietResetDelay,
+            execute: workItem
+        )
+    }
+
+    private func collapsedScrollScreenHitResult(
+        screenPoint: NSPoint
+    ) -> (inside: Bool, localPoint: NSPoint, hitFrame: NSRect, collapsedFrame: NSRect, previewFrame: NSRect) {
+        let collapsedFrame = screenRect(for: layoutStore.collapsedSurfaceFrame)
+        let previewFrame = screenRect(for: layoutStore.collapsedPreviewSurfaceFrame)
+        let hitFrame = collapsedGestureCandidateScreenRegion
+        let localPoint = NSPoint(
+            x: screenPoint.x - islandPanel.frame.minX,
+            y: screenPoint.y - islandPanel.frame.minY
+        )
+        return (
+            inside: !hitFrame.isEmpty && hitFrame.contains(screenPoint),
+            localPoint: localPoint,
+            hitFrame: hitFrame,
+            collapsedFrame: collapsedFrame,
+            previewFrame: previewFrame
+        )
+    }
+
+    private func collapsedScrollGesture(from delta: CGSize) -> IslandPointerGesture? {
+        let threshold = collapsedScrollThreshold
+        let absoluteX = abs(delta.width)
+        let absoluteY = abs(delta.height)
+        guard max(absoluteX, absoluteY) >= threshold else { return nil }
+
+        if absoluteX >= absoluteY {
+            return delta.width < 0 ? .swipeLeft : .swipeRight
+        }
+        return delta.height > 0 ? .swipeDown : .swipeUp
+    }
+
+    private var collapsedScrollThreshold: CGFloat {
+        let clampedSensitivity = min(max(settings.gestureSensitivity, 0), 1)
+        return collapsedScrollBaseThreshold / max(0.4, CGFloat(clampedSensitivity))
+    }
+
+    private func updateMediaSwipeSession(with event: NSEvent, source: String) {
+        let now = Date()
+        if !mediaSwipeSessionActive {
+            mediaSwipeSessionActive = true
+            mediaSwipeStartedAt = now
+            mediaSwipeAccumulatedX = 0
+            mediaSwipeAccumulatedY = 0
+        }
+
+        mediaSwipeAccumulatedX += event.scrollingDeltaX
+        mediaSwipeAccumulatedY += event.scrollingDeltaY
+        mediaSwipeLastEventAt = now
+        debugGesture(
+            "media swipe session update source=\(source) dx=\(event.scrollingDeltaX) dy=\(event.scrollingDeltaY) accumulatedX=\(mediaSwipeAccumulatedX) accumulatedY=\(mediaSwipeAccumulatedY)"
+        )
+        scheduleMediaSwipeFinish()
+    }
+
+    private func scheduleMediaSwipeFinish() {
+        mediaSwipeFinishWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            Task { @MainActor in
+                self?.finishCollapsedMediaSwipeSession()
+            }
+        }
+        mediaSwipeFinishWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + mediaSwipeQuietPeriod, execute: workItem)
+        debugGesture("media swipe finish scheduled quiet=\(String(format: "%.2f", mediaSwipeQuietPeriod))")
+    }
+
+    private func finishCollapsedMediaSwipeSession() {
+        guard mediaSwipeSessionActive else {
+            return
+        }
+
+        let accumulatedX = mediaSwipeAccumulatedX
+        let accumulatedY = mediaSwipeAccumulatedY
+        let threshold = collapsedScrollThreshold
+        resetMediaSwipeSession()
+        collapsedScrollDelta = .zero
+        collapsedScrollGestureHandled = false
+
+        debugGesture(
+            "media swipe finish x=\(accumulatedX) y=\(accumulatedY) threshold=\(threshold)"
+        )
+
+        guard settings.gesturesEnabled,
+              settings.gestureInputSource == .trackpad,
+              islandState.state == .collapsed,
+              !layoutStore.isShellMorphing,
+              !layoutStore.isCollapseShellOnly,
+              !layoutStore.isExpandedContentExiting,
+              !modules.navigation.isFileDropTargeted else {
+            debugGesture("media swipe finish ignored: settings-or-state")
+            return
+        }
+
+        guard abs(accumulatedX) >= threshold else {
+            debugGesture("media swipe finish ignored: below threshold")
+            return
+        }
+
+        guard abs(accumulatedX) > abs(accumulatedY) else {
+            debugGesture("media swipe finish ignored: not horizontal dominant")
+            return
+        }
+
+        let gesture: IslandPointerGesture = accumulatedX < 0 ? .swipeLeft : .swipeRight
+        let action = collapsedMediaPillAction(for: gesture)
+        guard isHorizontalMediaTrackAction(action) else {
+            debugGesture("media swipe finish ignored: action-not-media-track action=\(action.rawValue)")
+            return
+        }
+        guard !settings.requireGestureConfirmation else {
+            debugGesture("media swipe finish ignored: require-confirmation action=\(action.rawValue)")
+            return
+        }
+        guard collapsedScrollCooldownAllowsAction() else {
+            debugGesture("media swipe finish ignored: cooldown action=\(action.rawValue)")
+            return
+        }
+        guard settings.mediaEnabled,
+              modules.media.isTransportControlAvailable else {
+            debugGesture("media swipe finish ignored: media-track-unavailable action=\(action.rawValue) mediaEnabled=\(settings.mediaEnabled) transport=\(modules.media.isTransportControlAvailable)")
+            return
+        }
+
+        startMediaSwipePostCommandLockout(action: action)
+        collapsedScrollLastActionAt = CACurrentMediaTime()
+
+        switch action {
+        case .mediaNextTrack:
+            debugGesture("media swipe finish quiet=\(String(format: "%.2f", mediaSwipeQuietPeriod)) x=\(accumulatedX) y=\(accumulatedY) action=\(action.rawValue)")
+            debugGesture("media swipe finished; ACTION mediaNextTrack")
+            modules.media.requestGestureArtworkFlip(direction: .next)
+            modules.media.nextTrack()
+            scheduleMediaRefreshAfterTransportGesture(reason: "gestureNext")
+        case .mediaPreviousTrack:
+            debugGesture("media swipe finish quiet=\(String(format: "%.2f", mediaSwipeQuietPeriod)) x=\(accumulatedX) y=\(accumulatedY) action=\(action.rawValue)")
+            debugGesture("media swipe finished; ACTION mediaPreviousTrack")
+            modules.media.requestGestureArtworkFlip(direction: .previous)
+            modules.media.previousTrack()
+            scheduleMediaRefreshAfterTransportGesture(reason: "gesturePrevious")
+        default:
+            break
+        }
+    }
+
+    private func resetMediaSwipeSession() {
+        mediaSwipeFinishWorkItem?.cancel()
+        mediaSwipeFinishWorkItem = nil
+        mediaSwipeSessionActive = false
+        mediaSwipeAccumulatedX = 0
+        mediaSwipeAccumulatedY = 0
+        mediaSwipeStartedAt = nil
+        mediaSwipeLastEventAt = nil
+        debugGesture("media swipe session reset")
+    }
+
+    private func mediaSwipeLockoutRemaining(now: Date = Date()) -> TimeInterval {
+        max(0, mediaSwipeLockedUntil.timeIntervalSince(now))
+    }
+
+    private func mediaSwipeLockoutIsActive(now: Date = Date()) -> Bool {
+        if now < mediaSwipeLockedUntil {
+            return true
+        }
+
+        if mediaSwipeCommandInFlight {
+            mediaSwipeCommandInFlight = false
+            mediaSwipeUnlockWorkItem = nil
+        }
+
+        return false
+    }
+
+    private func startMediaSwipePostCommandLockout(action: IslandGestureAction) {
+        mediaSwipeCommandInFlight = true
+        mediaSwipeLockedUntil = Date().addingTimeInterval(mediaSwipePostCommandLockoutSeconds)
+        mediaSwipeUnlockWorkItem?.cancel()
+
+        let workItem = DispatchWorkItem { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                guard Date() >= self.mediaSwipeLockedUntil else {
+                    self.debugGesture("media swipe unlock skipped; lockout extended")
+                    return
+                }
+                self.mediaSwipeCommandInFlight = false
+                self.mediaSwipeUnlockWorkItem = nil
+                self.debugGesture("media swipe post-command lockout released")
+            }
+        }
+        mediaSwipeUnlockWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + mediaSwipePostCommandLockoutSeconds, execute: workItem)
+        debugGesture("media swipe post-command lockout started action=\(action.rawValue) duration=\(String(format: "%.2f", mediaSwipePostCommandLockoutSeconds))")
+    }
+
+    private func isHorizontalMediaTrackAction(_ action: IslandGestureAction) -> Bool {
+        action == .mediaNextTrack || action == .mediaPreviousTrack
+    }
+
+    private func handleCollapsedMediaPillGesture(_ gesture: IslandPointerGesture) -> Bool {
+        guard !settings.requireGestureConfirmation else {
+            debugGesture("blocked reason=require-confirmation gesture=\(gesture.rawValue)")
+            return false
+        }
+
+        let action = collapsedMediaPillAction(for: gesture)
+        debugGesture("resolved gesture=\(gesture.rawValue) action=\(action.rawValue)")
+        guard action != .none else {
+            debugGesture("blocked reason=action-none gesture=\(gesture.rawValue)")
+            return false
+        }
+        guard collapsedScrollCooldownAllowsAction() else {
+            debugGesture("blocked reason=cooldown gesture=\(gesture.rawValue) action=\(action.rawValue)")
+            return false
+        }
+
+        switch action {
+        case .expand:
+            debugGesture("executing action=\(action.rawValue)")
+            expandFromCollapsedPreparingGeometry()
+            collapsedScrollLastActionAt = CACurrentMediaTime()
+            return true
+        case .mediaNextTrack:
+            debugGesture("deferred action=\(action.rawValue) to media swipe finish")
+            return true
+        case .mediaPreviousTrack:
+            debugGesture("deferred action=\(action.rawValue) to media swipe finish")
+            return true
+        case .mediaPlayPause:
+            guard settings.mediaEnabled,
+                  settings.mediaPlayPauseGestureEnabled,
+                  modules.media.isTransportControlAvailable else {
+                debugGesture("blocked reason=media-play-pause-unavailable mediaEnabled=\(settings.mediaEnabled) enabled=\(settings.mediaPlayPauseGestureEnabled) transport=\(modules.media.isTransportControlAvailable)")
+                return false
+            }
+            debugGesture("executing action=\(action.rawValue)")
+            modules.media.playPause()
+            collapsedScrollLastActionAt = CACurrentMediaTime()
+            return true
+        case .openSettings:
+            // Long press still owns Settings. Two-finger scroll gestures intentionally do not.
+            debugGesture("blocked reason=open-settings-not-scroll-action")
+            return false
+        case .collapse, .toggleExpanded, .nextTab, .previousTab, .timerStartStop, .none:
+            debugGesture("blocked reason=unsupported-collapsed-scroll-action action=\(action.rawValue)")
+            return false
+        }
+    }
+
+    private func collapsedScrollCooldownAllowsAction() -> Bool {
+        guard let collapsedScrollLastActionAt else { return true }
+        return CACurrentMediaTime() - collapsedScrollLastActionAt >= settings.gestureCooldownSeconds
+    }
+
+    private func scheduleMediaRefreshAfterTransportGesture(reason: String) {
+        debugGesture("scheduling media refresh sequence reason=\(reason)")
+        debugGesture("media refresh scheduled reason=\(reason)")
+        debugMedia("artwork refresh requested reason=\(reason)")
+        modules.media.refresh()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            guard let self else { return }
+            self.debugGesture("media refresh firing reason=\(reason) delayed=0.25")
+            self.debugMedia("artwork refresh requested reason=\(reason) delayed=0.25")
+            self.modules.media.refresh()
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) { [weak self] in
+            guard let self else { return }
+            self.debugGesture("media refresh firing reason=\(reason) delayed=0.75")
+            self.debugMedia("artwork refresh requested reason=\(reason) delayed=0.75")
+            self.modules.media.refresh()
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.20) { [weak self] in
+            guard let self else { return }
+            self.debugGesture("media refresh firing reason=\(reason) delayed=1.20")
+            self.debugMedia("artwork refresh requested reason=\(reason) delayed=1.20")
+            self.modules.media.refresh()
+        }
+    }
+
+    private func collapsedMediaPillAction(for gesture: IslandPointerGesture) -> IslandGestureAction {
+        switch gesture {
+        case .swipeLeft:
+            return settings.collapsedSwipeLeftAction
+        case .swipeRight:
+            return settings.collapsedSwipeRightAction
+        case .swipeDown:
+            return settings.collapsedSwipeDownAction
+        case .swipeUp:
+            return settings.collapsedSwipeUpAction
+        case .doubleClick:
+            return settings.collapsedDoubleClickAction
+        case .longPress:
+            return settings.collapsedLongPressAction
+        }
+    }
+
+    private func debugScrollWheelReceived(_ event: NSEvent, source: String) {
+        #if DEBUG
+        print(
+            "[GestureDebug] scrollWheel received source=\(source) deltaX=\(event.scrollingDeltaX) deltaY=\(event.scrollingDeltaY) phase=\(event.phase.rawValue) momentum=\(event.momentumPhase.rawValue) precise=\(event.hasPreciseScrollingDeltas)"
+        )
+        #endif
+    }
+
+    private func debugCollapsedScrollRegion(
+        screenPoint: NSPoint,
+        rawLocalPoint: NSPoint? = nil,
+        hitResult: (inside: Bool, localPoint: NSPoint, hitFrame: NSRect, collapsedFrame: NSRect, previewFrame: NSRect)? = nil
+    ) {
+        #if DEBUG
+        let result = hitResult ?? collapsedScrollScreenHitResult(screenPoint: screenPoint)
+        let localPoint = rawLocalPoint ?? result.localPoint
+        print(
+            "[GestureDebug] screenPoint=\(screenPoint) localPoint=\(localPoint) collapsedScreenFrame=\(result.collapsedFrame) previewScreenFrame=\(result.previewFrame) hitFrame=\(result.hitFrame) inside=\(result.inside) panelFrame=\(islandPanel.frame)"
+        )
+        #endif
+    }
+
+    private func logCollapsedScrollSettingsAndState() {
+        #if DEBUG
+        print(
+            "[GestureDebug] settings gesturesEnabled=\(settings.gesturesEnabled) input=\(settings.gestureInputSource) left=\(settings.collapsedSwipeLeftAction) right=\(settings.collapsedSwipeRightAction) down=\(settings.collapsedSwipeDownAction)"
+        )
+        print(
+            "[GestureDebug] islandState=\(islandState.state) isShellMorphing=\(layoutStore.isShellMorphing) isCollapseShellOnly=\(layoutStore.isCollapseShellOnly) isExpandedContentExiting=\(layoutStore.isExpandedContentExiting) previewActive=\(layoutStore.collapsedPreviewActive) fileDropTargeted=\(modules.navigation.isFileDropTargeted)"
+        )
+        #endif
+    }
+
+    private func debugGesture(_ message: String) {
+        #if DEBUG
+        print("[GestureDebug] \(message)")
+        #endif
+    }
+
+    private func debugMedia(_ message: String) {
+        #if DEBUG
+        print("[MediaDebug] \(message)")
+        #endif
+    }
 }
 
 private final class IslandOverlayPanel: NSPanel {
@@ -615,6 +1433,8 @@ private final class IslandOverlayPanel: NSPanel {
 private final class IslandHostingView<Content: View>: NSHostingView<Content> {
     var onMouseExited: (() -> Void)?
     var interactiveRegionProvider: (() -> NSRect)?
+    var collapsedScrollGestureRegionProvider: (() -> NSRect)?
+    var onCollapsedScrollWheel: ((NSEvent, NSPoint) -> Bool)?
     private var trackingAreaReference: NSTrackingArea?
 
     override var intrinsicContentSize: NSSize {
@@ -649,6 +1469,20 @@ private final class IslandHostingView<Content: View>: NSHostingView<Content> {
         }
 
         return super.hitTest(point)
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        #if DEBUG
+        print(
+            "[GestureDebug] IslandHostingView.scrollWheel override fired deltaX=\(event.scrollingDeltaX) deltaY=\(event.scrollingDeltaY) phase=\(event.phase.rawValue) momentum=\(event.momentumPhase.rawValue)"
+        )
+        #endif
+        let localPoint = convert(event.locationInWindow, from: nil)
+        if onCollapsedScrollWheel?(event, localPoint) == true {
+            return
+        }
+
+        super.scrollWheel(with: event)
     }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {

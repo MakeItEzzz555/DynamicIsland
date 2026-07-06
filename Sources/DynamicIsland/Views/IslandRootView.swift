@@ -35,6 +35,69 @@ struct CollapsedPreviewContent: Equatable {
     let kind: CollapsedPreviewKind
 }
 
+private struct IslandPointerGestureModifier: ViewModifier {
+    @ObservedObject var settings: AppSettings
+    @ObservedObject var coordinator: IslandGestureCoordinator
+    let context: IslandGestureContext
+    let callbacks: IslandGestureCallbacks
+    let swipeSensitivity: Double
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if settings.gesturesEnabled, settings.gestureInputSource == .trackpad {
+            content
+                .gesture(doubleClickGesture)
+                .simultaneousGesture(swipeGesture)
+                .simultaneousGesture(longPressGesture)
+        } else {
+            content
+        }
+    }
+
+    private var doubleClickGesture: some Gesture {
+        TapGesture(count: 2)
+            .onEnded {
+                coordinator.handle(
+                    .doubleClick,
+                    settings: settings,
+                    context: context,
+                    callbacks: callbacks
+                )
+            }
+    }
+
+    private var swipeGesture: some Gesture {
+        DragGesture(minimumDistance: 12, coordinateSpace: .local)
+            .onEnded { value in
+                guard let gesture = IslandPointerGesture.detected(
+                    from: value.translation,
+                    sensitivity: swipeSensitivity
+                ) else {
+                    return
+                }
+                coordinator.handle(
+                    gesture,
+                    settings: settings,
+                    context: context,
+                    callbacks: callbacks
+                )
+            }
+    }
+
+    private var longPressGesture: some Gesture {
+        LongPressGesture(minimumDuration: 0.55, maximumDistance: 10)
+            .onEnded { completed in
+                guard completed else { return }
+                coordinator.handle(
+                    .longPress,
+                    settings: settings,
+                    context: context,
+                    callbacks: callbacks
+                )
+            }
+    }
+}
+
 private enum IslandShellLayout {
     static let collapsedHorizontalPadding: CGFloat = 8
     static let collapsedTopPadding: CGFloat = 0
@@ -96,6 +159,7 @@ struct IslandRootView: View {
     @State private var isCollapsedHovering = false
     @State private var collapsedPreviewVisible = false
     @State private var collapsedPreviewGeneration = 0
+    @StateObject private var gestureCoordinator = IslandGestureCoordinator()
 
     init(
         settings: AppSettings,
@@ -198,6 +262,15 @@ struct IslandRootView: View {
             .notchIntegrated(layoutStore.hasHardwareNotch)
             .shellMorphing(layoutStore.isShellMorphing)
             .collapseShellOnly(layoutStore.isCollapseShellOnly)
+            .modifier(
+                IslandPointerGestureModifier(
+                    settings: settings,
+                    coordinator: gestureCoordinator,
+                    context: gestureContext,
+                    callbacks: gestureCallbacks,
+                    swipeSensitivity: settings.gestureSensitivity
+                )
+            )
             .frame(width: surfaceSize.width, height: surfaceSize.height)
             .position(x: surfaceFrame.midX, y: layoutStore.canvasSize.height - surfaceFrame.midY)
         }
@@ -258,6 +331,57 @@ struct IslandRootView: View {
 
     private var surfaceSize: CGSize {
         surfaceFrame.size
+    }
+
+    private var gestureContext: IslandGestureContext {
+        IslandGestureContext(
+            presentationState: islandState.state,
+            selectedPage: navigation.selectedPage,
+            mediaControlAvailable: media.isTransportControlAvailable,
+            timerIsRunning: modules.timer.isRunning,
+            timerCanResume: modules.timer.remainingSeconds > 0,
+            collapsedPreviewActive: isCollapsedPreviewActive,
+            isShellMorphing: layoutStore.isShellMorphing,
+            isCollapseShellOnly: layoutStore.isCollapseShellOnly,
+            isExpandedContentExiting: layoutStore.isExpandedContentExiting,
+            isFileDropTargeted: navigation.isFileDropTargeted
+        )
+    }
+
+    private var gestureCallbacks: IslandGestureCallbacks {
+        IslandGestureCallbacks(
+            expand: {
+                deactivateCollapsedPreview()
+                onRequestExpand()
+            },
+            collapse: onRequestCollapse,
+            nextTab: {
+                navigation.selectNextPage(using: settings)
+            },
+            previousTab: {
+                navigation.selectPreviousPage(using: settings)
+            },
+            mediaPlayPause: {
+                guard media.isTransportControlAvailable else { return }
+                media.playPause()
+            },
+            mediaNextTrack: {
+                guard media.isTransportControlAvailable else { return }
+                media.nextTrack()
+            },
+            mediaPreviousTrack: {
+                guard media.isTransportControlAvailable else { return }
+                media.previousTrack()
+            },
+            timerStartStop: {
+                if modules.timer.isRunning {
+                    modules.timer.pause()
+                } else if modules.timer.remainingSeconds > 0 {
+                    modules.timer.resume()
+                }
+            },
+            openSettings: onOpenSettings
+        )
     }
 
     private var surfaceFrame: CGRect {
@@ -854,7 +978,9 @@ struct CompactIslandView: View {
                             isPlaying: media.isPlaying,
                             isActive: media.hasActiveMediaSource,
                             accentColor: visualizerColor,
-                            variant: .compact
+                            variant: .compact,
+                            barCount: 7,
+                            pauseDuringShellMorph: settings.disableVisualizerDuringMorph
                         )
                     }
                 }
@@ -896,7 +1022,7 @@ struct CompactIslandView: View {
         switch settings.visualizerAccentMode {
         case .artwork:
             if settings.useArtworkAccentColor {
-                return accentCache.color(for: media.artworkKey, image: media.artworkImage)
+                return accentCache.color(for: media.artworkImageKey, image: media.artworkImage)
             }
             return .white
         case .white:
@@ -1397,7 +1523,7 @@ private struct CompactHandoffGhostView: View {
     }
 
     var body: some View {
-        let accentColor = accentCache.color(for: media.artworkKey, image: media.artworkImage)
+        let accentColor = accentCache.color(for: media.artworkImageKey, image: media.artworkImage)
 
         ZStack {
             if media.hasActiveMediaSource {
@@ -1419,7 +1545,8 @@ private struct CompactHandoffGhostView: View {
                             isPlaying: media.isPlaying,
                             isActive: media.hasActiveMediaSource,
                             accentColor: accentColor,
-                            variant: .compact
+                            variant: .compact,
+                            barCount: 7
                         )
                     }
                 }

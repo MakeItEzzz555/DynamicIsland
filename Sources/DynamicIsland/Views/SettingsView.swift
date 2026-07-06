@@ -405,38 +405,96 @@ struct SettingsView: View {
 
     private var gesturesSection: some View {
         settingsForm("Gestures") {
-            SettingsGroup("Coming Soon") {
+            SettingsGroup("Pointer / Trackpad") {
                 Toggle("Enable gestures", isOn: $settings.gesturesEnabled)
-                    .disabled(true)
                 Picker("Input source", selection: $settings.gestureInputSource) {
                     ForEach(GestureInputSource.allCases) { source in
                         Text(source.displayName).tag(source)
+                            .disabled(source == .camera)
                     }
                 }
-                .disabled(true)
+                .disabled(!settings.gesturesEnabled)
                 Toggle("Expand gesture", isOn: $settings.expandGestureEnabled)
-                    .disabled(true)
+                    .disabled(!settings.gesturesEnabled || settings.gestureInputSource != .trackpad)
                 Toggle("Collapse gesture", isOn: $settings.collapseGestureEnabled)
-                    .disabled(true)
+                    .disabled(!settings.gesturesEnabled || settings.gestureInputSource != .trackpad)
                 Toggle("Next tab gesture", isOn: $settings.nextTabGestureEnabled)
-                    .disabled(true)
+                    .disabled(!settings.gesturesEnabled || settings.gestureInputSource != .trackpad)
                 Toggle("Previous tab gesture", isOn: $settings.previousTabGestureEnabled)
-                    .disabled(true)
+                    .disabled(!settings.gesturesEnabled || settings.gestureInputSource != .trackpad)
                 Toggle("Media play/pause gesture", isOn: $settings.mediaPlayPauseGestureEnabled)
-                    .disabled(true)
+                    .disabled(!settings.gesturesEnabled || settings.gestureInputSource != .trackpad)
                 Toggle("Timer start/stop gesture", isOn: $settings.timerStartStopGestureEnabled)
-                    .disabled(true)
-                SliderRow(title: "Sensitivity", value: $settings.gestureSensitivity, range: 0...1, format: "%.2f", disabled: true)
-                SliderRow(title: "Cooldown", value: $settings.gestureCooldownSeconds, range: 0.1...10.0, format: "%.2fs", disabled: true)
+                    .disabled(!settings.gesturesEnabled || settings.gestureInputSource != .trackpad)
+                SliderRow(
+                    title: "Sensitivity",
+                    value: $settings.gestureSensitivity,
+                    range: 0...1,
+                    format: "%.2f",
+                    disabled: !settings.gesturesEnabled || settings.gestureInputSource != .trackpad
+                )
+                SliderRow(
+                    title: "Cooldown",
+                    value: $settings.gestureCooldownSeconds,
+                    range: 0.1...10.0,
+                    format: "%.2fs",
+                    disabled: !settings.gesturesEnabled
+                )
                 Toggle("Show gesture hints", isOn: $settings.showGestureHints)
-                    .disabled(true)
+                    .disabled(!settings.gesturesEnabled)
                 Toggle("Require confirmation", isOn: $settings.requireGestureConfirmation)
-                    .disabled(true)
+                    .disabled(!settings.gesturesEnabled)
+                HelpText("Pointer gestures use the mappings below. Camera gestures remain unavailable.")
+            }
+
+            SettingsGroup("Collapsed Media Pill Gestures") {
+                gestureActionPicker("Double Click", selection: $settings.collapsedDoubleClickAction, actions: collapsedMediaPillActions)
+                gestureActionPicker("Two-Finger Swipe Left", selection: $settings.collapsedSwipeLeftAction, actions: collapsedMediaPillActions)
+                gestureActionPicker("Two-Finger Swipe Right", selection: $settings.collapsedSwipeRightAction, actions: collapsedMediaPillActions)
+                gestureActionPicker("Two-Finger Swipe Down", selection: $settings.collapsedSwipeDownAction, actions: collapsedMediaPillActions)
+                gestureActionPicker("Two-Finger Swipe Up", selection: $settings.collapsedSwipeUpAction, actions: collapsedMediaPillActions)
+                gestureActionPicker("Long Press", selection: $settings.collapsedLongPressAction, actions: collapsedMediaPillActions)
+            }
+
+            SettingsGroup("Expanded Island Gestures") {
+                gestureActionPicker("Double Click", selection: $settings.expandedDoubleClickAction)
+                gestureActionPicker("Swipe Down", selection: $settings.expandedSwipeDownAction)
+                gestureActionPicker("Swipe Up", selection: $settings.expandedSwipeUpAction)
+                gestureActionPicker("Swipe Left", selection: $settings.expandedSwipeLeftAction)
+                gestureActionPicker("Swipe Right", selection: $settings.expandedSwipeRightAction)
+                gestureActionPicker("Long Press", selection: $settings.expandedLongPressAction)
+            }
+
+            SettingsGroup("Coming Soon") {
+                Text("Camera gestures")
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.74))
                 Toggle("Privacy mode", isOn: $settings.gesturePrivacyMode)
                     .disabled(true)
-                HelpText("Gesture recognition is not implemented in Phase 7A. These fields are persisted only.")
+                HelpText("Camera-based gestures are not implemented. No camera permission, capture session, or hand recognition is used.")
             }
         }
+    }
+
+    private func gestureActionPicker(
+        _ title: String,
+        selection: Binding<IslandGestureAction>,
+        actions: [IslandGestureAction] = IslandGestureAction.allCases
+    ) -> some View {
+        let displayedActions = actions.contains(selection.wrappedValue)
+            ? actions
+            : [selection.wrappedValue] + actions
+
+        return Picker(title, selection: selection) {
+            ForEach(displayedActions) { action in
+                Text(action.displayName).tag(action)
+            }
+        }
+        .disabled(!settings.gesturesEnabled || settings.gestureInputSource != .trackpad)
+    }
+
+    private var collapsedMediaPillActions: [IslandGestureAction] {
+        [.none, .expand, .mediaNextTrack, .mediaPreviousTrack, .mediaPlayPause, .openSettings]
     }
 
     private var advancedSection: some View {
