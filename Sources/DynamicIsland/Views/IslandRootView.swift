@@ -29,6 +29,13 @@ enum CollapsedPreviewKind: String {
 
 struct CollapsedPreviewContent: Equatable {
     let rows: [CollapsedPreviewRowContent]
+
+    static func mounted(
+        _ content: CollapsedPreviewContent?,
+        previewActive: Bool
+    ) -> CollapsedPreviewContent? {
+        previewActive ? content : nil
+    }
 }
 
 struct CollapsedPreviewRowContent: Identifiable, Equatable {
@@ -258,7 +265,10 @@ struct IslandRootView: View {
                         settings: settings,
                         modules: modules,
                         contentMode: collapsedContentMode,
-                        previewContent: isCollapsedPreviewActive ? collapsedPreviewContent : nil,
+                        previewContent: CollapsedPreviewContent.mounted(
+                            collapsedPreviewContent,
+                            previewActive: isCollapsedPreviewActive
+                        ),
                         previewActive: isCollapsedPreviewActive
                         )
                         .contentShape(Rectangle())
@@ -1071,11 +1081,11 @@ struct CompactIslandView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: previewActive ? .top : .center)
                 .padding(.top, previewActive ? 2 : 0)
 
-if previewActive, let previewContent {
-    CollapsedPreviewRow(content: previewContent)
-        .transition(.opacity.combined(with: .move(edge: .bottom)))
-        .animation(previewRowAnimation, value: previewActive)
-}
+            if previewActive, let previewContent {
+                CollapsedPreviewRow(content: previewContent)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    .animation(previewRowAnimation, value: previewActive)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(compactContentAnimation, value: media.hasActiveMediaSource)

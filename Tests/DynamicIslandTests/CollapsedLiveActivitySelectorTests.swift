@@ -11,6 +11,15 @@ final class CollapsedLiveActivitySelectorTests: XCTestCase {
         XCTAssertEqual(mode, .timer(activity(id: "timer", kind: .timer, title: "Timer", isActive: true)))
     }
 
+    func testRunningTimerBeatsPlayingMediaByDefault() {
+        let mode = select([
+            activity(id: "media", kind: .media, title: "Song", isActive: true),
+            activity(id: "timer", kind: .timer, title: "Timer", isActive: true)
+        ])
+
+        XCTAssertEqual(mode, .timer(activity(id: "timer", kind: .timer, title: "Timer", isActive: true)))
+    }
+
     func testPlayingMediaBeatsRecentFilesByDefault() {
         let mode = select([
             activity(id: "files", kind: .fileTray, title: "Files added"),
@@ -75,6 +84,20 @@ final class CollapsedLiveActivitySelectorTests: XCTestCase {
         )
 
         XCTAssertEqual(mode, .media)
+    }
+
+    func testSelectedCollapsedActivityReturnsOnlyPrimaryWinner() {
+        let mode = select([
+            activity(id: "media", kind: .media, title: "Song", isActive: false),
+            activity(id: "timer", kind: .timer, title: "Timer", isActive: true)
+        ])
+
+        switch mode {
+        case .timer(let selected):
+            XCTAssertEqual(selected.id, "timer")
+        default:
+            XCTFail("Expected only the timer winner in the selected collapsed mode, got \(mode)")
+        }
     }
 
     func testCustomPriorityCanMakeRecentFilesBeatPausedMedia() {
@@ -177,6 +200,31 @@ final class CollapsedLiveActivitySelectorTests: XCTestCase {
         XCTAssertEqual(preview.map(\.id), ["timer", "media"])
     }
 
+    func testPreviewActivitiesIncludeTimerAndPausedMediaWhenBothEligible() {
+        let activities = [
+            activity(id: "media", kind: .media, title: "Song", isActive: false),
+            activity(id: "timer", kind: .timer, title: "Timer", isActive: true)
+        ]
+
+        let preview = previewActivities(activities)
+
+        XCTAssertEqual(preview.map(\.id), ["timer", "media"])
+    }
+
+    func testNonHoveredCollapsedPreviewContentIsNotMounted() {
+        let content = collapsedPreviewContent(rowIDs: ["timer", "media"])
+
+        XCTAssertNil(CollapsedPreviewContent.mounted(content, previewActive: false))
+    }
+
+    func testHoveredCollapsedPreviewContentMountsStackedRows() throws {
+        let content = collapsedPreviewContent(rowIDs: ["timer", "media"])
+
+        let mounted = try XCTUnwrap(CollapsedPreviewContent.mounted(content, previewActive: true))
+
+        XCTAssertEqual(mounted.rows.map(\.id), ["timer", "media"])
+    }
+
     func testPreviewActivitiesRespectMaxRowCount() {
         let activities = [
             activity(id: "media", kind: .media, title: "Song", isActive: true),
@@ -276,6 +324,23 @@ final class CollapsedLiveActivitySelectorTests: XCTestCase {
             isActive: isActive,
             progress: nil,
             updatedAt: updatedAt
+        )
+    }
+
+    private func collapsedPreviewContent(rowIDs: [String]) -> CollapsedPreviewContent {
+        CollapsedPreviewContent(
+            rows: rowIDs.map { id in
+                CollapsedPreviewRowContent(
+                    id: id,
+                    title: id.capitalized,
+                    subtitle: nil,
+                    trailingText: nil,
+                    symbolName: "sparkles",
+                    fallbackSymbolName: "sparkles",
+                    kind: id == "timer" ? .timer : .media,
+                    isPrimary: id == rowIDs.first
+                )
+            }
         )
     }
 }

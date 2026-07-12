@@ -3282,6 +3282,40 @@ For every requested feature phase:
   - `open dist/DynamicIsland.app` returned LaunchServices `-600` immediately after `pkill`; retrying with the absolute app path succeeded.
   - Packaging still reports the existing `FileThumbnailCache` non-Sendable capture warning in `ModuleViews.swift`.
 
+### 2026-07-12 - Phase 10C - Collapsed Live Activity Stability Lock
+
+- Locked the collapsed live activity selection invariants with focused tests:
+  - Running Timer beats paused media by default.
+  - Paused Timer beats paused media by default.
+  - Running Timer beats playing media by default unless custom priority explicitly raises playing media above it.
+  - Preview activities can include Timer + Media rows when both are eligible.
+  - Selected collapsed activity returns only the primary winner.
+- Added a lightweight preview mounting regression guard:
+  - Non-hovered collapsed preview content resolves to `nil`, so stacked preview rows are not mounted in the regular collapsed layout.
+  - Hovered collapsed preview content resolves to the stacked preview rows.
+- Preserved the SwiftUI mount behavior:
+  - `CompactIslandView` receives preview content only through `CollapsedPreviewContent.mounted(..., previewActive:)`.
+  - `CollapsedPreviewRow` is only created with `if previewActive, let previewContent`.
+  - Hidden live activity rows are not allowed to exist with `opacity(0)` in the base collapsed layout.
+- Preserved collapsed geometry:
+  - No timer-specific collapsed height was added.
+  - No live-activity-specific collapsed height was added.
+  - Timer compact, media compact, and file compact continue to share the same base collapsed shell height source.
+  - Timer + paused media no longer participates in base collapsed layout height; secondary media is preview-only while hovering.
+- Do not alter this path unless explicitly fixing collapsed/live-activity bugs.
+- Changed files:
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `Tests/DynamicIslandTests/CollapsedLiveActivitySelectorTests.swift`
+  - `context.md`
+- Validation passed:
+  - `git status`
+  - `swift build`
+  - `swift test`
+  - `chmod +x Scripts/package_app.sh`
+  - `Scripts/package_app.sh`
+- Validation note:
+  - Packaging still reports the existing `FileThumbnailCache` non-Sendable capture warning in `ModuleViews.swift`.
+
 ### 2026-07-11 - Phase 10B.3 Collapsed Timer Pill Layout Repair
 
 - Restored normal base collapsed pill height behavior for live activity modes:
