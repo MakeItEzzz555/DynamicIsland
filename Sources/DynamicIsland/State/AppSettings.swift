@@ -28,20 +28,16 @@ public enum AutoCollapseDelayPreset: String, CaseIterable, Identifiable {
     }
 }
 
-public enum IslandTheme: String, CaseIterable, Identifiable {
-    case systemBlack
-    case pureBlack
-    case graphite
-    case translucent
+public enum IslandThemeStyle: String, CaseIterable, Identifiable {
+    case classicBlack
+    case liquidGlass
 
     public var id: String { rawValue }
 
     public var displayName: String {
         switch self {
-        case .systemBlack: "System Black"
-        case .pureBlack: "Pure Black"
-        case .graphite: "Graphite"
-        case .translucent: "Translucent"
+        case .classicBlack: "Classic Black"
+        case .liquidGlass: "Liquid Glass"
         }
     }
 }
@@ -166,7 +162,7 @@ public final class AppSettings: ObservableObject {
     @Published public var useAdaptiveNotchSizing: Bool { didSet { save(useAdaptiveNotchSizing, for: Key.useAdaptiveNotchSizing) } }
     @Published public var respectHardwareNotch: Bool { didSet { save(respectHardwareNotch, for: Key.respectHardwareNotch) } }
 
-    @Published public var islandTheme: IslandTheme { didSet { save(islandTheme.rawValue, for: Key.islandTheme) } }
+    @Published public var islandThemeStyle: IslandThemeStyle { didSet { save(islandThemeStyle.rawValue, for: Key.islandThemeStyle) } }
     @Published public var shellOpacity: Double { didSet { normalizeShellOpacity(oldValue: oldValue) } }
     @Published public var shellStrokeEnabled: Bool { didSet { save(shellStrokeEnabled, for: Key.shellStrokeEnabled) } }
     @Published public var shellShadowEnabled: Bool { didSet { save(shellShadowEnabled, for: Key.shellShadowEnabled) } }
@@ -322,6 +318,21 @@ public final class AppSettings: ObservableObject {
         didSet { normalizeLiveActivityDismiss(oldValue: oldValue) }
     }
     @Published public var liveActivityAnimationEnabled: Bool { didSet { save(liveActivityAnimationEnabled, for: Key.liveActivityAnimationEnabled) } }
+    @Published public var collapsedPriorityRunningTimer: Int {
+        didSet { normalizeCollapsedPriorityRunningTimer(oldValue: oldValue) }
+    }
+    @Published public var collapsedPriorityPlayingMedia: Int {
+        didSet { normalizeCollapsedPriorityPlayingMedia(oldValue: oldValue) }
+    }
+    @Published public var collapsedPriorityPausedTimer: Int {
+        didSet { normalizeCollapsedPriorityPausedTimer(oldValue: oldValue) }
+    }
+    @Published public var collapsedPriorityRecentFiles: Int {
+        didSet { normalizeCollapsedPriorityRecentFiles(oldValue: oldValue) }
+    }
+    @Published public var collapsedPriorityPausedMedia: Int {
+        didSet { normalizeCollapsedPriorityPausedMedia(oldValue: oldValue) }
+    }
 
     @Published public var gesturesEnabled: Bool { didSet { save(gesturesEnabled, for: Key.gesturesEnabled) } }
     @Published public var gestureInputSource: GestureInputSource { didSet { save(gestureInputSource.rawValue, for: Key.gestureInputSource) } }
@@ -381,7 +392,8 @@ public final class AppSettings: ObservableObject {
         useAdaptiveNotchSizing = Self.bool(defaults, Key.useAdaptiveNotchSizing, true)
         respectHardwareNotch = Self.bool(defaults, Key.respectHardwareNotch, true)
 
-        islandTheme = Self.enumValue(defaults, Key.islandTheme, .systemBlack)
+        islandThemeStyle = Self.islandThemeStyleValue(defaults, Key.islandThemeStyle, .classicBlack)
+        Self.migrateLegacyIslandThemeStyleIfNeeded(defaults, Key.islandThemeStyle)
         shellOpacity = Self.double(defaults, Key.shellOpacity, 1.0)
         shellStrokeEnabled = Self.bool(defaults, Key.shellStrokeEnabled, true)
         shellShadowEnabled = Self.bool(defaults, Key.shellShadowEnabled, true)
@@ -494,7 +506,7 @@ public final class AppSettings: ObservableObject {
         showCalendarActivity = Self.bool(defaults, Key.showCalendarActivity, false)
         showNowPlayingActivity = Self.bool(defaults, Key.showNowPlayingActivity, false)
 
-        liveActivitiesEnabled = Self.bool(defaults, Key.liveActivitiesEnabled, false)
+        liveActivitiesEnabled = Self.bool(defaults, Key.liveActivitiesEnabled, true)
         liveActivityStyle = Self.enumValue(defaults, Key.liveActivityStyle, .compact)
         showMusicLiveActivity = Self.bool(defaults, Key.showMusicLiveActivity, true)
         showTimerLiveActivity = Self.bool(defaults, Key.showTimerLiveActivity, true)
@@ -505,6 +517,11 @@ public final class AppSettings: ObservableObject {
         liveActivityAutoDismissEnabled = Self.bool(defaults, Key.liveActivityAutoDismissEnabled, true)
         liveActivityAutoDismissSeconds = Self.double(defaults, Key.liveActivityAutoDismissSeconds, 6.0)
         liveActivityAnimationEnabled = Self.bool(defaults, Key.liveActivityAnimationEnabled, true)
+        collapsedPriorityRunningTimer = Self.int(defaults, Key.collapsedPriorityRunningTimer, CollapsedLiveActivityPrioritySource.runningTimer.defaultPriority)
+        collapsedPriorityPlayingMedia = Self.int(defaults, Key.collapsedPriorityPlayingMedia, CollapsedLiveActivityPrioritySource.playingMedia.defaultPriority)
+        collapsedPriorityPausedTimer = Self.int(defaults, Key.collapsedPriorityPausedTimer, CollapsedLiveActivityPrioritySource.pausedTimer.defaultPriority)
+        collapsedPriorityRecentFiles = Self.int(defaults, Key.collapsedPriorityRecentFiles, CollapsedLiveActivityPrioritySource.recentFiles.defaultPriority)
+        collapsedPriorityPausedMedia = Self.int(defaults, Key.collapsedPriorityPausedMedia, CollapsedLiveActivityPrioritySource.pausedMedia.defaultPriority)
 
         gesturesEnabled = Self.bool(defaults, Key.gesturesEnabled, false)
         gestureInputSource = Self.enumValue(defaults, Key.gestureInputSource, .none)
@@ -613,6 +630,25 @@ public final class AppSettings: ObservableObject {
         reload()
     }
 
+    var collapsedLiveActivityPrioritySettings: CollapsedLiveActivityPrioritySettings {
+        CollapsedLiveActivityPrioritySettings(
+            runningTimer: collapsedPriorityRunningTimer,
+            playingMedia: collapsedPriorityPlayingMedia,
+            pausedTimer: collapsedPriorityPausedTimer,
+            recentFiles: collapsedPriorityRecentFiles,
+            pausedMedia: collapsedPriorityPausedMedia
+        )
+    }
+
+    func resetCollapsedLiveActivityPrioritySettings() {
+        let defaults = CollapsedLiveActivityPrioritySettings.defaults
+        collapsedPriorityRunningTimer = defaults.runningTimer
+        collapsedPriorityPlayingMedia = defaults.playingMedia
+        collapsedPriorityPausedTimer = defaults.pausedTimer
+        collapsedPriorityRecentFiles = defaults.recentFiles
+        collapsedPriorityPausedMedia = defaults.pausedMedia
+    }
+
     private func reload() {
         overlayEnabled = Self.bool(defaults, Key.overlayEnabled, true)
         launchAtLoginEnabled = Self.bool(defaults, Key.launchAtLoginEnabled, false)
@@ -629,7 +665,8 @@ public final class AppSettings: ObservableObject {
         expandedHeight = Self.double(defaults, Key.expandedHeight, 286)
         useAdaptiveNotchSizing = Self.bool(defaults, Key.useAdaptiveNotchSizing, true)
         respectHardwareNotch = Self.bool(defaults, Key.respectHardwareNotch, true)
-        islandTheme = Self.enumValue(defaults, Key.islandTheme, .systemBlack)
+        islandThemeStyle = Self.islandThemeStyleValue(defaults, Key.islandThemeStyle, .classicBlack)
+        Self.migrateLegacyIslandThemeStyleIfNeeded(defaults, Key.islandThemeStyle)
         shellOpacity = Self.double(defaults, Key.shellOpacity, 1.0)
         shellStrokeEnabled = Self.bool(defaults, Key.shellStrokeEnabled, true)
         shellShadowEnabled = Self.bool(defaults, Key.shellShadowEnabled, true)
@@ -735,7 +772,7 @@ public final class AppSettings: ObservableObject {
         showDownloadsActivity = Self.bool(defaults, Key.showDownloadsActivity, false)
         showCalendarActivity = Self.bool(defaults, Key.showCalendarActivity, false)
         showNowPlayingActivity = Self.bool(defaults, Key.showNowPlayingActivity, false)
-        liveActivitiesEnabled = Self.bool(defaults, Key.liveActivitiesEnabled, false)
+        liveActivitiesEnabled = Self.bool(defaults, Key.liveActivitiesEnabled, true)
         liveActivityStyle = Self.enumValue(defaults, Key.liveActivityStyle, .compact)
         showMusicLiveActivity = Self.bool(defaults, Key.showMusicLiveActivity, true)
         showTimerLiveActivity = Self.bool(defaults, Key.showTimerLiveActivity, true)
@@ -746,6 +783,11 @@ public final class AppSettings: ObservableObject {
         liveActivityAutoDismissEnabled = Self.bool(defaults, Key.liveActivityAutoDismissEnabled, true)
         liveActivityAutoDismissSeconds = Self.double(defaults, Key.liveActivityAutoDismissSeconds, 6.0)
         liveActivityAnimationEnabled = Self.bool(defaults, Key.liveActivityAnimationEnabled, true)
+        collapsedPriorityRunningTimer = Self.int(defaults, Key.collapsedPriorityRunningTimer, CollapsedLiveActivityPrioritySource.runningTimer.defaultPriority)
+        collapsedPriorityPlayingMedia = Self.int(defaults, Key.collapsedPriorityPlayingMedia, CollapsedLiveActivityPrioritySource.playingMedia.defaultPriority)
+        collapsedPriorityPausedTimer = Self.int(defaults, Key.collapsedPriorityPausedTimer, CollapsedLiveActivityPrioritySource.pausedTimer.defaultPriority)
+        collapsedPriorityRecentFiles = Self.int(defaults, Key.collapsedPriorityRecentFiles, CollapsedLiveActivityPrioritySource.recentFiles.defaultPriority)
+        collapsedPriorityPausedMedia = Self.int(defaults, Key.collapsedPriorityPausedMedia, CollapsedLiveActivityPrioritySource.pausedMedia.defaultPriority)
         gesturesEnabled = Self.bool(defaults, Key.gesturesEnabled, false)
         gestureInputSource = Self.enumValue(defaults, Key.gestureInputSource, .none)
         expandGestureEnabled = Self.bool(defaults, Key.expandGestureEnabled, true)
@@ -800,6 +842,11 @@ public final class AppSettings: ObservableObject {
         statsRefreshIntervalSeconds = normalizedDouble(statsRefreshIntervalSeconds, fallback: 2.0, range: 0.5...10.0)
         activitiesRefreshIntervalSeconds = normalizedDouble(activitiesRefreshIntervalSeconds, fallback: 3.0, range: 0.5...30.0)
         liveActivityAutoDismissSeconds = normalizedDouble(liveActivityAutoDismissSeconds, fallback: 6.0, range: 1.0...60.0)
+        collapsedPriorityRunningTimer = normalizedCollapsedLiveActivityPriority(collapsedPriorityRunningTimer)
+        collapsedPriorityPlayingMedia = normalizedCollapsedLiveActivityPriority(collapsedPriorityPlayingMedia)
+        collapsedPriorityPausedTimer = normalizedCollapsedLiveActivityPriority(collapsedPriorityPausedTimer)
+        collapsedPriorityRecentFiles = normalizedCollapsedLiveActivityPriority(collapsedPriorityRecentFiles)
+        collapsedPriorityPausedMedia = normalizedCollapsedLiveActivityPriority(collapsedPriorityPausedMedia)
         gestureSensitivity = normalizedDouble(gestureSensitivity, fallback: 0.5, range: 0...1.0)
         gestureCooldownSeconds = normalizedDouble(gestureCooldownSeconds, fallback: 0.75, range: 0.1...10.0)
         showIslandTab = true
@@ -882,6 +929,66 @@ public final class AppSettings: ObservableObject {
         normalizeAndSaveDouble(\.gestureCooldownSeconds, oldValue: oldValue, fallback: 0.75, range: 0.1...10.0, key: Key.gestureCooldownSeconds)
     }
 
+    private func normalizeCollapsedPriorityRunningTimer(oldValue: Int) {
+        normalizeAndSaveCollapsedPriority(
+            \.collapsedPriorityRunningTimer,
+            oldValue: oldValue,
+            fallback: CollapsedLiveActivityPrioritySource.runningTimer.defaultPriority,
+            key: Key.collapsedPriorityRunningTimer
+        )
+    }
+
+    private func normalizeCollapsedPriorityPlayingMedia(oldValue: Int) {
+        normalizeAndSaveCollapsedPriority(
+            \.collapsedPriorityPlayingMedia,
+            oldValue: oldValue,
+            fallback: CollapsedLiveActivityPrioritySource.playingMedia.defaultPriority,
+            key: Key.collapsedPriorityPlayingMedia
+        )
+    }
+
+    private func normalizeCollapsedPriorityPausedTimer(oldValue: Int) {
+        normalizeAndSaveCollapsedPriority(
+            \.collapsedPriorityPausedTimer,
+            oldValue: oldValue,
+            fallback: CollapsedLiveActivityPrioritySource.pausedTimer.defaultPriority,
+            key: Key.collapsedPriorityPausedTimer
+        )
+    }
+
+    private func normalizeCollapsedPriorityRecentFiles(oldValue: Int) {
+        normalizeAndSaveCollapsedPriority(
+            \.collapsedPriorityRecentFiles,
+            oldValue: oldValue,
+            fallback: CollapsedLiveActivityPrioritySource.recentFiles.defaultPriority,
+            key: Key.collapsedPriorityRecentFiles
+        )
+    }
+
+    private func normalizeCollapsedPriorityPausedMedia(oldValue: Int) {
+        normalizeAndSaveCollapsedPriority(
+            \.collapsedPriorityPausedMedia,
+            oldValue: oldValue,
+            fallback: CollapsedLiveActivityPrioritySource.pausedMedia.defaultPriority,
+            key: Key.collapsedPriorityPausedMedia
+        )
+    }
+
+    private func normalizeAndSaveCollapsedPriority(
+        _ keyPath: ReferenceWritableKeyPath<AppSettings, Int>,
+        oldValue: Int,
+        fallback: Int,
+        key: String
+    ) {
+        normalizeAndSaveInt(
+            keyPath,
+            oldValue: oldValue,
+            fallback: fallback,
+            range: CollapsedLiveActivityPrioritySettings.range,
+            key: key
+        )
+    }
+
     private func normalizeAndSaveDouble(
         _ keyPath: ReferenceWritableKeyPath<AppSettings, Double>,
         oldValue: Double,
@@ -939,6 +1046,14 @@ public final class AppSettings: ObservableObject {
         min(max(value, range.lowerBound), range.upperBound)
     }
 
+    private func normalizedCollapsedLiveActivityPriority(_ value: Int) -> Int {
+        normalizedInt(
+            value,
+            fallback: CollapsedLiveActivityPrioritySource.pausedMedia.defaultPriority,
+            range: CollapsedLiveActivityPrioritySettings.range
+        )
+    }
+
     private func saveAllNormalizedValues() {
         save(autoCollapseGraceSeconds, for: Key.autoCollapseGraceSeconds)
         save(collapsedWidth, for: Key.collapsedWidth)
@@ -957,6 +1072,11 @@ public final class AppSettings: ObservableObject {
         save(statsRefreshIntervalSeconds, for: Key.statsRefreshIntervalSeconds)
         save(activitiesRefreshIntervalSeconds, for: Key.activitiesRefreshIntervalSeconds)
         save(liveActivityAutoDismissSeconds, for: Key.liveActivityAutoDismissSeconds)
+        save(collapsedPriorityRunningTimer, for: Key.collapsedPriorityRunningTimer)
+        save(collapsedPriorityPlayingMedia, for: Key.collapsedPriorityPlayingMedia)
+        save(collapsedPriorityPausedTimer, for: Key.collapsedPriorityPausedTimer)
+        save(collapsedPriorityRecentFiles, for: Key.collapsedPriorityRecentFiles)
+        save(collapsedPriorityPausedMedia, for: Key.collapsedPriorityPausedMedia)
         save(gestureSensitivity, for: Key.gestureSensitivity)
         save(gestureCooldownSeconds, for: Key.gestureCooldownSeconds)
         save(showIslandTab, for: Key.showIslandTab)
@@ -989,12 +1109,38 @@ public final class AppSettings: ObservableObject {
         return value
     }
 
+    private static func islandThemeStyleValue(_ defaults: UserDefaults, _ key: String, _ fallback: IslandThemeStyle) -> IslandThemeStyle {
+        guard let rawValue = defaults.string(forKey: key) else {
+            return fallback
+        }
+        if let value = IslandThemeStyle(rawValue: rawValue) {
+            return value
+        }
+        return legacyHybridThemeRawValues.contains(rawValue) ? .liquidGlass : fallback
+    }
+
+    private static func migrateLegacyIslandThemeStyleIfNeeded(_ defaults: UserDefaults, _ key: String) {
+        guard let rawValue = defaults.string(forKey: key), legacyHybridThemeRawValues.contains(rawValue) else {
+            return
+        }
+        defaults.set(IslandThemeStyle.liquidGlass.rawValue, forKey: key)
+    }
+
     private static func enumValue<T: RawRepresentable>(_ defaults: UserDefaults, _ key: String, _ fallback: T) -> T where T.RawValue == String {
         guard let rawValue = defaults.string(forKey: key), let value = T(rawValue: rawValue) else {
             return fallback
         }
         return value
     }
+
+    private static let legacyHybridThemeRawValues: Set<String> = [
+        "hybridBlackGlass",
+        "blackLiquidGlass",
+        "blackGlass",
+        "blackAndLiquidGlass",
+        "blackPlusLiquidGlass",
+        "hybridBlackLiquidGlass"
+    ]
 }
 
 private enum Key {
@@ -1013,7 +1159,7 @@ private enum Key {
     static let expandedHeight = "expandedHeight"
     static let useAdaptiveNotchSizing = "useAdaptiveNotchSizing"
     static let respectHardwareNotch = "respectHardwareNotch"
-    static let islandTheme = "islandTheme"
+    static let islandThemeStyle = "islandThemeStyle"
     static let shellOpacity = "shellOpacity"
     static let shellStrokeEnabled = "shellStrokeEnabled"
     static let shellShadowEnabled = "shellShadowEnabled"
@@ -1130,6 +1276,11 @@ private enum Key {
     static let liveActivityAutoDismissEnabled = "liveActivityAutoDismissEnabled"
     static let liveActivityAutoDismissSeconds = "liveActivityAutoDismissSeconds"
     static let liveActivityAnimationEnabled = "liveActivityAnimationEnabled"
+    static let collapsedPriorityRunningTimer = "collapsedPriorityRunningTimer"
+    static let collapsedPriorityPlayingMedia = "collapsedPriorityPlayingMedia"
+    static let collapsedPriorityPausedTimer = "collapsedPriorityPausedTimer"
+    static let collapsedPriorityRecentFiles = "collapsedPriorityRecentFiles"
+    static let collapsedPriorityPausedMedia = "collapsedPriorityPausedMedia"
     static let gesturesEnabled = "gesturesEnabled"
     static let gestureInputSource = "gestureInputSource"
     static let expandGestureEnabled = "expandGestureEnabled"
@@ -1165,7 +1316,7 @@ private enum Key {
         overlayEnabled, launchAtLoginEnabled, startCollapsedOnLaunch, expandOnHover, expandOnClick,
         collapseOnMouseLeave, autoCollapseEnabled, autoCollapseDelayPreset, autoCollapseGraceSeconds,
         collapsedWidth, collapsedHeight, expandedWidth, expandedHeight, useAdaptiveNotchSizing,
-        respectHardwareNotch, islandTheme, shellOpacity, shellStrokeEnabled, shellShadowEnabled,
+        respectHardwareNotch, islandThemeStyle, shellOpacity, shellStrokeEnabled, shellShadowEnabled,
         useArtworkAccentColor, visualizerAccentMode, notchShoulderBlendEnabledSetting,
         showCollapsedVisualizer, showExpandedVisualizer, collapsedHoverPreviewEnabled,
         collapsedHoverPreviewMediaEnabled, collapsedHoverPreviewHeight, collapsedHoverPreviewDelay,
@@ -1196,6 +1347,8 @@ private enum Key {
         showMusicLiveActivity, showTimerLiveActivity, showFileDropLiveActivity,
         showBatteryLiveActivity, showCalendarLiveActivity, showDownloadsLiveActivity,
         liveActivityAutoDismissEnabled, liveActivityAutoDismissSeconds, liveActivityAnimationEnabled,
+        collapsedPriorityRunningTimer, collapsedPriorityPlayingMedia, collapsedPriorityPausedTimer,
+        collapsedPriorityRecentFiles, collapsedPriorityPausedMedia,
         gesturesEnabled, gestureInputSource, expandGestureEnabled, collapseGestureEnabled,
         nextTabGestureEnabled, previousTabGestureEnabled, mediaPlayPauseGestureEnabled,
         timerStartStopGestureEnabled, collapsedDoubleClickAction, collapsedSwipeDownAction,

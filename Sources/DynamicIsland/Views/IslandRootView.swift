@@ -28,11 +28,18 @@ enum CollapsedPreviewKind: String {
 }
 
 struct CollapsedPreviewContent: Equatable {
-    let title: String?
-    let artist: String?
-    let titleIconName: String
-    let artistIconName: String
+    let rows: [CollapsedPreviewRowContent]
+}
+
+struct CollapsedPreviewRowContent: Identifiable, Equatable {
+    let id: String
+    let title: String
+    let subtitle: String?
+    let trailingText: String?
+    let symbolName: String
+    let fallbackSymbolName: String
     let kind: CollapsedPreviewKind
+    let isPrimary: Bool
 }
 
 private struct IslandPointerGestureModifier: ViewModifier {
@@ -134,6 +141,7 @@ private struct ExpandedIslandLayoutMetrics {
     var timerRingSize: CGFloat { min(max(pageHeight - timerReservedHeight, 86), 118) }
     var mediaMaxHeight: CGFloat { pageHeight }
     var shortcutsMaxHeight: CGFloat { pageHeight }
+    var liveActivitiesMaxHeight: CGFloat { pageHeight }
     var statsCardWidth: CGFloat { max((innerWidth - (cardSpacing * 2)) / 3, 0) }
     var statsCardHeight: CGFloat { min(max((pageHeight - cardSpacing) / 2, 64), 74) }
 }
@@ -149,6 +157,7 @@ struct IslandRootView: View {
     let onOpenSettings: () -> Void
     @ObservedObject private var media: MediaController
     @ObservedObject private var navigation: IslandNavigationStore
+    @ObservedObject private var liveActivities: LiveActivityStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var contentPhase: IslandContentPhase = .compact
     @State private var renderedContentMode: RenderedContentMode = .compact
@@ -181,6 +190,7 @@ struct IslandRootView: View {
         self.onOpenSettings = onOpenSettings
         media = modules.media
         navigation = modules.navigation
+        liveActivities = modules.liveActivities
     }
 
     private var isExpanded: Bool {
@@ -247,9 +257,10 @@ struct IslandRootView: View {
                     CompactIslandView(
                         settings: settings,
                         modules: modules,
-                        previewContent: collapsedPreviewContent,
+                        contentMode: collapsedContentMode,
+                        previewContent: isCollapsedPreviewActive ? collapsedPreviewContent : nil,
                         previewActive: isCollapsedPreviewActive
-                    )
+                        )
                         .contentShape(Rectangle())
                         .onHover(perform: handleCollapsedHover)
                         .onTapGesture {
@@ -337,7 +348,7 @@ struct IslandRootView: View {
         IslandGestureContext(
             presentationState: islandState.state,
             selectedPage: navigation.selectedPage,
-            mediaControlAvailable: media.isTransportControlAvailable,
+            mediaControlAvailable: collapsedContentMode == .media && media.isTransportControlAvailable,
             timerIsRunning: modules.timer.isRunning,
             timerCanResume: modules.timer.remainingSeconds > 0,
             collapsedPreviewActive: isCollapsedPreviewActive,
@@ -396,7 +407,9 @@ struct IslandRootView: View {
 
     private var collapsedPreviewSurfaceFrame: CGRect {
         let base = layoutStore.collapsedSurfaceFrame
-        let previewHeight = max(base.height, CGFloat(settings.collapsedHoverPreviewHeight))
+        let rowCount = collapsedPreviewContent?.rows.count ?? 0
+        let liveActivityPreviewHeight = base.height + CGFloat(max(rowCount, 1) * 20) + 8
+        let previewHeight = max(base.height, CGFloat(settings.collapsedHoverPreviewHeight), liveActivityPreviewHeight)
         return CGRect(
             x: base.minX,
             y: base.maxY - previewHeight,
@@ -406,7 +419,24 @@ struct IslandRootView: View {
     }
 
     private var collapsedPreviewContent: CollapsedPreviewContent? {
-        mediaCollapsedPreviewContent
+        let rows = collapsedPreviewRows
+        guard !rows.isEmpty else { return nil }
+        return CollapsedPreviewContent(rows: rows)
+    }
+
+    private var collapsedContentMode: CollapsedIslandContentMode {
+        CollapsedLiveActivitySelector.select(
+            activities: liveActivities.activities,
+            priorities: settings.collapsedLiveActivityPrioritySettings,
+            toggles: CollapsedLiveActivitySourceToggles(
+                liveActivitiesEnabled: settings.liveActivitiesEnabled,
+                timerEnabled: settings.timerEnabled && settings.showTimerLiveActivity,
+                mediaEnabled: settings.mediaEnabled &&
+                    settings.showMusicLiveActivity &&
+                    (settings.showMediaWhenPaused || media.isPlaying),
+                fileTrayEnabled: settings.trayEnabled && settings.fileShelfEnabled && settings.showFileDropLiveActivity
+            )
+        )
     }
 
     private var isCollapsedPreviewAllowed: Bool {
@@ -433,11 +463,43 @@ struct IslandRootView: View {
     }
 
     private var mediaCollapsedPreviewContent: CollapsedPreviewContent? {
+        let rows = mediaCollapsedPreviewRows(isPrimary: true)
+        guard !rows.isEmpty else { return nil }
+        return CollapsedPreviewContent(rows: rows)
+    }
+
+    private var collapsedPreviewRows: [CollapsedPreviewRowContent] {
+        let toggles = CollapsedLiveActivitySourceToggles(
+            liveActivitiesEnabled: settings.liveActivitiesEnabled,
+            timerEnabled: settings.timerEnabled && settings.showTimerLiveActivity,
+            mediaEnabled: settings.mediaEnabled &&
+                settings.showMusicLiveActivity &&
+                settings.collapsedHoverPreviewMediaEnabled &&
+                (settings.showMediaWhenPaused || media.isPlaying),
+            fileTrayEnabled: settings.trayEnabled && settings.fileShelfEnabled && settings.showFileDropLiveActivity
+        )
+        let previewActivities = CollapsedLiveActivitySelector.previewActivities(
+            activities: liveActivities.activities,
+            priorities: settings.collapsedLiveActivityPrioritySettings,
+            toggles: toggles,
+            maxCount: 3
+        )
+
+        if previewActivities.isEmpty {
+            return mediaCollapsedPreviewRows(isPrimary: true)
+        }
+
+        return previewActivities.enumerated().compactMap { index, activity in
+            previewRow(for: activity, isPrimary: index == 0)
+        }
+    }
+
+    private func mediaCollapsedPreviewRows(isPrimary: Bool) -> [CollapsedPreviewRowContent] {
         guard settings.mediaEnabled,
               settings.collapsedHoverPreviewMediaEnabled,
               media.hasActiveMediaSource,
               settings.showMediaWhenPaused || media.isPlaying else {
-            return nil
+            return []
         }
 
         let title = settings.collapsedHoverPreviewShowTitle && settings.showMediaTitle
@@ -458,16 +520,76 @@ struct IslandRootView: View {
         }
 
         guard title != nil || artist != nil else {
-            return nil
+            return []
         }
 
-        return CollapsedPreviewContent(
-            title: title,
-            artist: artist,
-            titleIconName: settings.collapsedHoverPreviewTitleIconName,
-            artistIconName: settings.collapsedHoverPreviewArtistIconName,
-            kind: .media
-        )
+        return [
+            CollapsedPreviewRowContent(
+                id: LiveActivityStore.mediaActivityID,
+                title: title ?? "Now Playing",
+                subtitle: artist,
+                trailingText: nil,
+                symbolName: settings.collapsedHoverPreviewTitleIconName,
+                fallbackSymbolName: "music.note",
+                kind: .media,
+                isPrimary: isPrimary
+            )
+        ]
+    }
+
+    private func previewRow(
+        for activity: DynamicIslandLiveActivity,
+        isPrimary: Bool
+    ) -> CollapsedPreviewRowContent? {
+        switch activity.kind {
+        case .timer:
+            let remainingTime = timerText(for: activity)
+            return CollapsedPreviewRowContent(
+                id: activity.id,
+                title: "Timer",
+                subtitle: activity.isActive ? "Running" : "Paused",
+                trailingText: remainingTime,
+                symbolName: activity.isActive ? "timer" : "pause.circle.fill",
+                fallbackSymbolName: "timer",
+                kind: .timer,
+                isPrimary: isPrimary
+            )
+        case .media:
+            let title = settings.showMediaTitle ? media.title.trimmedForCollapsedPreview : nil
+            let subtitle = settings.showMediaArtist
+                ? media.artist.trimmedForCollapsedPreview
+                : (settings.showMediaSourceName ? media.sourceName.trimmedForCollapsedPreview : nil)
+            guard title != nil || subtitle != nil else { return nil }
+            return CollapsedPreviewRowContent(
+                id: activity.id,
+                title: title ?? "Now Playing",
+                subtitle: subtitle,
+                trailingText: activity.isActive ? "Playing" : "Paused",
+                symbolName: "music.note",
+                fallbackSymbolName: "music.note",
+                kind: .media,
+                isPrimary: isPrimary
+            )
+        case .fileTray:
+            return CollapsedPreviewRowContent(
+                id: activity.id,
+                title: activity.title,
+                subtitle: activity.subtitle,
+                trailingText: nil,
+                symbolName: "tray.and.arrow.down.fill",
+                fallbackSymbolName: "tray.full",
+                kind: .fileDrop,
+                isPrimary: isPrimary
+            )
+        case .system:
+            return nil
+        }
+    }
+
+    private func timerText(for activity: DynamicIslandLiveActivity) -> String {
+        (activity.subtitle ?? activity.title)
+            .replacingOccurrences(of: "Paused • ", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private var fileDropTargetBinding: Binding<Bool> {
@@ -828,7 +950,7 @@ struct IslandSurface<Content: View>: View {
     @Environment(\.isCollapseShellOnly) private var isCollapseShellOnly
 
     var body: some View {
-        let shellColor = resolvedShellColor.opacity(settings.shellOpacity)
+        let shellColor = Color(red: 0.001, green: 0.001, blue: 0.002).opacity(settings.shellOpacity)
         let shellShape = IslandShellShape(bottomRadius: bottomRadius)
         let shouldShowShoulderBlend = notchShoulderBlendEnabled && isNotchIntegratedShell
         let usesExpandedContentPadding = isExpanded || isCollapseShellOnly
@@ -846,8 +968,13 @@ struct IslandSurface<Content: View>: View {
                 NotchShoulderBlend(isExpanded: isExpanded, shellColor: shellColor)
             }
 
-            shellShape
-                .fill(shellColor)
+            IslandSurfaceBackground(
+                theme: settings.islandThemeStyle,
+                isExpanded: isExpanded,
+                isShellMorphing: isShellMorphing,
+                opacity: settings.shellOpacity,
+                shape: shellShape
+            )
                 .overlay {
                     if settings.shellStrokeEnabled {
                         shellShape
@@ -866,19 +993,6 @@ struct IslandSurface<Content: View>: View {
                 .padding(.bottom, usesExpandedContentPadding ? 0 : IslandShellLayout.collapsedBottomPadding)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .clipShape(shellShape)
-        }
-    }
-
-    private var resolvedShellColor: Color {
-        switch settings.islandTheme {
-        case .systemBlack:
-            return Color(red: 0.001, green: 0.001, blue: 0.002)
-        case .pureBlack:
-            return .black
-        case .graphite:
-            return Color(red: 0.10, green: 0.11, blue: 0.13)
-        case .translucent:
-            return Color(red: 0.05, green: 0.06, blue: 0.08)
         }
     }
 }
@@ -916,27 +1030,32 @@ private struct IslandShellShape: Shape {
 struct CompactIslandView: View {
     @ObservedObject var settings: AppSettings
     let modules: IslandModules
+    let contentMode: CollapsedIslandContentMode
     let previewContent: CollapsedPreviewContent?
     let previewActive: Bool
     @ObservedObject private var media: MediaController
+    @ObservedObject private var liveActivities: LiveActivityStore
     @ObservedObject private var accentCache = ArtworkAccentColorCache.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(
         settings: AppSettings,
         modules: IslandModules,
+        contentMode: CollapsedIslandContentMode = .inactive,
         previewContent: CollapsedPreviewContent? = nil,
         previewActive: Bool = false
     ) {
         self.settings = settings
         self.modules = modules
+        self.contentMode = contentMode
         self.previewContent = previewContent
         self.previewActive = previewActive
         media = modules.media
+        liveActivities = modules.liveActivities
     }
 
     var body: some View {
-        let activeBranch = shouldShowMediaSession
+        let activeBranch = contentMode == .media && shouldShowMediaSession
         let visualizerColor = visualizerAccentColor
         let _ = Self.debugRender(
             hasActiveMediaSource: media.hasActiveMediaSource,
@@ -952,27 +1071,29 @@ struct CompactIslandView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: previewActive ? .top : .center)
                 .padding(.top, previewActive ? 2 : 0)
 
-            if let previewContent {
-                CollapsedPreviewRow(content: previewContent)
-                    .opacity(previewActive ? 1 : 0)
-                    .offset(y: previewActive ? 0 : 4)
-                    .animation(previewRowAnimation, value: previewActive)
-            }
+if previewActive, let previewContent {
+    CollapsedPreviewRow(content: previewContent)
+        .transition(.opacity.combined(with: .move(edge: .bottom)))
+        .animation(previewRowAnimation, value: previewActive)
+}
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(compactContentAnimation, value: media.hasActiveMediaSource)
+        .animation(compactContentAnimation, value: liveActivities.activities)
+        .animation(compactContentAnimation, value: contentMode)
         .animation(compactContentAnimation, value: previewActive)
     }
 
     @ViewBuilder
     private func compactContentRow(activeBranch: Bool, visualizerColor: Color) -> some View {
         ZStack {
-            if activeBranch {
-                HStack(spacing: 10) {
+            switch contentMode {
+            case .media where activeBranch:
+                CompactCollapsedSideSlotLayout {
                     if settings.showAlbumArtwork {
                         CompactMediaView(media: media)
                     }
-                    Spacer(minLength: 0)
+                } right: {
                     if settings.showVisualizer && settings.showCollapsedVisualizer {
                         AudioVisualizerView(
                             isPlaying: media.isPlaying,
@@ -985,7 +1106,13 @@ struct CompactIslandView: View {
                     }
                 }
                 .transition(.compactMediaContent)
-            } else {
+            case .timer(let activity):
+                CollapsedTimerActivityCompactView(activity: activity)
+                    .transition(.compactMediaContent)
+            case .fileTray(let activity):
+                CollapsedFileActivityCompactView(activity: activity)
+                    .transition(.compactMediaContent)
+            case .media, .inactive:
                 Color.clear
                     .transition(.opacity)
             }
@@ -1053,35 +1180,171 @@ struct CompactIslandView: View {
     }
 }
 
+private struct CompactCollapsedSideSlotLayout<Left: View, Right: View>: View {
+    @ViewBuilder let left: () -> Left
+    @ViewBuilder let right: () -> Right
+
+    var body: some View {
+        HStack(spacing: 10) {
+            left()
+            Spacer(minLength: 0)
+            right()
+        }
+    }
+}
+
+private struct CollapsedTimerActivityCompactView: View {
+    let activity: DynamicIslandLiveActivity
+
+    var body: some View {
+        CompactCollapsedSideSlotLayout {
+            timerIcon
+                .frame(width: 13, height: 13)
+        } right: {
+            Text(formattedCompactRemainingTime)
+                .monospacedDigit()
+                .font(.system(size: 8.8, weight: .bold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.90))
+                .lineLimit(1)
+                .minimumScaleFactor(0.35)
+                .allowsTightening(true)
+                .frame(width: 38, alignment: .trailing)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        .clipped()
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var timerIcon: some View {
+        ZStack(alignment: .center) {
+            Circle()
+                .stroke(.white.opacity(0.18), lineWidth: 1)
+
+            Image(systemName: activity.isActive ? "timer" : "pause.fill")
+                .font(.system(size: activity.isActive ? 6.5 : 6, weight: .bold))
+                .foregroundStyle(activity.isActive ? .orange : .white.opacity(0.82))
+        }
+    }
+
+    private var formattedCompactRemainingTime: String {
+        let text = activity.subtitle ?? activity.title
+        return text
+            .replacingOccurrences(of: "Paused • ", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var accessibilityLabel: String {
+        [activity.title, activity.subtitle]
+            .compactMap { $0 }
+            .joined(separator: ", ")
+    }
+}
+
+private struct CollapsedFileActivityCompactView: View {
+    let activity: DynamicIslandLiveActivity
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "tray.and.arrow.down.fill")
+                .font(.system(size: 12, weight: .bold))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(.cyan.opacity(0.90))
+                .frame(width: 17, height: 17)
+
+            Spacer(minLength: 6)
+
+            Text(fileText)
+                .font(.system(size: 11, weight: .bold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.86))
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var fileText: String {
+        let text = activity.subtitle ?? activity.title
+        return text
+            .replacingOccurrences(of: " in Tray", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var accessibilityLabel: String {
+        [activity.title, activity.subtitle]
+            .compactMap { $0 }
+            .joined(separator: ", ")
+    }
+}
+
 private struct CollapsedPreviewRow: View {
     let content: CollapsedPreviewContent
 
     var body: some View {
-        let hasTitle = content.title != nil
-        let hasArtist = content.artist != nil
-
-        HStack(alignment: .center, spacing: 16) {
-            if let title = content.title {
-                CollapsedPreviewLabel(
-                    text: title,
-                    symbolName: content.titleIconName,
-                    fallbackSymbolName: "music.note"
-                )
-                .frame(maxWidth: .infinity, alignment: hasArtist ? .trailing : .center)
-            }
-
-            if let artist = content.artist {
-                CollapsedPreviewLabel(
-                    text: artist,
-                    symbolName: content.artistIconName,
-                    fallbackSymbolName: "person.fill"
-                )
-                .frame(maxWidth: .infinity, alignment: hasTitle ? .leading : .center)
+        VStack(alignment: .leading, spacing: 3) {
+            ForEach(content.rows.prefix(3)) { row in
+                CollapsedPreviewActivityRow(row: row)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .center)
-        .padding(.horizontal, 10)
-        .padding(.bottom, 1)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 9)
+        .padding(.bottom, 3)
+    }
+}
+
+private struct CollapsedPreviewActivityRow: View {
+    let row: CollapsedPreviewRowContent
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 7) {
+            SafeSystemImage(symbolName: row.symbolName, fallbackSymbolName: row.fallbackSymbolName)
+                .font(.system(size: row.isPrimary ? 10 : 9, weight: .bold))
+                .foregroundStyle(iconColor)
+                .frame(width: 13, height: 13)
+
+            VStack(alignment: .leading, spacing: 0) {
+                Text(row.title)
+                    .font(.system(size: row.isPrimary ? 10 : 9, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(row.isPrimary ? 0.90 : 0.72))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+
+                if let subtitle = row.subtitle {
+                    Text(subtitle)
+                        .font(.system(size: 8, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.48))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+            }
+
+            Spacer(minLength: 4)
+
+            if let trailingText = row.trailingText {
+                Text(trailingText)
+                    .monospacedDigit()
+                    .font(.system(size: row.isPrimary ? 10 : 9, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(row.isPrimary ? 0.86 : 0.62))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+                    .allowsTightening(true)
+                    .frame(minWidth: 42, alignment: .trailing)
+            }
+        }
+        .frame(height: row.subtitle == nil ? 15 : 18)
+    }
+
+    private var iconColor: Color {
+        switch row.kind {
+        case .timer:
+            .orange.opacity(row.isPrimary ? 0.90 : 0.68)
+        case .fileDrop:
+            .cyan.opacity(row.isPrimary ? 0.86 : 0.62)
+        case .media:
+            .white.opacity(row.isPrimary ? 0.72 : 0.54)
+        case .none, .liveActivity:
+            .white.opacity(row.isPrimary ? 0.68 : 0.48)
+        }
     }
 }
 
@@ -1134,6 +1397,7 @@ struct ExpandedIslandView: View {
     let rendersExpandedVisualContent: Bool
     let onOpenSettings: () -> Void
     @ObservedObject private var navigation: IslandNavigationStore
+    @ObservedObject private var liveActivities: LiveActivityStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.isCollapseShellOnly) private var isCollapseShellOnly
 
@@ -1161,6 +1425,7 @@ struct ExpandedIslandView: View {
         self.rendersExpandedVisualContent = rendersExpandedVisualContent
         self.onOpenSettings = onOpenSettings
         navigation = modules.navigation
+        liveActivities = modules.liveActivities
     }
 
     var body: some View {
@@ -1284,6 +1549,23 @@ struct ExpandedIslandView: View {
                         index: 2,
                         reduceMotion: reduceMotion
                     )
+            }
+
+            if settings.liveActivitiesEnabled && !liveActivities.activities.isEmpty {
+                LiveActivitiesModuleView(
+                    liveActivities: liveActivities,
+                    navigation: navigation,
+                    settings: settings
+                )
+                .frame(maxWidth: .infinity, maxHeight: metrics.liveActivitiesMaxHeight, alignment: .topLeading)
+                .clipped()
+                .innerBlurScaleClean(
+                    settings: settings,
+                    isVisible: contentVisible,
+                    isRemoval: isContentRemoving,
+                    index: 3,
+                    reduceMotion: reduceMotion
+                )
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -1658,6 +1940,126 @@ private struct ExpandedIslandPageSwitcher: View {
                 .stroke(.white.opacity(0.07), lineWidth: 1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct LiveActivitiesModuleView: View {
+    @ObservedObject var liveActivities: LiveActivityStore
+    @ObservedObject var navigation: IslandNavigationStore
+    @ObservedObject var settings: AppSettings
+
+    private var visibleActivities: [DynamicIslandLiveActivity] {
+        Array(liveActivities.activities.prefix(3))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 7) {
+                Label("Live Activities", systemImage: "waveform.path.ecg")
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+
+            VStack(spacing: 7) {
+                ForEach(visibleActivities) { activity in
+                    LiveActivityCard(activity: activity) {
+                        openDestination(for: activity)
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(.white.opacity(0.070), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(.white.opacity(0.055), lineWidth: 1)
+        }
+    }
+
+    private func openDestination(for activity: DynamicIslandLiveActivity) {
+        switch activity.kind {
+        case .timer:
+            if settings.timerEnabled, settings.showTimerTab {
+                navigation.showTimer()
+            }
+        case .fileTray:
+            if settings.trayEnabled, settings.showTrayTab {
+                navigation.showTray()
+            }
+        case .media:
+            navigation.showIsland()
+        case .system:
+            break
+        }
+    }
+}
+
+private struct LiveActivityCard: View {
+    let activity: DynamicIslandLiveActivity
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(alignment: .center, spacing: 8) {
+                Image(systemName: activity.symbolName)
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(activity.isActive ? .green : .white.opacity(0.58))
+                    .frame(width: 22, height: 22)
+                    .background(.white.opacity(0.085), in: Circle())
+
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text(activity.title)
+                            .font(.system(size: 11.5, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.78)
+                        Spacer(minLength: 0)
+                    }
+
+                    if let subtitle = activity.subtitle, !subtitle.isEmpty {
+                        Text(subtitle)
+                            .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.56))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.78)
+                    }
+
+                    if let progress = LiveActivityStore.clampedProgress(activity.progress) {
+                        GeometryReader { proxy in
+                            ZStack(alignment: .leading) {
+                                Capsule(style: .continuous)
+                                    .fill(.white.opacity(0.12))
+                                Capsule(style: .continuous)
+                                    .fill(.white.opacity(0.62))
+                                    .frame(width: max(proxy.size.width * progress, 3))
+                            }
+                        }
+                        .frame(height: 3)
+                    }
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity, minHeight: 42, alignment: .leading)
+            .background(.white.opacity(0.082), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(.white.opacity(0.055), lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(activityAccessibilityLabel)
+    }
+
+    private var activityAccessibilityLabel: String {
+        if let subtitle = activity.subtitle, !subtitle.isEmpty {
+            return "\(activity.title), \(subtitle)"
+        }
+        return activity.title
     }
 }
 

@@ -103,13 +103,14 @@ public final class NotchGeometryService {
                 preferredCollapsedWidth,
                 collapsedMediaActive ? notchMinimumActiveWidth : notchMinimumInactiveWidth
             )
-            let resolvedCollapsedHeight = max(collapsedSize.height, min(max(notchRect.height + 5, 33), 40))
-            collapsedFrame = CGRect(
-                x: notchRect.midX - resolvedCollapsedWidth / 2,
-                y: topY - resolvedCollapsedHeight,
-                width: resolvedCollapsedWidth,
-                height: resolvedCollapsedHeight
-            )
+let resolvedCollapsedHeight = max(collapsedSize.height, 1)
+
+collapsedFrame = CGRect(
+    x: notchRect.midX - resolvedCollapsedWidth / 2,
+    y: topY - resolvedCollapsedHeight,
+    width: resolvedCollapsedWidth,
+    height: resolvedCollapsedHeight
+)
         } else {
             let resolvedCollapsedWidth = collapsedMediaActive ? collapsedSize.width : max(126, collapsedSize.width * 0.70)
             collapsedFrame = CGRect(

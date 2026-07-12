@@ -172,6 +172,14 @@ final class OverlayWindowController {
             }
             .store(in: &cancellables)
 
+        modules.liveActivities.$activities
+            .sink { [weak self] _ in
+                DispatchQueue.main.async {
+                    self?.reposition(animated: true)
+                }
+            }
+            .store(in: &cancellables)
+
         NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)
             .sink { [weak self] _ in
                 self?.reposition(animated: false)
@@ -209,7 +217,7 @@ final class OverlayWindowController {
         let geometry = geometryService.geometry(
             collapsedSize: settings.collapsedSize,
             expandedSize: settings.expandedSize,
-            collapsedMediaActive: modules.media.hasActiveMediaSource,
+            collapsedMediaActive: collapsedHasActiveContent,
             useAdaptiveNotchSizing: settings.useAdaptiveNotchSizing,
             respectHardwareNotch: settings.respectHardwareNotch
         )
@@ -234,7 +242,7 @@ final class OverlayWindowController {
             let correctedGeometry = self.geometryService.geometry(
                 collapsedSize: self.settings.collapsedSize,
                 expandedSize: self.settings.expandedSize,
-                collapsedMediaActive: self.modules.media.hasActiveMediaSource,
+                collapsedMediaActive: self.collapsedHasActiveContent,
                 useAdaptiveNotchSizing: self.settings.useAdaptiveNotchSizing,
                 respectHardwareNotch: self.settings.respectHardwareNotch
             )
@@ -254,6 +262,27 @@ final class OverlayWindowController {
                 self.updateMousePassthrough()
             }
         }
+    }
+
+    private var collapsedHasActiveContent: Bool {
+        collapsedContentMode != .inactive
+    }
+
+    private var collapsedContentMode: CollapsedIslandContentMode {
+        CollapsedLiveActivitySelector.select(
+            activities: modules.liveActivities.activities,
+            priorities: settings.collapsedLiveActivityPrioritySettings,
+            toggles: CollapsedLiveActivitySourceToggles(
+                liveActivitiesEnabled: settings.liveActivitiesEnabled,
+                timerEnabled: settings.timerEnabled && settings.showTimerLiveActivity,
+                mediaEnabled: settings.mediaEnabled &&
+                    settings.showMusicLiveActivity &&
+                    (settings.showMediaWhenPaused || modules.media.isPlaying),
+                fileTrayEnabled: settings.trayEnabled &&
+                    settings.fileShelfEnabled &&
+                    settings.showFileDropLiveActivity
+            )
+        )
     }
 
     private static func configure(_ panel: IslandOverlayPanel) {
@@ -597,7 +626,7 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
         let geometry = geometryService.geometry(
             collapsedSize: settings.collapsedSize,
             expandedSize: settings.expandedSize,
-            collapsedMediaActive: modules.media.hasActiveMediaSource,
+            collapsedMediaActive: collapsedHasActiveContent,
             useAdaptiveNotchSizing: settings.useAdaptiveNotchSizing,
             respectHardwareNotch: settings.respectHardwareNotch
         )

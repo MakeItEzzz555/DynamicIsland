@@ -1,6 +1,6 @@
 # DynamicIsland Project Context
 
-Last updated: 2026-07-04
+Last updated: 2026-07-06
 
 ## Purpose
 
@@ -8,17 +8,51 @@ DynamicIsland is a native macOS SwiftUI/AppKit prototype that turns the MacBook 
 
 The app targets macOS 14.6+ and uses Swift Package Manager, SwiftUI views hosted in AppKit overlay panels, and a menu bar accessory app model.
 
+## Current Stable Baseline
+
+- Active baseline: **Phase 8C15 stable final**.
+- Active Git state after merging the fixed zip back into the original repo:
+  - Branch: `phase-5h2-shoulder-tuning`
+  - Commit: `de337d3`
+  - Tag: `phase-8c15-stable-final`
+- Validation on macOS passed after the merge:
+  - `swift build`
+  - `swift test` with 57 tests and 0 failures
+  - `Scripts/package_app.sh`
+  - Packaged app path: `dist/DynamicIsland.app`
+- Current known non-blocking warning:
+  - `FileThumbnailCache` emits a Swift concurrency warning about capturing a non-Sendable `self` inside a `@Sendable` closure.
+  - This warning does not currently block build, test, package, or launch.
+- Current user-confirmed stable behavior:
+  - Collapsed swipe left/right changes exactly one song per physical swipe.
+  - Album artwork flips correctly and uses the real new cover.
+  - Visualizer accent color follows the real displayed artwork, not stale previous artwork.
+  - Collapsed swipe down expands fully.
+  - Expanded swipe up collapses when `Expanded Island Gestures -> Swipe Up -> Collapse` is set.
+  - Media module next/previous and natural media changes also trigger album-cover flip.
+- Current responsiveness tuning:
+  - `mediaSwipeQuietPeriod = 0.045`
+  - `mediaSwipePostCommandLockoutSeconds = 0.05`
+  - These values were user-tested as responsive and currently stable. Increase the lockout if aggressive trackpad swipes ever double-skip.
+
 ## Non-Negotiable Behavior To Preserve
 
-- Collapsed pill click-through behavior must remain fixed.
-- Collapsed pill itself remains clickable to expand.
-- Expanded tray internal buttons, sliders, shortcuts, timer controls, and file shelf controls remain clickable.
-- Areas outside the visible pill/tray must not block other macOS apps or menu bar clicks.
-- Expanded tray must collapse on mouse leave.
-- Expanded tray shell/background keeps its bouncy/elastic spring behavior.
+- The stable **single host panel / shape-aware hit-testing** architecture must remain intact.
+- Do not return to the old split-panel architecture unless there is a proven, isolated reason and a migration plan.
+- The island panel must not block clicks outside the visible collapsed/expanded island surface.
+- Collapsed pill click-through outside the visible pill must remain fixed.
+- Collapsed pill itself remains hoverable/clickable and can expand.
+- Expanded island internal buttons, sliders, tabs, shortcuts, timer controls, stats, Tray file tiles, AirDrop zone, and settings controls remain clickable.
+- Expanded island must collapse on the intended outside-hover/leave behavior and through the configured expanded swipe-up gesture.
+- Collapsed swipe down must expand without immediately collapsing from trackpad momentum/tail events.
+- Collapsed swipe left/right must remain one physical swipe = exactly one media next/previous command.
+- Album artwork flips must wait for the real new artwork image/revision before midpoint swap.
+- Visualizer accent color must be keyed from the actual displayed artwork image key/revision, not the early selected artwork key.
+- Expanded tray shell/background keeps its bouncy/elastic shell behavior.
 - Inner expanded components use clean blur/scale/opacity animation without spring bounce.
-- Do not rewrite `OverlayWindowController` unless a specific feature requires it.
-- Do not change the split-panel click-through architecture unless a specific feature requires it.
+- `IslandStateStore` must remain limited to `.collapsed` and `.expanded`.
+- Do not rewrite `OverlayWindowController` unless a specific feature requires it; it is the most fragile file.
+- Do not remove or bypass the artwork-image/revision guards that prevent stale covers and stale visualizer colors.
 
 ## Current Architecture
 
@@ -46,15 +80,22 @@ The app targets macOS 14.6+ and uses Swift Package Manager, SwiftUI views hosted
 
 - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
   - This is the most fragile file in the project.
-  - Current architecture uses split panels:
-    - `panel`: visual-only canvas for collapsed rendering. It must ignore mouse events.
-    - `collapsedHitPanel`: small click target over the collapsed pill.
-    - `expandedPanel`: interactive expanded tray panel that owns SwiftUI controls.
-  - This split exists because a single large transparent `NSPanel` caused hidden click-blocking areas, while physically resizing one panel caused positioning regressions.
-  - Collapse checks are centralized through `collapseIfExpandedMouseOutsideAfterGrace(...)`.
-  - A repeating timer while expanded is intended to be the source of truth for collapse detection.
-  - Mouse-exit and mouse-move monitors are fast paths only.
-  - Escape fallback currently exists in DEBUG/diagnostic work to prove state/window visibility behavior.
+  - Current stable architecture is the **Phase 6B single host panel with shape-aware hit testing**:
+    - One stable island panel hosts the SwiftUI island surface.
+    - The panel does not physically resize between collapsed and expanded during the normal morph.
+    - SwiftUI owns the visual collapsed/expanded surface morph.
+    - `IslandLayoutStore.updateLocal(...)` converts screen-space frames into panel-local frames.
+    - Click-through is handled by setting window-level mouse event behavior from the currently visible island rect.
+  - Preserve the stable shell/content sequencing:
+    - Expansion: shell establishes first; inner content mounts hidden and reveals after the shell is ready.
+    - Collapse: inner content exits first; shell collapses after.
+  - Collapse and hover containment must use the current visible/target frames and should not regress to top-left origin bugs.
+  - Trackpad scroll gestures are handled here:
+    - Collapsed horizontal media gestures use end-of-swipe resolution.
+    - Collapsed swipe down expansion remains immediate and separate.
+    - Expanded swipe up collapse must not consume the momentum tail from collapsed swipe-down expansion.
+  - Do not bring back hidden click-blocking transparent areas.
+  - Do not reintroduce separate presentation states into `IslandStateStore`.
 
 ### Geometry
 
@@ -79,8 +120,9 @@ The app targets macOS 14.6+ and uses Swift Package Manager, SwiftUI views hosted
   - Avoid reintroducing peek/pinned/drag-receiving states.
 
 - `Sources/DynamicIsland/State/AppSettings.swift`
-  - Stores overlay enablement, launch-at-login, animation intensity, and module flags.
-  - Current size properties are mostly legacy inputs; notched geometry should own actual notch sizing.
+  - Stores overlay enablement, launch-at-login, animation intensity, module flags, gesture mappings, tab/module visibility, sizing inputs, timer presets, stats settings, and media/tray controls.
+  - Expanded gesture mappings include `expandedSwipeUpAction`; the UI exposes this under `Settings -> Gestures -> Expanded Island Gestures`.
+  - Size settings are wired into the current stable geometry path where supported; avoid bypassing `NotchGeometryService` and `IslandLayoutStore`.
 
 ### Views
 
@@ -100,9 +142,9 @@ The app targets macOS 14.6+ and uses Swift Package Manager, SwiftUI views hosted
 ### Modules
 
 - `Sources/DynamicIsland/Modules/MediaController.swift`
-  - Spotify-first media detection and control.
-  - Apple Music fallback.
-  - Avoid broad changes without testing permissions and playback state.
+  - Media detection/arbitration supports System Now Playing/MediaRemote, Spotify, Apple Music, and browser/YouTube fallbacks.
+  - Publishes selected media identity, artwork keys, actual displayed artwork image key/revision, transport control availability, and flip requests.
+  - Album-cover flip and visualizer color depend on the actual displayed image/revision path; avoid broad changes without testing Spotify, Apple Music, YouTube/browser, paused/playing arbitration, artwork download timing, and natural track changes.
 
 - `Sources/DynamicIsland/Modules/FileShelfStore.swift`
   - Temporary in-memory file shelf.
@@ -118,18 +160,26 @@ The app targets macOS 14.6+ and uses Swift Package Manager, SwiftUI views hosted
 ### Collapsed
 
 - Small top-attached pill around the notch.
-- Album art on the left.
-- Native-style compact 3-bar visualizer on the right.
-- Only the visible pill should be clickable.
-- Hidden expanded tray/canvas areas must not intercept clicks.
+- Album art on the left when a displayable media session exists.
+- Native-style compact 12-bar simulated visualizer on the right.
+- Hovering the collapsed pill can reveal the compact media preview.
+- Only the visible pill/hover surface should receive interaction.
+- Hidden expanded/canvas areas must not intercept clicks.
+- Trackpad gestures:
+  - Swipe left over collapsed media pill: next track.
+  - Swipe right over collapsed media pill: previous track.
+  - Swipe down over collapsed pill: expand island.
+  - One continuous left/right swipe must fire exactly one media command.
 
 ### Expanded
 
-- Centered top-attached tray.
+- Centered top-attached tray/island surface.
 - Internal controls are clickable.
-- Tray collapses on first mouse leave after a small grace period.
-- Escape can be used as a diagnostic fallback.
-- The tray itself keeps bouncy/elastic shell expansion.
+- Tabs/pages currently include Island, Tray, Timer, and Stats.
+- Expanded swipe up can collapse the island when configured in Settings.
+- Tray collapses on outside hover/leave using the current stable containment behavior.
+- Escape can be used as a diagnostic fallback when present.
+- The shell keeps bouncy/elastic expansion/collapse behavior.
 - Inner modules animate with clean blur/scale/opacity and subtle stagger.
 
 ## Validation Commands
@@ -139,6 +189,14 @@ Run after each phase:
 ```sh
 swift build
 swift test
+Scripts/package_app.sh
+```
+
+
+When `Scripts/package_app.sh` is not executable after unzipping/copying a project, run:
+
+```sh
+chmod +x Scripts/package_app.sh
 Scripts/package_app.sh
 ```
 
@@ -2763,3 +2821,534 @@ For every requested feature phase:
 - Preserved next = left flip and previous = right flip with midpoint image swap.
 - Added expanded swipe-up fallback collapse for stale saved settings where `expandedSwipeUpAction` may still be `.none`.
 - Preserved gesture settings gates for enabled/input/action mappings and media/collapse availability.
+
+### 2026-07-06 - Phase 8C.13 Expanded Swipe Fix Reverted
+
+- Attempted a focused `OverlayWindowController.swift` replacement for expanded swipe-up collapse.
+- The attempt was rejected because it introduced a regression:
+  - Collapsed swipe down began expanding the island but then immediately collapsed again before inner content appeared.
+  - Root cause: the momentum/tail from the collapsed swipe-down expansion could be interpreted as an expanded swipe-up collapse during the same scroll stream.
+- Do not reuse the 8C13 overlay replacement.
+- This phase is documented only as a reverted/invalid intermediate state.
+
+### 2026-07-06 - Phase 8C.14 Expanded Swipe Repair
+
+- Repaired expanded swipe-up collapse without breaking collapsed swipe-down expansion.
+- Fixed the scroll-tail handoff problem:
+  - Collapsed swipe down expansion no longer immediately triggers expanded collapse from the same gesture momentum.
+  - Expanded swipe-up collapse works only once the expanded island is actually active and the gesture is inside the expanded island region.
+- Preserved:
+  - Collapsed swipe down expands fully and content appears.
+  - Expanded swipe up collapses when `Settings -> Gestures -> Expanded Island Gestures -> Swipe Up` is set to `Collapse`.
+  - Collapsed swipe left/right remain one physical swipe = one media command.
+  - Album cover flip and visualizer behavior were not touched.
+- Changed files:
+  - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
+  - `context.md`
+- Validation on macOS:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+  - Manual launch and gesture testing.
+
+### 2026-07-06 - Phase 8C.15 Visualizer Artwork Color Sync And Universal Album Flip
+
+- Fixed visualizer accent-color staleness:
+  - The visualizer no longer keys accent color from an early selected `artworkKey` that can update before the new image is loaded.
+  - Color extraction now follows the actual displayed artwork image key/revision so it cannot cache `new artwork key -> old artwork image color`.
+  - This fixed the visualizer keeping the previous song/album color during both gesture skips and natural track changes.
+- Generalized album-cover flip behavior:
+  - Gesture next/previous still trigger directional flips.
+  - Expanded media module next/previous buttons also trigger flips.
+  - Internal `nextTrack()` / `previousTrack()` calls trigger flips.
+  - Natural detected media identity/artwork changes also trigger a forward/default flip when a true previous direction cannot be inferred.
+- Preserved artwork correctness guards:
+  - Flip waits for the real new `NSImage` / displayed image revision before starting.
+  - Midpoint swap uses the actual new cover.
+  - Placeholder/old-cover flashes are still avoided.
+  - Reduce Motion still bypasses the 3D flip.
+- Preserved:
+  - Expanded swipe-up collapse from Phase 8C.14.
+  - Collapsed swipe-down expansion.
+  - One-swipe-one-song media gestures.
+  - Media arbitration and async artwork guards.
+  - Timer, Stats, Tray, AirDrop, File Shelf, settings, and app launch behavior.
+- Changed files:
+  - `Sources/DynamicIsland/Modules/MediaController.swift`
+  - `Sources/DynamicIsland/Views/ModuleViews.swift`
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `context.md`
+- Validation on macOS:
+  - `swift build`
+  - `swift test`
+  - `Scripts/package_app.sh`
+  - Manual launch and media testing.
+
+### 2026-07-06 - Phase 8C.15 Responsiveness Tuning
+
+- User-tuned collapsed media swipe timing after Phase 8C.15:
+  - `mediaSwipeQuietPeriod = 0.045`
+  - `mediaSwipePostCommandLockoutSeconds = 0.05`
+- Result:
+  - Swipe left/right feels close to instant.
+  - Album flip starts as soon as the external player publishes the song change and the real artwork path updates.
+  - Spotify was manually tested and behaved correctly.
+- Stability note:
+  - If future testing on Apple Music or YouTube/browser shows double-skips from aggressive trackpad momentum, increase `mediaSwipePostCommandLockoutSeconds` first, e.g. to `0.15`.
+  - Do not remove end-of-swipe resolution or artwork revision guards to make the animation feel faster.
+
+### 2026-07-06 - Git Repo Restoration And Stable Final Tag
+
+- Restored the stable fixed zip code into the original Git repository while preserving history.
+- Active repo after merge:
+  - Path: `~/Documents/DynamicIsland`
+  - Branch: `phase-5h2-shoulder-tuning`
+  - Commit: `de337d3`
+  - Tag: `phase-8c15-stable-final`
+- The previous zipped working copy was renamed to a backup folder.
+- A full backup of the original Git repo before the merge was also created.
+- Final verification on macOS passed:
+  - `git status` clean
+  - `swift build`
+  - `swift test` with 57 tests and 0 failures
+  - `chmod +x Scripts/package_app.sh`
+  - `Scripts/package_app.sh`
+  - Packaged app produced at `dist/DynamicIsland.app`
+- Current non-blocking warning:
+  - `FileThumbnailCache` still emits the Swift concurrency non-Sendable capture warning in `ModuleViews.swift`.
+  - This warning is known and did not block build/test/package.
+
+### 2026-07-11 - Phase 9A/9B Island Theme System And Hybrid Glass Shell
+
+- Created branch:
+  - `phase-9ab-island-theme-system`
+- Added island shell theme setting:
+  - `IslandThemeStyle.classicBlack`
+  - `IslandThemeStyle.liquidGlass`
+  - Classic Black is the default and invalid stored raw values fall back to Classic Black.
+- Updated Settings:
+  - Added an Appearance/Shell picker labeled `Island Theme`.
+  - Phase 9D later simplified the active options to Classic Black and Liquid Glass only.
+  - Added helper text explaining that Liquid Glass uses native glass when available and falls back to macOS material on older systems.
+- Added theme-aware shell rendering:
+  - `IslandSurfaceBackground` owns Classic Black and Liquid Glass fallback shell backgrounds after Phase 9D.
+  - Classic Black preserves the stable black shell style.
+  - Liquid Glass uses a macOS material fallback with dark readability tint and subtle highlight layering.
+  - Hybrid Black + Glass was prototyped here and removed from the active product in Phase 9D.
+- Native Liquid Glass handling:
+  - No direct `glassEffect(_:in:)` call was added because older local SDKs can fail compilation even behind `#available`.
+  - A TODO is isolated in `IslandThemeBackground.swift` for adding the native SwiftUI Liquid Glass path when building with an SDK that exposes the API.
+- Preserved:
+  - Theme changes are visual-only.
+  - Overlay frames, hit testing, gestures, media logic, album flip, visualizer color/timing, Tray, AirDrop, Timer, Stats, shell morph sequencing, and parked notch shoulder behavior were not changed.
+  - Existing shell shadow, stroke, shape, content clipping, and shell-morph performance protections remain in place.
+- Added tests:
+  - Invalid island theme raw value falls back to Classic Black.
+  - Theme selection persists by raw value.
+- Changed files:
+  - `Sources/DynamicIsland/State/AppSettings.swift`
+  - `Sources/DynamicIsland/Views/SettingsView.swift`
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `Sources/DynamicIsland/Views/IslandThemeBackground.swift`
+  - `Tests/DynamicIslandTests/AppSettingsTests.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `chmod +x Scripts/package_app.sh`
+  - `Scripts/package_app.sh`
+  - `open /Users/makeiteasy3/Documents/DynamicIsland/dist/DynamicIsland.app`
+- Known limitation:
+  - Native Liquid Glass depends on building with an SDK that exposes SwiftUI `glassEffect`; older SDKs use the macOS material fallback path.
+
+### 2026-07-11 - Phase 9C Liquid Glass Visual Repair
+
+- Reworked fallback Liquid Glass rendering:
+  - Replaced the blur-heavy material-dominant look with a layered glossy smoked-glass shell.
+  - Reduced dominant material opacity so the glass reads sharper and darker instead of frosted/cloudy.
+  - Added dark smoked tint, top gloss, diagonal specular sheen, bottom depth gradient, and rim highlight strokes.
+  - All decorative glass layers remain clipped to the existing island shell shape and opt out of hit testing.
+- Note:
+  - Hybrid Black + Liquid Glass rendering from this phase was removed from the active product in Phase 9D.
+- Updated Settings helper text:
+  - Clarifies that older macOS versions use a custom glossy material fallback.
+- Preserved:
+  - Classic Black remains the stable black shell path.
+  - No changes were made to `OverlayWindowController`, hit testing, panel architecture, gestures, media controller, album flip, visualizer logic, artwork color sync, Tray, Timer, Stats, Island navigation, or shell morph timing.
+  - Native `glassEffect` remains documented as a future SDK-gated path and is not referenced directly in compiled code.
+- Changed files:
+  - `Sources/DynamicIsland/Views/IslandThemeBackground.swift`
+  - `Sources/DynamicIsland/Views/SettingsView.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `chmod +x Scripts/package_app.sh`
+  - `Scripts/package_app.sh`
+  - `pkill -9 DynamicIsland`
+  - `open dist/DynamicIsland.app`
+- Known limitation:
+  - Native Liquid Glass still depends on building with an SDK that exposes SwiftUI `glassEffect`; the current fallback is custom SwiftUI layering over macOS material.
+
+### 2026-07-11 - Phase 9C.1 Liquid Glass Guidance Alignment
+
+- Rechecked native SwiftUI Liquid Glass availability:
+  - Local SDK path: `MacOSX26.2.sdk`.
+  - Searched SwiftUI SDK interfaces/framework contents for `glassEffect`, `GlassEffectContainer`, and `glassEffectTransition`.
+  - Those symbols were not exposed in the readable local SwiftUI interfaces, so no direct native `glassEffect` calls were added.
+  - The helper keeps a clear TODO for adding `glassEffect(_:in:)`, `GlassEffectContainer`, and `glassEffectTransition` when the active SDK exposes them safely.
+- Tightened the fallback Liquid Glass visual implementation:
+  - Material is now only a low-opacity substrate, not the dominant visible effect.
+  - Increased smoked-glass darkness and contrast.
+  - Added stronger top gloss, top-edge glow, diagonal specular sheen, bottom depth, and brighter rim lighting.
+  - No blur is applied to island content, album art, visualizer, controls, sliders, text, tabs, Tray, Timer, or Stats.
+- Note:
+  - Hybrid Black + Liquid Glass rendering was removed from the active product in Phase 9D.
+- Preserved:
+  - Classic Black default/stable shell.
+  - `OverlayWindowController`, panel architecture, hit testing, gestures, media, album flip, visualizer logic, artwork color sync, Tray, Timer, Stats, Island navigation, and shell morph timing were not changed.
+- Changed files:
+  - `Sources/DynamicIsland/Views/IslandThemeBackground.swift`
+  - `context.md`
+- Validation passed:
+  - `git status`
+  - `swift build`
+  - `swift test`
+  - `chmod +x Scripts/package_app.sh`
+  - `Scripts/package_app.sh`
+  - `pkill -9 DynamicIsland`
+  - `open dist/DynamicIsland.app`
+- Validation note:
+  - Packaging still reports the existing `FileThumbnailCache` non-Sendable capture warning in `ModuleViews.swift`.
+  - `chmod +x Scripts/package_app.sh`
+  - `Scripts/package_app.sh`
+  - `pkill -9 DynamicIsland`
+  - `open dist/DynamicIsland.app`
+
+### 2026-07-11 - Phase 9D Theme Simplification
+
+- Removed Black + Liquid Glass hybrid theme option.
+- Theme picker now exposes only:
+  - Classic Black
+  - Liquid Glass
+- Updated `IslandThemeStyle`:
+  - Removed the active `hybridBlackGlass` case.
+  - Classic Black remains the default.
+  - Old saved hybrid-style raw values such as `hybridBlackGlass` and `blackLiquidGlass` safely migrate/fallback to Liquid Glass without resetting unrelated settings.
+- Simplified theme rendering:
+  - Removed the hybrid split background renderer and split-ratio code.
+  - Classic Black remains the stable black shell path.
+  - Liquid Glass/fallback renderer remains available.
+- Preserved:
+  - No changes were made to `OverlayWindowController`, panel architecture, hit testing, gestures, media controller, album flip, visualizer logic, artwork color sync, Tray, AirDrop, Timer, Stats, Island navigation, or shell morph timing.
+- Changed files:
+  - `Sources/DynamicIsland/State/AppSettings.swift`
+  - `Sources/DynamicIsland/Views/SettingsView.swift`
+  - `Sources/DynamicIsland/Views/IslandThemeBackground.swift`
+  - `Tests/DynamicIslandTests/AppSettingsTests.swift`
+  - `context.md`
+
+### 2026-07-11 - Phase 10A Mac-Style Live Activities Foundation
+
+- Added an internal macOS overlay live activity foundation:
+  - This does not integrate Apple ActivityKit.
+  - `DynamicIslandLiveActivityKind`
+  - `DynamicIslandLiveActivity`
+  - `LiveActivityStore`
+- Added shared `LiveActivityStore` ownership:
+  - Created once in `AppDelegate`.
+  - Passed through `IslandModules`.
+  - Store supports deterministic sorting by priority, updated date, and title.
+  - Store supports primary activity selection, update-by-id replacement, removal, remove-all, and clamped progress.
+- Added activity sources:
+  - Timer activity when the timer is running or paused with partially elapsed remaining time.
+  - Media activity when a displayable media source exists.
+  - File Tray activity when new files are added to the tray.
+- Added Island tab UI:
+  - Lightweight Live Activities section appears only when activities exist and live activities are enabled.
+  - Shows up to three compact cards.
+  - Timer card can switch to the Timer tab.
+  - File Tray card can switch to the Tray tab.
+  - Media card remains on the Island tab.
+- Updated Live Activities settings:
+  - Existing persisted Live Activities controls now enable/disable the Phase 10A sources.
+  - Music, Timer, and File Tray source toggles are active.
+  - Battery, Calendar, Downloads, style, auto-dismiss, and animation controls remain reserved for later phases.
+- Preserved:
+  - Existing Media module, Timer tab, Tray tab, Stats tab, collapsed pill layout, album flip, visualizer color sync, tray actions, AirDrop, OverlayWindowController, hit testing, gestures, panel architecture, stats polling, timer engine, theme renderer, and shell morph timing were not rewritten.
+  - Collapsed live activity priority behavior is not implemented yet; that remains Phase 10B.
+- Added tests:
+  - Live activity sorting by priority/date/title.
+  - Primary activity selection.
+  - Updating the same id replaces the previous activity.
+  - Removing activity works.
+  - Progress clamping covers nil, invalid, low, in-range, and high values.
+- Changed files:
+  - `Sources/DynamicIsland/App/DynamicIslandApp.swift`
+  - `Sources/DynamicIsland/Modules/IslandModule.swift`
+  - `Sources/DynamicIsland/Modules/LiveActivityStore.swift`
+  - `Sources/DynamicIsland/State/AppSettings.swift`
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `Sources/DynamicIsland/Views/SettingsView.swift`
+  - `Tests/DynamicIslandTests/LiveActivityStoreTests.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `chmod +x Scripts/package_app.sh`
+  - `Scripts/package_app.sh`
+  - `pkill -9 DynamicIsland`
+  - `open /Users/makeiteasy3/Documents/DynamicIsland/dist/DynamicIsland.app`
+- Validation note:
+  - First `open dist/DynamicIsland.app` returned LaunchServices `-600` immediately after `pkill`; retrying with the absolute app path succeeded.
+  - Packaging still reports the existing `FileThumbnailCache` non-Sendable capture warning in `ModuleViews.swift`.
+
+### 2026-07-11 - Phase 10B Collapsed Live Activity Priority Settings
+
+- Added collapsed live activity priority selection:
+  - Running Timer, Playing Media, Paused Timer, Recent Files, and Paused Media are now modeled as selectable collapsed priority sources.
+  - Default order is Running Timer, Playing Media, Paused Timer, Recent Files, then Paused Media.
+  - Higher user priority wins; ties fall back to the default order, then update time/title for deterministic selection.
+- Added persisted priority settings:
+  - Settings now exposes a `Collapsed Live Activity Priority` group with steppers for each source.
+  - Priorities are clamped to `0...200`.
+  - Restore Defaults resets the source priorities without touching unrelated settings.
+- Updated collapsed pill rendering:
+  - Media-selected collapsed content keeps the existing compact artwork/visualizer path.
+  - Timer/file live activity selections render compact icon/text/progress status inside the existing pill.
+  - Inactive mode remains the empty compact pill.
+- Preserved gesture behavior:
+  - Collapsed swipe down still expands.
+  - Media left/right gestures remain active only when the collapsed content mode is media.
+  - Timer/file collapsed content does not route horizontal swipes to media controls.
+- Updated live activity metadata:
+  - Paused timer activities now publish `isActive = false`, allowing the selector to distinguish running and paused timers.
+- Added tests:
+  - Default source ordering.
+  - Disabled source eligibility.
+  - Custom priorities overriding defaults.
+  - Tie fallback ordering.
+  - Priority clamping and settings reset.
+- Preserved:
+  - No changes were made to `OverlayWindowController`, panel architecture, hit testing, album flip, visualizer color logic, media arbitration, Tray, AirDrop, Timer engine, Stats polling, theme rendering, or shell morph timing.
+- Changed files:
+  - `Sources/DynamicIsland/App/DynamicIslandApp.swift`
+  - `Sources/DynamicIsland/Modules/LiveActivityStore.swift`
+  - `Sources/DynamicIsland/State/AppSettings.swift`
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `Sources/DynamicIsland/Views/SettingsView.swift`
+  - `Tests/DynamicIslandTests/AppSettingsTests.swift`
+  - `Tests/DynamicIslandTests/CollapsedLiveActivitySelectorTests.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `chmod +x Scripts/package_app.sh`
+  - `Scripts/package_app.sh`
+  - `pkill -9 DynamicIsland`
+  - `open dist/DynamicIsland.app`
+- Validation note:
+  - Packaging still reports the existing `FileThumbnailCache` non-Sendable capture warning in `ModuleViews.swift`.
+
+### 2026-07-11 - Phase 10B.1 Collapsed Live Activity Rendering Repair
+
+- Fixed collapsed priority mode rendering:
+  - Replaced the generic collapsed live activity mode with explicit collapsed modes for media, timer, file tray, and inactive.
+  - Timer and file tray live activities now render dedicated compact collapsed content instead of hiding media and showing an empty pill.
+- Added compact collapsed activity views:
+  - Timer mode shows a small timer/pause icon and monospaced remaining time.
+  - File tray mode shows a tray icon and compact file count text.
+  - Media mode continues to use the existing compact artwork/visualizer path.
+- Fixed collapsed active sizing:
+  - `OverlayWindowController` now computes collapsed active sizing from the selected collapsed content mode, not only `media.hasActiveMediaSource`.
+  - The overlay observes the shared `LiveActivityStore` so timer/file activity changes can update collapsed geometry.
+- Updated compact observation:
+  - `CompactIslandView` observes the shared `LiveActivityStore` and animates when collapsed live activity content changes.
+- Preserved gesture behavior:
+  - Horizontal media gestures remain gated to visible media compact mode.
+  - Timer/file collapsed modes do not route left/right gestures to media controls.
+  - Collapsed swipe down expansion, expanded swipe up collapse, album flip, visualizer color sync, and click-through behavior were preserved.
+- Added tests:
+  - Custom priority can make paused media beat a running timer.
+  - Selected timer and file tray modes are not inactive.
+- Preserved:
+  - No changes were made to media source arbitration, album flip logic, visualizer color logic, tray file actions, AirDrop logic, timer engine internals, stats polling, shell morph timing, or panel architecture beyond collapsed active sizing input.
+- Changed files:
+  - `Sources/DynamicIsland/Modules/LiveActivityStore.swift`
+  - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `Tests/DynamicIslandTests/CollapsedLiveActivitySelectorTests.swift`
+  - `context.md`
+- Validation passed:
+  - `git status`
+  - `swift build`
+  - `swift test`
+  - `chmod +x Scripts/package_app.sh`
+  - `Scripts/package_app.sh`
+  - `open /Users/makeiteasy3/Documents/DynamicIsland/dist/DynamicIsland.app`
+- Validation note:
+  - `open dist/DynamicIsland.app` returned LaunchServices `-600` immediately after `pkill`; retrying with the absolute app path succeeded.
+  - Packaging still reports the existing `FileThumbnailCache` non-Sendable capture warning in `ModuleViews.swift`.
+
+### 2026-07-11 - Phase 10B.4 Compact Timer Pill Final Fix
+
+- Repaired the base compact timer pill without changing collapsed geometry:
+  - No timer/live-activity-specific base collapsed height override was added.
+  - Timer active collapsed mode continues to use the same base row height as the normal compact media pill.
+- Changed the compact timer base layout to a notch-safe side-slot layout:
+  - Timer icon stays in a fixed left slot.
+  - A fixed center spacer keeps content away from the physical notch.
+  - Remaining time stays in a fixed right slot.
+  - Timer text uses smaller monospaced digits with tightening and scaling before clipping.
+- Kept compact timer content minimal:
+  - Base compact timer shows only icon plus remaining time.
+  - Timer status/details remain in the hover-expanded live activity preview.
+- Preserved:
+  - Hover-expanded live activity preview layout and height were not changed.
+  - Media compact UI, album flip, visualizer color sync, collapsed swipe down, expanded swipe up, media gesture gating, click-through behavior, Live Activity priority logic, Tray, AirDrop, Timer engine internals, Stats polling, theme rendering, and shell morph timing were not changed.
+- Changed files:
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `context.md`
+- Validation passed:
+  - `git status`
+  - `swift build`
+  - `swift test`
+  - `chmod +x Scripts/package_app.sh`
+  - `Scripts/package_app.sh`
+  - `pkill -9 DynamicIsland`
+  - `open dist/DynamicIsland.app`
+- Validation note:
+  - Packaging still reports the existing `FileThumbnailCache` non-Sendable capture warning in `ModuleViews.swift`.
+
+### 2026-07-11 - Phase 10B.5 Regular Collapsed Timer Pill Final Repair
+
+- Fixed only the non-hovered regular collapsed timer pill:
+  - Targeted `CollapsedTimerActivityCompactView`, the base collapsed timer view used when timer live activity wins priority and the pill is not hovered.
+  - Did not change hover-expanded Live Activities preview rows, hover height, or the expanded Live Activities section.
+- Preserved normal collapsed height behavior:
+  - Timer base pill continues to use the same `CompactIslandView` row height as normal media active collapsed mode.
+  - No timer/live-activity-specific collapsed geometry, frame height, minimum height, or vertical padding was added.
+- Repositioned timer base content with notch-safe absolute side slots:
+  - Timer icon is pinned to the left safe side.
+  - The center/notch area is left empty.
+  - Full remaining time is pinned to the right safe side with a wider adaptive text slot for minutes and hour-format values.
+  - Base timer pill shows only icon plus compact monospaced remaining time.
+- Preserved:
+  - Media compact UI, gestures, album flip, visualizer color sync, collapsed swipe down, expanded swipe up, media gesture gating, click-through behavior, Live Activity priority logic, Tray, AirDrop, Timer engine internals, Stats polling, theme rendering, and shell morph timing were not changed.
+- Changed files:
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `context.md`
+- Validation passed:
+  - `git status`
+  - `swift build`
+  - `swift test`
+  - `chmod +x Scripts/package_app.sh`
+  - `Scripts/package_app.sh`
+  - `open /Users/makeiteasy3/Documents/DynamicIsland/dist/DynamicIsland.app`
+- Validation note:
+  - `open dist/DynamicIsland.app` returned LaunchServices `-600` immediately after `pkill`; retrying with the absolute app path succeeded.
+  - Packaging still reports the existing `FileThumbnailCache` non-Sendable capture warning in `ModuleViews.swift`.
+
+### 2026-07-11 - Phase 10B.6 Regular Collapsed Timer Pill Source-of-Truth Layout Fix
+
+- Repaired only the regular non-hovered collapsed timer pill:
+  - Targeted the timer base compact path used when Timer live activity wins collapsed priority.
+  - Hover-expanded live activity preview and expanded Live Activities section were left unchanged.
+- Reused the existing media compact pill layout model:
+  - Added `CompactCollapsedSideSlotLayout` as the shared left-slot/spacer/right-slot row used by the media compact pill and timer compact pill.
+  - Timer base compact layout now uses the same base collapsed row height and side-slot placement as the existing media compact pill.
+  - Removed the timer-specific `GeometryReader`/absolute positioning path from Phase 10B.5.
+- Fixed timer content placement:
+  - Timer icon uses the media left-slot placement with a constrained 14 pt visual size.
+  - Timer remaining time uses the media right-slot/visualizer-safe placement.
+  - Timer time uses a smaller bold monospaced full-time string with tightening and scaling so minutes and seconds remain visible.
+  - Base timer pill shows only icon plus compact remaining time.
+- Height/geometry verification:
+  - `NotchGeometryService.swift` has no diff from `phase-8c15-stable-final`, so collapsed geometry height remains the stable source of truth.
+  - No timer/live-activity-specific collapsed geometry, frame height, minimum height, or vertical padding was added.
+- Preserved:
+  - Media compact UI, album flip, visualizer color sync, collapsed swipe down, expanded swipe up, media gesture gating, click-through behavior, Live Activity priority logic, Tray, AirDrop, Timer engine internals, Stats polling, theme rendering, and shell morph timing were not changed.
+- Changed files:
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `context.md`
+- Validation passed:
+  - `git status`
+  - `swift build`
+  - `swift test`
+  - `chmod +x Scripts/package_app.sh`
+  - `Scripts/package_app.sh`
+  - `open /Users/makeiteasy3/Documents/DynamicIsland/dist/DynamicIsland.app`
+- Validation note:
+  - `open dist/DynamicIsland.app` returned LaunchServices `-600` immediately after `pkill`; retrying with the absolute app path succeeded.
+  - Packaging still reports the existing `FileThumbnailCache` non-Sendable capture warning in `ModuleViews.swift`.
+
+### 2026-07-11 - Phase 10B.3 Collapsed Timer Pill Layout Repair
+
+- Restored normal base collapsed pill height behavior for live activity modes:
+  - Reverted the compact collapsed content row height back to the stable `16` pt row used by the media pill.
+  - Did not change collapsed geometry, expanded geometry, hover-expanded preview height, or shell morph timing.
+- Kept hover-expanded live activity preview unchanged:
+  - Existing Timer/Media/File hover rows and multi-activity preview behavior remain intact.
+- Fixed compact timer base layout:
+  - Base timer pill now uses only a compact icon plus monospaced remaining time.
+  - Removed extra base paused indicator text/icon; pause/running detail remains in the hover preview.
+  - Reduced icon footprint, reduced timer font slightly, added layout priority, bounded trailing time width, and allowed tighter scaling before clipping.
+- Preserved:
+  - Media compact UI, album flip, visualizer color sync, collapsed swipe down, expanded swipe up, click-through behavior, media gesture gating, Live Activity priority logic, Tray, AirDrop, Timer engine internals, Stats polling, theme rendering, and expanded Live Activities section were not changed.
+- Changed files:
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `context.md`
+- Validation passed:
+  - `git status`
+  - `swift build`
+  - `swift test`
+  - `chmod +x Scripts/package_app.sh`
+  - `Scripts/package_app.sh`
+  - `pkill -9 DynamicIsland`
+  - `open dist/DynamicIsland.app`
+- Validation note:
+  - Packaging still reports the existing `FileThumbnailCache` non-Sendable capture warning in `ModuleViews.swift`.
+
+### 2026-07-11 - Phase 10B.2 Collapsed Live Activity Hover Preview
+
+- Fixed compact timer collapsed layout:
+  - Timer text now reserves trailing width, uses monospaced digits, allows tightening, and scales down before clipping.
+  - Timer formatting now uses `m:ss` under one hour and `h:mm:ss` at one hour or more.
+- Reused collapsed hover expansion for live activity previews:
+  - Hover preview now supports up to three eligible live activity rows.
+  - Preview ordering follows the same user-configurable collapsed live activity priorities.
+  - The primary collapsed activity appears first, followed by secondary activities such as Now Playing or recent files.
+- Preserved existing media hover behavior:
+  - Media-only collapsed hover still shows song/artist details.
+  - Media rows are not duplicated when live activity preview rows are available.
+- Added compact hover preview rows:
+  - Timer row shows title/status and trailing remaining time.
+  - Media row shows song and artist/source.
+  - File row shows file activity title/details.
+- Preserved gesture behavior:
+  - Horizontal media gestures remain active only when media is the visible collapsed content mode.
+  - Collapsed swipe down still expands from media, timer, file, and inactive modes.
+- Added tests:
+  - Timer formatting for under and over one hour.
+  - Hover preview includes primary timer and secondary media.
+  - Hover preview respects max row count.
+  - Hover preview ordering follows custom priority.
+  - Disabled sources are excluded from hover preview.
+- Preserved:
+  - No changes were made to `OverlayWindowController`, panel architecture, click-through behavior, shell morph timing, media arbitration, album flip logic, visualizer artwork color sync, tray file actions, AirDrop logic, timer engine internals, stats polling, or theme rendering.
+- Changed files:
+  - `Sources/DynamicIsland/App/DynamicIslandApp.swift`
+  - `Sources/DynamicIsland/Modules/LiveActivityStore.swift`
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `Tests/DynamicIslandTests/CollapsedLiveActivitySelectorTests.swift`
+  - `context.md`
+- Validation passed:
+  - `git status`
+  - `swift build`
+  - `swift test`
+  - `chmod +x Scripts/package_app.sh`
+  - `Scripts/package_app.sh`
+  - `open /Users/makeiteasy3/Documents/DynamicIsland/dist/DynamicIsland.app`
+- Validation note:
+  - `open dist/DynamicIsland.app` returned LaunchServices `-600` immediately after `pkill`; retrying with the absolute app path succeeded.
+  - Packaging still reports the existing `FileThumbnailCache` non-Sendable capture warning in `ModuleViews.swift`.

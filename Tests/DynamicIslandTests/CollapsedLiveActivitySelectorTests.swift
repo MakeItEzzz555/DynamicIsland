@@ -1,0 +1,281 @@
+import XCTest
+@testable import DynamicIsland
+
+final class CollapsedLiveActivitySelectorTests: XCTestCase {
+    func testRunningTimerBeatsPausedMediaByDefault() {
+        let mode = select([
+            activity(id: "media", kind: .media, title: "Song", isActive: false),
+            activity(id: "timer", kind: .timer, title: "Timer", isActive: true)
+        ])
+
+        XCTAssertEqual(mode, .timer(activity(id: "timer", kind: .timer, title: "Timer", isActive: true)))
+    }
+
+    func testPlayingMediaBeatsRecentFilesByDefault() {
+        let mode = select([
+            activity(id: "files", kind: .fileTray, title: "Files added"),
+            activity(id: "media", kind: .media, title: "Song", isActive: true)
+        ])
+
+        XCTAssertEqual(mode, .media)
+    }
+
+    func testPausedTimerBeatsPausedMediaByDefault() {
+        let mode = select([
+            activity(id: "media", kind: .media, title: "Song", isActive: false),
+            activity(id: "timer", kind: .timer, title: "Timer", isActive: false)
+        ])
+
+        XCTAssertEqual(mode, .timer(activity(id: "timer", kind: .timer, title: "Timer", isActive: false)))
+    }
+
+    func testPausedMediaWinsWhenNoTimerFilesOrPlayingMedia() {
+        let mode = select([
+            activity(id: "media", kind: .media, title: "Song", isActive: false)
+        ])
+
+        XCTAssertEqual(mode, .media)
+    }
+
+    func testRecentFilesWinWhenNoTimerOrMedia() {
+        let mode = select([
+            activity(id: "files", kind: .fileTray, title: "Files added")
+        ])
+
+        XCTAssertEqual(mode, .fileTray(activity(id: "files", kind: .fileTray, title: "Files added")))
+    }
+
+    func testDisabledTimerSourceRemovesTimerEligibility() {
+        let mode = select(
+            [
+                activity(id: "timer", kind: .timer, title: "Timer", isActive: true),
+                activity(id: "media", kind: .media, title: "Song", isActive: false)
+            ],
+            toggles: CollapsedLiveActivitySourceToggles(
+                liveActivitiesEnabled: true,
+                timerEnabled: false,
+                mediaEnabled: true,
+                fileTrayEnabled: true
+            )
+        )
+
+        XCTAssertEqual(mode, .media)
+    }
+
+    func testCustomPriorityCanMakePlayingMediaBeatRunningTimer() {
+        var priorities = CollapsedLiveActivityPrioritySettings.defaults
+        priorities.playingMedia = 120
+
+        let mode = select(
+            [
+                activity(id: "timer", kind: .timer, title: "Timer", isActive: true),
+                activity(id: "media", kind: .media, title: "Song", isActive: true)
+            ],
+            priorities: priorities
+        )
+
+        XCTAssertEqual(mode, .media)
+    }
+
+    func testCustomPriorityCanMakeRecentFilesBeatPausedMedia() {
+        var priorities = CollapsedLiveActivityPrioritySettings.defaults
+        priorities.recentFiles = 70
+        priorities.pausedMedia = 65
+
+        let mode = select(
+            [
+                activity(id: "media", kind: .media, title: "Song", isActive: false),
+                activity(id: "files", kind: .fileTray, title: "Files added")
+            ],
+            priorities: priorities
+        )
+
+        XCTAssertEqual(mode, .fileTray(activity(id: "files", kind: .fileTray, title: "Files added")))
+    }
+
+    func testCustomPriorityCanMakePausedMediaBeatRunningTimer() {
+        var priorities = CollapsedLiveActivityPrioritySettings.defaults
+        priorities.pausedMedia = 150
+
+        let mode = select(
+            [
+                activity(id: "timer", kind: .timer, title: "Timer", isActive: true),
+                activity(id: "media", kind: .media, title: "Song", isActive: false)
+            ],
+            priorities: priorities
+        )
+
+        XCTAssertEqual(mode, .media)
+    }
+
+    func testSelectedTimerModeIsNotInactive() {
+        let mode = select([
+            activity(id: "timer", kind: .timer, title: "Timer", isActive: true)
+        ])
+
+        XCTAssertNotEqual(mode, .inactive)
+    }
+
+    func testSelectedFileModeIsNotInactive() {
+        let mode = select([
+            activity(id: "files", kind: .fileTray, title: "Files added")
+        ])
+
+        XCTAssertNotEqual(mode, .inactive)
+    }
+
+    func testTiesUseDefaultOrder() {
+        let priorities = CollapsedLiveActivityPrioritySettings(
+            runningTimer: 80,
+            playingMedia: 80,
+            pausedTimer: 80,
+            recentFiles: 80,
+            pausedMedia: 80
+        )
+
+        let mode = select(
+            [
+                activity(id: "files", kind: .fileTray, title: "Files added"),
+                activity(id: "media", kind: .media, title: "Song", isActive: true)
+            ],
+            priorities: priorities
+        )
+
+        XCTAssertEqual(mode, .media)
+    }
+
+    func testPrioritiesClampDuringSelection() {
+        let priorities = CollapsedLiveActivityPrioritySettings(
+            runningTimer: 500,
+            playingMedia: 90,
+            pausedTimer: 80,
+            recentFiles: 60,
+            pausedMedia: -20
+        )
+
+        XCTAssertEqual(priorities.priority(for: .runningTimer), 200)
+        XCTAssertEqual(priorities.priority(for: .pausedMedia), 0)
+    }
+
+    func testTimerFormattingUnderOneHourUsesMinutesAndSeconds() {
+        XCTAssertEqual(LiveActivityTimeFormatting.remainingTime(572), "9:32")
+        XCTAssertEqual(LiveActivityTimeFormatting.remainingTime(724), "12:04")
+    }
+
+    func testTimerFormattingOverOneHourUsesHoursMinutesAndSeconds() {
+        XCTAssertEqual(LiveActivityTimeFormatting.remainingTime(3_735), "1:02:15")
+    }
+
+    func testPreviewActivitiesIncludePrimaryTimerAndSecondaryMedia() {
+        let activities = [
+            activity(id: "media", kind: .media, title: "Song", isActive: true),
+            activity(id: "timer", kind: .timer, title: "Timer", isActive: true)
+        ]
+
+        let preview = previewActivities(activities)
+
+        XCTAssertEqual(preview.map(\.id), ["timer", "media"])
+    }
+
+    func testPreviewActivitiesRespectMaxRowCount() {
+        let activities = [
+            activity(id: "media", kind: .media, title: "Song", isActive: true),
+            activity(id: "timer", kind: .timer, title: "Timer", isActive: true),
+            activity(id: "files", kind: .fileTray, title: "Files added")
+        ]
+
+        let preview = previewActivities(activities, maxCount: 2)
+
+        XCTAssertEqual(preview.count, 2)
+        XCTAssertEqual(preview.map(\.id), ["timer", "media"])
+    }
+
+    func testPreviewActivitiesFollowCustomPriorityOrdering() {
+        var priorities = CollapsedLiveActivityPrioritySettings.defaults
+        priorities.recentFiles = 140
+
+        let preview = previewActivities(
+            [
+                activity(id: "media", kind: .media, title: "Song", isActive: true),
+                activity(id: "timer", kind: .timer, title: "Timer", isActive: true),
+                activity(id: "files", kind: .fileTray, title: "Files added")
+            ],
+            priorities: priorities
+        )
+
+        XCTAssertEqual(preview.map(\.id), ["files", "timer", "media"])
+    }
+
+    func testPreviewActivitiesExcludeDisabledSources() {
+        let preview = previewActivities(
+            [
+                activity(id: "timer", kind: .timer, title: "Timer", isActive: true),
+                activity(id: "files", kind: .fileTray, title: "Files added")
+            ],
+            toggles: CollapsedLiveActivitySourceToggles(
+                liveActivitiesEnabled: true,
+                timerEnabled: false,
+                mediaEnabled: true,
+                fileTrayEnabled: true
+            )
+        )
+
+        XCTAssertEqual(preview.map(\.id), ["files"])
+    }
+
+    private func select(
+        _ activities: [DynamicIslandLiveActivity],
+        priorities: CollapsedLiveActivityPrioritySettings = .defaults,
+        toggles: CollapsedLiveActivitySourceToggles = CollapsedLiveActivitySourceToggles(
+            liveActivitiesEnabled: true,
+            timerEnabled: true,
+            mediaEnabled: true,
+            fileTrayEnabled: true
+        )
+    ) -> CollapsedIslandContentMode {
+        CollapsedLiveActivitySelector.select(
+            activities: activities,
+            priorities: priorities,
+            toggles: toggles
+        )
+    }
+
+    private func previewActivities(
+        _ activities: [DynamicIslandLiveActivity],
+        priorities: CollapsedLiveActivityPrioritySettings = .defaults,
+        toggles: CollapsedLiveActivitySourceToggles = CollapsedLiveActivitySourceToggles(
+            liveActivitiesEnabled: true,
+            timerEnabled: true,
+            mediaEnabled: true,
+            fileTrayEnabled: true
+        ),
+        maxCount: Int = 3
+    ) -> [DynamicIslandLiveActivity] {
+        CollapsedLiveActivitySelector.previewActivities(
+            activities: activities,
+            priorities: priorities,
+            toggles: toggles,
+            maxCount: maxCount
+        )
+    }
+
+    private func activity(
+        id: String,
+        kind: DynamicIslandLiveActivityKind,
+        title: String,
+        isActive: Bool = true,
+        updatedAt: Date = Date(timeIntervalSince1970: 1_000)
+    ) -> DynamicIslandLiveActivity {
+        DynamicIslandLiveActivity(
+            id: id,
+            kind: kind,
+            title: title,
+            subtitle: nil,
+            symbolName: "sparkles",
+            priority: 0,
+            isActive: isActive,
+            progress: nil,
+            updatedAt: updatedAt
+        )
+    }
+}

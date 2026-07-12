@@ -122,8 +122,8 @@ struct SettingsView: View {
     private var appearanceSection: some View {
         settingsForm("Appearance") {
             SettingsGroup("Shell") {
-                Picker("Theme", selection: $settings.islandTheme) {
-                    ForEach(IslandTheme.allCases) { theme in
+                Picker("Island Theme", selection: $settings.islandThemeStyle) {
+                    ForEach(IslandThemeStyle.allCases) { theme in
                         Text(theme.displayName).tag(theme)
                     }
                 }
@@ -132,6 +132,7 @@ struct SettingsView: View {
                 Toggle("Shell shadow", isOn: $settings.shellShadowEnabled)
                 Toggle("Notch shoulder blend", isOn: $settings.notchShoulderBlendEnabledSetting)
                     .disabled(true)
+                HelpText("Liquid Glass uses Apple’s native glassEffect when available. On older macOS versions or older SDKs, DynamicIsland uses a fallback material/gloss effect.")
                 HelpText("Shoulder blend remains parked and disabled in the active shell path.")
             }
 
@@ -372,9 +373,8 @@ struct SettingsView: View {
 
     private var liveActivitiesSection: some View {
         settingsForm("Live Activities") {
-            SettingsGroup("Coming Soon") {
+            SettingsGroup("Sources") {
                 Toggle("Enable live activities", isOn: $settings.liveActivitiesEnabled)
-                    .disabled(true)
                 Picker("Style", selection: $settings.liveActivityStyle) {
                     ForEach(LiveActivityStyle.allCases) { style in
                         Text(style.rawValue.capitalized).tag(style)
@@ -382,11 +382,8 @@ struct SettingsView: View {
                 }
                 .disabled(true)
                 Toggle("Music live activity", isOn: $settings.showMusicLiveActivity)
-                    .disabled(true)
                 Toggle("Timer live activity", isOn: $settings.showTimerLiveActivity)
-                    .disabled(true)
                 Toggle("File drop live activity", isOn: $settings.showFileDropLiveActivity)
-                    .disabled(true)
                 Toggle("Battery live activity", isOn: $settings.showBatteryLiveActivity)
                     .disabled(true)
                 Toggle("Calendar live activity", isOn: $settings.showCalendarLiveActivity)
@@ -398,7 +395,34 @@ struct SettingsView: View {
                 SliderRow(title: "Dismiss delay", value: $settings.liveActivityAutoDismissSeconds, range: 1...60, format: "%.0fs", disabled: true)
                 Toggle("Animation", isOn: $settings.liveActivityAnimationEnabled)
                     .disabled(true)
-                HelpText("These fields are persisted now and intentionally marked coming soon because a live-activities engine does not exist yet.")
+                HelpText("Music, Timer, and File Tray activities appear in the Island tab. Other sources and auto-dismiss controls are reserved for later phases.")
+            }
+            SettingsGroup("Collapsed Live Activity Priority") {
+                PriorityStepperRow(
+                    title: CollapsedLiveActivityPrioritySource.runningTimer.displayName,
+                    value: $settings.collapsedPriorityRunningTimer
+                )
+                PriorityStepperRow(
+                    title: CollapsedLiveActivityPrioritySource.playingMedia.displayName,
+                    value: $settings.collapsedPriorityPlayingMedia
+                )
+                PriorityStepperRow(
+                    title: CollapsedLiveActivityPrioritySource.pausedTimer.displayName,
+                    value: $settings.collapsedPriorityPausedTimer
+                )
+                PriorityStepperRow(
+                    title: CollapsedLiveActivityPrioritySource.recentFiles.displayName,
+                    value: $settings.collapsedPriorityRecentFiles
+                )
+                PriorityStepperRow(
+                    title: CollapsedLiveActivityPrioritySource.pausedMedia.displayName,
+                    value: $settings.collapsedPriorityPausedMedia
+                )
+                Button("Restore Defaults") {
+                    settings.resetCollapsedLiveActivityPrioritySettings()
+                }
+                .buttonStyle(.borderless)
+                HelpText("Higher priority appears first in the collapsed island. If two activities have the same priority, DynamicIsland uses the default order.")
             }
         }
     }
@@ -578,6 +602,23 @@ private struct SliderRow: View {
             }
             Slider(value: $value, in: range)
                 .disabled(disabled)
+        }
+    }
+}
+
+private struct PriorityStepperRow: View {
+    let title: String
+    @Binding var value: Int
+
+    var body: some View {
+        Stepper(value: $value, in: CollapsedLiveActivityPrioritySettings.range, step: 5) {
+            HStack {
+                Text(title)
+                Spacer()
+                Text("\(value)")
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
         }
     }
 }
