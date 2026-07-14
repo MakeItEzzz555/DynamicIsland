@@ -23,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let timer = TimerController()
     private let stats = SystemStatsController()
     private let liveActivities = LiveActivityStore()
+    private let batteryActivityProvider = BatteryActivityProvider()
     private let navigation = IslandNavigationStore()
     private let geometryService = NotchGeometryService()
 
@@ -129,6 +130,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func installLiveActivityObservers() {
+        #if DEBUG
+        print("[BatteryActivity] started")
+        #endif
+
         Publishers.CombineLatest3(timer.$remainingSeconds, timer.$totalSeconds, timer.$isRunning)
             .sink { [weak self] remainingSeconds, totalSeconds, isRunning in
                 self?.updateTimerLiveActivity(
@@ -178,6 +183,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.refreshLiveActivitiesForSettingsChange()
         }
         .store(in: &cancellables)
+
+        settings.$showBatteryLiveActivity
+            .removeDuplicates()
+            .sink { [weak self] _ in
+                self?.refreshLiveActivitiesForSettingsChange()
+            }
+            .store(in: &cancellables)
+
+        Timer.publish(every: 60, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in
+                self?.updateBatteryLiveActivity()
+            }
+            .store(in: &cancellables)
+
+        updateBatteryLiveActivity()
     }
 
     private func refreshLiveActivitiesForSettingsChange() {
@@ -192,6 +213,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         updateMediaLiveActivity()
         updateFileTrayLiveActivity(files: fileShelf.files)
+        updateBatteryLiveActivity()
     }
 
     private func updateTimerLiveActivity(
@@ -285,6 +307,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 updatedAt: Date()
             )
         )
+    }
+
+    private func updateBatteryLiveActivity() {
+        guard settings.liveActivitiesEnabled, settings.showBatteryLiveActivity else {
+            BatteryActivityProvider.debugRemoving(reason: "disabled")
+            liveActivities.remove(id: LiveActivityStore.batteryActivityID)
+            return
+        }
+        guard let snapshot = batteryActivityProvider.snapshot() else {
+            liveActivities.remove(id: LiveActivityStore.batteryActivityID)
+            return
+        }
+        guard snapshot.isEligible, let activity = snapshot.liveActivity() else {
+            BatteryActivityProvider.debugRemoving(reason: "ineligible")
+            liveActivities.remove(id: LiveActivityStore.batteryActivityID)
+            return
+        }
+
+        liveActivities.update(activity)
     }
 
     private static func formattedTimerText(_ seconds: Int) -> String {

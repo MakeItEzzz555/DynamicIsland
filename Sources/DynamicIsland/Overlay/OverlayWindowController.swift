@@ -280,7 +280,8 @@ final class OverlayWindowController {
                     (settings.showMediaWhenPaused || modules.media.isPlaying),
                 fileTrayEnabled: settings.trayEnabled &&
                     settings.fileShelfEnabled &&
-                    settings.showFileDropLiveActivity
+                    settings.showFileDropLiveActivity,
+                batteryEnabled: settings.showBatteryLiveActivity
             )
         )
     }

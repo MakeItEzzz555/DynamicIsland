@@ -4,15 +4,19 @@ enum DynamicIslandLiveActivityKind: String, Equatable {
     case media
     case timer
     case fileTray
+    case battery
     case system
 }
 
 enum CollapsedLiveActivityPrioritySource: String, CaseIterable, Identifiable {
     case runningTimer
     case playingMedia
+    case lowBattery
     case pausedTimer
     case recentFiles
     case pausedMedia
+    case chargingBattery
+    case fullBattery
 
     var id: String { rawValue }
 
@@ -22,12 +26,18 @@ enum CollapsedLiveActivityPrioritySource: String, CaseIterable, Identifiable {
             "Running Timer"
         case .playingMedia:
             "Playing Media"
+        case .lowBattery:
+            "Low Battery"
         case .pausedTimer:
             "Paused Timer"
         case .recentFiles:
             "Recent Files"
         case .pausedMedia:
             "Paused Media"
+        case .chargingBattery:
+            "Charging Battery"
+        case .fullBattery:
+            "Charged Battery"
         }
     }
 
@@ -37,12 +47,16 @@ enum CollapsedLiveActivityPrioritySource: String, CaseIterable, Identifiable {
             100
         case .playingMedia:
             90
+        case .lowBattery:
+            85
         case .pausedTimer:
             80
         case .recentFiles:
             60
         case .pausedMedia:
             50
+        case .chargingBattery, .fullBattery:
+            45
         }
     }
 
@@ -52,12 +66,18 @@ enum CollapsedLiveActivityPrioritySource: String, CaseIterable, Identifiable {
             0
         case .playingMedia:
             1
-        case .pausedTimer:
+        case .lowBattery:
             2
-        case .recentFiles:
+        case .pausedTimer:
             3
-        case .pausedMedia:
+        case .recentFiles:
             4
+        case .pausedMedia:
+            5
+        case .chargingBattery:
+            6
+        case .fullBattery:
+            7
         }
     }
 }
@@ -94,6 +114,8 @@ struct CollapsedLiveActivityPrioritySettings: Equatable {
             value = recentFiles
         case .pausedMedia:
             value = pausedMedia
+        case .lowBattery, .chargingBattery, .fullBattery:
+            value = source.defaultPriority
         }
         return Self.clamped(value)
     }
@@ -108,6 +130,7 @@ struct CollapsedLiveActivitySourceToggles: Equatable {
     var timerEnabled: Bool
     var mediaEnabled: Bool
     var fileTrayEnabled: Bool
+    var batteryEnabled: Bool
 }
 
 enum CollapsedIslandContentMode: Equatable {
@@ -115,6 +138,14 @@ enum CollapsedIslandContentMode: Equatable {
     case media
     case timer(DynamicIslandLiveActivity)
     case fileTray(DynamicIslandLiveActivity)
+    case battery(DynamicIslandLiveActivity)
+}
+
+enum BatteryLiveActivityState: String, Equatable {
+    case low
+    case charging
+    case pluggedIn
+    case full
 }
 
 enum LiveActivityTimeFormatting {
@@ -141,6 +172,31 @@ struct DynamicIslandLiveActivity: Identifiable, Equatable {
     let isActive: Bool
     let progress: Double?
     let updatedAt: Date
+    let batteryState: BatteryLiveActivityState?
+
+    init(
+        id: String,
+        kind: DynamicIslandLiveActivityKind,
+        title: String,
+        subtitle: String?,
+        symbolName: String,
+        priority: Int,
+        isActive: Bool,
+        progress: Double?,
+        updatedAt: Date,
+        batteryState: BatteryLiveActivityState? = nil
+    ) {
+        self.id = id
+        self.kind = kind
+        self.title = title
+        self.subtitle = subtitle
+        self.symbolName = symbolName
+        self.priority = priority
+        self.isActive = isActive
+        self.progress = progress
+        self.updatedAt = updatedAt
+        self.batteryState = batteryState
+    }
 }
 
 enum CollapsedLiveActivitySelector {
@@ -168,6 +224,8 @@ enum CollapsedLiveActivitySelector {
             return .timer(selected.activity)
         case .recentFiles:
             return .fileTray(selected.activity)
+        case .lowBattery, .chargingBattery, .fullBattery:
+            return .battery(selected.activity)
         }
     }
 
@@ -219,6 +277,17 @@ enum CollapsedLiveActivitySelector {
             return activity.isActive ? .playingMedia : .pausedMedia
         case .fileTray:
             return .recentFiles
+        case .battery:
+            switch activity.batteryState {
+            case .low:
+                return .lowBattery
+            case .charging, .pluggedIn:
+                return .chargingBattery
+            case .full:
+                return .fullBattery
+            case nil:
+                return nil
+            }
         case .system:
             return nil
         }
@@ -235,6 +304,8 @@ enum CollapsedLiveActivitySelector {
             return toggles.mediaEnabled
         case .recentFiles:
             return toggles.fileTrayEnabled
+        case .lowBattery, .chargingBattery, .fullBattery:
+            return toggles.batteryEnabled
         }
     }
 
@@ -257,6 +328,7 @@ final class LiveActivityStore: ObservableObject {
     static let timerActivityID = "timer"
     static let mediaActivityID = "media"
     static let fileTrayActivityID = "fileTray"
+    nonisolated static let batteryActivityID = "battery"
 
     @Published private(set) var activities: [DynamicIslandLiveActivity] = []
 

@@ -24,6 +24,7 @@ enum CollapsedPreviewKind: String {
     case media
     case timer
     case fileDrop
+    case battery
     case liveActivity
 }
 
@@ -444,7 +445,8 @@ struct IslandRootView: View {
                 mediaEnabled: settings.mediaEnabled &&
                     settings.showMusicLiveActivity &&
                     (settings.showMediaWhenPaused || media.isPlaying),
-                fileTrayEnabled: settings.trayEnabled && settings.fileShelfEnabled && settings.showFileDropLiveActivity
+                fileTrayEnabled: settings.trayEnabled && settings.fileShelfEnabled && settings.showFileDropLiveActivity,
+                batteryEnabled: settings.showBatteryLiveActivity
             )
         )
     }
@@ -486,7 +488,8 @@ struct IslandRootView: View {
                 settings.showMusicLiveActivity &&
                 settings.collapsedHoverPreviewMediaEnabled &&
                 (settings.showMediaWhenPaused || media.isPlaying),
-            fileTrayEnabled: settings.trayEnabled && settings.fileShelfEnabled && settings.showFileDropLiveActivity
+            fileTrayEnabled: settings.trayEnabled && settings.fileShelfEnabled && settings.showFileDropLiveActivity,
+            batteryEnabled: settings.showBatteryLiveActivity
         )
         let previewActivities = CollapsedLiveActivitySelector.previewActivities(
             activities: liveActivities.activities,
@@ -591,9 +594,25 @@ struct IslandRootView: View {
                 kind: .fileDrop,
                 isPrimary: isPrimary
             )
+        case .battery:
+            return CollapsedPreviewRowContent(
+                id: activity.id,
+                title: activity.title,
+                subtitle: activity.subtitle,
+                trailingText: batteryPercentText(for: activity),
+                symbolName: activity.symbolName,
+                fallbackSymbolName: "battery.75percent",
+                kind: .battery,
+                isPrimary: isPrimary
+            )
         case .system:
             return nil
         }
+    }
+
+    private func batteryPercentText(for activity: DynamicIslandLiveActivity) -> String? {
+        guard let progress = LiveActivityStore.clampedProgress(activity.progress) else { return nil }
+        return "\(Int((progress * 100).rounded()))%"
     }
 
     private func timerText(for activity: DynamicIslandLiveActivity) -> String {
@@ -1122,6 +1141,9 @@ struct CompactIslandView: View {
             case .fileTray(let activity):
                 CollapsedFileActivityCompactView(activity: activity)
                     .transition(.compactMediaContent)
+            case .battery(let activity):
+                CollapsedBatteryActivityCompactView(activity: activity)
+                    .transition(.compactMediaContent)
             case .media, .inactive:
                 Color.clear
                     .transition(.opacity)
@@ -1287,6 +1309,55 @@ private struct CollapsedFileActivityCompactView: View {
     }
 }
 
+private struct CollapsedBatteryActivityCompactView: View {
+    let activity: DynamicIslandLiveActivity
+
+    var body: some View {
+        CompactCollapsedSideSlotLayout {
+            SafeSystemImage(symbolName: activity.symbolName, fallbackSymbolName: "battery.75percent")
+                .font(.system(size: 12, weight: .bold))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(iconColor)
+                .frame(width: 17, height: 17)
+        } right: {
+            Text(percentText)
+                .font(.system(size: 8.8, weight: .bold, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(.white.opacity(0.88))
+                .lineLimit(1)
+                .minimumScaleFactor(0.35)
+                .allowsTightening(true)
+                .frame(width: 34, alignment: .trailing)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var percentText: String {
+        guard let progress = LiveActivityStore.clampedProgress(activity.progress) else { return "--%" }
+        return "\(Int((progress * 100).rounded()))%"
+    }
+
+    private var iconColor: Color {
+        switch activity.batteryState {
+        case .low:
+            return .orange.opacity(0.92)
+        case .charging, .pluggedIn:
+            return .green.opacity(0.86)
+        case .full:
+            return .white.opacity(0.76)
+        case nil:
+            return .white.opacity(0.68)
+        }
+    }
+
+    private var accessibilityLabel: String {
+        [activity.title, activity.subtitle]
+            .compactMap { $0 }
+            .joined(separator: ", ")
+    }
+}
+
 private struct CollapsedPreviewRow: View {
     let content: CollapsedPreviewContent
 
@@ -1352,6 +1423,8 @@ private struct CollapsedPreviewActivityRow: View {
             .cyan.opacity(row.isPrimary ? 0.86 : 0.62)
         case .media:
             .white.opacity(row.isPrimary ? 0.72 : 0.54)
+        case .battery:
+            .green.opacity(row.isPrimary ? 0.84 : 0.62)
         case .none, .liveActivity:
             .white.opacity(row.isPrimary ? 0.68 : 0.48)
         }
@@ -2001,6 +2074,8 @@ private struct LiveActivitiesModuleView: View {
             }
         case .media:
             navigation.showIsland()
+        case .battery:
+            break
         case .system:
             break
         }

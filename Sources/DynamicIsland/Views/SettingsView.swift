@@ -385,7 +385,6 @@ struct SettingsView: View {
                 Toggle("Timer live activity", isOn: $settings.showTimerLiveActivity)
                 Toggle("File drop live activity", isOn: $settings.showFileDropLiveActivity)
                 Toggle("Battery live activity", isOn: $settings.showBatteryLiveActivity)
-                    .disabled(true)
                 Toggle("Calendar live activity", isOn: $settings.showCalendarLiveActivity)
                     .disabled(true)
                 Toggle("Downloads live activity", isOn: $settings.showDownloadsLiveActivity)
@@ -395,7 +394,7 @@ struct SettingsView: View {
                 SliderRow(title: "Dismiss delay", value: $settings.liveActivityAutoDismissSeconds, range: 1...60, format: "%.0fs", disabled: true)
                 Toggle("Animation", isOn: $settings.liveActivityAnimationEnabled)
                     .disabled(true)
-                HelpText("Music, Timer, and File Tray activities appear in the Island tab. Other sources and auto-dismiss controls are reserved for later phases.")
+                HelpText("Music, Timer, File Tray, and Battery activities appear in the Island tab. Calendar, Downloads, and auto-dismiss controls are reserved for later phases.")
             }
             SettingsGroup("Collapsed Live Activity Priority") {
                 PriorityStepperRow(

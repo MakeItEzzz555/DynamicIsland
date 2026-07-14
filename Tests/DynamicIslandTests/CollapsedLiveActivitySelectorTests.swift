@@ -64,7 +64,8 @@ final class CollapsedLiveActivitySelectorTests: XCTestCase {
                 liveActivitiesEnabled: true,
                 timerEnabled: false,
                 mediaEnabled: true,
-                fileTrayEnabled: true
+                fileTrayEnabled: true,
+                batteryEnabled: true
             )
         )
 
@@ -264,11 +265,114 @@ final class CollapsedLiveActivitySelectorTests: XCTestCase {
                 liveActivitiesEnabled: true,
                 timerEnabled: false,
                 mediaEnabled: true,
-                fileTrayEnabled: true
+                fileTrayEnabled: true,
+                batteryEnabled: true
             )
         )
 
         XCTAssertEqual(preview.map(\.id), ["files"])
+    }
+
+    func testRunningTimerBeatsLowBatteryByDefault() {
+        let timer = activity(id: "timer", kind: .timer, title: "Timer", isActive: true)
+        let battery = batteryActivity(state: .low, percentage: 18)
+
+        let mode = select([battery, timer])
+
+        XCTAssertEqual(mode, .timer(timer))
+    }
+
+    func testLowBatteryBeatsPausedMediaByDefault() {
+        let battery = batteryActivity(state: .low, percentage: 18)
+
+        let mode = select([
+            activity(id: "media", kind: .media, title: "Song", isActive: false),
+            battery
+        ])
+
+        XCTAssertEqual(mode, .battery(battery))
+    }
+
+    func testLowBatteryBeatsRecentFilesByDefault() {
+        let battery = batteryActivity(state: .low, percentage: 18)
+
+        let mode = select([
+            activity(id: "files", kind: .fileTray, title: "Files added"),
+            battery
+        ])
+
+        XCTAssertEqual(mode, .battery(battery))
+    }
+
+    func testPlayingMediaBeatsChargingBatteryByDefault() {
+        let mode = select([
+            activity(id: "media", kind: .media, title: "Song", isActive: true),
+            batteryActivity(state: .charging, percentage: 74)
+        ])
+
+        XCTAssertEqual(mode, .media)
+    }
+
+    func testNormalBatteryDoesNotBecomeCollapsedWinner() {
+        let normalBattery = activity(
+            id: "battery",
+            kind: .battery,
+            title: "Battery",
+            isActive: false,
+            batteryState: nil
+        )
+
+        let mode = select([normalBattery])
+
+        XCTAssertEqual(mode, .inactive)
+    }
+
+    func testBatteryCanAppearInPreviewActivitiesWhenEligible() {
+        let preview = previewActivities([
+            activity(id: "media", kind: .media, title: "Song", isActive: false),
+            batteryActivity(state: .low, percentage: 18)
+        ])
+
+        XCTAssertEqual(preview.map(\.id), ["battery", "media"])
+    }
+
+    func testDisabledBatteryLiveActivityRemovesBatteryEligibility() {
+        let preview = previewActivities(
+            [
+                batteryActivity(state: .low, percentage: 18),
+                activity(id: "media", kind: .media, title: "Song", isActive: false)
+            ],
+            toggles: CollapsedLiveActivitySourceToggles(
+                liveActivitiesEnabled: true,
+                timerEnabled: true,
+                mediaEnabled: true,
+                fileTrayEnabled: true,
+                batteryEnabled: false
+            )
+        )
+
+        XCTAssertEqual(preview.map(\.id), ["media"])
+    }
+
+    func testPreviewActivitiesWithBatteryRespectMaxRowCount() {
+        let preview = previewActivities(
+            [
+                activity(id: "media", kind: .media, title: "Song", isActive: true),
+                activity(id: "timer", kind: .timer, title: "Timer", isActive: true),
+                activity(id: "files", kind: .fileTray, title: "Files added"),
+                batteryActivity(state: .low, percentage: 18)
+            ],
+            maxCount: 3
+        )
+
+        XCTAssertEqual(preview.count, 3)
+        XCTAssertEqual(preview.map(\.id), ["timer", "media", "battery"])
+    }
+
+    func testTimerPausedMediaAndBatteryDoNotMountNonHoveredPreviewContent() {
+        let content = collapsedPreviewContent(rowIDs: ["timer", "battery", "media"])
+
+        XCTAssertNil(CollapsedPreviewContent.mounted(content, previewActive: false))
     }
 
     private func select(
@@ -278,7 +382,8 @@ final class CollapsedLiveActivitySelectorTests: XCTestCase {
             liveActivitiesEnabled: true,
             timerEnabled: true,
             mediaEnabled: true,
-            fileTrayEnabled: true
+            fileTrayEnabled: true,
+            batteryEnabled: true
         )
     ) -> CollapsedIslandContentMode {
         CollapsedLiveActivitySelector.select(
@@ -295,7 +400,8 @@ final class CollapsedLiveActivitySelectorTests: XCTestCase {
             liveActivitiesEnabled: true,
             timerEnabled: true,
             mediaEnabled: true,
-            fileTrayEnabled: true
+            fileTrayEnabled: true,
+            batteryEnabled: true
         ),
         maxCount: Int = 3
     ) -> [DynamicIslandLiveActivity] {
@@ -312,7 +418,8 @@ final class CollapsedLiveActivitySelectorTests: XCTestCase {
         kind: DynamicIslandLiveActivityKind,
         title: String,
         isActive: Bool = true,
-        updatedAt: Date = Date(timeIntervalSince1970: 1_000)
+        updatedAt: Date = Date(timeIntervalSince1970: 1_000),
+        batteryState: BatteryLiveActivityState? = nil
     ) -> DynamicIslandLiveActivity {
         DynamicIslandLiveActivity(
             id: id,
@@ -323,7 +430,27 @@ final class CollapsedLiveActivitySelectorTests: XCTestCase {
             priority: 0,
             isActive: isActive,
             progress: nil,
-            updatedAt: updatedAt
+            updatedAt: updatedAt,
+            batteryState: batteryState
+        )
+    }
+
+    private func batteryActivity(
+        state: BatteryLiveActivityState,
+        percentage: Int,
+        updatedAt: Date = Date(timeIntervalSince1970: 1_000)
+    ) -> DynamicIslandLiveActivity {
+        DynamicIslandLiveActivity(
+            id: "battery",
+            kind: .battery,
+            title: state == .low ? "Low Battery" : "Battery",
+            subtitle: "\(percentage)%",
+            symbolName: "battery.25percent",
+            priority: 0,
+            isActive: state != .full,
+            progress: Double(percentage) / 100,
+            updatedAt: updatedAt,
+            batteryState: state
         )
     }
 
@@ -337,7 +464,7 @@ final class CollapsedLiveActivitySelectorTests: XCTestCase {
                     trailingText: nil,
                     symbolName: "sparkles",
                     fallbackSymbolName: "sparkles",
-                    kind: id == "timer" ? .timer : .media,
+                    kind: id == "timer" ? .timer : (id == "battery" ? .battery : .media),
                     isPrimary: id == rowIDs.first
                 )
             }

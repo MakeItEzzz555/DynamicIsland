@@ -280,6 +280,12 @@ pkill -9 DynamicIsland
 - Validation passed:
   - `swift build`
   - `swift test`
+  - `chmod +x Scripts/package_app.sh`
+  - `Scripts/package_app.sh`
+  - `pkill -9 DynamicIsland`
+  - `open dist/DynamicIsland.app`
+- Validation note:
+  - Packaging still reports the existing `FileThumbnailCache` non-Sendable capture warning in `ModuleViews.swift`.
   - `Scripts/package_app.sh`
 
 ### 2026-07-03 - Phase 2 Empty Media Launcher State
@@ -3189,6 +3195,72 @@ For every requested feature phase:
 - Validation note:
   - `open dist/DynamicIsland.app` returned LaunchServices `-600` immediately after `pkill`; retrying with the absolute app path succeeded.
   - Packaging still reports the existing `FileThumbnailCache` non-Sendable capture warning in `ModuleViews.swift`.
+
+### 2026-07-12 - Phase 11A.1 Battery Live Activity Publish Repair
+
+- Fixed Battery Live Activity eligibility for plugged-in MacBooks:
+  - Battery activity now treats `kIOPSPowerSourceStateKey == kIOPSACPowerValue` as plugged in, even when `kIOPSIsChargingKey` is `false`.
+  - Plugged-in but not actively charging state now publishes a Battery activity titled `Plugged In` with the current percentage.
+  - Charging, full, and low-unplugged battery states still publish as eligible activities.
+  - Normal unplugged battery above 20% remains ineligible and does not become a collapsed candidate.
+- Added DEBUG battery diagnostics:
+  - Startup log: `[BatteryActivity] started`
+  - Snapshot log includes percent, power source state, plugged-in state, charging state, charged state, low state, and eligibility.
+  - Publish/remove logs identify the battery activity and reason.
+- Preserved:
+  - Phase 10C collapsed preview stability, hover-preview mount gating, collapsed pill height, NotchGeometryService, gestures, shell morphing, click-through behavior, media/timer/file behavior, album flip, visualizer, and theme rendering were not redesigned.
+- Changed files:
+  - `Sources/DynamicIsland/App/DynamicIslandApp.swift`
+  - `Sources/DynamicIsland/Modules/BatteryActivityProvider.swift`
+  - `Sources/DynamicIsland/Modules/LiveActivityStore.swift`
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `Tests/DynamicIslandTests/BatteryActivityProviderTests.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `chmod +x Scripts/package_app.sh`
+  - `Scripts/package_app.sh`
+  - `.build/debug/DynamicIsland`
+- Debug verification on this machine:
+  - `[BatteryActivity] started`
+  - `[BatteryActivity] percent=80% source=AC Power pluggedIn=true charging=false charged=false low=false eligible=true`
+  - `[BatteryActivity] publishing id=battery title=Plugged In subtitle=80%`
+- Validation note:
+  - Packaging still reports the existing `FileThumbnailCache` non-Sendable capture warning in `ModuleViews.swift`.
+
+### Phase 11A - Battery Live Activity
+
+- Added a Battery Live Activity source:
+  - Added a lightweight `BatteryActivityProvider` that reads macOS power-source state through IOKit.
+  - Battery activity publishes only eligible states: low battery, charging, or full.
+  - Normal battery state does not become a collapsed winner or preview row.
+- Added battery activity selection support:
+  - Added `.battery` live activity kind and battery-specific collapsed priority sources.
+  - Running Timer still beats low battery by default.
+  - Low battery beats paused media and recent files by default.
+  - Playing media beats charging/full battery by default.
+  - Disabling `showBatteryLiveActivity` removes battery eligibility.
+- Added collapsed and hover rendering:
+  - Base collapsed battery mode uses the same compact two-slot side layout and base height as media/timer/file modes.
+  - Base compact battery shows only a battery icon and percentage.
+  - Hover preview can include battery rows alongside timer/media/file rows, but preview rows remain mounted only while hover preview is active.
+  - Expanded Live Activities can show the battery card.
+- Preserved:
+  - Overlay panel architecture, click-through behavior, gestures, media arbitration, album flip, visualizer artwork color sync, Tray/AirDrop/files, Timer, Stats, theme rendering, shell morph timing, and Phase 10C hidden-preview invariants were not redesigned.
+- Changed files:
+  - `Sources/DynamicIsland/App/DynamicIslandApp.swift`
+  - `Sources/DynamicIsland/Modules/BatteryActivityProvider.swift`
+  - `Sources/DynamicIsland/Modules/LiveActivityStore.swift`
+  - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `Sources/DynamicIsland/Views/SettingsView.swift`
+  - `Tests/DynamicIslandTests/BatteryActivityProviderTests.swift`
+  - `Tests/DynamicIslandTests/CollapsedLiveActivitySelectorTests.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
 
 ### 2026-07-11 - Phase 10B.4 Compact Timer Pill Final Fix
 
