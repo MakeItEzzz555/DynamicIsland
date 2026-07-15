@@ -137,9 +137,25 @@ private struct ExpandedIslandLayoutMetrics {
     var innerWidth: CGFloat { max(containerSize.width - (horizontalPadding * 2), 0) }
     var innerHeight: CGFloat { max(containerSize.height - topPadding - bottomPadding, 0) }
     var pageHeight: CGFloat { max(innerHeight - tabSwitcherHeight - tabToPageSpacing, 0) }
+    var responsiveScale: CGFloat {
+        min(max(min(pageHeight / 178, innerWidth / 720), 0.78), 1)
+    }
+    var compactScale: CGFloat { responsiveScale }
 
-    var mediaColumnWidth: CGFloat { min(max(innerWidth * 0.52, 228), 272) }
-    var shortcutsColumnWidth: CGFloat { min(max(innerWidth * 0.28, 150), 176) }
+    var rightStackWidth: CGFloat {
+        let spacingBudget = dividerWidth + (pageColumnSpacing * 2)
+        let availableColumnWidth = max(innerWidth - spacingBudget, 0)
+        let preferredWidth = floor(innerWidth * 0.44)
+        let minimumWidth = min(420, max(360, availableColumnWidth * 0.40))
+        let maximumWidth = min(520, max(availableColumnWidth - minimumMediaColumnWidth, 0))
+        return min(max(preferredWidth, minimumWidth), maximumWidth)
+    }
+    var mediaColumnWidth: CGFloat {
+        max(innerWidth - rightStackWidth - dividerWidth - (pageColumnSpacing * 2), 0)
+    }
+    var minimumMediaColumnWidth: CGFloat { min(360, max(300, innerWidth * 0.46)) }
+    var shortcutsColumnWidth: CGFloat { rightStackWidth }
+    var dividerWidth: CGFloat { 1 }
     var dividerHeight: CGFloat { min(max(pageHeight - 10, 100), pageHeight) }
     var trayAirDropWidth: CGFloat { min(max(innerWidth * 0.29, 150), 188) }
     var timerHeaderHeight: CGFloat { 24 }
@@ -150,8 +166,27 @@ private struct ExpandedIslandLayoutMetrics {
     var mediaMaxHeight: CGFloat { pageHeight }
     var shortcutsMaxHeight: CGFloat { pageHeight }
     var liveActivitiesMaxHeight: CGFloat { pageHeight }
+    var rightStackSpacing: CGFloat { min(max(14 * compactScale, 12), 16) }
+    var rightStackAvailableHeight: CGFloat {
+        max(pageHeight - rightStackSpacing, 0)
+    }
+    var liveActivitiesStackHeight: CGFloat {
+        floor(rightStackAvailableHeight * 0.45)
+    }
+    var shortcutsStackHeight: CGFloat {
+        max(rightStackAvailableHeight - liveActivitiesStackHeight, 0)
+    }
     var statsCardWidth: CGFloat { max((innerWidth - (cardSpacing * 2)) / 3, 0) }
-    var statsCardHeight: CGFloat { min(max((pageHeight - cardSpacing) / 2, 64), 74) }
+    var statsHeaderHeight: CGFloat { 25 * compactScale }
+    var statsGridAvailableHeight: CGFloat { max(pageHeight - statsHeaderHeight - 8 - 4, 0) }
+    var statsTwoRowCardHeight: CGFloat { max((statsGridAvailableHeight - cardSpacing) / 2, 0) }
+    var statsUsesScroll: Bool { statsTwoRowCardHeight < (48 * compactScale) }
+    var statsCardHeight: CGFloat {
+        if statsUsesScroll {
+            return 58 * compactScale
+        }
+        return min(statsTwoRowCardHeight, 74 * compactScale)
+    }
 }
 
 struct IslandRootView: View {
@@ -1583,7 +1618,9 @@ struct ExpandedIslandView: View {
     }
 
     private func islandPage(metrics: ExpandedIslandLayoutMetrics) -> some View {
-        HStack(spacing: metrics.pageColumnSpacing) {
+        let showsRightStack = settings.liveActivitiesEnabled || settings.shortcutsEnabled
+
+        return HStack(spacing: metrics.pageColumnSpacing) {
             if settings.mediaEnabled {
                 MediaModuleView(
                     settings: settings,
@@ -1600,7 +1637,7 @@ struct ExpandedIslandView: View {
                         }
                     }
                 )
-                    .frame(width: settings.shortcutsEnabled ? metrics.mediaColumnWidth : nil, height: metrics.mediaMaxHeight, alignment: .topLeading)
+                    .frame(width: showsRightStack ? metrics.mediaColumnWidth : nil, height: metrics.mediaMaxHeight, alignment: .topLeading)
                     .clipped()
                     .innerBlurScaleClean(
                         settings: settings,
@@ -1611,42 +1648,46 @@ struct ExpandedIslandView: View {
                     )
             }
 
-            if settings.mediaEnabled && settings.shortcutsEnabled {
+            if settings.mediaEnabled && showsRightStack {
                 Divider()
                     .frame(height: metrics.dividerHeight)
                     .overlay(.white.opacity(0.10))
                     .opacity(contentVisible ? 1 : 0)
             }
 
-            if settings.shortcutsEnabled {
-                ShortcutsModuleView(
-                    shortcuts: modules.shortcuts,
-                    onShortcutLaunched: onShortcutLaunched
-                )
-                    .frame(width: settings.mediaEnabled ? metrics.shortcutsColumnWidth : nil, height: metrics.shortcutsMaxHeight, alignment: .topLeading)
-                    .clipped()
-                    .innerBlurScaleClean(
-                        settings: settings,
-                        isVisible: contentVisible,
-                        isRemoval: isContentRemoving,
-                        index: 2,
-                        reduceMotion: reduceMotion
-                    )
-            }
+            if showsRightStack {
+                let liveActivitiesHeight = settings.shortcutsEnabled ? metrics.liveActivitiesStackHeight : metrics.pageHeight
+                let shortcutsHeight = settings.liveActivitiesEnabled ? metrics.shortcutsStackHeight : metrics.pageHeight
 
-            if settings.liveActivitiesEnabled && !liveActivities.activities.isEmpty {
-                LiveActivitiesModuleView(
-                    liveActivities: liveActivities,
-                    navigation: navigation,
-                    settings: settings
-                )
-                .frame(maxWidth: .infinity, maxHeight: metrics.liveActivitiesMaxHeight, alignment: .topLeading)
+                VStack(spacing: metrics.rightStackSpacing) {
+                    if settings.liveActivitiesEnabled {
+                        LiveActivitiesModuleView(
+                            liveActivities: liveActivities,
+                            navigation: navigation,
+                            settings: settings,
+                            availableHeight: liveActivitiesHeight,
+                            compactScale: metrics.compactScale
+                        )
+                        .frame(height: liveActivitiesHeight, alignment: .topLeading)
+                    }
+
+                    if settings.shortcutsEnabled {
+                        ShortcutsModuleView(
+                            shortcuts: modules.shortcuts,
+                            availableHeight: shortcutsHeight,
+                            compactScale: metrics.compactScale,
+                            onShortcutLaunched: onShortcutLaunched
+                        )
+                        .frame(height: shortcutsHeight, alignment: .topLeading)
+                    }
+                }
+                .frame(width: settings.mediaEnabled ? metrics.rightStackWidth : nil, height: metrics.pageHeight, alignment: .topLeading)
                 .clipped()
                 .innerBlurScaleClean(
                     settings: settings,
                     isVisible: contentVisible,
                     isRemoval: isContentRemoving,
-                    index: 3,
+                    index: 2,
                     reduceMotion: reduceMotion
                 )
             }
@@ -2030,36 +2071,100 @@ private struct LiveActivitiesModuleView: View {
     @ObservedObject var liveActivities: LiveActivityStore
     @ObservedObject var navigation: IslandNavigationStore
     @ObservedObject var settings: AppSettings
+    var availableHeight: CGFloat? = nil
+    var compactScale: CGFloat = 1
 
     private var visibleActivities: [DynamicIslandLiveActivity] {
-        Array(liveActivities.activities.prefix(3))
+        if liveActivities.activities.count > 4 {
+            return Array(liveActivities.activities.prefix(3))
+        }
+        return Array(liveActivities.activities.prefix(4))
+    }
+
+    private var remainingActivityCount: Int {
+        max(liveActivities.activities.count - visibleActivities.count, 0)
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: max(5, 8 * compactScale)) {
             HStack(spacing: 7) {
                 Label("Live Activities", systemImage: "waveform.path.ecg")
-                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .font(.system(size: 13 * compactScale, weight: .bold, design: .rounded))
                     .foregroundStyle(.white)
                     .lineLimit(1)
                 Spacer(minLength: 0)
             }
 
-            VStack(spacing: 7) {
-                ForEach(visibleActivities) { activity in
-                    LiveActivityCard(activity: activity) {
-                        openDestination(for: activity)
-                    }
+            if visibleActivities.isEmpty {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("No current activity")
+                        .font(.system(size: 10.5 * compactScale, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.68))
+                        .lineLimit(1)
+                    Text("Timer, media, files, and battery show here.")
+                        .font(.system(size: 8.5 * compactScale, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.42))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.78)
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            } else {
+                GeometryReader { proxy in
+                    liveActivityGrid(size: proxy.size)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
         }
-        .padding(10)
+        .padding(max(7, 10 * compactScale))
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(.white.opacity(0.070), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .stroke(.white.opacity(0.055), lineWidth: 1)
         }
+    }
+
+    @ViewBuilder
+    private func liveActivityGrid(size: CGSize) -> some View {
+        let itemCount = visibleActivities.count + (remainingActivityCount > 0 ? 1 : 0)
+        let columns = itemCount <= 1 ? 1 : 2
+        let rows = max(1, min(2, Int(ceil(Double(itemCount) / Double(columns)))))
+        let spacing = max(5, 8 * compactScale)
+        let itemWidth = floor(max(size.width - (CGFloat(columns - 1) * spacing), 0) / CGFloat(columns))
+        let itemHeight = floor(max(size.height - (CGFloat(rows - 1) * spacing), 0) / CGFloat(rows))
+        let itemScale = min(max(min(itemWidth / 168, itemHeight / 56) * compactScale, 0.70), 1)
+
+        VStack(spacing: spacing) {
+            ForEach(0..<rows, id: \.self) { row in
+                HStack(spacing: spacing) {
+                    ForEach(0..<columns, id: \.self) { column in
+                        let index = (row * columns) + column
+
+                        if index < visibleActivities.count {
+                            let activity = visibleActivities[index]
+                            LiveActivityCard(
+                                activity: activity,
+                                compactScale: itemScale,
+                                showsProgress: itemHeight >= 48
+                            ) {
+                                openDestination(for: activity)
+                            }
+                            .frame(width: itemWidth, height: itemHeight, alignment: .topLeading)
+                        } else if index == visibleActivities.count && remainingActivityCount > 0 {
+                            ExtraLiveActivityCard(
+                                count: remainingActivityCount,
+                                compactScale: itemScale
+                            )
+                            .frame(width: itemWidth, height: itemHeight, alignment: .center)
+                        } else {
+                            Color.clear
+                                .frame(width: itemWidth, height: itemHeight)
+                        }
+                    }
+                }
+            }
+        }
+        .frame(width: size.width, height: size.height, alignment: .topLeading)
     }
 
     private func openDestination(for activity: DynamicIslandLiveActivity) {
@@ -2084,36 +2189,38 @@ private struct LiveActivitiesModuleView: View {
 
 private struct LiveActivityCard: View {
     let activity: DynamicIslandLiveActivity
+    var compactScale: CGFloat = 1
+    var showsProgress = true
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            HStack(alignment: .center, spacing: 8) {
+            HStack(alignment: .center, spacing: max(6, 8 * compactScale)) {
                 Image(systemName: activity.symbolName)
-                    .font(.system(size: 12, weight: .bold))
+                    .font(.system(size: 12 * compactScale, weight: .bold))
                     .foregroundStyle(activity.isActive ? .green : .white.opacity(0.58))
-                    .frame(width: 22, height: 22)
+                    .frame(width: 22 * compactScale, height: 22 * compactScale)
                     .background(.white.opacity(0.085), in: Circle())
 
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: max(2, 3 * compactScale)) {
                     HStack(spacing: 6) {
                         Text(activity.title)
-                            .font(.system(size: 11.5, weight: .bold, design: .rounded))
+                            .font(.system(size: 11.5 * compactScale, weight: .bold, design: .rounded))
                             .foregroundStyle(.white)
                             .lineLimit(1)
                             .minimumScaleFactor(0.78)
                         Spacer(minLength: 0)
                     }
 
-                    if let subtitle = activity.subtitle, !subtitle.isEmpty {
+                    if showsProgress, let subtitle = activity.subtitle, !subtitle.isEmpty {
                         Text(subtitle)
-                            .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                            .font(.system(size: 9.5 * compactScale, weight: .semibold, design: .rounded))
                             .foregroundStyle(.white.opacity(0.56))
                             .lineLimit(1)
                             .minimumScaleFactor(0.78)
                     }
 
-                    if let progress = LiveActivityStore.clampedProgress(activity.progress) {
+                    if showsProgress, let progress = LiveActivityStore.clampedProgress(activity.progress) {
                         GeometryReader { proxy in
                             ZStack(alignment: .leading) {
                                 Capsule(style: .continuous)
@@ -2127,9 +2234,9 @@ private struct LiveActivityCard: View {
                     }
                 }
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 7)
-            .frame(maxWidth: .infinity, minHeight: 42, alignment: .leading)
+            .padding(.horizontal, max(6, 8 * compactScale))
+            .padding(.vertical, max(5, 7 * compactScale))
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             .background(.white.opacity(0.082), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -2145,6 +2252,24 @@ private struct LiveActivityCard: View {
             return "\(activity.title), \(subtitle)"
         }
         return activity.title
+    }
+}
+
+private struct ExtraLiveActivityCard: View {
+    let count: Int
+    let compactScale: CGFloat
+
+    var body: some View {
+        Text("+\(count)")
+            .font(.system(size: max(12, 16 * compactScale), weight: .heavy, design: .rounded))
+            .foregroundStyle(.white.opacity(0.72))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(.white.opacity(0.070), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(.white.opacity(0.055), lineWidth: 1)
+            }
+            .accessibilityLabel("\(count) more live activities")
     }
 }
 
@@ -2170,102 +2295,121 @@ private struct StatsPageView: View {
                     .foregroundStyle(.white.opacity(0.62))
             }
 
-            VStack(spacing: metrics.cardSpacing) {
-                HStack(spacing: metrics.cardSpacing) {
-                    if settings.showCPU {
-                        StatsMetricCard(
-                            title: "CPU",
-                            symbol: "cpu",
-                            value: "\(Int((snapshot.cpuUsage * 100).rounded()))%",
-                            detail: "System load",
-                            accent: .cyan,
-                            fraction: snapshot.cpuUsage,
-                            history: snapshot.cpuHistory,
-                            width: metrics.statsCardWidth,
-                            height: metrics.statsCardHeight
-                        )
-                    }
-
-                    if settings.showMemory {
-                        StatsMetricCard(
-                            title: "Memory",
-                            symbol: "memorychip",
-                            value: percentText(fraction(used: snapshot.memoryUsedBytes, total: snapshot.memoryTotalBytes)),
-                            detail: usedTotalText(used: snapshot.memoryUsedBytes, total: snapshot.memoryTotalBytes),
-                            secondary: "Cached \(SystemStatsFormatting.formatBytes(snapshot.memoryCachedBytes))",
-                            accent: .purple,
-                            fraction: fraction(used: snapshot.memoryUsedBytes, total: snapshot.memoryTotalBytes),
-                            history: snapshot.memoryHistory,
-                            width: metrics.statsCardWidth,
-                            height: metrics.statsCardHeight
-                        )
-                    }
-
-                    if settings.showGPU {
-                        StatsMetricCard(
-                            title: "GPU",
-                            symbol: "display",
-                            value: "Unavailable",
-                            detail: "No reliable API",
-                            accent: .orange,
-                            fraction: nil,
-                            history: [],
-                            width: metrics.statsCardWidth,
-                            height: metrics.statsCardHeight
-                        )
-                    }
+            if metrics.statsUsesScroll {
+                ScrollView(.vertical, showsIndicators: false) {
+                    statsGrid(snapshot)
+                        .padding(.bottom, 3)
                 }
-
-                HStack(spacing: metrics.cardSpacing) {
-                    if settings.showNetwork {
-                        StatsMetricCard(
-                            title: "Network",
-                            symbol: "network",
-                            value: networkText(snapshot),
-                            detail: "Current transfer",
-                            secondary: "↑ \(SystemStatsFormatting.formatBytesPerSecond(snapshot.networkUploadBytesPerSecond))",
-                            accent: .green,
-                            fraction: nil,
-                            history: snapshot.networkDownloadHistory,
-                            secondaryHistory: snapshot.networkUploadHistory,
-                            width: metrics.statsCardWidth,
-                            height: metrics.statsCardHeight
-                        )
-                    }
-
-                    if settings.showDisk {
-                        StatsMetricCard(
-                            title: "Disk",
-                            symbol: "internaldrive",
-                            value: percentText(fraction(used: snapshot.diskUsedBytes, total: snapshot.diskTotalBytes)),
-                            detail: usedTotalText(used: snapshot.diskUsedBytes, total: snapshot.diskTotalBytes),
-                            secondary: "Startup volume",
-                            accent: .blue,
-                            fraction: fraction(used: snapshot.diskUsedBytes, total: snapshot.diskTotalBytes),
-                            history: snapshot.diskHistory,
-                            width: metrics.statsCardWidth,
-                            height: metrics.statsCardHeight
-                        )
-                    }
-
-                    if settings.showBattery || settings.showUptime {
-                        StatsMetricCard(
-                            title: settings.showBattery ? "Battery" : "Uptime",
-                            symbol: settings.showBattery ? "battery.75percent" : "clock",
-                            value: settings.showBattery ? batteryText(snapshot) : uptimeText(snapshot.uptimeSeconds),
-                            detail: settings.showBattery ? batteryDetail(snapshot) : "System uptime",
-                            secondary: settings.showUptime ? "Uptime \(uptimeText(snapshot.uptimeSeconds))" : nil,
-                            accent: .mint,
-                            fraction: settings.showBattery ? snapshot.batteryPercent : nil,
-                            history: settings.showBattery ? batteryHistory(snapshot) : [],
-                            width: metrics.statsCardWidth,
-                            height: metrics.statsCardHeight
-                        )
-                    }
-                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            } else {
+                statsGrid(snapshot)
+                    .padding(.bottom, 2)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private func statsGrid(_ snapshot: SystemStatsSnapshot) -> some View {
+        VStack(spacing: metrics.cardSpacing) {
+            HStack(spacing: metrics.cardSpacing) {
+                if settings.showCPU {
+                    StatsMetricCard(
+                        title: "CPU",
+                        symbol: "cpu",
+                        value: "\(Int((snapshot.cpuUsage * 100).rounded()))%",
+                        detail: "System load",
+                        accent: .cyan,
+                        fraction: snapshot.cpuUsage,
+                        history: snapshot.cpuHistory,
+                        width: metrics.statsCardWidth,
+                        height: metrics.statsCardHeight,
+                        compactScale: metrics.compactScale
+                    )
+                }
+
+                if settings.showMemory {
+                    StatsMetricCard(
+                        title: "Memory",
+                        symbol: "memorychip",
+                        value: percentText(fraction(used: snapshot.memoryUsedBytes, total: snapshot.memoryTotalBytes)),
+                        detail: usedTotalText(used: snapshot.memoryUsedBytes, total: snapshot.memoryTotalBytes),
+                        secondary: "Cached \(SystemStatsFormatting.formatBytes(snapshot.memoryCachedBytes))",
+                        accent: .purple,
+                        fraction: fraction(used: snapshot.memoryUsedBytes, total: snapshot.memoryTotalBytes),
+                        history: snapshot.memoryHistory,
+                        width: metrics.statsCardWidth,
+                        height: metrics.statsCardHeight,
+                        compactScale: metrics.compactScale
+                    )
+                }
+
+                if settings.showGPU {
+                    StatsMetricCard(
+                        title: "GPU",
+                        symbol: "display",
+                        value: "Unavailable",
+                        detail: "No reliable API",
+                        accent: .orange,
+                        fraction: nil,
+                        history: [],
+                        width: metrics.statsCardWidth,
+                        height: metrics.statsCardHeight,
+                        compactScale: metrics.compactScale
+                    )
+                }
+            }
+
+            HStack(spacing: metrics.cardSpacing) {
+                if settings.showNetwork {
+                    StatsMetricCard(
+                        title: "Network",
+                        symbol: "network",
+                        value: networkText(snapshot),
+                        detail: "Current transfer",
+                        secondary: "↑ \(SystemStatsFormatting.formatBytesPerSecond(snapshot.networkUploadBytesPerSecond))",
+                        accent: .green,
+                        fraction: nil,
+                        history: snapshot.networkDownloadHistory,
+                        secondaryHistory: snapshot.networkUploadHistory,
+                        width: metrics.statsCardWidth,
+                        height: metrics.statsCardHeight,
+                        compactScale: metrics.compactScale
+                    )
+                }
+
+                if settings.showDisk {
+                    StatsMetricCard(
+                        title: "Disk",
+                        symbol: "internaldrive",
+                        value: percentText(fraction(used: snapshot.diskUsedBytes, total: snapshot.diskTotalBytes)),
+                        detail: usedTotalText(used: snapshot.diskUsedBytes, total: snapshot.diskTotalBytes),
+                        secondary: "Startup volume",
+                        accent: .blue,
+                        fraction: fraction(used: snapshot.diskUsedBytes, total: snapshot.diskTotalBytes),
+                        history: snapshot.diskHistory,
+                        width: metrics.statsCardWidth,
+                        height: metrics.statsCardHeight,
+                        compactScale: metrics.compactScale
+                    )
+                }
+
+                if settings.showBattery || settings.showUptime {
+                    StatsMetricCard(
+                        title: settings.showBattery ? "Battery" : "Uptime",
+                        symbol: settings.showBattery ? "battery.75percent" : "clock",
+                        value: settings.showBattery ? batteryText(snapshot) : uptimeText(snapshot.uptimeSeconds),
+                        detail: settings.showBattery ? batteryDetail(snapshot) : "System uptime",
+                        secondary: settings.showUptime ? "Uptime \(uptimeText(snapshot.uptimeSeconds))" : nil,
+                        accent: .mint,
+                        fraction: settings.showBattery ? snapshot.batteryPercent : nil,
+                        history: settings.showBattery ? batteryHistory(snapshot) : [],
+                        width: metrics.statsCardWidth,
+                        height: metrics.statsCardHeight,
+                        compactScale: metrics.compactScale
+                    )
+                }
+            }
+        }
     }
 
     private func usedTotalText(used: UInt64, total: UInt64) -> String {
@@ -2331,23 +2475,24 @@ private struct StatsMetricCard: View {
     var secondaryHistory: [Double] = []
     let width: CGFloat
     let height: CGFloat
+    let compactScale: CGFloat
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 7) {
+        VStack(alignment: .leading, spacing: max(3, 4 * compactScale)) {
+            HStack(spacing: max(5, 7 * compactScale)) {
                 Image(systemName: symbol)
-                    .font(.system(size: 12, weight: .bold))
+                    .font(.system(size: 12 * compactScale, weight: .bold))
                     .foregroundStyle(accent.opacity(0.95))
-                    .frame(width: 22, height: 22)
+                    .frame(width: 22 * compactScale, height: 22 * compactScale)
                     .background(accent.opacity(0.16), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(title)
-                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .font(.system(size: 11 * compactScale, weight: .bold, design: .rounded))
                         .foregroundStyle(.white.opacity(0.62))
                         .lineLimit(1)
                     Text(value)
-                        .font(.system(size: 17, weight: .heavy, design: .rounded))
+                        .font(.system(size: 17 * compactScale, weight: .heavy, design: .rounded))
                         .foregroundStyle(.white)
                         .lineLimit(1)
                         .minimumScaleFactor(0.56)
@@ -2360,7 +2505,7 @@ private struct StatsMetricCard: View {
                 secondaryValues: secondaryHistory,
                 accent: accent
             )
-            .frame(height: 13)
+            .frame(height: max(8, 13 * compactScale))
 
             HStack(spacing: 5) {
                 Text(detail)
@@ -2369,12 +2514,12 @@ private struct StatsMetricCard: View {
                     Text(secondary)
                 }
             }
-            .font(.system(size: 8, weight: .semibold, design: .rounded))
+            .font(.system(size: 8 * compactScale, weight: .semibold, design: .rounded))
             .foregroundStyle(.white.opacity(0.42))
             .lineLimit(1)
             .minimumScaleFactor(0.72)
         }
-        .padding(8)
+        .padding(max(5, 8 * compactScale))
         .frame(width: width, height: height, alignment: .topLeading)
         .background(.white.opacity(0.085), in: RoundedRectangle(cornerRadius: 15, style: .continuous))
         .overlay {

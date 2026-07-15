@@ -1453,42 +1453,111 @@ struct ShelfFileTile: View {
 
 struct ShortcutsModuleView: View {
     @ObservedObject var shortcuts: ShortcutsStore
+    var availableHeight: CGFloat?
+    var compactScale: CGFloat
     let onShortcutLaunched: () -> Void
 
-    init(shortcuts: ShortcutsStore, onShortcutLaunched: @escaping () -> Void = {}) {
+    init(
+        shortcuts: ShortcutsStore,
+        availableHeight: CGFloat? = nil,
+        compactScale: CGFloat = 1,
+        onShortcutLaunched: @escaping () -> Void = {}
+    ) {
         self.shortcuts = shortcuts
+        self.availableHeight = availableHeight
+        self.compactScale = compactScale
         self.onShortcutLaunched = onShortcutLaunched
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label("Shortcuts", systemImage: "bolt.fill")
-                .font(.system(size: 14, weight: .bold, design: .rounded))
-                .foregroundStyle(.white)
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 2), spacing: 8) {
-                ForEach(shortcuts.shortcuts.prefix(4)) { shortcut in
-                    Button {
-                        shortcuts.open(shortcut)
-                        onShortcutLaunched()
-                    } label: {
-                        VStack(spacing: 6) {
-                            Image(systemName: shortcut.symbolName)
-                                .font(.system(size: 17, weight: .semibold))
-                            Text(shortcut.title)
-                                .font(.system(size: 11, weight: .bold, design: .rounded))
-                                .lineLimit(1)
-                        }
-                        .frame(maxWidth: .infinity, minHeight: 58)
-                        .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    }
-                    .buttonStyle(.plain)
+        VStack(alignment: .leading, spacing: max(7, 12 * compactScale)) {
+            HStack(spacing: 8) {
+                Label("Shortcuts", systemImage: "bolt.fill")
+                    .font(.system(size: 14 * compactScale, weight: .bold, design: .rounded))
                     .foregroundStyle(.white)
-                    .accessibilityLabel("Open \(shortcut.title)")
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                if hiddenShortcutCount > 0 {
+                    Text("+\(hiddenShortcutCount)")
+                        .font(.system(size: 10 * compactScale, weight: .heavy, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.62))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(.white.opacity(0.08), in: Capsule(style: .continuous))
                 }
             }
+
+            if shortcuts.shortcuts.isEmpty {
+                Text("No shortcuts")
+                    .font(.system(size: 10 * compactScale, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.54))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            } else {
+                GeometryReader { proxy in
+                    shortcutsRow(availableWidth: proxy.size.width)
+                }
+                .frame(height: shortcutTileHeight)
+            }
         }
-        .padding(12)
+        .padding(max(8, 12 * compactScale))
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(.white.opacity(0.075), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+    }
+
+    private func shortcutsRow(availableWidth: CGFloat) -> some View {
+        let spacing = max(7, 10 * compactScale)
+        let visibleShortcuts = displayedShortcuts
+        let visibleCount = max(min(visibleShortcuts.count, 3), 1)
+        let fittedWidth = floor((availableWidth - (spacing * CGFloat(visibleCount - 1))) / CGFloat(visibleCount))
+        let buttonWidth = max(fittedWidth, 0)
+
+        return HStack(spacing: spacing) {
+            ForEach(visibleShortcuts) { shortcut in
+                shortcutButton(shortcut, width: buttonWidth)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+    }
+
+    private func shortcutButton(_ shortcut: LauncherShortcut, width: CGFloat) -> some View {
+        let buttonScale = min(max(min(width / 112, shortcutTileHeight / 62) * compactScale, 0.70), 1)
+
+        return Button {
+            shortcuts.open(shortcut)
+            onShortcutLaunched()
+        } label: {
+            VStack(spacing: max(3, 6 * buttonScale)) {
+                Image(systemName: shortcut.symbolName)
+                    .font(.system(size: 17 * buttonScale, weight: .semibold))
+                Text(shortcut.title)
+                    .font(.system(size: 11 * buttonScale, weight: .bold, design: .rounded))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.58)
+                    .allowsTightening(true)
+            }
+            .frame(width: width, height: shortcutTileHeight)
+            .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.white)
+        .accessibilityLabel("Open \(shortcut.title)")
+    }
+
+    private var displayedShortcuts: [LauncherShortcut] {
+        Array(shortcuts.shortcuts.prefix(3))
+    }
+
+    private var hiddenShortcutCount: Int {
+        max(shortcuts.shortcuts.count - displayedShortcuts.count, 0)
+    }
+
+    private var shortcutTileHeight: CGFloat {
+        guard let availableHeight else {
+            return 58
+        }
+        let headerAndPadding: CGFloat = max(42, 54 * compactScale)
+        let fittedRowHeight = availableHeight - headerAndPadding
+        let clampedRowHeight = min(max(fittedRowHeight, 46), 68)
+        return min(clampedRowHeight, max(fittedRowHeight, 0))
     }
 }

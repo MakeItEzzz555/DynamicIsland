@@ -3196,6 +3196,854 @@ For every requested feature phase:
   - `open dist/DynamicIsland.app` returned LaunchServices `-600` immediately after `pkill`; retrying with the absolute app path succeeded.
   - Packaging still reports the existing `FileThumbnailCache` non-Sendable capture warning in `ModuleViews.swift`.
 
+### Phase 11C.11 - Native canJoinAllApplications A/B Test
+
+- Added the isolated native Space membership A/B variable on top of the stable 11C.10 configuration:
+  - Default native collection behavior is now `[.fullScreenAuxiliary, .canJoinAllSpaces, .canJoinAllApplications, .ignoresCycle]`.
+  - DEBUG override `DYNAMIC_ISLAND_DISABLE_JOIN_ALL_APPLICATIONS=1` restores the 11C.10 variant `[.fullScreenAuxiliary, .canJoinAllSpaces, .ignoresCycle]`.
+  - `panel.level` remains `.statusBar`.
+  - No `.stationary`, `.auxiliary`, `.transient`, `.fullScreenPrimary`, `.primary`, or `.screenSaver` was added.
+- Preserved native parity mode:
+  - Manual Space compensation remains disabled by default.
+  - `SpaceMotionProbePanel`, `SpaceTransitionRenderPanel`, `CGWindowListCopyWindowInfo` Space correction, `CVDisplayLink` Space correction, prediction, per-frame `NSWindow` movement, and per-frame layer counter-translation remain inactive unless `DYNAMIC_ISLAND_ENABLE_SPACE_COMPENSATION=1` is set.
+  - App/Space lifecycle notifications were not changed and still do not reconfigure, reorder, reposition, or retry in parity mode.
+- Added startup DEBUG A/B logging:
+  - Default startup: `[SpaceNativeAB] canJoinAllApplications=true level=25 collectionBehavior=262465`.
+  - Override startup: `[SpaceNativeAB] canJoinAllApplications=false level=25 collectionBehavior=321`.
+  - Both startup smokes confirmed `spaceDisplayLinkRunning=false`, `probeVisible=false`, and `transitionRenderVisible=false`.
+- Runtime collection behavior variants:
+  - Default with `.canJoinAllApplications`: raw `262465`.
+  - Override without `.canJoinAllApplications`: raw `321`.
+- Validation passed:
+  - `swift build`
+  - `swift test` with `124` tests and `0` failures
+  - `Scripts/package_app.sh`
+  - Packaging still reports the existing `FileThumbnailCache` non-Sendable capture warning in `ModuleViews.swift`.
+- Manual A/B transition matrix:
+  - Desktop Space A to Desktop Space B: not manually executed by Codex; requires local trackpad test.
+  - Fullscreen to Desktop Space: not manually executed by Codex; requires local fullscreen test.
+  - Desktop Space to Fullscreen: not manually executed by Codex; requires local fullscreen test.
+  - Fullscreen to Fullscreen: not manually executed by Codex; requires local fullscreen test.
+  - Mission Control behavior: not manually executed by Codex; requires local Mission Control test.
+  - Slow, normal, fast, and cancel/reverse partial Space swipes: not manually executed by Codex; require local trackpad testing.
+- A/B winner:
+  - Not determined by Codex because the required visual Space/Mission Control transition matrix needs local interaction.
+  - The default is set to the `.canJoinAllApplications` variant for the requested experiment.
+  - Keep it only if local testing shows desktop/windowed Space transitions improve without fullscreen, Mission Control, interactivity, flicker, duplication, or disappearance regressions.
+
+### Phase 11C.10 - Exact Atoll Native Window Parity Experiment
+
+- Added the Atoll parity experiment switch:
+  - `OverlayWindowController.useExperimentalSpaceCompensation` is `false` by default.
+  - DEBUG override `DYNAMIC_ISLAND_ENABLE_SPACE_COMPENSATION=1` restores the Phase 11C.9 probe/render/display-link compensation stack for A/B testing.
+  - Default parity mode stops and orders out the `SpaceMotionProbePanel` and `SpaceTransitionRenderPanel`.
+  - Default parity mode does not start the `SpaceLockDisplayLink`, does not poll `CGWindowListCopyWindowInfo` for Space tracking, does not apply Space layer counter-translation, and does not run Space prediction or recovery.
+- Matched the inspected Atoll notch-panel configuration for the effective island panel:
+  - Style mask is `[.borderless, .nonactivatingPanel]`.
+  - `isFloatingPanel = true`.
+  - `becomesKeyOnlyIfNeeded = false`.
+  - `level = .statusBar`.
+  - `sharingType = .readOnly`.
+  - `backgroundColor = .clear`.
+  - `isOpaque = false`.
+  - `hasShadow = false`.
+  - `isMovable = false`.
+  - `hidesOnDeactivate = false`.
+  - `canHide = false`.
+  - `isReleasedWhenClosed = false`.
+  - Collection behavior is exactly `[.fullScreenAuxiliary, .canJoinAllSpaces, .ignoresCycle]`.
+  - `.stationary`, `.canJoinAllApplications`, `.auxiliary`, `.transient`, `.fullScreenPrimary`, and `.primary` are not in the effective collection behavior.
+- Stopped parity-mode panel manipulation on app/Space lifecycle events:
+  - `activeSpaceDidChange`, `didActivateApplication`, `didBecomeActive`, and `didResignActive` now only keep DEBUG logging in parity mode.
+  - They do not reposition, reorder, reconfigure, restore frames, schedule recovery verification, or start Space monitoring in parity mode.
+  - Screen-parameter changes still reposition through the existing geometry path, but probe/render/reassertion work remains disabled unless the A/B override is enabled.
+- Kept the island panel permanently ordered while overlay is enabled:
+  - Initial show positions the canonical frame and orders the island once.
+  - Collapsed/expanded state changes no longer re-order an already visible panel in parity mode.
+  - Overlay disable still orders out the island and any experimental panels.
+  - Mouse behavior remains controlled by `ignoresMouseEvents`.
+- Preserved the fixed-canvas island architecture:
+  - The canonical panel frame remains the existing NotchGeometryService expanded/canvas-sized frame at the top-center notch position.
+  - Collapsed/expanded morphing remains SwiftUI-owned.
+  - No collapsed UI, expanded UI, Live Activities, gestures, media, timer, battery, hover preview, click-through calculations, or NotchGeometryService behavior was intentionally changed.
+- Runtime parity startup result:
+  - `[AtollParity] level=25 collectionBehavior=321 frame=(246.0, 592.0, 860.0, 286.0)`.
+  - `containsFullScreenAuxiliary=true`.
+  - `containsCanJoinAllSpaces=true`.
+  - `containsIgnoresCycle=true`.
+  - `containsStationary=false`.
+  - `containsCanJoinAllApplications=false`.
+  - `spaceDisplayLinkRunning=false`.
+  - `probeVisible=false`.
+  - `transitionRenderVisible=false`.
+  - `islandVisible=true`.
+- A/B startup result:
+  - `DYNAMIC_ISLAND_ENABLE_SPACE_COMPENSATION=1 .build/debug/DynamicIsland` starts the Phase 11C.9 machinery.
+  - Startup log showed `SpaceRender canvasSetFrame`, `SpaceProbe displayLinkStarted nominalFPS=120.0`, and `SpaceProbe BASELINE_CAPTURED offset=0.0`.
+  - A/B mode still uses the Atoll-level/statusBar window configuration from this phase.
+- Validation passed:
+  - `swift build`
+  - `swift test` with `124` tests and `0` failures
+  - `Scripts/package_app.sh`
+  - Packaging still reports the existing `FileThumbnailCache` non-Sendable capture warning in `ModuleViews.swift`.
+  - No-trace parity smoke: `pkill -9 DynamicIsland`; `.build/debug/DynamicIsland`; no `SpaceProbe` or `SpaceRender` runtime activity appeared, and `[AtollParity]` confirmed display link/probe/render were inactive.
+- Manual transition matrix:
+  - Slow 3-finger Space transition: not manually executed by Codex; requires local trackpad test with trace logging disabled.
+  - Normal Space transition: not manually executed by Codex; requires local trackpad test with trace logging disabled.
+  - Fast Space transition: not manually executed by Codex; requires local trackpad test with trace logging disabled.
+  - Fullscreen to desktop: not manually executed by Codex; requires local fullscreen test.
+  - Desktop to fullscreen: not manually executed by Codex; requires local fullscreen test.
+  - Fullscreen app to fullscreen app: not manually executed by Codex; requires local fullscreen test.
+  - Cmd+Tab into/out of fullscreen: not manually executed by Codex; requires local fullscreen test.
+  - Visual comparison against `DYNAMIC_ISLAND_ENABLE_SPACE_COMPENSATION=1`: startup behavior verified; actual transition comparison requires local trackpad/fullscreen testing.
+
+### Phase 11C.9 - Predictive Space Motion Resampling
+
+- Preserved the Phase 11C.8 render-canvas architecture:
+  - The real interactive `islandPanel` remains physically canonical during normal Space transitions.
+  - `SpaceMotionProbePanel` remains the independent uncompensated sensor.
+  - `SpaceTransitionRenderPanel` remains the fixed wide render canvas.
+  - The duplicate visual-only `IslandRootView` remains continuously mounted.
+  - The normal display-frequency visual mutation remains only `transitionIslandHostingView.layer` affine transform.
+- Addressed the remaining temporal jitter:
+  - 11C.8 manual testing improved tracking by roughly an order of magnitude, but visible lag/stair-stepping could remain because display-link cadence and fresh WindowServer probe samples are not the same thing.
+  - Added timestamped raw probe samples and distinct probe samples.
+  - A sample is distinct only when translation changes by more than `0.1` pt.
+  - Maintains `lastRawProbeSample`, `previousRawProbeSample`, `lastDistinctProbeSample`, `previousDistinctProbeSample`, and an EMA of distinct sensor intervals.
+- Added bounded motion prediction:
+  - Velocity is estimated only from distinct samples, never repeated identical samples.
+  - Velocity is clamped by `screenWidth * 6.0` points/second; larger jumps are treated as discontinuities and prediction velocity becomes zero.
+  - Prediction lead uses `distinctProbeSampleIntervalEMA * 0.6`, clamped to `8...24ms`.
+  - Prediction distance is capped at `min(screenWidth * 0.04, 60)`, which is about `54` pt on the `1352` pt test display.
+  - Prediction is disabled near rest when raw translation is under `8` pt or velocity is under `20` pt/second.
+- Added reversal handling:
+  - Consecutive distinct sample deltas with opposite signs are treated as a direction reversal.
+  - On reversal, previous velocity prediction is discarded, the latest raw sample is used directly, and velocity is rebuilt from subsequent distinct samples.
+- Added render coalescing and hot-path cleanup:
+  - MainActor render updates remain strictly coalesced; queued closures consume the newest sample state instead of capturing stale translation values.
+  - The hot path reads the newest probe sample, updates numeric motion state, predicts the current translation, dedupes tiny transform changes under `0.1` pt, and writes one disabled-actions layer transform.
+  - No normal-path per-frame real island `NSWindow.setFrame`, geometry recalculation, SwiftUI observable update, visible-island CG query, window ordering, or mouse-passthrough update was added.
+- Added activation/completion hysteresis:
+  - Activation threshold is now `2.0` pt.
+  - Completion threshold is now `0.5` pt.
+  - Completion requires `9` stable display frames.
+  - This keeps the duplicate renderer active through tiny endpoint bounces instead of flickering the handoff.
+- Added one-frame overlapping visual handoff:
+  - On completion, the real island is forced canonical and main content opacity is restored first.
+  - The duplicate renderer remains visible at approximately zero translation for one frame.
+  - On the next frame, the duplicate is hidden, its layer transform resets to identity, and normal mouse passthrough is restored.
+- Preserved baseline safety:
+  - Stable baseline capture still requires `10` consecutive samples within `±2` pt.
+  - Recovery only requests baseline recapture; it does not establish a new baseline while motion is active.
+  - Startup trace captured `BASELINE_CAPTURED offset=0.0`; no invalid nonzero baseline appeared.
+- Added diagnostics and A/B switch:
+  - `DYNAMIC_ISLAND_DISABLE_SPACE_PREDICTION=1` uses raw probe translation directly for 11C.8-style comparison.
+  - `DYNAMIC_ISLAND_TRACE_SPACE_TRANSITIONS=1` logs approximately every `0.25s`: display FPS, distinct probe sample Hz, raw translation, predicted translation, prediction lead, velocity, layer compensation, main-queue render delay, p95 visual error, and max visual error.
+  - Visible island CG position is sampled only at low frequency for diagnostics, not at display frequency.
+  - Normal DEBUG runs without trace logging no longer print per-frame `SpaceProbe` or `SpaceRender` tracking lines.
+- Updated pure math tests:
+  - Bounded prediction uses short adaptive lead.
+  - Prediction distance clamps to the configured maximum.
+  - Prediction disables near rest and in raw A/B mode.
+  - Direction reversal detection ignores tiny noise.
+- Changed files:
+  - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
+  - `Sources/DynamicIsland/Overlay/SpaceTransitionCompensationMath.swift`
+  - `Tests/DynamicIslandTests/SpaceTransitionCompensationMathTests.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test` with `124` tests and `0` failures
+  - `chmod +x Scripts/package_app.sh`
+  - `Scripts/package_app.sh`
+  - Packaging first hit the known resource-fork signing issue, then passed after `xattr -cr dist/DynamicIsland.app`.
+  - Normal no-trace smoke: `pkill -9 DynamicIsland`; `.build/debug/DynamicIsland`; no `SpaceProbe`/`SpaceRender` per-frame lines appeared.
+  - Predictive trace: `DYNAMIC_ISLAND_TRACE_SPACE_TRANSITIONS=1 .build/debug/DynamicIsland`.
+  - Raw A/B trace: `DYNAMIC_ISLAND_TRACE_SPACE_TRANSITIONS=1 DYNAMIC_ISLAND_DISABLE_SPACE_PREDICTION=1 .build/debug/DynamicIsland`.
+- Trace result:
+  - Predictive idle startup captured `displayFPS` settling around `111.1`, `distinctProbeSampleHz=0.0`, `rawTranslationX=0.0`, `predictedTranslationX=0.0`, `predictionLeadMilliseconds=0.00`, `p95VisualErrorX=0.0`, and `maxVisualErrorX=0.0`.
+  - Raw A/B idle startup showed predicted translation equal to raw translation and prediction lead `0.00ms`.
+  - No `PROBE_RECOVERY` or `correctionRejected` appeared during startup smoke traces.
+- Manual transition matrix:
+  - Very slow swipe: not manually executed by Codex; requires local trackpad test with trace logging disabled.
+  - Normal swipe: not manually executed by Codex; requires local trackpad test with trace logging disabled.
+  - Fast swipe: not manually executed by Codex; requires local trackpad test with trace logging disabled.
+  - Halfway hold: not manually executed by Codex; requires local trackpad test with trace logging disabled.
+  - Halfway reverse/cancel: not manually executed by Codex; requires local trackpad test with trace logging disabled.
+  - Repeated rapid Space switches: not manually executed by Codex; requires local trackpad test with trace logging disabled.
+  - Raw A/B visual result: not manually executed by Codex; requires local trackpad test with `DYNAMIC_ISLAND_DISABLE_SPACE_PREDICTION=1`.
+  - Predictive A/B visual result: not manually executed by Codex; requires local trackpad test without the disable flag.
+
+### Phase 11C.8 - Core Animation Space Transition Render Canvas
+
+- Replaced Phase 11C.7's remaining per-frame real island `NSPanel` movement:
+  - The 11C.7 trace proved the independent probe and inverse feed-forward math were correct.
+  - Clean transition traces reached approximately `-1415` probe translation on a `1352` pt screen, which is a valid one-Space movement.
+  - Moving the real island `NSPanel` every display frame kept it near the notch but still produced visible lag/staggering because AppKit window movement remained in the hot path.
+- Kept the Space Motion Probe:
+  - `SpaceMotionProbePanel` is still the independent, uncompensated WindowServer motion sensor.
+  - The probe is still never used for hover detection, click-through, collapsed gestures, expanded hover boundaries, or user interaction.
+- Added a render-only transition canvas:
+  - `SpaceTransitionRenderPanel` is a wide transparent non-interactive `NSPanel`.
+  - It uses the same `OverlayPersistence.level` and `OverlayPersistence.collectionBehavior` as the island panel.
+  - It keeps clear background/content, no shadow, `alphaValue = 1`, `ignoresMouseEvents = true`, `canBecomeKey = false`, and `canBecomeMain = false`.
+  - The startup trace on the test display created canvas frame `x=-2704`, `y=592`, `width=6760`, `height=286`.
+  - Canvas width is `screenWidth + (screenWidth * 2.0 * 2)`, giving two screen widths of horizontal margin on each side.
+- Mounted a duplicate visual island renderer:
+  - A second `NSHostingView<IslandRootView>` is mounted once inside `SpaceTransitionRenderPanel`.
+  - It shares the existing `settings`, `islandState`, `layoutStore`, and `modules`.
+  - Its callbacks are inert: no expand, collapse, or settings actions are routed through the duplicate renderer.
+  - The duplicate host is laid out at the canonical island position inside the wide transition canvas.
+- Replaced hot-path window movement with layer movement:
+  - The real `islandPanel` remains at `canonicalPanelFrame`.
+  - During an active Space transition, the main island content layer is hidden and the real panel is forced click-through.
+  - The duplicate renderer is shown, and only `transitionIslandHostingView.layer` receives a disabled-actions affine translation.
+  - The applied layer compensation is `-probeTranslationX`.
+  - No normal-path `spaceLockOffsetX += error`, proportional gain, island CG acknowledgement wait, or per-frame real island `NSPanel.setFrame` remains.
+- Fixed probe baseline poisoning:
+  - Baseline capture is now explicitly pending after probe setup, recovery, screen changes, and active app/Space events.
+  - A baseline is captured only after `10` consecutive display-link samples with raw probe offset within `±2` pt.
+  - The startup trace showed `BASELINE_STABLE_SAMPLE` counts `1...10`, then `BASELINE_CAPTURED offset=0.0 probeCGX=4.0 probeCanonicalX=4.0`.
+  - No invalid nonzero baseline such as `offset=2156` was captured in the 11C.8 startup trace.
+- Added transition activation/completion policy:
+  - Render mode activates when `abs(probeTranslationX) > 1.5`.
+  - Render mode completes after `4` stable samples back within the activation threshold.
+  - Normal probe translation range is `screenWidth * 1.75`; on the test display this is `2366` pt.
+  - Absolute probe anomaly range is `screenWidth * 2.5`; on the test display this is `3380` pt.
+  - Samples between the normal and absolute ranges hold the last valid layer transform instead of moving the island thousands of pixels.
+  - Repeated samples beyond the absolute range still trigger recovery.
+- Preserved hard recovery as a fallback:
+  - Physical real-island stale/runaway bound remains `screenWidth * 1.25`; on the test display this is `1690` pt.
+  - Recovery still resets `spaceLockOffsetX = 0`, restores `canonicalPanelFrame`, calls `orderFrontRegardless()` once, restores mouse passthrough, enters a `0.15s` cooldown, and requests a fresh stable probe baseline.
+  - Recovery triggers for real island physical offset beyond `screenWidth * 1.25`, repeated missing/offscreen probe snapshots, repeated invalid probe translations beyond the absolute range, nonfinite probe translations, and post-Space verification finding an out-of-bounds physical island frame.
+- Preserved canonical visual hit testing:
+  - `screenRect(for:)` and collapsed gesture local-point conversion still use `canonicalPanelFrame`, not the transition renderer or any temporary layer transform.
+- Updated pure math tests:
+  - Valid observed `-1415` one-Space probe translation stays inside the normal `screenWidth * 1.75` range.
+  - Probe translations between normal and absolute bounds are held rather than immediately recovered.
+  - Large probe anomalies beyond `screenWidth * 2.5` remain invalid before moving the island thousands of pixels.
+- Changed files:
+  - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
+  - `Sources/DynamicIsland/Overlay/SpaceTransitionCompensationMath.swift`
+  - `Tests/DynamicIslandTests/SpaceTransitionCompensationMathTests.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test` with `120` tests and `0` failures
+  - `chmod +x Scripts/package_app.sh`
+  - `Scripts/package_app.sh`
+  - `DYNAMIC_ISLAND_TRACE_SPACE_TRANSITIONS=1 .build/debug/DynamicIsland 2>&1 | tee /tmp/dynamicisland-11c8.log`
+- Trace result:
+  - `SpaceRender canvasSetFrame` reported `frame=(-2704.0, 592.0, 6760.0, 286.0)`.
+  - `SpaceProbe BASELINE_CAPTURED` reported `offset=0.0`.
+  - Idle render trace showed `probeTranslationX=0.0`, `layerCompensationX=-0.0`, `transitionActive=false`, `mainPanelFrameX=246.0`, `mainContentVisible=true`, and `transitionContentVisible=false`.
+  - Observed display-link cadence reported `nominalFPS=120.0`, then observed debug samples around `98.6` to `111.2 FPS` during startup/media polling.
+  - No `PROBE_RECOVERY`, `correctionRejected`, `physicalX=-2584`, `physicalX=-3999`, or invalid nonzero baseline appeared during the startup trace.
+- Manual transition matrix:
+  - Extremely slow three-finger Space swipe: not manually executed by Codex; requires local trackpad test.
+  - Normal-speed Space swipe: not manually executed by Codex; requires local trackpad test.
+  - Very fast Space swipe: not manually executed by Codex; requires local trackpad test.
+  - Slow halfway drag and hold: not manually executed by Codex; requires local trackpad test.
+  - Reverse/cancel halfway gesture: not manually executed by Codex; requires local trackpad test.
+  - Rapid consecutive Space changes: not manually executed by Codex; requires local trackpad test.
+  - Expand/collapse after switching: not manually executed by Codex; requires local UI test.
+  - Hover/click-through: not manually executed by Codex; requires local UI test.
+
+### Phase 11C.7 - Decoupled Space Motion Probe
+
+- Replaced the laggy Phase 11C.6 self-referential Space Lock normal path:
+  - Slow gesture testing proved the compensation direction was correct.
+  - The sample-and-hold safety controller was intentionally stable but too low-bandwidth for normal-speed macOS Space transitions.
+  - The old normal path measured the visible island window while also moving that same window, creating WindowServer feedback latency.
+- Added an independent Space Motion Probe:
+  - `SpaceMotionProbePanel` is a tiny `2x2` transparent non-interactive `NSPanel`.
+  - It uses the same `OverlayPersistence.level` and `OverlayPersistence.collectionBehavior` as the island panel.
+  - It keeps `alphaValue = 1`, clear content/background, no shadow, `ignoresMouseEvents = true`, `canBecomeKey = false`, and `canBecomeMain = false`.
+  - Its canonical frame is anchored on the island's target screen at `x = screen.minX + 4`, `y = screen.maxY - 4 - 2`, `width = 2`, `height = 2`.
+  - It is never counter-translated and exists only as a WindowServer motion sensor.
+- Replaced normal tracking with absolute feed-forward:
+  - Probe baseline is captured once after setup/screen changes as `probeWindowServerXOffset = probeCGX - probeCanonicalX`.
+  - Raw Space translation is `probeTranslationX = actualProbeCGX - (probeCanonicalX + probeWindowServerXOffset)`.
+  - Visible island offset is `spaceLockOffsetX = -probeTranslationX`.
+  - Effective island frame is `canonicalPanelFrame.offsetBy(dx: spaceLockOffsetX, dy: 0)`.
+  - No normal-path `spaceLockOffsetX += error`, no proportional gain, no island CG acknowledgement waiting, and no 20 Hz sample-and-hold write interval remain.
+- Added display-synchronized probe tracking:
+  - `SpaceLockDisplayLink` uses `CVDisplayLinkCreateWithActiveCGDisplays`.
+  - The display-link callback coalesces pending updates before dispatching to the main queue, then `performProbeDrivenSpaceLockTick(reason:)` runs on the main actor.
+  - Startup trace on this Mac reported `nominalFPS=120.0`; observed debug cadence stabilized near `114.0 FPS` after startup.
+- Preserved hard recovery as a fallback:
+  - Recovery still resets `spaceLockOffsetX = 0`, restores `canonicalPanelFrame`, calls `orderFrontRegardless()` once, restores mouse passthrough, enters a `0.15s` cooldown, and re-establishes the probe baseline.
+  - Recovery now triggers for physical island offset beyond `screenWidth * 1.25`, repeated missing/offscreen probe snapshots, repeated invalid probe translations, desired probe offset beyond `screenWidth * 1.25`, and post-Space verification finding an out-of-bounds physical island frame.
+  - Probe translation samples beyond `screenWidth * 2` are held first and only recover after repeated invalid samples.
+- Preserved canonical visual hit testing:
+  - `screenRect(for:)` and collapsed gesture local-point conversion still use `canonicalPanelFrame`, not the physically counter-shifted island frame.
+  - The probe is never used for hover detection, click-through, collapsed gestures, expanded hover boundaries, or any user interaction.
+- Updated pure math tests:
+  - Probe raw translation.
+  - Probe WindowServer coordinate offset handling.
+  - Inverse feed-forward island offset.
+  - Stable probe returning canonical island position.
+  - Repeated probe samples not accumulating offset.
+  - Transition end returning the island to canonical X.
+  - Real `x=-2584` physical runaway bound.
+  - Large probe anomaly held before moving the island thousands of pixels.
+- Changed files:
+  - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
+  - `Sources/DynamicIsland/Overlay/SpaceTransitionCompensationMath.swift`
+  - `Tests/DynamicIslandTests/SpaceTransitionCompensationMathTests.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test` with 118 tests and 0 failures
+  - `chmod +x Scripts/package_app.sh`
+  - `Scripts/package_app.sh`
+  - `DYNAMIC_ISLAND_TRACE_SPACE_TRANSITIONS=1 .build/debug/DynamicIsland 2>&1 | tee /tmp/dynamicisland-11c7.log`
+- Trace result:
+  - Probe ordered and captured baseline: `probeCanonicalX=4`, `probeCGX=4`, `offset=0`.
+  - Idle feed-forward trace showed `translationX=0`, `desiredIslandOffsetX=0`, `canonicalIslandX=246`, `physicalIslandX=246`, and `islandActualCGX=246`.
+  - No `PROBE_RECOVERY`, `correctionRejected`, `physicalX=-2584`, `physicalX=-3999`, or offscreen frame entries appeared during the startup trace.
+- Manual transition matrix:
+  - Extremely slow three-finger Space swipe: not manually executed by Codex; requires local trackpad test.
+  - Normal-speed Space swipe: not manually executed by Codex; requires local trackpad test.
+  - Very fast Space swipe: not manually executed by Codex; requires local trackpad test.
+  - Slow halfway drag and hold: not manually executed by Codex; requires local trackpad test.
+  - Reverse/cancel halfway gesture: not manually executed by Codex; requires local trackpad test.
+  - Rapid consecutive Space changes: not manually executed by Codex; requires local trackpad test.
+  - Expand/collapse after switching: not manually executed by Codex; requires local UI test.
+  - Hover/click-through: not manually executed by Codex; requires local UI test.
+  - Probe invisibility: startup trace confirms transparent ordered probe configuration; visual confirmation requires local UI test.
+- Validation note:
+  - Packaging still reports the existing `FileThumbnailCache` non-Sendable capture warning in `ModuleViews.swift`.
+
+### Phase 11C.6 - Stable Sample-And-Hold Space Lock
+
+- Fixed the proven Phase 11C.5 Space Lock runaway failure:
+  - Runtime trace showed the continuous integrator physically pushed the `NSPanel` offscreen.
+  - Real failed physical position reached `x=-2584`, with earlier samples around `x=-3998/-3999`.
+  - The previous large-error rejection only logged `correctionRejected` and left the panel permanently stranded.
+- Replaced uncontrolled per-frame accumulation with sample-and-hold correction:
+  - Removed the Space Lock control path equivalent to `spaceLockOffsetX += errorX`.
+  - WindowServer observation still runs at `1/60s`.
+  - Physical frame corrections are independently rate-limited by `minimumWriteInterval = 0.05s`, so maximum correction cadence is 20 Hz.
+  - During the write hold period, observed errors are discarded and no pending corrections are queued.
+  - Each accepted sample computes an absolute target from current physical X plus current visual error, then assigns the resulting bounded offset once.
+- Added hard safety bounds:
+  - Total physical offset limit is `screenWidth * 1.25`.
+  - Maximum single physical write step is `screenWidth * 0.75`.
+  - The real failing state `canonicalX=246`, `physicalX=-2584`, `screenWidth=1352` produces `physicalOffset=-2830`, exceeding the `1690` total-offset limit and now triggers immediate recovery.
+- Added guaranteed runaway recovery:
+  - `recoverSpaceLockFromRunaway(reason:actualCGX:)` logs `[SpaceLock] RUNAWAY_RECOVERY`, resets `spaceLockOffsetX` to `0`, restores `canonicalPanelFrame` through the centralized physical writer, calls `orderFrontRegardless()` once, restores mouse passthrough, and enters a `0.15s` recovery cooldown.
+  - Recovery now runs for:
+    - nonfinite physical frame values
+    - current physical offset beyond `screenWidth * 1.25`
+    - desired offset beyond `screenWidth * 1.25`
+    - repeated invalid/offscreen WindowServer samples after 8 samples
+    - large visual error while physical offset is already out of bounds
+    - persistent large visual error after 3 accepted samples
+    - delayed active-Space verification finding physical offset beyond the limit
+  - Active-Space verification also restores the canonical frame when CG X has settled near expected X but the physical panel still has a large residual offset.
+- Replaced large-error behavior:
+  - Large visual errors no longer move the panel multiple screen widths.
+  - If the physical frame is still near canonical, large CG anomalies are held and rechecked instead of applied.
+  - Repeated large anomalies recover safely to the canonical frame.
+- Added post-Space transition recovery verification:
+  - `activeSpaceDidChange` still runs one immediate `performSpaceLockTick(reason:)`.
+  - It also schedules `verifySpaceLockRecovery(reason:)` after `0.15s` and `0.35s`.
+  - This is a Space Lock recovery verifier, not a new visibility reassertion path.
+- Preserved:
+  - Canonical visual hit testing from Phase 11C.5 remains intact.
+  - `screenRect(for:)` and collapsed scroll local-point conversion still use the canonical visual reference frame.
+  - No changes to `NSPanel` collection behavior, window level, overlay architecture, NotchGeometryService, collapsed UI, expanded UI, Live Activities, gestures, media, timer, battery, tray, stats, or shell morph timing.
+- Updated pure control-policy tests:
+  - normal left-moving transform computes desired physical X
+  - WindowServer catch-up does not apply a second accumulated correction
+  - write hold suppresses immediate second physical writes
+  - transition end computes canonical physical X
+  - real `x=-2584` runaway state exceeds total bound
+  - large CG anomaly near canonical exceeds visual bound but not physical bound
+  - single-step write bounding
+- Changed files:
+  - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
+  - `Sources/DynamicIsland/Overlay/SpaceTransitionCompensationMath.swift`
+  - `Tests/DynamicIslandTests/SpaceTransitionCompensationMathTests.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `chmod +x Scripts/package_app.sh`
+  - `Scripts/package_app.sh`
+  - `pkill -9 DynamicIsland`
+  - `DYNAMIC_ISLAND_TRACE_SPACE_TRANSITIONS=1 .build/debug/DynamicIsland 2>&1 | tee /tmp/dynamicisland-11c6.log`
+  - `open /Users/makeiteasy3/Documents/DynamicIsland/dist/DynamicIsland.app`
+- Trace result:
+  - `/tmp/dynamicisland-11c6.log` startup trace shows `[SpaceLock] watchdogStarted`, coordinate offset capture at canonical X `246`, and settled samples at expected/actual CG X `246`.
+  - No `correctionRejected`, `physicalX=-2584`, `physicalX=-3999`, or offscreen frame entries appeared in the startup trace.
+- Manual fullscreen transition matrix:
+  - Desktop -> fullscreen Space: not manually executed by Codex; requires local UI/trackpad test.
+  - fullscreen -> Desktop: not manually executed by Codex; requires local UI/trackpad test.
+  - fullscreen -> fullscreen: not manually executed by Codex; requires local UI/trackpad test.
+  - Cmd+Tab into fullscreen: not manually executed by Codex; requires local UI test.
+  - Cmd+Tab out of fullscreen: not manually executed by Codex; requires local UI test.
+  - slow half-Space drag: not manually executed by Codex; requires local trackpad test.
+  - reverse/cancel Space drag: not manually executed by Codex; requires local trackpad test.
+  - rapid repeated switches: not manually executed by Codex; requires local UI/trackpad test.
+- Validation note:
+  - Packaging still reports the existing `FileThumbnailCache` non-Sendable capture warning in `ModuleViews.swift`.
+
+### Phase 11C.5 - Continuous Horizontal Space Lock
+
+- Replaced the Phase 11C.4 event-triggered Space compensation session with a continuous X-only space lock:
+  - Removed the transition-session state machine based on monitoring deadlines, active/settled samples, saved mouse-ignore state, forced finish on active Space changes, and session generation.
+  - Removed horizontal-scroll-triggered compensation startup.
+  - Active app and active Space notifications now request an immediate space-lock tick, trace/reassert as before, and do not start or finish compensation sessions.
+- Added canonical-vs-physical panel frame ownership:
+  - `canonicalPanelFrame` is the stable intended AppKit frame used for geometry, hit testing, and local coordinate conversion.
+  - `spaceLockOffsetX` is the transient horizontal physical counter-translation.
+  - Physical frame application is `canonicalPanelFrame.offsetBy(dx: spaceLockOffsetX, dy: 0)`.
+  - Only `applyPhysicalPanelFrame(...)` calls raw `islandPanel.setFrame(...)`; no `setFrameOrigin(...)` path remains.
+- Added a continuous watchdog:
+  - Runs while the overlay is shown/enabled at `1/60s` in `.common` run-loop mode.
+  - Captures the stable WindowServer/AppKit X coordinate offset only after initial show and screen-parameter changes.
+  - Each tick compares expected CG X against the current WindowServer CG X, applies X-only incremental correction inside a `1pt` deadzone, and rejects corrections larger than `screenWidth * 2`.
+  - Y position, panel size, shell geometry, and IslandLayoutStore local coordinates are not compensated.
+  - Mouse input is temporarily ignored while the active X offset is above the safety threshold, then normal passthrough is restored when settled.
+- Updated hit testing and gesture coordinate conversion:
+  - `screenRect(for:)` now uses the canonical visual reference frame instead of the transient physical panel frame.
+  - Collapsed scroll hit-test local points subtract the canonical visual reference frame, so gestures continue to map to the visible island geometry while the physical panel is counter-translated.
+- Refactored the compensation math helper to X-only public math:
+  - `horizontalCorrection(expectedX:actualX:)`
+  - `clampedHorizontalCorrection(...)`
+  - `updatedOffset(currentOffset:correction:)`
+  - `isHorizontallySettled(errorX:offsetX:threshold:)`
+  - Tests cover no displacement, negative/positive X displacement, nonfinite rejection, clamping, incremental convergence, transition-end offset return to zero, and geometry signature equality.
+- Preserved:
+  - No changes to OverlayWindowController panel architecture, window level, collection behavior, NotchGeometryService, IslandRootView, IslandLayoutStore local surface semantics, responsive expanded layout, Live Activities UI, collapsed media/timer/battery views, gesture actions, media transport, timer, battery provider, album artwork, visualizer, tray, stats, or shell morph timing.
+- Changed files:
+  - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
+  - `Sources/DynamicIsland/Overlay/SpaceTransitionCompensationMath.swift`
+  - `Tests/DynamicIslandTests/SpaceTransitionCompensationMathTests.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `chmod +x Scripts/package_app.sh`
+  - `Scripts/package_app.sh`
+  - Short debug smoke launch with `DYNAMIC_ISLAND_TRACE_SPACE_TRANSITIONS=1`
+  - `pkill -9 DynamicIsland`
+  - `open /Users/makeiteasy3/Documents/DynamicIsland/dist/DynamicIsland.app`
+- Smoke launch result:
+  - `/tmp/dynamicisland-space-lock-smoke.log` shows `[SpaceLock] watchdogStarted`, `[SpaceLock] coordinateOffsetCaptured`, and repeated settled samples at expected/actual CG X `246.0`.
+- Manual fullscreen transition matrix:
+  - Not manually executed by Codex; requires local UI/trackpad testing with the trace command from Phase 11C.3.
+- Validation note:
+  - Packaging still reports the existing `FileThumbnailCache` non-Sendable capture warning in `ModuleViews.swift`.
+
+### Phase 11C.4 - WindowServer Space-Transition Counter-Translation
+
+- Implemented the evidence-based Space-transition compensation path from the captured WindowServer trace:
+  - The trace proved AppKit still reported the overlay visible/on-active-Space while WindowServer moved the actual CG bounds horizontally offscreen.
+  - Preserved the canonical panel membership configuration:
+    - `.screenSaver` level
+    - `.canJoinAllSpaces`
+    - `.canJoinAllApplications`
+    - `.stationary`
+    - `.ignoresCycle`
+    - borderless non-activating `IslandOverlayPanel`
+  - No additional window-level or collection-behavior experiments were added.
+- Added canonical WindowServer bounds capture:
+  - `currentWindowServerSnapshot()` now safely parses the overlay window through `CGWindowListCopyWindowInfo(.optionIncludingWindow, windowNumber)`.
+  - Captures `bounds`, `isOnscreen`, `layer`, `alpha`, `ownerName`, and `windowNumber`.
+  - `canonicalWindowServerBounds` is refreshed only while not actively compensating and only from a visible, onscreen, valid-size overlay window.
+  - The Phase 11C.3 diagnostic trace now reuses this single snapshot parser.
+- Added public-API counter-translation:
+  - Starts monitoring on active app changes and horizontal precise trackpad scroll/swipe events outside the visible island.
+  - Samples WindowServer bounds at `1/60s` for up to `3.5s`.
+  - Activates only when actual CG bounds diverge from canonical bounds by more than `3pt`.
+  - Temporarily sets `ignoresMouseEvents = true`, stops expanded mouse containment checks, and does not alter island state.
+  - Applies only AppKit panel-origin corrections through `setFrameOrigin`, without changing panel size, IslandLayoutStore coordinates, target frames, geometry, or ordering.
+  - Finishes on active Space change, deadline, or settled CG bounds, then restores the canonical panel frame once and orders front once.
+- Compensation math:
+  - `dx = canonicalCGBounds.minX - actualCGBounds.minX`
+  - `dy = actualCGBounds.minY - canonicalCGBounds.minY`
+  - Example from the failing trace:
+    - canonical `x=246`
+    - actual `x=-175`
+    - AppKit correction `dx=421`
+  - Corrections are clamped to `screenSize * 1.5` and invalid/nonfinite input is rejected.
+- Reduced repeated canonical geometry work:
+  - Added `OverlayGeometrySignature` for collapsed size, expanded size, collapsed active-content presence, adaptive notch sizing, and hardware-notch respect.
+  - `reposition(...)` now skips duplicate signatures unless forced.
+  - Live activity updates now trigger geometry work only when collapsed active-content presence changes, not for every title/progress/timestamp/battery update.
+  - Settings changes now only call `setVisible(...)` when `overlayEnabled` actually changes; otherwise geometry dedupe handles relevant layout settings.
+  - While Space compensation is monitoring/active, canonical repositioning, reassertion, and visibility ordering are deferred so they do not fight the counter-translation.
+  - Added DEBUG warning for excessive canonical frame applications.
+  - Added visibility-order dedupe so repeated collapsed/expanded visibility updates skip redundant `orderFrontRegardless()`.
+- Diagnostics:
+  - Detailed Phase 11C.3 transition trace now runs only when `DYNAMIC_ISLAND_TRACE_SPACE_TRANSITIONS=1`.
+  - Normal DEBUG logs keep monitoring start, compensation activation, throttled corrections, completion, and snapshot failures.
+- Pure math tests added:
+  - no displacement
+  - negative and positive CG X displacement
+  - downward and upward CG Y displacement
+  - invalid rect rejection
+  - correction clamping
+  - settled-threshold logic
+  - geometry signature equality
+- Smoke launch observations without manual Space transition:
+  - Canonical bounds captured as `(246.0, 0.0, 860.0, 286.0)` on the current machine.
+  - Startup operation counts over a 3-second trace-enabled debug launch:
+    - `setFrame`: `3`
+    - `orderFrontRegardless`: `3`
+    - `orderFrontRegardlessSkipped`: `4`
+    - duplicate reposition skips: `3`
+  - This is reduced from the previous diagnostic behavior where repeated live activity updates could produce many frame/order operations.
+- Preserved:
+  - No changes to NotchGeometryService, IslandRootView, responsive expanded layout, Live Activities UI, Shortcuts UI, collapsed preview mounting, collapsed media/timer/battery views, gesture actions, media transport, timer, battery provider, album artwork, visualizer, shell morph, or IslandLayoutStore coordinate semantics.
+- Changed files:
+  - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
+  - `Sources/DynamicIsland/Overlay/SpaceTransitionCompensationMath.swift`
+  - `Tests/DynamicIslandTests/SpaceTransitionCompensationMathTests.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `chmod +x Scripts/package_app.sh`
+  - `Scripts/package_app.sh`
+  - Short debug smoke launch with `DYNAMIC_ISLAND_TRACE_SPACE_TRANSITIONS=1`
+- Manual fullscreen transition matrix:
+  - Desktop Space -> fullscreen Space: not manually executed by Codex; requires local trackpad/UI test.
+  - Fullscreen Space -> Desktop Space: not manually executed by Codex; requires local trackpad/UI test.
+  - Fullscreen app A -> fullscreen app B: not manually executed by Codex; requires local trackpad/UI test.
+  - Desktop app -> fullscreen app via Cmd+Tab/AltTab: not manually executed by Codex; requires local UI test.
+  - Fullscreen app -> desktop app via Cmd+Tab/AltTab: not manually executed by Codex; requires local UI test.
+  - Begin/cancel Space swipe: not manually executed by Codex; requires local trackpad/UI test.
+- Known measurement gap:
+  - Maximum observed pre-fix CG X displacement from the provided trace was `246 -> -1169`.
+  - Maximum residual CGWindow displacement after correction was not measured by Codex because it requires manual fullscreen Space transitions.
+  - Run with `DYNAMIC_ISLAND_TRACE_SPACE_TRANSITIONS=1` and inspect `[SpaceCompensation] corrected/finished` plus `[OverlayTransitionTrace] cgBounds=...` to measure residual displacement.
+- Known limitation:
+  - If CG bounds remain pinned after compensation but the overlay is still visually absent, the remaining issue is compositor suppression despite corrected public WindowServer bounds.
+
+### Phase 11C.3 - Diagnostic WindowServer Transition Trace
+
+- Added DEBUG-only overlay transition tracing for fullscreen Space diagnostics:
+  - Samples the `IslandOverlayPanel` every `0.04s` for about `2.5s`.
+  - Trace is observation-only and does not reorder, reposition, reconfigure, or resize the overlay.
+  - Logs AppKit state:
+    - elapsed time
+    - reason
+    - `windowNumber`
+    - `isVisible`
+    - `isOnActiveSpace`
+    - `occlusionState`
+    - window level
+    - collection behavior
+    - frame
+    - alpha
+    - `ignoresMouseEvents`
+  - Logs WindowServer state through `CGWindowListCopyWindowInfo(.optionIncludingWindow, windowNumber)`:
+    - `kCGWindowIsOnscreen`
+    - `kCGWindowLayer`
+    - `kCGWindowAlpha`
+    - `kCGWindowBounds`
+    - `kCGWindowOwnerName`
+    - `kCGWindowNumber`
+- Starts diagnostic traces from:
+  - active app changes
+  - active Space changes
+  - app became active
+  - app resigned active
+  - DEBUG-only `.swipe` / `.gesture` monitors
+  - first relevant `.scrollWheel` event outside the visible island region as a fallback
+- Added DEBUG-only operation logs before every overlay `orderFrontRegardless()`, `orderOut(nil)`, and `setFrame(...)` call.
+- Added controlled diagnostic environment flag:
+  - `DYNAMIC_ISLAND_DISABLE_PERSISTENCE_REASSERT=1`
+  - When set in DEBUG, `reassertOverlayPresence(reason:)` logs a skip and returns without calling `orderFrontRegardless()`.
+- Preserved:
+  - No changes to window level, collection behavior, panel style mask, panel architecture, island geometry, responsive UI, gestures, live activities, mouse passthrough behavior, shell morph, media, timer, battery, tray, or stats.
+- Changed files:
+  - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+- Diagnostic run commands:
+  - Normal:
+    - `pkill -9 DynamicIsland`
+    - `.build/debug/DynamicIsland 2>&1 | tee /tmp/dynamicisland-transition-trace.log`
+    - `grep -E "OverlayTransitionTrace|OverlayWindowOperation|OverlayPersistence" /tmp/dynamicisland-transition-trace.log > /tmp/dynamicisland-transition-filtered.log`
+  - Reassertion disabled:
+    - `pkill -9 DynamicIsland`
+    - `DYNAMIC_ISLAND_DISABLE_PERSISTENCE_REASSERT=1 .build/debug/DynamicIsland 2>&1 | tee /tmp/dynamicisland-transition-no-reassert.log`
+- Notes:
+  - This is diagnostic instrumentation only; no new persistence fix was attempted.
+  - Manual fullscreen Space transition capture must be performed locally with the provided commands.
+
+### Phase 11C.2 - canJoinAllApplications Fullscreen Overlay Membership
+
+- Replaced the auxiliary fullscreen overlay role with true cross-application fullscreen membership:
+  - Removed `.fullScreenAuxiliary`.
+  - Removed `.auxiliary`.
+  - Added `.canJoinAllApplications`.
+  - Canonical overlay collection behavior is now:
+    - `.canJoinAllSpaces`
+    - `.canJoinAllApplications`
+    - `.stationary`
+    - `.ignoresCycle`
+- Kept the controlled window-level variable unchanged:
+  - Overlay level remains `.screenSaver`.
+  - DEBUG startup log confirms `level=1000`.
+- Simplified persistence reassertion for controlled testing:
+  - Removed the delayed reassertion burst path from the active code.
+  - App/Space/application activation notifications now perform one immediate reassertion only.
+  - Reassertion reapplies the canonical panel configuration, calls `orderFrontRegardless()`, and refreshes mouse passthrough.
+  - Reassertion does not alter island state, content phase, frame, geometry, collapse/expand state, or shell morph.
+- Avoided unnecessary geometry rebuilds during app/Space changes:
+  - Active app changes, active Space changes, app became active, and app resigned active no longer trigger any geometry repositioning.
+  - Screen parameter changes and wake still reposition because those can invalidate screen/notch geometry.
+- Added explicit DEBUG behavior flags:
+  - `behavior.canJoinAllApplications=true`
+  - `behavior.canJoinAllSpaces=true`
+  - `behavior.fullScreenAuxiliary=false`
+  - `behavior.auxiliary=false`
+- Verified configuration search:
+  - No `.transient` remains in overlay configuration.
+  - No `.auxiliary` or `.fullScreenAuxiliary` remains in overlay configuration.
+  - No delayed reassertion burst helper remains.
+  - `orderFrontRegardless()` remains the overlay ordering path.
+- Preserved:
+  - No changes to NotchGeometryService, IslandRootView responsive layout, main Island tab flex layout, Live Activities layout, Shortcuts layout, collapsed preview mounting, collapsed media/timer/battery UI, gesture routing, media swipe handling, timer, battery, live activity selector, album artwork, visualizer, or shell morph.
+- Changed files:
+  - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `chmod +x Scripts/package_app.sh`
+  - `Scripts/package_app.sh`
+  - `pkill -9 DynamicIsland`
+  - `.build/debug/DynamicIsland`
+- Debug log result:
+  - `/tmp/dynamicisland-phase11c2.log` contains `[OverlayPersistence] configure level=1000 collectionBehavior=262225 behavior.canJoinAllApplications=true behavior.canJoinAllSpaces=true behavior.fullScreenAuxiliary=false behavior.auxiliary=false`.
+- Fullscreen transition test matrix:
+  - Normal desktop Space -> fullscreen app via three-finger swipe: not manually executed by Codex; requires local UI test.
+  - Fullscreen app -> normal desktop Space via three-finger swipe: not manually executed by Codex; requires local UI test.
+  - Fullscreen app A -> fullscreen app B via three-finger swipe: not manually executed by Codex; requires local UI test.
+  - Normal app -> fullscreen app via Cmd+Tab: not manually executed by Codex; requires local UI test.
+  - Fullscreen app -> normal app via Cmd+Tab: not manually executed by Codex; requires local UI test.
+- Failure diagnosis guidance:
+  - If visual disappearance remains while logs show `visible=true` and `onActiveSpace=true`, the remaining issue is likely system compositor behavior during interactive fullscreen Space animation rather than AppKit Space membership.
+  - If logs show `visible=false`, investigate AppKit/window-server membership or an unexpected hide path.
+- Known limitations:
+  - Packaging still reports the existing `FileThumbnailCache` non-Sendable capture warning in `ModuleViews.swift`.
+
+### Phase 11C.1 - Fullscreen Space Overlay Persistence Fix
+
+- Fixed the conflicting fullscreen/Mission Control collection behavior from Phase 11C:
+  - Removed `.transient` because transient windows hide during Mission Control and conflict with persistent overlay behavior.
+  - Canonical overlay collection behavior is now:
+    - `.canJoinAllSpaces`
+    - `.fullScreenAuxiliary`
+    - `.stationary`
+    - `.ignoresCycle`
+    - `.auxiliary`
+  - There is still one canonical overlay panel configuration path in `OverlayWindowController.configure(_:)`.
+- Raised the persistent overlay window level for fullscreen Space transition testing:
+  - Overlay level is now `.screenSaver`.
+  - DEBUG startup log confirms `level=1000`.
+  - Reassertion bursts remain as fallback protection only; they were not expanded or turned into polling.
+- Added stronger DEBUG diagnostics:
+  - Logs `isVisible`, `isOnActiveSpace`, `occlusionState`, level, collection behavior, frame, `ignoresMouseEvents`, and island state before and after each reassertion.
+  - Added explicit `[OverlayPersistence] ORDERING OUT reason=overlayDisabled ...` logging around the only overlay `orderOut(nil)` path.
+  - This should distinguish app-side hiding from macOS compositor/window-level suppression during fullscreen transitions.
+- Verified configuration search:
+  - No `.transient` remains in the overlay configuration.
+  - No `.statusBar` overlay level remains.
+  - `orderFrontRegardless()` remains the overlay ordering path.
+  - No `makeKeyAndOrderFront(nil)` remains in `OverlayWindowController`.
+- Preserved:
+  - No changes to NotchGeometryService, IslandRootView responsive layout, main Island tab flex layout, Live Activities cards, Shortcuts layout, collapsed preview mounting, collapsed media/timer/battery UI, gesture routing, media swipe handling, timer, battery, live activity selector, album artwork, visualizer, or shell morph.
+- Changed files:
+  - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `chmod +x Scripts/package_app.sh`
+  - `Scripts/package_app.sh`
+  - `pkill -9 DynamicIsland`
+  - `.build/debug/DynamicIsland`
+- Debug log result:
+  - `/tmp/dynamicisland-phase11c1.log` contains `[OverlayPersistence] configure level=1000 collectionBehavior=131409`.
+  - No `ORDERING OUT` lines appeared in the sampled startup log.
+- Fullscreen transition test matrix:
+  - Desktop app -> Desktop app: not manually executed by Codex; requires local UI test.
+  - Desktop app -> fullscreen app: not manually executed by Codex; requires local UI test.
+  - Fullscreen app -> Desktop app: not manually executed by Codex; requires local UI test.
+  - Fullscreen app -> fullscreen app: not manually executed by Codex; requires local UI test.
+  - Three-finger Desktop Space -> fullscreen Space: not manually executed by Codex; requires local trackpad/UI test.
+  - Three-finger fullscreen Space -> Desktop Space: not manually executed by Codex; requires local trackpad/UI test.
+  - Mission Control select another Space: not manually executed by Codex; requires local UI test.
+- Known limitations:
+  - If the overlay still visually disappears while logs show `visible=true` and `onActiveSpace=true`, the remaining cause is likely macOS compositor suppression during that specific fullscreen transition.
+  - Packaging still reports the existing `FileThumbnailCache` non-Sendable capture warning in `ModuleViews.swift`.
+
+### Phase 11C - Persistent Overlay During App And Window Switching
+
+- Improved overlay persistence during app/window/Space transitions:
+  - `IslandOverlayPanel` is now created/configured as a non-activating panel.
+  - Overlay panel level was changed to `.statusBar` for a stronger persistent overlay level without jumping to `.screenSaver`.
+  - Collection behavior now includes `.canJoinAllSpaces`, `.fullScreenAuxiliary`, `.stationary`, `.ignoresCycle`, and `.transient`.
+  - Panel remains `hidesOnDeactivate = false`, `canHide = false`, transparent, shadowless, and floating.
+- Added event-driven persistence reassertion:
+  - Reasserts panel configuration and `orderFrontRegardless()` on active app changes, active Space changes, app became/resigned active, wake, and screen parameter changes.
+  - Uses a short delayed burst at `0.05s`, `0.18s`, and `0.35s` to cover system transition windows without adding a polling timer.
+  - Reassertion preserves island state, content phase, shell morph, geometry, and mouse passthrough.
+- Reduced focus-stealing risk:
+  - Expanded visibility now uses `orderFrontRegardless()` instead of `makeKeyAndOrderFront(nil)`.
+  - Overlay remains non-activating and click-through outside the current visible island region.
+- Added DEBUG event logs:
+  - `[OverlayPersistence] configure level=...`
+  - `[OverlayPersistence] reassert reason=...`
+  - active app, active Space, app active/resign, wake, and screen parameter events.
+- Preserved:
+  - No changes to NotchGeometryService, collapsed geometry, compact media/timer/battery pills, collapsed preview mounting, gestures, click-through region logic, shell morphing, album flip, visualizer behavior, battery provider, timer logic, media arbitration, live activity priority, or responsive expanded UI.
+- Changed files:
+  - `Sources/DynamicIsland/Overlay/OverlayWindowController.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `chmod +x Scripts/package_app.sh`
+  - `Scripts/package_app.sh`
+  - `pkill -9 DynamicIsland`
+  - `.build/debug/DynamicIsland`
+- Debug log result:
+  - `/tmp/dynamicisland-phase11c.log` contains `[OverlayPersistence] configure level=25 collectionBehavior=345`.
+- Known limitations:
+  - Some Mission Control/Space animations may still temporarily suppress third-party panels at the system compositor level; the app now reasserts immediately and shortly after transition events.
+  - Packaging still reports the existing `FileThumbnailCache` non-Sendable capture warning in `ModuleViews.swift`.
+
+### Phase 11B.1.3 - True Responsive Flex-Like Island Layout
+
+- Rebuilt the main expanded Island tab right side as a non-scrolling responsive layout:
+  - Main Island tab right-side cards no longer use internal `ScrollView`.
+  - Live Activities preview now uses parent-derived item sizing in a responsive 1- or 2-column grid.
+  - Live Activities overflow is represented with a compact `+N` tile instead of scrolling or clipping.
+  - Shortcuts preview now uses one-row parent-derived button sizing with no horizontal scroll and no second row.
+  - Shortcut overflow is shown as a compact header `+N` badge.
+- Retuned expanded layout metrics:
+  - Added an explicit responsive scale derived from expanded width/height.
+  - Right column and media column use explicit flex-like width ratios.
+  - Right-column card heights are derived from available page height instead of fixed card heights.
+  - Expanded content scales from user-selected expanded width/height.
+- Preserved:
+  - No changes to NotchGeometryService, OverlayWindowController, collapsed geometry, collapsed compact media/timer/battery views, Phase 10C collapsed preview mounting, gestures, click-through behavior, shell morphing, album flip, visualizer behavior, battery provider, timer logic, media arbitration, or live activity priority.
+- Changed files:
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `Sources/DynamicIsland/Views/ModuleViews.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `chmod +x Scripts/package_app.sh`
+  - `Scripts/package_app.sh`
+  - `pkill -9 DynamicIsland`
+  - `open dist/DynamicIsland.app`
+- Validation note:
+  - Packaging still reports the existing `FileThumbnailCache` non-Sendable capture warning in `ModuleViews.swift`.
+
+### Phase 11B.1.2 - Right Column And One-Row Shortcuts Fix
+
+- Rebalanced the main expanded Island tab again:
+  - Main Island tab split moved closer to center with a stronger right-column width target.
+  - Right-side Live Activities/Shortcuts column is wider and can claim roughly the intended right-side share before media expands.
+  - Media column is explicitly constrained so it no longer dominates the page width or pushes the divider too far right.
+- Fixed right-side Shortcuts wrapping/clipping:
+  - Right-side Shortcuts card now uses a one-row horizontal shortcut strip instead of a two-column grid.
+  - Safari, Finder, and Settings stay on one row at the intended size.
+  - If more than three shortcuts exist, the same one-row strip scrolls horizontally instead of wrapping to a second row.
+  - Shortcut row height is derived from the card height so buttons and the card bottom border are not clipped.
+- Preserved right-column card behavior:
+  - Live Activities and Shortcuts cards fill the right column width.
+  - Live Activities still uses internal vertical scrolling for multiple rows.
+- Preserved:
+  - No changes to NotchGeometryService, OverlayWindowController, collapsed geometry, collapsed compact media/timer/battery views, Phase 10C collapsed preview mounting, gestures, click-through behavior, shell morphing, album flip, visualizer behavior, battery provider, timer logic, media arbitration, or live activity priority.
+- Changed files:
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `Sources/DynamicIsland/Views/ModuleViews.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `chmod +x Scripts/package_app.sh`
+  - `Scripts/package_app.sh`
+  - `pkill -9 DynamicIsland`
+  - `open dist/DynamicIsland.app`
+- Validation note:
+  - Packaging still reports the existing `FileThumbnailCache` non-Sendable capture warning in `ModuleViews.swift`.
+
+### Phase 11B.1.1 - Main Island Right Column Balance Fix
+
+- Rebalanced the main expanded Island tab:
+  - Main Island tab divider moved closer to center.
+  - Right-side stacked Live Activities/Shortcuts column widened from the narrow sidebar cap used in Phase 11B.1.
+  - Right column now targets roughly 40% of inner width with adaptive min/max bounds.
+  - Media column is constrained by the widened right column so it no longer dominates horizontal space.
+- Improved right-column card fit:
+  - Live Activities and Shortcuts cards fill the right column width.
+  - Live Activities height remains proportional while reserving room for Shortcuts.
+  - Shortcuts card keeps an internal scroll area with safe bottom padding.
+  - Shortcut buttons now use fixed adaptive tile heights so buttons remain readable and are scrollable instead of clipped.
+- Preserved:
+  - No changes to NotchGeometryService, OverlayWindowController, collapsed geometry, collapsed compact media/timer/battery views, Phase 10C collapsed preview mounting, gestures, click-through behavior, shell morphing, album flip, visualizer behavior, battery provider, timer logic, media arbitration, or live activity priority.
+- Changed files:
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `Sources/DynamicIsland/Views/ModuleViews.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `chmod +x Scripts/package_app.sh`
+  - `Scripts/package_app.sh`
+  - `open /Users/makeiteasy3/Documents/DynamicIsland/dist/DynamicIsland.app`
+- Validation note:
+  - `open dist/DynamicIsland.app` returned LaunchServices `-600` immediately after `pkill`; the absolute app path fallback succeeded.
+  - Packaging still reports the existing `FileThumbnailCache` non-Sendable capture warning in `ModuleViews.swift`.
+
+### Phase 11B.1 - Responsive Expanded Island Layout Repolish
+
+- Repolished the expanded Island tab layout:
+  - Main Island tab right side changed from side-by-side Shortcuts/Live Activities columns to one stacked right column.
+  - Live Activities now sits above Shortcuts.
+  - Media remains on the left with the divider between media and the right stack.
+- Added responsive expanded layout metrics:
+  - Expanded component sizing now derives from the user-selected expanded width/height through shared inner width, inner height, page height, and compact scale values.
+  - Media/right-stack widths, right-stack section heights, card spacing, timer sizing inputs, and stats sizing are derived from the current expanded container.
+- Fixed Stats tab clipping:
+  - Stats cards now use adaptive card heights based on available page height.
+  - Stats card internals scale icon/text/chart/padding with the expanded compact scale.
+  - Stats grid uses an internal vertical scroll when the configured expanded height is too small for two rows without clipping.
+  - Added bottom padding inside the scroll/grid path so bottom card borders are not cut off.
+- Improved expanded right-side fit:
+  - Live Activities card supports a compact empty state, scaled rows, and internal scrolling.
+  - Shortcuts card scales title/button/icon/text sizes and uses internal scrolling when needed.
+- Preserved:
+  - No changes to NotchGeometryService, OverlayWindowController, collapsed geometry, collapsed compact media/timer/battery views, Phase 10C collapsed preview mounting, gestures, click-through behavior, shell morphing, album flip, visualizer behavior, battery provider, timer logic, media arbitration, or live activity priority.
+- Changed files:
+  - `Sources/DynamicIsland/Views/IslandRootView.swift`
+  - `Sources/DynamicIsland/Views/ModuleViews.swift`
+  - `context.md`
+- Validation passed:
+  - `swift build`
+  - `swift test`
+  - `chmod +x Scripts/package_app.sh`
+  - `Scripts/package_app.sh`
+  - `open /Users/makeiteasy3/Documents/DynamicIsland/dist/DynamicIsland.app`
+- Validation note:
+  - `open dist/DynamicIsland.app` returned LaunchServices `-600` immediately after `pkill`; retrying with the absolute app path succeeded.
+  - Packaging still reports the existing `FileThumbnailCache` non-Sendable capture warning in `ModuleViews.swift`.
+
 ### 2026-07-12 - Phase 11A.1 Battery Live Activity Publish Repair
 
 - Fixed Battery Live Activity eligibility for plugged-in MacBooks:
