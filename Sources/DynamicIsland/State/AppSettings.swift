@@ -165,7 +165,6 @@ public final class AppSettings: ObservableObject {
     @Published public var islandThemeStyle: IslandThemeStyle { didSet { save(islandThemeStyle.rawValue, for: Key.islandThemeStyle) } }
     @Published public var shellOpacity: Double { didSet { normalizeShellOpacity(oldValue: oldValue) } }
     @Published public var shellStrokeEnabled: Bool { didSet { save(shellStrokeEnabled, for: Key.shellStrokeEnabled) } }
-    @Published public var shellShadowEnabled: Bool { didSet { save(shellShadowEnabled, for: Key.shellShadowEnabled) } }
     @Published public var useArtworkAccentColor: Bool { didSet { save(useArtworkAccentColor, for: Key.useArtworkAccentColor) } }
     @Published public var visualizerAccentMode: VisualizerAccentMode { didSet { save(visualizerAccentMode.rawValue, for: Key.visualizerAccentMode) } }
     @Published public var notchShoulderBlendEnabledSetting: Bool { didSet { save(notchShoulderBlendEnabledSetting, for: Key.notchShoulderBlendEnabledSetting) } }
@@ -197,7 +196,6 @@ public final class AppSettings: ObservableObject {
     }
     @Published public var useBlurTransitions: Bool { didSet { save(useBlurTransitions, for: Key.useBlurTransitions) } }
     @Published public var useScaleTransitions: Bool { didSet { save(useScaleTransitions, for: Key.useScaleTransitions) } }
-    @Published public var useOpacityTransitions: Bool { didSet { save(useOpacityTransitions, for: Key.useOpacityTransitions) } }
 
     @Published public var showIslandTab: Bool {
         didSet {
@@ -396,7 +394,6 @@ public final class AppSettings: ObservableObject {
         Self.migrateLegacyIslandThemeStyleIfNeeded(defaults, Key.islandThemeStyle)
         shellOpacity = Self.double(defaults, Key.shellOpacity, 1.0)
         shellStrokeEnabled = Self.bool(defaults, Key.shellStrokeEnabled, true)
-        shellShadowEnabled = Self.bool(defaults, Key.shellShadowEnabled, true)
         useArtworkAccentColor = Self.bool(defaults, Key.useArtworkAccentColor, true)
         visualizerAccentMode = Self.enumValue(defaults, Key.visualizerAccentMode, .artwork)
         notchShoulderBlendEnabledSetting = Self.bool(defaults, Key.notchShoulderBlendEnabledSetting, false)
@@ -420,7 +417,6 @@ public final class AppSettings: ObservableObject {
         contentStaggerAmount = Self.double(defaults, Key.contentStaggerAmount, 1.0)
         useBlurTransitions = Self.bool(defaults, Key.useBlurTransitions, true)
         useScaleTransitions = Self.bool(defaults, Key.useScaleTransitions, true)
-        useOpacityTransitions = Self.bool(defaults, Key.useOpacityTransitions, false)
 
         showIslandTab = true
         showTrayTab = Self.bool(defaults, Key.showTrayTab, true)
@@ -610,7 +606,7 @@ public final class AppSettings: ObservableObject {
             Key.collapsedHoverPreviewDelay,
             Key.animationPreset, Key.reduceExtraMotion, Key.shellAnimationSpeed,
             Key.contentAnimationEnabled, Key.contentStaggerEnabled, Key.contentStaggerAmount,
-            Key.useBlurTransitions, Key.useScaleTransitions, Key.useOpacityTransitions
+            Key.useBlurTransitions, Key.useScaleTransitions
         ])
         reload()
     }
@@ -669,7 +665,6 @@ public final class AppSettings: ObservableObject {
         Self.migrateLegacyIslandThemeStyleIfNeeded(defaults, Key.islandThemeStyle)
         shellOpacity = Self.double(defaults, Key.shellOpacity, 1.0)
         shellStrokeEnabled = Self.bool(defaults, Key.shellStrokeEnabled, true)
-        shellShadowEnabled = Self.bool(defaults, Key.shellShadowEnabled, true)
         useArtworkAccentColor = Self.bool(defaults, Key.useArtworkAccentColor, true)
         visualizerAccentMode = Self.enumValue(defaults, Key.visualizerAccentMode, .artwork)
         notchShoulderBlendEnabledSetting = Self.bool(defaults, Key.notchShoulderBlendEnabledSetting, false)
@@ -692,7 +687,6 @@ public final class AppSettings: ObservableObject {
         contentStaggerAmount = Self.double(defaults, Key.contentStaggerAmount, 1.0)
         useBlurTransitions = Self.bool(defaults, Key.useBlurTransitions, true)
         useScaleTransitions = Self.bool(defaults, Key.useScaleTransitions, true)
-        useOpacityTransitions = Self.bool(defaults, Key.useOpacityTransitions, false)
         showIslandTab = true
         showTrayTab = Self.bool(defaults, Key.showTrayTab, true)
         showTimerTab = Self.bool(defaults, Key.showTimerTab, true)
@@ -1162,7 +1156,6 @@ private enum Key {
     static let islandThemeStyle = "islandThemeStyle"
     static let shellOpacity = "shellOpacity"
     static let shellStrokeEnabled = "shellStrokeEnabled"
-    static let shellShadowEnabled = "shellShadowEnabled"
     static let useArtworkAccentColor = "useArtworkAccentColor"
     static let visualizerAccentMode = "visualizerAccentMode"
     static let notchShoulderBlendEnabledSetting = "notchShoulderBlendEnabledSetting"
@@ -1185,7 +1178,6 @@ private enum Key {
     static let contentStaggerAmount = "contentStaggerAmount"
     static let useBlurTransitions = "useBlurTransitions"
     static let useScaleTransitions = "useScaleTransitions"
-    static let useOpacityTransitions = "useOpacityTransitions"
     static let showIslandTab = "showIslandTab"
     static let showTrayTab = "showTrayTab"
     static let showTimerTab = "showTimerTab"
@@ -1316,14 +1308,14 @@ private enum Key {
         overlayEnabled, launchAtLoginEnabled, startCollapsedOnLaunch, expandOnHover, expandOnClick,
         collapseOnMouseLeave, autoCollapseEnabled, autoCollapseDelayPreset, autoCollapseGraceSeconds,
         collapsedWidth, collapsedHeight, expandedWidth, expandedHeight, useAdaptiveNotchSizing,
-        respectHardwareNotch, islandThemeStyle, shellOpacity, shellStrokeEnabled, shellShadowEnabled,
+        respectHardwareNotch, islandThemeStyle, shellOpacity, shellStrokeEnabled,
         useArtworkAccentColor, visualizerAccentMode, notchShoulderBlendEnabledSetting,
         showCollapsedVisualizer, showExpandedVisualizer, collapsedHoverPreviewEnabled,
         collapsedHoverPreviewMediaEnabled, collapsedHoverPreviewHeight, collapsedHoverPreviewDelay,
         collapsedHoverPreviewShowTitle, collapsedHoverPreviewShowsArtist, collapsedHoverPreviewShowsSource,
         collapsedHoverPreviewTitleIconName, collapsedHoverPreviewArtistIconName, animationPreset, reduceExtraMotion,
         shellAnimationSpeed, contentAnimationEnabled, contentStaggerEnabled, contentStaggerAmount,
-        useBlurTransitions, useScaleTransitions, useOpacityTransitions, showIslandTab, showTrayTab,
+        useBlurTransitions, useScaleTransitions, showIslandTab, showTrayTab,
         showTimerTab, showStatsTab, showActivitiesTab, showLiveActivitiesTab, showGesturesTab,
         rememberLastSelectedTab, defaultExpandedTab, mediaEnabled, showMediaWhenPaused,
         showMediaWhenNoSource, showAlbumArtwork, showMediaTitle, showMediaArtist, showMediaSourceName,

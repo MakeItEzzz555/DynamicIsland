@@ -129,7 +129,6 @@ struct SettingsView: View {
                 }
                 SliderRow(title: "Shell opacity", value: $settings.shellOpacity, range: 0.35...1.0, format: "%.2f")
                 Toggle("Shell stroke", isOn: $settings.shellStrokeEnabled)
-                Toggle("Shell shadow", isOn: $settings.shellShadowEnabled)
                 Toggle("Notch shoulder blend", isOn: $settings.notchShoulderBlendEnabledSetting)
                     .disabled(true)
                 HelpText("Liquid Glass uses Apple’s native glassEffect when available. On older macOS versions or older SDKs, DynamicIsland uses a fallback material/gloss effect.")
@@ -191,7 +190,6 @@ struct SettingsView: View {
                 SliderRow(title: "Stagger amount", value: $settings.contentStaggerAmount, range: 0...2.0, format: "%.2f", disabled: !settings.contentStaggerEnabled)
                 Toggle("Blur transitions", isOn: $settings.useBlurTransitions)
                 Toggle("Scale transitions", isOn: $settings.useScaleTransitions)
-                Toggle("Opacity transitions", isOn: $settings.useOpacityTransitions)
                 HelpText("Expansion still avoids fade-in. Opacity is only available to the staged removal path.")
             }
         }

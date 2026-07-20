@@ -1,95 +1,34 @@
 import AppKit
 import Combine
-import CoreGraphics
-import CoreVideo
 import QuartzCore
 import SwiftUI
 
+struct OverlayGeometrySignature: Equatable, CustomStringConvertible {
+    let collapsedSize: CGSize
+    let expandedSize: CGSize
+    let collapsedHasActiveContent: Bool
+    let useAdaptiveNotchSizing: Bool
+    let respectHardwareNotch: Bool
+
+    var description: String {
+        "collapsedSize=\(collapsedSize) expandedSize=\(expandedSize) collapsedHasActiveContent=\(collapsedHasActiveContent) useAdaptiveNotchSizing=\(useAdaptiveNotchSizing) respectHardwareNotch=\(respectHardwareNotch)"
+    }
+}
+
 @MainActor
 final class OverlayWindowController {
-    private static let useExperimentalSpaceCompensation = false
-
     private enum OverlayPersistence {
         static let level: NSWindow.Level = .statusBar
 
-        static var collectionBehavior: NSWindow.CollectionBehavior {
-            var behavior: NSWindow.CollectionBehavior = [
-                .fullScreenAuxiliary,
-                .canJoinAllSpaces,
-                .ignoresCycle
-            ]
-            if canJoinAllApplicationsEnabled {
-                behavior.insert(.canJoinAllApplications)
-            }
-            return behavior
-        }
-
-        static var canJoinAllApplicationsEnabled: Bool {
-            #if DEBUG
-            ProcessInfo.processInfo.environment["DYNAMIC_ISLAND_DISABLE_JOIN_ALL_APPLICATIONS"] != "1"
-            #else
-            true
-            #endif
-        }
-    }
-
-    private enum SpaceLock {
-        static let deadzone: CGFloat = 1.0
-        static let activeOffsetThreshold: CGFloat = 1.5
-        static let frameDedupeTolerance: CGFloat = 0.35
-        static let maximumTotalOffsetMultiplier: CGFloat = 1.25
-        static let invalidSampleRecoveryThreshold = 8
-        static let invalidProbeTranslationRecoveryThreshold = 6
-        static let normalProbeTranslationMultiplier: CGFloat = 1.75
-        static let absoluteProbeTranslationMultiplier: CGFloat = 2.5
-        static let distinctProbeSampleThreshold: CGFloat = 0.1
-        static let distinctProbeIntervalEMAAlpha: CGFloat = 0.2
-        static let maximumProbeVelocityMultiplier: CGFloat = 6.0
-        static let predictionLeadIntervalMultiplier: CGFloat = 0.6
-        static let minimumPredictionLead: TimeInterval = 0.008
-        static let maximumPredictionLead: TimeInterval = 0.024
-        static let maximumPredictionDistanceMultiplier: CGFloat = 0.04
-        static let maximumPredictionDistanceCap: CGFloat = 60
-        static let predictionRestTranslationThreshold: CGFloat = 8
-        static let predictionRestVelocityThreshold: CGFloat = 20
-        static let recoveryCooldown: TimeInterval = 0.15
-        static let probeBaselineStableTolerance: CGFloat = 2.0
-        static let probeBaselineRequiredStableSamples = 10
-        static let transitionActivationThreshold: CGFloat = 2.0
-        static let transitionCompletionThreshold: CGFloat = 0.5
-        static let transitionCompletionRequiredStableSamples = 9
-        static let renderTransformDedupeThreshold: CGFloat = 0.1
-        static let handoffOverlapDelay: TimeInterval = 1.0 / 120.0
-        static let transitionCanvasHorizontalMarginMultiplier: CGFloat = 2.0
-        static let recoveryVerificationDelays: [TimeInterval] = [0.10, 0.25]
-        static let probeSize = CGSize(width: 2, height: 2)
-        static let probeScreenInset: CGFloat = 4
-    }
-
-    private struct SpaceProbeMotionSample {
-        let translationX: CGFloat
-        let timestamp: CFTimeInterval
-    }
-
-    private struct SpaceProbePrediction {
-        let rawTranslationX: CGFloat
-        let predictedTranslationX: CGFloat
-        let predictionLead: CFTimeInterval
-        let velocityX: CGFloat
-    }
-
-    private struct OverlayWindowServerSnapshot {
-        let windowNumber: Int
-        let bounds: CGRect
-        let isOnscreen: Bool
-        let layer: Int
-        let alpha: Double
-        let ownerName: String?
+        static let collectionBehavior: NSWindow.CollectionBehavior = [
+            .fullScreenAuxiliary,
+            .canJoinAllSpaces,
+            .ignoresCycle
+        ]
     }
 
     private let expandedHoverTolerance: CGFloat = 2
     private let collapsedHoverTolerance: CGFloat = 4
-    private let collapseContentExitDelay: DispatchTimeInterval = .milliseconds(205)
     private let collapsedScrollBaseThreshold: CGFloat = 8
     private let collapsedScrollQuietResetDelay: TimeInterval = 0.28
     private let mediaSwipeQuietPeriod: TimeInterval = 0.045
@@ -100,9 +39,6 @@ final class OverlayWindowController {
     private let geometryService: NotchGeometryService
     private let layoutStore = IslandLayoutStore()
     private let islandPanel: IslandOverlayPanel
-    private let spaceMotionProbePanel: SpaceMotionProbePanel
-    private let spaceTransitionRenderPanel: SpaceTransitionRenderPanel
-    private let spaceLockDisplayLink = SpaceLockDisplayLink()
     private var cancellables: Set<AnyCancellable> = []
     private var mouseContainmentTimer: Timer?
     private var localMouseMovedMonitor: Any?
@@ -114,32 +50,6 @@ final class OverlayWindowController {
     private var targetExpandedFrame: NSRect?
     private var lastAppliedGeometrySignature: OverlayGeometrySignature?
     private var canonicalPanelFrame: NSRect = .zero
-    private var probeCanonicalFrame: NSRect = .zero
-    private var transitionCanvasFrame: NSRect = .zero
-    private var spaceLockOffsetX: CGFloat = 0
-    private var probeWindowServerXOffset: CGFloat?
-    private var probeWindowID: CGWindowID?
-    private var lastRawProbeSample: SpaceProbeMotionSample?
-    private var previousRawProbeSample: SpaceProbeMotionSample?
-    private var lastDistinctProbeSample: SpaceProbeMotionSample?
-    private var previousDistinctProbeSample: SpaceProbeMotionSample?
-    private var distinctProbeSampleIntervalEMA: CFTimeInterval?
-    private var estimatedProbeVelocityX: CGFloat = 0
-    private var lastPredictionResult: SpaceProbePrediction?
-    private var probeStableSampleCount = 0
-    private var probeBaselineCapturePending = false
-    private var spaceLockRecoveryUntil: CFTimeInterval = 0
-    private var consecutiveInvalidSpaceLockSamples = 0
-    private var consecutiveInvalidProbeTranslations = 0
-    private var transitionCompletionStableSamples = 0
-    private var isSpaceTransitionRenderActive = false
-    private var transitionRenderHandoffPending = false
-    private var transitionRenderHandoffGeneration = 0
-    private var lastAppliedTransitionLayerTranslationX: CGFloat = 0
-    private var lastValidProbeTranslationX: CGFloat = 0
-    private var spaceLockFrameUpdatePending = false
-    private var lastRenderEnqueueTimestamp: CFTimeInterval = 0
-    private var lastMainQueueRenderDelay: CFTimeInterval = 0
     private var lastOrderedVisibilityState: IslandPresentationState?
     private var lastOverlayEnabled: Bool
     private var visibilityGeneration: Int = 0
@@ -166,26 +76,9 @@ final class OverlayWindowController {
     private var expandedScrollLockedUntil: Date = .distantPast
     #if DEBUG
     private var lastCollapseDebugLogAt: CFTimeInterval = 0
-    private var overlayTransitionTraceTimer: Timer?
-    private var overlayTransitionTraceStartedAt: CFTimeInterval?
-    private var localSystemGestureMonitor: Any?
-    private var globalSystemGestureMonitor: Any?
-    private var canonicalFrameApplicationWindowStartedAt: CFTimeInterval = 0
-    private var canonicalFrameApplicationCount: Int = 0
-    private var lastSpaceLockCorrectionLogAt: CFTimeInterval = 0
-    private var lastSpaceLockSettledLogAt: CFTimeInterval = 0
-    private var lastSpaceProbeTraceLogAt: CFTimeInterval = 0
-    private var spaceProbeFrameSampleStartedAt: CFTimeInterval = 0
-    private var spaceProbeFrameSampleCount = 0
-    private var lastObservedSpaceProbeFPS: Double = 0
-    private var lastSpaceMotionMetricsLogAt: CFTimeInterval = 0
-    private var lastVisibleIslandErrorSampleAt: CFTimeInterval = 0
-    private var visibleIslandErrorSamples: [CGFloat] = []
     private var didLogAtollParityConfiguration = false
-    private var didLogSpaceNativeABConfiguration = false
     #endif
     private weak var hostingView: IslandHostingView<IslandRootView>?
-    private weak var transitionIslandHostingView: NSHostingView<IslandRootView>?
 
     init(
         settings: AppSettings,
@@ -213,24 +106,6 @@ final class OverlayWindowController {
             defer: false
         )
         Self.configure(islandPanel)
-
-        spaceMotionProbePanel = SpaceMotionProbePanel(
-            contentRect: NSRect(origin: .zero, size: SpaceLock.probeSize),
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
-        )
-        Self.configure(spaceMotionProbePanel)
-        Self.configureSpaceMotionProbe(spaceMotionProbePanel)
-
-        spaceTransitionRenderPanel = SpaceTransitionRenderPanel(
-            contentRect: .zero,
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
-        )
-        Self.configure(spaceTransitionRenderPanel)
-        Self.configureSpaceTransitionRenderPanel(spaceTransitionRenderPanel)
 
         let rootView = IslandRootView(
             settings: settings,
@@ -265,24 +140,6 @@ final class OverlayWindowController {
         islandPanel.contentView = hostingView
         self.hostingView = hostingView
         debugGesture("Island hosting view installed")
-
-        let transitionRootView = IslandRootView(
-            settings: settings,
-            islandState: islandState,
-            layoutStore: layoutStore,
-            modules: modules,
-            rendersExpandedVisualContent: true,
-            onRequestExpand: {},
-            onRequestCollapse: {},
-            onOpenSettings: {}
-        )
-        let transitionHostingView = NSHostingView(rootView: transitionRootView)
-        transitionHostingView.wantsLayer = true
-        transitionHostingView.layer?.backgroundColor = NSColor.clear.cgColor
-        transitionHostingView.layer?.opacity = 0
-        transitionHostingView.autoresizingMask = []
-        spaceTransitionRenderPanel.contentView?.addSubview(transitionHostingView)
-        self.transitionIslandHostingView = transitionHostingView
 
         islandState.$state
             .sink { [weak self] _ in
@@ -362,67 +219,7 @@ final class OverlayWindowController {
         NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)
             .sink { [weak self] _ in
                 self?.debugOverlayPersistence("screen parameters changed")
-                if self?.spaceCompensationEnabled == true {
-                    self?.pauseProbeDrivenTrackingForScreenChange()
-                }
                 self?.reposition(animated: false, reason: "screenParametersChanged", force: true)
-                if self?.spaceCompensationEnabled == true {
-                    self?.prepareSpaceMotionProbe(reason: "screenParametersChanged")
-                    self?.reassertOverlayPresence(reason: "screenParametersChanged")
-                }
-            }
-            .store(in: &cancellables)
-
-        NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)
-            .sink { [weak self] _ in
-                self?.debugOverlayPersistence("workspace woke")
-                if self?.spaceCompensationEnabled == true {
-                    self?.reposition(animated: false, reason: "workspaceDidWake", force: true)
-                    self?.reassertOverlayPresence(reason: "workspaceDidWake")
-                }
-            }
-            .store(in: &cancellables)
-
-        NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didActivateApplicationNotification)
-            .sink { [weak self] _ in
-                self?.debugOverlayPersistence("active app changed")
-                if self?.spaceCompensationEnabled == true {
-                    self?.requestProbeDrivenSpaceLockUpdate(reason: "activeApplicationChanged")
-                    self?.startOverlayTransitionTrace(reason: "activeApplicationChanged")
-                    self?.reassertOverlayPresence(reason: "activeApplicationChanged")
-                }
-            }
-            .store(in: &cancellables)
-
-        NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.activeSpaceDidChangeNotification)
-            .sink { [weak self] _ in
-                self?.debugOverlayPersistence("active space changed")
-                if self?.spaceCompensationEnabled == true {
-                    self?.requestProbeDrivenSpaceLockUpdate(reason: "activeSpaceChanged")
-                    self?.scheduleSpaceLockRecoveryVerification(reason: "activeSpaceChanged")
-                    self?.startOverlayTransitionTrace(reason: "activeSpaceChanged")
-                    self?.reassertOverlayPresence(reason: "activeSpaceChanged")
-                }
-            }
-            .store(in: &cancellables)
-
-        NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
-            .sink { [weak self] _ in
-                self?.debugOverlayPersistence("app became active")
-                if self?.spaceCompensationEnabled == true {
-                    self?.startOverlayTransitionTrace(reason: "appBecameActive")
-                    self?.reassertOverlayPresence(reason: "appBecameActive")
-                }
-            }
-            .store(in: &cancellables)
-
-        NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)
-            .sink { [weak self] _ in
-                self?.debugOverlayPersistence("app resigned active")
-                if self?.spaceCompensationEnabled == true {
-                    self?.startOverlayTransitionTrace(reason: "appResignedActive")
-                    self?.reassertOverlayPresence(reason: "appResignedActive")
-                }
             }
             .store(in: &cancellables)
 
@@ -432,15 +229,8 @@ final class OverlayWindowController {
     func show() {
         islandState.collapse()
         reposition(animated: false, reason: "initialShow", force: true)
-        if spaceCompensationEnabled {
-            prepareSpaceMotionProbe(reason: "initialShow")
-            startSpaceLockWatchdog()
-        } else {
-            disableExperimentalSpaceCompensationPanels(reason: "initialShow")
-        }
         updateWindowVisibility()
         logAtollParityConfigurationIfNeeded()
-        logSpaceNativeABConfigurationIfNeeded()
     }
 
     func setVisible(_ visible: Bool) {
@@ -451,14 +241,11 @@ final class OverlayWindowController {
             islandPanel.ignoresMouseEvents = true
             debugOverlayWindowOperation(operation: "orderOut", reason: "overlayDisabled")
             islandPanel.orderOut(nil)
-            spaceMotionProbePanel.orderOut(nil)
-            spaceTransitionRenderPanel.orderOut(nil)
             lastOrderedVisibilityState = nil
             debugOverlayWindowState(reason: "ORDERING OUT reason=overlayDisabled after")
         }
         if !visible {
             stopMouseContainmentTimer()
-            stopSpaceLockWatchdog()
         }
     }
 
@@ -574,15 +361,6 @@ final class OverlayWindowController {
         )
     }
 
-    private var spaceCompensationEnabled: Bool {
-        #if DEBUG
-        Self.useExperimentalSpaceCompensation ||
-            ProcessInfo.processInfo.environment["DYNAMIC_ISLAND_ENABLE_SPACE_COMPENSATION"] == "1"
-        #else
-        Self.useExperimentalSpaceCompensation
-        #endif
-    }
-
     private static func configure(_ panel: NSPanel) {
         panel.isFloatingPanel = true
         panel.becomesKeyOnlyIfNeeded = false
@@ -605,47 +383,12 @@ final class OverlayWindowController {
             "[OverlayPersistence] configure",
             "level=\(panel.level.rawValue)",
             "collectionBehavior=\(panel.collectionBehavior.rawValue)",
-            "behavior.canJoinAllApplications=\(panel.collectionBehavior.contains(.canJoinAllApplications))",
             "behavior.canJoinAllSpaces=\(panel.collectionBehavior.contains(.canJoinAllSpaces))",
             "behavior.fullScreenAuxiliary=\(panel.collectionBehavior.contains(.fullScreenAuxiliary))",
             "behavior.stationary=\(panel.collectionBehavior.contains(.stationary))",
             "behavior.auxiliary=\(panel.collectionBehavior.contains(.auxiliary))"
         )
         #endif
-    }
-
-    private static func configureSpaceMotionProbe(_ panel: SpaceMotionProbePanel) {
-        panel.backgroundColor = .clear
-        panel.isOpaque = false
-        panel.hasShadow = false
-        panel.ignoresMouseEvents = true
-        panel.hidesOnDeactivate = false
-        panel.canHide = false
-        panel.isReleasedWhenClosed = false
-        panel.alphaValue = 1
-        panel.acceptsMouseMovedEvents = false
-
-        let contentView = NSView(frame: NSRect(origin: .zero, size: SpaceLock.probeSize))
-        contentView.wantsLayer = true
-        contentView.layer?.backgroundColor = NSColor.clear.cgColor
-        panel.contentView = contentView
-    }
-
-    private static func configureSpaceTransitionRenderPanel(_ panel: SpaceTransitionRenderPanel) {
-        panel.backgroundColor = .clear
-        panel.isOpaque = false
-        panel.hasShadow = false
-        panel.ignoresMouseEvents = true
-        panel.hidesOnDeactivate = false
-        panel.canHide = false
-        panel.isReleasedWhenClosed = false
-        panel.alphaValue = 1
-        panel.acceptsMouseMovedEvents = false
-
-        let contentView = NSView(frame: .zero)
-        contentView.wantsLayer = true
-        contentView.layer?.backgroundColor = NSColor.clear.cgColor
-        panel.contentView = contentView
     }
 
     private func applyCanonicalPanelFrame(_ frame: NSRect, reason: String) {
@@ -660,13 +403,8 @@ final class OverlayWindowController {
         }
 
         canonicalPanelFrame = frame
-        spaceLockOffsetX = 0
-        recordCanonicalFrameApplication(reason: reason)
         applyPhysicalPanelFrame(frame, reason: reason)
         islandPanel.contentView?.frame = NSRect(origin: .zero, size: frame.size)
-        if spaceCompensationEnabled {
-            prepareSpaceTransitionRenderPanel(reason: reason)
-        }
         lastOrderedVisibilityState = nil
     }
 
@@ -684,7 +422,7 @@ final class OverlayWindowController {
         guard !framesAreApproximatelyEqual(
             frame,
             islandPanel.frame,
-            tolerance: SpaceLock.frameDedupeTolerance
+            tolerance: 0.35
         ) else {
             return
         }
@@ -727,76 +465,16 @@ final class OverlayWindowController {
 
     private func updateWindowVisibility() {
         visibilityGeneration += 1
-        if !spaceCompensationEnabled {
-            if !islandPanel.isVisible {
-                debugOverlayWindowOperation(
-                    operation: "orderFrontRegardless",
-                    reason: "updateWindowVisibility parity initial order generation=\(visibilityGeneration)"
-                )
-                islandPanel.orderFrontRegardless()
-            }
-            lastOrderedVisibilityState = islandState.state
-            updateMousePassthrough()
-            updateMouseContainmentTimer()
-            return
-        }
-
-        if islandPanel.isVisible, lastOrderedVisibilityState == islandState.state {
-            #if DEBUG
-            debugPrint(
-                "[OverlayWindowOperation]",
-                "operation=orderFrontRegardlessSkipped",
-                "reason=visibilityStateAlreadyOrdered",
-                "state=\(islandState.state.rawValue)",
-                "generation=\(visibilityGeneration)"
-            )
-            #endif
-            updateMousePassthrough()
-            updateMouseContainmentTimer()
-            return
-        }
-
-        if islandState.state == .expanded {
+        if !islandPanel.isVisible {
             debugOverlayWindowOperation(
                 operation: "orderFrontRegardless",
-                reason: "updateWindowVisibility expanded generation=\(visibilityGeneration)"
+                reason: "updateWindowVisibility initial order generation=\(visibilityGeneration)"
             )
             islandPanel.orderFrontRegardless()
-            lastOrderedVisibilityState = .expanded
-            startMouseContainmentTimer()
-        } else {
-            debugLog("updateWindowVisibility received collapsed")
-            debugOverlayWindowOperation(
-                operation: "orderFrontRegardless",
-                reason: "updateWindowVisibility collapsed generation=\(visibilityGeneration)"
-            )
-            islandPanel.orderFrontRegardless()
-            lastOrderedVisibilityState = .collapsed
-            stopMouseContainmentTimer()
         }
-        updateMousePassthrough()
-    }
-
-    private func reassertOverlayPresence(reason: String) {
-        guard settings.overlayEnabled else { return }
-        guard spaceCompensationEnabled else {
-            debugOverlayPersistence("reassert skipped reason=\(reason) mode=atollParity")
-            return
-        }
-        #if DEBUG
-        if ProcessInfo.processInfo.environment["DYNAMIC_ISLAND_DISABLE_PERSISTENCE_REASSERT"] == "1" {
-            debugOverlayPersistence("reassert skipped reason=\(reason) env=DYNAMIC_ISLAND_DISABLE_PERSISTENCE_REASSERT")
-            debugOverlayWindowState(reason: "skipped reassert \(reason)")
-            return
-        }
-        #endif
-        debugOverlayWindowState(reason: "before reassert \(reason)")
-        Self.configure(islandPanel)
-        debugOverlayWindowOperation(operation: "orderFrontRegardless", reason: "reassert \(reason)")
-        islandPanel.orderFrontRegardless()
         lastOrderedVisibilityState = islandState.state
         updateMousePassthrough()
-        debugOverlayWindowState(reason: "after reassert \(reason)")
+        updateMouseContainmentTimer()
     }
 
     private func updateMouseContainmentTimer() {
@@ -851,25 +529,10 @@ final class OverlayWindowController {
             }
         }
 
-        #if DEBUG
-        localSystemGestureMonitor = NSEvent.addLocalMonitorForEvents(matching: [.swipe, .gesture]) { [weak self] event in
-            self?.startOverlayTransitionTraceIfEventIsOutsideIsland(event)
-            return event
-        }
-
-        globalSystemGestureMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.swipe, .gesture]) { [weak self] event in
-            Task { @MainActor in
-                self?.startOverlayTransitionTraceIfEventIsOutsideIsland(event)
-            }
-        }
-        #endif
-
         localScrollWheelMonitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel]) { [weak self] event in
     guard let self else { return event }
 
     self.debugScrollWheelReceived(event, source: "localScrollMonitor")
-    self.startOverlayTransitionTraceIfEventIsOutsideIsland(event)
-
     if self.handleExpandedScrollWheelFromMonitor(event, source: "localScrollMonitor") {
         return nil
     }
@@ -890,8 +553,6 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
         guard let self else { return }
 
         self.debugScrollWheelReceived(event, source: "globalScrollMonitor")
-        self.startOverlayTransitionTraceIfEventIsOutsideIsland(event)
-
         if self.handleExpandedScrollWheelFromMonitor(event, source: "globalScrollMonitor") {
             return
         }
@@ -1010,11 +671,6 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
             return
         }
 
-        guard abs(spaceLockOffsetX) <= SpaceLock.activeOffsetThreshold else {
-            islandPanel.ignoresMouseEvents = true
-            return
-        }
-
         // Window-level passthrough is the primary click-through control. Returning nil from the
         // hosting view hit-test is kept only as a secondary safeguard because the NSPanel itself
         // can still block clicks for other apps when its frame covers the screen.
@@ -1091,7 +747,11 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
         layoutStore.isShellMorphing = true
         layoutStore.isCollapseShellOnly = (state == .collapsed)
 
-        let clearDelay: DispatchTimeInterval = .milliseconds(state == .collapsed ? 340 : 380)
+        let shellDuration = IslandContentTransitionTiming.shellDuration(
+            settings: settings,
+            reduceMotion: false
+        )
+        let clearDelay = shellDuration + (state == .collapsed ? 0.025 : 0)
         DispatchQueue.main.asyncAfter(deadline: .now() + clearDelay) { [weak self] in
             guard let self else { return }
             guard generation == self.morphGeneration else { return }
@@ -1143,13 +803,19 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
 
         collapseSequenceGeneration += 1
         let generation = collapseSequenceGeneration
-
+        let shellDuration = IslandContentTransitionTiming.shellDuration(
+            settings: settings,
+            reduceMotion: false
+        )
+        let collapseShellDelay = IslandContentTransitionTiming.collapseShellDelay(
+            shellDuration: shellDuration
+        )
         debugLog("requestCollapseWithSequencing started generation=\(generation)")
         stopMouseContainmentTimer()
         layoutStore.isExpandedContentExiting = true
         updateMousePassthrough()
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + collapseContentExitDelay) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + collapseShellDelay) { [weak self] in
             guard let self else { return }
             guard generation == self.collapseSequenceGeneration else { return }
             guard self.islandState.state == .expanded else { return }
@@ -1936,1240 +1602,6 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
         #endif
     }
 
-    private func startSpaceLockWatchdog() {
-        guard spaceCompensationEnabled else { return }
-        guard !spaceLockDisplayLink.isRunning else { return }
-
-        spaceLockDisplayLink.start { [weak self] frameTimestamp in
-            self?.requestProbeDrivenSpaceLockUpdate(reason: "displayLink", frameTimestamp: frameTimestamp)
-        }
-        debugSpaceProbe(
-            "displayLinkStarted",
-            "nominalFPS=\(spaceLockDisplayLink.nominalFramesPerSecond.map { String(format: "%.1f", $0) } ?? "unknown")"
-        )
-    }
-
-    private func stopSpaceLockWatchdog() {
-        let displayLinkWasRunning = spaceLockDisplayLink.isRunning
-        spaceLockDisplayLink.stop()
-        spaceLockFrameUpdatePending = false
-        spaceLockOffsetX = 0
-        probeWindowServerXOffset = nil
-        probeWindowID = nil
-        resetProbeMotionState()
-        probeStableSampleCount = 0
-        probeBaselineCapturePending = false
-        spaceLockRecoveryUntil = 0
-        consecutiveInvalidSpaceLockSamples = 0
-        consecutiveInvalidProbeTranslations = 0
-        transitionCompletionStableSamples = 0
-        isSpaceTransitionRenderActive = false
-        transitionRenderHandoffPending = false
-        transitionRenderHandoffGeneration += 1
-        lastAppliedTransitionLayerTranslationX = 0
-        lastValidProbeTranslationX = 0
-        lastPredictionResult = nil
-        setMainIslandContentVisible(true)
-        setTransitionIslandVisible(false)
-        resetTransitionLayerTransform()
-        if displayLinkWasRunning || spaceCompensationEnabled {
-            debugSpaceProbe("displayLinkStopped")
-        }
-    }
-
-    private func disableExperimentalSpaceCompensationPanels(reason: String) {
-        stopSpaceLockWatchdog()
-        spaceMotionProbePanel.orderOut(nil)
-        spaceTransitionRenderPanel.orderOut(nil)
-        setMainIslandContentVisible(true)
-        updateMousePassthrough()
-        debugOverlayPersistence("space compensation disabled reason=\(reason)")
-    }
-
-    private func pauseProbeDrivenTrackingForScreenChange() {
-        guard spaceCompensationEnabled else { return }
-        spaceLockDisplayLink.stop()
-        spaceLockFrameUpdatePending = false
-        spaceLockOffsetX = 0
-        probeWindowServerXOffset = nil
-        probeWindowID = nil
-        resetProbeMotionState()
-        probeStableSampleCount = 0
-        probeBaselineCapturePending = true
-        consecutiveInvalidSpaceLockSamples = 0
-        consecutiveInvalidProbeTranslations = 0
-        transitionCompletionStableSamples = 0
-        endSpaceTransitionRendering(reason: "screenChangePause")
-    }
-
-    private func prepareSpaceMotionProbe(reason: String) {
-        guard spaceCompensationEnabled else { return }
-        guard settings.overlayEnabled,
-              !canonicalPanelFrame.isEmpty else {
-            return
-        }
-
-        let targetScreen = targetScreenForSpaceMotionProbe()
-        let frame = canonicalProbeFrame(on: targetScreen)
-        probeCanonicalFrame = frame
-        probeWindowServerXOffset = nil
-        requestProbeBaselineCapture(reason: reason, invalidateExistingBaseline: true)
-        consecutiveInvalidSpaceLockSamples = 0
-        consecutiveInvalidProbeTranslations = 0
-
-        applyProbeCanonicalFrame(frame, reason: reason)
-        debugOverlayWindowOperation(operation: "orderFrontRegardless", reason: "spaceMotionProbe \(reason)")
-        spaceMotionProbePanel.orderFrontRegardless()
-        if spaceMotionProbePanel.windowNumber > 0 {
-            probeWindowID = CGWindowID(spaceMotionProbePanel.windowNumber)
-        }
-        prepareSpaceTransitionRenderPanel(reason: reason)
-        startSpaceLockWatchdog()
-    }
-
-    private func targetScreenForSpaceMotionProbe() -> NSScreen {
-        let canonicalMidPoint = NSPoint(x: canonicalPanelFrame.midX, y: canonicalPanelFrame.midY)
-        if let screen = NSScreen.screens.first(where: { $0.frame.contains(canonicalMidPoint) }) {
-            return screen
-        }
-        return islandPanel.screen ?? NSScreen.main ?? NSScreen.screens.first!
-    }
-
-    private func canonicalProbeFrame(on screen: NSScreen) -> NSRect {
-        NSRect(
-            x: screen.frame.minX + SpaceLock.probeScreenInset,
-            y: screen.frame.maxY - SpaceLock.probeScreenInset - SpaceLock.probeSize.height,
-            width: SpaceLock.probeSize.width,
-            height: SpaceLock.probeSize.height
-        )
-    }
-
-    private func applyProbeCanonicalFrame(_ frame: NSRect, reason: String) {
-        guard frame.origin.x.isFinite,
-              frame.origin.y.isFinite,
-              frame.size.width.isFinite,
-              frame.size.height.isFinite,
-              frame.size.width > 0,
-              frame.size.height > 0 else {
-            return
-        }
-
-        guard !framesAreApproximatelyEqual(
-            frame,
-            spaceMotionProbePanel.frame,
-            tolerance: SpaceLock.frameDedupeTolerance
-        ) else {
-            return
-        }
-
-        debugSpaceProbe("probeSetFrame", "reason=\(reason)", "frame=\(frame)")
-        spaceMotionProbePanel.setFrame(frame, display: false)
-        spaceMotionProbePanel.contentView?.frame = NSRect(origin: .zero, size: frame.size)
-    }
-
-    private func prepareSpaceTransitionRenderPanel(reason: String) {
-        guard spaceCompensationEnabled else { return }
-        guard settings.overlayEnabled,
-              !canonicalPanelFrame.isEmpty else {
-            return
-        }
-
-        let targetScreen = targetScreenForSpaceMotionProbe()
-        let canvasFrame = transitionCanvasFrame(on: targetScreen)
-        transitionCanvasFrame = canvasFrame
-        applyTransitionCanvasFrame(canvasFrame, reason: reason)
-        layoutTransitionIslandRenderer()
-        setTransitionIslandVisible(isSpaceTransitionRenderActive)
-        debugOverlayWindowOperation(operation: "orderFrontRegardless", reason: "spaceTransitionRender \(reason)")
-        spaceTransitionRenderPanel.orderFrontRegardless()
-    }
-
-    private func transitionCanvasFrame(on screen: NSScreen) -> NSRect {
-        let horizontalMargin = screen.frame.width * SpaceLock.transitionCanvasHorizontalMarginMultiplier
-        return NSRect(
-            x: screen.frame.minX - horizontalMargin,
-            y: canonicalPanelFrame.minY,
-            width: screen.frame.width + horizontalMargin * 2,
-            height: canonicalPanelFrame.height
-        )
-    }
-
-    private func applyTransitionCanvasFrame(_ frame: NSRect, reason: String) {
-        guard frame.origin.x.isFinite,
-              frame.origin.y.isFinite,
-              frame.size.width.isFinite,
-              frame.size.height.isFinite,
-              frame.size.width > 0,
-              frame.size.height > 0 else {
-            return
-        }
-
-        guard !framesAreApproximatelyEqual(
-            frame,
-            spaceTransitionRenderPanel.frame,
-            tolerance: SpaceLock.frameDedupeTolerance
-        ) else {
-            return
-        }
-
-        debugSpaceRender("canvasSetFrame", "reason=\(reason)", "frame=\(frame)")
-        spaceTransitionRenderPanel.setFrame(frame, display: false)
-        spaceTransitionRenderPanel.contentView?.frame = NSRect(origin: .zero, size: frame.size)
-    }
-
-    private func layoutTransitionIslandRenderer() {
-        guard let transitionIslandHostingView,
-              !transitionCanvasFrame.isEmpty,
-              !canonicalPanelFrame.isEmpty else {
-            return
-        }
-
-        let localFrame = NSRect(
-            x: canonicalPanelFrame.minX - transitionCanvasFrame.minX,
-            y: canonicalPanelFrame.minY - transitionCanvasFrame.minY,
-            width: canonicalPanelFrame.width,
-            height: canonicalPanelFrame.height
-        )
-        transitionIslandHostingView.frame = localFrame
-        transitionIslandHostingView.layer?.anchorPoint = CGPoint(x: 0, y: 0)
-        transitionIslandHostingView.layer?.position = CGPoint(x: localFrame.minX, y: localFrame.minY)
-    }
-
-    private func requestProbeBaselineCapture(reason: String, invalidateExistingBaseline: Bool) {
-        if invalidateExistingBaseline {
-            probeWindowServerXOffset = nil
-        }
-        resetProbeMotionState()
-        probeBaselineCapturePending = true
-        probeStableSampleCount = 0
-        debugSpaceProbe("BASELINE_PENDING", "reason=\(reason)")
-    }
-
-    private func requestProbeDrivenSpaceLockUpdate(reason: String, frameTimestamp: CFTimeInterval = CACurrentMediaTime()) {
-        guard spaceCompensationEnabled else { return }
-        lastRenderEnqueueTimestamp = frameTimestamp
-        guard !spaceLockFrameUpdatePending else { return }
-        spaceLockFrameUpdatePending = true
-
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.spaceLockFrameUpdatePending = false
-            let renderTimestamp = CACurrentMediaTime()
-            self.lastMainQueueRenderDelay = max(0, renderTimestamp - self.lastRenderEnqueueTimestamp)
-            self.performProbeDrivenSpaceLockTick(reason: reason, renderTimestamp: renderTimestamp)
-        }
-    }
-
-    private func performProbeDrivenSpaceLockTick(reason: String, renderTimestamp: CFTimeInterval = CACurrentMediaTime()) {
-        guard spaceCompensationEnabled else { return }
-        guard settings.overlayEnabled,
-              islandPanel.isVisible,
-              !canonicalPanelFrame.isEmpty else {
-            return
-        }
-
-        let now = renderTimestamp
-        recordSpaceProbeFrame(now: now)
-        guard now >= spaceLockRecoveryUntil else {
-            return
-        }
-
-        let screenWidth = effectiveSpaceLockScreenWidth
-        let maximumTotalOffset = maximumSpaceLockOffset(screenWidth: screenWidth)
-        let currentPhysicalX = islandPanel.frame.minX
-        guard let currentPhysicalOffset = SpaceTransitionCompensationMath.physicalOffset(
-            canonicalX: canonicalPanelFrame.minX,
-            physicalX: currentPhysicalX
-        ) else {
-            recoverSpaceLockFromRunaway(reason: "nonFinitePhysicalFrame", actualCGX: nil)
-            return
-        }
-
-        if SpaceTransitionCompensationMath.exceedsMaximumOffset(
-            currentPhysicalOffset,
-            maximumOffset: maximumTotalOffset
-        ) {
-            recoverSpaceLockFromRunaway(reason: "physicalOffsetExceeded \(reason)", actualCGX: currentWindowServerSnapshot()?.bounds.minX)
-            return
-        }
-
-        if probeBaselineCapturePending || probeWindowServerXOffset == nil {
-            updateProbeBaselineCaptureIfStable(reason: reason)
-            guard probeWindowServerXOffset != nil else {
-                restoreCanonicalMainIslandWhileProbeBaselineUnavailable(reason: reason)
-                return
-            }
-        }
-
-        guard let rawTranslationX = sampleProbeSpaceTranslation(reason: reason, timestamp: now) else {
-            handleInvalidSpaceLockSample(reason: "probeUnavailable \(reason)")
-            return
-        }
-
-        guard rawTranslationX.isFinite else {
-            handleInvalidSpaceLockSample(reason: "nonFiniteProbeTranslation \(reason)")
-            return
-        }
-
-        let normalProbeTranslationMaximum = screenWidth * SpaceLock.normalProbeTranslationMultiplier
-        let absoluteProbeTranslationMaximum = screenWidth * SpaceLock.absoluteProbeTranslationMultiplier
-        if SpaceTransitionCompensationMath.exceedsMaximumOffset(
-            rawTranslationX,
-            maximumOffset: absoluteProbeTranslationMaximum
-        ) {
-            handleInvalidProbeTranslation(reason: reason, translationX: rawTranslationX)
-            return
-        }
-
-        consecutiveInvalidSpaceLockSamples = 0
-        if SpaceTransitionCompensationMath.exceedsMaximumOffset(
-            rawTranslationX,
-            maximumOffset: normalProbeTranslationMaximum
-        ) {
-            consecutiveInvalidProbeTranslations += 1
-            throttledSpaceProbeInvalidTranslationLog(
-                reason: "heldBeyondNormalRange \(reason)",
-                translationX: rawTranslationX,
-                count: consecutiveInvalidProbeTranslations
-            )
-            applySpaceTransitionRenderTransform(
-                layerCompensationX: -lastValidProbeTranslationX,
-                renderedProbeTranslationX: lastValidProbeTranslationX,
-                rawProbeTranslationX: lastValidProbeTranslationX,
-                reason: "heldBeyondNormalRange \(reason)"
-            )
-            return
-        }
-
-        consecutiveInvalidProbeTranslations = 0
-        lastValidProbeTranslationX = rawTranslationX
-
-        let prediction = predictedProbeTranslationX(at: now) ?? SpaceProbePrediction(
-            rawTranslationX: rawTranslationX,
-            predictedTranslationX: rawTranslationX,
-            predictionLead: 0,
-            velocityX: 0
-        )
-        lastPredictionResult = prediction
-        let layerCompensationX = -prediction.predictedTranslationX
-        applySpaceTransitionRenderTransform(
-            layerCompensationX: layerCompensationX,
-            renderedProbeTranslationX: prediction.predictedTranslationX,
-            rawProbeTranslationX: rawTranslationX,
-            reason: reason
-        )
-    }
-
-    private func updateProbeBaselineCaptureIfStable(reason: String) {
-        guard settings.overlayEnabled,
-              spaceMotionProbePanel.isVisible,
-              !probeCanonicalFrame.isEmpty,
-              let snapshot = currentProbeWindowServerSnapshot(),
-              snapshot.isOnscreen else {
-            probeStableSampleCount = 0
-            handleInvalidSpaceLockSample(reason: "probeBaselineUnavailable \(reason)")
-            return
-        }
-
-        let rawOffset = snapshot.bounds.minX - probeCanonicalFrame.minX
-        guard rawOffset.isFinite else {
-            probeStableSampleCount = 0
-            handleInvalidSpaceLockSample(reason: "probeBaselineNonFinite \(reason)")
-            return
-        }
-
-        guard abs(rawOffset) <= SpaceLock.probeBaselineStableTolerance else {
-            probeStableSampleCount = 0
-            debugSpaceProbe(
-                "BASELINE_PENDING",
-                "reason=moving \(reason)",
-                "rawOffset=\(rawOffset)"
-            )
-            return
-        }
-
-        probeStableSampleCount += 1
-        debugSpaceProbe(
-            "BASELINE_STABLE_SAMPLE",
-            "reason=\(reason)",
-            "count=\(probeStableSampleCount)",
-            "rawOffset=\(rawOffset)"
-        )
-        guard probeStableSampleCount >= SpaceLock.probeBaselineRequiredStableSamples else {
-            return
-        }
-
-        probeWindowServerXOffset = rawOffset
-        probeBaselineCapturePending = false
-        probeStableSampleCount = 0
-        consecutiveInvalidSpaceLockSamples = 0
-        debugSpaceProbe(
-            "BASELINE_CAPTURED",
-            "reason=\(reason)",
-            "offset=\(rawOffset)",
-            "probeCGX=\(snapshot.bounds.minX)",
-            "probeCanonicalX=\(probeCanonicalFrame.minX)"
-        )
-    }
-
-    private func resetProbeMotionState() {
-        lastRawProbeSample = nil
-        previousRawProbeSample = nil
-        lastDistinctProbeSample = nil
-        previousDistinctProbeSample = nil
-        distinctProbeSampleIntervalEMA = nil
-        estimatedProbeVelocityX = 0
-        lastPredictionResult = nil
-        #if DEBUG
-        visibleIslandErrorSamples.removeAll(keepingCapacity: true)
-        #endif
-    }
-
-    private func sampleProbeSpaceTranslation(reason: String, timestamp: CFTimeInterval) -> CGFloat? {
-        guard let translationX = currentProbeSpaceTranslationX(reason: reason) else {
-            return nil
-        }
-
-        ingestProbeMotionSample(
-            SpaceProbeMotionSample(
-                translationX: translationX,
-                timestamp: timestamp
-            )
-        )
-        return translationX
-    }
-
-    private func currentProbeSpaceTranslationX(reason: String) -> CGFloat? {
-        guard let probeWindowServerXOffset,
-              !probeCanonicalFrame.isEmpty else {
-            return nil
-        }
-        guard let snapshot = currentProbeWindowServerSnapshot(),
-              snapshot.isOnscreen else {
-            return nil
-        }
-
-        let translationX = SpaceTransitionCompensationMath.probeSpaceTranslationX(
-            probeCanonicalX: probeCanonicalFrame.minX,
-            actualProbeCGX: snapshot.bounds.minX,
-            probeWindowServerXOffset: probeWindowServerXOffset
-        )
-        #if DEBUG
-        if let translationX {
-            lastProbeSnapshotForTrace = (
-                canonicalX: probeCanonicalFrame.minX,
-                actualCGX: snapshot.bounds.minX,
-                translationX: translationX
-            )
-        }
-        #endif
-        return translationX
-    }
-
-    private func ingestProbeMotionSample(_ sample: SpaceProbeMotionSample) {
-        previousRawProbeSample = lastRawProbeSample
-        lastRawProbeSample = sample
-
-        guard let previousRawProbeSample else {
-            lastDistinctProbeSample = sample
-            estimatedProbeVelocityX = 0
-            return
-        }
-
-        guard abs(sample.translationX - previousRawProbeSample.translationX) > SpaceLock.distinctProbeSampleThreshold else {
-            return
-        }
-
-        let oldLastDistinct = lastDistinctProbeSample
-        let oldPreviousDistinct = previousDistinctProbeSample
-        var detectedReversal = false
-        if let oldLastDistinct, let oldPreviousDistinct {
-            let oldDelta = oldLastDistinct.translationX - oldPreviousDistinct.translationX
-            let newDelta = sample.translationX - oldLastDistinct.translationX
-            detectedReversal = SpaceTransitionCompensationMath.didReverseDirection(
-                previousDelta: oldDelta,
-                currentDelta: newDelta,
-                threshold: SpaceLock.distinctProbeSampleThreshold
-            )
-        }
-
-        if detectedReversal {
-            previousDistinctProbeSample = nil
-            lastDistinctProbeSample = sample
-            estimatedProbeVelocityX = 0
-            return
-        }
-
-        previousDistinctProbeSample = oldLastDistinct
-        lastDistinctProbeSample = sample
-
-        guard let previousDistinctProbeSample else {
-            estimatedProbeVelocityX = 0
-            return
-        }
-
-        let interval = sample.timestamp - previousDistinctProbeSample.timestamp
-        guard interval.isFinite, interval > 0 else {
-            estimatedProbeVelocityX = 0
-            return
-        }
-
-        distinctProbeSampleIntervalEMA = SpaceTransitionCompensationMath.exponentialMovingAverage(
-            previous: distinctProbeSampleIntervalEMA,
-            newValue: interval,
-            alpha: SpaceLock.distinctProbeIntervalEMAAlpha
-        )
-
-        let velocityX = (sample.translationX - previousDistinctProbeSample.translationX) / CGFloat(interval)
-        let maximumVelocity = effectiveSpaceLockScreenWidth * SpaceLock.maximumProbeVelocityMultiplier
-        estimatedProbeVelocityX = abs(velocityX) <= maximumVelocity ? velocityX : 0
-    }
-
-    private func predictedProbeTranslationX(at renderTimestamp: CFTimeInterval) -> SpaceProbePrediction? {
-        guard let lastDistinctProbeSample else {
-            guard let lastRawProbeSample else { return nil }
-            return SpaceProbePrediction(
-                rawTranslationX: lastRawProbeSample.translationX,
-                predictedTranslationX: lastRawProbeSample.translationX,
-                predictionLead: 0,
-                velocityX: 0
-            )
-        }
-
-        let rawX = lastDistinctProbeSample.translationX
-        let sampleAge = max(0, renderTimestamp - lastDistinctProbeSample.timestamp)
-        let sensorInterval = distinctProbeSampleIntervalEMA ?? (1.0 / 120.0)
-        let maximumPredictionDistance = min(
-            effectiveSpaceLockScreenWidth * SpaceLock.maximumPredictionDistanceMultiplier,
-            SpaceLock.maximumPredictionDistanceCap
-        )
-        guard let prediction = SpaceTransitionCompensationMath.boundedPredictedTranslationX(
-            rawTranslationX: rawX,
-            velocityX: estimatedProbeVelocityX,
-            sampleAge: sampleAge,
-            sensorInterval: sensorInterval,
-            leadIntervalMultiplier: SpaceLock.predictionLeadIntervalMultiplier,
-            minimumLead: SpaceLock.minimumPredictionLead,
-            maximumLead: SpaceLock.maximumPredictionLead,
-            maximumPredictionDistance: maximumPredictionDistance,
-            restTranslationThreshold: SpaceLock.predictionRestTranslationThreshold,
-            restVelocityThreshold: SpaceLock.predictionRestVelocityThreshold,
-            predictionDisabled: spacePredictionDisabled
-        ) else {
-            return nil
-        }
-        return SpaceProbePrediction(
-            rawTranslationX: rawX,
-            predictedTranslationX: prediction.translationX,
-            predictionLead: prediction.lead,
-            velocityX: prediction.lead > 0 ? estimatedProbeVelocityX : 0
-        )
-    }
-
-    private func applySpaceTransitionRenderTransform(
-        layerCompensationX: CGFloat,
-        renderedProbeTranslationX: CGFloat,
-        rawProbeTranslationX: CGFloat,
-        reason: String
-    ) {
-        guard layerCompensationX.isFinite,
-              renderedProbeTranslationX.isFinite,
-              rawProbeTranslationX.isFinite else {
-            handleInvalidSpaceLockSample(reason: "nonFiniteLayerCompensation \(reason)")
-            return
-        }
-
-        let isNearBaseline = abs(rawProbeTranslationX) <= SpaceLock.transitionCompletionThreshold
-        if isNearBaseline {
-            transitionCompletionStableSamples += 1
-        } else {
-            transitionCompletionStableSamples = 0
-        }
-
-        if !isSpaceTransitionRenderActive,
-           abs(rawProbeTranslationX) > SpaceLock.transitionActivationThreshold {
-            activateSpaceTransitionRendering(
-                layerCompensationX: layerCompensationX,
-                probeTranslationX: rawProbeTranslationX,
-                reason: reason
-            )
-        } else if isSpaceTransitionRenderActive,
-                  abs(rawProbeTranslationX) > SpaceLock.transitionCompletionThreshold {
-            applyTransitionIslandLayerTransform(layerCompensationX)
-        } else if isSpaceTransitionRenderActive,
-                  transitionCompletionStableSamples >= SpaceLock.transitionCompletionRequiredStableSamples {
-            endSpaceTransitionRendering(reason: "completed \(reason)")
-        } else if isSpaceTransitionRenderActive {
-            applyTransitionIslandLayerTransform(layerCompensationX)
-        }
-
-        recordSpaceMotionMetrics(
-            reason: reason,
-            rawProbeTranslationX: rawProbeTranslationX,
-            predictedProbeTranslationX: renderedProbeTranslationX,
-            layerCompensationX: layerCompensationX
-        )
-    }
-
-    private func activateSpaceTransitionRendering(
-        layerCompensationX: CGFloat,
-        probeTranslationX: CGFloat,
-        reason: String
-    ) {
-        transitionRenderHandoffPending = false
-        transitionRenderHandoffGeneration += 1
-        prepareSpaceTransitionRenderPanel(reason: "activate \(reason)")
-        layoutTransitionIslandRenderer()
-        applyTransitionIslandLayerTransform(layerCompensationX)
-        setTransitionIslandVisible(true)
-        setMainIslandContentVisible(false)
-        islandPanel.ignoresMouseEvents = true
-        isSpaceTransitionRenderActive = true
-        transitionCompletionStableSamples = 0
-        debugSpaceRender(
-            "ACTIVATED",
-            "reason=\(reason)",
-            "probeTranslationX=\(probeTranslationX)",
-            "layerCompensationX=\(layerCompensationX)"
-        )
-    }
-
-    private func endSpaceTransitionRendering(reason: String) {
-        guard isSpaceTransitionRenderActive ||
-              transitionRenderHandoffPending ||
-              transitionIslandHostingView?.layer?.opacity != 0 ||
-              abs(lastAppliedTransitionLayerTranslationX) > SpaceLock.renderTransformDedupeThreshold else {
-            setMainIslandContentVisible(true)
-            updateMousePassthrough()
-            return
-        }
-
-        spaceLockOffsetX = 0
-        applyPhysicalPanelFrame(canonicalPanelFrame, reason: "spaceRender handoff \(reason)")
-        applyTransitionIslandLayerTransform(0)
-        setMainIslandContentVisible(true)
-        isSpaceTransitionRenderActive = false
-        transitionRenderHandoffPending = true
-        transitionRenderHandoffGeneration += 1
-        let generation = transitionRenderHandoffGeneration
-        transitionCompletionStableSamples = 0
-        debugSpaceRender("HANDOFF_OVERLAP", "reason=\(reason)", "mainPanelFrameX=\(islandPanel.frame.minX)")
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + SpaceLock.handoffOverlapDelay) { [weak self] in
-            guard let self else { return }
-            guard self.transitionRenderHandoffPending,
-                  !self.isSpaceTransitionRenderActive,
-                  generation == self.transitionRenderHandoffGeneration else {
-                return
-            }
-            self.finishSpaceTransitionRenderHandoff(reason: reason)
-        }
-    }
-
-    private func finishSpaceTransitionRenderHandoff(reason: String) {
-        setTransitionIslandVisible(false)
-        resetTransitionLayerTransform()
-        transitionRenderHandoffPending = false
-        updateMousePassthrough()
-        debugSpaceRender("COMPLETED", "reason=\(reason)", "mainPanelFrameX=\(islandPanel.frame.minX)")
-    }
-
-    private func restoreCanonicalMainIslandWhileProbeBaselineUnavailable(reason: String) {
-        spaceLockOffsetX = 0
-        applyPhysicalPanelFrame(canonicalPanelFrame, reason: "probeBaselineUnavailable \(reason)")
-        setMainIslandContentVisible(true)
-        setTransitionIslandVisible(false)
-        resetTransitionLayerTransform()
-        isSpaceTransitionRenderActive = false
-        transitionRenderHandoffPending = false
-        updateMousePassthrough()
-    }
-
-    private func applyTransitionIslandLayerTransform(_ translationX: CGFloat) {
-        guard let layer = transitionIslandHostingView?.layer else { return }
-        guard abs(translationX - lastAppliedTransitionLayerTranslationX) >= SpaceLock.renderTransformDedupeThreshold else {
-            return
-        }
-
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        layer.setAffineTransform(CGAffineTransform(translationX: translationX, y: 0))
-        CATransaction.commit()
-        lastAppliedTransitionLayerTranslationX = translationX
-    }
-
-    private func resetTransitionLayerTransform() {
-        guard let layer = transitionIslandHostingView?.layer else { return }
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        layer.setAffineTransform(.identity)
-        CATransaction.commit()
-        lastAppliedTransitionLayerTranslationX = 0
-    }
-
-    private func setMainIslandContentVisible(_ visible: Bool) {
-        guard let layer = islandPanel.contentView?.layer else { return }
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        layer.opacity = visible ? 1 : 0
-        CATransaction.commit()
-    }
-
-    private func setTransitionIslandVisible(_ visible: Bool) {
-        guard let layer = transitionIslandHostingView?.layer else { return }
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        layer.opacity = visible ? 1 : 0
-        CATransaction.commit()
-    }
-
-    #if DEBUG
-    private var lastProbeSnapshotForTrace: (canonicalX: CGFloat, actualCGX: CGFloat, translationX: CGFloat)?
-    #endif
-
-    private func handleInvalidProbeTranslation(reason: String, translationX: CGFloat) {
-        consecutiveInvalidProbeTranslations += 1
-        throttledSpaceProbeInvalidTranslationLog(
-            reason: reason,
-            translationX: translationX,
-            count: consecutiveInvalidProbeTranslations
-        )
-        guard consecutiveInvalidProbeTranslations >= SpaceLock.invalidProbeTranslationRecoveryThreshold else {
-            return
-        }
-
-        recoverSpaceLockFromRunaway(reason: "invalidProbeTranslation \(reason)", actualCGX: currentWindowServerSnapshot()?.bounds.minX)
-    }
-
-    private var effectiveSpaceLockScreenWidth: CGFloat {
-        let width = islandPanel.screen?.frame.width ?? NSScreen.main?.frame.width ?? 1_440
-        guard width.isFinite, width > 0 else { return 1_440 }
-        return width
-    }
-
-    private var spacePredictionDisabled: Bool {
-        #if DEBUG
-        ProcessInfo.processInfo.environment["DYNAMIC_ISLAND_DISABLE_SPACE_PREDICTION"] == "1"
-        #else
-        false
-        #endif
-    }
-
-    private func maximumSpaceLockOffset(screenWidth: CGFloat) -> CGFloat {
-        SpaceTransitionCompensationMath.maximumTotalOffset(
-            screenWidth: screenWidth,
-            multiplier: SpaceLock.maximumTotalOffsetMultiplier
-        ) ?? (1_440 * SpaceLock.maximumTotalOffsetMultiplier)
-    }
-
-    private func handleInvalidSpaceLockSample(reason: String) {
-        consecutiveInvalidSpaceLockSamples += 1
-        guard consecutiveInvalidSpaceLockSamples >= SpaceLock.invalidSampleRecoveryThreshold else {
-            return
-        }
-
-        recoverSpaceLockFromRunaway(reason: "invalidWindowServerSamples \(reason)", actualCGX: nil)
-    }
-
-    private func recoverSpaceLockFromRunaway(reason: String, actualCGX: CGFloat?) {
-        guard spaceCompensationEnabled else { return }
-        let screenWidth = effectiveSpaceLockScreenWidth
-        let physicalX = islandPanel.frame.minX
-        let offsetX = physicalX - canonicalPanelFrame.minX
-        debugSpaceProbeRecovery(
-            reason: reason,
-            canonicalX: canonicalPanelFrame.minX,
-            physicalX: physicalX,
-            actualCGX: actualCGX,
-            offsetX: offsetX,
-            screenWidth: screenWidth
-        )
-
-        spaceLockOffsetX = 0
-        consecutiveInvalidSpaceLockSamples = 0
-        consecutiveInvalidProbeTranslations = 0
-        applyPhysicalPanelFrame(canonicalPanelFrame, reason: "spaceLock recovery \(reason)")
-        debugOverlayWindowOperation(operation: "orderFrontRegardless", reason: "spaceLock recovery \(reason)")
-        islandPanel.orderFrontRegardless()
-        updateMousePassthrough()
-        spaceLockRecoveryUntil = CACurrentMediaTime() + SpaceLock.recoveryCooldown
-        prepareSpaceMotionProbe(reason: "recovery \(reason)")
-
-        #if DEBUG
-        debugSpaceProbe(
-            "RECOVERED",
-            "canonicalX=\(canonicalPanelFrame.minX)",
-            "physicalX=\(islandPanel.frame.minX)"
-        )
-        #endif
-    }
-
-    private func scheduleSpaceLockRecoveryVerification(reason: String) {
-        guard spaceCompensationEnabled else { return }
-        for delay in SpaceLock.recoveryVerificationDelays {
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                self?.verifySpaceLockRecovery(reason: "\(reason) delay=\(delay)")
-            }
-        }
-    }
-
-    private func verifySpaceLockRecovery(reason: String) {
-        guard spaceCompensationEnabled else { return }
-        guard settings.overlayEnabled,
-              islandPanel.isVisible,
-              !canonicalPanelFrame.isEmpty else {
-            return
-        }
-
-        let screenWidth = effectiveSpaceLockScreenWidth
-        let maximumTotalOffset = maximumSpaceLockOffset(screenWidth: screenWidth)
-        let physicalOffset = islandPanel.frame.minX - canonicalPanelFrame.minX
-        if SpaceTransitionCompensationMath.exceedsMaximumOffset(
-            physicalOffset,
-            maximumOffset: maximumTotalOffset
-        ) {
-            recoverSpaceLockFromRunaway(reason: "verificationPhysicalOffsetExceeded \(reason)", actualCGX: currentWindowServerSnapshot()?.bounds.minX)
-            return
-        }
-
-        guard let translationX = currentProbeSpaceTranslationX(reason: "verification \(reason)") else {
-            return
-        }
-
-        guard abs(translationX) <= SpaceLock.deadzone,
-              abs(physicalOffset) > SpaceLock.activeOffsetThreshold else {
-            return
-        }
-
-        spaceLockOffsetX = 0
-        consecutiveInvalidProbeTranslations = 0
-        applyPhysicalPanelFrame(canonicalPanelFrame, reason: "spaceLock verification restored \(reason)")
-        updateMousePassthrough()
-        debugSpaceProbe(
-            "RECOVERED",
-            "reason=verification",
-            "canonicalX=\(canonicalPanelFrame.minX)",
-            "physicalX=\(islandPanel.frame.minX)",
-            "translationX=\(translationX)"
-        )
-    }
-
-    private func currentWindowServerSnapshot() -> OverlayWindowServerSnapshot? {
-        currentWindowServerSnapshot(for: islandPanel)
-    }
-
-    private func currentProbeWindowServerSnapshot() -> OverlayWindowServerSnapshot? {
-        if probeWindowID == nil, spaceMotionProbePanel.windowNumber > 0 {
-            probeWindowID = CGWindowID(spaceMotionProbePanel.windowNumber)
-        }
-        guard let probeWindowID,
-              probeWindowID > 0 else {
-            return nil
-        }
-        return currentWindowServerSnapshot(windowID: probeWindowID)
-    }
-
-    private func currentWindowServerSnapshot(for window: NSWindow) -> OverlayWindowServerSnapshot? {
-        let requestedWindowNumber = window.windowNumber
-        guard requestedWindowNumber > 0 else { return nil }
-        return currentWindowServerSnapshot(windowID: CGWindowID(requestedWindowNumber))
-    }
-
-    private func currentWindowServerSnapshot(windowID: CGWindowID) -> OverlayWindowServerSnapshot? {
-        let requestedWindowNumber = Int(windowID)
-        guard requestedWindowNumber > 0,
-              let windows = CGWindowListCopyWindowInfo(
-                  [.optionIncludingWindow],
-                  windowID
-              ) as? [[String: Any]],
-              let windowInfo = windows.first,
-              let boundsDictionary = windowInfo[kCGWindowBounds as String] as? NSDictionary,
-              let bounds = CGRect(dictionaryRepresentation: boundsDictionary as CFDictionary),
-              bounds.width.isFinite,
-              bounds.height.isFinite,
-              bounds.width > 0,
-              bounds.height > 0 else {
-            return nil
-        }
-
-        return OverlayWindowServerSnapshot(
-            windowNumber: intValue(windowInfo[kCGWindowNumber as String]) ?? requestedWindowNumber,
-            bounds: bounds,
-            isOnscreen: boolValue(windowInfo[kCGWindowIsOnscreen as String]) ?? false,
-            layer: intValue(windowInfo[kCGWindowLayer as String]) ?? 0,
-            alpha: doubleValue(windowInfo[kCGWindowAlpha as String]) ?? 0,
-            ownerName: windowInfo[kCGWindowOwnerName as String] as? String
-        )
-    }
-
-    private func boolValue(_ value: Any?) -> Bool? {
-        if let value = value as? Bool { return value }
-        if let value = value as? NSNumber { return value.boolValue }
-        return nil
-    }
-
-    private func intValue(_ value: Any?) -> Int? {
-        if let value = value as? Int { return value }
-        if let value = value as? NSNumber { return value.intValue }
-        return nil
-    }
-
-    private func doubleValue(_ value: Any?) -> Double? {
-        if let value = value as? Double { return value }
-        if let value = value as? NSNumber { return value.doubleValue }
-        return nil
-    }
-
-    private func throttledSpaceProbeTrace(
-        reason: String,
-        translationX: CGFloat,
-        desiredIslandOffsetX: CGFloat,
-        physicalIslandX: CGFloat
-    ) {
-        #if DEBUG
-        let shouldTraceEveryFrame = ProcessInfo.processInfo.environment["DYNAMIC_ISLAND_TRACE_SPACE_TRANSITIONS_VERBOSE"] == "1"
-        let now = CACurrentMediaTime()
-        guard shouldTraceEveryFrame || now - lastSpaceProbeTraceLogAt >= 0.05 else {
-            return
-        }
-        lastSpaceProbeTraceLogAt = now
-
-        let probeSnapshot = lastProbeSnapshotForTrace
-        let islandActualCGX = currentWindowServerSnapshot()?.bounds.minX
-        debugSpaceProbe(
-            "track",
-            "reason=\(reason)",
-            "probeCanonicalX=\(probeSnapshot?.canonicalX ?? probeCanonicalFrame.minX)",
-            "probeActualCGX=\(probeSnapshot?.actualCGX ?? .nan)",
-            "translationX=\(translationX)",
-            "desiredIslandOffsetX=\(desiredIslandOffsetX)",
-            "canonicalIslandX=\(canonicalPanelFrame.minX)",
-            "physicalIslandX=\(physicalIslandX)",
-            "islandActualCGX=\(String(describing: islandActualCGX))"
-        )
-        #endif
-    }
-
-    private func recordSpaceMotionMetrics(
-        reason: String,
-        rawProbeTranslationX: CGFloat,
-        predictedProbeTranslationX: CGFloat,
-        layerCompensationX: CGFloat
-    ) {
-        #if DEBUG
-        guard spaceTraceEnabled else { return }
-        let now = CACurrentMediaTime()
-        if now - lastVisibleIslandErrorSampleAt >= 0.05 {
-            lastVisibleIslandErrorSampleAt = now
-            if let islandActualCGX = currentWindowServerSnapshot()?.bounds.minX {
-                visibleIslandErrorSamples.append(abs(islandActualCGX - canonicalPanelFrame.minX))
-                if visibleIslandErrorSamples.count > 240 {
-                    visibleIslandErrorSamples.removeFirst(visibleIslandErrorSamples.count - 240)
-                }
-            }
-        }
-
-        guard now - lastSpaceMotionMetricsLogAt >= 0.25 else {
-            return
-        }
-        lastSpaceMotionMetricsLogAt = now
-
-        let distinctProbeSampleHz = distinctProbeSampleIntervalEMA.map { $0 > 0 ? 1.0 / $0 : 0 } ?? 0
-        let predictionLeadMs = (lastPredictionResult?.predictionLead ?? 0) * 1_000
-        let velocityX = lastPredictionResult?.velocityX ?? 0
-        let sortedErrors = visibleIslandErrorSamples.sorted()
-        let p95Error: CGFloat
-        if sortedErrors.isEmpty {
-            p95Error = 0
-        } else {
-            let index = min(sortedErrors.count - 1, Int(Double(sortedErrors.count - 1) * 0.95))
-            p95Error = sortedErrors[index]
-        }
-        let maxError = visibleIslandErrorSamples.max() ?? 0
-
-        debugSpaceRender(
-            "track",
-            "reason=\(reason)",
-            "displayFPS=\(String(format: "%.1f", lastObservedSpaceProbeFPS))",
-            "distinctProbeSampleHz=\(String(format: "%.1f", distinctProbeSampleHz))",
-            "rawTranslationX=\(rawProbeTranslationX)",
-            "predictedTranslationX=\(predictedProbeTranslationX)",
-            "predictionLeadMilliseconds=\(String(format: "%.2f", predictionLeadMs))",
-            "velocityX=\(velocityX)",
-            "layerCompensationX=\(layerCompensationX)",
-            "mainQueueRenderDelayMilliseconds=\(String(format: "%.2f", lastMainQueueRenderDelay * 1_000))",
-            "p95VisualErrorX=\(p95Error)",
-            "maxVisualErrorX=\(maxError)",
-            "transitionActive=\(isSpaceTransitionRenderActive)",
-            "mainPanelFrameX=\(islandPanel.frame.minX)",
-            "mainContentVisible=\((islandPanel.contentView?.layer?.opacity ?? 1) > 0)",
-            "transitionContentVisible=\((transitionIslandHostingView?.layer?.opacity ?? 0) > 0)"
-        )
-        #endif
-    }
-
-    private func recordSpaceProbeFrame(now: CFTimeInterval) {
-        #if DEBUG
-        if spaceProbeFrameSampleStartedAt == 0 {
-            spaceProbeFrameSampleStartedAt = now
-            spaceProbeFrameSampleCount = 0
-        }
-
-        spaceProbeFrameSampleCount += 1
-        let elapsed = now - spaceProbeFrameSampleStartedAt
-        guard elapsed >= 1 else { return }
-
-        lastObservedSpaceProbeFPS = Double(spaceProbeFrameSampleCount) / elapsed
-        if spaceTraceEnabled {
-            debugSpaceProbe(
-                "observedFPS",
-                "fps=\(String(format: "%.1f", lastObservedSpaceProbeFPS))"
-            )
-        }
-        spaceProbeFrameSampleStartedAt = now
-        spaceProbeFrameSampleCount = 0
-        #endif
-    }
-
-    private func throttledSpaceProbeInvalidTranslationLog(
-        reason: String,
-        translationX: CGFloat,
-        count: Int
-    ) {
-        #if DEBUG
-        let now = CACurrentMediaTime()
-        guard now - lastSpaceLockCorrectionLogAt >= 0.15 else {
-            return
-        }
-        lastSpaceLockCorrectionLogAt = now
-        debugSpaceProbe(
-            "invalidTranslationHeld",
-            "reason=\(reason)",
-            "translationX=\(translationX)",
-            "count=\(count)"
-        )
-        #endif
-    }
-
-    private func debugSpaceProbeRecovery(
-        reason: String,
-        canonicalX: CGFloat,
-        physicalX: CGFloat,
-        actualCGX: CGFloat?,
-        offsetX: CGFloat,
-        screenWidth: CGFloat
-    ) {
-        #if DEBUG
-        debugSpaceProbe(
-            "PROBE_RECOVERY",
-            "reason=\(reason)",
-            "canonicalX=\(canonicalX)",
-            "physicalX=\(physicalX)",
-            "actualCGX=\(String(describing: actualCGX))",
-            "offsetX=\(offsetX)",
-            "screenWidth=\(screenWidth)"
-        )
-        #endif
-    }
-
-    private func debugSpaceProbe(_ event: String, _ fields: String...) {
-        #if DEBUG
-        guard spaceTraceEnabled || [
-            "displayLinkStarted",
-            "displayLinkStopped",
-            "BASELINE_CAPTURED",
-            "PROBE_RECOVERY",
-            "RECOVERED"
-        ].contains(event) else {
-            return
-        }
-        print("[SpaceProbe]", event, fields.joined(separator: " "))
-        #endif
-    }
-
-    private func debugSpaceRender(_ event: String, _ fields: String...) {
-        #if DEBUG
-        guard spaceTraceEnabled || [
-            "canvasSetFrame",
-            "ACTIVATED",
-            "HANDOFF_OVERLAP",
-            "COMPLETED"
-        ].contains(event) else {
-            return
-        }
-        print("[SpaceRender]", event, fields.joined(separator: " "))
-        #endif
-    }
-
-    private func debugSpaceLock(_ event: String, _ fields: String...) {
-        #if DEBUG
-        print("[SpaceLock]", event, fields.joined(separator: " "))
-        #endif
-    }
-
-    #if DEBUG
-    private var spaceTraceEnabled: Bool {
-        ProcessInfo.processInfo.environment["DYNAMIC_ISLAND_TRACE_SPACE_TRANSITIONS"] == "1" ||
-            ProcessInfo.processInfo.environment["DYNAMIC_ISLAND_TRACE_SPACE_TRANSITIONS_VERBOSE"] == "1"
-    }
-    #endif
-
-    private func recordCanonicalFrameApplication(reason: String) {
-        #if DEBUG
-        let now = CACurrentMediaTime()
-        if now - canonicalFrameApplicationWindowStartedAt > 1 {
-            canonicalFrameApplicationWindowStartedAt = now
-            canonicalFrameApplicationCount = 0
-        }
-
-        canonicalFrameApplicationCount += 1
-        if canonicalFrameApplicationCount > 6 {
-            debugPrint(
-                "[OverlayGeometry]",
-                "WARNING excessive canonical frame applications",
-                "count=\(canonicalFrameApplicationCount)",
-                "reason=\(reason)",
-                "signature=\(String(describing: lastAppliedGeometrySignature ?? currentGeometrySignature))"
-            )
-        }
-        #endif
-    }
-
-    private func startOverlayTransitionTrace(reason: String) {
-        #if DEBUG
-        guard spaceCompensationEnabled else { return }
-        guard ProcessInfo.processInfo.environment["DYNAMIC_ISLAND_TRACE_SPACE_TRANSITIONS"] == "1" else {
-            return
-        }
-        guard overlayTransitionTraceTimer == nil else { return }
-
-        let startedAt = CACurrentMediaTime()
-        overlayTransitionTraceStartedAt = startedAt
-        logOverlayTransitionTraceSample(reason: reason, elapsed: 0)
-
-        let timer = Timer(timeInterval: 0.04, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                self?.handleOverlayTransitionTraceTimer(reason: reason)
-            }
-        }
-
-        RunLoop.main.add(timer, forMode: .common)
-        overlayTransitionTraceTimer = timer
-        #endif
-    }
-
-    private func handleOverlayTransitionTraceTimer(reason: String) {
-        #if DEBUG
-        guard let traceStartedAt = overlayTransitionTraceStartedAt else {
-            overlayTransitionTraceTimer?.invalidate()
-            overlayTransitionTraceTimer = nil
-            return
-        }
-
-        let elapsed = CACurrentMediaTime() - traceStartedAt
-        guard elapsed <= 2.5 else {
-            overlayTransitionTraceTimer?.invalidate()
-            overlayTransitionTraceTimer = nil
-            overlayTransitionTraceStartedAt = nil
-            return
-        }
-
-        logOverlayTransitionTraceSample(reason: reason, elapsed: elapsed)
-        #endif
-    }
-
-    private func startOverlayTransitionTraceIfEventIsOutsideIsland(_ event: NSEvent) {
-        #if DEBUG
-        guard spaceCompensationEnabled else { return }
-        if event.type == .scrollWheel,
-           !event.phase.isEmpty,
-           !event.phase.contains(.began) {
-            return
-        }
-
-        let screenPoint = NSEvent.mouseLocation
-        let visibleIslandRect = currentVisibleIslandScreenRect
-        guard visibleIslandRect.isEmpty || !visibleIslandRect.contains(screenPoint) else {
-            return
-        }
-
-        startOverlayTransitionTrace(reason: "systemGesture")
-        #endif
-    }
-
-    private func logOverlayTransitionTraceSample(reason: String, elapsed: CFTimeInterval) {
-        #if DEBUG
-        let cgWindowInfo = overlayCGWindowInfo()
-        print(
-            "[OverlayTransitionTrace]",
-            "t=\(String(format: "%.3f", elapsed))",
-            "reason=\(reason)",
-            "windowNumber=\(islandPanel.windowNumber)",
-            "appKitVisible=\(islandPanel.isVisible)",
-            "onActiveSpace=\(islandPanel.isOnActiveSpace)",
-            "occlusion=\(islandPanel.occlusionState.rawValue)",
-            "level=\(islandPanel.level.rawValue)",
-            "collectionBehavior=\(islandPanel.collectionBehavior.rawValue)",
-            "frame=\(islandPanel.frame)",
-            "alpha=\(islandPanel.alphaValue)",
-            "ignoresMouseEvents=\(islandPanel.ignoresMouseEvents)",
-            "cgOnscreen=\(cgWindowInfo.onscreen)",
-            "cgLayer=\(cgWindowInfo.layer)",
-            "cgAlpha=\(cgWindowInfo.alpha)",
-            "cgBounds=\(cgWindowInfo.bounds)",
-            "cgOwnerName=\(cgWindowInfo.ownerName)",
-            "cgWindowNumber=\(cgWindowInfo.windowNumber)"
-        )
-        #endif
-    }
-
-    private func overlayCGWindowInfo() -> (
-        onscreen: String,
-        layer: String,
-        alpha: String,
-        bounds: String,
-        ownerName: String,
-        windowNumber: String
-    ) {
-        #if DEBUG
-        guard let snapshot = currentWindowServerSnapshot() else {
-            return ("nil", "nil", "nil", "nil", "nil", "nil")
-        }
-
-        return (
-            "\(snapshot.isOnscreen ? 1 : 0)",
-            "\(snapshot.layer)",
-            "\(snapshot.alpha)",
-            "\(snapshot.bounds)",
-            snapshot.ownerName ?? "nil",
-            "\(snapshot.windowNumber)"
-        )
-        #else
-        return ("nil", "nil", "nil", "nil", "nil", "nil")
-        #endif
-    }
-
-    private func debugWindowBoundsString(_ value: Any?) -> String {
-        #if DEBUG
-        guard let boundsDictionary = value as? NSDictionary,
-              let rect = CGRect(dictionaryRepresentation: boundsDictionary as CFDictionary) else {
-            return debugString(value)
-        }
-        return "\(rect)"
-        #else
-        return "nil"
-        #endif
-    }
-
-    private func debugString(_ value: Any?) -> String {
-        #if DEBUG
-        guard let value else { return "nil" }
-        return "\(value)"
-        #else
-        return "nil"
-        #endif
-    }
-
     private func debugOverlayWindowOperation(operation: String, reason: String) {
         #if DEBUG
         print(
@@ -3194,10 +1626,7 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
 
     private func logAtollParityConfigurationIfNeeded() {
         #if DEBUG
-        guard !spaceCompensationEnabled,
-              !didLogAtollParityConfiguration else {
-            return
-        }
+        guard !didLogAtollParityConfiguration else { return }
 
         didLogAtollParityConfiguration = true
         print(
@@ -3209,28 +1638,7 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
             "containsCanJoinAllSpaces=\(islandPanel.collectionBehavior.contains(.canJoinAllSpaces))",
             "containsIgnoresCycle=\(islandPanel.collectionBehavior.contains(.ignoresCycle))",
             "containsStationary=\(islandPanel.collectionBehavior.contains(.stationary))",
-            "containsCanJoinAllApplications=\(islandPanel.collectionBehavior.contains(.canJoinAllApplications))",
-            "spaceDisplayLinkRunning=\(spaceLockDisplayLink.isRunning)",
-            "probeVisible=\(spaceMotionProbePanel.isVisible)",
-            "transitionRenderVisible=\(spaceTransitionRenderPanel.isVisible)",
             "islandVisible=\(islandPanel.isVisible)"
-        )
-        #endif
-    }
-
-    private func logSpaceNativeABConfigurationIfNeeded() {
-        #if DEBUG
-        guard !spaceCompensationEnabled,
-              !didLogSpaceNativeABConfiguration else {
-            return
-        }
-
-        didLogSpaceNativeABConfiguration = true
-        print(
-            "[SpaceNativeAB]",
-            "canJoinAllApplications=\(islandPanel.collectionBehavior.contains(.canJoinAllApplications))",
-            "level=\(islandPanel.level.rawValue)",
-            "collectionBehavior=\(islandPanel.collectionBehavior.rawValue)"
         )
         #endif
     }
@@ -3263,113 +1671,6 @@ private final class IslandOverlayPanel: NSPanel {
     }
 }
 
-private final class SpaceMotionProbePanel: NSPanel {
-    override var canBecomeKey: Bool {
-        false
-    }
-
-    override var canBecomeMain: Bool {
-        false
-    }
-}
-
-private final class SpaceTransitionRenderPanel: NSPanel {
-    override var canBecomeKey: Bool {
-        false
-    }
-
-    override var canBecomeMain: Bool {
-        false
-    }
-}
-
-private final class SpaceLockDisplayLink: @unchecked Sendable {
-    private var displayLink: CVDisplayLink?
-    private let stateLock = NSLock()
-    private var updatePending = false
-    private var frameHandler: ((CFTimeInterval) -> Void)?
-
-    var isRunning: Bool {
-        guard let displayLink else { return false }
-        return CVDisplayLinkIsRunning(displayLink)
-    }
-
-    var nominalFramesPerSecond: Double? {
-        guard let displayLink else { return nil }
-        let period = CVDisplayLinkGetNominalOutputVideoRefreshPeriod(displayLink)
-        guard period.timeValue > 0,
-              period.timeScale > 0 else {
-            return nil
-        }
-        return Double(period.timeScale) / Double(period.timeValue)
-    }
-
-    func start(frameHandler: @escaping (CFTimeInterval) -> Void) {
-        self.frameHandler = frameHandler
-
-        if let displayLink {
-            if !CVDisplayLinkIsRunning(displayLink) {
-                CVDisplayLinkStart(displayLink)
-            }
-            return
-        }
-
-        var createdLink: CVDisplayLink?
-        guard CVDisplayLinkCreateWithActiveCGDisplays(&createdLink) == kCVReturnSuccess,
-              let createdLink else {
-            return
-        }
-
-        let context = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
-        CVDisplayLinkSetOutputCallback(
-            createdLink,
-            { _, _, _, _, _, context in
-                guard let context else { return kCVReturnSuccess }
-                let displayLink = Unmanaged<SpaceLockDisplayLink>
-                    .fromOpaque(context)
-                    .takeUnretainedValue()
-                displayLink.enqueueFrame()
-                return kCVReturnSuccess
-            },
-            context
-        )
-        displayLink = createdLink
-        CVDisplayLinkStart(createdLink)
-    }
-
-    func stop() {
-        if let displayLink, CVDisplayLinkIsRunning(displayLink) {
-            CVDisplayLinkStop(displayLink)
-        }
-        stateLock.lock()
-        updatePending = false
-        stateLock.unlock()
-    }
-
-    private func enqueueFrame() {
-        let frameTimestamp = CACurrentMediaTime()
-        stateLock.lock()
-        if updatePending {
-            stateLock.unlock()
-            return
-        }
-        updatePending = true
-        stateLock.unlock()
-
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.stateLock.lock()
-            self.updatePending = false
-            let handler = self.frameHandler
-            self.stateLock.unlock()
-            handler?(frameTimestamp)
-        }
-    }
-
-    deinit {
-        stop()
-    }
-}
 
 private final class IslandHostingView<Content: View>: NSHostingView<Content> {
     var onMouseExited: (() -> Void)?

@@ -1164,6 +1164,7 @@ struct FileShelfModuleView: View {
     }
 }
 
+@MainActor
 final class FileThumbnailCache: ObservableObject {
     @Published private var imagesByKey: [String: NSImage] = [:]
     private var loadingKeys: Set<String> = []
@@ -1181,21 +1182,17 @@ final class FileThumbnailCache: ObservableObject {
         let shouldLoadImagePreview = Self.isImageFile(url)
         let fileURL = url
 
-        DispatchQueue.global(qos: .utility).async {
-            let imageData: Data?
-            if shouldLoadImagePreview {
-                imageData = try? Data(contentsOf: fileURL, options: [.mappedIfSafe])
-            } else {
-                imageData = nil
-            }
+        Task {
+            let imageData = await Task.detached(priority: .utility) {
+                shouldLoadImagePreview
+                    ? try? Data(contentsOf: fileURL, options: [.mappedIfSafe])
+                    : nil
+            }.value
 
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                let image = imageData.flatMap(NSImage.init(data:)) ?? NSWorkspace.shared.icon(forFile: path)
-                image.size = NSSize(width: 56, height: 56)
-                self.imagesByKey[key] = image
-                self.loadingKeys.remove(key)
-            }
+            let image = imageData.flatMap(NSImage.init(data:)) ?? NSWorkspace.shared.icon(forFile: path)
+            image.size = NSSize(width: 56, height: 56)
+            imagesByKey[key] = image
+            loadingKeys.remove(key)
         }
     }
 

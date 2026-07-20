@@ -2,9 +2,44 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-private let collapseHandoffDebug = false
-private let disableCollapsedArtworkDuringHandoff = false
-private let disableCollapsedVisualizerDuringHandoff = false
+enum IslandContentTransitionTiming {
+    // Content timing is derived from the active shell animation duration. With the default
+    // `.normal` shell timing of 0.40s, expansion content runs from about 0.16s to 0.32s.
+    static let expansionContentDelayRatio: TimeInterval = 0.40
+    static let expansionContentDurationRatio: TimeInterval = 0.40
+    static let collapseShellDelayRatio: TimeInterval = 0.15
+    static let collapseContentDurationRatio: TimeInterval = 0.40
+    static let tabFadeOutDuration: TimeInterval = 0.12
+    static let tabHandoffDelay: TimeInterval = 0.01
+    static let tabFadeInDuration: TimeInterval = 0.14
+
+    @MainActor
+    static func shellDuration(settings: AppSettings, reduceMotion: Bool) -> TimeInterval {
+        if reduceMotion || settings.reduceExtraMotion {
+            return 0.24
+        }
+        if settings.animationPreset == .instant {
+            return 0.01
+        }
+        return settings.animationPreset.shellDuration / max(settings.shellAnimationSpeed, 0.25)
+    }
+
+    static func expansionContentDelay(shellDuration: TimeInterval) -> TimeInterval {
+        shellDuration * expansionContentDelayRatio
+    }
+
+    static func expansionContentDuration(shellDuration: TimeInterval) -> TimeInterval {
+        shellDuration * expansionContentDurationRatio
+    }
+
+    static func collapseShellDelay(shellDuration: TimeInterval) -> TimeInterval {
+        shellDuration * collapseShellDelayRatio
+    }
+
+    static func collapseContentDuration(shellDuration: TimeInterval) -> TimeInterval {
+        shellDuration * collapseContentDurationRatio
+    }
+}
 
 private enum IslandContentPhase {
     case compact
@@ -17,6 +52,12 @@ private enum IslandContentPhase {
 private enum RenderedContentMode {
     case compact
     case expanded
+}
+
+private enum ExpandedTabTransitionPhase {
+    case idle
+    case fadingOut
+    case fadingIn
 }
 
 enum CollapsedPreviewKind: String {
@@ -727,40 +768,25 @@ struct IslandRootView: View {
             }
         }
         renderedContentMode = .expanded
-        expandedContentMounted = false
+        expandedContentMounted = true
         contentVisible = false
         isContentRemoving = false
         contentPhase = .shellExpanding
 
-        let mountDelay: DispatchTimeInterval
-        if reduceMotion || settings.reduceExtraMotion || !settings.contentAnimationEnabled {
-            mountDelay = .milliseconds(40)
-        } else if settings.animationPreset == .slow {
-            mountDelay = .milliseconds(300)
-        } else if settings.animationPreset == .instant {
-            mountDelay = .milliseconds(0)
-        } else {
-            mountDelay = .milliseconds(240)
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + mountDelay) {
+        let shellDuration = IslandContentTransitionTiming.shellDuration(
+            settings: settings,
+            reduceMotion: reduceMotion
+        )
+        let revealDelay = reduceMotion || settings.reduceExtraMotion || !settings.contentAnimationEnabled || settings.animationPreset == .instant
+            ? 0
+            : IslandContentTransitionTiming.expansionContentDelay(shellDuration: shellDuration)
+        DispatchQueue.main.asyncAfter(deadline: .now() + revealDelay) {
             guard generation == sequenceGeneration else { return }
             guard islandState.state == .expanded else { return }
             guard !layoutStore.isExpandedContentExiting else { return }
-            expandedContentMounted = true
-            contentVisible = false
             isContentRemoving = false
-            let revealDelay: DispatchTimeInterval = reduceMotion || settings.reduceExtraMotion || !settings.contentAnimationEnabled
-                ? .milliseconds(0)
-                : .milliseconds(20)
-            DispatchQueue.main.asyncAfter(deadline: .now() + revealDelay) {
-                guard generation == sequenceGeneration else { return }
-                guard islandState.state == .expanded else { return }
-                guard expandedContentMounted else { return }
-                guard !layoutStore.isExpandedContentExiting else { return }
-                contentVisible = true
-                isContentRemoving = false
-                contentPhase = .expandedContentVisible
-            }
+            contentVisible = true
+            contentPhase = .expandedContentVisible
         }
     }
 
@@ -865,11 +891,12 @@ private struct InnerBlurScaleCleanModifier: ViewModifier {
     let isVisible: Bool
     let isRemoval: Bool
     let delay: Double
+    let entranceDuration: TimeInterval
+    let exitDuration: TimeInterval
     let reduceMotion: Bool
     let animationsEnabled: Bool
     let useBlurTransitions: Bool
     let useScaleTransitions: Bool
-    let useOpacityTransitions: Bool
 
     private var scale: CGFloat {
         if reduceMotion || !animationsEnabled || !useScaleTransitions { return 1.0 }
@@ -884,8 +911,7 @@ private struct InnerBlurScaleCleanModifier: ViewModifier {
     }
 
     private var opacity: Double {
-        if isVisible { return 1 }
-        return (isRemoval && animationsEnabled && useOpacityTransitions) ? 0 : 1
+        isVisible ? 1 : 0
     }
 
     func body(content: Content) -> some View {
@@ -901,12 +927,54 @@ private struct InnerBlurScaleCleanModifier: ViewModifier {
             return .linear(duration: 0.01)
         }
         if isVisible {
-            return .easeOut(duration: reduceMotion ? 0.10 : 0.22)
+            return .easeOut(duration: reduceMotion ? 0.10 : entranceDuration)
                 .delay(reduceMotion ? 0 : delay)
         }
 
-        return .easeIn(duration: reduceMotion ? 0.10 : 0.18)
-            .delay(reduceMotion ? 0 : max(0, delay * 0.35))
+        return .easeIn(duration: reduceMotion ? 0.10 : exitDuration)
+            .delay(reduceMotion ? 0 : min(max(0, delay * 0.35), 0.015))
+    }
+}
+
+private struct ExpandedTabContentTransitionModifier: ViewModifier {
+    let isVisible: Bool
+    let phase: ExpandedTabTransitionPhase
+    let reduceMotion: Bool
+    let animationsEnabled: Bool
+    let useBlurTransitions: Bool
+    let useScaleTransitions: Bool
+
+    private var blur: CGFloat {
+        guard !reduceMotion, animationsEnabled, useBlurTransitions else { return 0 }
+        guard !isVisible else { return 0 }
+        switch phase {
+        case .fadingOut:
+            return 6
+        case .fadingIn:
+            return 8
+        case .idle:
+            return 0
+        }
+    }
+
+    private var scale: CGFloat {
+        guard !reduceMotion, animationsEnabled, useScaleTransitions else { return 1 }
+        guard !isVisible else { return 1 }
+        switch phase {
+        case .fadingOut:
+            return 0.97
+        case .fadingIn:
+            return 0.96
+        case .idle:
+            return 1
+        }
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .blur(radius: blur)
+            .scaleEffect(scale, anchor: .center)
+            .opacity(isVisible ? 1 : 0)
     }
 }
 
@@ -991,13 +1059,24 @@ private extension View {
                 isVisible: isVisible,
                 isRemoval: isRemoval,
                 delay: settings.contentStaggerEnabled
-                    ? (Double(index) * 0.035 * settings.contentStaggerAmount)
+                    ? min(Double(index) * 0.01 * min(max(settings.contentStaggerAmount, 0), 1.5), 0.04)
                     : 0,
+                entranceDuration: IslandContentTransitionTiming.expansionContentDuration(
+                    shellDuration: IslandContentTransitionTiming.shellDuration(
+                        settings: settings,
+                        reduceMotion: reduceMotion
+                    )
+                ),
+                exitDuration: IslandContentTransitionTiming.collapseContentDuration(
+                    shellDuration: IslandContentTransitionTiming.shellDuration(
+                        settings: settings,
+                        reduceMotion: reduceMotion
+                    )
+                ),
                 reduceMotion: reduceMotion,
                 animationsEnabled: settings.contentAnimationEnabled,
                 useBlurTransitions: settings.useBlurTransitions,
-                useScaleTransitions: settings.useScaleTransitions,
-                useOpacityTransitions: settings.useOpacityTransitions
+                useScaleTransitions: settings.useScaleTransitions
             )
         )
     }
@@ -1019,13 +1098,6 @@ struct IslandSurface<Content: View>: View {
         let shouldShowShoulderBlend = notchShoulderBlendEnabled && isNotchIntegratedShell
         let usesExpandedContentPadding = isExpanded || isCollapseShellOnly
         let strokeOpacity = 0.035 + ((0.07 - 0.035) * Double(visualProgress))
-        let shadowOpacity = isShellMorphing ? 0.22 : 0.34
-        let collapsedShadowRadius: CGFloat = isShellMorphing ? 5 : 8
-        let expandedShadowRadius: CGFloat = isShellMorphing ? 14 : 22
-        let collapsedShadowY: CGFloat = isShellMorphing ? 2 : 3
-        let expandedShadowY: CGFloat = isShellMorphing ? 6 : 10
-        let shadowRadius = collapsedShadowRadius + ((expandedShadowRadius - collapsedShadowRadius) * visualProgress)
-        let shadowY = collapsedShadowY + ((expandedShadowY - collapsedShadowY) * visualProgress)
 
         ZStack {
             if shouldShowShoulderBlend {
@@ -1045,11 +1117,6 @@ struct IslandSurface<Content: View>: View {
                             .stroke(Color.white.opacity(strokeOpacity), lineWidth: 1)
                     }
                 }
-                .shadow(
-                    color: settings.shellShadowEnabled ? .black.opacity(shadowOpacity) : .clear,
-                    radius: settings.shellShadowEnabled ? shadowRadius : 0,
-                    y: settings.shellShadowEnabled ? shadowY : 0
-                )
 
             content
                 .padding(.horizontal, usesExpandedContentPadding ? 0 : IslandShellLayout.collapsedHorizontalPadding)
@@ -1521,6 +1588,11 @@ struct ExpandedIslandView: View {
 
     @State private var isAirDropTargeted = false
     @State private var isFilesTargeted = false
+    @State private var displayedPage: ExpandedIslandPage
+    @State private var pendingPage: ExpandedIslandPage?
+    @State private var tabTransitionPhase: ExpandedTabTransitionPhase = .idle
+    @State private var tabContentVisible = true
+    @State private var tabTransitionGeneration = 0
 
     init(
         settings: AppSettings,
@@ -1544,6 +1616,7 @@ struct ExpandedIslandView: View {
         self.onOpenSettings = onOpenSettings
         navigation = modules.navigation
         liveActivities = modules.liveActivities
+        _displayedPage = State(initialValue: modules.navigation.selectedPage)
     }
 
     var body: some View {
@@ -1589,25 +1662,21 @@ struct ExpandedIslandView: View {
                         Color.clear
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
-                        switch navigation.selectedPage {
-                        case .island:
-                            islandPage(metrics: metrics)
-                                .transition(pageTransition)
-                        case .tray:
-                            trayPage(metrics: metrics)
-                                .transition(pageTransition)
-                        case .timer:
-                            timerPage(metrics: metrics)
-                                .transition(pageTransition)
-                        case .stats:
-                            statsPage(metrics: metrics)
-                                .transition(pageTransition)
-                        }
+                        pageView(displayedPage, metrics: metrics)
+                            .modifier(
+                                ExpandedTabContentTransitionModifier(
+                                    isVisible: tabContentVisible,
+                                    phase: tabTransitionPhase,
+                                    reduceMotion: reduceMotion,
+                                    animationsEnabled: settings.contentAnimationEnabled,
+                                    useBlurTransitions: settings.useBlurTransitions,
+                                    useScaleTransitions: settings.useScaleTransitions
+                                )
+                            )
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: metrics.pageHeight, alignment: .topLeading)
                 .clipped()
-                .animation(pageAnimation, value: navigation.selectedPage)
             }
             .padding(.horizontal, metrics.horizontalPadding)
             .padding(.top, metrics.topPadding)
@@ -1615,6 +1684,185 @@ struct ExpandedIslandView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onAppear {
+            resetTabPresentation(to: navigation.selectedPage)
+            synchronizeStatsPolling()
+        }
+        .onChange(of: navigation.selectedPage) { _, newPage in
+            handleRequestedTabChange(newPage)
+        }
+        .onChange(of: displayedPage) { _, _ in
+            synchronizeStatsPolling()
+        }
+        .onChange(of: tabContentVisible) { _, _ in
+            synchronizeStatsPolling()
+        }
+        .onChange(of: contentVisible) { _, isVisible in
+            if !isVisible {
+                cancelTabTransitionForContentExit()
+            }
+            synchronizeStatsPolling()
+        }
+        .onChange(of: shouldRenderContent) { _, shouldRender in
+            if !shouldRender {
+                cancelTabTransitionForContentExit()
+            }
+            synchronizeStatsPolling()
+        }
+        .onChange(of: isCollapseShellOnly) { _, collapseOnly in
+            if collapseOnly {
+                cancelTabTransitionForContentExit()
+            }
+            synchronizeStatsPolling()
+        }
+        .onDisappear {
+            modules.stats.stopPolling()
+        }
+    }
+
+    @ViewBuilder
+    private func pageView(_ page: ExpandedIslandPage, metrics: ExpandedIslandLayoutMetrics) -> some View {
+        switch page {
+        case .island:
+            islandPage(metrics: metrics)
+        case .tray:
+            trayPage(metrics: metrics)
+        case .timer:
+            timerPage(metrics: metrics)
+        case .stats:
+            statsPage(metrics: metrics)
+        }
+    }
+
+    private var tabAnimationsEnabled: Bool {
+        !reduceMotion &&
+            settings.contentAnimationEnabled &&
+            settings.animationPreset != .instant
+    }
+
+    private var tabFadeOutAnimation: Animation {
+        tabAnimationsEnabled
+            ? .easeIn(duration: IslandContentTransitionTiming.tabFadeOutDuration)
+            : .linear(duration: 0.01)
+    }
+
+    private var tabFadeInAnimation: Animation {
+        tabAnimationsEnabled
+            ? .easeOut(duration: IslandContentTransitionTiming.tabFadeInDuration)
+            : .linear(duration: 0.01)
+    }
+
+    private var contentVisibilityAnimation: Animation {
+        guard settings.contentAnimationEnabled else {
+            return .linear(duration: 0.01)
+        }
+
+        let shellDuration = IslandContentTransitionTiming.shellDuration(
+            settings: settings,
+            reduceMotion: reduceMotion
+        )
+        if contentVisible {
+            let duration = IslandContentTransitionTiming.expansionContentDuration(shellDuration: shellDuration)
+            return .easeOut(duration: reduceMotion ? 0.10 : duration)
+        }
+
+        let duration = IslandContentTransitionTiming.collapseContentDuration(shellDuration: shellDuration)
+        return .easeIn(duration: reduceMotion ? 0.10 : duration)
+    }
+
+    private func handleRequestedTabChange(_ newPage: ExpandedIslandPage) {
+        guard shouldRenderContent,
+              contentVisible,
+              !isCollapseShellOnly else {
+            resetTabPresentation(to: newPage)
+            return
+        }
+
+        guard newPage != displayedPage || pendingPage != nil else {
+            return
+        }
+
+        guard tabAnimationsEnabled else {
+            resetTabPresentation(to: newPage)
+            return
+        }
+
+        pendingPage = newPage
+        switch tabTransitionPhase {
+        case .idle, .fadingIn:
+            beginTabFadeOut()
+        case .fadingOut:
+            break
+        }
+    }
+
+    private func beginTabFadeOut() {
+        tabTransitionGeneration += 1
+        let generation = tabTransitionGeneration
+        tabTransitionPhase = .fadingOut
+
+        withAnimation(tabFadeOutAnimation) {
+            tabContentVisible = false
+        }
+
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + IslandContentTransitionTiming.tabFadeOutDuration + IslandContentTransitionTiming.tabHandoffDelay
+        ) {
+            guard generation == tabTransitionGeneration else { return }
+            guard shouldRenderContent,
+                  contentVisible,
+                  !isCollapseShellOnly else {
+                resetTabPresentation(to: navigation.selectedPage)
+                return
+            }
+
+            let destination = pendingPage ?? navigation.selectedPage
+            displayedPage = destination
+            pendingPage = nil
+            tabTransitionPhase = .fadingIn
+            tabContentVisible = false
+
+            DispatchQueue.main.async {
+                guard generation == tabTransitionGeneration else { return }
+                withAnimation(tabFadeInAnimation) {
+                    tabContentVisible = true
+                }
+            }
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + IslandContentTransitionTiming.tabFadeInDuration) {
+                guard generation == tabTransitionGeneration else { return }
+                tabTransitionPhase = .idle
+                if let pendingPage, pendingPage != displayedPage {
+                    beginTabFadeOut()
+                }
+            }
+        }
+    }
+
+    private func resetTabPresentation(to page: ExpandedIslandPage) {
+        tabTransitionGeneration += 1
+        displayedPage = page
+        pendingPage = nil
+        tabTransitionPhase = .idle
+        tabContentVisible = true
+    }
+
+    private func cancelTabTransitionForContentExit() {
+        resetTabPresentation(to: navigation.selectedPage)
+    }
+
+    private func synchronizeStatsPolling() {
+        let shouldPoll = rendersExpandedVisualContent &&
+            shouldRenderContent &&
+            contentVisible &&
+            tabContentVisible &&
+            !isCollapseShellOnly &&
+            displayedPage == .stats
+        if shouldPoll {
+            modules.stats.startPolling()
+        } else {
+            modules.stats.stopPolling()
+        }
     }
 
     private func islandPage(metrics: ExpandedIslandLayoutMetrics) -> some View {
@@ -1653,6 +1901,7 @@ struct ExpandedIslandView: View {
                     .frame(height: metrics.dividerHeight)
                     .overlay(.white.opacity(0.10))
                     .opacity(contentVisible ? 1 : 0)
+                    .animation(contentVisibilityAnimation, value: contentVisible)
             }
 
             if showsRightStack {
@@ -1896,85 +2145,6 @@ struct ExpandedIslandView: View {
         }
     }
 
-    private var pageTransition: AnyTransition {
-        if reduceMotion {
-            return .identity
-        }
-
-        return .asymmetric(
-            insertion: .modifier(
-                active: BlurBounceModifier(blur: 8, scale: 0.96, opacity: 1),
-                identity: BlurBounceModifier(blur: 0, scale: 1, opacity: 1)
-            ),
-            removal: .modifier(
-                active: BlurBounceModifier(blur: 6, scale: 0.97, opacity: 1),
-                identity: BlurBounceModifier(blur: 0, scale: 1, opacity: 1)
-            )
-        )
-    }
-
-    private var pageAnimation: Animation {
-        reduceMotion ? .easeInOut(duration: 0.12) : .easeInOut(duration: 0.20)
-    }
-}
-
-private struct CompactHandoffGhostView: View {
-    let modules: IslandModules
-    @ObservedObject private var media: MediaController
-    @ObservedObject private var accentCache = ArtworkAccentColorCache.shared
-
-    init(modules: IslandModules) {
-        self.modules = modules
-        media = modules.media
-    }
-
-    var body: some View {
-        let accentColor = accentCache.color(for: media.artworkImageKey, image: media.artworkImage)
-
-        ZStack {
-            if media.hasActiveMediaSource {
-                HStack(spacing: 10) {
-                    if disableCollapsedArtworkDuringHandoff {
-                        Color.clear
-                            .frame(width: 14, height: 14)
-                    } else {
-                        CompactMediaView(media: media)
-                    }
-
-                    Spacer(minLength: 0)
-
-                    if disableCollapsedVisualizerDuringHandoff {
-                        Color.clear
-                            .frame(width: AudioVisualizerVariant.compact.size.width, height: AudioVisualizerVariant.compact.size.height)
-                    } else {
-                        AudioVisualizerView(
-                            isPlaying: media.isPlaying,
-                            isActive: media.hasActiveMediaSource,
-                            accentColor: accentColor,
-                            variant: .compact,
-                            barCount: 7
-                        )
-                    }
-                }
-            } else {
-                Color.clear
-            }
-        }
-        .padding(.horizontal, 8)
-        .padding(.bottom, 6)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .overlay {
-            if collapseHandoffDebug {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(Color.red.opacity(0.9), lineWidth: 2)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(Color.green.opacity(0.22))
-                    )
-            }
-        }
-        .allowsHitTesting(false)
-    }
 }
 
 private final class FileDropURLAccumulator: @unchecked Sendable {

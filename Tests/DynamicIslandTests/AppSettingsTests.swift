@@ -40,13 +40,10 @@ final class AppSettingsTests: XCTestCase {
     @MainActor
     func testLegacyHybridIslandThemeStyleMigratesToLiquidGlass() {
         defaults.set("hybridBlackGlass", forKey: "islandThemeStyle")
-        defaults.set(false, forKey: "shellShadowEnabled")
-
         let settings = AppSettings(defaults: defaults)
 
         XCTAssertEqual(settings.islandThemeStyle, .liquidGlass)
         XCTAssertEqual(defaults.string(forKey: "islandThemeStyle"), IslandThemeStyle.liquidGlass.rawValue)
-        XCTAssertFalse(settings.shellShadowEnabled)
     }
 
     @MainActor

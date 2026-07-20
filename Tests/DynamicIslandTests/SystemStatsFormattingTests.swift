@@ -2,6 +2,41 @@ import XCTest
 @testable import DynamicIsland
 
 final class SystemStatsFormattingTests: XCTestCase {
+    @MainActor
+    func testPollingLifecycleIsDemandDrivenAndIdempotent() {
+        let controller = SystemStatsController()
+
+        XCTAssertFalse(controller.isPolling)
+        controller.startPolling()
+        XCTAssertTrue(controller.isPolling)
+        controller.startPolling()
+        XCTAssertTrue(controller.isPolling)
+        controller.stopPolling()
+        XCTAssertFalse(controller.isPolling)
+        controller.stopPolling()
+        XCTAssertFalse(controller.isPolling)
+    }
+
+    @MainActor
+    func testRefreshIntervalChangePreservesStoppedState() {
+        let controller = SystemStatsController()
+
+        controller.setRefreshInterval(3)
+
+        XCTAssertFalse(controller.isPolling)
+    }
+
+    @MainActor
+    func testRefreshIntervalChangePreservesPollingState() {
+        let controller = SystemStatsController()
+        controller.startPolling()
+
+        controller.setRefreshInterval(3)
+
+        XCTAssertTrue(controller.isPolling)
+        controller.stopPolling()
+    }
+
     func testFormatBytesUsesBinaryUnits() {
         XCTAssertEqual(SystemStatsFormatting.formatBytes(1024), "1.0 KB")
         XCTAssertEqual(SystemStatsFormatting.formatBytes(1_048_576), "1.0 MB")

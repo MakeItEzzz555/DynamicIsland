@@ -3196,6 +3196,176 @@ For every requested feature phase:
   - `open dist/DynamicIsland.app` returned LaunchServices `-600` immediately after `pkill`; retrying with the absolute app path succeeded.
   - Packaging still reports the existing `FileThumbnailCache` non-Sendable capture warning in `ModuleViews.swift`.
 
+### Phase 12A - Final Island Content Transition Sequencing
+
+- Fixed the brief fully-expanded empty-black content gap:
+  - Root cause was `IslandRootView.startExpansionSequence()` setting `expandedContentMounted = false` and delaying the mount by `240ms` for normal animations and `300ms` for slow animations, then adding a nested `20ms` reveal delay.
+  - The expanded shell could therefore finish or nearly finish morphing while no expanded content hierarchy existed.
+  - Expanded content is now mounted immediately at expansion start with `contentVisible = false`.
+  - Visibility begins after `IslandContentTransitionTiming.expansionContentDelay = 0.05s`, while the shell morph is still active.
+  - `InnerBlurScaleCleanModifier` now makes non-visible expanded content opacity `0` when opacity transitions are enabled, instead of leaving newly mounted hidden content visibly blurred.
+- Added centralized content transition timing:
+  - `expansionContentDelay = 0.05s`.
+  - `collapseShellDelay = 0.05s`.
+  - `tabFadeOutDuration = 0.12s`.
+  - `tabHandoffDelay = 0.01s`.
+  - `tabFadeInDuration = 0.14s`.
+- Changed collapse staging to the inverse timing:
+  - `OverlayWindowController` now waits `0.05s` after marking expanded content as exiting before committing the collapsed state.
+  - This lets expanded content begin fading/blurring out before the shell follows closed.
+  - Existing mounted-content exit handling remains in place so expanded content is not removed immediately on collapse.
+- Replaced overlapping tab crossfades with strict outgoing-then-incoming sequencing:
+  - Root cause was `ExpandedIslandView` rendering directly from `navigation.selectedPage` inside a `ZStack` with `.transition(pageTransition)` and `.animation(..., value: navigation.selectedPage)`, which allowed the old and new tab pages to be visible during the same animation.
+  - Added explicit tab presentation state: `displayedPage`, `pendingPage`, `tabTransitionPhase`, `tabContentVisible`, and `tabTransitionGeneration`.
+  - The tab bar still updates immediately through `navigation.selectedPage`.
+  - The page content now keeps the old `displayedPage`, fades/blurs it out completely, switches `displayedPage` while invisible, then fades/blurs the new page in.
+  - Removed the old `pageTransition` and `pageAnimation` helpers so there is no second tab animation system.
+- Added rapid-change safety:
+  - New tab requests during `fadingOut` only replace `pendingPage`; the latest requested destination wins.
+  - New tab requests during `fadingIn` cancel the stale generation and start a clean fade-out from the current displayed page.
+  - Collapse/content exit calls reset tab presentation and increment the generation so stale delayed callbacks cannot reveal content after collapse.
+- Preserved:
+  - No changes to native macOS Space behavior, window level, collection behavior, overlay persistence, NotchGeometryService, media detection, Live Activities, battery, timer, gestures, hover preview, or responsive expanded layout.
+- Validation passed:
+  - `swift build`
+  - `swift test` with `124` tests and `0` failures
+  - `Scripts/package_app.sh`
+  - Short debug launch smoke using `.build/debug/DynamicIsland`
+  - Packaging still reports the existing `FileThumbnailCache` non-Sendable capture warning in `ModuleViews.swift`.
+- Manual transition matrix:
+  - Collapsed to expanded: not manually executed by Codex; requires local visual check for no fully expanded empty-black flash.
+  - Expanded to collapsed: not manually executed by Codex; requires local visual check that content exits before shell contraction.
+  - Rapid repeated expand/collapse: not manually executed by Codex; requires local UI check for stale delayed content.
+  - Tab A to Tab B: not manually executed by Codex; requires local visual check that A disappears before B appears.
+  - Rapid A to B to C clicks: not manually executed by Codex; requires local UI check for no ghost layers.
+  - Change tab then immediately collapse: not manually executed by Codex; requires local UI check for no delayed incoming tab during/after collapse.
+  - Re-expand: not manually executed by Codex; requires local UI check that the selected tab appears with normal expansion staging.
+  - Existing shell morph: not manually executed by Codex; code path preserved except relative content timing.
+
+### Phase 12A.1 - Balanced Shell And Content Staging
+
+- Fine-tuned only the top-level expanded content staging from Phase 12A:
+  - Phase 12A fixed tab overlap and removed the fully expanded empty-black gap.
+  - The initial `0.05s` expansion staging made expanded content appear too early relative to shell geometry.
+  - Content entrance now derives from the real active shell duration instead of a generic fixed delay.
+- Centralized shell-derived content timing:
+  - Actual shell duration is `settings.animationPreset.shellDuration / max(settings.shellAnimationSpeed, 0.25)`.
+  - Reduced motion / extra reduced motion uses `0.24s`.
+  - Instant preset uses `0.01s`.
+  - Default `.normal` at `1.0x` shell speed remains `0.40s`.
+  - Expansion content delay is `shellDuration * 0.62`, so default normal starts at `0.248s`.
+  - Expansion content duration is `shellDuration * 0.45`, so default normal runs `0.18s` and finishes at about `0.428s`.
+  - Collapse shell delay is `shellDuration * 0.06`, so default normal starts shell collapse after `0.024s`.
+  - Collapse content duration is `shellDuration * 0.75`, so default normal reaches zero in `0.30s`.
+- Preserved Phase 12A mounting and stale-task safety:
+  - Expanded content still mounts immediately at expansion start with opacity/blur/scale hidden.
+  - The single expansion sequence still owns delayed content visibility.
+  - Delayed reveal still checks generation, expanded state, and expanded-content-exit state before showing content.
+  - Shell morph cleanup now also follows the active shell duration instead of fixed `340/380ms` values, preventing slow/custom shell speeds from ending collapse staging before the content fade is complete.
+- Collapse now feels more coupled:
+  - Content exit starts immediately when collapse is requested.
+  - Shell collapse follows after the derived tiny delay instead of the Phase 12A fixed `0.05s` hold.
+  - Content reaches zero before the shell becomes too small, avoiding visible compression into collapsed geometry.
+- Tab transition timing remains unchanged:
+  - `tabFadeOutDuration = 0.12s`.
+  - `tabHandoffDelay = 0.01s`.
+  - `tabFadeInDuration = 0.14s`.
+  - The `displayedPage` / `pendingPage` / generation-based tab architecture from Phase 12A was not retuned.
+- Validation passed:
+  - `swift build`
+  - `swift test` with `124` tests and `0` failures
+  - `chmod +x Scripts/package_app.sh`
+  - `Scripts/package_app.sh`
+  - Packaging still reports the existing `FileThumbnailCache` non-Sendable capture warning in `ModuleViews.swift`.
+- Manual transition matrix:
+  - Collapsed to expanded: not manually executed by Codex; requires local visual check that content begins near the final shell morph portion and no empty black pause returns.
+  - Expanded to collapsed: not manually executed by Codex; requires local visual check that content fades gradually and is gone before the shell is too small.
+  - Rapid expand -> collapse before completion: not manually executed by Codex; requires local visual check for no stale delayed content.
+  - Rapid collapse -> expand: not manually executed by Codex; requires local visual check for clean sequence reversal.
+  - Tab switching: not manually executed by Codex; requires local visual check that Phase 12A sequential tab transition remains unchanged.
+
+### Phase 12A.2 - Single Authoritative Shell/Content Timeline
+
+- Consolidated the active expanded-content timing path:
+  - `IslandRootView` remains the single owner of overall expanded content visibility through `contentVisible`.
+  - Expanded content mounts immediately at expansion start with `contentVisible = false`.
+  - The parent flips `contentVisible = true` after the shared expansion delay.
+  - `ExpandedIslandView` no longer owns any overall presentation timer; it retains only the Phase 12A tab sequencing state.
+- Replaced the Phase 12A.1 timing ratios with the requested single timeline:
+  - Default shell duration remains `0.40s`.
+  - Final manually approved expansion content delay is `shellDuration * 0.40`, so normal default starts at `0.16s`.
+  - Final manually approved expansion content duration is `shellDuration * 0.40`, so normal default resolves at about `0.32s`.
+  - Final manually approved collapse shell delay is `shellDuration * 0.15`, so normal default shell collapse starts after `0.06s`.
+  - Final manually approved collapse content duration is `shellDuration * 0.40`, so normal default content exit lasts about `0.16s`.
+- Removed hidden secondary timing ownership:
+  - Deleted the old nested expansion mount/reveal delay from the active path.
+  - Removed the old controller `collapseContentExitDelay` property; controller collapse now uses `IslandContentTransitionTiming.collapseShellDelay(...)`.
+  - Reduced component stagger from the previous `0.035s * index` multiplier to a tiny `0.01s * index` multiplier, capped under `0.04s`.
+  - Collapse modifier delay is capped at `0.015s`.
+  - The Island-page divider now animates from the same `contentVisible` signal and shared content duration instead of trailing on an implicit/unowned timeline.
+- Preserved tab transitions:
+  - `tabFadeOutDuration = 0.12s`.
+  - `tabHandoffDelay = 0.01s`.
+  - `tabFadeInDuration = 0.14s`.
+  - The displayed/pending page and generation-based tab handoff architecture was not changed.
+- Added DEBUG-only transition timestamps:
+  - Expansion logs: `expandRequested`, `expandedTreeMountedHidden`, `contentRevealStarted`, `shellMorphExpectedComplete`.
+  - Collapse logs: `collapseRequested`, `contentExitStarted`, `shellCollapseStarted`, `contentExitExpectedComplete`, `shellCollapseExpectedComplete`.
+  - Logs use `ProcessInfo.processInfo.systemUptime` and are not per-frame.
+- Ownership validation:
+  - Temporarily changed `expansionContentDelayRatio` to `2.50`, which makes the default normal expansion delay `1.0s`, and verified the variant compiles.
+  - The subsequent manually approved final value is `expansionContentDelayRatio = 0.40`.
+  - Visual 1-second ownership verification was not manually executed by Codex; it still requires local UI/trackpad testing.
+- Validation passed:
+  - `swift build`
+  - `swift test` with `124` tests and `0` failures
+  - `chmod +x Scripts/package_app.sh`
+  - `Scripts/package_app.sh`
+  - Packaging still reports the existing `FileThumbnailCache` non-Sendable capture warning in `ModuleViews.swift`.
+
+### Phase 12B - Native Overlay Cleanup And Runtime Optimization
+
+- Permanently removed the `.canJoinAllApplications` A/B experiment, its environment override, conditional behavior mutation, and experiment-only logging.
+- Final native overlay configuration is `.statusBar` with `[.fullScreenAuxiliary, .canJoinAllSpaces, .ignoresCycle]`; `.stationary`, `.canJoinAllApplications`, and `.screenSaver` are absent.
+- Deleted the obsolete Phase 11C.3–11C.9 manual Space compensation system:
+  - Removed the motion probe panel, transition render panel, display-link tracking, WindowServer polling, prediction/recovery logic, compositor translations, reassertion loops, and compensation diagnostics.
+  - Removed `SpaceTransitionCompensationMath.swift` and its compensation-only tests while retaining `OverlayGeometrySignature` with the active native geometry path.
+- Removed the duplicate transition-render `IslandRootView`; `OverlayWindowController` now creates one production root hosted in one real `IslandOverlayPanel`.
+- Native behavior remains one stable maximum-size transparent panel, ordered while enabled and ordered out only when the overlay is disabled. Screen-parameter changes may refresh genuine geometry; active app/Space and app activation changes no longer reassert the panel.
+- Removed the unused `CompactHandoffGhostView` and its three temporary debug/isolation flags.
+- Preserved final manually approved transition timing:
+  - `expansionContentDelayRatio = 0.40`
+  - `expansionContentDurationRatio = 0.40`
+  - `collapseShellDelayRatio = 0.15`
+  - `collapseContentDurationRatio = 0.40`
+  - `tabFadeOutDuration = 0.12`
+  - `tabHandoffDelay = 0.01`
+  - `tabFadeInDuration = 0.14`
+  - The collapse shell-clear handoff retains its approximately `+0.025s` padding.
+- Removed temporary `[IslandMorph]` instrumentation. Hidden expanded content remains opacity `0` as a correctness invariant.
+- Removed the obsolete user-facing Opacity transitions setting and persisted setting bookkeeping. Blur and scale transition settings remain configurable; opacity remains the mandatory visibility gate.
+- Made `FileThumbnailCache` explicitly `@MainActor`; it records load state on the main actor, performs image-file data I/O in a detached utility task without capturing the cache, then creates/finalizes the image and publishes cache state on the main actor.
+- Made system stats polling demand-driven:
+  - Initialization takes one snapshot but does not start a timer.
+  - Polling starts idempotently only when the real displayed Stats page is mounted and visible, and stops when leaving Stats or beginning collapse.
+  - Refresh-interval changes preserve whether polling was already active, and history is retained across stops.
+- Added focused stats polling lifecycle and refresh-interval tests. Removed compensation-only tests.
+- Automated validation on 2026-07-20:
+  - `git diff --check`: passed.
+  - `swift build`: passed with no warnings.
+  - `swift test`: 107 tests, 0 failures.
+  - `Scripts/package_app.sh`: initial signing attempt hit the documented resource-fork/Finder metadata error; after `xattr -cr dist/DynamicIsland.app`, packaging passed and produced `dist/DynamicIsland.app`.
+  - Explicit dead-symbol searches found no probe panel, transition render panel, display link, compensation environment flag, join-all-applications experiment, collapse ghost, WindowServer polling, CVDisplayLink, or `[IslandMorph]` references.
+- Manual validation remains required for the transition, tab, Stats lifecycle, native Spaces/Mission Control/Cmd+Tab, and transparent rounded-corner test matrices. The panel remains `hasShadow = false`; the 36 pt expanded corner radius was not changed.
+
+### Phase 12B.1 - Shell Shadow Removal
+
+- Permanently removed the main island shell-shadow feature after manual confirmation that the shell is correct without it.
+- Removed `AppSettings.shellShadowEnabled`, its persistence/default/reset bookkeeping, and the Settings `Shell shadow` toggle. Any old persisted preference is now ignored.
+- Removed all exterior and clipped-inner shadow rendering from `IslandSurface`; no island-shell `.shadow(...)`, blurred shadow layer, or shadow-specific `visualProgress` interpolation remains.
+- The native `NSPanel` remains shadowless with `panel.hasShadow = false`.
+- The existing shell stroke remains unchanged, along with shell shape, fill, opacity, themes, geometry, corner radii, and transition behavior.
+
 ### Phase 11C.11 - Native canJoinAllApplications A/B Test
 
 - Added the isolated native Space membership A/B variable on top of the stable 11C.10 configuration:

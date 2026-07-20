@@ -79,6 +79,7 @@ final class SystemStatsController: ObservableObject {
     private let provider = SystemStatsProvider()
     private var timer: Timer?
     private var refreshInterval: TimeInterval = 2.0
+    private var lastRefreshAt: Date?
     private var cpuHistory = SystemStatsHistory()
     private var memoryHistory = SystemStatsHistory()
     private var diskHistory = SystemStatsHistory()
@@ -87,11 +88,15 @@ final class SystemStatsController: ObservableObject {
 
     init() {
         refresh()
-        startPolling()
     }
+
+    var isPolling: Bool { timer != nil }
 
     func startPolling() {
         guard timer == nil else { return }
+        if lastRefreshAt.map({ Date().timeIntervalSince($0) > 0.25 }) ?? true {
+            refresh()
+        }
         let timer = Timer(timeInterval: refreshInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.refresh()
@@ -101,13 +106,20 @@ final class SystemStatsController: ObservableObject {
         self.timer = timer
     }
 
+    func stopPolling() {
+        timer?.invalidate()
+        timer = nil
+    }
+
     func setRefreshInterval(_ seconds: Double) {
         let normalized = min(max(seconds, 0.5), 10.0)
         guard abs(refreshInterval - normalized) > 0.001 else { return }
+        let wasPolling = isPolling
         refreshInterval = normalized
-        timer?.invalidate()
-        timer = nil
-        startPolling()
+        stopPolling()
+        if wasPolling {
+            startPolling()
+        }
     }
 
     func refresh() {
@@ -123,6 +135,7 @@ final class SystemStatsController: ObservableObject {
         next.networkDownloadHistory = networkDownloadHistory.samples
         next.networkUploadHistory = networkUploadHistory.samples
         snapshot = next
+        lastRefreshAt = Date()
     }
 
     private func fraction(used: UInt64, total: UInt64) -> Double {
