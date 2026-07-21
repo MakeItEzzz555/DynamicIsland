@@ -129,10 +129,7 @@ struct SettingsView: View {
                 }
                 SliderRow(title: "Shell opacity", value: $settings.shellOpacity, range: 0.35...1.0, format: "%.2f")
                 Toggle("Shell stroke", isOn: $settings.shellStrokeEnabled)
-                Toggle("Notch shoulder blend", isOn: $settings.notchShoulderBlendEnabledSetting)
-                    .disabled(true)
                 HelpText("Liquid Glass uses Apple’s native glassEffect when available. On older macOS versions or older SDKs, DynamicIsland uses a fallback material/gloss effect.")
-                HelpText("Shoulder blend remains parked and disabled in the active shell path.")
             }
 
             SettingsGroup("Visualizer") {

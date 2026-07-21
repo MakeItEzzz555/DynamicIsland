@@ -167,7 +167,6 @@ public final class AppSettings: ObservableObject {
     @Published public var shellStrokeEnabled: Bool { didSet { save(shellStrokeEnabled, for: Key.shellStrokeEnabled) } }
     @Published public var useArtworkAccentColor: Bool { didSet { save(useArtworkAccentColor, for: Key.useArtworkAccentColor) } }
     @Published public var visualizerAccentMode: VisualizerAccentMode { didSet { save(visualizerAccentMode.rawValue, for: Key.visualizerAccentMode) } }
-    @Published public var notchShoulderBlendEnabledSetting: Bool { didSet { save(notchShoulderBlendEnabledSetting, for: Key.notchShoulderBlendEnabledSetting) } }
     @Published public var showCollapsedVisualizer: Bool { didSet { save(showCollapsedVisualizer, for: Key.showCollapsedVisualizer) } }
     @Published public var showExpandedVisualizer: Bool { didSet { save(showExpandedVisualizer, for: Key.showExpandedVisualizer) } }
     @Published public var collapsedHoverPreviewEnabled: Bool { didSet { save(collapsedHoverPreviewEnabled, for: Key.collapsedHoverPreviewEnabled) } }
@@ -396,7 +395,6 @@ public final class AppSettings: ObservableObject {
         shellStrokeEnabled = Self.bool(defaults, Key.shellStrokeEnabled, true)
         useArtworkAccentColor = Self.bool(defaults, Key.useArtworkAccentColor, true)
         visualizerAccentMode = Self.enumValue(defaults, Key.visualizerAccentMode, .artwork)
-        notchShoulderBlendEnabledSetting = Self.bool(defaults, Key.notchShoulderBlendEnabledSetting, false)
         showCollapsedVisualizer = Self.bool(defaults, Key.showCollapsedVisualizer, true)
         showExpandedVisualizer = Self.bool(defaults, Key.showExpandedVisualizer, true)
         collapsedHoverPreviewEnabled = Self.bool(defaults, Key.collapsedHoverPreviewEnabled, true)
@@ -667,7 +665,6 @@ public final class AppSettings: ObservableObject {
         shellStrokeEnabled = Self.bool(defaults, Key.shellStrokeEnabled, true)
         useArtworkAccentColor = Self.bool(defaults, Key.useArtworkAccentColor, true)
         visualizerAccentMode = Self.enumValue(defaults, Key.visualizerAccentMode, .artwork)
-        notchShoulderBlendEnabledSetting = Self.bool(defaults, Key.notchShoulderBlendEnabledSetting, false)
         showCollapsedVisualizer = Self.bool(defaults, Key.showCollapsedVisualizer, true)
         showExpandedVisualizer = Self.bool(defaults, Key.showExpandedVisualizer, true)
         collapsedHoverPreviewEnabled = Self.bool(defaults, Key.collapsedHoverPreviewEnabled, true)
@@ -1158,7 +1155,6 @@ private enum Key {
     static let shellStrokeEnabled = "shellStrokeEnabled"
     static let useArtworkAccentColor = "useArtworkAccentColor"
     static let visualizerAccentMode = "visualizerAccentMode"
-    static let notchShoulderBlendEnabledSetting = "notchShoulderBlendEnabledSetting"
     static let showCollapsedVisualizer = "showCollapsedVisualizer"
     static let showExpandedVisualizer = "showExpandedVisualizer"
     static let collapsedHoverPreviewEnabled = "collapsedHoverPreviewEnabled"
@@ -1309,7 +1305,7 @@ private enum Key {
         collapseOnMouseLeave, autoCollapseEnabled, autoCollapseDelayPreset, autoCollapseGraceSeconds,
         collapsedWidth, collapsedHeight, expandedWidth, expandedHeight, useAdaptiveNotchSizing,
         respectHardwareNotch, islandThemeStyle, shellOpacity, shellStrokeEnabled,
-        useArtworkAccentColor, visualizerAccentMode, notchShoulderBlendEnabledSetting,
+        useArtworkAccentColor, visualizerAccentMode,
         showCollapsedVisualizer, showExpandedVisualizer, collapsedHoverPreviewEnabled,
         collapsedHoverPreviewMediaEnabled, collapsedHoverPreviewHeight, collapsedHoverPreviewDelay,
         collapsedHoverPreviewShowTitle, collapsedHoverPreviewShowsArtist, collapsedHoverPreviewShowsSource,

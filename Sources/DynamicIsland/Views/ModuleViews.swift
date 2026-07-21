@@ -6,7 +6,7 @@ struct CompactMediaView: View {
     @ObservedObject var media: MediaController
 
     var body: some View {
-        FlippingAlbumArtworkView(media: media, size: 14)
+        FlippingAlbumArtworkView(media: media, size: CollapsedActivityLayoutProfile.mediaLeftContentWidth)
             .accessibilityLabel("Media \(media.title)")
     }
 }
@@ -122,7 +122,7 @@ enum AudioVisualizerVariant {
     var size: CGSize {
         switch self {
         case .compact:
-            CGSize(width: 30, height: 14)
+            CGSize(width: CollapsedActivityLayoutProfile.mediaRightContentWidth, height: 14)
         case .expanded:
             CGSize(width: 76, height: 28)
         }

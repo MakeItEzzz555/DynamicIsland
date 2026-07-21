@@ -6,12 +6,12 @@ import SwiftUI
 struct OverlayGeometrySignature: Equatable, CustomStringConvertible {
     let collapsedSize: CGSize
     let expandedSize: CGSize
-    let collapsedHasActiveContent: Bool
+    let collapsedActivityProfile: CollapsedActivityLayoutProfile?
     let useAdaptiveNotchSizing: Bool
     let respectHardwareNotch: Bool
 
     var description: String {
-        "collapsedSize=\(collapsedSize) expandedSize=\(expandedSize) collapsedHasActiveContent=\(collapsedHasActiveContent) useAdaptiveNotchSizing=\(useAdaptiveNotchSizing) respectHardwareNotch=\(respectHardwareNotch)"
+        "collapsedSize=\(collapsedSize) expandedSize=\(expandedSize) collapsedActivityProfile=\(String(describing: collapsedActivityProfile)) useAdaptiveNotchSizing=\(useAdaptiveNotchSizing) respectHardwareNotch=\(respectHardwareNotch)"
     }
 }
 
@@ -206,7 +206,7 @@ final class OverlayWindowController {
 
         modules.liveActivities.$activities
             .map { [weak self] activities in
-                self?.collapsedHasActiveContent(activities: activities) ?? false
+                self?.collapsedActivityLayoutProfile(activities: activities)
             }
             .removeDuplicates()
             .sink { [weak self] _ in
@@ -265,7 +265,7 @@ final class OverlayWindowController {
         let geometry = geometryService.geometry(
             collapsedSize: settings.collapsedSize,
             expandedSize: settings.expandedSize,
-            collapsedMediaActive: collapsedHasActiveContent,
+            collapsedActivityProfile: collapsedActivityLayoutProfile,
             useAdaptiveNotchSizing: settings.useAdaptiveNotchSizing,
             respectHardwareNotch: settings.respectHardwareNotch
         )
@@ -276,7 +276,11 @@ final class OverlayWindowController {
             panelFrame: geometry.expandedFrame,
             collapsedFrame: geometry.collapsedFrame,
             expandedFrame: geometry.expandedFrame,
-            hasHardwareNotch: geometry.hasHardwareNotch
+            hasHardwareNotch: geometry.hasHardwareNotch,
+            hardwareNotchWidth: geometry.hardwareNotchWidth,
+            collapsedLeftRegionWidth: geometry.collapsedLeftRegionWidth,
+            collapsedNotchCoreWidth: geometry.collapsedNotchCoreWidth,
+            collapsedRightRegionWidth: geometry.collapsedRightRegionWidth
         )
         applyCanonicalPanelFrame(geometry.expandedFrame, reason: "\(reason) initial animated=\(animated)")
         lastAppliedGeometrySignature = signature
@@ -295,7 +299,7 @@ final class OverlayWindowController {
             let correctedGeometry = self.geometryService.geometry(
                 collapsedSize: self.settings.collapsedSize,
                 expandedSize: self.settings.expandedSize,
-                collapsedMediaActive: self.collapsedHasActiveContent,
+                collapsedActivityProfile: self.collapsedActivityLayoutProfile,
                 useAdaptiveNotchSizing: self.settings.useAdaptiveNotchSizing,
                 respectHardwareNotch: self.settings.respectHardwareNotch
             )
@@ -307,7 +311,11 @@ final class OverlayWindowController {
                     panelFrame: correctedGeometry.expandedFrame,
                     collapsedFrame: correctedGeometry.collapsedFrame,
                     expandedFrame: correctedGeometry.expandedFrame,
-                    hasHardwareNotch: correctedGeometry.hasHardwareNotch
+                    hasHardwareNotch: correctedGeometry.hasHardwareNotch,
+                    hardwareNotchWidth: correctedGeometry.hardwareNotchWidth,
+                    collapsedLeftRegionWidth: correctedGeometry.collapsedLeftRegionWidth,
+                    collapsedNotchCoreWidth: correctedGeometry.collapsedNotchCoreWidth,
+                    collapsedRightRegionWidth: correctedGeometry.collapsedRightRegionWidth
                 )
                 self.applyCanonicalPanelFrame(
                     correctedGeometry.expandedFrame,
@@ -321,16 +329,32 @@ final class OverlayWindowController {
         }
     }
 
-    private var collapsedHasActiveContent: Bool {
-        collapsedContentMode != .inactive
-    }
-
-    private func collapsedHasActiveContent(activities: [DynamicIslandLiveActivity]) -> Bool {
-        collapsedContentMode(activities: activities) != .inactive
-    }
-
     private var collapsedContentMode: CollapsedIslandContentMode {
         collapsedContentMode(activities: modules.liveActivities.activities)
+    }
+
+    private var collapsedActivityLayoutProfile: CollapsedActivityLayoutProfile? {
+        collapsedActivityLayoutProfile(activities: modules.liveActivities.activities)
+    }
+
+    private func collapsedActivityLayoutProfile(
+        activities: [DynamicIslandLiveActivity]
+    ) -> CollapsedActivityLayoutProfile? {
+        switch collapsedContentMode(activities: activities) {
+        case .inactive:
+            return nil
+        case .media:
+            return .media(
+                showsArtwork: settings.showAlbumArtwork,
+                showsVisualizer: settings.showVisualizer && settings.showCollapsedVisualizer
+            )
+        case .timer:
+            return .timer
+        case .fileTray:
+            return .file
+        case .battery:
+            return .battery
+        }
     }
 
     private func collapsedContentMode(activities: [DynamicIslandLiveActivity]) -> CollapsedIslandContentMode {
@@ -355,7 +379,7 @@ final class OverlayWindowController {
         OverlayGeometrySignature(
             collapsedSize: settings.collapsedSize,
             expandedSize: settings.expandedSize,
-            collapsedHasActiveContent: collapsedHasActiveContent,
+            collapsedActivityProfile: collapsedActivityLayoutProfile,
             useAdaptiveNotchSizing: settings.useAdaptiveNotchSizing,
             respectHardwareNotch: settings.respectHardwareNotch
         )
@@ -448,7 +472,11 @@ final class OverlayWindowController {
         panelFrame: NSRect,
         collapsedFrame: NSRect,
         expandedFrame: NSRect,
-        hasHardwareNotch: Bool
+        hasHardwareNotch: Bool,
+        hardwareNotchWidth: CGFloat,
+        collapsedLeftRegionWidth: CGFloat,
+        collapsedNotchCoreWidth: CGFloat,
+        collapsedRightRegionWidth: CGFloat
     ) {
         var transaction = Transaction(animation: nil)
         transaction.disablesAnimations = true
@@ -458,7 +486,11 @@ final class OverlayWindowController {
                 panelFrame: panelFrame,
                 collapsedScreenFrame: collapsedFrame,
                 expandedScreenFrame: expandedFrame,
-                hasHardwareNotch: hasHardwareNotch
+                hasHardwareNotch: hasHardwareNotch,
+                hardwareNotchWidth: hardwareNotchWidth,
+                collapsedLeftRegionWidth: collapsedLeftRegionWidth,
+                collapsedNotchCoreWidth: collapsedNotchCoreWidth,
+                collapsedRightRegionWidth: collapsedRightRegionWidth
             )
         }
     }
@@ -770,7 +802,7 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
         let geometry = geometryService.geometry(
             collapsedSize: settings.collapsedSize,
             expandedSize: settings.expandedSize,
-            collapsedMediaActive: collapsedHasActiveContent,
+            collapsedActivityProfile: collapsedActivityLayoutProfile,
             useAdaptiveNotchSizing: settings.useAdaptiveNotchSizing,
             respectHardwareNotch: settings.respectHardwareNotch
         )
@@ -783,7 +815,11 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
             panelFrame: geometry.expandedFrame,
             collapsedFrame: geometry.collapsedFrame,
             expandedFrame: geometry.expandedFrame,
-            hasHardwareNotch: geometry.hasHardwareNotch
+            hasHardwareNotch: geometry.hasHardwareNotch,
+            hardwareNotchWidth: geometry.hardwareNotchWidth,
+            collapsedLeftRegionWidth: geometry.collapsedLeftRegionWidth,
+            collapsedNotchCoreWidth: geometry.collapsedNotchCoreWidth,
+            collapsedRightRegionWidth: geometry.collapsedRightRegionWidth
         )
 
         applyCanonicalPanelFrame(geometry.expandedFrame, reason: "expandFromCollapsedPreparingGeometry")

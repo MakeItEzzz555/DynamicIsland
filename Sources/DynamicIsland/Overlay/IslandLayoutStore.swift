@@ -8,6 +8,10 @@ final class IslandLayoutStore: ObservableObject {
     @Published var collapsedSize: CGSize = CGSize(width: 216, height: 34)
     @Published var expandedSize: CGSize = CGSize(width: 760, height: 260)
     @Published var hasHardwareNotch = true
+    @Published private(set) var hardwareNotchWidth: CGFloat = 0
+    @Published private(set) var collapsedLeftRegionWidth: CGFloat = 0
+    @Published private(set) var collapsedNotchCoreWidth: CGFloat = 0
+    @Published private(set) var collapsedRightRegionWidth: CGFloat = 0
     @Published var isShellMorphing = false
     @Published var isCollapseShellOnly = false
     @Published var isExpandedContentExiting = false
@@ -15,7 +19,14 @@ final class IslandLayoutStore: ObservableObject {
     @Published var collapsedPreviewSurfaceFrame: CGRect = .zero
     @Published var panelFrame: CGRect = .zero
 
-    func update(canvas: IslandCanvasGeometry, hasHardwareNotch: Bool) {
+    func update(
+        canvas: IslandCanvasGeometry,
+        hasHardwareNotch: Bool,
+        hardwareNotchWidth: CGFloat,
+        collapsedLeftRegionWidth: CGFloat,
+        collapsedNotchCoreWidth: CGFloat,
+        collapsedRightRegionWidth: CGFloat
+    ) {
         panelFrame = canvas.frame
         canvasSize = canvas.frame.size
         collapsedSurfaceFrame = canvas.collapsedSurfaceFrame
@@ -25,13 +36,21 @@ final class IslandLayoutStore: ObservableObject {
         collapsedSize = canvas.collapsedSurfaceFrame.size
         expandedSize = canvas.expandedSurfaceFrame.size
         self.hasHardwareNotch = hasHardwareNotch
+        self.hardwareNotchWidth = hasHardwareNotch ? max(hardwareNotchWidth, 0) : 0
+        self.collapsedLeftRegionWidth = max(collapsedLeftRegionWidth, 0)
+        self.collapsedNotchCoreWidth = max(collapsedNotchCoreWidth, 0)
+        self.collapsedRightRegionWidth = max(collapsedRightRegionWidth, 0)
     }
 
     func updateLocal(
         panelFrame: CGRect,
         collapsedScreenFrame: CGRect,
         expandedScreenFrame: CGRect,
-        hasHardwareNotch: Bool
+        hasHardwareNotch: Bool,
+        hardwareNotchWidth: CGFloat,
+        collapsedLeftRegionWidth: CGFloat,
+        collapsedNotchCoreWidth: CGFloat,
+        collapsedRightRegionWidth: CGFloat
     ) {
         let integralPanelFrame = panelFrame.integral
         let localCollapsedFrame = CGRect(
@@ -57,6 +76,10 @@ final class IslandLayoutStore: ObservableObject {
         collapsedSize = localCollapsedFrame.size
         expandedSize = localExpandedFrame.size
         self.hasHardwareNotch = hasHardwareNotch
+        self.hardwareNotchWidth = hasHardwareNotch ? max(hardwareNotchWidth, 0) : 0
+        self.collapsedLeftRegionWidth = max(collapsedLeftRegionWidth, 0)
+        self.collapsedNotchCoreWidth = max(collapsedNotchCoreWidth, 0)
+        self.collapsedRightRegionWidth = max(collapsedRightRegionWidth, 0)
         debugLocalLayout(
             panelFrame: integralPanelFrame,
             collapsedScreenFrame: collapsedScreenFrame,

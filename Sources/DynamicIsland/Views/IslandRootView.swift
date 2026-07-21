@@ -2,6 +2,23 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
+private struct NotchIntegratedShellEnvironmentKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
+extension EnvironmentValues {
+    var isNotchIntegratedShell: Bool {
+        get { self[NotchIntegratedShellEnvironmentKey.self] }
+        set { self[NotchIntegratedShellEnvironmentKey.self] = newValue }
+    }
+}
+
+extension View {
+    func notchIntegrated(_ isNotchIntegrated: Bool) -> some View {
+        environment(\.isNotchIntegratedShell, isNotchIntegrated)
+    }
+}
+
 enum IslandContentTransitionTiming {
     // Content timing is derived from the active shell animation duration. With the default
     // `.normal` shell timing of 0.40s, expansion content runs from about 0.16s to 0.32s.
@@ -154,20 +171,28 @@ private struct IslandPointerGestureModifier: ViewModifier {
     }
 }
 
-private enum IslandShellLayout {
+enum IslandShellLayout {
     static let collapsedHorizontalPadding: CGFloat = 8
+    static let floatingExpandedHorizontalPadding: CGFloat = 22
+    static let integratedExpandedHorizontalPadding: CGFloat = 41
+
+    static func collapsedHorizontalPadding(isNotchIntegrated: Bool) -> CGFloat {
+        collapsedHorizontalPadding
+    }
+
+    static func expandedHorizontalPadding(isNotchIntegrated: Bool) -> CGFloat {
+        isNotchIntegrated ? integratedExpandedHorizontalPadding : floatingExpandedHorizontalPadding
+    }
+
     static let collapsedTopPadding: CGFloat = 0
     static let collapsedBottomPadding: CGFloat = 6
-
-    static let expandedHorizontalPadding: CGFloat = 22
     static let expandedTopPadding: CGFloat = 14
     static let expandedBottomPadding: CGFloat = 20
 }
 
 private struct ExpandedIslandLayoutMetrics {
     let containerSize: CGSize
-
-    let horizontalPadding: CGFloat = IslandShellLayout.expandedHorizontalPadding
+    let horizontalPadding: CGFloat
     let topPadding: CGFloat = IslandShellLayout.expandedTopPadding
     let bottomPadding: CGFloat = IslandShellLayout.expandedBottomPadding
     let tabSwitcherHeight: CGFloat = 34
@@ -302,13 +327,6 @@ struct IslandRootView: View {
         return min(max(progress, 0), 1)
     }
 
-    private var shellBottomRadius: CGFloat {
-        let collapsedRadius: CGFloat = 22
-        let expandedRadius: CGFloat = 36
-        let interpolated = collapsedRadius + ((expandedRadius - collapsedRadius) * shellMorphProgress)
-        return min(interpolated, surfaceFrame.height / 2)
-    }
-
     private var shellVisualProgress: CGFloat {
         shellMorphProgress
     }
@@ -318,7 +336,6 @@ struct IslandRootView: View {
             IslandSurface(
                 settings: settings,
                 isExpanded: isExpanded,
-                bottomRadius: shellBottomRadius,
                 visualProgress: shellVisualProgress
             ) {
                 if showsExpandedContent {
@@ -346,8 +363,13 @@ struct IslandRootView: View {
                             collapsedPreviewContent,
                             previewActive: isCollapsedPreviewActive
                         ),
-                        previewActive: isCollapsedPreviewActive
-                        )
+                        previewActive: isCollapsedPreviewActive,
+                        hardwareNotchWidth: layoutStore.hardwareNotchWidth,
+                        collapsedLeftRegionWidth: layoutStore.collapsedLeftRegionWidth,
+                        collapsedNotchCoreWidth: layoutStore.collapsedNotchCoreWidth,
+                        collapsedRightRegionWidth: layoutStore.collapsedRightRegionWidth,
+                        isNotchIntegratedShell: layoutStore.hasHardwareNotch
+                    )
                         .contentShape(Rectangle())
                         .onHover(perform: handleCollapsedHover)
                         .onTapGesture {
@@ -1085,7 +1107,6 @@ private extension View {
 struct IslandSurface<Content: View>: View {
     @ObservedObject var settings: AppSettings
     let isExpanded: Bool
-    let bottomRadius: CGFloat
     let visualProgress: CGFloat
     @ViewBuilder var content: Content
     @Environment(\.isNotchIntegratedShell) private var isNotchIntegratedShell
@@ -1093,17 +1114,21 @@ struct IslandSurface<Content: View>: View {
     @Environment(\.isCollapseShellOnly) private var isCollapseShellOnly
 
     var body: some View {
-        let shellColor = Color(red: 0.001, green: 0.001, blue: 0.002).opacity(settings.shellOpacity)
-        let shellShape = IslandShellShape(bottomRadius: bottomRadius)
-        let shouldShowShoulderBlend = notchShoulderBlendEnabled && isNotchIntegratedShell
+        let radii = IslandShellRadii.interpolated(
+            progress: visualProgress,
+            isNotchIntegrated: isNotchIntegratedShell
+        )
+        let shellShape = IslandShellShape(
+            topCornerRadius: radii.top,
+            bottomCornerRadius: radii.bottom
+        )
         let usesExpandedContentPadding = isExpanded || isCollapseShellOnly
+        let collapsedHorizontalPadding = IslandShellLayout.collapsedHorizontalPadding(
+            isNotchIntegrated: isNotchIntegratedShell
+        )
         let strokeOpacity = 0.035 + ((0.07 - 0.035) * Double(visualProgress))
 
         ZStack {
-            if shouldShowShoulderBlend {
-                NotchShoulderBlend(isExpanded: isExpanded, shellColor: shellColor)
-            }
-
             IslandSurfaceBackground(
                 theme: settings.islandThemeStyle,
                 isExpanded: isExpanded,
@@ -1119,7 +1144,7 @@ struct IslandSurface<Content: View>: View {
                 }
 
             content
-                .padding(.horizontal, usesExpandedContentPadding ? 0 : IslandShellLayout.collapsedHorizontalPadding)
+                .padding(.horizontal, usesExpandedContentPadding ? 0 : collapsedHorizontalPadding)
                 .padding(.top, usesExpandedContentPadding ? 0 : IslandShellLayout.collapsedTopPadding)
                 .padding(.bottom, usesExpandedContentPadding ? 0 : IslandShellLayout.collapsedBottomPadding)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1128,31 +1153,76 @@ struct IslandSurface<Content: View>: View {
     }
 }
 
-private struct IslandShellShape: Shape {
-    var bottomRadius: CGFloat
+struct IslandShellRadii: Equatable {
+    static let collapsedTop: CGFloat = 6
+    static let expandedTop: CGFloat = 19
+    static let collapsedBottom: CGFloat = 14
+    static let expandedBottom: CGFloat = 24
 
-    var animatableData: CGFloat {
-        get { bottomRadius }
-        set { bottomRadius = newValue }
+    let top: CGFloat
+    let bottom: CGFloat
+
+    static func interpolated(progress: CGFloat, isNotchIntegrated: Bool) -> IslandShellRadii {
+        let clampedProgress = progress.isFinite ? min(max(progress, 0), 1) : 0
+        let top = collapsedTop + ((expandedTop - collapsedTop) * clampedProgress)
+        let bottom = collapsedBottom + ((expandedBottom - collapsedBottom) * clampedProgress)
+        return IslandShellRadii(
+            top: isNotchIntegrated ? top : 0,
+            bottom: bottom
+        )
+    }
+}
+
+private struct IslandShellShape: Shape {
+    var topCornerRadius: CGFloat
+    var bottomCornerRadius: CGFloat
+
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(topCornerRadius, bottomCornerRadius) }
+        set {
+            topCornerRadius = newValue.first
+            bottomCornerRadius = newValue.second
+        }
     }
 
     func path(in rect: CGRect) -> Path {
-        let radius = min(bottomRadius, min(rect.width, rect.height) / 2)
+        guard rect.width.isFinite,
+              rect.height.isFinite,
+              rect.width > 0,
+              rect.height > 0 else {
+            return Path()
+        }
+
+        let requestedTop = topCornerRadius.isFinite ? max(topCornerRadius, 0) : 0
+        let topRadius = min(requestedTop, rect.width / 2, rect.height)
+        let requestedBottom = bottomCornerRadius.isFinite ? max(bottomCornerRadius, 0) : 0
+        let bottomRadius = min(
+            requestedBottom,
+            max(rect.height - topRadius, 0),
+            max((rect.width / 2) - topRadius, 0)
+        )
 
         var path = Path()
         path.move(to: CGPoint(x: rect.minX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - radius))
         path.addQuadCurve(
-            to: CGPoint(x: rect.maxX - radius, y: rect.maxY),
-            control: CGPoint(x: rect.maxX, y: rect.maxY)
+            to: CGPoint(x: rect.minX + topRadius, y: rect.minY + topRadius),
+            control: CGPoint(x: rect.minX + topRadius, y: rect.minY)
         )
-        path.addLine(to: CGPoint(x: rect.minX + radius, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX + topRadius, y: rect.maxY - bottomRadius))
         path.addQuadCurve(
-            to: CGPoint(x: rect.minX, y: rect.maxY - radius),
-            control: CGPoint(x: rect.minX, y: rect.maxY)
+            to: CGPoint(x: rect.minX + topRadius + bottomRadius, y: rect.maxY),
+            control: CGPoint(x: rect.minX + topRadius, y: rect.maxY)
         )
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX - topRadius - bottomRadius, y: rect.maxY))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.maxX - topRadius, y: rect.maxY - bottomRadius),
+            control: CGPoint(x: rect.maxX - topRadius, y: rect.maxY)
+        )
+        path.addLine(to: CGPoint(x: rect.maxX - topRadius, y: rect.minY + topRadius))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.maxX, y: rect.minY),
+            control: CGPoint(x: rect.maxX - topRadius, y: rect.minY)
+        )
         path.closeSubpath()
         return path
     }
@@ -1164,6 +1234,11 @@ struct CompactIslandView: View {
     let contentMode: CollapsedIslandContentMode
     let previewContent: CollapsedPreviewContent?
     let previewActive: Bool
+    let hardwareNotchWidth: CGFloat
+    let collapsedLeftRegionWidth: CGFloat
+    let collapsedNotchCoreWidth: CGFloat
+    let collapsedRightRegionWidth: CGFloat
+    let isNotchIntegratedShell: Bool
     @ObservedObject private var media: MediaController
     @ObservedObject private var liveActivities: LiveActivityStore
     @ObservedObject private var accentCache = ArtworkAccentColorCache.shared
@@ -1174,13 +1249,23 @@ struct CompactIslandView: View {
         modules: IslandModules,
         contentMode: CollapsedIslandContentMode = .inactive,
         previewContent: CollapsedPreviewContent? = nil,
-        previewActive: Bool = false
+        previewActive: Bool = false,
+        hardwareNotchWidth: CGFloat = 0,
+        collapsedLeftRegionWidth: CGFloat = 0,
+        collapsedNotchCoreWidth: CGFloat = 0,
+        collapsedRightRegionWidth: CGFloat = 0,
+        isNotchIntegratedShell: Bool = false
     ) {
         self.settings = settings
         self.modules = modules
         self.contentMode = contentMode
         self.previewContent = previewContent
         self.previewActive = previewActive
+        self.hardwareNotchWidth = hardwareNotchWidth
+        self.collapsedLeftRegionWidth = collapsedLeftRegionWidth
+        self.collapsedNotchCoreWidth = collapsedNotchCoreWidth
+        self.collapsedRightRegionWidth = collapsedRightRegionWidth
+        self.isNotchIntegratedShell = isNotchIntegratedShell
         media = modules.media
         liveActivities = modules.liveActivities
     }
@@ -1220,7 +1305,7 @@ struct CompactIslandView: View {
         ZStack {
             switch contentMode {
             case .media where activeBranch:
-                CompactCollapsedSideSlotLayout {
+                sideSlotLayout {
                     if settings.showAlbumArtwork {
                         CompactMediaView(media: media)
                     }
@@ -1238,19 +1323,48 @@ struct CompactIslandView: View {
                 }
                 .transition(.compactMediaContent)
             case .timer(let activity):
-                CollapsedTimerActivityCompactView(activity: activity)
+                CollapsedTimerActivityCompactView(
+                    activity: activity,
+                    layout: sideSlotGeometry
+                )
                     .transition(.compactMediaContent)
             case .fileTray(let activity):
-                CollapsedFileActivityCompactView(activity: activity)
+                CollapsedFileActivityCompactView(
+                    activity: activity,
+                    layout: sideSlotGeometry
+                )
                     .transition(.compactMediaContent)
             case .battery(let activity):
-                CollapsedBatteryActivityCompactView(activity: activity)
+                CollapsedBatteryActivityCompactView(
+                    activity: activity,
+                    layout: sideSlotGeometry
+                )
                     .transition(.compactMediaContent)
             case .media, .inactive:
                 Color.clear
                     .transition(.opacity)
             }
         }
+    }
+
+    private var sideSlotGeometry: CompactCollapsedSideSlotGeometry {
+        CompactCollapsedSideSlotGeometry(
+            isNotchIntegrated: isNotchIntegratedShell,
+            leftRegionWidth: collapsedLeftRegionWidth,
+            notchCoreWidth: hardwareNotchWidth > 0 ? collapsedNotchCoreWidth : 0,
+            rightRegionWidth: collapsedRightRegionWidth
+        )
+    }
+
+    private func sideSlotLayout<Left: View, Right: View>(
+        @ViewBuilder left: @escaping () -> Left,
+        @ViewBuilder right: @escaping () -> Right
+    ) -> some View {
+        CompactCollapsedSideSlotLayout(
+            geometry: sideSlotGeometry,
+            left: left,
+            right: right
+        )
     }
 
     private var compactContentAnimation: Animation {
@@ -1314,26 +1428,53 @@ struct CompactIslandView: View {
     }
 }
 
+private struct CompactCollapsedSideSlotGeometry {
+    let isNotchIntegrated: Bool
+    let leftRegionWidth: CGFloat
+    let notchCoreWidth: CGFloat
+    let rightRegionWidth: CGFloat
+
+    var usesPhysicalNotchRegions: Bool {
+        isNotchIntegrated && notchCoreWidth > 0
+    }
+}
+
 private struct CompactCollapsedSideSlotLayout<Left: View, Right: View>: View {
+    let geometry: CompactCollapsedSideSlotGeometry
     @ViewBuilder let left: () -> Left
     @ViewBuilder let right: () -> Right
 
     var body: some View {
-        HStack(spacing: 10) {
-            left()
-            Spacer(minLength: 0)
-            right()
+        if geometry.usesPhysicalNotchRegions {
+            HStack(spacing: 0) {
+                left()
+                    .frame(width: geometry.leftRegionWidth, alignment: .leading)
+                Color.clear
+                    .frame(width: geometry.notchCoreWidth)
+                right()
+                    .frame(width: geometry.rightRegionWidth, alignment: .trailing)
+            }
+        } else {
+            HStack(spacing: 10) {
+                left()
+                Spacer(minLength: 0)
+                right()
+            }
         }
     }
 }
 
 private struct CollapsedTimerActivityCompactView: View {
     let activity: DynamicIslandLiveActivity
+    let layout: CompactCollapsedSideSlotGeometry
 
     var body: some View {
-        CompactCollapsedSideSlotLayout {
+        CompactCollapsedSideSlotLayout(geometry: layout) {
             timerIcon
-                .frame(width: 13, height: 13)
+                .frame(
+                    width: CollapsedActivityLayoutProfile.timerLeftContentWidth,
+                    height: CollapsedActivityLayoutProfile.timerLeftContentWidth
+                )
         } right: {
             Text(formattedCompactRemainingTime)
                 .monospacedDigit()
@@ -1342,7 +1483,10 @@ private struct CollapsedTimerActivityCompactView: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.35)
                 .allowsTightening(true)
-                .frame(width: 38, alignment: .trailing)
+                .frame(
+                    width: CollapsedActivityLayoutProfile.timerRightContentWidth,
+                    alignment: .trailing
+                )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         .clipped()
@@ -1376,22 +1520,28 @@ private struct CollapsedTimerActivityCompactView: View {
 
 private struct CollapsedFileActivityCompactView: View {
     let activity: DynamicIslandLiveActivity
+    let layout: CompactCollapsedSideSlotGeometry
 
     var body: some View {
-        HStack(spacing: 8) {
+        CompactCollapsedSideSlotLayout(geometry: layout) {
             Image(systemName: "tray.and.arrow.down.fill")
                 .font(.system(size: 12, weight: .bold))
                 .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(.cyan.opacity(0.90))
-                .frame(width: 17, height: 17)
-
-            Spacer(minLength: 6)
-
+                .frame(
+                    width: CollapsedActivityLayoutProfile.fileLeftContentWidth,
+                    height: CollapsedActivityLayoutProfile.fileLeftContentWidth
+                )
+        } right: {
             Text(fileText)
                 .font(.system(size: 11, weight: .bold, design: .rounded))
                 .foregroundStyle(.white.opacity(0.86))
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
+                .frame(
+                    width: CollapsedActivityLayoutProfile.fileRightContentWidth,
+                    alignment: .trailing
+                )
         }
         .frame(maxWidth: .infinity, alignment: .center)
         .accessibilityLabel(accessibilityLabel)
@@ -1413,14 +1563,18 @@ private struct CollapsedFileActivityCompactView: View {
 
 private struct CollapsedBatteryActivityCompactView: View {
     let activity: DynamicIslandLiveActivity
+    let layout: CompactCollapsedSideSlotGeometry
 
     var body: some View {
-        CompactCollapsedSideSlotLayout {
+        CompactCollapsedSideSlotLayout(geometry: layout) {
             SafeSystemImage(symbolName: activity.symbolName, fallbackSymbolName: "battery.75percent")
                 .font(.system(size: 12, weight: .bold))
                 .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(iconColor)
-                .frame(width: 17, height: 17)
+                .frame(
+                    width: CollapsedActivityLayoutProfile.batteryLeftContentWidth,
+                    height: CollapsedActivityLayoutProfile.batteryLeftContentWidth
+                )
         } right: {
             Text(percentText)
                 .font(.system(size: 8.8, weight: .bold, design: .rounded))
@@ -1429,7 +1583,10 @@ private struct CollapsedBatteryActivityCompactView: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.35)
                 .allowsTightening(true)
-                .frame(width: 34, alignment: .trailing)
+                .frame(
+                    width: CollapsedActivityLayoutProfile.batteryRightContentWidth,
+                    alignment: .trailing
+                )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         .accessibilityLabel(accessibilityLabel)
@@ -1585,6 +1742,7 @@ struct ExpandedIslandView: View {
     @ObservedObject private var liveActivities: LiveActivityStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.isCollapseShellOnly) private var isCollapseShellOnly
+    @Environment(\.isNotchIntegratedShell) private var isNotchIntegratedShell
 
     @State private var isAirDropTargeted = false
     @State private var isFilesTargeted = false
@@ -1621,7 +1779,12 @@ struct ExpandedIslandView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let metrics = ExpandedIslandLayoutMetrics(containerSize: proxy.size)
+            let metrics = ExpandedIslandLayoutMetrics(
+                containerSize: proxy.size,
+                horizontalPadding: IslandShellLayout.expandedHorizontalPadding(
+                    isNotchIntegrated: isNotchIntegratedShell
+                )
+            )
 
             VStack(alignment: .leading, spacing: metrics.tabToPageSpacing) {
                 HStack(alignment: .center, spacing: 8) {

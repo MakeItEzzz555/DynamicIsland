@@ -3366,6 +3366,114 @@ For every requested feature phase:
 - The native `NSPanel` remains shadowless with `panel.hasShadow = false`.
 - The existing shell stroke remains unchanged, along with shell shape, fill, opacity, themes, geometry, corner radii, and transition behavior.
 
+### Phase 12C - Integrated Atoll-Style Notch Shell Geometry
+
+- Removed the old decorative shoulder-blend architecture completely:
+  - Deleted `NotchShoulderBlend.swift`.
+  - Deleted the ellipse/blob rendering, manual tuning constants, debug tinting, enable flags, opacity/offset positioning, and unused shoulder asset image sets.
+  - Removed the obsolete `Notch shoulder blend` Settings toggle, help text, `AppSettings` property, UserDefaults key, loading, saving, and reset bookkeeping. Old persisted values are ignored.
+- Preserved the physical-notch integration environment by moving `NotchIntegratedShellEnvironmentKey`, `EnvironmentValues.isNotchIntegratedShell`, and `View.notchIntegrated(_:)` into `IslandRootView.swift`; the root still wires it from `layoutStore.hasHardwareNotch`.
+- Replaced the old one-radius shell with one continuous `IslandShellShape` containing independently animatable `topCornerRadius` and `bottomCornerRadius` values through `AnimatablePair<CGFloat, CGFloat>`.
+- Implemented the integrated path as one symmetric silhouette: outer top-left to inset top-left shoulder, inset left wall, bottom-left curve, flat bottom, bottom-right curve, inset right wall, outward top-right shoulder, then closed top edge.
+- Exact initial physical-notch endpoints are:
+  - Collapsed: top `6`, bottom `14`.
+  - Expanded: top `19`, bottom `24`.
+  - Both interpolate linearly from the existing `shellMorphProgress`/`shellVisualProgress`; no secondary animation or timing was added.
+- Non-notch/floating shells keep `topCornerRadius = 0` while using the same bottom-radius interpolation.
+- The same single shape instance drives `IslandSurfaceBackground`, the optional shell stroke, and content clipping for Classic Black and Liquid Glass.
+- Added geometry safety clamping for non-finite, negative, and impossibly small temporary frames without changing production endpoint values.
+- Added `IslandShellRadiiTests` for collapsed/midpoint/expanded endpoints, non-notch behavior, out-of-range clamping, and non-finite progress fallback.
+- Preserved Phase 12B.1 shadow removal: no shell shadow or panel shadow was introduced, and `panel.hasShadow = false` remains.
+- `OverlayWindowController.swift`, `NotchGeometryService.swift`, panel geometry, Space behavior, layout, gestures, and transition timing were not changed for Phase 12C.
+- Validation on 2026-07-20:
+  - `git diff --check`: passed.
+  - `swift build`: passed with no warnings.
+  - `swift test`: 110 tests, 0 failures.
+  - `Scripts/package_app.sh`: passed and produced `dist/DynamicIsland.app`.
+  - Active-source searches found no decorative shoulder symbols, settings, assets, ellipse rendering, or shoulder-specific layer; notch integration definitions exist once and remain wired.
+- Manual visual validation remains required for physical-notch collapsed/expanding/expanded/collapsing states, non-notch behavior if available, symmetry, content clearance, and both themes. The exact 6/14 and 19/24 radii were not tuned beyond the requested first A/B values.
+
+### Phase 12C.1 - Integrated Notch Content Safe Areas
+
+- Retained the visually validated integrated notch shell geometry unchanged. The new shoulders reduce the usable horizontal body width compared with the old straight-sided shell.
+- Increased the shared collapsed horizontal content padding from `8pt` to `14pt`: the `6pt` collapsed shoulder inset plus approximately `8pt` of interior clearance.
+- Increased `ExpandedIslandLayoutMetrics` horizontal padding from `22pt` to `24pt`: the `19pt` expanded shoulder inset plus approximately `5pt` of interior clearance.
+- The single shared compact inset continues to wrap media artwork and visualizer, Timer icon/countdown, Battery icon/percentage, File activity icon/text, inactive content, hover preview rows, and future compact Live Activities.
+- Added no per-activity padding, offsets, width changes, font changes, or trailing-slot changes.
+- Panel/shell widths, `NotchGeometryService`, expanded responsive column metrics, and content hierarchy remain unchanged; responsive metrics naturally consume the two-point-smaller expanded inner width.
+- Shoulder radii remain exactly collapsed `6/14` and expanded `19/24`, driven by the existing shell morph progress. Shape topology, detection, background, stroke, and clipping were not changed.
+- No shell or panel shadows were restored; `panel.hasShadow = false` remains.
+- Validation on 2026-07-20:
+  - `git diff --check`: passed.
+  - `swift build`: passed with no warnings.
+  - `swift test`: 110 tests, 0 failures.
+  - Initial `Scripts/package_app.sh` signing failed with the known resource-fork/Finder metadata error. After `xattr -cr dist/DynamicIsland.app`, packaging passed and produced `dist/DynamicIsland.app`.
+- Manual visual validation remains required for all collapsed activity modes, hover preview, all expanded pages, both themes, and slow expansion/collapse content clearance.
+
+### Phase 12C.2 - Notch-Aware Body-Relative Content Insets
+
+- Phase 12C.1's integrated-shell `14pt` collapsed and `24pt` expanded padding values were manually tested and found insufficient.
+- The expanded `24pt` frame-relative inset left only `5pt` of actual interior clearance after the integrated shell's `19pt` side inset. The collapsed `14pt` value preserved `8pt` of interior clearance but remained visually too tight for edge-anchored compact content.
+- Replaced the global padding values with notch-aware resolution through the existing `isNotchIntegratedShell` environment:
+  - Physical-notch collapsed: `18pt` total inset.
+  - Floating/non-notch collapsed: original `8pt` inset.
+  - Physical-notch expanded: `41pt` total inset, preserving the former `22pt` body-relative clearance after the `19pt` shell inset.
+  - Floating/non-notch expanded: original `22pt` inset.
+- `IslandSurface` resolves and applies the collapsed value once at the shared outer compact-content boundary. Media, Timer, Battery, File, hover preview, and future compact activities inherit it without individual offsets or padding.
+- `ExpandedIslandView` consumes the same notch-integration environment and supplies the resolved expanded value to `ExpandedIslandLayoutMetrics`; `innerWidth` continues to derive naturally from that single value.
+- Added focused resolver assertions for integrated/floating collapsed and expanded values. No visualizer, activity width, font, trailing slot, or per-activity layout was changed.
+- Integrated shell shape topology and exact `6/14 → 19/24` radii remain unchanged. `NotchGeometryService`, panel/surface frames, widths, hit testing, Space behavior, and transitions were not modified.
+- No shell shadow was restored; `panel.hasShadow = false` remains.
+- Validation on 2026-07-20:
+  - `git diff --check`: passed.
+  - `swift build`: passed with no warnings.
+  - `swift test`: 111 tests, 0 failures.
+  - Initial `Scripts/package_app.sh` signing failed with the known resource-fork/Finder metadata error. After `xattr -cr dist/DynamicIsland.app`, packaging passed and produced `dist/DynamicIsland.app`.
+- Manual visual validation remains required for all physical-notch collapsed activity modes, all expanded pages, and floating/non-notch displays if available.
+
+### Phase 12C.3 - Hardware Notch Center Exclusion
+
+- Confirmed that collapsed outer-padding-only fixes were conceptually incorrect: increasing the inset moved both side contents inward toward the physical center notch instead of keeping that obstruction empty.
+- Modeled the physical notch as a non-usable central exclusion zone for the top compact primary row. The actual notch width comes from `NotchGeometryService`'s inferred notch rectangle and is propagated as `IslandGeometry.hardwareNotchWidth` through `OverlayWindowController` and `IslandLayoutStore` to `CompactIslandView`; SwiftUI performs no independent screen query.
+- `CompactCollapsedSideSlotLayout` now divides integrated compact content into symmetric left and right flexible wings separated by layout-only space. Center safety clearance is `4pt` on each side, so exclusion width is `hardwareNotchWidth + 8pt`.
+- The minimum usable side-wing width is `38pt`. For active integrated collapsed content, the adaptive minimum surface width is derived as `hardwareNotchWidth + 2×4pt clearance + 2×38pt wings + 2×8pt outer padding`, or `hardwareNotchWidth + 100pt`. A larger configured collapsed width continues to win.
+- Restored collapsed outer horizontal padding to `8pt` for both integrated and floating shells. The manually validated integrated expanded padding remains `41pt`; floating expanded padding remains `22pt`.
+- Media artwork/visualizer, Timer icon/countdown, Battery icon/percentage, and File icon/text now share the same side-wing container. No activity-specific offsets, fake notch mask, visible center view, or preview-row split was added.
+- Floating/non-notch compact layout retains the original ordinary `HStack` behavior with no center exclusion. `IslandLayoutStore.hardwareNotchWidth` resolves to `0` on displays without a hardware notch.
+- Integrated shell geometry, the exact `6/14 → 19/24` radii, shell morphing, background, stroke, clipping, transitions, expanded metrics, positioning, and panel architecture remain unchanged. No shell shadow was restored and `panel.hasShadow = false` remains.
+- Added focused pure-geometry coverage for `150 → 250pt` and `160 → 260pt` required widths, `notchWidth + 8pt` exclusion, zero non-notch exclusion, configured-width precedence, and symmetric `38pt` wings. Updated the existing notch geometry expectation for the derived active width and the collapsed-padding assertion.
+- Validation on 2026-07-21:
+  - `git diff --check`: passed.
+  - `swift build`: passed with no warnings.
+  - `swift test`: 112 tests, 0 failures.
+  - Initial `Scripts/package_app.sh` signing failed with the known resource-fork/Finder metadata error. After `xattr -cr dist/DynamicIsland.app`, packaging passed and produced `dist/DynamicIsland.app`.
+- Manual validation remains required for physical-notch media, Timer, Battery, File activity, rapid winner switching, hover preview, unchanged expanded `41pt` spacing, and the absence of a center gap on a non-notch display.
+
+### Phase 12C.4 - Compact Below-Notch Content Rail
+
+- Experimentally restored the pre-12C.3 compact width and moved active content below the hardware notch using its propagated height.
+- This approach was rejected: it avoided horizontal notch overlap but forced an unwanted non-hover active height of `hardwareNotchHeight + 22pt` (`60pt` for the 38pt fixture), producing a visibly dropped-down/taller pill.
+- Phase 12C.5 removes the below-notch rail, hardware-notch height propagation, active-height growth, and rail-specific tests. Phase 12C.4 is retained here only as rejected experimental history, not as the final architecture.
+
+### Phase 12C.5 - Content-Aware Physical-Notch Activity Wings
+
+- Retained the Atoll-style integrated shell and identified the root mismatch: the new shell geometry had not been paired with a content-aware left-wing/physical-notch-core/right-wing collapsed activity layout.
+- Removed the rejected Phase 12C.4 below-notch rail, hardware-notch height propagation, `hardwareNotchHeight + 22pt` sizing, 60pt active height, and integrated 2pt bottom-padding override. Compact content is back on the original vertically centered 16pt band and collapsed height again uses the normal configured/resolved value.
+- Preserved `hardwareNotchWidth` from `NotchGeometryService` through `IslandGeometry`, `OverlayWindowController`, and `IslandLayoutStore`. The physical notch remains an empty central layout core; SwiftUI does not independently rediscover screen geometry.
+- Added shared `CollapsedActivityLayoutProfile` values consumed by both geometry and rendering: media `14/30pt` (respecting artwork/visualizer visibility), Timer `13/38pt`, Battery `17/34pt`, File `17/44pt`. The File trailing text now has a deterministic 44pt frame without changing its font or scaling behavior.
+- Uses existing 8pt shell-edge padding and 4pt of notch-side safety per visible region. For the 242pt fixture, exact minimum widths are media `310pt`, Timer `317pt`, Battery `317pt`, and File `327pt`; the universal `hardwareNotchWidth + 100pt`/symmetric 38pt rule is gone.
+- Geometry anchors the core exactly to `notchRect.minX...notchRect.maxX`. Asymmetric content intentionally shifts the shell extent; any configured width beyond the activity requirement is divided equally outside the minimum left/right geometry. Propagated region widths are reconciled with the final integral panel frame to prevent sub-point alignment drift.
+- `CompactCollapsedSideSlotLayout` renders explicit left, transparent center-core, and right regions for active integrated layouts. Media, Timer, Battery, and File all share it. Floating/non-notch layouts retain the original left/`Spacer`/right `HStack` with no fake core or activity-driven notch expansion.
+- `OverlayGeometrySignature` now includes the current `CollapsedActivityLayoutProfile`, and live-activity observation deduplicates on that profile instead of only active/inactive presence. Activity winner changes therefore trigger one legitimate geometry refresh without adding another animation system.
+- Expanded integrated padding remains `41pt` and floating expanded padding remains `22pt`. Shell path, exact `6/14 → 19/24` radii, morphing, background, stroke, clipping, hover preview, transitions, interaction geometry, and `panel.hasShadow = false` remain unchanged.
+- Removed obsolete Phase 12C.3 universal-wing and Phase 12C.4 height/rail assertions. Added exact profile-width, core-alignment, larger-configured-width distribution, restored-height, inactive-sizing, non-notch fallback, and expanded-geometry coverage.
+- Validation on 2026-07-21:
+  - `git diff --check`: passed.
+  - `swift build`: passed with no warnings after correcting public-profile visibility and immutable `Sendable` conformance.
+  - `swift test`: 113 tests, 0 failures.
+  - Initial `Scripts/package_app.sh` signing failed with the known resource-fork/Finder metadata error. After `xattr -cr dist/DynamicIsland.app`, packaging passed and produced `dist/DynamicIsland.app`.
+- Manual validation remains required for media, Timer, Battery, File, activity switching, hover preview, expand/collapse, unchanged expanded spacing, and floating/non-notch behavior.
+
 ### Phase 11C.11 - Native canJoinAllApplications A/B Test
 
 - Added the isolated native Space membership A/B variable on top of the stable 11C.10 configuration:
