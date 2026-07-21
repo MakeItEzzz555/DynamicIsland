@@ -37,11 +37,7 @@ final class ShortcutsStore: ObservableObject {
     }
 
     func open(_ shortcut: LauncherShortcut) {
-        if let url = URL(string: shortcut.target), url.scheme != nil {
-            NSWorkspace.shared.open(url)
-            return
-        }
-        NSWorkspace.shared.open(URL(fileURLWithPath: shortcut.target))
+        AppLaunchService.openShortcut(title: shortcut.title, target: shortcut.target)
     }
 
     func update(_ shortcut: LauncherShortcut) {

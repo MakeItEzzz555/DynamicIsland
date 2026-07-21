@@ -68,6 +68,42 @@ final class NotchGeometryServiceTests: XCTestCase {
         )
     }
 
+    func testInactiveCollapsedMediaUsesSmallerTopAttachedFrame() {
+        let service = NotchGeometryService()
+        let snapshot = ScreenSnapshot(
+            frame: CGRect(x: 0, y: 0, width: 1512, height: 982),
+            visibleFrame: CGRect(x: 0, y: 0, width: 1512, height: 944),
+            safeAreaInsets: NSEdgeInsets(top: 38, left: 0, bottom: 0, right: 0),
+            auxiliaryTopLeftArea: CGRect(x: 0, y: 944, width: 635, height: 38),
+            auxiliaryTopRightArea: CGRect(x: 877, y: 944, width: 635, height: 38)
+        )
+
+        let activeGeometry = service.geometry(
+            for: snapshot,
+            collapsedSize: CGSize(width: 520, height: 58),
+            expandedSize: CGSize(width: 900, height: 300),
+            collapsedMediaActive: true
+        )
+        let inactiveGeometry = service.geometry(
+            for: snapshot,
+            collapsedSize: CGSize(width: 520, height: 58),
+            expandedSize: CGSize(width: 900, height: 300),
+            collapsedMediaActive: false
+        )
+
+        XCTAssertEqual(inactiveGeometry.collapsedFrame.midX, activeGeometry.collapsedFrame.midX, accuracy: 0.5)
+        XCTAssertEqual(inactiveGeometry.collapsedFrame.maxY, snapshot.frame.maxY, accuracy: 0.5)
+        XCTAssertEqual(inactiveGeometry.collapsedFrame.height, activeGeometry.collapsedFrame.height, accuracy: 0.5)
+        XCTAssertLessThan(inactiveGeometry.collapsedFrame.width, activeGeometry.collapsedFrame.width)
+        XCTAssertEqual(
+            inactiveGeometry.canvas.collapsedSurfaceFrame,
+            inactiveGeometry.collapsedFrame.offsetBy(
+                dx: -inactiveGeometry.canvas.frame.minX,
+                dy: -inactiveGeometry.canvas.frame.minY
+            )
+        )
+    }
+
     func testExpandedFrameStaysScreenCenteredWhenNotchIsOffCenter() {
         let service = NotchGeometryService()
         let snapshot = ScreenSnapshot(

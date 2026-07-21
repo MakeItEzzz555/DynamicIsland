@@ -24,4 +24,12 @@ final class IslandStateStoreTests: XCTestCase {
 
         XCTAssertEqual(store.state, .collapsed)
     }
+
+    func testExpandSetsExpandedWithoutAddingPresentationStates() {
+        let store = IslandStateStore()
+
+        store.expand()
+
+        XCTAssertEqual(store.state, .expanded)
+    }
 }

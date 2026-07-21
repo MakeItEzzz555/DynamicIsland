@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct CompactMediaView: View {
     @ObservedObject var media: MediaController
@@ -12,51 +13,99 @@ struct CompactMediaView: View {
 
 struct AudioVisualizerView: View {
     let isPlaying: Bool
+    var isActive = true
+    var accentColor: Color = ArtworkAccentColorExtractor.fallbackColor
+    var variant: AudioVisualizerVariant = .compact
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Group {
-            if isPlaying {
-                TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { timeline in
-                    bars(tick: timeline.date.timeIntervalSinceReferenceDate, opacity: 0.88)
+            if isPlaying && isActive && !reduceMotion {
+                TimelineView(.animation(minimumInterval: 1.0 / 24.0)) { timeline in
+                    bars(tick: timeline.date.timeIntervalSinceReferenceDate, opacity: 0.92)
                 }
             } else {
-                bars(tick: nil, opacity: 0.48)
+                bars(tick: nil, opacity: isActive ? 0.48 : 0.28)
             }
         }
-        .frame(width: 10, height: 12)
+        .frame(width: variant.size.width, height: variant.size.height)
         .accessibilityLabel(isPlaying ? "Audio playing" : "Audio paused")
     }
 
     private func bars(tick: TimeInterval?, opacity: Double) -> some View {
-        HStack(alignment: .center, spacing: 2) {
-            ForEach(0..<3, id: \.self) { index in
+        HStack(alignment: .center, spacing: variant.spacing) {
+            ForEach(0..<Self.barCount, id: \.self) { index in
                 Capsule(style: .continuous)
-                    .fill(Color.white.opacity(opacity))
-                    .frame(width: 2, height: barHeight(index: index, tick: tick))
+                    .fill(accentColor.opacity(opacity))
+                    .frame(width: variant.barWidth, height: barHeight(index: index, tick: tick))
+                    .shadow(color: accentColor.opacity(tick == nil || reduceMotion ? 0 : 0.22), radius: 3)
             }
         }
     }
 
     private func barHeight(index: Int, tick: TimeInterval?) -> CGFloat {
-        guard let tick else { return Self.pausedHeights[index] }
-        let samples = Self.playingHeights[index]
+        guard let tick else {
+            return variant.maximumBarHeight * Self.pausedFractions[index % Self.pausedFractions.count]
+        }
+
+        let samples = Self.playingFractions[index % Self.playingFractions.count]
         let phase = tick.truncatingRemainder(dividingBy: Self.loopDuration) / Self.loopDuration
-        let samplePosition = phase * Double(samples.count)
+        let offsetPhase = (phase + (Double(index) * 0.047)).truncatingRemainder(dividingBy: 1)
+        let samplePosition = offsetPhase * Double(samples.count)
         let lowerIndex = Int(floor(samplePosition)) % samples.count
         let upperIndex = (lowerIndex + 1) % samples.count
         let progress = CGFloat(samplePosition - floor(samplePosition))
         let easedProgress = progress * progress * (3 - 2 * progress)
 
-        return samples[lowerIndex] + ((samples[upperIndex] - samples[lowerIndex]) * easedProgress)
+        let fraction = samples[lowerIndex] + ((samples[upperIndex] - samples[lowerIndex]) * easedProgress)
+        return variant.maximumBarHeight * min(max(fraction, 0.14), 1)
     }
 
-    private static let loopDuration: TimeInterval = 1.84
-    private static let pausedHeights: [CGFloat] = [3.5, 8.5, 5.5]
-    private static let playingHeights: [[CGFloat]] = [
-        [4.0, 11.5, 6.5, 10.0, 3.5, 8.0],
-        [10.5, 4.0, 12.0, 6.0, 9.5, 5.0],
-        [6.0, 9.5, 3.5, 11.0, 7.0, 10.5]
+    private static let barCount = 12
+    private static let loopDuration: TimeInterval = 1.72
+    private static let pausedFractions: [CGFloat] = [0.24, 0.36, 0.28, 0.46, 0.31, 0.40, 0.27, 0.34, 0.44, 0.30, 0.38, 0.26]
+    private static let playingFractions: [[CGFloat]] = [
+        [0.28, 0.80, 0.42, 0.92, 0.33, 0.62],
+        [0.64, 0.34, 0.96, 0.46, 0.74, 0.38],
+        [0.40, 0.88, 0.30, 0.70, 0.52, 0.95],
+        [0.76, 0.42, 0.58, 0.98, 0.36, 0.66]
     ]
+}
+
+enum AudioVisualizerVariant {
+    case compact
+    case expanded
+
+    var size: CGSize {
+        switch self {
+        case .compact:
+            CGSize(width: 30, height: 14)
+        case .expanded:
+            CGSize(width: 76, height: 28)
+        }
+    }
+
+    var barWidth: CGFloat {
+        switch self {
+        case .compact:
+            1.55
+        case .expanded:
+            3.2
+        }
+    }
+
+    var spacing: CGFloat {
+        switch self {
+        case .compact:
+            1.05
+        case .expanded:
+            2.2
+        }
+    }
+
+    var maximumBarHeight: CGFloat {
+        size.height
+    }
 }
 
 struct AlbumArtworkView: View {
@@ -99,11 +148,53 @@ struct CompactShelfBadge: View {
 
 struct MediaModuleView: View {
     @ObservedObject var media: MediaController
+    let onLauncherActivated: () -> Void
+    let onMediaSourceOpened: () -> Void
+    @ObservedObject private var accentCache = ArtworkAccentColorCache.shared
+
+    init(
+        media: MediaController,
+        onLauncherActivated: @escaping () -> Void = {},
+        onMediaSourceOpened: @escaping () -> Void = {}
+    ) {
+        self.media = media
+        self.onLauncherActivated = onLauncherActivated
+        self.onMediaSourceOpened = onMediaSourceOpened
+    }
 
     var body: some View {
+        let activeBranch = media.hasActiveMediaSource
+        let _ = Self.debugRender(
+            hasActiveMediaSource: media.hasActiveMediaSource,
+            isPlaying: media.isPlaying,
+            title: media.title,
+            sourceName: media.sourceName,
+            branch: activeBranch ? "active player" : "empty launcher"
+        )
+
+        Group {
+            if activeBranch {
+                activePlayerView
+            } else {
+                EmptyMediaLauncherView(media: media, onLauncherActivated: onLauncherActivated)
+            }
+        }
+        .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+    }
+
+    @ViewBuilder
+    private var activePlayerView: some View {
+        let visualizerColor = accentCache.color(for: media.artworkKey, image: media.artworkImage)
+
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 14) {
-                AlbumArtworkView(image: media.artworkImage, size: 112)
+                ClickableAlbumArtworkButton(media: media, size: 112) {
+                    let opened = media.openActiveMediaSource()
+                    Self.debugMediaSourceOpenCollapse(opened: opened)
+                    if opened {
+                        onMediaSourceOpened()
+                    }
+                }
                 VStack(alignment: .leading, spacing: 4) {
                     Text(media.title)
                         .font(.system(size: 21, weight: .bold, design: .rounded))
@@ -117,39 +208,86 @@ struct MediaModuleView: View {
                         .font(.system(size: 14, weight: .bold, design: .rounded))
                         .foregroundStyle(.white.opacity(0.48))
                         .lineLimit(1)
+                    AudioVisualizerView(
+                        isPlaying: media.isPlaying,
+                        isActive: media.hasActiveMediaSource,
+                        accentColor: visualizerColor,
+                        variant: .expanded
+                    )
+                    .padding(.top, 4)
                     HStack(spacing: 18) {
-                        MediaButton(symbol: "backward.fill", label: "Previous track", action: media.previousTrack)
-                        MediaButton(symbol: media.isPlaying ? "pause.fill" : "play.fill", label: "Play or pause", action: media.playPause)
-                        MediaButton(symbol: "forward.fill", label: "Next track", action: media.nextTrack)
+                        MediaButton(
+                            symbol: "backward.fill",
+                            label: "Previous track",
+                            isEnabled: media.isTransportControlAvailable,
+                            action: media.previousTrack
+                        )
+                        MediaButton(
+                            symbol: media.isPlaying ? "pause.fill" : "play.fill",
+                            label: "Play or pause",
+                            isEnabled: media.isTransportControlAvailable,
+                            action: media.playPause
+                        )
+                        MediaButton(
+                            symbol: "forward.fill",
+                            label: "Next track",
+                            isEnabled: media.isTransportControlAvailable,
+                            action: media.nextTrack
+                        )
                     }
                     .padding(.top, 12)
                 }
                 Spacer(minLength: 0)
             }
             VStack(spacing: 10) {
+                if media.hasPlaybackProgress {
+                    Slider(
+                        value: Binding(
+                            get: { media.playbackPosition },
+                            set: { media.updateScrubPosition($0) }
+                        ),
+                        in: 0...max(media.duration, 1),
+                        onEditingChanged: { isEditing in
+                            if !isEditing {
+                                media.seek(to: media.playbackPosition)
+                            }
+                        }
+                    )
+                    .tint(.white.opacity(0.70))
+                    .opacity(media.isSeekControlAvailable ? 1 : 0.38)
+                    .disabled(!media.isSeekControlAvailable)
+                    HStack {
+                        Text(formatTime(media.playbackPosition))
+                        Spacer()
+                        Text(formatTime(media.duration))
+                    }
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.58))
+                } else {
+                    Capsule(style: .continuous)
+                        .fill(.white.opacity(0.16))
+                        .frame(height: 5)
+                    HStack {
+                        Text("--:--")
+                        Spacer()
+                        Text("--:--")
+                    }
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.36))
+                }
                 Slider(
                     value: Binding(
-                        get: { media.playbackPosition },
-                        set: { media.updateScrubPosition($0) }
+                        get: { media.volume },
+                        set: { media.setVolume($0) }
                     ),
-                    in: 0...max(media.duration, 1),
-                    onEditingChanged: { isEditing in
-                        if !isEditing {
-                            media.seek(to: media.playbackPosition)
-                        }
-                    }
+                    in: 0...1
                 )
-                    .tint(.white.opacity(0.70))
-                HStack {
-                    Text(formatTime(media.playbackPosition))
-                    Spacer()
-                    Text(formatTime(media.duration))
-                }
-                .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(.white.opacity(0.58))
+                .tint(.white.opacity(0.70))
+                .opacity(media.isVolumeControlAvailable ? 1 : 0.38)
+                .disabled(!media.isVolumeControlAvailable)
+                .accessibilityLabel("Media volume")
             }
         }
-        .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
 
     private func formatTime(_ seconds: Double) -> String {
@@ -157,11 +295,132 @@ struct MediaModuleView: View {
         let wholeSeconds = max(0, Int(seconds.rounded()))
         return "\(wholeSeconds / 60):\(String(format: "%02d", wholeSeconds % 60))"
     }
+
+    private static func debugRender(
+        hasActiveMediaSource: Bool,
+        isPlaying: Bool,
+        title: String,
+        sourceName: String,
+        branch: String
+    ) {
+        #if DEBUG
+        guard ProcessInfo.processInfo.environment["DYNAMIC_ISLAND_VERBOSE_UI_LOGS"] == "1" else { return }
+        debugPrint(
+            "DynamicIsland MediaModuleView render",
+            "hasActiveMediaSource=\(hasActiveMediaSource)",
+            "isPlaying=\(isPlaying)",
+            "title=\(title)",
+            "source=\(sourceName)",
+            "branch=\(branch)"
+        )
+        #endif
+    }
+
+    private static func debugMediaSourceOpenCollapse(opened: Bool) {
+        #if DEBUG
+        guard ProcessInfo.processInfo.environment["DYNAMIC_ISLAND_VERBOSE_UI_LOGS"] == "1" else { return }
+        debugPrint(
+            "DynamicIsland media source open",
+            "requestedCollapse=\(opened)"
+        )
+        #endif
+    }
+}
+
+private struct ClickableAlbumArtworkButton: View {
+    @ObservedObject var media: MediaController
+    let size: CGFloat
+    let action: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            AlbumArtworkView(image: media.artworkImage, size: size)
+                .scaleEffect(isHovering ? 1.028 : 1)
+                .brightness(isHovering ? 0.035 : 0)
+                .animation(.easeOut(duration: 0.16), value: isHovering)
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+        .accessibilityLabel("Open media source")
+        .accessibilityHint("Opens the app currently playing this media")
+    }
+}
+
+private struct EmptyMediaLauncherView: View {
+    @ObservedObject var media: MediaController
+    let onLauncherActivated: () -> Void
+
+    var body: some View {
+        VStack(spacing: 18) {
+            VStack(spacing: 4) {
+                Text("No app seems to be running")
+                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                Text("Wanna open one?")
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.58))
+            }
+
+            HStack(spacing: 10) {
+                MediaLauncherButton(title: "Apple Music", symbol: "music.note", tint: .pink) {
+                    media.openMusicApp()
+                    onLauncherActivated()
+                }
+                MediaLauncherButton(title: "Spotify", symbol: "dot.radiowaves.left.and.right", tint: .green) {
+                    media.openSpotifyApp()
+                    onLauncherActivated()
+                }
+                MediaLauncherButton(title: "YouTube", symbol: "play.rectangle.fill", tint: .red) {
+                    media.openYouTube()
+                    onLauncherActivated()
+                }
+            }
+        }
+        .padding(.horizontal, 4)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+    }
+}
+
+private struct MediaLauncherButton: View {
+    let title: String
+    let symbol: String
+    let tint: Color
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 7) {
+                Image(systemName: symbol)
+                    .font(.system(size: 22, weight: .bold))
+                    .frame(width: 40, height: 40)
+                    .foregroundStyle(tint)
+                    .background(.white.opacity(0.10), in: Circle())
+                Text(title)
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.78)
+            }
+            .frame(width: 86, height: 82)
+            .foregroundStyle(.white)
+            .background(.white.opacity(0.09), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .stroke(.white.opacity(0.06), lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Open \(title)")
+    }
 }
 
 struct MediaButton: View {
     let symbol: String
     let label: String
+    var isEnabled = true
     let action: () -> Void
 
     var body: some View {
@@ -171,13 +430,19 @@ struct MediaButton: View {
                 .frame(width: 36, height: 36)
         }
         .buttonStyle(.plain)
-        .foregroundStyle(.white)
+        .foregroundStyle(.white.opacity(isEnabled ? 1 : 0.38))
+        .disabled(!isEnabled)
         .accessibilityLabel(label)
     }
 }
 
 struct FileShelfModuleView: View {
     @ObservedObject var fileShelf: FileShelfStore
+    @StateObject private var thumbnailCache = FileThumbnailCache()
+
+    private let columns = [
+        GridItem(.adaptive(minimum: 78, maximum: 92), spacing: 10, alignment: .top)
+    ]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -189,31 +454,93 @@ struct FileShelfModuleView: View {
                     fileShelf.clear()
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.white.opacity(0.66))
+                .foregroundStyle(.white.opacity(fileShelf.files.isEmpty ? 0.34 : 0.66))
                 .disabled(fileShelf.files.isEmpty)
             }
             .foregroundStyle(.white)
 
             if fileShelf.files.isEmpty {
-                Text("Drag files onto the island to hold them here temporarily.")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.56))
-                    .lineLimit(1)
+                VStack(spacing: 8) {
+                    Image(systemName: "square.and.arrow.down.on.square")
+                        .font(.system(size: 24, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.42))
+                    Text("Drop files here")
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.62))
+                    Text("They stay here temporarily until you clear them.")
+                        .font(.system(size: 11, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.42))
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, minHeight: 118)
             } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
+                ScrollView(.vertical, showsIndicators: false) {
+                    LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
                         ForEach(fileShelf.files, id: \.self) { url in
-                            ShelfFileChip(url: url) {
-                                fileShelf.remove(url)
-                            }
+                            ShelfFileTile(
+                                url: url,
+                                thumbnailCache: thumbnailCache,
+                                onRemove: { fileShelf.remove(url) }
+                            )
                         }
                     }
+                    .padding(.vertical, 2)
+                    .padding(.trailing, 4)
                 }
+                .frame(maxHeight: 176)
             }
         }
         .padding(12)
-        .frame(maxWidth: .infinity, minHeight: 82, maxHeight: 94)
+        .frame(maxWidth: .infinity, minHeight: 154, maxHeight: 214, alignment: .topLeading)
         .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+}
+
+final class FileThumbnailCache: ObservableObject {
+    @Published private var imagesByKey: [String: NSImage] = [:]
+    private var loadingKeys: Set<String> = []
+
+    func image(for url: URL) -> NSImage? {
+        imagesByKey[cacheKey(for: url)]
+    }
+
+    func loadIfNeeded(for url: URL) {
+        let key = cacheKey(for: url)
+        guard imagesByKey[key] == nil, !loadingKeys.contains(key) else { return }
+        loadingKeys.insert(key)
+
+        let path = url.path
+        let shouldLoadImagePreview = Self.isImageFile(url)
+        let fileURL = url
+
+        DispatchQueue.global(qos: .utility).async {
+            let imageData: Data?
+            if shouldLoadImagePreview {
+                imageData = try? Data(contentsOf: fileURL, options: [.mappedIfSafe])
+            } else {
+                imageData = nil
+            }
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                let image = imageData.flatMap(NSImage.init(data:)) ?? NSWorkspace.shared.icon(forFile: path)
+                image.size = NSSize(width: 56, height: 56)
+                self.imagesByKey[key] = image
+                self.loadingKeys.remove(key)
+            }
+        }
+    }
+
+    private func cacheKey(for url: URL) -> String {
+        let resourceValues = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+        let modified = resourceValues?.contentModificationDate?.timeIntervalSince1970 ?? 0
+        let size = resourceValues?.fileSize ?? 0
+        return "\(url.path)|\(modified)|\(size)"
+    }
+
+    private static func isImageFile(_ url: URL) -> Bool {
+        guard let type = UTType(filenameExtension: url.pathExtension) else { return false }
+        return type.conforms(to: .image)
     }
 }
 
@@ -243,35 +570,179 @@ struct TimerModuleView: View {
     }
 }
 
-struct ShelfFileChip: View {
+enum FileShelfActions {
+    @discardableResult
+    static func open(_ url: URL) -> Bool {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            debugLog("FileShelfActions.open skipped missing file path=\(url.path)")
+            return false
+        }
+
+        let didOpen = NSWorkspace.shared.open(url)
+        debugLog("FileShelfActions.open path=\(url.path) success=\(didOpen)")
+        return didOpen
+    }
+
+    @discardableResult
+    static func revealInFinder(_ url: URL) -> Bool {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            debugLog("FileShelfActions.reveal skipped missing file path=\(url.path)")
+            return false
+        }
+
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+        debugLog("FileShelfActions.reveal path=\(url.path)")
+        return true
+    }
+
+    static func copyPath(_ url: URL) {
+        copy(url.path)
+        debugLog("FileShelfActions.copyPath path=\(url.path)")
+    }
+
+    static func copyName(_ url: URL) {
+        copy(url.lastPathComponent)
+        debugLog("FileShelfActions.copyName name=\(url.lastPathComponent)")
+    }
+
+    private static func copy(_ string: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(string, forType: .string)
+    }
+
+    private static func debugLog(_ message: String) {
+        #if DEBUG
+        print("[DynamicIsland][FileShelfActions] \(message)")
+        #endif
+    }
+}
+
+struct ShelfFileTile: View {
     let url: URL
+    @ObservedObject var thumbnailCache: FileThumbnailCache
     let onRemove: () -> Void
 
+    @State private var isHovering = false
+
     var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "doc")
-            Text(url.lastPathComponent)
-                .lineLimit(1)
-                .frame(maxWidth: 130)
-            Button(action: onRemove) {
-                Image(systemName: "xmark.circle.fill")
+        VStack(spacing: 6) {
+            ZStack(alignment: .topTrailing) {
+                fileImage
+                    .frame(width: 56, height: 56)
+                    .background(.white.opacity(0.075), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(.white.opacity(isHovering ? 0.16 : 0.05), lineWidth: 1)
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+
+                if isHovering {
+                    Button(action: onRemove) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 13, weight: .bold))
+                            .symbolRenderingMode(.hierarchical)
+                            .foregroundStyle(.white.opacity(0.94), .black.opacity(0.62))
+                    }
+                    .buttonStyle(.plain)
+                    .offset(x: 5, y: -5)
+                    .transition(.opacity)
+                    .accessibilityLabel("Remove \(url.lastPathComponent) from Tray")
+                }
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Remove \(url.lastPathComponent)")
+
+            Text(url.lastPathComponent)
+                .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.86))
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .truncationMode(.middle)
+                .frame(width: 78, alignment: .top)
+                .frame(minHeight: 24)
         }
-        .font(.system(size: 12, weight: .semibold))
-        .padding(.horizontal, 10)
+        .padding(.horizontal, 5)
         .padding(.vertical, 7)
-        .foregroundStyle(.white)
-        .background(.white.opacity(0.12), in: Capsule())
+        .frame(width: 84, alignment: .top)
+        .background(.white.opacity(isHovering ? 0.12 : 0.045), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .onHover { hovering in
+            if isHovering != hovering {
+                isHovering = hovering
+            }
+        }
+        .onAppear {
+            thumbnailCache.loadIfNeeded(for: url)
+        }
+        .contextMenu {
+            Button("Open") {
+                FileShelfActions.open(url)
+            }
+
+            Button("Reveal in Finder") {
+                FileShelfActions.revealInFinder(url)
+            }
+
+            Divider()
+
+            Button("Copy Path") {
+                FileShelfActions.copyPath(url)
+            }
+
+            Button("Copy File Name") {
+                FileShelfActions.copyName(url)
+            }
+
+            Divider()
+
+            Button("Remove from Tray", role: .destructive) {
+                onRemove()
+            }
+        }
+        .accessibilityLabel("File \(url.lastPathComponent)")
+        .accessibilityHint("Right-click for file actions")
         .onDrag {
             NSItemProvider(object: url as NSURL)
         }
+    }
+
+    @ViewBuilder
+    private var fileImage: some View {
+        if let image = thumbnailCache.image(for: url) {
+            Image(nsImage: image)
+                .resizable()
+                .scaledToFit()
+                .padding(Self.isImageFile(url) ? 0 : 6)
+        } else {
+            Image(systemName: Self.placeholderSymbol(for: url))
+                .font(.system(size: 32, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.74))
+        }
+    }
+
+    private static func isImageFile(_ url: URL) -> Bool {
+        guard let type = UTType(filenameExtension: url.pathExtension) else { return false }
+        return type.conforms(to: .image)
+    }
+
+    private static func placeholderSymbol(for url: URL) -> String {
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue {
+            return "folder.fill"
+        }
+        if isImageFile(url) {
+            return "photo.fill"
+        }
+        return "doc.fill"
     }
 }
 
 struct ShortcutsModuleView: View {
     @ObservedObject var shortcuts: ShortcutsStore
+    let onShortcutLaunched: () -> Void
+
+    init(shortcuts: ShortcutsStore, onShortcutLaunched: @escaping () -> Void = {}) {
+        self.shortcuts = shortcuts
+        self.onShortcutLaunched = onShortcutLaunched
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -282,6 +753,7 @@ struct ShortcutsModuleView: View {
                 ForEach(shortcuts.shortcuts.prefix(4)) { shortcut in
                     Button {
                         shortcuts.open(shortcut)
+                        onShortcutLaunched()
                     } label: {
                         VStack(spacing: 6) {
                             Image(systemName: shortcut.symbolName)

@@ -10,16 +10,39 @@ final class MediaController: ObservableObject {
     @Published private(set) var artworkImage: NSImage?
     @Published private(set) var playbackPosition: Double = 0
     @Published private(set) var duration: Double = 1
+    @Published private(set) var volume: Double = 0.5
+    @Published private(set) var isVolumeControlAvailable = false
+    @Published private(set) var hasActiveMediaSource = false
+    @Published private(set) var isTransportControlAvailable = false
+    @Published private(set) var isSeekControlAvailable = false
+    @Published private(set) var hasPlaybackProgress = false
+    @Published private(set) var sourceKind: MediaSourceKind = .unknown
+    @Published private(set) var sourceBundleIdentifier: String?
+    @Published private(set) var artworkKey: String?
 
+    private let systemNowPlayingProvider = NowPlayingMediaProvider()
+    private let youtubeMetadataProvider = YouTubeMetadataProvider()
     private var activePlayer: MediaPlayer = .spotify
     private var refreshTimer: Timer?
     private var currentArtworkURL: String?
+    private var currentArtworkKey: String?
+    private var currentArtworkSourceIdentity: MediaSourceIdentity?
+    private var artworkCache: [String: NSImage] = [:]
+    private var currentYouTubeVideoID: String?
     private var lastPlaybackIdentity: String?
     private var lastPlaybackPosition: Double?
     private var lastPlaybackAdvancedAt: Date?
+    private var lastSelectedSourceIdentity: MediaSourceIdentity?
+    private var lastSelectedSourceSelectedAt: Date?
+    private var lastSelectedSourceWasPlaying = false
+    private var selectedPublishGeneration = 0
+    private var pendingPausedSwitchIdentity: MediaSourceIdentity?
+    private var pendingPausedSwitchFirstSeenAt: Date?
+    private var pendingPausedSwitchCount = 0
     private var isScrubbing = false
+    private var isRefreshInFlight = false
 
-    private enum MediaPlayer: String, CaseIterable {
+    enum MediaPlayer: String, CaseIterable {
         case spotify = "Spotify"
         case music = "Music"
 
@@ -40,72 +63,198 @@ final class MediaController: ObservableObject {
     init() {
         refresh()
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 0.75, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                self?.refresh()
-            }
+            Task { @MainActor in self?.refresh() }
         }
     }
 
     func refresh() {
-        if readPlayer(.spotify) {
+        guard !isRefreshInFlight else { return }
+        isRefreshInFlight = true
+        Task { @MainActor in
+            await refreshFromProviders()
+            isRefreshInFlight = false
+        }
+    }
+
+    private func refreshFromProviders() async {
+        var candidates: [MediaCandidate] = []
+
+        logProviderAttempt("System Now Playing")
+        if let snapshot = await systemNowPlayingProvider.snapshot() {
+            logProviderResult("System Now Playing", succeeded: true, snapshot: snapshot)
+            candidates.append(MediaCandidate(providerName: "System Now Playing", snapshot: snapshot))
+        } else {
+            logProviderResult("System Now Playing", succeeded: false)
+        }
+
+        logProviderAttempt("Spotify AppleScript")
+        if let spotify = readPlayerCandidate(.spotify) {
+            candidates.append(spotify)
+        }
+
+        logProviderAttempt("Music AppleScript")
+        if let music = readPlayerCandidate(.music) {
+            candidates.append(music)
+        }
+
+        logProviderAttempt("Browser AppleScript")
+        if let browser = readBrowserCandidate() {
+            candidates.append(browser)
+        }
+
+        guard let selected = selectBestSnapshot(from: candidates) else {
+            clearMediaState()
             return
         }
-        if readPlayer(.music) {
+
+        let reason = MediaArbitrator.selectionReason(
+            selected,
+            candidates: candidates,
+            currentIdentity: lastSelectedSourceIdentity
+        )
+        guard let publishCandidate = candidateConfirmedForPublishing(selected, reason: reason) else {
             return
         }
-        if readBrowserAudio() {
-            return
-        }
+        publishSelectedCandidate(publishCandidate.candidate, reason: publishCandidate.reason)
+    }
+
+    private func clearMediaState() {
         title = "Nothing Playing"
         artist = "Open Spotify or Music"
         isPlaying = false
         sourceName = "Media"
-        artworkImage = nil
-        currentArtworkURL = nil
+        clearArtwork(reason: "clearing inactive media")
         lastPlaybackIdentity = nil
         lastPlaybackPosition = nil
         lastPlaybackAdvancedAt = nil
         playbackPosition = 0
         duration = 1
+        isVolumeControlAvailable = false
+        hasActiveMediaSource = false
+        isTransportControlAvailable = false
+        isSeekControlAvailable = false
+        hasPlaybackProgress = false
+        sourceKind = .unknown
+        sourceBundleIdentifier = nil
+        currentYouTubeVideoID = nil
+        lastSelectedSourceIdentity = nil
+        lastSelectedSourceSelectedAt = nil
+        lastSelectedSourceWasPlaying = false
+        selectedPublishGeneration += 1
+        resetPendingPausedSwitch()
+        logProviderResult("All providers", succeeded: false)
+        logMediaDetection(source: "none")
     }
 
     func playPause() {
+        guard isTransportControlAvailable else { return }
         send(command: activePlayer.playPauseCommand, to: activePlayer)
         refresh()
     }
 
     func nextTrack() {
+        guard isTransportControlAvailable else { return }
         send(command: "next track", to: activePlayer)
         refresh()
     }
 
     func previousTrack() {
+        guard isTransportControlAvailable else { return }
         send(command: "previous track", to: activePlayer)
         refresh()
     }
 
     func updateScrubPosition(_ position: Double) {
+        guard isSeekControlAvailable else { return }
         isScrubbing = true
         playbackPosition = min(max(0, position), duration)
     }
 
     func seek(to position: Double) {
+        guard isSeekControlAvailable else { return }
         let clampedPosition = min(max(0, position), duration)
         send(command: "set player position to \(clampedPosition)", to: activePlayer)
         isScrubbing = false
         refresh()
     }
 
-    private func readPlayer(_ player: MediaPlayer) -> Bool {
+    func setVolume(_ value: Double) {
+        let clampedVolume = min(max(0, value), 1)
+        volume = clampedVolume
+
+        // Browser and future non-scriptable sources can expose playback state
+        // without app volume control. Keep the slider safe in those cases.
+        guard isVolumeControlAvailable else { return }
+
+        let scriptVolume = Int((clampedVolume * 100).rounded())
+        send(command: "set sound volume to \(scriptVolume)", to: activePlayer)
+    }
+
+    func openMusicApp() {
+        AppLaunchService.open(.music)
+    }
+
+    func openSpotifyApp() {
+        AppLaunchService.open(.spotify)
+    }
+
+    func openYouTube() {
+        AppLaunchService.openYouTube(preferredBrowserBundleIdentifier: sourceBundleIdentifier)
+    }
+
+    @discardableResult
+    func openActiveMediaSource() -> Bool {
+        let target = MediaSourceOpenTarget.resolve(
+            sourceKind: sourceKind,
+            sourceName: sourceName,
+            bundleIdentifier: sourceBundleIdentifier
+        )
+        logMediaSourceOpenRequested(target: target)
+
+        guard let target else {
+            logMediaSourceOpenResult(targetDescription: "none", fallbackUsed: false, succeeded: false)
+            return false
+        }
+
+        let succeeded: Bool
+        switch target {
+        case .app(let app):
+            succeeded = AppLaunchService.open(app)
+            logMediaSourceOpenResult(
+                targetDescription: app.displayName,
+                fallbackUsed: false,
+                succeeded: succeeded
+            )
+        case .bundleIdentifier(let bundleIdentifier):
+            succeeded = AppLaunchService.openApp(bundleIdentifier: bundleIdentifier)
+            logMediaSourceOpenResult(
+                targetDescription: bundleIdentifier,
+                fallbackUsed: false,
+                succeeded: succeeded
+            )
+        case .youtube:
+            succeeded = AppLaunchService.openYouTube()
+            logMediaSourceOpenResult(
+                targetDescription: "YouTube default browser",
+                fallbackUsed: true,
+                succeeded: succeeded
+            )
+        }
+        return succeeded
+    }
+
+    private func readPlayerCandidate(_ player: MediaPlayer) -> MediaCandidate? {
         let script = """
         with timeout of 1 seconds
             tell application "\(player.rawValue)"
                 if it is running then
-                    if player state is playing then
-                        return (name of current track) & "||" & (artist of current track) & "||playing||\(player.displayName)" & "||" & (player position as text) & "||" & (\(durationExpression(for: player)) as text) & "||" & \(artworkExpression(for: player))
-                    else if player state is paused then
-                        return (name of current track) & "||" & (artist of current track) & "||paused||\(player.displayName)" & "||" & (player position as text) & "||" & (\(durationExpression(for: player)) as text) & "||" & \(artworkExpression(for: player))
-                    end if
+                    set playbackState to player state as text
+                    try
+                        set trackName to name of current track
+                        if trackName is not "" then
+                            return trackName & "||" & (artist of current track) & "||" & playbackState & "||\(player.displayName)" & "||" & (player position as text) & "||" & (\(durationExpression(for: player)) as text) & "||" & \(artworkExpression(for: player)) & "||" & (sound volume as text)
+                        end if
+                    end try
                 end if
             end tell
         end timeout
@@ -114,79 +263,162 @@ final class MediaController: ObservableObject {
         if let result = runAppleScript(script), !result.isEmpty {
             let parts = result.components(separatedBy: "||")
             if parts.count >= 4 {
-                title = parts[0]
-                artist = parts[1]
+                let trackTitle = parts[0]
+                let trackArtist = parts[1]
                 let reportedPlaybackState = parts[2]
-                sourceName = parts[3]
-                activePlayer = player
-                let parsedPlaybackPosition = Double(parts[safe: 4] ?? "") ?? playbackPosition
-                let playbackIdentity = "\(player.rawValue)||\(title)||\(artist)"
-                if lastPlaybackIdentity != playbackIdentity {
-                    lastPlaybackAdvancedAt = nil
-                }
-                let playbackPositionAdvanced = lastPlaybackIdentity == playbackIdentity &&
-                    parsedPlaybackPosition > ((lastPlaybackPosition ?? parsedPlaybackPosition) + 0.08)
-                if playbackPositionAdvanced {
-                    lastPlaybackAdvancedAt = Date()
-                }
-                let recentlyAdvanced = lastPlaybackIdentity == playbackIdentity &&
-                    lastPlaybackAdvancedAt.map { Date().timeIntervalSince($0) < 1.6 } == true
-                isPlaying = reportedPlaybackState == "playing" || playbackPositionAdvanced || recentlyAdvanced
-                if !isScrubbing {
-                    playbackPosition = parsedPlaybackPosition
-                }
-                lastPlaybackIdentity = playbackIdentity
-                lastPlaybackPosition = parsedPlaybackPosition
-                duration = max(1, Double(parts[safe: 5] ?? "") ?? duration)
-                if parts.count > 6 {
-                    loadArtwork(from: parts[6])
-                }
-                return true
+                let parsedPlaybackPosition = Double(parts[safe: 4] ?? "") ?? 0
+                let parsedDuration = max(1, Double(parts[safe: 5] ?? "") ?? 1)
+                let reportedVolume = Double(parts[safe: 7] ?? "")
+                let snapshot = MediaSnapshot(
+                    sourceKind: player == .spotify ? .spotify : .music,
+                    sourceName: parts[3],
+                    bundleIdentifier: bundleIdentifier(for: player),
+                    title: trackTitle,
+                    artist: trackArtist,
+                    album: nil,
+                    artwork: nil,
+                    isPlaying: reportedPlaybackState == "playing",
+                    duration: parsedDuration,
+                    elapsedTime: parsedPlaybackPosition,
+                    transportAvailable: true,
+                    seekAvailable: true,
+                    volumeAvailable: true
+                )
+                return MediaCandidate(
+                    providerName: "\(player.displayName) AppleScript",
+                    snapshot: snapshot,
+                    hasPlaybackProgress: true,
+                    artworkURL: parts[safe: 6],
+                    volume: reportedVolume.map { min(max(0, $0 / 100), 1) },
+                    activePlayer: player
+                )
             }
         }
-        return false
+        return nil
     }
 
-    private func readBrowserAudio() -> Bool {
-        let browserScripts = [
-            browserScript(applicationName: "Safari", usesChromeScripting: false),
-            browserScript(applicationName: "Google Chrome", usesChromeScripting: true),
-            browserScript(applicationName: "Microsoft Edge", usesChromeScripting: true),
-            browserScript(applicationName: "Brave Browser", usesChromeScripting: true)
+    private func readBrowserCandidate() -> MediaCandidate? {
+        let browsers = [
+            BrowserScriptTarget(
+                applicationName: "Brave Browser",
+                bundleIdentifier: "com.brave.Browser",
+                usesChromeScripting: true
+            ),
+            BrowserScriptTarget(
+                applicationName: "Safari",
+                bundleIdentifier: "com.apple.Safari",
+                usesChromeScripting: false
+            ),
+            BrowserScriptTarget(
+                applicationName: "Google Chrome",
+                bundleIdentifier: "com.google.Chrome",
+                usesChromeScripting: true
+            ),
+            BrowserScriptTarget(
+                applicationName: "Arc",
+                bundleIdentifier: "company.thebrowser.Browser",
+                usesChromeScripting: true
+            ),
+            BrowserScriptTarget(
+                applicationName: "Microsoft Edge",
+                bundleIdentifier: "com.microsoft.edgemac",
+                usesChromeScripting: true
+            )
         ]
 
-        for script in browserScripts {
-            if runAppleScript(script) == "playing" {
-                title = "Browser Audio"
-                artist = "Safari, Chrome, Edge, or Brave"
-                isPlaying = true
-                sourceName = "Browser"
-                artworkImage = nil
-                currentArtworkURL = nil
-                lastPlaybackIdentity = nil
-                lastPlaybackPosition = nil
-                lastPlaybackAdvancedAt = nil
-                playbackPosition = 0
-                duration = 1
-                return true
+        for browser in browsers {
+            let isRunning = isApplicationRunning(browser)
+            logBrowserDetectionAttempt(browser: browser, isRunning: isRunning, phase: "start")
+            guard isRunning else {
+                continue
+            }
+
+            let execution = runAppleScriptDetailed(browserScript(for: browser))
+            logBrowserDetectionAttempt(
+                browser: browser,
+                isRunning: isRunning,
+                phase: "script-result",
+                rawResult: execution.output,
+                errorDescription: execution.errorDescription
+            )
+
+            guard execution.output.hasPrefix("media||") else {
+                continue
+            }
+
+            let parts = execution.output.components(separatedBy: "||")
+            if parts.count >= 6 {
+                let browserTitle = parts[safe: 1]?.isEmpty == false ? parts[1] : "Browser Audio"
+                let browserSource = parts[safe: 2]?.isEmpty == false ? parts[2] : browser.applicationName
+                let playbackState = parts[safe: 5] ?? "paused"
+                let pageURL = parts[safe: 6] ?? ""
+                let youtubeVideoID = YouTubeMetadataProvider.videoID(from: pageURL)
+                let parsedPosition = Double(parts[safe: 3] ?? "")
+                let parsedDuration = Double(parts[safe: 4] ?? "")
+                let hasRealProgress = parsedDuration.map { $0.isFinite && $0 > 1 } == true
+                let playbackProvider = playbackState == "unknown" ? "fallback unknown" : "Browser JS"
+                let snapshot = MediaSnapshot(
+                    sourceKind: .browser,
+                    sourceName: browserSource,
+                    bundleIdentifier: browser.bundleIdentifier,
+                    title: browserTitle,
+                    artist: browserSource,
+                    album: nil,
+                    artwork: nil,
+                    isPlaying: playbackState == "playing",
+                    duration: hasRealProgress ? max(1, parsedDuration ?? 1) : nil,
+                    elapsedTime: hasRealProgress ? (parsedPosition ?? 0) : nil,
+                    transportAvailable: false,
+                    seekAvailable: false,
+                    volumeAvailable: false
+                )
+                logBrowserDetectionAttempt(
+                    browser: browser,
+                    isRunning: isRunning,
+                    phase: "parsed-session",
+                    rawResult: execution.output
+                )
+                logBrowserPlaybackSelection(
+                    provider: playbackProvider,
+                    pageURL: pageURL,
+                    videoID: youtubeVideoID,
+                    hasProgress: hasRealProgress,
+                    playbackState: playbackState
+                )
+                return MediaCandidate(
+                    providerName: "Browser AppleScript",
+                    snapshot: snapshot,
+                    hasPlaybackProgress: hasRealProgress,
+                    youtubePageURL: pageURL,
+                    youtubeVideoID: youtubeVideoID,
+                    playbackProvider: playbackProvider
+                )
             }
         }
-        return false
+        return nil
     }
 
-    private func browserScript(applicationName: String, usesChromeScripting: Bool) -> String {
-        let mediaCheck = """
-        (() => Array.from(document.querySelectorAll('video,audio')).some(element => !element.paused && !element.muted && element.readyState > 1))()
+    private func browserScript(for browser: BrowserScriptTarget) -> String {
+        let mediaMetadataCheck = """
+        (() => { const clean = (value) => String(value || '').replace(/\\|\\|/g, ' ').trim(); const host = clean(location.hostname); const href = clean(location.href); const isYouTube = /(^|\\.)youtube\\.com$|(^|\\.)youtu\\.be$/.test(location.hostname); const isYouTubeWatch = isYouTube && /\\/watch(\\?|$)/.test(location.pathname + location.search); const candidates = Array.from(document.querySelectorAll('video,audio')).filter((element) => { const hasDuration = Number.isFinite(element.duration) && element.duration > 0; const hasProgress = Number.isFinite(element.currentTime) && element.currentTime > 0; const hasSource = Boolean(element.currentSrc || element.src); return !element.ended && (element.readyState >= 1 || hasDuration || hasProgress || hasSource); }); candidates.sort((first, second) => Number(first.paused) - Number(second.paused)); const media = candidates[0]; if (!media && !isYouTubeWatch) { return ''; } const rawTitle = clean(document.title).replace(/ - YouTube$/, ''); const title = rawTitle || (isYouTube ? 'YouTube' : 'Browser Audio'); const source = isYouTube ? 'YouTube' : (host || 'Browser'); const current = media && Number.isFinite(media.currentTime) ? String(media.currentTime) : ''; const duration = media && Number.isFinite(media.duration) && media.duration > 0 ? String(media.duration) : ''; const state = media ? ((!media.paused && !media.ended) ? 'playing' : 'paused') : 'unknown'; return ['media', title, source, current, duration, state, href].join('||'); })()
         """
-        if usesChromeScripting {
+        if browser.usesChromeScripting {
             return """
             with timeout of 1 seconds
-                tell application "\(applicationName)"
+                tell application "\(browser.applicationName)"
                     if it is running then
                         repeat with browserWindow in windows
                             repeat with browserTab in tabs of browserWindow
                                 try
-                                    if execute browserTab javascript "\(Self.appleScriptEscaped(mediaCheck))" is true then return "playing"
+                                    set mediaState to execute browserTab javascript "\(Self.appleScriptEscaped(mediaMetadataCheck))"
+                                    if mediaState is not "" then return mediaState
+                                end try
+                                try
+                                    set tabURL to URL of browserTab as text
+                                    if tabURL contains "youtube.com/watch" or tabURL contains "youtu.be/" then
+                                        set tabTitle to title of browserTab as text
+                                        return "media||" & tabTitle & "||YouTube||||||unknown||" & tabURL
+                                    end if
                                 end try
                             end repeat
                         end repeat
@@ -199,12 +431,20 @@ final class MediaController: ObservableObject {
 
         return """
         with timeout of 1 seconds
-            tell application "\(applicationName)"
+            tell application "\(browser.applicationName)"
                 if it is running then
                     repeat with browserWindow in windows
                         repeat with browserTab in tabs of browserWindow
                             try
-                                if do JavaScript "\(Self.appleScriptEscaped(mediaCheck))" in browserTab is true then return "playing"
+                                set mediaState to do JavaScript "\(Self.appleScriptEscaped(mediaMetadataCheck))" in browserTab
+                                if mediaState is not "" then return mediaState
+                            end try
+                            try
+                                set tabURL to URL of browserTab as text
+                                if tabURL contains "youtube.com/watch" or tabURL contains "youtu.be/" then
+                                    set tabTitle to name of browserTab as text
+                                    return "media||" & tabTitle & "||YouTube||||||unknown||" & tabURL
+                                end if
                             end try
                         end repeat
                     end repeat
@@ -233,14 +473,429 @@ final class MediaController: ObservableObject {
         }
     }
 
-    private func loadArtwork(from rawValue: String) {
-        guard let url = URL(string: rawValue), !rawValue.isEmpty else {
-            artworkImage = nil
-            currentArtworkURL = nil
+    private func bundleIdentifier(for player: MediaPlayer) -> String {
+        switch player {
+        case .spotify:
+            "com.spotify.client"
+        case .music:
+            "com.apple.Music"
+        }
+    }
+
+    private func selectBestSnapshot(from candidates: [MediaCandidate]) -> MediaCandidate? {
+        guard !candidates.isEmpty else { return nil }
+        let ranked = candidates.map { candidate in
+            (candidate, MediaArbitrator.score(candidate, currentIdentity: lastSelectedSourceIdentity))
+        }
+
+        #if DEBUG
+        for (candidate, score) in ranked {
+            logCandidate(candidate, score: score)
+        }
+        #endif
+
+        if let selected = MediaArbitrator.selectBestCandidate(
+            from: candidates,
+            currentIdentity: lastSelectedSourceIdentity
+        ) {
+            let reason = MediaArbitrator.selectionReason(
+                selected,
+                candidates: candidates,
+                currentIdentity: lastSelectedSourceIdentity
+            )
+            if reason == "paused current source still valid" {
+                logPausedHysteresisKept(current: selected, candidates: candidates)
+            }
+            logSelection(
+                selected,
+                score: MediaArbitrator.score(selected, currentIdentity: lastSelectedSourceIdentity),
+                reason: reason
+            )
+            return selected
+        }
+
+        return nil
+    }
+
+    private func candidateConfirmedForPublishing(
+        _ candidate: MediaCandidate,
+        reason: String
+    ) -> (candidate: MediaCandidate, reason: String)? {
+        let identityChanged = candidate.identity != lastSelectedSourceIdentity
+        if !identityChanged {
+            resetPendingPausedSwitch()
+            return (candidate, reason)
+        }
+
+        if candidate.snapshot.isPlaying {
+            resetPendingPausedSwitch()
+            return (candidate, reason)
+        }
+
+        let decision = MediaPausedSwitchGate.decision(
+            candidateIdentity: candidate.identity,
+            currentIdentity: lastSelectedSourceIdentity,
+            currentWasPlaying: lastSelectedSourceWasPlaying,
+            pendingIdentity: pendingPausedSwitchIdentity,
+            pendingFirstSeenAt: pendingPausedSwitchFirstSeenAt,
+            pendingCount: pendingPausedSwitchCount,
+            now: Date()
+        )
+
+        pendingPausedSwitchIdentity = candidate.identity
+        pendingPausedSwitchFirstSeenAt = decision.firstSeenAt
+        pendingPausedSwitchCount = decision.count
+
+        guard decision.shouldPublish else {
+            logPausedSwitchPending(candidate, reason: decision.reason)
+            return nil
+        }
+
+        resetPendingPausedSwitch()
+        return (candidate, decision.reason)
+    }
+
+    private func resetPendingPausedSwitch() {
+        pendingPausedSwitchIdentity = nil
+        pendingPausedSwitchFirstSeenAt = nil
+        pendingPausedSwitchCount = 0
+    }
+
+    private func publishSelectedCandidate(_ candidate: MediaCandidate, reason: String) {
+        let previousSource = sourceName
+        let previousTitle = title
+        let previousPlaying = isPlaying
+        let previousYouTubeVideoID = currentYouTubeVideoID
+        let previousIdentity = lastSelectedSourceIdentity
+        let snapshot = candidate.snapshot
+        let identityChanged = candidate.identity != lastSelectedSourceIdentity
+        if identityChanged {
+            selectedPublishGeneration += 1
+            lastSelectedSourceSelectedAt = Date()
+        }
+        let publishGeneration = selectedPublishGeneration
+        let sameYouTubeVideo = candidate.youtubeVideoID != nil &&
+            candidate.youtubeVideoID == previousYouTubeVideoID
+
+        logSelectedCandidatePublish(candidate, reason: reason, identityChanged: identityChanged)
+
+        title = snapshot.title
+        if sameYouTubeVideo,
+           snapshot.artist == "YouTube",
+           artist != "YouTube",
+           !artist.isEmpty {
+            // Keep the already enriched channel while the same YouTube video remains selected.
+        } else {
+            artist = snapshot.artist ?? snapshot.sourceName
+        }
+        sourceName = snapshot.sourceName
+        sourceBundleIdentifier = snapshot.bundleIdentifier
+        sourceKind = snapshot.sourceKind
+        hasActiveMediaSource = true
+        isPlaying = snapshot.isPlaying
+        if !isScrubbing {
+            playbackPosition = candidate.hasPlaybackProgress ? (snapshot.elapsedTime ?? 0) : 0
+        }
+        duration = candidate.hasPlaybackProgress ? max(1, snapshot.duration ?? 1) : 1
+        isTransportControlAvailable = snapshot.transportAvailable
+        isSeekControlAvailable = snapshot.seekAvailable
+        isVolumeControlAvailable = snapshot.volumeAvailable
+        hasPlaybackProgress = candidate.hasPlaybackProgress
+        currentYouTubeVideoID = candidate.youtubeVideoID
+        lastSelectedSourceIdentity = candidate.identity
+        lastSelectedSourceWasPlaying = candidate.snapshot.isPlaying
+        if let candidateVolume = candidate.volume {
+            volume = candidateVolume
+        }
+
+        if let candidatePlayer = candidate.activePlayer {
+            activePlayer = candidatePlayer
+        } else {
+            switch snapshot.sourceKind {
+            case .spotify:
+                activePlayer = .spotify
+            case .music:
+                activePlayer = .music
+            case .browser, .system, .unknown:
+                break
+            }
+        }
+
+        publishArtwork(for: candidate, generation: publishGeneration, sourceChanged: identityChanged)
+
+        if let youtubePageURL = candidate.youtubePageURL,
+           let youtubeVideoID = candidate.youtubeVideoID {
+            enrichYouTubeMetadata(
+                pageURL: youtubePageURL,
+                videoID: youtubeVideoID,
+                identity: candidate.identity,
+                generation: publishGeneration
+            )
+        }
+
+        logSourceSwitch(
+            previousIdentity: previousIdentity,
+            previousSource: previousSource,
+            previousTitle: previousTitle,
+            previousPlaying: previousPlaying,
+            selected: candidate
+        )
+        logSelectedProvider(candidate.providerName, snapshot: snapshot)
+        logMediaDetection(source: snapshot.sourceName, usesPlaceholderArtwork: snapshot.artwork == nil)
+    }
+
+    private func enrichYouTubeMetadata(
+        pageURL: String,
+        videoID: String,
+        identity: MediaSourceIdentity,
+        generation: Int
+    ) {
+        logYouTubeMetadata(
+            phase: "request",
+            pageURL: pageURL,
+            videoID: videoID,
+            title: title,
+            authorName: artist,
+            thumbnailURLExists: false,
+            thumbnailLoaded: artworkImage != nil
+        )
+
+        Task {
+            guard let metadata = await youtubeMetadataProvider.metadata(for: pageURL) else {
+                await MainActor.run {
+                    self.logYouTubeMetadata(
+                        phase: "unavailable",
+                        pageURL: pageURL,
+                        videoID: videoID,
+                        title: self.title,
+                        authorName: self.artist,
+                        thumbnailURLExists: false,
+                        thumbnailLoaded: self.artworkImage != nil
+                    )
+                }
+                return
+            }
+
+            await MainActor.run {
+                guard self.currentYouTubeVideoID == metadata.videoID,
+                      MediaPublishGuard.canApplyAsyncUpdate(
+                        selectedIdentity: self.lastSelectedSourceIdentity,
+                        selectedGeneration: self.selectedPublishGeneration,
+                        requestIdentity: identity,
+                        requestGeneration: generation
+                      )
+                else {
+                    self.logYouTubeMetadata(
+                        phase: "discarded-not-selected",
+                        pageURL: pageURL,
+                        videoID: metadata.videoID,
+                        title: metadata.title,
+                        authorName: metadata.authorName,
+                        thumbnailURLExists: metadata.thumbnailURL != nil,
+                        thumbnailLoaded: metadata.thumbnailData != nil
+                    )
+                    return
+                }
+
+                if let metadataTitle = metadata.title, !metadataTitle.isEmpty {
+                    self.title = metadataTitle
+                }
+                if let authorName = metadata.authorName, !authorName.isEmpty {
+                    self.artist = authorName
+                } else if self.artist.isEmpty {
+                    self.artist = "YouTube"
+                }
+                if let thumbnailData = metadata.thumbnailData,
+                   let image = NSImage(data: thumbnailData) {
+                    let key = metadata.thumbnailURL
+                        .map { "url:\($0.absoluteString)" } ??
+                        "youtube:\(metadata.videoID)"
+                    self.assignArtwork(
+                        image,
+                        key: key,
+                        sourceIdentity: identity,
+                        reason: "YouTube oEmbed thumbnail",
+                        force: false
+                    )
+                }
+
+                self.logYouTubeMetadata(
+                    phase: "applied",
+                    pageURL: pageURL,
+                    videoID: metadata.videoID,
+                    title: self.title,
+                    authorName: self.artist,
+                    thumbnailURLExists: metadata.thumbnailURL != nil,
+                    thumbnailLoaded: self.artworkImage != nil
+                )
+                self.logMediaDetection(source: self.sourceName, usesPlaceholderArtwork: self.artworkImage == nil)
+            }
+        }
+    }
+
+    private func publishArtwork(for candidate: MediaCandidate, generation: Int, sourceChanged: Bool) {
+        let key = candidate.artworkKey
+
+        if let embeddedArtwork = candidate.snapshot.artwork,
+           let key {
+            assignArtwork(
+                embeddedArtwork,
+                key: key,
+                sourceIdentity: candidate.identity,
+                reason: "selected candidate has embedded artwork",
+                force: sourceChanged
+            )
             return
         }
-        guard rawValue != currentArtworkURL else { return }
-        currentArtworkURL = rawValue
+
+        if let key, let cachedArtwork = artworkCache[key] {
+            assignArtwork(
+                cachedArtwork,
+                key: key,
+                sourceIdentity: candidate.identity,
+                reason: "cached artwork",
+                force: sourceChanged
+            )
+            return
+        }
+
+        if let artworkURL = candidate.artworkURL,
+           let key {
+            if currentArtworkSourceIdentity == candidate.identity,
+               currentArtworkKey == key,
+               artworkImage != nil {
+                logArtworkAssignment(
+                    reason: "skipped unchanged artwork while load may be in flight",
+                    sourceIdentity: candidate.identity,
+                    oldKey: currentArtworkKey,
+                    newKey: key,
+                    skipped: true
+                )
+                return
+            }
+
+            currentArtworkKey = key
+            artworkKey = key
+            currentArtworkSourceIdentity = candidate.identity
+            currentArtworkURL = artworkURL
+            loadArtwork(
+                from: artworkURL,
+                key: key,
+                identity: candidate.identity,
+                generation: generation
+            )
+            return
+        }
+
+        if currentArtworkSourceIdentity == candidate.identity, artworkImage != nil {
+            logArtworkAssignment(
+                reason: "kept existing artwork because candidate artwork is temporarily unavailable",
+                sourceIdentity: candidate.identity,
+                oldKey: currentArtworkKey,
+                newKey: key,
+                skipped: true
+            )
+            return
+        }
+
+        let placeholderKey = candidate.artworkKey ?? "placeholder:\(candidate.identity.debugDescription)"
+        let oldKey = currentArtworkKey
+        if currentArtworkSourceIdentity == candidate.identity,
+           currentArtworkKey == placeholderKey,
+           artworkImage == nil {
+            logArtworkAssignment(
+                reason: "skipped unchanged placeholder",
+                sourceIdentity: candidate.identity,
+                oldKey: currentArtworkKey,
+                newKey: placeholderKey,
+                skipped: true
+            )
+            return
+        }
+
+        currentArtworkKey = placeholderKey
+        artworkKey = placeholderKey
+        currentArtworkSourceIdentity = candidate.identity
+        currentArtworkURL = nil
+        artworkImage = nil
+        logArtworkAssignment(
+            reason: sourceChanged ? "source changed with no artwork; using placeholder" : "using placeholder fallback",
+            sourceIdentity: candidate.identity,
+            oldKey: oldKey,
+            newKey: placeholderKey,
+            skipped: false
+        )
+    }
+
+    private func assignArtwork(
+        _ image: NSImage,
+        key: String,
+        sourceIdentity: MediaSourceIdentity,
+        reason: String,
+        force: Bool
+    ) {
+        let oldKey = currentArtworkKey
+        if !force,
+           currentArtworkSourceIdentity == sourceIdentity,
+           currentArtworkKey == key,
+           artworkImage != nil {
+            logArtworkAssignment(
+                reason: "skipped unchanged artwork",
+                sourceIdentity: sourceIdentity,
+                oldKey: oldKey,
+                newKey: key,
+                skipped: true
+            )
+            return
+        }
+
+        artworkCache[key] = image
+        currentArtworkKey = key
+        artworkKey = key
+        currentArtworkSourceIdentity = sourceIdentity
+        currentArtworkURL = key.hasPrefix("url:") ? String(key.dropFirst(4)) : currentArtworkURL
+        artworkImage = image
+        logArtworkAssignment(
+            reason: reason,
+            sourceIdentity: sourceIdentity,
+            oldKey: oldKey,
+            newKey: key,
+            skipped: false
+        )
+    }
+
+    private func clearArtwork(reason: String) {
+        let oldKey = currentArtworkKey
+        artworkImage = nil
+        currentArtworkURL = nil
+        currentArtworkKey = nil
+        artworkKey = nil
+        currentArtworkSourceIdentity = nil
+        logArtworkAssignment(
+            reason: reason,
+            sourceIdentity: lastSelectedSourceIdentity,
+            oldKey: oldKey,
+            newKey: nil,
+            skipped: false
+        )
+    }
+
+    private func loadArtwork(
+        from rawValue: String,
+        key: String,
+        identity: MediaSourceIdentity,
+        generation: Int
+    ) {
+        guard let url = URL(string: rawValue), !rawValue.isEmpty else {
+            logArtworkAssignment(
+                reason: "skipped invalid artwork URL",
+                sourceIdentity: identity,
+                oldKey: currentArtworkKey,
+                newKey: key,
+                skipped: true
+            )
+            return
+        }
 
         Task {
             guard
@@ -250,7 +905,29 @@ final class MediaController: ObservableObject {
                 return
             }
             await MainActor.run {
-                self.artworkImage = image
+                guard MediaPublishGuard.canApplyAsyncUpdate(
+                    selectedIdentity: self.lastSelectedSourceIdentity,
+                    selectedGeneration: self.selectedPublishGeneration,
+                    requestIdentity: identity,
+                    requestGeneration: generation
+                ),
+                    self.currentArtworkKey == key
+                else {
+                    self.logAsyncArtworkDiscarded(
+                        rawValue: rawValue,
+                        key: key,
+                        identity: identity,
+                        generation: generation
+                    )
+                    return
+                }
+                self.assignArtwork(
+                    image,
+                    key: key,
+                    sourceIdentity: identity,
+                    reason: "downloaded Spotify artwork",
+                    force: false
+                )
             }
         }
     }
@@ -259,11 +936,380 @@ final class MediaController: ObservableObject {
         _ = runAppleScript("tell application \"\(player.rawValue)\" to \(command)")
     }
 
+    private func logMediaDetection(source: String, usesPlaceholderArtwork: Bool = false) {
+        #if DEBUG
+        debugPrint(
+            "DynamicIsland media",
+            "source=\(source)",
+            "title=\(title)",
+            "artist=\(artist)",
+            "sourceKind=\(sourceKind)",
+            "hasActiveMediaSource=\(hasActiveMediaSource)",
+            "isPlaying=\(isPlaying)",
+            "bundleIdentifier=\(sourceBundleIdentifier ?? "nil")",
+            "hasArtwork=\(artworkImage != nil)",
+            "usesPlaceholderArtwork=\(usesPlaceholderArtwork || artworkImage == nil)",
+            "transport=\(isTransportControlAvailable)",
+            "seek=\(isSeekControlAvailable)",
+            "hasProgress=\(hasPlaybackProgress)",
+            "duration=\(hasPlaybackProgress ? String(duration) : "unknown")",
+            "currentTime=\(hasPlaybackProgress ? String(playbackPosition) : "unknown")"
+        )
+        #endif
+    }
+
+    private func logProviderAttempt(_ provider: String) {
+        #if DEBUG
+        debugPrint("DynamicIsland media provider", "attempt=\(provider)")
+        #endif
+    }
+
+    private func logProviderResult(_ provider: String, succeeded: Bool, snapshot: MediaSnapshot? = nil) {
+        #if DEBUG
+        if let snapshot {
+            debugPrint(
+                "DynamicIsland media provider",
+                "provider=\(provider)",
+                "succeeded=\(succeeded)",
+                "title=\(snapshot.title)",
+                "source=\(snapshot.sourceName)",
+                "bundleIdentifier=\(snapshot.bundleIdentifier ?? "nil")",
+                "sourceKind=\(snapshot.sourceKind)",
+                "isPlaying=\(snapshot.isPlaying)",
+                "hasArtwork=\(snapshot.artwork != nil)",
+                "duration=\(snapshot.duration.map { String($0) } ?? "nil")",
+                "elapsed=\(snapshot.elapsedTime.map { String($0) } ?? "nil")"
+            )
+        } else {
+            debugPrint(
+                "DynamicIsland media provider",
+                "provider=\(provider)",
+                "succeeded=\(succeeded)"
+            )
+        }
+        #endif
+    }
+
+    private func logSelectedProvider(_ provider: String, snapshot: MediaSnapshot? = nil) {
+        #if DEBUG
+        if let snapshot {
+            debugPrint(
+                "DynamicIsland media provider",
+                "selected=\(provider)",
+                "title=\(snapshot.title)",
+                "source=\(snapshot.sourceName)",
+                "bundleIdentifier=\(snapshot.bundleIdentifier ?? "nil")",
+                "isPlaying=\(snapshot.isPlaying)"
+            )
+        } else {
+            debugPrint(
+                "DynamicIsland media provider",
+                "selected=\(provider)",
+                "title=\(title)",
+                "source=\(sourceName)",
+                "bundleIdentifier=\(sourceBundleIdentifier ?? "nil")",
+                "isPlaying=\(isPlaying)"
+            )
+        }
+        #endif
+    }
+
+    private func logCandidate(_ candidate: MediaCandidate, score: Int) {
+        #if DEBUG
+        debugPrint(
+            "DynamicIsland media candidate",
+            "identity=\(candidate.identity.debugDescription)",
+            "provider=\(candidate.providerName)",
+            "sourceKind=\(candidate.snapshot.sourceKind)",
+            "title=\(candidate.snapshot.title)",
+            "source=\(candidate.snapshot.sourceName)",
+            "bundleIdentifier=\(candidate.snapshot.bundleIdentifier ?? "nil")",
+            "isPlaying=\(candidate.snapshot.isPlaying)",
+            "hasArtwork=\(candidate.snapshot.artwork != nil || candidate.artworkURL != nil)",
+            "hasProgress=\(candidate.hasPlaybackProgress)",
+            "matchesCurrent=\(candidate.identity == lastSelectedSourceIdentity)",
+            "score=\(score)"
+        )
+        #endif
+    }
+
+    private func logSelection(_ candidate: MediaCandidate, score: Int, reason: String) {
+        #if DEBUG
+        debugPrint(
+            "DynamicIsland media selection",
+            "identity=\(candidate.identity.debugDescription)",
+            "provider=\(candidate.providerName)",
+            "sourceKind=\(candidate.snapshot.sourceKind)",
+            "title=\(candidate.snapshot.title)",
+            "source=\(candidate.snapshot.sourceName)",
+            "isPlaying=\(candidate.snapshot.isPlaying)",
+            "score=\(score)",
+            "reason=\(reason)"
+        )
+        #endif
+    }
+
+    private func logSelectedCandidatePublish(
+        _ candidate: MediaCandidate,
+        reason: String,
+        identityChanged: Bool
+    ) {
+        #if DEBUG
+        debugPrint(
+            "DynamicIsland media publishing selected candidate",
+            "provider=\(candidate.providerName)",
+            "identity=\(candidate.identity.debugDescription)",
+            "source=\(candidate.snapshot.sourceName)",
+            "title=\(candidate.snapshot.title)",
+            "isPlaying=\(candidate.snapshot.isPlaying)",
+            "reason=\(reason)",
+            "identityChanged=\(identityChanged)",
+            "generation=\(selectedPublishGeneration)"
+        )
+        #endif
+    }
+
+    private func logAsyncArtworkDiscarded(
+        rawValue: String,
+        key: String,
+        identity: MediaSourceIdentity,
+        generation: Int
+    ) {
+        #if DEBUG
+        debugPrint(
+            "DynamicIsland media async artwork discarded",
+            "requestIdentity=\(identity.debugDescription)",
+            "requestGeneration=\(generation)",
+            "selectedIdentity=\(lastSelectedSourceIdentity?.debugDescription ?? "nil")",
+            "selectedGeneration=\(selectedPublishGeneration)",
+            "key=\(key)",
+            "url=\(rawValue)"
+        )
+        #endif
+    }
+
+    private func logArtworkAssignment(
+        reason: String,
+        sourceIdentity: MediaSourceIdentity?,
+        oldKey: String?,
+        newKey: String?,
+        skipped: Bool
+    ) {
+        #if DEBUG
+        debugPrint(
+            "DynamicIsland media artwork",
+            "reason=\(reason)",
+            "skipped=\(skipped)",
+            "sourceIdentity=\(sourceIdentity?.debugDescription ?? "nil")",
+            "selectedIdentity=\(lastSelectedSourceIdentity?.debugDescription ?? "nil")",
+            "sourceKind=\(sourceKind)",
+            "title=\(title)",
+            "artist=\(artist)",
+            "oldKey=\(oldKey ?? "nil")",
+            "newKey=\(newKey ?? "nil")",
+            "currentKey=\(currentArtworkKey ?? "nil")",
+            "hasArtwork=\(artworkImage != nil)"
+        )
+        #endif
+    }
+
+    private func logPausedSwitchPending(_ candidate: MediaCandidate, reason: String) {
+        #if DEBUG
+        debugPrint(
+            "DynamicIsland media arbitration",
+            "paused switch not published",
+            "reason=\(reason)",
+            "current=\(lastSelectedSourceIdentity?.debugDescription ?? "nil")",
+            "candidate=\(candidate.identity.debugDescription)",
+            "candidateTitle=\(candidate.snapshot.title)",
+            "candidatePlaying=\(candidate.snapshot.isPlaying)",
+            "currentWasPlaying=\(lastSelectedSourceWasPlaying)",
+            "pendingCount=\(pendingPausedSwitchCount)"
+        )
+        #endif
+    }
+
+    private func logPausedHysteresisKept(current: MediaCandidate, candidates: [MediaCandidate]) {
+        #if DEBUG
+        for candidate in candidates where candidate.identity != current.identity {
+            debugPrint(
+                "DynamicIsland media arbitration",
+                "blocked paused-source switch",
+                "current=\(current.identity.debugDescription)",
+                "candidate=\(candidate.identity.debugDescription)",
+                "currentTitle=\(current.snapshot.title)",
+                "candidateTitle=\(candidate.snapshot.title)",
+                "reason=current paused source still valid; no playback activity"
+            )
+        }
+        #endif
+    }
+
+    private func logSourceSwitch(
+        previousIdentity: MediaSourceIdentity?,
+        previousSource: String,
+        previousTitle: String,
+        previousPlaying: Bool,
+        selected: MediaCandidate
+    ) {
+        #if DEBUG
+        guard previousSource != selected.snapshot.sourceName ||
+            previousTitle != selected.snapshot.title ||
+            previousPlaying != selected.snapshot.isPlaying
+        else {
+            return
+        }
+        debugPrint(
+            "DynamicIsland media source switch",
+            "previousIdentity=\(previousIdentity?.debugDescription ?? "nil")",
+            "previousSource=\(previousSource)",
+            "previousTitle=\(previousTitle)",
+            "previousPlaying=\(previousPlaying)",
+            "newIdentity=\(selected.identity.debugDescription)",
+            "newSource=\(selected.snapshot.sourceName)",
+            "newTitle=\(selected.snapshot.title)",
+            "newPlaying=\(selected.snapshot.isPlaying)"
+        )
+        #endif
+    }
+
+    private func logMediaSourceOpenRequested(target: MediaSourceOpenTarget?) {
+        #if DEBUG
+        debugPrint(
+            "DynamicIsland media source open requested",
+            "sourceKind=\(sourceKind)",
+            "source=\(sourceName)",
+            "bundle=\(sourceBundleIdentifier ?? "nil")",
+            "title=\(title)",
+            "target=\(target?.debugDescription ?? "nil")"
+        )
+        #endif
+    }
+
+    private func logMediaSourceOpenResult(
+        targetDescription: String,
+        fallbackUsed: Bool,
+        succeeded: Bool
+    ) {
+        #if DEBUG
+        debugPrint(
+            "DynamicIsland media source open",
+            "target=\(targetDescription)",
+            "fallback=\(fallbackUsed)",
+            "succeeded=\(succeeded)"
+        )
+        #endif
+    }
+
+    private func logBrowserDetectionAttempt(
+        browser: BrowserScriptTarget,
+        isRunning: Bool,
+        phase: String,
+        rawResult: String = "",
+        errorDescription: String? = nil
+    ) {
+        #if DEBUG
+        debugPrint(
+            "DynamicIsland browser detection",
+            "phase=\(phase)",
+            "browser=\(browser.applicationName)",
+            "bundleIdentifier=\(browser.bundleIdentifier)",
+            "isRunning=\(isRunning)",
+            "rawResult=\(rawResult)",
+            "error=\(errorDescription ?? "none")",
+            "hasActiveMediaSource=\(hasActiveMediaSource)",
+            "isPlaying=\(isPlaying)",
+            "title=\(title)",
+            "source=\(sourceName)"
+        )
+        #endif
+    }
+
+    private func logBrowserPlaybackSelection(
+        provider: String,
+        pageURL: String,
+        videoID: String?,
+        hasProgress: Bool,
+        playbackState: String
+    ) {
+        #if DEBUG
+        debugPrint(
+            "DynamicIsland browser playback",
+            "provider=\(provider)",
+            "pageURL=\(pageURL)",
+            "videoID=\(videoID ?? "nil")",
+            "state=\(playbackState)",
+            "isPlaying=\(isPlaying)",
+            "hasProgress=\(hasProgress)",
+            "duration=\(hasProgress ? String(duration) : "unknown")",
+            "currentTime=\(hasProgress ? String(playbackPosition) : "unknown")"
+        )
+        #endif
+    }
+
+    private func logYouTubeMetadata(
+        phase: String,
+        pageURL: String,
+        videoID: String,
+        title: String?,
+        authorName: String?,
+        thumbnailURLExists: Bool,
+        thumbnailLoaded: Bool
+    ) {
+        #if DEBUG
+        debugPrint(
+            "DynamicIsland YouTube metadata",
+            "phase=\(phase)",
+            "pageURL=\(pageURL)",
+            "videoID=\(videoID)",
+            "title=\(title ?? "nil")",
+            "author=\(authorName ?? "nil")",
+            "thumbnailURL=\(thumbnailURLExists)",
+            "thumbnailLoaded=\(thumbnailLoaded)",
+            "finalTitle=\(self.title)",
+            "finalArtist=\(self.artist)",
+            "finalArtwork=\(self.artworkImage != nil)",
+            "isPlaying=\(self.isPlaying)",
+            "hasProgress=\(self.hasPlaybackProgress)"
+        )
+        #endif
+    }
+
+    private func isApplicationRunning(_ browser: BrowserScriptTarget) -> Bool {
+        NSWorkspace.shared.runningApplications.contains { application in
+            application.bundleIdentifier == browser.bundleIdentifier ||
+                application.localizedName == browser.applicationName
+        }
+    }
+
     private func runAppleScript(_ source: String) -> String? {
+        runAppleScriptDetailed(source).output
+    }
+
+    private func runAppleScriptDetailed(_ source: String) -> AppleScriptExecutionResult {
         var error: NSDictionary?
-        let script = NSAppleScript(source: source)
-        let output = script?.executeAndReturnError(&error)
-        return output?.stringValue
+        guard let script = NSAppleScript(source: source) else {
+            return AppleScriptExecutionResult(output: "", errorDescription: "Unable to compile AppleScript")
+        }
+
+        let output = script.executeAndReturnError(&error)
+        return AppleScriptExecutionResult(
+            output: output.stringValue ?? "",
+            errorDescription: Self.appleScriptErrorDescription(error)
+        )
+    }
+
+    private static func appleScriptErrorDescription(_ error: NSDictionary?) -> String? {
+        guard let error else { return nil }
+        let message = error[NSAppleScript.errorMessage] as? String
+        let number = error[NSAppleScript.errorNumber] as? NSNumber
+        if let message, let number {
+            return "\(message) (\(number))"
+        }
+        if let message {
+            return message
+        }
+        return error.description
     }
 
     private static func appleScriptEscaped(_ value: String) -> String {
@@ -271,6 +1317,350 @@ final class MediaController: ObservableObject {
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
     }
+}
+
+private struct BrowserScriptTarget {
+    let applicationName: String
+    let bundleIdentifier: String
+    let usesChromeScripting: Bool
+}
+
+struct MediaSourceIdentity: Hashable {
+    let sourceKind: MediaSourceKind
+    let bundleIdentifier: String?
+    let persistentID: String?
+
+    init(sourceKind: MediaSourceKind, bundleIdentifier: String?, persistentID: String?) {
+        self.sourceKind = sourceKind
+        self.bundleIdentifier = bundleIdentifier?.lowercased()
+        self.persistentID = persistentID?.lowercased()
+    }
+
+    var debugDescription: String {
+        [
+            "\(sourceKind)",
+            bundleIdentifier ?? "nil",
+            persistentID ?? "nil"
+        ].joined(separator: "|")
+    }
+}
+
+enum MediaArbitrator {
+    static func selectBestCandidate(
+        from candidates: [MediaCandidate],
+        currentIdentity: MediaSourceIdentity?
+    ) -> MediaCandidate? {
+        guard !candidates.isEmpty else { return nil }
+
+        let playingCandidates = candidates.filter { $0.snapshot.isPlaying }
+        if !playingCandidates.isEmpty {
+            return bestCandidate(from: playingCandidates, currentIdentity: currentIdentity)
+        }
+
+        if let currentIdentity,
+           let currentCandidate = candidates.first(where: { $0.identity == currentIdentity }) {
+            return currentCandidate
+        }
+
+        return bestCandidate(from: candidates, currentIdentity: currentIdentity)
+    }
+
+    static func selectionReason(
+        _ selected: MediaCandidate,
+        candidates: [MediaCandidate],
+        currentIdentity: MediaSourceIdentity?
+    ) -> String {
+        if selected.snapshot.isPlaying {
+            return "playing candidate won"
+        }
+        if let currentIdentity,
+           selected.identity == currentIdentity {
+            return "paused current source still valid"
+        }
+        if let currentIdentity,
+           !candidates.contains(where: { $0.identity == currentIdentity }) {
+            return "current source disappeared"
+        }
+        return "deterministic paused fallback"
+    }
+
+    static func score(_ candidate: MediaCandidate, currentIdentity: MediaSourceIdentity?) -> Int {
+        var value = 0
+        if candidate.snapshot.isPlaying {
+            value += 1_000
+        }
+        if candidate.providerName == "System Now Playing", candidate.snapshot.isPlaying {
+            value += 100
+        }
+        if (candidate.snapshot.sourceKind == .spotify || candidate.snapshot.sourceKind == .music),
+           candidate.providerName.contains("AppleScript") {
+            value += 150
+        }
+        if candidate.identity == currentIdentity {
+            value += 500
+        }
+        if candidate.snapshot.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            value -= 500
+        }
+        return value
+    }
+
+    static func providerTieBreakRank(_ candidate: MediaCandidate) -> Int {
+        switch candidate.providerName {
+        case "Spotify AppleScript", "Music AppleScript":
+            return 4
+        case "Browser AppleScript":
+            return 3
+        case "System Now Playing":
+            return 2
+        default:
+            return 1
+        }
+    }
+
+    private static func bestCandidate(
+        from candidates: [MediaCandidate],
+        currentIdentity: MediaSourceIdentity?
+    ) -> MediaCandidate? {
+        candidates.max { first, second in
+            let firstScore = score(first, currentIdentity: currentIdentity)
+            let secondScore = score(second, currentIdentity: currentIdentity)
+            if firstScore == secondScore {
+                return providerTieBreakRank(first) < providerTieBreakRank(second)
+            }
+            return firstScore < secondScore
+        }
+    }
+}
+
+enum MediaPublishGuard {
+    static func canApplyAsyncUpdate(
+        selectedIdentity: MediaSourceIdentity?,
+        selectedGeneration: Int,
+        requestIdentity: MediaSourceIdentity,
+        requestGeneration: Int
+    ) -> Bool {
+        selectedIdentity == requestIdentity && selectedGeneration == requestGeneration
+    }
+}
+
+enum MediaPausedSwitchGate {
+    struct Decision {
+        let shouldPublish: Bool
+        let firstSeenAt: Date?
+        let count: Int
+        let reason: String
+    }
+
+    static let confirmationInterval: TimeInterval = 0.35
+    static let requiredConsecutivePolls = 2
+
+    static func decision(
+        candidateIdentity: MediaSourceIdentity,
+        currentIdentity: MediaSourceIdentity?,
+        currentWasPlaying: Bool,
+        pendingIdentity: MediaSourceIdentity?,
+        pendingFirstSeenAt: Date?,
+        pendingCount: Int,
+        now: Date
+    ) -> Decision {
+        guard currentIdentity != nil else {
+            return Decision(
+                shouldPublish: true,
+                firstSeenAt: nil,
+                count: 0,
+                reason: "initial paused candidate selected"
+            )
+        }
+
+        let firstSeenAt: Date
+        let count: Int
+        if pendingIdentity == candidateIdentity, let existingFirstSeenAt = pendingFirstSeenAt {
+            firstSeenAt = existingFirstSeenAt
+            count = pendingCount + 1
+        } else {
+            firstSeenAt = now
+            count = 1
+        }
+
+        let elapsed = now.timeIntervalSince(firstSeenAt)
+        let confirmed = count >= requiredConsecutivePolls && elapsed >= confirmationInterval
+        if confirmed {
+            return Decision(
+                shouldPublish: true,
+                firstSeenAt: firstSeenAt,
+                count: count,
+                reason: currentWasPlaying
+                    ? "confirmed paused switch after playing source disappeared"
+                    : "confirmed paused switch"
+            )
+        }
+
+        return Decision(
+            shouldPublish: false,
+            firstSeenAt: firstSeenAt,
+            count: count,
+            reason: currentWasPlaying
+                ? "blocked paused candidate from publishing over playing source"
+                : "pending paused switch confirmation"
+        )
+    }
+}
+
+enum MediaSourceOpenTarget: Equatable {
+    case app(AppLaunchService.SupportedApp)
+    case bundleIdentifier(String)
+    case youtube
+
+    static func resolve(
+        sourceKind: MediaSourceKind,
+        sourceName: String,
+        bundleIdentifier: String?
+    ) -> MediaSourceOpenTarget? {
+        let normalizedSource = sourceName.lowercased()
+        let normalizedBundle = bundleIdentifier?.lowercased()
+
+        if sourceKind == .spotify ||
+            normalizedBundle == AppLaunchService.SupportedApp.spotify.bundleIdentifier.lowercased() ||
+            normalizedSource.contains("spotify") {
+            return .app(.spotify)
+        }
+
+        if sourceKind == .music ||
+            normalizedBundle == AppLaunchService.SupportedApp.music.bundleIdentifier.lowercased() ||
+            normalizedSource.contains("music") ||
+            normalizedSource.contains("apple music") {
+            return .app(.music)
+        }
+
+        if let bundleIdentifier, !bundleIdentifier.isEmpty {
+            return .bundleIdentifier(bundleIdentifier)
+        }
+
+        if sourceKind == .browser ||
+            normalizedSource.contains("youtube") ||
+            normalizedSource.contains("browser") {
+            return .youtube
+        }
+
+        return nil
+    }
+
+    var debugDescription: String {
+        switch self {
+        case .app(let app):
+            app.displayName
+        case .bundleIdentifier(let bundleIdentifier):
+            bundleIdentifier
+        case .youtube:
+            "YouTube default browser"
+        }
+    }
+}
+
+struct MediaCandidate {
+    let providerName: String
+    let snapshot: MediaSnapshot
+    let hasPlaybackProgress: Bool
+    let artworkURL: String?
+    let volume: Double?
+    let activePlayer: MediaController.MediaPlayer?
+    let youtubePageURL: String?
+    let youtubeVideoID: String?
+    let playbackProvider: String?
+    let identity: MediaSourceIdentity
+    let artworkKey: String?
+
+    init(
+        providerName: String,
+        snapshot: MediaSnapshot,
+        hasPlaybackProgress: Bool? = nil,
+        artworkURL: String? = nil,
+        volume: Double? = nil,
+        activePlayer: MediaController.MediaPlayer? = nil,
+        youtubePageURL: String? = nil,
+        youtubeVideoID: String? = nil,
+        playbackProvider: String? = nil
+    ) {
+        self.providerName = providerName
+        self.snapshot = snapshot
+        self.hasPlaybackProgress = hasPlaybackProgress ??
+            (snapshot.duration.map { $0.isFinite && $0 > 1 } == true &&
+                snapshot.elapsedTime.map { $0.isFinite } == true)
+        self.artworkURL = artworkURL?.isEmpty == false ? artworkURL : nil
+        self.volume = volume
+        self.activePlayer = activePlayer
+        self.youtubePageURL = youtubePageURL?.isEmpty == false ? youtubePageURL : nil
+        self.youtubeVideoID = youtubeVideoID?.isEmpty == false ? youtubeVideoID : nil
+        self.playbackProvider = playbackProvider
+        self.identity = MediaSourceIdentity(
+            sourceKind: snapshot.sourceKind,
+            bundleIdentifier: snapshot.bundleIdentifier,
+            persistentID: Self.persistentID(
+                snapshot: snapshot,
+                youtubePageURL: self.youtubePageURL,
+                youtubeVideoID: self.youtubeVideoID
+            )
+        )
+        self.artworkKey = Self.artworkKey(
+            identity: self.identity,
+            artworkURL: self.artworkURL,
+            youtubePageURL: self.youtubePageURL,
+            youtubeVideoID: self.youtubeVideoID,
+            hasEmbeddedArtwork: snapshot.artwork != nil
+        )
+    }
+
+    var sourceKey: String {
+        identity.debugDescription
+    }
+
+    private static func persistentID(
+        snapshot: MediaSnapshot,
+        youtubePageURL: String?,
+        youtubeVideoID: String?
+    ) -> String {
+        if let youtubeVideoID {
+            return "youtube:\(youtubeVideoID)"
+        }
+        if let youtubePageURL {
+            return "url:\(youtubePageURL)"
+        }
+        let normalizedTitle = snapshot.title
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let normalizedArtist = (snapshot.artist ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return "\(snapshot.sourceKind)|\(normalizedTitle)|\(normalizedArtist)"
+    }
+
+    private static func artworkKey(
+        identity: MediaSourceIdentity,
+        artworkURL: String?,
+        youtubePageURL: String?,
+        youtubeVideoID: String?,
+        hasEmbeddedArtwork: Bool
+    ) -> String? {
+        if let artworkURL, !artworkURL.isEmpty {
+            return "url:\(artworkURL)"
+        }
+        if let youtubeVideoID, !youtubeVideoID.isEmpty {
+            return "youtube:\(youtubeVideoID)"
+        }
+        if let youtubePageURL, !youtubePageURL.isEmpty {
+            return "url:\(youtubePageURL)"
+        }
+        if hasEmbeddedArtwork {
+            return "embedded:\(identity.debugDescription)"
+        }
+        return nil
+    }
+}
+
+private struct AppleScriptExecutionResult {
+    let output: String
+    let errorDescription: String?
 }
 
 private extension Array {

@@ -24,6 +24,10 @@ public final class IslandStateStore: ObservableObject {
         }
     }
 
+    public func expand() {
+        state = .expanded
+    }
+
     public func collapseFromOutsideClick() {
         state = .collapsed
     }
