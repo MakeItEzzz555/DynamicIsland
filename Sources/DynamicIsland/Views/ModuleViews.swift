@@ -6,8 +6,8 @@ struct CompactMediaView: View {
     @ObservedObject var media: MediaController
 
     var body: some View {
-        AlbumArtworkView(image: media.artworkImage, size: 14)
-        .accessibilityLabel("Media \(media.title)")
+        FlippingAlbumArtworkView(media: media, size: CollapsedActivityLayoutProfile.mediaLeftContentWidth)
+            .accessibilityLabel("Media \(media.title)")
     }
 }
 
@@ -16,25 +16,68 @@ struct AudioVisualizerView: View {
     var isActive = true
     var accentColor: Color = ArtworkAccentColorExtractor.fallbackColor
     var variant: AudioVisualizerVariant = .compact
+    var barCount = 12
+    var pauseDuringShellMorph = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.isShellMorphing) private var isShellMorphing
+    @State private var isPlaybackVisuallyActive = false
+    @State private var playbackHoldGeneration = 0
 
     var body: some View {
-        Group {
-            if isPlaying && isActive && !reduceMotion {
-                TimelineView(.animation(minimumInterval: 1.0 / 24.0)) { timeline in
-                    bars(tick: timeline.date.timeIntervalSinceReferenceDate, opacity: 0.92)
-                }
-            } else {
-                bars(tick: nil, opacity: isActive ? 0.48 : 0.28)
-            }
+        TimelineView(.animation(minimumInterval: 1.0 / 24.0, paused: !shouldAnimateContinuously)) { timeline in
+            bars(
+                tick: shouldAnimateContinuously ? timeline.date.timeIntervalSinceReferenceDate : nil,
+                opacity: visualizerOpacity
+            )
         }
         .frame(width: variant.size.width, height: variant.size.height)
         .accessibilityLabel(isPlaying ? "Audio playing" : "Audio paused")
+        .onAppear {
+            updatePlaybackHold()
+        }
+        .onChange(of: isPlaying) { _, _ in
+            updatePlaybackHold()
+        }
+        .onChange(of: isActive) { _, _ in
+            updatePlaybackHold()
+        }
+    }
+
+    private var shouldAnimateContinuously: Bool {
+        isPlaybackVisuallyActive &&
+            !reduceMotion &&
+            !(pauseDuringShellMorph && isShellMorphing)
+    }
+
+    private var visualizerOpacity: Double {
+        if isPlaybackVisuallyActive {
+            return 0.92
+        }
+        return isActive ? 0.48 : 0.28
+    }
+
+    private func updatePlaybackHold() {
+        playbackHoldGeneration += 1
+        let generation = playbackHoldGeneration
+
+        guard isPlaying && isActive else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.playbackHoldDuration) {
+                guard generation == playbackHoldGeneration else { return }
+                guard !(isPlaying && isActive) else {
+                    isPlaybackVisuallyActive = true
+                    return
+                }
+                isPlaybackVisuallyActive = false
+            }
+            return
+        }
+
+        isPlaybackVisuallyActive = true
     }
 
     private func bars(tick: TimeInterval?, opacity: Double) -> some View {
         HStack(alignment: .center, spacing: variant.spacing) {
-            ForEach(0..<Self.barCount, id: \.self) { index in
+            ForEach(0..<barCount, id: \.self) { index in
                 Capsule(style: .continuous)
                     .fill(accentColor.opacity(opacity))
                     .frame(width: variant.barWidth, height: barHeight(index: index, tick: tick))
@@ -61,7 +104,7 @@ struct AudioVisualizerView: View {
         return variant.maximumBarHeight * min(max(fraction, 0.14), 1)
     }
 
-    private static let barCount = 12
+    private static let playbackHoldDuration: TimeInterval = 0.34
     private static let loopDuration: TimeInterval = 1.72
     private static let pausedFractions: [CGFloat] = [0.24, 0.36, 0.28, 0.46, 0.31, 0.40, 0.27, 0.34, 0.44, 0.30, 0.38, 0.26]
     private static let playingFractions: [[CGFloat]] = [
@@ -79,7 +122,7 @@ enum AudioVisualizerVariant {
     var size: CGSize {
         switch self {
         case .compact:
-            CGSize(width: 30, height: 14)
+            CGSize(width: CollapsedActivityLayoutProfile.mediaRightContentWidth, height: 14)
         case .expanded:
             CGSize(width: 76, height: 28)
         }
@@ -132,6 +175,240 @@ struct AlbumArtworkView: View {
     }
 }
 
+struct FlippingAlbumArtworkView: View {
+    @ObservedObject var media: MediaController
+    let size: CGFloat
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    @State private var displayedArtwork: NSImage?
+    @State private var displayedIdentity: String?
+    @State private var displayedFingerprint: String?
+    @State private var rotationDegrees: Double = 0
+    @State private var isFlipping = false
+    @State private var flipGeneration = 0
+
+    var body: some View {
+        AlbumArtworkView(image: displayedArtwork ?? media.artworkImage, size: size)
+            .rotation3DEffect(
+                .degrees(rotationDegrees),
+                axis: (x: 0, y: 1, z: 0),
+                perspective: 0.72
+            )
+            .onAppear {
+                initializeDisplayedArtworkIfNeeded()
+            }
+            .onChange(of: media.title) { _, _ in
+                handleArtworkChange(reason: "title changed")
+            }
+            .onChange(of: media.artist) { _, _ in
+                handleArtworkChange(reason: "artist changed")
+            }
+            .onChange(of: media.sourceName) { _, _ in
+                handleArtworkChange(reason: "source changed")
+            }
+            .onChange(of: media.artworkKey) { _, _ in
+                handleArtworkChange(reason: "artwork key changed")
+            }
+            .onChange(of: media.artworkImageRevision) { _, _ in
+                handleArtworkChange(reason: "artwork image revision changed")
+            }
+            .onReceive(media.$artworkImage) { _ in
+                handleArtworkChange(reason: "artwork image changed")
+            }
+    }
+
+    private var currentTrackIdentity: String {
+        [
+            media.sourceName,
+            media.title,
+            media.artist,
+            media.artworkKey ?? "nil"
+        ]
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        .joined(separator: "|")
+    }
+
+    private func initializeDisplayedArtworkIfNeeded() {
+        guard displayedIdentity == nil else { return }
+
+        displayedArtwork = media.artworkImage
+        displayedIdentity = currentTrackIdentity
+        displayedFingerprint = fingerprint(for: media.artworkImage)
+
+        debugArtworkFlip(
+            "initialized identity=\(displayedIdentity ?? "nil") fingerprint=\(displayedFingerprint ?? "nil")"
+        )
+    }
+
+    private func handleArtworkChange(reason: String) {
+        let newIdentity = currentTrackIdentity
+        let newArtwork = media.artworkImage
+        let newFingerprint = fingerprint(for: newArtwork)
+
+        initializeDisplayedArtworkIfNeeded()
+
+        guard let newArtwork else {
+            debugArtworkFlip("waiting reason=\(reason) no new artwork identity=\(newIdentity)")
+            return
+        }
+
+        guard let oldIdentity = displayedIdentity else {
+            displayedArtwork = newArtwork
+            displayedIdentity = newIdentity
+            displayedFingerprint = newFingerprint
+            debugArtworkFlip("assigned reason=no old identity new=\(newIdentity)")
+            return
+        }
+
+        guard let oldArtwork = displayedArtwork else {
+            displayedArtwork = newArtwork
+            displayedIdentity = newIdentity
+            displayedFingerprint = newFingerprint
+            debugArtworkFlip("assigned reason=no old artwork new=\(newIdentity)")
+            return
+        }
+
+        let identityChanged = newIdentity != oldIdentity
+        let fingerprintChanged = newFingerprint != nil && newFingerprint != displayedFingerprint
+
+        guard identityChanged || fingerprintChanged else {
+            return
+        }
+
+        /*
+         Important:
+         MediaController may publish a new artworkKey before the actual downloaded
+         NSImage has arrived. In that moment media.artworkImage can still be the
+         old image. If we flip there, the animation flips old cover -> old cover.
+
+         So:
+         - If identity changed but the image fingerprint is still the same,
+           wait for the later artworkImage publish.
+         - If the fingerprint changed, we now have the real new cover.
+         */
+        if identityChanged && !fingerprintChanged {
+            debugArtworkFlip(
+                "waiting reason=\(reason) identity changed but artwork image still stale old=\(oldIdentity) new=\(newIdentity)"
+            )
+            return
+        }
+
+        guard let request = media.artworkFlipRequest,
+              !request.isExpired,
+              !reduceMotion else {
+            displayedArtwork = newArtwork
+            displayedIdentity = newIdentity
+            displayedFingerprint = newFingerprint
+
+            if let request = media.artworkFlipRequest, request.isExpired {
+                media.consumeArtworkFlipRequest(id: request.id)
+                debugArtworkFlip("assigned without flip reason=request expired new=\(newIdentity)")
+            } else if reduceMotion {
+                debugArtworkFlip("assigned without flip reason=reduce motion new=\(newIdentity)")
+            } else {
+                debugArtworkFlip("assigned without flip reason=no request new=\(newIdentity)")
+            }
+
+            return
+        }
+
+        startFlip(
+            from: oldIdentity,
+            to: newIdentity,
+            oldArtwork: oldArtwork,
+            newArtwork: newArtwork,
+            newFingerprint: newFingerprint,
+            direction: request.direction,
+            requestID: request.id
+        )
+    }
+
+    private func startFlip(
+        from oldIdentity: String,
+        to newIdentity: String,
+        oldArtwork: NSImage,
+        newArtwork: NSImage,
+        newFingerprint: String?,
+        direction: MediaArtworkFlipDirection,
+        requestID: UUID
+    ) {
+        if isFlipping {
+            displayedArtwork = newArtwork
+            displayedIdentity = newIdentity
+            displayedFingerprint = newFingerprint
+            media.consumeArtworkFlipRequest(id: requestID)
+            debugArtworkFlip("forced assign reason=already flipping new=\(newIdentity)")
+            return
+        }
+
+        isFlipping = true
+        flipGeneration += 1
+
+        let generation = flipGeneration
+        let firstHalfDegrees = direction == .next ? -90.0 : 90.0
+        let secondHalfStartDegrees = -firstHalfDegrees
+        let halfDuration = 0.19
+
+        debugArtworkFlip(
+            "starting flip old=\(oldIdentity) new=\(newIdentity) direction=\(direction.rawValue)"
+        )
+
+        media.consumeArtworkFlipRequest(id: requestID)
+
+        withAnimation(.easeInOut(duration: halfDuration)) {
+            rotationDegrees = firstHalfDegrees
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + halfDuration) {
+            guard generation == flipGeneration else { return }
+
+            displayedArtwork = newArtwork
+            displayedIdentity = newIdentity
+            displayedFingerprint = newFingerprint
+            rotationDegrees = secondHalfStartDegrees
+
+            debugArtworkFlip("midpoint swap new=\(newIdentity)")
+
+            withAnimation(.easeInOut(duration: halfDuration)) {
+                rotationDegrees = 0
+            }
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + halfDuration) {
+                guard generation == flipGeneration else { return }
+
+                isFlipping = false
+                debugArtworkFlip("completed new=\(newIdentity)")
+            }
+        }
+    }
+
+    private func fingerprint(for image: NSImage?) -> String? {
+        guard let image else { return nil }
+
+        let size = image.size
+        let representations = image.representations
+        let pixelDescription = representations
+            .map { "\($0.pixelsWide)x\($0.pixelsHigh)" }
+            .joined(separator: ",")
+
+        let dataHash: Int
+        if let data = image.tiffRepresentation {
+            dataHash = data.hashValue
+        } else {
+            dataHash = ObjectIdentifier(image).hashValue
+        }
+
+        return "rev=\(media.artworkImageRevision)|\(Int(size.width))x\(Int(size.height))|\(pixelDescription)|\(dataHash)"
+    }
+
+    private func debugArtworkFlip(_ message: String) {
+        #if DEBUG
+        print("[ArtworkFlip] \(message)")
+        #endif
+    }
+}
+
 struct CompactShelfBadge: View {
     @ObservedObject var fileShelf: FileShelfStore
 
@@ -147,23 +424,85 @@ struct CompactShelfBadge: View {
 }
 
 struct MediaModuleView: View {
+    @ObservedObject var settings: AppSettings
     @ObservedObject var media: MediaController
+    let availableHeight: CGFloat?
     let onLauncherActivated: () -> Void
     let onMediaSourceOpened: () -> Void
     @ObservedObject private var accentCache = ArtworkAccentColorCache.shared
 
     init(
+        settings: AppSettings,
         media: MediaController,
+        availableHeight: CGFloat? = nil,
         onLauncherActivated: @escaping () -> Void = {},
         onMediaSourceOpened: @escaping () -> Void = {}
     ) {
+        self.settings = settings
         self.media = media
+        self.availableHeight = availableHeight
         self.onLauncherActivated = onLauncherActivated
         self.onMediaSourceOpened = onMediaSourceOpened
     }
 
+    private var usesCompactExpandedLayout: Bool {
+        availableHeight != nil
+    }
+
+    private var artworkSize: CGFloat {
+        usesCompactExpandedLayout ? 44 : 112
+    }
+
+    private var moduleSpacing: CGFloat {
+        usesCompactExpandedLayout ? 6 : 14
+    }
+
+    private var headerSpacing: CGFloat {
+        usesCompactExpandedLayout ? 9 : 14
+    }
+
+    private var metadataSpacing: CGFloat {
+        usesCompactExpandedLayout ? 2 : 4
+    }
+
+    private var titleFontSize: CGFloat {
+        usesCompactExpandedLayout ? 15 : 21
+    }
+
+    private var artistFontSize: CGFloat {
+        usesCompactExpandedLayout ? 12 : 16
+    }
+
+    private var sourceFontSize: CGFloat {
+        usesCompactExpandedLayout ? 10 : 14
+    }
+
+    private var visualizerTopPadding: CGFloat {
+        usesCompactExpandedLayout ? 2 : 4
+    }
+
+    private var transportControlsSpacing: CGFloat {
+        usesCompactExpandedLayout ? 10 : 18
+    }
+
+    private var transportControlsTopPadding: CGFloat {
+        usesCompactExpandedLayout ? 5 : 12
+    }
+
+    private var sliderStackSpacing: CGFloat {
+        usesCompactExpandedLayout ? 5 : 10
+    }
+
+    private var timeFontSize: CGFloat {
+        usesCompactExpandedLayout ? 9 : 13
+    }
+
+    private var placeholderProgressHeight: CGFloat {
+        usesCompactExpandedLayout ? 4 : 5
+    }
+
     var body: some View {
-        let activeBranch = media.hasActiveMediaSource
+        let activeBranch = shouldShowActivePlayer
         let _ = Self.debugRender(
             hasActiveMediaSource: media.hasActiveMediaSource,
             isPlaying: media.isPlaying,
@@ -172,75 +511,161 @@ struct MediaModuleView: View {
             branch: activeBranch ? "active player" : "empty launcher"
         )
 
-        Group {
+        let content = Group {
             if activeBranch {
                 activePlayerView
+            } else if shouldShowLauncher {
+                EmptyMediaLauncherView(settings: settings, media: media, onLauncherActivated: onLauncherActivated)
             } else {
-                EmptyMediaLauncherView(media: media, onLauncherActivated: onLauncherActivated)
+                disabledState
             }
         }
-        .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+
+        if let availableHeight {
+            VStack(spacing: 0) {
+                Spacer(minLength: 0)
+                content
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+            .frame(
+                minWidth: 0,
+                maxWidth: .infinity,
+                minHeight: availableHeight,
+                maxHeight: availableHeight,
+                alignment: .center
+            )
+        } else {
+            content
+                .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+    }
+
+    private var shouldShowActivePlayer: Bool {
+        guard settings.mediaEnabled else { return false }
+        guard media.hasActiveMediaSource else { return false }
+        return settings.showMediaWhenPaused || media.isPlaying
+    }
+
+    private var shouldShowLauncher: Bool {
+        settings.mediaEnabled && settings.showMediaWhenNoSource && settings.mediaLauncherEnabled
+    }
+
+    private var visualizerColor: Color {
+        switch settings.visualizerAccentMode {
+        case .artwork:
+            if settings.useArtworkAccentColor {
+                return accentCache.color(for: media.artworkImageKey, image: media.artworkImage)
+            }
+            return .white
+        case .white:
+            return .white
+        case .system:
+            return .accentColor
+        }
+    }
+
+    private var disabledState: some View {
+        VStack(alignment: .center, spacing: 8) {
+            Image(systemName: "music.note.slash")
+                .font(.system(size: usesCompactExpandedLayout ? 20 : 28, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.42))
+            Text(settings.mediaEnabled ? "No media visible" : "Media disabled")
+                .font(.system(size: usesCompactExpandedLayout ? 12 : 14, weight: .bold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.60))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
 
     @ViewBuilder
     private var activePlayerView: some View {
-        let visualizerColor = accentCache.color(for: media.artworkKey, image: media.artworkImage)
+        if usesCompactExpandedLayout {
+            constrainedActivePlayerView
+        } else {
+            regularActivePlayerView
+        }
+    }
 
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 14) {
-                ClickableAlbumArtworkButton(media: media, size: 112) {
-                    let opened = media.openActiveMediaSource()
-                    Self.debugMediaSourceOpenCollapse(opened: opened)
-                    if opened {
-                        onMediaSourceOpened()
+    @ViewBuilder
+    private var regularActivePlayerView: some View {
+        VStack(alignment: .leading, spacing: moduleSpacing) {
+            HStack(alignment: .top, spacing: headerSpacing) {
+                if settings.showAlbumArtwork {
+                    ClickableAlbumArtworkButton(
+                        settings: settings,
+                        media: media,
+                        size: artworkSize
+                    ) {
+                        let opened = media.openActiveMediaSource()
+                        Self.debugMediaSourceOpenCollapse(opened: opened)
+                        if opened {
+                            onMediaSourceOpened()
+                        }
                     }
                 }
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(media.title)
-                        .font(.system(size: 21, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
-                        .lineLimit(1)
-                    Text(media.artist)
-                        .font(.system(size: 16, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.66))
-                        .lineLimit(1)
-                    Text(media.sourceName)
-                        .font(.system(size: 14, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.48))
-                        .lineLimit(1)
-                    AudioVisualizerView(
-                        isPlaying: media.isPlaying,
-                        isActive: media.hasActiveMediaSource,
-                        accentColor: visualizerColor,
-                        variant: .expanded
-                    )
-                    .padding(.top, 4)
-                    HStack(spacing: 18) {
-                        MediaButton(
-                            symbol: "backward.fill",
-                            label: "Previous track",
-                            isEnabled: media.isTransportControlAvailable,
-                            action: media.previousTrack
-                        )
-                        MediaButton(
-                            symbol: media.isPlaying ? "pause.fill" : "play.fill",
-                            label: "Play or pause",
-                            isEnabled: media.isTransportControlAvailable,
-                            action: media.playPause
-                        )
-                        MediaButton(
-                            symbol: "forward.fill",
-                            label: "Next track",
-                            isEnabled: media.isTransportControlAvailable,
-                            action: media.nextTrack
-                        )
+                VStack(alignment: .leading, spacing: metadataSpacing) {
+                    if settings.showMediaTitle {
+                        Text(media.title)
+                            .font(.system(size: titleFontSize, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
                     }
-                    .padding(.top, 12)
+                    if settings.showMediaArtist {
+                        Text(media.artist)
+                            .font(.system(size: artistFontSize, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.66))
+                            .lineLimit(1)
+                    }
+                    if settings.showMediaSourceName {
+                        Text(media.sourceName)
+                            .font(.system(size: sourceFontSize, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.48))
+                            .lineLimit(1)
+                    }
+                    if settings.showVisualizer && settings.showExpandedVisualizer {
+                        AudioVisualizerView(
+                            isPlaying: media.isPlaying,
+                            isActive: media.hasActiveMediaSource,
+                            accentColor: visualizerColor,
+                            variant: .expanded,
+                            pauseDuringShellMorph: settings.disableVisualizerDuringMorph
+                        )
+                        .padding(.top, visualizerTopPadding)
+                    }
+                    if settings.showPlaybackControls {
+                        HStack(spacing: transportControlsSpacing) {
+                            MediaButton(
+                                symbol: "backward.fill",
+                                label: "Previous track",
+                                symbolSize: usesCompactExpandedLayout ? 13 : 15,
+                                buttonSize: usesCompactExpandedLayout ? 30 : 36,
+                                isEnabled: media.isTransportControlAvailable,
+                                action: media.previousTrack
+                            )
+                            MediaButton(
+                                symbol: media.isPlaying ? "pause.fill" : "play.fill",
+                                label: "Play or pause",
+                                symbolSize: usesCompactExpandedLayout ? 13 : 15,
+                                buttonSize: usesCompactExpandedLayout ? 30 : 36,
+                                isEnabled: media.isTransportControlAvailable,
+                                action: media.playPause
+                            )
+                            MediaButton(
+                                symbol: "forward.fill",
+                                label: "Next track",
+                                symbolSize: usesCompactExpandedLayout ? 13 : 15,
+                                buttonSize: usesCompactExpandedLayout ? 30 : 36,
+                                isEnabled: media.isTransportControlAvailable,
+                                action: media.nextTrack
+                            )
+                        }
+                        .padding(.top, transportControlsTopPadding)
+                    }
                 }
                 Spacer(minLength: 0)
             }
-            VStack(spacing: 10) {
-                if media.hasPlaybackProgress {
+            VStack(spacing: sliderStackSpacing) {
+                if settings.showProgressSlider, media.hasPlaybackProgress {
                     Slider(
                         value: Binding(
                             get: { media.playbackPosition },
@@ -261,31 +686,217 @@ struct MediaModuleView: View {
                         Spacer()
                         Text(formatTime(media.duration))
                     }
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.system(size: timeFontSize, weight: .bold))
                     .foregroundStyle(.white.opacity(0.58))
-                } else {
+                } else if settings.showProgressSlider {
                     Capsule(style: .continuous)
                         .fill(.white.opacity(0.16))
-                        .frame(height: 5)
+                        .frame(height: placeholderProgressHeight)
                     HStack {
                         Text("--:--")
                         Spacer()
                         Text("--:--")
                     }
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.system(size: timeFontSize, weight: .bold))
                     .foregroundStyle(.white.opacity(0.36))
                 }
-                Slider(
-                    value: Binding(
-                        get: { media.volume },
-                        set: { media.setVolume($0) }
-                    ),
-                    in: 0...1
-                )
-                .tint(.white.opacity(0.70))
-                .opacity(media.isVolumeControlAvailable ? 1 : 0.38)
-                .disabled(!media.isVolumeControlAvailable)
-                .accessibilityLabel("Media volume")
+                if settings.showVolumeSlider {
+                    Slider(
+                        value: Binding(
+                            get: { media.volume },
+                            set: { media.setVolume($0) }
+                        ),
+                        in: 0...1
+                    )
+                    .tint(.white.opacity(0.70))
+                    .opacity(media.isVolumeControlAvailable ? 1 : 0.38)
+                    .disabled(!media.isVolumeControlAvailable)
+                    .accessibilityLabel("Media volume")
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    @ViewBuilder
+    private var constrainedActivePlayerView: some View {
+        ViewThatFits(in: .vertical) {
+            constrainedActivePlayerLayout(
+                artworkSize: artworkSize,
+                transportButtonSize: 28,
+                transportSymbolSize: 12,
+                sectionSpacing: 4,
+                headerSpacing: 8,
+                inlineVisualizerTopPadding: 1
+            )
+            constrainedActivePlayerLayout(
+                artworkSize: 40,
+                transportButtonSize: 26,
+                transportSymbolSize: 11,
+                sectionSpacing: 3,
+                headerSpacing: 7,
+                inlineVisualizerTopPadding: 0
+            )
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+
+    private func constrainedActivePlayerLayout(
+        artworkSize: CGFloat,
+        transportButtonSize: CGFloat,
+        transportSymbolSize: CGFloat,
+        sectionSpacing: CGFloat,
+        headerSpacing: CGFloat,
+        inlineVisualizerTopPadding: CGFloat
+    ) -> some View {
+        return VStack(alignment: .leading, spacing: sectionSpacing) {
+            HStack(alignment: .top, spacing: headerSpacing) {
+                if settings.showAlbumArtwork {
+                    ClickableAlbumArtworkButton(
+                        settings: settings,
+                        media: media,
+                        size: artworkSize
+                    ) {
+                        let opened = media.openActiveMediaSource()
+                        Self.debugMediaSourceOpenCollapse(opened: opened)
+                        if opened {
+                            onMediaSourceOpened()
+                        }
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 1) {
+                    if settings.showMediaTitle {
+                        Text(media.title)
+                            .font(.system(size: 14, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.78)
+                    }
+
+                    if settings.showMediaArtist {
+                        Text(media.artist)
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.66))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.78)
+                    }
+
+                    HStack(alignment: .center, spacing: 6) {
+                        if settings.showMediaSourceName {
+                            Text(media.sourceName)
+                                .font(.system(size: 9, weight: .bold, design: .rounded))
+                                .foregroundStyle(.white.opacity(0.48))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.78)
+                        }
+
+                        if settings.showVisualizer && settings.showExpandedVisualizer {
+                            AudioVisualizerView(
+                                isPlaying: media.isPlaying,
+                                isActive: media.hasActiveMediaSource,
+                                accentColor: visualizerColor,
+                                variant: .compact,
+                                pauseDuringShellMorph: settings.disableVisualizerDuringMorph
+                            )
+                            .padding(.top, inlineVisualizerTopPadding)
+                        }
+                    }
+                }
+
+                Spacer(minLength: 0)
+            }
+
+            if settings.showPlaybackControls {
+                HStack(spacing: 9) {
+                    MediaButton(
+                        symbol: "backward.fill",
+                        label: "Previous track",
+                        symbolSize: transportSymbolSize,
+                        buttonSize: transportButtonSize,
+                        isEnabled: media.isTransportControlAvailable,
+                        action: media.previousTrack
+                    )
+                    MediaButton(
+                        symbol: media.isPlaying ? "pause.fill" : "play.fill",
+                        label: "Play or pause",
+                        symbolSize: transportSymbolSize,
+                        buttonSize: transportButtonSize,
+                        isEnabled: media.isTransportControlAvailable,
+                        action: media.playPause
+                    )
+                    MediaButton(
+                        symbol: "forward.fill",
+                        label: "Next track",
+                        symbolSize: transportSymbolSize,
+                        buttonSize: transportButtonSize,
+                        isEnabled: media.isTransportControlAvailable,
+                        action: media.nextTrack
+                    )
+                }
+            }
+
+            if settings.showProgressSlider {
+                VStack(spacing: 3) {
+                    if media.hasPlaybackProgress {
+                        Slider(
+                            value: Binding(
+                                get: { media.playbackPosition },
+                                set: { media.updateScrubPosition($0) }
+                            ),
+                            in: 0...max(media.duration, 1),
+                            onEditingChanged: { isEditing in
+                                if !isEditing {
+                                    media.seek(to: media.playbackPosition)
+                                }
+                            }
+                        )
+                        .tint(.white.opacity(0.70))
+                        .opacity(media.isSeekControlAvailable ? 1 : 0.38)
+                        .disabled(!media.isSeekControlAvailable)
+
+                        HStack {
+                            Text(formatTime(media.playbackPosition))
+                            Spacer()
+                            Text(formatTime(media.duration))
+                        }
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.58))
+                    } else {
+                        Capsule(style: .continuous)
+                            .fill(.white.opacity(0.16))
+                            .frame(height: 4)
+
+                        HStack {
+                            Text("--:--")
+                            Spacer()
+                            Text("--:--")
+                        }
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.36))
+                    }
+                }
+            }
+
+            if settings.showVolumeSlider {
+                HStack(spacing: 6) {
+                    Image(systemName: media.isVolumeControlAvailable ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.white.opacity(media.isVolumeControlAvailable ? 0.50 : 0.32))
+                        .frame(width: 12)
+
+                    Slider(
+                        value: Binding(
+                            get: { media.volume },
+                            set: { media.setVolume($0) }
+                        ),
+                        in: 0...1
+                    )
+                    .tint(.white.opacity(0.70))
+                    .opacity(media.isVolumeControlAvailable ? 1 : 0.38)
+                    .disabled(!media.isVolumeControlAvailable)
+                    .accessibilityLabel("Media volume")
+                }
             }
         }
     }
@@ -328,6 +939,7 @@ struct MediaModuleView: View {
 }
 
 private struct ClickableAlbumArtworkButton: View {
+    @ObservedObject var settings: AppSettings
     @ObservedObject var media: MediaController
     let size: CGFloat
     let action: () -> Void
@@ -335,20 +947,31 @@ private struct ClickableAlbumArtworkButton: View {
     @State private var isHovering = false
 
     var body: some View {
-        Button(action: action) {
-            AlbumArtworkView(image: media.artworkImage, size: size)
-                .scaleEffect(isHovering ? 1.028 : 1)
-                .brightness(isHovering ? 0.035 : 0)
-                .animation(.easeOut(duration: 0.16), value: isHovering)
+        Group {
+            if settings.openSourceOnArtworkClick {
+                Button(action: action) {
+                    artwork
+                }
+                .buttonStyle(.plain)
+            } else {
+                artwork
+            }
         }
-        .buttonStyle(.plain)
         .onHover { isHovering = $0 }
         .accessibilityLabel("Open media source")
         .accessibilityHint("Opens the app currently playing this media")
     }
+
+    private var artwork: some View {
+        FlippingAlbumArtworkView(media: media, size: size)
+            .scaleEffect(isHovering ? 1.028 : 1)
+            .brightness(isHovering ? 0.035 : 0)
+            .animation(.easeOut(duration: 0.16), value: isHovering)
+    }
 }
 
 private struct EmptyMediaLauncherView: View {
+    @ObservedObject var settings: AppSettings
     @ObservedObject var media: MediaController
     let onLauncherActivated: () -> Void
 
@@ -366,17 +989,23 @@ private struct EmptyMediaLauncherView: View {
             }
 
             HStack(spacing: 10) {
-                MediaLauncherButton(title: "Apple Music", symbol: "music.note", tint: .pink) {
-                    media.openMusicApp()
-                    onLauncherActivated()
+                if settings.showAppleMusicLauncher {
+                    MediaLauncherButton(title: "Apple Music", symbol: "music.note", tint: .pink) {
+                        media.openMusicApp()
+                        onLauncherActivated()
+                    }
                 }
-                MediaLauncherButton(title: "Spotify", symbol: "dot.radiowaves.left.and.right", tint: .green) {
-                    media.openSpotifyApp()
-                    onLauncherActivated()
+                if settings.showSpotifyLauncher {
+                    MediaLauncherButton(title: "Spotify", symbol: "dot.radiowaves.left.and.right", tint: .green) {
+                        media.openSpotifyApp()
+                        onLauncherActivated()
+                    }
                 }
-                MediaLauncherButton(title: "YouTube", symbol: "play.rectangle.fill", tint: .red) {
-                    media.openYouTube()
-                    onLauncherActivated()
+                if settings.showYouTubeLauncher {
+                    MediaLauncherButton(title: "YouTube", symbol: "play.rectangle.fill", tint: .red) {
+                        media.openYouTube()
+                        onLauncherActivated()
+                    }
                 }
             }
         }
@@ -420,14 +1049,16 @@ private struct MediaLauncherButton: View {
 struct MediaButton: View {
     let symbol: String
     let label: String
+    var symbolSize: CGFloat = 15
+    var buttonSize: CGFloat = 36
     var isEnabled = true
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 15, weight: .bold))
-                .frame(width: 36, height: 36)
+                .font(.system(size: symbolSize, weight: .bold))
+                .frame(width: buttonSize, height: buttonSize)
         }
         .buttonStyle(.plain)
         .foregroundStyle(.white.opacity(isEnabled ? 1 : 0.38))
@@ -437,6 +1068,7 @@ struct MediaButton: View {
 }
 
 struct FileShelfModuleView: View {
+    @ObservedObject var settings: AppSettings
     @ObservedObject var fileShelf: FileShelfStore
     @StateObject private var thumbnailCache = FileThumbnailCache()
 
@@ -449,9 +1081,18 @@ struct FileShelfModuleView: View {
             HStack {
                 Label("File Shelf", systemImage: "tray.full")
                     .font(.system(size: 14, weight: .bold, design: .rounded))
+                if settings.showFileCountBadge, !fileShelf.files.isEmpty {
+                    Text("\(fileShelf.files.count)")
+                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .foregroundStyle(.cyan.opacity(0.92))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(.cyan.opacity(0.12), in: Capsule(style: .continuous))
+                        .accessibilityLabel("\(fileShelf.files.count) files")
+                }
                 Spacer()
                 Button("Clear") {
-                    fileShelf.clear()
+                    clearShelf()
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.white.opacity(fileShelf.files.isEmpty ? 0.34 : 0.66))
@@ -467,7 +1108,7 @@ struct FileShelfModuleView: View {
                     Text("Drop files here")
                         .font(.system(size: 13, weight: .bold, design: .rounded))
                         .foregroundStyle(.white.opacity(0.62))
-                    Text("They stay here temporarily until you clear them.")
+                    Text(emptyShelfSubtitle)
                         .font(.system(size: 11, weight: .medium, design: .rounded))
                         .foregroundStyle(.white.opacity(0.42))
                         .lineLimit(1)
@@ -478,6 +1119,7 @@ struct FileShelfModuleView: View {
                     LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
                         ForEach(fileShelf.files, id: \.self) { url in
                             ShelfFileTile(
+                                settings: settings,
                                 url: url,
                                 thumbnailCache: thumbnailCache,
                                 onRemove: { fileShelf.remove(url) }
@@ -494,8 +1136,35 @@ struct FileShelfModuleView: View {
         .frame(maxWidth: .infinity, minHeight: 154, maxHeight: 214, alignment: .topLeading)
         .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
     }
+
+    private var emptyShelfSubtitle: String {
+        if !settings.allowFileDropsOnExpandedTray {
+            return "File drops disabled in Settings"
+        }
+        if settings.persistFileShelfAcrossLaunches {
+            return "Files stay in your shelf and are saved across launches"
+        }
+        return "Files stay in your shelf for quick access"
+    }
+
+    private func clearShelf() {
+        guard !fileShelf.files.isEmpty else { return }
+        if settings.confirmBeforeClearShelf {
+            let alert = NSAlert()
+            alert.messageText = "Clear File Shelf?"
+            alert.informativeText = "This removes files from the shelf only. It does not delete anything from disk."
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "Clear")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else {
+                return
+            }
+        }
+        fileShelf.clear()
+    }
 }
 
+@MainActor
 final class FileThumbnailCache: ObservableObject {
     @Published private var imagesByKey: [String: NSImage] = [:]
     private var loadingKeys: Set<String> = []
@@ -513,21 +1182,17 @@ final class FileThumbnailCache: ObservableObject {
         let shouldLoadImagePreview = Self.isImageFile(url)
         let fileURL = url
 
-        DispatchQueue.global(qos: .utility).async {
-            let imageData: Data?
-            if shouldLoadImagePreview {
-                imageData = try? Data(contentsOf: fileURL, options: [.mappedIfSafe])
-            } else {
-                imageData = nil
-            }
+        Task {
+            let imageData = await Task.detached(priority: .utility) {
+                shouldLoadImagePreview
+                    ? try? Data(contentsOf: fileURL, options: [.mappedIfSafe])
+                    : nil
+            }.value
 
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                let image = imageData.flatMap(NSImage.init(data:)) ?? NSWorkspace.shared.icon(forFile: path)
-                image.size = NSSize(width: 56, height: 56)
-                self.imagesByKey[key] = image
-                self.loadingKeys.remove(key)
-            }
+            let image = imageData.flatMap(NSImage.init(data:)) ?? NSWorkspace.shared.icon(forFile: path)
+            image.size = NSSize(width: 56, height: 56)
+            imagesByKey[key] = image
+            loadingKeys.remove(key)
         }
     }
 
@@ -605,6 +1270,17 @@ enum FileShelfActions {
         debugLog("FileShelfActions.copyName name=\(url.lastPathComponent)")
     }
 
+    @discardableResult
+    static func quickLook(_ url: URL) -> Bool {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            debugLog("FileShelfActions.quickLook skipped missing file path=\(url.path)")
+            return false
+        }
+        let didPreview = open(url)
+        debugLog("FileShelfActions.quickLook path=\(url.path) success=\(didPreview)")
+        return didPreview
+    }
+
     private static func copy(_ string: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(string, forType: .string)
@@ -612,17 +1288,20 @@ enum FileShelfActions {
 
     private static func debugLog(_ message: String) {
         #if DEBUG
+        guard ProcessInfo.processInfo.environment["DYNAMIC_ISLAND_VERBOSE_UI_LOGS"] == "1" else { return }
         print("[DynamicIsland][FileShelfActions] \(message)")
         #endif
     }
 }
 
 struct ShelfFileTile: View {
+    @ObservedObject var settings: AppSettings
     let url: URL
     @ObservedObject var thumbnailCache: FileThumbnailCache
     let onRemove: () -> Void
 
     @State private var isHovering = false
+    @Environment(\.isShellMorphing) private var isShellMorphing
 
     var body: some View {
         VStack(spacing: 6) {
@@ -636,7 +1315,7 @@ struct ShelfFileTile: View {
                     }
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
 
-                if isHovering {
+                if isHovering && settings.removeFileActionEnabled {
                     Button(action: onRemove) {
                         Image(systemName: "xmark.circle.fill")
                             .font(.system(size: 13, weight: .bold))
@@ -650,7 +1329,7 @@ struct ShelfFileTile: View {
                 }
             }
 
-            Text(url.lastPathComponent)
+            Text(displayName)
                 .font(.system(size: 10.5, weight: .semibold, design: .rounded))
                 .foregroundStyle(.white.opacity(0.86))
                 .multilineTextAlignment(.center)
@@ -664,37 +1343,59 @@ struct ShelfFileTile: View {
         .frame(width: 84, alignment: .top)
         .background(.white.opacity(isHovering ? 0.12 : 0.045), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .onTapGesture(count: 2) {
+            FileShelfActions.quickLook(url)
+        }
         .onHover { hovering in
             if isHovering != hovering {
                 isHovering = hovering
             }
         }
         .onAppear {
-            thumbnailCache.loadIfNeeded(for: url)
+            loadThumbnailIfNeeded()
+        }
+        .onChange(of: isShellMorphing) { _, newValue in
+            if !newValue {
+                loadThumbnailIfNeeded()
+            }
         }
         .contextMenu {
-            Button("Open") {
-                FileShelfActions.open(url)
+            Button("Quick Look") {
+                FileShelfActions.quickLook(url)
             }
 
-            Button("Reveal in Finder") {
-                FileShelfActions.revealInFinder(url)
+            if settings.openFileActionEnabled {
+                Divider()
+
+                Button("Open") {
+                    FileShelfActions.open(url)
+                }
             }
 
-            Divider()
-
-            Button("Copy Path") {
-                FileShelfActions.copyPath(url)
+            if settings.revealInFinderActionEnabled {
+                Button("Reveal in Finder") {
+                    FileShelfActions.revealInFinder(url)
+                }
             }
 
-            Button("Copy File Name") {
-                FileShelfActions.copyName(url)
+            if settings.copyPathActionEnabled {
+                Divider()
+
+                Button("Copy Path") {
+                    FileShelfActions.copyPath(url)
+                }
+
+                Button("Copy File Name") {
+                    FileShelfActions.copyName(url)
+                }
             }
 
-            Divider()
+            if settings.removeFileActionEnabled {
+                Divider()
 
-            Button("Remove from Tray", role: .destructive) {
-                onRemove()
+                Button("Remove from Tray", role: .destructive) {
+                    onRemove()
+                }
             }
         }
         .accessibilityLabel("File \(url.lastPathComponent)")
@@ -706,7 +1407,7 @@ struct ShelfFileTile: View {
 
     @ViewBuilder
     private var fileImage: some View {
-        if let image = thumbnailCache.image(for: url) {
+        if settings.showFileThumbnails, let image = thumbnailCache.image(for: url) {
             Image(nsImage: image)
                 .resizable()
                 .scaledToFit()
@@ -733,46 +1434,127 @@ struct ShelfFileTile: View {
         }
         return "doc.fill"
     }
+
+    private func loadThumbnailIfNeeded() {
+        guard settings.showFileThumbnails else { return }
+        guard !isShellMorphing || !settings.deferThumbnailsDuringMorph else { return }
+        thumbnailCache.loadIfNeeded(for: url)
+    }
+
+    private var displayName: String {
+        settings.showFileExtensions
+            ? url.lastPathComponent
+            : url.deletingPathExtension().lastPathComponent
+    }
 }
 
 struct ShortcutsModuleView: View {
     @ObservedObject var shortcuts: ShortcutsStore
+    var availableHeight: CGFloat?
+    var compactScale: CGFloat
     let onShortcutLaunched: () -> Void
 
-    init(shortcuts: ShortcutsStore, onShortcutLaunched: @escaping () -> Void = {}) {
+    init(
+        shortcuts: ShortcutsStore,
+        availableHeight: CGFloat? = nil,
+        compactScale: CGFloat = 1,
+        onShortcutLaunched: @escaping () -> Void = {}
+    ) {
         self.shortcuts = shortcuts
+        self.availableHeight = availableHeight
+        self.compactScale = compactScale
         self.onShortcutLaunched = onShortcutLaunched
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label("Shortcuts", systemImage: "bolt.fill")
-                .font(.system(size: 14, weight: .bold, design: .rounded))
-                .foregroundStyle(.white)
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 2), spacing: 8) {
-                ForEach(shortcuts.shortcuts.prefix(4)) { shortcut in
-                    Button {
-                        shortcuts.open(shortcut)
-                        onShortcutLaunched()
-                    } label: {
-                        VStack(spacing: 6) {
-                            Image(systemName: shortcut.symbolName)
-                                .font(.system(size: 17, weight: .semibold))
-                            Text(shortcut.title)
-                                .font(.system(size: 11, weight: .bold, design: .rounded))
-                                .lineLimit(1)
-                        }
-                        .frame(maxWidth: .infinity, minHeight: 58)
-                        .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    }
-                    .buttonStyle(.plain)
+        VStack(alignment: .leading, spacing: max(7, 12 * compactScale)) {
+            HStack(spacing: 8) {
+                Label("Shortcuts", systemImage: "bolt.fill")
+                    .font(.system(size: 14 * compactScale, weight: .bold, design: .rounded))
                     .foregroundStyle(.white)
-                    .accessibilityLabel("Open \(shortcut.title)")
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                if hiddenShortcutCount > 0 {
+                    Text("+\(hiddenShortcutCount)")
+                        .font(.system(size: 10 * compactScale, weight: .heavy, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.62))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(.white.opacity(0.08), in: Capsule(style: .continuous))
                 }
             }
+
+            if shortcuts.shortcuts.isEmpty {
+                Text("No shortcuts")
+                    .font(.system(size: 10 * compactScale, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.54))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            } else {
+                GeometryReader { proxy in
+                    shortcutsRow(availableWidth: proxy.size.width)
+                }
+                .frame(height: shortcutTileHeight)
+            }
         }
-        .padding(12)
+        .padding(max(8, 12 * compactScale))
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(.white.opacity(0.075), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+    }
+
+    private func shortcutsRow(availableWidth: CGFloat) -> some View {
+        let spacing = max(7, 10 * compactScale)
+        let visibleShortcuts = displayedShortcuts
+        let visibleCount = max(min(visibleShortcuts.count, 3), 1)
+        let fittedWidth = floor((availableWidth - (spacing * CGFloat(visibleCount - 1))) / CGFloat(visibleCount))
+        let buttonWidth = max(fittedWidth, 0)
+
+        return HStack(spacing: spacing) {
+            ForEach(visibleShortcuts) { shortcut in
+                shortcutButton(shortcut, width: buttonWidth)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+    }
+
+    private func shortcutButton(_ shortcut: LauncherShortcut, width: CGFloat) -> some View {
+        let buttonScale = min(max(min(width / 112, shortcutTileHeight / 62) * compactScale, 0.70), 1)
+
+        return Button {
+            shortcuts.open(shortcut)
+            onShortcutLaunched()
+        } label: {
+            VStack(spacing: max(3, 6 * buttonScale)) {
+                Image(systemName: shortcut.symbolName)
+                    .font(.system(size: 17 * buttonScale, weight: .semibold))
+                Text(shortcut.title)
+                    .font(.system(size: 11 * buttonScale, weight: .bold, design: .rounded))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.58)
+                    .allowsTightening(true)
+            }
+            .frame(width: width, height: shortcutTileHeight)
+            .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.white)
+        .accessibilityLabel("Open \(shortcut.title)")
+    }
+
+    private var displayedShortcuts: [LauncherShortcut] {
+        Array(shortcuts.shortcuts.prefix(3))
+    }
+
+    private var hiddenShortcutCount: Int {
+        max(shortcuts.shortcuts.count - displayedShortcuts.count, 0)
+    }
+
+    private var shortcutTileHeight: CGFloat {
+        guard let availableHeight else {
+            return 58
+        }
+        let headerAndPadding: CGFloat = max(42, 54 * compactScale)
+        let fittedRowHeight = availableHeight - headerAndPadding
+        let clampedRowHeight = min(max(fittedRowHeight, 46), 68)
+        return min(clampedRowHeight, max(fittedRowHeight, 0))
     }
 }
