@@ -3474,6 +3474,22 @@ For every requested feature phase:
   - Initial `Scripts/package_app.sh` signing failed with the known resource-fork/Finder metadata error. After `xattr -cr dist/DynamicIsland.app`, packaging passed and produced `dist/DynamicIsland.app`.
 - Manual validation remains required for media, Timer, Battery, File, activity switching, hover preview, expand/collapse, unchanged expanded spacing, and floating/non-notch behavior.
 
+### Phase 12C.6 - Symmetric Collapsed Compact Wings
+
+- Fixed only the integrated, non-hovered collapsed compact wing layout. The physical hardware notch remains the centered empty core.
+- Replaced asymmetric per-side region sizing with one activity-specific symmetric wing width shared by geometry and SwiftUI rendering. Each wing uses the larger of the leading content plus `5pt` breathing room or trailing content, then retains the existing `4pt` notch-side safety clearance.
+- Added `5pt` leading padding inside the left wing so artwork and leading Timer, Battery, and File content no longer hug the shell edge. Left content remains leading-aligned and right content remains trailing-aligned.
+- Tightened only the compact media visualizer width from `30pt` to `27pt`; its outer right wing remains exactly equal to the left wing. Timer, Battery, and File trailing content widths remain unchanged.
+- For the 242pt hardware-notch fixture, media now resolves to two equal `31pt` outer content regions and a `320pt` shell. Timer resolves to equal `42pt` regions, Battery to equal `38pt` regions, and File to equal `48pt` regions. Larger configured widths continue to divide surplus space equally outside the notch.
+- Preserved collapsed height, expanded layout, notch inference and safety clearance, shell shape/radii, hover preview, gestures, transitions, Live Activity priority, single-row layout, and the existing non-notch fallback.
+- Added geometry coverage proving all media, Timer, Battery, and File profiles resolve equal left/right wing widths, while retaining exact physical-notch boundary alignment.
+- Validation on 2026-07-21:
+  - `git diff --check`: passed.
+  - `swift build`: passed.
+  - `swift test`: 114 tests, 0 failures.
+  - Initial `Scripts/package_app.sh` signing hit the known resource-fork/Finder metadata error. After `xattr -cr dist/DynamicIsland.app`, packaging passed and produced `dist/DynamicIsland.app`.
+- Manual visual validation remains required for media, Timer, Battery, File, hover preview, and expansion/collapse.
+
 ### Phase 11C.11 - Native canJoinAllApplications A/B Test
 
 - Added the isolated native Space membership A/B variable on top of the stable 11C.10 configuration:

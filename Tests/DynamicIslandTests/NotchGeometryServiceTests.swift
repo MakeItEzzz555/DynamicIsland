@@ -22,10 +22,10 @@ final class NotchGeometryServiceTests: XCTestCase {
         XCTAssertTrue(geometry.hasHardwareNotch)
         XCTAssertEqual(geometry.notchRect, CGRect(x: 635, y: 944, width: 242, height: 38))
         XCTAssertEqual(geometry.hardwareNotchWidth, 242)
-        XCTAssertEqual(geometry.collapsedFrame, CGRect(x: 609, y: 940, width: 310, height: 42))
-        XCTAssertEqual(geometry.collapsedLeftRegionWidth, 18)
+        XCTAssertEqual(geometry.collapsedFrame, CGRect(x: 596, y: 940, width: 320, height: 42))
+        XCTAssertEqual(geometry.collapsedLeftRegionWidth, 31)
         XCTAssertEqual(geometry.collapsedNotchCoreWidth, 242)
-        XCTAssertEqual(geometry.collapsedRightRegionWidth, 34)
+        XCTAssertEqual(geometry.collapsedRightRegionWidth, 31)
         XCTAssertEqual(geometry.collapsedFrame.maxY, 982, accuracy: 0.5)
         XCTAssertEqual(geometry.expandedFrame.midX, 756, accuracy: 0.5)
         XCTAssertEqual(geometry.expandedFrame.maxY, 982, accuracy: 0.5)
@@ -35,7 +35,7 @@ final class NotchGeometryServiceTests: XCTestCase {
         XCTAssertEqual(geometry.canvas.frame.maxY, snapshot.frame.maxY, accuracy: 0.5)
         XCTAssertTrue(geometry.canvas.frame.contains(geometry.collapsedFrame))
         XCTAssertTrue(geometry.canvas.frame.contains(geometry.expandedFrame))
-        XCTAssertEqual(geometry.canvas.collapsedSurfaceFrame, CGRect(x: 163, y: 168, width: 310, height: 42))
+        XCTAssertEqual(geometry.canvas.collapsedSurfaceFrame, CGRect(x: 150, y: 168, width: 320, height: 42))
         XCTAssertEqual(geometry.canvas.expandedSurfaceFrame, CGRect(x: 0, y: 0, width: 620, height: 210))
     }
 
@@ -58,7 +58,8 @@ final class NotchGeometryServiceTests: XCTestCase {
         XCTAssertEqual(geometry.collapsedFrame.maxY, 982, accuracy: 0.5)
         XCTAssertEqual(geometry.collapsedFrame.width, 520, accuracy: 0.5)
         XCTAssertEqual(geometry.collapsedFrame.height, 58, accuracy: 0.5)
-        XCTAssertEqual(geometry.collapsedFrame.minX, 504, accuracy: 0.5)
+        XCTAssertEqual(geometry.collapsedFrame.minX, 496, accuracy: 0.5)
+        XCTAssertEqual(geometry.collapsedLeftRegionWidth, geometry.collapsedRightRegionWidth)
         XCTAssertEqual(geometry.collapsedFrame.minX + 8 + geometry.collapsedLeftRegionWidth, 635, accuracy: 0.5)
         XCTAssertEqual(geometry.collapsedFrame.maxX - 8 - geometry.collapsedRightRegionWidth, 877, accuracy: 0.5)
         XCTAssertEqual(geometry.expandedFrame.width, 900, accuracy: 0.5)
@@ -200,19 +201,19 @@ final class NotchGeometryServiceTests: XCTestCase {
                 hardwareNotchWidth: notchWidth,
                 profile: .media(showsArtwork: true, showsVisualizer: true)
             ),
-            310
+            320
         )
         XCTAssertEqual(
             CollapsedActivityResolvedGeometry.requiredWidth(hardwareNotchWidth: notchWidth, profile: .timer),
-            317
+            342
         )
         XCTAssertEqual(
             CollapsedActivityResolvedGeometry.requiredWidth(hardwareNotchWidth: notchWidth, profile: .battery),
-            317
+            334
         )
         XCTAssertEqual(
             CollapsedActivityResolvedGeometry.requiredWidth(hardwareNotchWidth: notchWidth, profile: .file),
-            327
+            354
         )
     }
 
@@ -226,9 +227,30 @@ final class NotchGeometryServiceTests: XCTestCase {
         )
 
         XCTAssertEqual(resolved.frame.width, 400)
-        XCTAssertEqual(resolved.leftRegionWidth, 63)
-        XCTAssertEqual(resolved.rightRegionWidth, 79)
+        XCTAssertEqual(resolved.leftRegionWidth, 71)
+        XCTAssertEqual(resolved.rightRegionWidth, 71)
         XCTAssertEqual(resolved.frame.minX + 8 + resolved.leftRegionWidth, 635)
         XCTAssertEqual(resolved.frame.maxX - 8 - resolved.rightRegionWidth, 877)
+    }
+
+    func testEveryActivityProfileResolvesEqualOuterWingWidths() {
+        let profiles: [CollapsedActivityLayoutProfile] = [
+            .media(showsArtwork: true, showsVisualizer: true),
+            .timer,
+            .battery,
+            .file
+        ]
+
+        for profile in profiles {
+            let resolved = CollapsedActivityResolvedGeometry.resolve(
+                notchRect: CGRect(x: 635, y: 944, width: 242, height: 38),
+                existingWidth: 224,
+                collapsedHeight: 42,
+                topY: 982,
+                profile: profile
+            )
+
+            XCTAssertEqual(resolved.leftRegionWidth, resolved.rightRegionWidth)
+        }
     }
 }

@@ -1448,6 +1448,7 @@ private struct CompactCollapsedSideSlotLayout<Left: View, Right: View>: View {
         if geometry.usesPhysicalNotchRegions {
             HStack(spacing: 0) {
                 left()
+                    .padding(.leading, CollapsedActivityLayoutProfile.leadingContentPadding)
                     .frame(width: geometry.leftRegionWidth, alignment: .leading)
                 Color.clear
                     .frame(width: geometry.notchCoreWidth)
