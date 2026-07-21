@@ -8,12 +8,20 @@ DIST_DIR="$ROOT_DIR/dist"
 APP_DIR="$DIST_DIR/$APP_NAME.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
+RESOURCES_DIR="$CONTENTS_DIR/Resources"
 
 swift build -c release --package-path "$ROOT_DIR"
 
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR"
+mkdir -p "$RESOURCES_DIR"
 cp "$BUILD_DIR/$APP_NAME" "$MACOS_DIR/$APP_NAME"
+
+while IFS= read -r resource_bundle; do
+  cp -R "$resource_bundle" "$RESOURCES_DIR/"
+done < <(find "$ROOT_DIR/.build" -path "*/release/*.bundle" -print)
+
+xattr -cr "$APP_DIR"
 
 cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
