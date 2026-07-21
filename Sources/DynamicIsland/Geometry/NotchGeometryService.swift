@@ -47,8 +47,9 @@ public struct IslandGeometry: Equatable {
 }
 
 public struct CollapsedActivityLayoutProfile: Equatable, Sendable {
+    public static let leadingContentPadding: CGFloat = 5
     public static let mediaLeftContentWidth: CGFloat = 14
-    public static let mediaRightContentWidth: CGFloat = 30
+    public static let mediaRightContentWidth: CGFloat = 27
     public static let timerLeftContentWidth: CGFloat = 13
     public static let timerRightContentWidth: CGFloat = 38
     public static let batteryLeftContentWidth: CGFloat = 17
@@ -62,6 +63,13 @@ public struct CollapsedActivityLayoutProfile: Equatable, Sendable {
     public init(leftContentWidth: CGFloat, rightContentWidth: CGFloat) {
         self.leftContentWidth = leftContentWidth
         self.rightContentWidth = rightContentWidth
+    }
+
+    var symmetricWingContentWidth: CGFloat {
+        let paddedLeftContentWidth = leftContentWidth > 0
+            ? leftContentWidth + Self.leadingContentPadding
+            : 0
+        return max(max(paddedLeftContentWidth, rightContentWidth), 0)
     }
 
     public static func media(showsArtwork: Bool, showsVisualizer: Bool) -> Self {
@@ -92,10 +100,9 @@ struct CollapsedActivityResolvedGeometry: Equatable {
         topY: CGFloat,
         profile: CollapsedActivityLayoutProfile
     ) -> Self {
-        let leftMinimum = max(profile.leftContentWidth, 0) + notchSideSafetyClearance
-        let rightMinimum = max(profile.rightContentWidth, 0) + notchSideSafetyClearance
-        let requiredMinX = notchRect.minX - outerHorizontalPadding - leftMinimum
-        let requiredMaxX = notchRect.maxX + rightMinimum + outerHorizontalPadding
+        let minimumWingWidth = profile.symmetricWingContentWidth + notchSideSafetyClearance
+        let requiredMinX = notchRect.minX - outerHorizontalPadding - minimumWingWidth
+        let requiredMaxX = notchRect.maxX + minimumWingWidth + outerHorizontalPadding
         let requiredWidth = requiredMaxX - requiredMinX
         let targetWidth = max(existingWidth, requiredWidth)
         let extraPerSide = (targetWidth - requiredWidth) / 2
@@ -108,9 +115,9 @@ struct CollapsedActivityResolvedGeometry: Equatable {
                 width: targetWidth,
                 height: collapsedHeight
             ),
-            leftRegionWidth: leftMinimum + extraPerSide,
+            leftRegionWidth: minimumWingWidth + extraPerSide,
             notchCoreWidth: notchRect.width,
-            rightRegionWidth: rightMinimum + extraPerSide
+            rightRegionWidth: minimumWingWidth + extraPerSide
         )
     }
 
@@ -119,11 +126,8 @@ struct CollapsedActivityResolvedGeometry: Equatable {
         profile: CollapsedActivityLayoutProfile
     ) -> CGFloat {
         (2 * outerHorizontalPadding)
-            + profile.leftContentWidth
-            + notchSideSafetyClearance
+            + (2 * (profile.symmetricWingContentWidth + notchSideSafetyClearance))
             + max(hardwareNotchWidth, 0)
-            + profile.rightContentWidth
-            + notchSideSafetyClearance
     }
 }
 
