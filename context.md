@@ -3216,6 +3216,29 @@ For every requested feature phase:
   - `Scripts/package_app.sh`: passed on the first attempt and produced `dist/DynamicIsland.app`; no resource-fork cleanup was needed.
 - Manual validation remains required for the expanded split/full-height matrix, live toggling while expanded, collapsed activity independence, master-off/restore behavior, active and delayed hover-preview cancellation, stationary-pointer re-enable behavior, and the listed expansion/tab/gesture/geometry regressions.
 
+### Phase 13A.1 - Deterministic Artwork Flip Midpoint Handoff
+
+- Separated raw `MediaController.artworkImage` publication from the artwork allowed to appear on screen. `MediaController` now owns one `ArtworkPresentationCoordinator` backed by the pure `ArtworkFlipPresentationState` reducer.
+- `FlippingAlbumArtworkView` no longer owns independent displayed/pending/generation state, observes raw metadata/artwork, or renders `displayedArtwork ?? media.artworkImage`. Every collapsed, expanded, remounted, and `ViewThatFits` artwork instance renders only the shared presented snapshot and shared rotation.
+- Raw artwork mutations synchronously feed the coordinator. Initial/no-request artwork is presented directly before an artwork view is mounted, avoiding an `onAppear`-dependent blank first frame.
+- For valid next/previous requests, the old presented artwork is frozen through the complete first `0.19s` half. At exactly `-90°` for next or `+90°` for previous, a non-animated transaction commits the pending snapshot and resets rotation to the mirrored `+90°`/`-90°` second-half start. The incoming artwork remains presented through the full second half and completion.
+- Removed the active-flip force-assignment path. Updates received during either half retain only the latest queued transition, do not alter presented artwork, and begin after the active transition completes.
+- Flip request consumption moved from individual view startup to the shared midpoint. Direct non-animated, same-fingerprint, placeholder-only, Reduce Motion, and expired-request handoffs consume idempotently at their safe direct boundary.
+- Generation checks reject stale midpoint/completion callbacks. Existing media publication-generation guards continue to reject stale asynchronous source artwork before it can reach presentation.
+- Nil artwork is treated as the existing placeholder visual: nil-to-image and image-to-nil transitions swap only at midpoint when animated, while two placeholder states do not run a meaningless flip. Same visual fingerprints do not animate.
+- Artwork-derived visualizer colors in collapsed and expanded media layouts now use the same presented fingerprint/image as the artwork, preventing incoming-cover color leakage before midpoint. No visualizer architecture was rewritten.
+- Retained concise DEBUG-only `[ArtworkFlip]` logs for raw receipt, staging, first-half start, midpoint commit, second-half start, completion, queued updates, and stale callback rejection.
+- Added 15 focused reducer tests covering next and previous direction, first/second-half ownership, active queues, stale generations, identical fingerprints, synchronous initial display, nil/image boundaries, placeholder-only behavior, no-request and expired-request updates, and Reduce Motion.
+- `IslandRootView.swift` changed only at the compact visualizer accent source because midpoint-consistent collapsed accent color requires observing the shared presented artwork. Phase 13A visibility controls were not changed.
+- Did not modify Clipboard, Live Activities, geometry, panels, Spaces, source arbitration/selection, transport timing, hover preview, gestures, file shelf, timer, battery, Stats, shell themes/shadows, or expansion/tab timing.
+- Validation on 2026-07-24:
+  - `git diff --check`: passed.
+  - `swift build`: passed with no warnings.
+  - `swift test`: 137 tests, 0 failures.
+  - `chmod +x Scripts/package_app.sh`: completed.
+  - `Scripts/package_app.sh`: passed on the first attempt and produced `dist/DynamicIsland.app`.
+- Manual validation remains required for collapsed and expanded next/previous midpoint timing, cached and delayed artwork, rapid input, expand/collapse during a transition, Reduce Motion appearance, artwork click-to-open, metadata, visualizer, gestures, hover preview, shell transitions, and both expanded `ViewThatFits` candidates.
+
 ### Phase 12A - Final Island Content Transition Sequencing
 
 - Fixed the brief fully-expanded empty-black content gap:

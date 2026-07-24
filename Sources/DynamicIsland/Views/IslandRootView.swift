@@ -1247,6 +1247,7 @@ struct CompactIslandView: View {
     @ObservedObject private var media: MediaController
     @ObservedObject private var liveActivities: LiveActivityStore
     @ObservedObject private var accentCache = ArtworkAccentColorCache.shared
+    @ObservedObject private var artworkPresentation: ArtworkPresentationCoordinator
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(
@@ -1273,6 +1274,7 @@ struct CompactIslandView: View {
         self.isNotchIntegratedShell = isNotchIntegratedShell
         media = modules.media
         liveActivities = modules.liveActivities
+        artworkPresentation = modules.media.artworkPresentation
     }
 
     var body: some View {
@@ -1402,7 +1404,10 @@ struct CompactIslandView: View {
         switch settings.visualizerAccentMode {
         case .artwork:
             if settings.useArtworkAccentColor {
-                return accentCache.color(for: media.artworkImageKey, image: media.artworkImage)
+                return accentCache.color(
+                    for: artworkPresentation.displayedSnapshot?.fingerprint,
+                    image: artworkPresentation.displayedSnapshot?.image
+                )
             }
             return .white
         case .white:

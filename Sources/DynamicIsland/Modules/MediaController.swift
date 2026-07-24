@@ -1,7 +1,8 @@
 import AppKit
 import Foundation
+import SwiftUI
 
-enum MediaArtworkFlipDirection: String {
+enum MediaArtworkFlipDirection: String, Equatable {
     case next
     case previous
 }
@@ -16,6 +17,304 @@ struct MediaArtworkFlipRequest: Identifiable {
 
     var isExpired: Bool {
         Date() > expiresAt
+    }
+}
+
+struct ArtworkPresentationSnapshot: Equatable {
+    let image: NSImage?
+    let identity: String
+    let fingerprint: String
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.identity == rhs.identity &&
+            lhs.fingerprint == rhs.fingerprint &&
+            (lhs.image == nil) == (rhs.image == nil)
+    }
+}
+
+enum ArtworkFlipPhase: Equatable {
+    case idle
+    case firstHalf
+    case secondHalf
+}
+
+enum ArtworkFlipPresentationEffect: Equatable {
+    case none
+    case displayedDirectly(requestID: UUID?)
+    case firstHalfStarted(generation: Int, direction: MediaArtworkFlipDirection)
+    case queued
+    case midpointCommitted(requestID: UUID?)
+    case transitionCompleted
+    case staleTransitionDiscarded
+}
+
+struct ArtworkFlipPresentationState: Equatable {
+    private struct QueuedTransition: Equatable {
+        let snapshot: ArtworkPresentationSnapshot
+        let direction: MediaArtworkFlipDirection
+        let requestID: UUID?
+    }
+
+    private(set) var displayed: ArtworkPresentationSnapshot?
+    private(set) var pending: ArtworkPresentationSnapshot?
+    private(set) var phase: ArtworkFlipPhase = .idle
+    private(set) var direction: MediaArtworkFlipDirection?
+    private(set) var generation = 0
+    private(set) var pendingRequestID: UUID?
+    private var queued: QueuedTransition?
+
+    init(initial: ArtworkPresentationSnapshot? = nil) {
+        displayed = initial
+    }
+
+    var queuedSnapshot: ArtworkPresentationSnapshot? {
+        queued?.snapshot
+    }
+
+    mutating func receive(
+        _ snapshot: ArtworkPresentationSnapshot,
+        direction requestedDirection: MediaArtworkFlipDirection?,
+        requestID: UUID?,
+        shouldAnimate: Bool
+    ) -> ArtworkFlipPresentationEffect {
+        guard let displayed else {
+            self.displayed = snapshot
+            return .displayedDirectly(requestID: requestID)
+        }
+
+        if phase != .idle {
+            queued = QueuedTransition(
+                snapshot: snapshot,
+                direction: requestedDirection ?? direction ?? .next,
+                requestID: requestID
+            )
+            return .queued
+        }
+
+        guard isMeaningfulTransition(from: displayed, to: snapshot) else {
+            self.displayed = snapshot
+            return .displayedDirectly(requestID: requestID)
+        }
+
+        guard shouldAnimate, let requestedDirection else {
+            self.displayed = snapshot
+            return .displayedDirectly(requestID: requestID)
+        }
+
+        return stageFirstHalf(
+            snapshot: snapshot,
+            direction: requestedDirection,
+            requestID: requestID
+        )
+    }
+
+    mutating func commitMidpoint(generation callbackGeneration: Int) -> ArtworkFlipPresentationEffect {
+        guard callbackGeneration == generation, phase == .firstHalf, let pending else {
+            return .staleTransitionDiscarded
+        }
+
+        displayed = pending
+        self.pending = nil
+        phase = .secondHalf
+        return .midpointCommitted(requestID: pendingRequestID)
+    }
+
+    mutating func complete(generation callbackGeneration: Int) -> ArtworkFlipPresentationEffect {
+        guard callbackGeneration == generation, phase == .secondHalf else {
+            return .staleTransitionDiscarded
+        }
+
+        phase = .idle
+        direction = nil
+        pendingRequestID = nil
+
+        guard let queued else {
+            return .transitionCompleted
+        }
+        self.queued = nil
+
+        guard let displayed, isMeaningfulTransition(from: displayed, to: queued.snapshot) else {
+            self.displayed = queued.snapshot
+            return .displayedDirectly(requestID: queued.requestID)
+        }
+
+        return stageFirstHalf(
+            snapshot: queued.snapshot,
+            direction: queued.direction,
+            requestID: queued.requestID
+        )
+    }
+
+    private mutating func stageFirstHalf(
+        snapshot: ArtworkPresentationSnapshot,
+        direction: MediaArtworkFlipDirection,
+        requestID: UUID?
+    ) -> ArtworkFlipPresentationEffect {
+        generation += 1
+        pending = snapshot
+        phase = .firstHalf
+        self.direction = direction
+        pendingRequestID = requestID
+        return .firstHalfStarted(generation: generation, direction: direction)
+    }
+
+    private func isMeaningfulTransition(
+        from old: ArtworkPresentationSnapshot,
+        to new: ArtworkPresentationSnapshot
+    ) -> Bool {
+        guard old.fingerprint != new.fingerprint else { return false }
+        return old.image != nil || new.image != nil
+    }
+}
+
+@MainActor
+final class ArtworkPresentationCoordinator: ObservableObject {
+    static let halfDuration: TimeInterval = 0.19
+
+    @Published private(set) var state = ArtworkFlipPresentationState()
+    @Published private(set) var rotationDegrees = 0.0
+
+    var displayedSnapshot: ArtworkPresentationSnapshot? {
+        state.displayed
+    }
+
+    func receiveRawArtwork(
+        _ snapshot: ArtworkPresentationSnapshot,
+        request: MediaArtworkFlipRequest?,
+        reduceMotion: Bool,
+        consumeRequest: @escaping (UUID) -> Void
+    ) {
+        debugArtworkFlip(
+            "raw artwork received identity=\(snapshot.identity) fingerprint=\(snapshot.fingerprint)"
+        )
+
+        let validRequest = request.flatMap { $0.isExpired ? nil : $0 }
+        let requestID = request?.id
+        var nextState = state
+        let effect = nextState.receive(
+            snapshot,
+            direction: validRequest?.direction,
+            requestID: requestID,
+            shouldAnimate: validRequest != nil && !reduceMotion
+        )
+        state = nextState
+        handle(effect, consumeRequest: consumeRequest)
+    }
+
+    private func handle(
+        _ effect: ArtworkFlipPresentationEffect,
+        consumeRequest: @escaping (UUID) -> Void
+    ) {
+        switch effect {
+        case .none:
+            break
+        case .displayedDirectly(let requestID):
+            if let requestID {
+                consumeRequest(requestID)
+            }
+            debugArtworkFlip(
+                "transition completed direct identity=\(state.displayed?.identity ?? "nil")"
+            )
+        case .queued:
+            debugArtworkFlip(
+                "update queued identity=\(state.queuedSnapshot?.identity ?? "nil") generation=\(state.generation)"
+            )
+        case .firstHalfStarted(let generation, let direction):
+            debugArtworkFlip(
+                "transition staged identity=\(state.pending?.identity ?? "nil") generation=\(generation)"
+            )
+            startFirstHalf(
+                generation: generation,
+                direction: direction,
+                consumeRequest: consumeRequest
+            )
+        case .midpointCommitted, .transitionCompleted, .staleTransitionDiscarded:
+            break
+        }
+    }
+
+    private func startFirstHalf(
+        generation: Int,
+        direction: MediaArtworkFlipDirection,
+        consumeRequest: @escaping (UUID) -> Void
+    ) {
+        let firstHalfDegrees = direction == .next ? -90.0 : 90.0
+        debugArtworkFlip(
+            "first half started direction=\(direction.rawValue) generation=\(generation)"
+        )
+
+        withAnimation(.easeInOut(duration: Self.halfDuration)) {
+            rotationDegrees = firstHalfDegrees
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.halfDuration) { [weak self] in
+            self?.commitMidpoint(
+                generation: generation,
+                direction: direction,
+                consumeRequest: consumeRequest
+            )
+        }
+    }
+
+    private func commitMidpoint(
+        generation: Int,
+        direction: MediaArtworkFlipDirection,
+        consumeRequest: @escaping (UUID) -> Void
+    ) {
+        var nextState = state
+        let effect = nextState.commitMidpoint(generation: generation)
+        guard case .midpointCommitted(let requestID) = effect else {
+            debugArtworkFlip("stale transition discarded boundary=midpoint generation=\(generation)")
+            return
+        }
+
+        let secondHalfStartDegrees = direction == .next ? 90.0 : -90.0
+        withTransaction(Transaction(animation: nil)) {
+            state = nextState
+            rotationDegrees = secondHalfStartDegrees
+        }
+        if let requestID {
+            consumeRequest(requestID)
+        }
+        debugArtworkFlip(
+            "midpoint artwork committed identity=\(state.displayed?.identity ?? "nil") generation=\(generation)"
+        )
+        debugArtworkFlip(
+            "second half started direction=\(direction.rawValue) generation=\(generation)"
+        )
+
+        withAnimation(.easeInOut(duration: Self.halfDuration)) {
+            rotationDegrees = 0
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.halfDuration) { [weak self] in
+            self?.completeTransition(generation: generation, consumeRequest: consumeRequest)
+        }
+    }
+
+    private func completeTransition(
+        generation: Int,
+        consumeRequest: @escaping (UUID) -> Void
+    ) {
+        let completedIdentity = state.displayed?.identity ?? "nil"
+        var nextState = state
+        let effect = nextState.complete(generation: generation)
+        guard effect != .staleTransitionDiscarded else {
+            debugArtworkFlip("stale transition discarded boundary=completion generation=\(generation)")
+            return
+        }
+
+        state = nextState
+        debugArtworkFlip(
+            "transition completed identity=\(completedIdentity) generation=\(generation)"
+        )
+        handle(effect, consumeRequest: consumeRequest)
+    }
+
+    private func debugArtworkFlip(_ message: String) {
+        #if DEBUG
+        print("[ArtworkFlip] \(message)")
+        #endif
     }
 }
 
@@ -40,6 +339,7 @@ final class MediaController: ObservableObject {
     @Published private(set) var artworkImageKey: String?
     @Published private(set) var artworkImageRevision = 0
     @Published private(set) var artworkFlipRequest: MediaArtworkFlipRequest?
+    let artworkPresentation = ArtworkPresentationCoordinator()
 
     private let systemNowPlayingProvider = NowPlayingMediaProvider()
     private let youtubeMetadataProvider = YouTubeMetadataProvider()
@@ -914,6 +1214,7 @@ final class MediaController: ObservableObject {
         currentArtworkURL = nil
         artworkImage = nil
         artworkImageRevision += 1
+        synchronizeArtworkPresentation(reason: "placeholder published")
         logArtworkAssignment(
             reason: sourceChanged ? "source changed with no artwork; using placeholder" : "using placeholder fallback",
             sourceIdentity: candidate.identity,
@@ -955,6 +1256,7 @@ final class MediaController: ObservableObject {
         currentArtworkURL = key.hasPrefix("url:") ? String(key.dropFirst(4)) : currentArtworkURL
         artworkImage = image
         artworkImageRevision += 1
+        synchronizeArtworkPresentation(reason: reason)
         debugArtworkFlip("artwork image assigned key=\(key) revision=\(artworkImageRevision) reason=\(reason)")
         logArtworkAssignment(
             reason: reason,
@@ -975,6 +1277,7 @@ final class MediaController: ObservableObject {
         artworkImageKey = nil
         artworkKey = nil
         currentArtworkSourceIdentity = nil
+        synchronizeArtworkPresentation(reason: reason)
         logArtworkAssignment(
             reason: reason,
             sourceIdentity: lastSelectedSourceIdentity,
@@ -1066,6 +1369,40 @@ final class MediaController: ObservableObject {
         #if DEBUG
         print("[ArtworkFlip] \(message)")
         #endif
+    }
+
+    private func synchronizeArtworkPresentation(reason: String) {
+        let snapshot = ArtworkPresentationSnapshot(
+            image: artworkImage,
+            identity: currentArtworkPresentationIdentity,
+            fingerprint: artworkPresentationFingerprint(for: artworkImage)
+        )
+        debugArtworkFlip(
+            "raw artwork received reason=\(reason) identity=\(snapshot.identity) fingerprint=\(snapshot.fingerprint)"
+        )
+        artworkPresentation.receiveRawArtwork(
+            snapshot,
+            request: artworkFlipRequest,
+            reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        ) { [weak self] requestID in
+            self?.consumeArtworkFlipRequest(id: requestID)
+        }
+    }
+
+    private var currentArtworkPresentationIdentity: String {
+        [sourceName, title, artist]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .joined(separator: "|")
+    }
+
+    private func artworkPresentationFingerprint(for image: NSImage?) -> String {
+        guard let image else { return "placeholder" }
+
+        let representationDescription = image.representations
+            .map { "\($0.pixelsWide)x\($0.pixelsHigh)" }
+            .joined(separator: ",")
+        let dataHash = image.tiffRepresentation?.hashValue ?? ObjectIdentifier(image).hashValue
+        return "\(Int(image.size.width))x\(Int(image.size.height))|\(representationDescription)|\(dataHash)"
     }
 
     private func logProviderAttempt(_ provider: String) {
