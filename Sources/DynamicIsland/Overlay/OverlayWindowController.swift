@@ -15,6 +15,28 @@ struct OverlayGeometrySignature: Equatable, CustomStringConvertible {
     }
 }
 
+enum ExpandedScrollEventRoute: Equatable {
+    case islandGesture
+    case passThroughToContent
+}
+
+struct ExpandedScrollEventRoutingPolicy {
+    static func route(
+        isSuppressed: Bool,
+        isExpanded: Bool,
+        gesturesEnabled: Bool,
+        usesTrackpad: Bool
+    ) -> ExpandedScrollEventRoute {
+        guard gesturesEnabled, usesTrackpad else {
+            return .passThroughToContent
+        }
+        guard !isExpanded || !isSuppressed else {
+            return .passThroughToContent
+        }
+        return .islandGesture
+    }
+}
+
 @MainActor
 final class OverlayWindowController {
     private enum OverlayPersistence {
@@ -77,6 +99,7 @@ final class OverlayWindowController {
     #if DEBUG
     private var lastCollapseDebugLogAt: CFTimeInterval = 0
     private var didLogAtollParityConfiguration = false
+    private var didLogExpandedScrollPassThrough = false
     #endif
     private weak var hostingView: IslandHostingView<IslandRootView>?
 
@@ -161,6 +184,16 @@ final class OverlayWindowController {
                     }
                     self.updateWindowVisibility()
                 }
+            }
+            .store(in: &cancellables)
+
+        layoutStore.$isExpandedScrollGestureSuppressed
+            .removeDuplicates()
+            .sink { [weak self] _ in
+                self?.resetExpandedScrollTracking()
+                #if DEBUG
+                self?.didLogExpandedScrollPassThrough = false
+                #endif
             }
             .store(in: &cancellables)
 
@@ -925,6 +958,10 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
     }
 
     private func handleExpandedScrollWheelFromMonitor(_ event: NSEvent, source: String) -> Bool {
+        guard !shouldPassExpandedScrollThroughToContent() else {
+            return false
+        }
+
         guard settings.gesturesEnabled,
               settings.gestureInputSource == .trackpad,
               islandState.state == .expanded,
@@ -947,6 +984,10 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
     }
 
     private func handleExpandedScrollWheel(_ event: NSEvent, source: String) -> Bool {
+        guard !shouldPassExpandedScrollThroughToContent() else {
+            return false
+        }
+
         guard settings.gesturesEnabled,
               settings.gestureInputSource == .trackpad,
               islandState.state == .expanded,
@@ -1068,6 +1109,29 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
         case .expand, .none:
             return true
         }
+    }
+
+    private func shouldPassExpandedScrollThroughToContent() -> Bool {
+        let route = ExpandedScrollEventRoutingPolicy.route(
+            isSuppressed: layoutStore.isExpandedScrollGestureSuppressed,
+            isExpanded: islandState.state == .expanded,
+            gesturesEnabled: settings.gesturesEnabled,
+            usesTrackpad: settings.gestureInputSource == .trackpad
+        )
+        guard route == .passThroughToContent,
+              layoutStore.isExpandedScrollGestureSuppressed,
+              islandState.state == .expanded else {
+            return false
+        }
+
+        resetExpandedScrollTracking()
+        #if DEBUG
+        if !didLogExpandedScrollPassThrough {
+            print("[GestureDebug] expanded scroll passed through to content")
+            didLogExpandedScrollPassThrough = true
+        }
+        #endif
+        return true
     }
 
     private func expandedAction(for gesture: IslandPointerGesture) -> IslandGestureAction {

@@ -18,6 +18,19 @@ final class IslandLayoutStore: ObservableObject {
     @Published var collapsedPreviewActive = false
     @Published var collapsedPreviewSurfaceFrame: CGRect = .zero
     @Published var panelFrame: CGRect = .zero
+    @Published private(set) var isExpandedScrollGestureSuppressed = false
+
+    func setExpandedScrollGestureSuppressed(_ suppressed: Bool) {
+        guard isExpandedScrollGestureSuppressed != suppressed else { return }
+        isExpandedScrollGestureSuppressed = suppressed
+        #if DEBUG
+        print(
+            suppressed
+                ? "[GestureDebug] expanded scroll suppression enabled"
+                : "[GestureDebug] expanded scroll suppression disabled"
+        )
+        #endif
+    }
 
     func update(
         canvas: IslandCanvasGeometry,
