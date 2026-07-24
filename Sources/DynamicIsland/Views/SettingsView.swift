@@ -368,6 +368,17 @@ struct SettingsView: View {
 
     private var liveActivitiesSection: some View {
         settingsForm("Live Activities") {
+            SettingsGroup("Expanded Island") {
+                Toggle(
+                    "Show Live Activities section",
+                    isOn: $settings.showExpandedLiveActivitiesSection
+                )
+                .disabled(!settings.liveActivitiesEnabled)
+                HelpText(
+                    "Hides only the Live Activities section on the expanded Island page. " +
+                    "Collapsed Live Activities and their priority selection remain active."
+                )
+            }
             SettingsGroup("Sources") {
                 Toggle("Enable live activities", isOn: $settings.liveActivitiesEnabled)
                 Picker("Style", selection: $settings.liveActivityStyle) {

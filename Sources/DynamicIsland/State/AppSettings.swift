@@ -303,6 +303,11 @@ public final class AppSettings: ObservableObject {
     @Published public var showNowPlayingActivity: Bool { didSet { save(showNowPlayingActivity, for: Key.showNowPlayingActivity) } }
 
     @Published public var liveActivitiesEnabled: Bool { didSet { save(liveActivitiesEnabled, for: Key.liveActivitiesEnabled) } }
+    @Published public var showExpandedLiveActivitiesSection: Bool {
+        didSet {
+            save(showExpandedLiveActivitiesSection, for: Key.showExpandedLiveActivitiesSection)
+        }
+    }
     @Published public var liveActivityStyle: LiveActivityStyle { didSet { save(liveActivityStyle.rawValue, for: Key.liveActivityStyle) } }
     @Published public var showMusicLiveActivity: Bool { didSet { save(showMusicLiveActivity, for: Key.showMusicLiveActivity) } }
     @Published public var showTimerLiveActivity: Bool { didSet { save(showTimerLiveActivity, for: Key.showTimerLiveActivity) } }
@@ -501,6 +506,7 @@ public final class AppSettings: ObservableObject {
         showNowPlayingActivity = Self.bool(defaults, Key.showNowPlayingActivity, false)
 
         liveActivitiesEnabled = Self.bool(defaults, Key.liveActivitiesEnabled, true)
+        showExpandedLiveActivitiesSection = Self.bool(defaults, Key.showExpandedLiveActivitiesSection, true)
         liveActivityStyle = Self.enumValue(defaults, Key.liveActivityStyle, .compact)
         showMusicLiveActivity = Self.bool(defaults, Key.showMusicLiveActivity, true)
         showTimerLiveActivity = Self.bool(defaults, Key.showTimerLiveActivity, true)
@@ -619,7 +625,8 @@ public final class AppSettings: ObservableObject {
             Key.collapsedHoverPreviewShowsArtist, Key.collapsedHoverPreviewShowsSource,
             Key.trayEnabled, Key.fileShelfEnabled, Key.airDropZoneEnabled,
             Key.timerEnabled, Key.timerPresetsEnabled, Key.timerPreset1Minutes, Key.timerPreset2Minutes, Key.timerPreset3Minutes,
-            Key.statsEnabled, Key.showCPU, Key.showMemory, Key.showGPU, Key.showNetwork, Key.showDisk, Key.showBattery, Key.showUptime
+            Key.statsEnabled, Key.showCPU, Key.showMemory, Key.showGPU, Key.showNetwork, Key.showDisk, Key.showBattery, Key.showUptime,
+            Key.showExpandedLiveActivitiesSection
         ])
         reload()
     }
@@ -764,6 +771,7 @@ public final class AppSettings: ObservableObject {
         showCalendarActivity = Self.bool(defaults, Key.showCalendarActivity, false)
         showNowPlayingActivity = Self.bool(defaults, Key.showNowPlayingActivity, false)
         liveActivitiesEnabled = Self.bool(defaults, Key.liveActivitiesEnabled, true)
+        showExpandedLiveActivitiesSection = Self.bool(defaults, Key.showExpandedLiveActivitiesSection, true)
         liveActivityStyle = Self.enumValue(defaults, Key.liveActivityStyle, .compact)
         showMusicLiveActivity = Self.bool(defaults, Key.showMusicLiveActivity, true)
         showTimerLiveActivity = Self.bool(defaults, Key.showTimerLiveActivity, true)
@@ -1254,6 +1262,7 @@ private enum Key {
     static let showCalendarActivity = "showCalendarActivity"
     static let showNowPlayingActivity = "showNowPlayingActivity"
     static let liveActivitiesEnabled = "liveActivitiesEnabled"
+    static let showExpandedLiveActivitiesSection = "showExpandedLiveActivitiesSection"
     static let liveActivityStyle = "liveActivityStyle"
     static let showMusicLiveActivity = "showMusicLiveActivity"
     static let showTimerLiveActivity = "showTimerLiveActivity"
@@ -1331,7 +1340,8 @@ private enum Key {
         showCPU, showMemory, showGPU, showNetwork, showDisk, showBattery, showUptime,
         animateStatsCharts, pauseStatsDuringShellMorph, showActivityIndicator, activitiesEnabled,
         activitiesRefreshIntervalSeconds, showRunningAppsActivity, showDownloadsActivity,
-        showCalendarActivity, showNowPlayingActivity, liveActivitiesEnabled, liveActivityStyle,
+        showCalendarActivity, showNowPlayingActivity, liveActivitiesEnabled,
+        showExpandedLiveActivitiesSection, liveActivityStyle,
         showMusicLiveActivity, showTimerLiveActivity, showFileDropLiveActivity,
         showBatteryLiveActivity, showCalendarLiveActivity, showDownloadsLiveActivity,
         liveActivityAutoDismissEnabled, liveActivityAutoDismissSeconds, liveActivityAnimationEnabled,

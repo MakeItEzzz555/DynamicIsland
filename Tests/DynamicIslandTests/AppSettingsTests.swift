@@ -61,4 +61,31 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(settings.collapsedPriorityRunningTimer, CollapsedLiveActivityPrioritySource.runningTimer.defaultPriority)
         XCTAssertEqual(settings.collapsedPriorityPausedMedia, CollapsedLiveActivityPrioritySource.pausedMedia.defaultPriority)
     }
+
+    @MainActor
+    func testExpandedLiveActivitiesSectionDefaultsToVisible() {
+        let settings = AppSettings(defaults: defaults)
+
+        XCTAssertTrue(settings.showExpandedLiveActivitiesSection)
+    }
+
+    @MainActor
+    func testExpandedLiveActivitiesSectionVisibilityPersists() {
+        let firstSettings = AppSettings(defaults: defaults)
+        firstSettings.showExpandedLiveActivitiesSection = false
+
+        let secondSettings = AppSettings(defaults: defaults)
+
+        XCTAssertFalse(secondSettings.showExpandedLiveActivitiesSection)
+    }
+
+    @MainActor
+    func testResetAllSettingsRestoresExpandedLiveActivitiesSectionVisibility() {
+        let settings = AppSettings(defaults: defaults)
+        settings.showExpandedLiveActivitiesSection = false
+
+        settings.resetAllSettings()
+
+        XCTAssertTrue(settings.showExpandedLiveActivitiesSection)
+    }
 }
