@@ -22,5 +22,6 @@ struct IslandModules {
     let timer: TimerController
     let stats: SystemStatsController
     let liveActivities: LiveActivityStore
+    let clipboardHistory: ClipboardHistoryStore
     let navigation: IslandNavigationStore
 }
