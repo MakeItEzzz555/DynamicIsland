@@ -3196,6 +3196,26 @@ For every requested feature phase:
   - `open dist/DynamicIsland.app` returned LaunchServices `-600` immediately after `pkill`; retrying with the absolute app path succeeded.
   - Packaging still reports the existing `FileThumbnailCache` non-Sendable capture warning in `ModuleViews.swift`.
 
+### Phase 13A - Expanded Visibility Controls
+
+- Added persisted `showExpandedLiveActivitiesSection`, defaulting to `true`, with initialization, reload, full-reset, module-reset, and complete persisted-key bookkeeping.
+- Kept `liveActivitiesEnabled` as the master Live Activity engine switch. The new setting controls only whether the Live Activities module is mounted in the expanded Island page.
+- Added the Live Activities settings group `Expanded Island` with the toggle `Show Live Activities section`. The control is disabled when the master engine switch is off and explains that collapsed activities and priorities remain active.
+- Added internal, testable `ExpandedIslandRightStackVisibility`. It shows expanded Live Activities only when both the master engine and display setting are enabled, tracks Shortcuts independently, and reports whether either right-stack section is available.
+- Updated only the expanded Island-page right stack to use the resolver. When the Live Activities section is hidden and Shortcuts are enabled, the Live Activities view is not mounted, no empty placeholder or inter-card spacing remains, and Shortcuts receives `metrics.pageHeight`. Right-stack width, media width, divider placement, and responsive geometry remain unchanged.
+- The new display setting is not used by collapsed activity generation, selection, priority, hover-preview selection, or content-aware wing geometry.
+- Hardened the existing `collapsedHoverPreviewEnabled` setting with an explicit `IslandRootView` observer. Disabling it calls the existing `deactivateCollapsedPreview()`, which clears hover/visibility state, increments `collapsedPreviewGeneration` to invalidate delayed reveals, and updates the preview interaction frame to zero.
+- Re-enabling preview does not synthesize hover state; `expandOnHover` remains intentionally unwired.
+- Added AppSettings tests for the true default, persistence through a new instance, and full-reset restoration. Added five focused resolver cases covering split visibility, display-only hiding, master-off behavior, Live-Activities-only behavior, and a fully unavailable right stack.
+- Did not modify Clipboard functionality, `NotchGeometryService`, `IslandLayoutStore`, `OverlayWindowController`, shell geometry/radii/shadows, collapsed activity wings or height, panel behavior, providers, priority logic, transitions, Stats polling, gestures, or `ModuleViews.swift`.
+- Validation on 2026-07-24:
+  - `git diff --check`: passed.
+  - `swift build`: passed with no warnings.
+  - `swift test`: 122 tests, 0 failures.
+  - `chmod +x Scripts/package_app.sh`: completed.
+  - `Scripts/package_app.sh`: passed on the first attempt and produced `dist/DynamicIsland.app`; no resource-fork cleanup was needed.
+- Manual validation remains required for the expanded split/full-height matrix, live toggling while expanded, collapsed activity independence, master-off/restore behavior, active and delayed hover-preview cancellation, stationary-pointer re-enable behavior, and the listed expansion/tab/gesture/geometry regressions.
+
 ### Phase 12A - Final Island Content Transition Sequencing
 
 - Fixed the brief fully-expanded empty-black content gap:

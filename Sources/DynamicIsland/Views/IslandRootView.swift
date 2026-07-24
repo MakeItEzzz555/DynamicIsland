@@ -411,6 +411,11 @@ struct IslandRootView: View {
         .onChange(of: collapsedPreviewSurfaceFrame) { _, _ in
             updateCollapsedPreviewLayout()
         }
+        .onChange(of: settings.collapsedHoverPreviewEnabled) { _, enabled in
+            if !enabled {
+                deactivateCollapsedPreview()
+            }
+        }
         .onChange(of: navigation.isFileDropTargeted) { _, _ in
             if !isCollapsedPreviewAllowed {
                 deactivateCollapsedPreview()
@@ -2030,7 +2035,12 @@ struct ExpandedIslandView: View {
     }
 
     private func islandPage(metrics: ExpandedIslandLayoutMetrics) -> some View {
-        let showsRightStack = settings.liveActivitiesEnabled || settings.shortcutsEnabled
+        let visibility = ExpandedIslandRightStackVisibility.resolve(
+            liveActivitiesEnabled: settings.liveActivitiesEnabled,
+            showExpandedLiveActivitiesSection: settings.showExpandedLiveActivitiesSection,
+            shortcutsEnabled: settings.shortcutsEnabled
+        )
+        let showsRightStack = visibility.showsRightStack
 
         return HStack(spacing: metrics.pageColumnSpacing) {
             if settings.mediaEnabled {
@@ -2069,11 +2079,15 @@ struct ExpandedIslandView: View {
             }
 
             if showsRightStack {
-                let liveActivitiesHeight = settings.shortcutsEnabled ? metrics.liveActivitiesStackHeight : metrics.pageHeight
-                let shortcutsHeight = settings.liveActivitiesEnabled ? metrics.shortcutsStackHeight : metrics.pageHeight
+                let liveActivitiesHeight = visibility.showsShortcuts
+                    ? metrics.liveActivitiesStackHeight
+                    : metrics.pageHeight
+                let shortcutsHeight = visibility.showsLiveActivities
+                    ? metrics.shortcutsStackHeight
+                    : metrics.pageHeight
 
                 VStack(spacing: metrics.rightStackSpacing) {
-                    if settings.liveActivitiesEnabled {
+                    if visibility.showsLiveActivities {
                         LiveActivitiesModuleView(
                             liveActivities: liveActivities,
                             navigation: navigation,
@@ -2084,7 +2098,7 @@ struct ExpandedIslandView: View {
                         .frame(height: liveActivitiesHeight, alignment: .topLeading)
                     }
 
-                    if settings.shortcutsEnabled {
+                    if visibility.showsShortcuts {
                         ShortcutsModuleView(
                             shortcuts: modules.shortcuts,
                             availableHeight: shortcutsHeight,
@@ -2398,6 +2412,26 @@ private struct ExpandedIslandPageSwitcher: View {
                 .stroke(.white.opacity(0.07), lineWidth: 1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+struct ExpandedIslandRightStackVisibility: Equatable {
+    let showsLiveActivities: Bool
+    let showsShortcuts: Bool
+
+    static func resolve(
+        liveActivitiesEnabled: Bool,
+        showExpandedLiveActivitiesSection: Bool,
+        shortcutsEnabled: Bool
+    ) -> Self {
+        Self(
+            showsLiveActivities: liveActivitiesEnabled && showExpandedLiveActivitiesSection,
+            showsShortcuts: shortcutsEnabled
+        )
+    }
+
+    var showsRightStack: Bool {
+        showsLiveActivities || showsShortcuts
     }
 }
 
