@@ -77,6 +77,59 @@ private enum ExpandedTabTransitionPhase {
     case fadingIn
 }
 
+struct ClipboardHistoryPresentationState: Equatable {
+    private(set) var isRequested = false
+    private(set) var isMounted = false
+    private(set) var isVisible = false
+    private(set) var isRemoving = false
+    private(set) var generation = 0
+
+    @discardableResult
+    mutating func open() -> Int {
+        generation += 1
+        isRequested = true
+        isMounted = true
+        isVisible = false
+        isRemoving = false
+        return generation
+    }
+
+    @discardableResult
+    mutating func reveal(generation expectedGeneration: Int) -> Bool {
+        guard expectedGeneration == generation, isRequested, isMounted else { return false }
+        isRemoving = false
+        isVisible = true
+        return true
+    }
+
+    @discardableResult
+    mutating func beginAnimatedClose() -> Int? {
+        guard isRequested || isMounted else { return nil }
+        generation += 1
+        isRequested = false
+        isRemoving = isMounted
+        isVisible = false
+        return generation
+    }
+
+    @discardableResult
+    mutating func completeAnimatedClose(generation expectedGeneration: Int) -> Bool {
+        guard expectedGeneration == generation, !isRequested else { return false }
+        isMounted = false
+        isVisible = false
+        isRemoving = false
+        return true
+    }
+
+    mutating func closeImmediately() {
+        generation += 1
+        isRequested = false
+        isMounted = false
+        isVisible = false
+        isRemoving = false
+    }
+}
+
 enum CollapsedPreviewKind: String {
     case none
     case media
@@ -352,7 +405,12 @@ struct IslandRootView: View {
                             }
                         },
                         rendersExpandedVisualContent: rendersExpandedVisualContent,
-                        onOpenSettings: onOpenSettings
+                        onOpenSettings: onOpenSettings,
+                        layoutStore: layoutStore,
+                        islandGestureCoordinator: gestureCoordinator,
+                        islandGestureContext: gestureContext,
+                        islandGestureCallbacks: gestureCallbacks,
+                        islandSwipeSensitivity: settings.gestureSensitivity
                     )
                 } else {
                     CompactIslandView(
@@ -377,20 +435,20 @@ struct IslandRootView: View {
                             deactivateCollapsedPreview()
                             onRequestExpand()
                         }
+                        .modifier(
+                            IslandPointerGestureModifier(
+                                settings: settings,
+                                coordinator: gestureCoordinator,
+                                context: gestureContext,
+                                callbacks: gestureCallbacks,
+                                swipeSensitivity: settings.gestureSensitivity
+                            )
+                        )
                 }
             }
             .notchIntegrated(layoutStore.hasHardwareNotch)
             .shellMorphing(layoutStore.isShellMorphing)
             .collapseShellOnly(layoutStore.isCollapseShellOnly)
-            .modifier(
-                IslandPointerGestureModifier(
-                    settings: settings,
-                    coordinator: gestureCoordinator,
-                    context: gestureContext,
-                    callbacks: gestureCallbacks,
-                    swipeSensitivity: settings.gestureSensitivity
-                )
-            )
             .frame(width: surfaceSize.width, height: surfaceSize.height)
             .position(x: surfaceFrame.midX, y: layoutStore.canvasSize.height - surfaceFrame.midY)
         }
@@ -1749,6 +1807,11 @@ struct ExpandedIslandView: View {
     let onTimerStarted: () -> Void
     let rendersExpandedVisualContent: Bool
     let onOpenSettings: () -> Void
+    @ObservedObject var layoutStore: IslandLayoutStore
+    @ObservedObject var islandGestureCoordinator: IslandGestureCoordinator
+    let islandGestureContext: IslandGestureContext
+    let islandGestureCallbacks: IslandGestureCallbacks
+    let islandSwipeSensitivity: Double
     @ObservedObject private var navigation: IslandNavigationStore
     @ObservedObject private var liveActivities: LiveActivityStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -1762,6 +1825,7 @@ struct ExpandedIslandView: View {
     @State private var tabTransitionPhase: ExpandedTabTransitionPhase = .idle
     @State private var tabContentVisible = true
     @State private var tabTransitionGeneration = 0
+    @State private var clipboardPresentation = ClipboardHistoryPresentationState()
 
     init(
         settings: AppSettings,
@@ -1772,7 +1836,12 @@ struct ExpandedIslandView: View {
         onShortcutLaunched: @escaping () -> Void,
         onTimerStarted: @escaping () -> Void,
         rendersExpandedVisualContent: Bool = true,
-        onOpenSettings: @escaping () -> Void = {}
+        onOpenSettings: @escaping () -> Void = {},
+        layoutStore: IslandLayoutStore,
+        islandGestureCoordinator: IslandGestureCoordinator,
+        islandGestureContext: IslandGestureContext,
+        islandGestureCallbacks: IslandGestureCallbacks,
+        islandSwipeSensitivity: Double
     ) {
         self.settings = settings
         self.modules = modules
@@ -1783,6 +1852,11 @@ struct ExpandedIslandView: View {
         self.onTimerStarted = onTimerStarted
         self.rendersExpandedVisualContent = rendersExpandedVisualContent
         self.onOpenSettings = onOpenSettings
+        self.layoutStore = layoutStore
+        self.islandGestureCoordinator = islandGestureCoordinator
+        self.islandGestureContext = islandGestureContext
+        self.islandGestureCallbacks = islandGestureCallbacks
+        self.islandSwipeSensitivity = islandSwipeSensitivity
         navigation = modules.navigation
         liveActivities = modules.liveActivities
         _displayedPage = State(initialValue: modules.navigation.selectedPage)
@@ -1797,72 +1871,39 @@ struct ExpandedIslandView: View {
                 )
             )
 
-            VStack(alignment: .leading, spacing: metrics.tabToPageSpacing) {
-                HStack(alignment: .center, spacing: 8) {
-                    ZStack(alignment: .leading) {
-                        if rendersExpandedVisualContent && shouldRenderContent && !isCollapseShellOnly {
-                            ExpandedIslandPageSwitcher(settings: settings, navigation: navigation)
-                                .innerBlurScaleClean(
-                                    settings: settings,
-                                    isVisible: contentVisible,
-                                    isRemoval: isContentRemoving,
-                                    index: 0,
-                                    reduceMotion: reduceMotion
-                                )
-                        }
-                    }
-                    .frame(height: metrics.tabSwitcherHeight)
+            ZStack(alignment: .topLeading) {
+                expandedBaseLayer(metrics: metrics)
+                    .modifier(
+                        IslandPointerGestureModifier(
+                            settings: settings,
+                            coordinator: islandGestureCoordinator,
+                            context: islandGestureContext,
+                            callbacks: islandGestureCallbacks,
+                            swipeSensitivity: islandSwipeSensitivity
+                        )
+                    )
 
-                    Spacer(minLength: 0)
-
-                    ZStack {
-                        if rendersExpandedVisualContent && shouldRenderContent && !isCollapseShellOnly {
-                            SettingsGearButton(action: onOpenSettings)
-                                .innerBlurScaleClean(
-                                    settings: settings,
-                                    isVisible: contentVisible,
-                                    isRemoval: isContentRemoving,
-                                    index: 0,
-                                    reduceMotion: reduceMotion
-                                )
-                        }
-                    }
-                    .frame(width: metrics.tabSwitcherHeight, height: metrics.tabSwitcherHeight)
+                if clipboardPresentation.isMounted {
+                    clipboardHistoryOverlay(metrics: metrics)
+                        .frame(width: metrics.innerWidth, height: metrics.pageHeight)
+                        .offset(
+                            x: metrics.horizontalPadding,
+                            y: metrics.topPadding
+                                + metrics.tabSwitcherHeight
+                                + metrics.tabToPageSpacing
+                        )
+                        .allowsHitTesting(clipboardPresentation.isMounted)
                 }
-                .frame(height: metrics.tabSwitcherHeight)
-
-                ZStack(alignment: .topLeading) {
-                    if !rendersExpandedVisualContent || !shouldRenderContent {
-                        Color.clear
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else {
-                        pageView(displayedPage, metrics: metrics)
-                            .modifier(
-                                ExpandedTabContentTransitionModifier(
-                                    isVisible: tabContentVisible,
-                                    phase: tabTransitionPhase,
-                                    reduceMotion: reduceMotion,
-                                    animationsEnabled: settings.contentAnimationEnabled,
-                                    useBlurTransitions: settings.useBlurTransitions,
-                                    useScaleTransitions: settings.useScaleTransitions
-                                )
-                            )
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: metrics.pageHeight, alignment: .topLeading)
-                .clipped()
             }
-            .padding(.horizontal, metrics.horizontalPadding)
-            .padding(.top, metrics.topPadding)
-            .padding(.bottom, metrics.bottomPadding)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear {
+            synchronizeExpandedScrollSuppression()
             resetTabPresentation(to: navigation.selectedPage)
             synchronizeStatsPolling()
         }
         .onChange(of: navigation.selectedPage) { _, newPage in
+            closeClipboardHistoryImmediately()
             handleRequestedTabChange(newPage)
         }
         .onChange(of: displayedPage) { _, _ in
@@ -1873,25 +1914,112 @@ struct ExpandedIslandView: View {
         }
         .onChange(of: contentVisible) { _, isVisible in
             if !isVisible {
+                closeClipboardHistoryImmediately()
                 cancelTabTransitionForContentExit()
             }
             synchronizeStatsPolling()
         }
         .onChange(of: shouldRenderContent) { _, shouldRender in
             if !shouldRender {
+                closeClipboardHistoryImmediately()
                 cancelTabTransitionForContentExit()
             }
             synchronizeStatsPolling()
         }
         .onChange(of: isCollapseShellOnly) { _, collapseOnly in
             if collapseOnly {
+                closeClipboardHistoryImmediately()
                 cancelTabTransitionForContentExit()
             }
             synchronizeStatsPolling()
         }
         .onDisappear {
+            closeClipboardHistoryImmediately()
+            layoutStore.setExpandedScrollGestureSuppressed(false)
             modules.stats.stopPolling()
         }
+        .onChange(of: settings.clipboardHistoryEnabled) { _, enabled in
+            if !enabled {
+                closeClipboardHistoryImmediately()
+            }
+        }
+        .onExitCommand {
+            closeClipboardHistoryAnimated()
+        }
+    }
+
+    private func expandedBaseLayer(metrics: ExpandedIslandLayoutMetrics) -> some View {
+        VStack(alignment: .leading, spacing: metrics.tabToPageSpacing) {
+            HStack(alignment: .center, spacing: 8) {
+                ZStack(alignment: .leading) {
+                    if rendersExpandedVisualContent && shouldRenderContent && !isCollapseShellOnly {
+                        ExpandedIslandPageSwitcher(settings: settings, navigation: navigation)
+                            .innerBlurScaleClean(
+                                settings: settings,
+                                isVisible: contentVisible,
+                                isRemoval: isContentRemoving,
+                                index: 0,
+                                reduceMotion: reduceMotion
+                            )
+                    }
+                }
+                .frame(height: metrics.tabSwitcherHeight)
+
+                Spacer(minLength: 0)
+
+                HStack(spacing: 6) {
+                    if rendersExpandedVisualContent && shouldRenderContent && !isCollapseShellOnly {
+                        if settings.clipboardHistoryEnabled {
+                            ExpandedHeaderButton(
+                                systemImage: "clipboard",
+                                help: "Clipboard History",
+                                accessibilityLabel: "Open Clipboard History"
+                            ) {
+                                toggleClipboardHistory()
+                            }
+                        }
+                        SettingsGearButton {
+                            closeClipboardHistoryAnimated()
+                            onOpenSettings()
+                        }
+                    }
+                }
+                .innerBlurScaleClean(
+                    settings: settings,
+                    isVisible: contentVisible,
+                    isRemoval: isContentRemoving,
+                    index: 0,
+                    reduceMotion: reduceMotion
+                )
+                .frame(height: metrics.tabSwitcherHeight)
+            }
+            .frame(height: metrics.tabSwitcherHeight)
+
+            ZStack(alignment: .topLeading) {
+                if !rendersExpandedVisualContent || !shouldRenderContent {
+                    Color.clear
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    pageView(displayedPage, metrics: metrics)
+                        .modifier(
+                            ExpandedTabContentTransitionModifier(
+                                isVisible: tabContentVisible,
+                                phase: tabTransitionPhase,
+                                reduceMotion: reduceMotion,
+                                animationsEnabled: settings.contentAnimationEnabled,
+                                useBlurTransitions: settings.useBlurTransitions,
+                                useScaleTransitions: settings.useScaleTransitions
+                            )
+                        )
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: metrics.pageHeight, alignment: .topLeading)
+            .clipped()
+        }
+        .padding(.horizontal, metrics.horizontalPadding)
+        .padding(.top, metrics.topPadding)
+        .padding(.bottom, metrics.bottomPadding)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     @ViewBuilder
@@ -2023,6 +2151,147 @@ struct ExpandedIslandView: View {
 
     private func cancelTabTransitionForContentExit() {
         resetTabPresentation(to: navigation.selectedPage)
+    }
+
+    private func openClipboardHistory() {
+        guard settings.clipboardHistoryEnabled else { return }
+        var presentation = clipboardPresentation
+        let generation = presentation.open()
+        updateClipboardPresentation(presentation)
+
+        let shellDuration = IslandContentTransitionTiming.shellDuration(
+            settings: settings,
+            reduceMotion: reduceMotion
+        )
+        let revealDelay = reduceMotion
+            || settings.reduceExtraMotion
+            || !settings.contentAnimationEnabled
+            || settings.animationPreset == .instant
+            ? 0
+            : IslandContentTransitionTiming.expansionContentDelay(shellDuration: shellDuration)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + revealDelay) {
+            guard settings.clipboardHistoryEnabled,
+                  contentVisible,
+                  shouldRenderContent,
+                  !isCollapseShellOnly else {
+                return
+            }
+            var presentation = clipboardPresentation
+            guard presentation.reveal(generation: generation) else { return }
+            updateClipboardPresentation(presentation)
+        }
+    }
+
+    private func closeClipboardHistoryAnimated() {
+        var presentation = clipboardPresentation
+        guard let generation = presentation.beginAnimatedClose() else { return }
+        updateClipboardPresentation(presentation)
+
+        let shellDuration = IslandContentTransitionTiming.shellDuration(
+            settings: settings,
+            reduceMotion: reduceMotion
+        )
+        let exitDuration = reduceMotion
+            || settings.reduceExtraMotion
+            || !settings.contentAnimationEnabled
+            || settings.animationPreset == .instant
+            ? 0.01
+            : IslandContentTransitionTiming.collapseContentDuration(shellDuration: shellDuration)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + exitDuration + 0.025) {
+            var presentation = clipboardPresentation
+            guard presentation.completeAnimatedClose(generation: generation) else { return }
+            updateClipboardPresentation(presentation)
+        }
+    }
+
+    private func closeClipboardHistoryImmediately() {
+        var presentation = clipboardPresentation
+        presentation.closeImmediately()
+        updateClipboardPresentation(presentation)
+    }
+
+    private func updateClipboardPresentation(_ presentation: ClipboardHistoryPresentationState) {
+        clipboardPresentation = presentation
+        synchronizeExpandedScrollSuppression()
+    }
+
+    private func synchronizeExpandedScrollSuppression() {
+        layoutStore.setExpandedScrollGestureSuppressed(clipboardPresentation.isMounted)
+    }
+
+    private func toggleClipboardHistory() {
+        if clipboardPresentation.isRequested {
+            closeClipboardHistoryAnimated()
+        } else {
+            openClipboardHistory()
+        }
+    }
+
+    private func clipboardHistoryOverlay(metrics: ExpandedIslandLayoutMetrics) -> some View {
+        let availableWidth = max(0, metrics.innerWidth)
+        let preferredWidth = metrics.innerWidth * 0.46
+        let cardWidth = min(max(preferredWidth, 320), min(410, availableWidth))
+
+        return ZStack(alignment: .topTrailing) {
+            Color.black
+                .opacity(clipboardPresentation.isVisible ? 0.34 : 0)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    guard clipboardPresentation.isRequested else { return }
+                    closeClipboardHistoryAnimated()
+                }
+                .accessibilityLabel("Close Clipboard History")
+                .animation(clipboardBackdropAnimation, value: clipboardPresentation.isVisible)
+                .allowsHitTesting(clipboardPresentation.isMounted)
+
+            ClipboardHistoryView(
+                store: modules.clipboardHistory,
+                onClose: {
+                    closeClipboardHistoryAnimated()
+                }
+            )
+            .frame(width: cardWidth, height: metrics.pageHeight)
+            .innerBlurScaleClean(
+                settings: settings,
+                isVisible: clipboardPresentation.isVisible,
+                isRemoval: clipboardPresentation.isRemoving,
+                index: 0,
+                reduceMotion: reduceMotion
+            )
+            .allowsHitTesting(
+                clipboardPresentation.isRequested && clipboardPresentation.isVisible
+            )
+        }
+        .frame(maxWidth: .infinity, maxHeight: metrics.pageHeight)
+        .allowsHitTesting(clipboardPresentation.isMounted)
+    }
+
+    private var clipboardBackdropAnimation: Animation {
+        guard settings.contentAnimationEnabled else {
+            return .linear(duration: 0.01)
+        }
+        let shellDuration = IslandContentTransitionTiming.shellDuration(
+            settings: settings,
+            reduceMotion: reduceMotion
+        )
+        if clipboardPresentation.isVisible {
+            return .easeOut(
+                duration: reduceMotion
+                    ? 0.10
+                    : IslandContentTransitionTiming.expansionContentDuration(
+                        shellDuration: shellDuration
+                    )
+            )
+        }
+        return .easeIn(
+            duration: reduceMotion
+                ? 0.10
+                : IslandContentTransitionTiming.collapseContentDuration(
+                    shellDuration: shellDuration
+                )
+        )
     }
 
     private func synchronizeStatsPolling() {
@@ -2372,6 +2641,35 @@ private struct SettingsGearButton: View {
         .animation(.easeOut(duration: 0.14), value: isHovering)
         .help("Settings")
         .accessibilityLabel("Open Settings")
+    }
+}
+
+private struct ExpandedHeaderButton: View {
+    let systemImage: String
+    let help: String
+    let accessibilityLabel: String
+    let action: () -> Void
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(.white.opacity(isHovering ? 0.95 : 0.62))
+                .frame(width: 30, height: 30)
+                .background {
+                    Circle().fill(.white.opacity(isHovering ? 0.14 : 0.08))
+                }
+                .overlay {
+                    Circle().stroke(.white.opacity(isHovering ? 0.12 : 0.07), lineWidth: 1)
+                }
+                .scaleEffect(isHovering ? 1.04 : 1)
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+        .animation(.easeOut(duration: 0.14), value: isHovering)
+        .help(help)
+        .accessibilityLabel(accessibilityLabel)
     }
 }
 

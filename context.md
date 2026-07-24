@@ -3271,6 +3271,49 @@ For every requested feature phase:
 - `IslandRootView.swift`, `OverlayWindowController.swift`, geometry, panels, Spaces behavior, click-through behavior, shell/radii, transitions, gestures, Live Activities, artwork synchronization, media arbitration, Timer, Battery, File Shelf, Stats, themes, and shell-shadow removal were not modified.
 - Atoll remained reference-only; no substantial GPL source was copied verbatim.
 
+### Phase 13B.2 - Native In-Island Clipboard Interface
+
+- Reused the already inspected Atoll `dev` reference at commit `503606ca34aece08d30d3c86bce50eb5e07a3139` for native visual hierarchy, compact row, icon, action, empty-state, scrolling, and header-button patterns.
+- Added a native Clipboard History button directly left of the expanded header Settings button. It appears only while `clipboardHistoryEnabled` is enabled.
+- Added `ClipboardHistoryView` as an in-island overlay inside the existing expanded page-area `ZStack`; no new panel, window, popover, sheet, tab, or geometry path was introduced.
+- `ExpandedIslandView` owns only the local Clipboard presentation lifecycle. The existing shared `ClipboardHistoryStore` remains the sole owner of entries, copy-back, delete, clear, ordering, monitoring, and persistence.
+- The overlay uses a page-only backdrop and a top-trailing native-material card. The card has a subtle stroke, continuous 17pt corners, no shadow, full page height, and a responsive width derived from `metrics.innerWidth * 0.46` with the requested `320...410pt` bound when space permits.
+- Added header count, in-card Clear All confirmation, close button, empty state, lazy scrolling rows, text/URL/file/image presentation, timestamps, per-row copy and delete actions, and short generation-guarded copied feedback.
+- Clipboard rows now use an explicit native vertical `ScrollView` containing a `LazyVStack`. The card header and inline Clear All confirmation remain outside the scroll region and fixed while only the remaining row area scrolls with native macOS momentum and indicators.
+- Removed the duplicate copied-success indicator that previously appeared as a separate trailing row label. The fixed 24×24 copy button is now the sole feedback location, smoothly replacing its copy symbol with one green `Color.green.opacity(0.92)` checkmark without moving row content.
+- Existing `copiedEntryID` and generation checks remain authoritative: both row-click and copy-button paths produce the same feedback, failed copy-back shows none, and an older delayed reset cannot clear a newer entry's checkmark.
+- Added a bounded main-actor image thumbnail cache keyed by the existing entry fingerprint. Image data is decoded once per cached fingerprint, remains memory-only, and is not persisted by the view.
+- Added the pure internal `ClipboardHistoryRowPresentation` resolver. File rows expose only last path components/counts and do not reveal parent paths.
+- Clipboard presentation closes on feature disablement, expanded-content exit/unmount, collapse shell-only mode, page changes, Settings open, Escape, backdrop click, close-button click, and view disappearance.
+- Replaced the previous approximate asymmetric `AnyTransition` and Clipboard-specific blur/scale modifier with the existing `innerBlurScaleClean` modifier directly. Its implementation and values were not changed; the Clipboard now shares the Island content modifier's center anchor, scale, blur, opacity, easing, and duration resolution.
+- Clipboard presentation uses independent requested, mounted, visible, removing, and generation state. Opening mounts hidden, then reveals only after the exact `IslandContentTransitionTiming.expansionContentDelay(...)`; reveal uses the exact `expansionContentDuration(...)`.
+- Animated close clears logical presentation and marks removal while keeping the card mounted for the exact `collapseContentDuration(...)`. Unmount occurs only after that exit duration plus the established `0.025s` completion buffer.
+- Generation checks invalidate delayed reveal and delayed unmount callbacks. Rapid open-close-open therefore cannot reveal a closed card or unmount a reopened one.
+- The page-area backdrop shares the requested/mounted/visible lifecycle but animates opacity only with the same expansion/collapse duration direction. It stops hit testing as soon as logical presentation closes.
+- Reduce Motion and existing content/blur/scale settings continue flowing through `innerBlurScaleClean`; reduced/disabled/instant sequencing uses the established short or effectively immediate path.
+- User-triggered header, internal-close, backdrop, Escape, and Settings actions use staged removal. Content exit/unmount, shell-only collapse, setting disablement, view disappearance, and page changes invalidate callbacks and unmount immediately so Clipboard dismissal cannot compete with outer shell or tab transitions.
+- Removed the failed Clipboard-specific `GestureMask` and mounted-state global-lock approach. Native scrolling still failed because the Clipboard remained beneath the ancestor view carrying the Island `DragGesture`, allowing that recognizer to compete before its guarded action callback ran.
+- Expanded content now uses sibling interaction layers: the normal header/page base receives `IslandPointerGestureModifier`, while the page-area Clipboard overlay is composed afterward above it and is not part of that gesture-enabled subtree. Compact content independently retains the same Island gesture modifier and existing behavior.
+- The sibling overlay retains the exact page-area position and size from `ExpandedIslandLayoutMetrics`, covers only the area below the header, remains mounted and hit-testable through reveal and removal, and prevents interaction from reaching the gesture-enabled base until the existing delayed unmount completes.
+- The Clipboard card receives the concrete `metrics.pageHeight` constraint from its parent. Its header and Clear All confirmation remain fixed while an explicitly bounded native vertical `ScrollView` and `LazyVStack` consume the finite remaining height for rows, with normal macOS indicators and momentum.
+- The structural SwiftUI sibling-layer isolation remains correct but was insufficient by itself. The actual remaining blocker was the existing `OverlayWindowController` local scroll monitor returning `nil` after expanded handling, which consumed the event before SwiftUI, followed by `IslandHostingView.scrollWheel(with:)` being able to return before `super.scrollWheel`.
+- Added transient, non-persisted `IslandLayoutStore.isExpandedScrollGestureSuppressed` state. It follows the Clipboard's mounted lifecycle immediately through hidden reveal, visible presentation, animated removal, and the completion buffer, then clears at actual unmount or immediately during defensive closure/disappearance.
+- Both expanded AppKit scroll entry paths now return `false` while suppression is active. The local monitor therefore returns the original event, the global monitor performs no Island action, and `IslandHostingView` falls through to `super.scrollWheel(with:)` so the native Clipboard `ScrollView` can receive the event.
+- `OverlayWindowController` subscribes to suppression boundaries and calls the existing `resetExpandedScrollTracking()`, cancelling the pending reset work item and clearing accumulated delta/handled state. This prevents partial pre-Clipboard deltas from firing after close.
+- Collapsed scroll routing and gesture behavior are unchanged. Atoll's non-consuming local-monitor and scrollable-content suppression pattern was used only as an architectural reference; no substantial source was copied.
+- No additional event monitor, custom `NSScrollView`, event reposting, manual scroll offsets, or momentum calculation was added. Existing Clipboard animation and the single green copied tick were unchanged.
+- Added accessibility labels and hover help for the header entry, close, clear, copy, and delete controls.
+- Added `ClipboardHistoryRowPresentationTests` covering text normalization, URL presentation, file path privacy, image metadata, and empty text fallback. Added `ClipboardHistoryPresentationStateTests` covering hidden mount, reveal, mounted removal, completion unmount, stale reveal/unmount rejection, immediate teardown, and rapid reopen. Added `ExpandedScrollEventRoutingPolicyTests` covering suppressed pass-through, eligible expanded routing, collapsed non-regression, routing restoration, non-consumption, disabled/non-trackpad pass-through, and `IslandLayoutStore` suppression defaults/idempotent toggling. Removed the failed global-lock-only coordinator tests; established gesture coordinator coverage remains unchanged.
+- No changes were made to the Phase 13B.1 clipboard capture client, persistence format, monitoring lifecycle, settings definitions, Settings UI, Phase 13A visibility controls, Phase 13A.1 artwork synchronization, geometry, panel behavior, tabs, gestures, Live Activities, or shell transitions.
+- Rejected Atoll's separate Clipboard panel/window/popover, dedicated expanded Clipboard tab, multiple monitoring owners, and view-created store. No substantial Atoll source was copied verbatim.
+- AppKit scroll-routing correction validation on 2026-07-24:
+  - `git diff --check`: passed.
+  - `swift build`: passed with no warnings.
+  - `swift test`: 188 tests, 0 failures.
+  - `chmod +x Scripts/package_app.sh`: completed.
+  - `Scripts/package_app.sh`: passed on the first attempt and produced `dist/DynamicIsland.app`.
+- Manual validation remains required for all text/URL/file/image rows, copy/delete/clear behavior, empty state, long-history scrolling, feature-disable dismissal, Settings/tab/Escape/backdrop/close dismissal, collapse/expand behavior, Reduce Motion, narrow expanded sizes, both themes, and accessibility.
+
 ### Phase 12A - Final Island Content Transition Sequencing
 
 - Fixed the brief fully-expanded empty-black content gap:
