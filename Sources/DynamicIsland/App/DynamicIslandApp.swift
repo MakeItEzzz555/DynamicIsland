@@ -23,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let timer = TimerController()
     private let stats = SystemStatsController()
     private let liveActivities = LiveActivityStore()
+    private lazy var clipboardHistory = ClipboardHistoryStore(settings: settings)
     private let batteryActivityProvider = BatteryActivityProvider()
     private let navigation = IslandNavigationStore()
     private let geometryService = NotchGeometryService()
@@ -44,6 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             timer: timer,
             stats: stats,
             liveActivities: liveActivities,
+            clipboardHistory: clipboardHistory,
             navigation: navigation
         )
         #if DEBUG

@@ -302,6 +302,13 @@ public final class AppSettings: ObservableObject {
     @Published public var showCalendarActivity: Bool { didSet { save(showCalendarActivity, for: Key.showCalendarActivity) } }
     @Published public var showNowPlayingActivity: Bool { didSet { save(showNowPlayingActivity, for: Key.showNowPlayingActivity) } }
 
+    @Published public var clipboardHistoryEnabled: Bool { didSet { save(clipboardHistoryEnabled, for: Key.clipboardHistoryEnabled) } }
+    @Published public var clipboardHistoryMaximumItems: Int {
+        didSet { normalizeClipboardHistoryMaximumItems(oldValue: oldValue) }
+    }
+    @Published public var clipboardHistoryPersistenceEnabled: Bool { didSet { save(clipboardHistoryPersistenceEnabled, for: Key.clipboardHistoryPersistenceEnabled) } }
+    @Published public var clipboardHistoryCaptureImagesEnabled: Bool { didSet { save(clipboardHistoryCaptureImagesEnabled, for: Key.clipboardHistoryCaptureImagesEnabled) } }
+
     @Published public var liveActivitiesEnabled: Bool { didSet { save(liveActivitiesEnabled, for: Key.liveActivitiesEnabled) } }
     @Published public var showExpandedLiveActivitiesSection: Bool {
         didSet {
@@ -504,6 +511,10 @@ public final class AppSettings: ObservableObject {
         showDownloadsActivity = Self.bool(defaults, Key.showDownloadsActivity, false)
         showCalendarActivity = Self.bool(defaults, Key.showCalendarActivity, false)
         showNowPlayingActivity = Self.bool(defaults, Key.showNowPlayingActivity, false)
+        clipboardHistoryEnabled = Self.bool(defaults, Key.clipboardHistoryEnabled, false)
+        clipboardHistoryMaximumItems = Self.int(defaults, Key.clipboardHistoryMaximumItems, 50)
+        clipboardHistoryPersistenceEnabled = Self.bool(defaults, Key.clipboardHistoryPersistenceEnabled, false)
+        clipboardHistoryCaptureImagesEnabled = Self.bool(defaults, Key.clipboardHistoryCaptureImagesEnabled, true)
 
         liveActivitiesEnabled = Self.bool(defaults, Key.liveActivitiesEnabled, true)
         showExpandedLiveActivitiesSection = Self.bool(defaults, Key.showExpandedLiveActivitiesSection, true)
@@ -600,6 +611,7 @@ public final class AppSettings: ObservableObject {
     public func resetAllSettings() {
         reset(keys: Key.allCases)
         reload()
+        reset(keys: Key.clipboardHistoryKeys)
     }
 
     public func resetLayoutSettings() {
@@ -626,6 +638,8 @@ public final class AppSettings: ObservableObject {
             Key.trayEnabled, Key.fileShelfEnabled, Key.airDropZoneEnabled,
             Key.timerEnabled, Key.timerPresetsEnabled, Key.timerPreset1Minutes, Key.timerPreset2Minutes, Key.timerPreset3Minutes,
             Key.statsEnabled, Key.showCPU, Key.showMemory, Key.showGPU, Key.showNetwork, Key.showDisk, Key.showBattery, Key.showUptime,
+            Key.clipboardHistoryEnabled, Key.clipboardHistoryMaximumItems,
+            Key.clipboardHistoryPersistenceEnabled, Key.clipboardHistoryCaptureImagesEnabled,
             Key.showExpandedLiveActivitiesSection
         ])
         reload()
@@ -770,6 +784,10 @@ public final class AppSettings: ObservableObject {
         showDownloadsActivity = Self.bool(defaults, Key.showDownloadsActivity, false)
         showCalendarActivity = Self.bool(defaults, Key.showCalendarActivity, false)
         showNowPlayingActivity = Self.bool(defaults, Key.showNowPlayingActivity, false)
+        clipboardHistoryEnabled = Self.bool(defaults, Key.clipboardHistoryEnabled, false)
+        clipboardHistoryMaximumItems = Self.int(defaults, Key.clipboardHistoryMaximumItems, 50)
+        clipboardHistoryPersistenceEnabled = Self.bool(defaults, Key.clipboardHistoryPersistenceEnabled, false)
+        clipboardHistoryCaptureImagesEnabled = Self.bool(defaults, Key.clipboardHistoryCaptureImagesEnabled, true)
         liveActivitiesEnabled = Self.bool(defaults, Key.liveActivitiesEnabled, true)
         showExpandedLiveActivitiesSection = Self.bool(defaults, Key.showExpandedLiveActivitiesSection, true)
         liveActivityStyle = Self.enumValue(defaults, Key.liveActivityStyle, .compact)
@@ -840,6 +858,7 @@ public final class AppSettings: ObservableObject {
         timerPreset3Minutes = normalizedInt(timerPreset3Minutes, fallback: 15, range: 1...180)
         statsRefreshIntervalSeconds = normalizedDouble(statsRefreshIntervalSeconds, fallback: 2.0, range: 0.5...10.0)
         activitiesRefreshIntervalSeconds = normalizedDouble(activitiesRefreshIntervalSeconds, fallback: 3.0, range: 0.5...30.0)
+        clipboardHistoryMaximumItems = normalizedInt(clipboardHistoryMaximumItems, fallback: 50, range: 10...200)
         liveActivityAutoDismissSeconds = normalizedDouble(liveActivityAutoDismissSeconds, fallback: 6.0, range: 1.0...60.0)
         collapsedPriorityRunningTimer = normalizedCollapsedLiveActivityPriority(collapsedPriorityRunningTimer)
         collapsedPriorityPlayingMedia = normalizedCollapsedLiveActivityPriority(collapsedPriorityPlayingMedia)
@@ -914,6 +933,16 @@ public final class AppSettings: ObservableObject {
 
     private func normalizeActivitiesRefreshInterval(oldValue: Double) {
         normalizeAndSaveDouble(\.activitiesRefreshIntervalSeconds, oldValue: oldValue, fallback: 3.0, range: 0.5...30.0, key: Key.activitiesRefreshIntervalSeconds)
+    }
+
+    private func normalizeClipboardHistoryMaximumItems(oldValue: Int) {
+        normalizeAndSaveInt(
+            \.clipboardHistoryMaximumItems,
+            oldValue: oldValue,
+            fallback: 50,
+            range: 10...200,
+            key: Key.clipboardHistoryMaximumItems
+        )
     }
 
     private func normalizeLiveActivityDismiss(oldValue: Double) {
@@ -1070,6 +1099,7 @@ public final class AppSettings: ObservableObject {
         save(timerPreset3Minutes, for: Key.timerPreset3Minutes)
         save(statsRefreshIntervalSeconds, for: Key.statsRefreshIntervalSeconds)
         save(activitiesRefreshIntervalSeconds, for: Key.activitiesRefreshIntervalSeconds)
+        save(clipboardHistoryMaximumItems, for: Key.clipboardHistoryMaximumItems)
         save(liveActivityAutoDismissSeconds, for: Key.liveActivityAutoDismissSeconds)
         save(collapsedPriorityRunningTimer, for: Key.collapsedPriorityRunningTimer)
         save(collapsedPriorityPlayingMedia, for: Key.collapsedPriorityPlayingMedia)
@@ -1261,6 +1291,10 @@ private enum Key {
     static let showDownloadsActivity = "showDownloadsActivity"
     static let showCalendarActivity = "showCalendarActivity"
     static let showNowPlayingActivity = "showNowPlayingActivity"
+    static let clipboardHistoryEnabled = "clipboardHistoryEnabled"
+    static let clipboardHistoryMaximumItems = "clipboardHistoryMaximumItems"
+    static let clipboardHistoryPersistenceEnabled = "clipboardHistoryPersistenceEnabled"
+    static let clipboardHistoryCaptureImagesEnabled = "clipboardHistoryCaptureImagesEnabled"
     static let liveActivitiesEnabled = "liveActivitiesEnabled"
     static let showExpandedLiveActivitiesSection = "showExpandedLiveActivitiesSection"
     static let liveActivityStyle = "liveActivityStyle"
@@ -1340,7 +1374,9 @@ private enum Key {
         showCPU, showMemory, showGPU, showNetwork, showDisk, showBattery, showUptime,
         animateStatsCharts, pauseStatsDuringShellMorph, showActivityIndicator, activitiesEnabled,
         activitiesRefreshIntervalSeconds, showRunningAppsActivity, showDownloadsActivity,
-        showCalendarActivity, showNowPlayingActivity, liveActivitiesEnabled,
+        showCalendarActivity, showNowPlayingActivity, clipboardHistoryEnabled,
+        clipboardHistoryMaximumItems, clipboardHistoryPersistenceEnabled,
+        clipboardHistoryCaptureImagesEnabled, liveActivitiesEnabled,
         showExpandedLiveActivitiesSection, liveActivityStyle,
         showMusicLiveActivity, showTimerLiveActivity, showFileDropLiveActivity,
         showBatteryLiveActivity, showCalendarLiveActivity, showDownloadsLiveActivity,
@@ -1357,5 +1393,12 @@ private enum Key {
         showGestureHints, requireGestureConfirmation, gesturePrivacyMode, verboseUILogsEnabled,
         showDebugFrames, showHitTestRegionDebug, disableVisualizerDuringMorph,
         disableThumbnailsDuringMorph
+    ]
+
+    static let clipboardHistoryKeys = [
+        clipboardHistoryEnabled,
+        clipboardHistoryMaximumItems,
+        clipboardHistoryPersistenceEnabled,
+        clipboardHistoryCaptureImagesEnabled
     ]
 }
