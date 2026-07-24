@@ -176,236 +176,21 @@ struct AlbumArtworkView: View {
 }
 
 struct FlippingAlbumArtworkView: View {
-    @ObservedObject var media: MediaController
+    @ObservedObject private var presentation: ArtworkPresentationCoordinator
     let size: CGFloat
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    @State private var displayedArtwork: NSImage?
-    @State private var displayedIdentity: String?
-    @State private var displayedFingerprint: String?
-    @State private var rotationDegrees: Double = 0
-    @State private var isFlipping = false
-    @State private var flipGeneration = 0
+    init(media: MediaController, size: CGFloat) {
+        presentation = media.artworkPresentation
+        self.size = size
+    }
 
     var body: some View {
-        AlbumArtworkView(image: displayedArtwork ?? media.artworkImage, size: size)
+        AlbumArtworkView(image: presentation.displayedSnapshot?.image, size: size)
             .rotation3DEffect(
-                .degrees(rotationDegrees),
+                .degrees(presentation.rotationDegrees),
                 axis: (x: 0, y: 1, z: 0),
                 perspective: 0.72
             )
-            .onAppear {
-                initializeDisplayedArtworkIfNeeded()
-            }
-            .onChange(of: media.title) { _, _ in
-                handleArtworkChange(reason: "title changed")
-            }
-            .onChange(of: media.artist) { _, _ in
-                handleArtworkChange(reason: "artist changed")
-            }
-            .onChange(of: media.sourceName) { _, _ in
-                handleArtworkChange(reason: "source changed")
-            }
-            .onChange(of: media.artworkKey) { _, _ in
-                handleArtworkChange(reason: "artwork key changed")
-            }
-            .onChange(of: media.artworkImageRevision) { _, _ in
-                handleArtworkChange(reason: "artwork image revision changed")
-            }
-            .onReceive(media.$artworkImage) { _ in
-                handleArtworkChange(reason: "artwork image changed")
-            }
-    }
-
-    private var currentTrackIdentity: String {
-        [
-            media.sourceName,
-            media.title,
-            media.artist,
-            media.artworkKey ?? "nil"
-        ]
-        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
-        .joined(separator: "|")
-    }
-
-    private func initializeDisplayedArtworkIfNeeded() {
-        guard displayedIdentity == nil else { return }
-
-        displayedArtwork = media.artworkImage
-        displayedIdentity = currentTrackIdentity
-        displayedFingerprint = fingerprint(for: media.artworkImage)
-
-        debugArtworkFlip(
-            "initialized identity=\(displayedIdentity ?? "nil") fingerprint=\(displayedFingerprint ?? "nil")"
-        )
-    }
-
-    private func handleArtworkChange(reason: String) {
-        let newIdentity = currentTrackIdentity
-        let newArtwork = media.artworkImage
-        let newFingerprint = fingerprint(for: newArtwork)
-
-        initializeDisplayedArtworkIfNeeded()
-
-        guard let newArtwork else {
-            debugArtworkFlip("waiting reason=\(reason) no new artwork identity=\(newIdentity)")
-            return
-        }
-
-        guard let oldIdentity = displayedIdentity else {
-            displayedArtwork = newArtwork
-            displayedIdentity = newIdentity
-            displayedFingerprint = newFingerprint
-            debugArtworkFlip("assigned reason=no old identity new=\(newIdentity)")
-            return
-        }
-
-        guard let oldArtwork = displayedArtwork else {
-            displayedArtwork = newArtwork
-            displayedIdentity = newIdentity
-            displayedFingerprint = newFingerprint
-            debugArtworkFlip("assigned reason=no old artwork new=\(newIdentity)")
-            return
-        }
-
-        let identityChanged = newIdentity != oldIdentity
-        let fingerprintChanged = newFingerprint != nil && newFingerprint != displayedFingerprint
-
-        guard identityChanged || fingerprintChanged else {
-            return
-        }
-
-        /*
-         Important:
-         MediaController may publish a new artworkKey before the actual downloaded
-         NSImage has arrived. In that moment media.artworkImage can still be the
-         old image. If we flip there, the animation flips old cover -> old cover.
-
-         So:
-         - If identity changed but the image fingerprint is still the same,
-           wait for the later artworkImage publish.
-         - If the fingerprint changed, we now have the real new cover.
-         */
-        if identityChanged && !fingerprintChanged {
-            debugArtworkFlip(
-                "waiting reason=\(reason) identity changed but artwork image still stale old=\(oldIdentity) new=\(newIdentity)"
-            )
-            return
-        }
-
-        guard let request = media.artworkFlipRequest,
-              !request.isExpired,
-              !reduceMotion else {
-            displayedArtwork = newArtwork
-            displayedIdentity = newIdentity
-            displayedFingerprint = newFingerprint
-
-            if let request = media.artworkFlipRequest, request.isExpired {
-                media.consumeArtworkFlipRequest(id: request.id)
-                debugArtworkFlip("assigned without flip reason=request expired new=\(newIdentity)")
-            } else if reduceMotion {
-                debugArtworkFlip("assigned without flip reason=reduce motion new=\(newIdentity)")
-            } else {
-                debugArtworkFlip("assigned without flip reason=no request new=\(newIdentity)")
-            }
-
-            return
-        }
-
-        startFlip(
-            from: oldIdentity,
-            to: newIdentity,
-            oldArtwork: oldArtwork,
-            newArtwork: newArtwork,
-            newFingerprint: newFingerprint,
-            direction: request.direction,
-            requestID: request.id
-        )
-    }
-
-    private func startFlip(
-        from oldIdentity: String,
-        to newIdentity: String,
-        oldArtwork: NSImage,
-        newArtwork: NSImage,
-        newFingerprint: String?,
-        direction: MediaArtworkFlipDirection,
-        requestID: UUID
-    ) {
-        if isFlipping {
-            displayedArtwork = newArtwork
-            displayedIdentity = newIdentity
-            displayedFingerprint = newFingerprint
-            media.consumeArtworkFlipRequest(id: requestID)
-            debugArtworkFlip("forced assign reason=already flipping new=\(newIdentity)")
-            return
-        }
-
-        isFlipping = true
-        flipGeneration += 1
-
-        let generation = flipGeneration
-        let firstHalfDegrees = direction == .next ? -90.0 : 90.0
-        let secondHalfStartDegrees = -firstHalfDegrees
-        let halfDuration = 0.19
-
-        debugArtworkFlip(
-            "starting flip old=\(oldIdentity) new=\(newIdentity) direction=\(direction.rawValue)"
-        )
-
-        media.consumeArtworkFlipRequest(id: requestID)
-
-        withAnimation(.easeInOut(duration: halfDuration)) {
-            rotationDegrees = firstHalfDegrees
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + halfDuration) {
-            guard generation == flipGeneration else { return }
-
-            displayedArtwork = newArtwork
-            displayedIdentity = newIdentity
-            displayedFingerprint = newFingerprint
-            rotationDegrees = secondHalfStartDegrees
-
-            debugArtworkFlip("midpoint swap new=\(newIdentity)")
-
-            withAnimation(.easeInOut(duration: halfDuration)) {
-                rotationDegrees = 0
-            }
-
-            DispatchQueue.main.asyncAfter(deadline: .now() + halfDuration) {
-                guard generation == flipGeneration else { return }
-
-                isFlipping = false
-                debugArtworkFlip("completed new=\(newIdentity)")
-            }
-        }
-    }
-
-    private func fingerprint(for image: NSImage?) -> String? {
-        guard let image else { return nil }
-
-        let size = image.size
-        let representations = image.representations
-        let pixelDescription = representations
-            .map { "\($0.pixelsWide)x\($0.pixelsHigh)" }
-            .joined(separator: ",")
-
-        let dataHash: Int
-        if let data = image.tiffRepresentation {
-            dataHash = data.hashValue
-        } else {
-            dataHash = ObjectIdentifier(image).hashValue
-        }
-
-        return "rev=\(media.artworkImageRevision)|\(Int(size.width))x\(Int(size.height))|\(pixelDescription)|\(dataHash)"
-    }
-
-    private func debugArtworkFlip(_ message: String) {
-        #if DEBUG
-        print("[ArtworkFlip] \(message)")
-        #endif
     }
 }
 
@@ -430,6 +215,7 @@ struct MediaModuleView: View {
     let onLauncherActivated: () -> Void
     let onMediaSourceOpened: () -> Void
     @ObservedObject private var accentCache = ArtworkAccentColorCache.shared
+    @ObservedObject private var artworkPresentation: ArtworkPresentationCoordinator
 
     init(
         settings: AppSettings,
@@ -443,6 +229,7 @@ struct MediaModuleView: View {
         self.availableHeight = availableHeight
         self.onLauncherActivated = onLauncherActivated
         self.onMediaSourceOpened = onMediaSourceOpened
+        artworkPresentation = media.artworkPresentation
     }
 
     private var usesCompactExpandedLayout: Bool {
@@ -555,7 +342,10 @@ struct MediaModuleView: View {
         switch settings.visualizerAccentMode {
         case .artwork:
             if settings.useArtworkAccentColor {
-                return accentCache.color(for: media.artworkImageKey, image: media.artworkImage)
+                return accentCache.color(
+                    for: artworkPresentation.displayedSnapshot?.fingerprint,
+                    image: artworkPresentation.displayedSnapshot?.image
+                )
             }
             return .white
         case .white:
