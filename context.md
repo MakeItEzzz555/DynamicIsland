@@ -3314,6 +3314,28 @@ For every requested feature phase:
   - `Scripts/package_app.sh`: passed on the first attempt and produced `dist/DynamicIsland.app`.
 - Manual validation remains required for all text/URL/file/image rows, copy/delete/clear behavior, empty state, long-history scrolling, feature-disable dismissal, Settings/tab/Escape/backdrop/close dismissal, collapse/expand behavior, Reduce Motion, narrow expanded sizes, both themes, and accessibility.
 
+### Phase 13C.1 - Clipboard Escape And Long-Text Correctness Hotfix
+
+- Fixed Escape ownership without adding another event monitor. The existing `OverlayWindowController` AppKit local key monitor receives Escape before SwiftUI's `.onExitCommand`; it previously consumed the event and immediately requested the sequenced shell collapse, so Clipboard History never received its SwiftUI fallback.
+- Added one `@MainActor` `IslandEscapeRouter`, owned by `OverlayWindowController` and passed through `IslandRootView` into `ExpandedIslandView`. It mirrors only the current topmost in-Island presentation and publishes deterministic dismissal-request generations; it does not mutate `ClipboardHistoryStore` or own Clipboard presentation state.
+- Clipboard registers as `.clipboardHistory` whenever its existing presentation state is mounted. Registration therefore spans the hidden reveal delay, visible state, animated removal, and the existing `0.025s` completion buffer. It clears only after actual unmount, or defensively during immediate lifecycle shutdown and `onDisappear`.
+- The AppKit key monitor now passes through non-Escape events and all Escape events while collapsed. While expanded, it consumes Escape to request topmost dismissal when Clipboard is registered; only when no presentation handles Escape does it call the unchanged `requestCollapseWithSequencing()` path.
+- Repeated Escape requests remain consumed during mounted removal. The router increments each handled request deterministically, while the existing Clipboard close state now treats a repeated animated-close request during removal as idempotent, so no second close schedule restarts or extends the established animation.
+- Fixed pasteboard URL classification order. The former `readURL` path applied the 16 KB URL size limit after only `URL(string:) != nil`; Foundation can construct relative URLs from scheme-less plain strings, so a 20,000-character word was incorrectly returned as `.oversized` before reaching text extraction.
+- `readURL` now first requires a non-empty scheme, a non-file URL, and a non-empty absolute string. Only a candidate that passes that classification receives the unchanged 16 KB URL limit. Invalid, relative, and scheme-less candidates fall through to the unchanged 2 MB text path. Extraction precedence remains files, images, URLs, then text.
+- Added deterministic `IslandEscapeRouterTests` for empty/registered/cleared/idempotent state, dismissal generations, expanded dismiss/collapse routing, collapsed pass-through, and full mounted-removal ownership. Added a presentation-state idempotence regression test and named-`NSPasteboard` coverage for 20,000-character text, relative paths, short HTTPS URLs, oversized valid HTTPS URLs, text over 2 MB, file precedence, whitespace-only text, and punctuation without a scheme. No test uses `NSPasteboard.general`, `NSEvent` monitors, or sleeps.
+- Validation on 2026-07-25:
+  - `git diff --check`: passed.
+  - Focused regression run: 34 tests, 0 failures.
+  - `swift build`: passed with no warnings. The initial managed-sandbox invocation could not write Swift's user module cache; the required build passed after granting compiler-cache access.
+  - `swift test`: 205 tests, 0 failures.
+  - `swift build -c release`: passed with no warnings.
+  - `chmod +x Scripts/package_app.sh`: completed.
+  - `Scripts/package_app.sh`: exited successfully on the first packaging attempt and produced `dist/DynamicIsland.app`.
+  - Follow-up `codesign --verify --deep` passed. Strict verification found the known Finder/resource metadata on the generated bundle; `xattr -cr dist/DynamicIsland.app` made strict verification pass immediately, but the Documents file provider subsequently reapplied that metadata, so a later strict check reproduced the warning.
+- Manual UI validation was not executed by Codex. The actual key-monitor sequence, rapid double-Escape behavior, Clipboard scrolling/copy/delete/Clear All, 20,000-character cross-application capture, normal HTTPS capture, collapsed/expanded gestures, and outside click-through still require the requested local checks.
+- Clipboard timing/modifiers/generation delays, native scrolling, scroll suppression/pass-through, copied feedback, persistence, fingerprints, sensitive filtering, media, artwork, shell/tab timing, gestures, panels, Spaces, geometry, click-through, Live Activities, Shortcuts, Timer, Battery, File Shelf, Stats, themes, and shadows were intentionally left unchanged.
+
 ### Phase 12A - Final Island Content Transition Sequencing
 
 - Fixed the brief fully-expanded empty-black content gap:
