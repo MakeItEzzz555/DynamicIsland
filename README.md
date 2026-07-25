@@ -326,6 +326,3 @@ The current architecture is ready for the next feature phase rather than further
 - Multi-display edge-case testing and tuning
 - Signed and notarized release automation
 
-## Suggested GitHub Repository Description
-
-Native macOS SwiftUI/AppKit Dynamic Island-style notch overlay with adaptive media controls, Live Activities, file shelf/AirDrop, timer, system stats, gestures, themes, and notch-aware multi-display support.
