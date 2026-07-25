@@ -35,6 +35,17 @@ final class ClipboardHistoryPresentationStateTests: XCTestCase {
         XCTAssertTrue(state.isRemoving)
     }
 
+    func testRepeatedAnimatedCloseDuringRemovalIsIdempotent() {
+        var state = ClipboardHistoryPresentationState()
+        state.open()
+        let closeGeneration = state.beginAnimatedClose()!
+
+        XCTAssertNil(state.beginAnimatedClose())
+        XCTAssertEqual(state.generation, closeGeneration)
+        XCTAssertTrue(state.isMounted)
+        XCTAssertTrue(state.isRemoving)
+    }
+
     func testCloseCompletionUnmountsContent() {
         var state = ClipboardHistoryPresentationState()
         state.open()

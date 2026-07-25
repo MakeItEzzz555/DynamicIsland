@@ -33,6 +33,97 @@ final class ClipboardPasteboardClientTests: XCTestCase {
     }
 
     @MainActor
+    func testPlainStringWithHTTPSURLIsCapturedAsURL() {
+        let pasteboard = NSPasteboard(name: .init("ClipboardTests-\(UUID())"))
+        let value = "https://example.com/plain-string"
+        pasteboard.clearContents()
+        pasteboard.setString(value, forType: .string)
+
+        let result = SystemClipboardPasteboardClient(pasteboard: pasteboard)
+            .readSupportedPayload(limits: .standard, capturesImages: true)
+
+        XCTAssertEqual(result, .payload(.url(URL(string: value)!)))
+    }
+
+    @MainActor
+    func testTwentyThousandCharacterPlainWordIsCapturedAsText() {
+        let pasteboard = NSPasteboard(name: .init("ClipboardTests-\(UUID())"))
+        let value = String(repeating: "a", count: 20_000)
+        pasteboard.clearContents()
+        pasteboard.setString(value, forType: .string)
+
+        let result = SystemClipboardPasteboardClient(pasteboard: pasteboard)
+            .readSupportedPayload(limits: .standard, capturesImages: true)
+
+        XCTAssertEqual(
+            result,
+            .payload(.text(.init(plainText: value, rtfData: nil, htmlData: nil)))
+        )
+    }
+
+    @MainActor
+    func testSchemeLessRelativePathIsCapturedAsText() {
+        let pasteboard = NSPasteboard(name: .init("ClipboardTests-\(UUID())"))
+        let value = "notes/archive/today.txt"
+        pasteboard.clearContents()
+        pasteboard.setString(value, forType: .string)
+
+        let result = SystemClipboardPasteboardClient(pasteboard: pasteboard)
+            .readSupportedPayload(limits: .standard, capturesImages: true)
+
+        XCTAssertEqual(
+            result,
+            .payload(.text(.init(plainText: value, rtfData: nil, htmlData: nil)))
+        )
+    }
+
+    @MainActor
+    func testValidHTTPSURLOverURLLimitIsOversized() {
+        let pasteboard = NSPasteboard(name: .init("ClipboardTests-\(UUID())"))
+        let value = "https://example.com/"
+            + String(repeating: "a", count: ClipboardHistoryLimits.standard.maximumURLStringBytes)
+        pasteboard.clearContents()
+        pasteboard.setString(value, forType: .string)
+
+        let result = SystemClipboardPasteboardClient(pasteboard: pasteboard)
+            .readSupportedPayload(limits: .standard, capturesImages: true)
+
+        XCTAssertEqual(result, .oversized)
+    }
+
+    @MainActor
+    func testTextOverPlainTextLimitIsOversized() {
+        let pasteboard = NSPasteboard(name: .init("ClipboardTests-\(UUID())"))
+        let value = String(
+            repeating: "a",
+            count: ClipboardHistoryLimits.standard.maximumPlainTextBytes + 1
+        )
+        pasteboard.clearContents()
+        pasteboard.setString(value, forType: .string)
+
+        let result = SystemClipboardPasteboardClient(pasteboard: pasteboard)
+            .readSupportedPayload(limits: .standard, capturesImages: true)
+
+        XCTAssertEqual(result, .oversized)
+    }
+
+    @MainActor
+    func testPunctuationWithoutSchemeIsCapturedAsText() {
+        let pasteboard = NSPasteboard(name: .init("ClipboardTests-\(UUID())"))
+        let value = "Reminder, buy milk! (two cartons) #errands"
+        pasteboard.clearContents()
+        pasteboard.setString(value, forType: .string)
+
+        let result = SystemClipboardPasteboardClient(pasteboard: pasteboard)
+            .readSupportedPayload(limits: .standard, capturesImages: true)
+
+        XCTAssertEqual(
+            result,
+            .payload(.text(.init(plainText: value, rtfData: nil, htmlData: nil)))
+        )
+    }
+
+    @MainActor
     func testWhitespaceOnlyTextIsRejected() {
         let pasteboard = NSPasteboard(name: .init("ClipboardTests-\(UUID())"))
         pasteboard.clearContents()

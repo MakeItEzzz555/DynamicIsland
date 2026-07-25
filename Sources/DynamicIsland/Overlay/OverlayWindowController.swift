@@ -60,6 +60,7 @@ final class OverlayWindowController {
     private let modules: IslandModules
     private let geometryService: NotchGeometryService
     private let layoutStore = IslandLayoutStore()
+    private let escapeRouter = IslandEscapeRouter()
     private let islandPanel: IslandOverlayPanel
     private var cancellables: Set<AnyCancellable> = []
     private var mouseContainmentTimer: Timer?
@@ -134,6 +135,7 @@ final class OverlayWindowController {
             settings: settings,
             islandState: islandState,
             layoutStore: layoutStore,
+            escapeRouter: escapeRouter,
             modules: modules,
             rendersExpandedVisualContent: true,
             onRequestExpand: { [weak self] in
@@ -628,12 +630,29 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
 
         localKeyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
             guard let self else { return event }
-            guard event.keyCode == 53, self.islandState.state == .expanded else {
+            guard event.keyCode == 53 else {
                 return event
             }
-            self.debugLog("Escape pressed while expanded; requesting sequenced collapse")
-            self.requestCollapseWithSequencing()
-            return nil
+            guard self.islandState.state == .expanded else {
+                return event
+            }
+            switch IslandEscapeRoutingPolicy.route(
+                islandState: self.islandState.state,
+                topmostPresentation: self.escapeRouter.topmostPresentation
+            ) {
+            case .dismissPresentation:
+                guard self.escapeRouter.requestDismissTopmost() else {
+                    return event
+                }
+                self.debugLog("[EscapeRouting] requested topmost dismissal")
+                return nil
+            case .collapseIsland:
+                self.debugLog("[EscapeRouting] no presentation; requesting Island collapse")
+                self.requestCollapseWithSequencing()
+                return nil
+            case .passThrough:
+                return event
+            }
         }
     }
 

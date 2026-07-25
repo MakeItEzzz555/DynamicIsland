@@ -292,13 +292,15 @@ final class SystemClipboardPasteboardClient: ClipboardPasteboardClient {
         for item in items {
             let value = item.string(forType: .URL) ?? item.string(forType: .string)
             guard let value else { continue }
-            guard value.utf8.count <= limits.maximumURLStringBytes else {
-                if URL(string: value) != nil { return .oversized }
+            guard let url = URL(string: value),
+                  let scheme = url.scheme,
+                  !scheme.isEmpty,
+                  !url.isFileURL,
+                  !url.absoluteString.isEmpty else {
                 continue
             }
-            guard let url = URL(string: value), !url.isFileURL, !url.absoluteString.isEmpty,
-                  url.scheme?.isEmpty == false else {
-                continue
+            guard value.utf8.count <= limits.maximumURLStringBytes else {
+                return .oversized
             }
             return .payload(.url(url))
         }

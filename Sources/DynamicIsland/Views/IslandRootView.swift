@@ -84,6 +84,10 @@ struct ClipboardHistoryPresentationState: Equatable {
     private(set) var isRemoving = false
     private(set) var generation = 0
 
+    var topmostOverlayPresentation: IslandOverlayPresentation? {
+        isMounted ? .clipboardHistory : nil
+    }
+
     @discardableResult
     mutating func open() -> Int {
         generation += 1
@@ -104,7 +108,7 @@ struct ClipboardHistoryPresentationState: Equatable {
 
     @discardableResult
     mutating func beginAnimatedClose() -> Int? {
-        guard isRequested || isMounted else { return nil }
+        guard (isRequested || isMounted), !isRemoving else { return nil }
         generation += 1
         isRequested = false
         isRemoving = isMounted
@@ -312,6 +316,7 @@ struct IslandRootView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var islandState: IslandStateStore
     @ObservedObject var layoutStore: IslandLayoutStore
+    @ObservedObject var escapeRouter: IslandEscapeRouter
     let modules: IslandModules
     let rendersExpandedVisualContent: Bool
     let onRequestExpand: () -> Void
@@ -336,6 +341,7 @@ struct IslandRootView: View {
         settings: AppSettings,
         islandState: IslandStateStore,
         layoutStore: IslandLayoutStore,
+        escapeRouter: IslandEscapeRouter,
         modules: IslandModules,
         rendersExpandedVisualContent: Bool,
         onRequestExpand: @escaping () -> Void,
@@ -345,6 +351,7 @@ struct IslandRootView: View {
         self.settings = settings
         self.islandState = islandState
         self.layoutStore = layoutStore
+        self.escapeRouter = escapeRouter
         self.modules = modules
         self.rendersExpandedVisualContent = rendersExpandedVisualContent
         self.onRequestExpand = onRequestExpand
@@ -407,6 +414,7 @@ struct IslandRootView: View {
                         rendersExpandedVisualContent: rendersExpandedVisualContent,
                         onOpenSettings: onOpenSettings,
                         layoutStore: layoutStore,
+                        escapeRouter: escapeRouter,
                         islandGestureCoordinator: gestureCoordinator,
                         islandGestureContext: gestureContext,
                         islandGestureCallbacks: gestureCallbacks,
@@ -1808,6 +1816,7 @@ struct ExpandedIslandView: View {
     let rendersExpandedVisualContent: Bool
     let onOpenSettings: () -> Void
     @ObservedObject var layoutStore: IslandLayoutStore
+    @ObservedObject var escapeRouter: IslandEscapeRouter
     @ObservedObject var islandGestureCoordinator: IslandGestureCoordinator
     let islandGestureContext: IslandGestureContext
     let islandGestureCallbacks: IslandGestureCallbacks
@@ -1838,6 +1847,7 @@ struct ExpandedIslandView: View {
         rendersExpandedVisualContent: Bool = true,
         onOpenSettings: @escaping () -> Void = {},
         layoutStore: IslandLayoutStore,
+        escapeRouter: IslandEscapeRouter,
         islandGestureCoordinator: IslandGestureCoordinator,
         islandGestureContext: IslandGestureContext,
         islandGestureCallbacks: IslandGestureCallbacks,
@@ -1853,6 +1863,7 @@ struct ExpandedIslandView: View {
         self.rendersExpandedVisualContent = rendersExpandedVisualContent
         self.onOpenSettings = onOpenSettings
         self.layoutStore = layoutStore
+        self.escapeRouter = escapeRouter
         self.islandGestureCoordinator = islandGestureCoordinator
         self.islandGestureContext = islandGestureContext
         self.islandGestureCallbacks = islandGestureCallbacks
@@ -1899,6 +1910,7 @@ struct ExpandedIslandView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear {
             synchronizeExpandedScrollSuppression()
+            synchronizeClipboardEscapeRegistration()
             resetTabPresentation(to: navigation.selectedPage)
             synchronizeStatsPolling()
         }
@@ -1935,6 +1947,7 @@ struct ExpandedIslandView: View {
         }
         .onDisappear {
             closeClipboardHistoryImmediately()
+            escapeRouter.setTopmostPresentation(nil)
             layoutStore.setExpandedScrollGestureSuppressed(false)
             modules.stats.stopPolling()
         }
@@ -1942,6 +1955,12 @@ struct ExpandedIslandView: View {
             if !enabled {
                 closeClipboardHistoryImmediately()
             }
+        }
+        .onChange(of: escapeRouter.dismissalRequestGeneration) { _, _ in
+            guard clipboardPresentation.isMounted || clipboardPresentation.isRequested else {
+                return
+            }
+            closeClipboardHistoryAnimated()
         }
         .onExitCommand {
             closeClipboardHistoryAnimated()
@@ -2210,15 +2229,23 @@ struct ExpandedIslandView: View {
         var presentation = clipboardPresentation
         presentation.closeImmediately()
         updateClipboardPresentation(presentation)
+        escapeRouter.setTopmostPresentation(nil)
     }
 
     private func updateClipboardPresentation(_ presentation: ClipboardHistoryPresentationState) {
         clipboardPresentation = presentation
         synchronizeExpandedScrollSuppression()
+        synchronizeClipboardEscapeRegistration()
     }
 
     private func synchronizeExpandedScrollSuppression() {
         layoutStore.setExpandedScrollGestureSuppressed(clipboardPresentation.isMounted)
+    }
+
+    private func synchronizeClipboardEscapeRegistration() {
+        escapeRouter.setTopmostPresentation(
+            clipboardPresentation.topmostOverlayPresentation
+        )
     }
 
     private func toggleClipboardHistory() {
