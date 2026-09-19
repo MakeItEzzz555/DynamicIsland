@@ -9,6 +9,7 @@ APP_DIR="$DIST_DIR/$APP_NAME.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
+ENTITLEMENTS_FILE="$ROOT_DIR/Scripts/DynamicIsland.entitlements.plist"
 
 swift build -c release --package-path "$ROOT_DIR"
 
@@ -53,7 +54,7 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 PLIST
 
 if [[ -n "${DEVELOPER_ID_APP:-}" ]]; then
-  codesign --force --deep --options runtime --timestamp --sign "$DEVELOPER_ID_APP" "$APP_DIR"
+  codesign --force --deep --options runtime --timestamp --entitlements "$ENTITLEMENTS_FILE" --sign "$DEVELOPER_ID_APP" "$APP_DIR"
 else
   codesign --force --deep --sign - "$APP_DIR"
 fi

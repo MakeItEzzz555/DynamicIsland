@@ -65,7 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         )
         self.overlayController = overlayController
-        overlayController.show()
+        overlayController.setVisible(settings.overlayEnabled)
         LaunchAtLoginController.setEnabled(settings.launchAtLoginEnabled)
 
         settings.$launchAtLoginEnabled
@@ -128,7 +128,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func toggleOverlay() {
         settings.overlayEnabled.toggle()
-        overlayController?.setVisible(settings.overlayEnabled)
     }
 
     private func installLiveActivityObservers() {

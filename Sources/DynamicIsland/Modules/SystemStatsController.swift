@@ -285,10 +285,7 @@ private final class SystemStatsProvider {
             return nil
         }
 
-        let interval = max(now.timeIntervalSince(previousNetworkDate), 0.1)
-        let upload = Double(counters.sent - previousNetwork.sent) / interval
-        let download = Double(counters.received - previousNetwork.received) / interval
-        return (max(0, upload), max(0, download))
+        return counters.rates(since: previousNetwork, interval: now.timeIntervalSince(previousNetworkDate))
     }
 
     private func networkCounters() -> NetworkCounters? {
@@ -298,24 +295,7 @@ private final class SystemStatsProvider {
         }
         defer { freeifaddrs(interfaces) }
 
-        var counters = NetworkCounters()
-        var pointer: UnsafeMutablePointer<ifaddrs>? = interfaces
-        while let current = pointer {
-            defer { pointer = current.pointee.ifa_next }
-
-            let flags = Int32(current.pointee.ifa_flags)
-            guard (flags & IFF_LOOPBACK) == 0,
-                  current.pointee.ifa_addr.pointee.sa_family == UInt8(AF_LINK),
-                  let dataPointer = current.pointee.ifa_data else {
-                continue
-            }
-
-            let data = dataPointer.assumingMemoryBound(to: if_data.self).pointee
-            counters.received += UInt64(data.ifi_ibytes)
-            counters.sent += UInt64(data.ifi_obytes)
-        }
-
-        return counters
+        return NetworkCounters.read(from: interfaces)
     }
 
     private func batteryStatus() -> (percent: Double?, isCharging: Bool?) {
@@ -347,7 +327,36 @@ private struct CPUCounters {
     var idle: UInt64 = 0
 }
 
-private struct NetworkCounters {
+struct NetworkCounters {
     var sent: UInt64 = 0
     var received: UInt64 = 0
+
+    func rates(since previous: Self?, interval: TimeInterval) -> (upload: Double, download: Double)? {
+        guard let previous else { return nil }
+        let interval = max(interval, 0.1)
+        // Interface changes and counter resets can decrease aggregate totals. The caller
+        // records this sample as the next baseline, so a decrease contributes zero.
+        let sentDelta = sent >= previous.sent ? sent - previous.sent : 0
+        let receivedDelta = received >= previous.received ? received - previous.received : 0
+        return (Double(sentDelta) / interval, Double(receivedDelta) / interval)
+    }
+
+    static func read(from interfaces: UnsafeMutablePointer<ifaddrs>?) -> Self {
+        var counters = Self()
+        var pointer = interfaces
+        while let current = pointer {
+            defer { pointer = current.pointee.ifa_next }
+            let flags = Int32(current.pointee.ifa_flags)
+            guard (flags & IFF_LOOPBACK) == 0,
+                  let address = current.pointee.ifa_addr,
+                  address.pointee.sa_family == UInt8(AF_LINK),
+                  let dataPointer = current.pointee.ifa_data else { continue }
+
+            let data = dataPointer.assumingMemoryBound(to: if_data.self).pointee
+            // Wrapped aggregate totals are handled as resets by rates(since:interval:).
+            counters.received &+= UInt64(data.ifi_ibytes)
+            counters.sent &+= UInt64(data.ifi_obytes)
+        }
+        return counters
+    }
 }
