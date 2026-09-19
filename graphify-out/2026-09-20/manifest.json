@@ -126,10 +126,10 @@
     "semantic_hash": "cad58bad24bd06aca15049211ee51aff"
   },
   "Sources/DynamicIsland/Modules/NowPlayingMediaProvider.swift": {
-    "mtime": 1789855674.1519663,
-    "seen": 1789856170.206481,
-    "ast_hash": "8f5bd87a131753c540961ecf71ce0924",
-    "semantic_hash": ""
+    "mtime": 1784595893.625827,
+    "seen": 1789768544.301538,
+    "ast_hash": "60a716cda0ddb9c0f644941abdcdf351",
+    "semantic_hash": "60a716cda0ddb9c0f644941abdcdf351"
   },
   "Sources/DynamicIsland/Modules/ShortcutsStore.swift": {
     "mtime": 1784595893.6263127,
@@ -501,12 +501,6 @@
     "mtime": 1789825970.343933,
     "seen": 1789826228.122798,
     "ast_hash": "ee9dc6137fd7cce22c7f0a513264b619",
-    "semantic_hash": ""
-  },
-  "Tests/DynamicIslandTests/MediaRemoteCallbackTests.swift": {
-    "mtime": 1789855855.6229146,
-    "seen": 1789856170.206518,
-    "ast_hash": "0174fbb7f61c8943cd51ca7b516b1ddf",
     "semantic_hash": ""
   }
 }

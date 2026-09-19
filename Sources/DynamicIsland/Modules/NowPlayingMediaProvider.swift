@@ -6,7 +6,11 @@ import Foundation
 final class NowPlayingMediaProvider: MediaDetectionProvider {
     let name = "System Now Playing"
 
-    private let mediaRemote = MediaRemoteClient()
+    private let mediaRemote: any MediaRemoteProviding
+
+    init(mediaRemote: any MediaRemoteProviding = MediaRemoteClient()) {
+        self.mediaRemote = mediaRemote
+    }
 
     func snapshot() async -> MediaSnapshot? {
         guard mediaRemote.isAvailable else {
@@ -179,7 +183,117 @@ final class NowPlayingMediaProvider: MediaDetectionProvider {
 }
 
 @MainActor
-private final class MediaRemoteClient {
+protocol MediaRemoteProviding: AnyObject {
+    var isAvailable: Bool { get }
+    func nowPlayingInfo() async -> NSDictionary?
+    func nowPlayingApplicationDisplayName() async -> String?
+}
+
+struct MediaRemoteDeadlineToken: @unchecked Sendable {
+    let cancel: () -> Void
+}
+
+struct MediaRemoteDeadlineScheduler: Sendable {
+    let schedule: @Sendable (
+        _ delay: TimeInterval,
+        _ action: @escaping @Sendable () -> Void
+    ) -> MediaRemoteDeadlineToken
+
+    static let live = Self { delay, action in
+        let workItem = DispatchWorkItem(block: action)
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(
+            deadline: .now() + delay,
+            execute: workItem
+        )
+        return MediaRemoteDeadlineToken(cancel: workItem.cancel)
+    }
+}
+
+enum MediaRemoteCallbackBridge {
+    @MainActor
+    static func wait<Value: Sendable>(
+        timeout: TimeInterval,
+        scheduler: MediaRemoteDeadlineScheduler = .live,
+        start: @escaping (@escaping @Sendable (Value?) -> Void) -> Void
+    ) async -> Value? {
+        let state = MediaRemoteCallbackState<Value>()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                guard state.install(continuation) else { return }
+
+                let deadline = scheduler.schedule(timeout) { [weak state] in
+                    state?.resolve(nil)
+                }
+                state.install(deadline)
+
+                guard state.isPending else { return }
+                start { [weak state] value in
+                    state?.resolve(value)
+                }
+            }
+        } onCancel: { [weak state] in
+            state?.resolve(nil)
+        }
+    }
+}
+
+private final class MediaRemoteCallbackState<Value: Sendable>: @unchecked Sendable {
+    private enum Completion {
+        case value(Value?)
+    }
+
+    private let lock = NSLock()
+    private var completion: Completion?
+    private var continuation: CheckedContinuation<Value?, Never>?
+    private var deadline: MediaRemoteDeadlineToken?
+
+    var isPending: Bool {
+        lock.withLock { completion == nil }
+    }
+
+    func install(_ continuation: CheckedContinuation<Value?, Never>) -> Bool {
+        let completedValue: Value?? = lock.withLock {
+            if case let .value(value) = completion {
+                return .some(value)
+            }
+            self.continuation = continuation
+            return nil
+        }
+        if let completedValue {
+            continuation.resume(returning: completedValue)
+            return false
+        }
+        return true
+    }
+
+    func install(_ deadline: MediaRemoteDeadlineToken) {
+        let shouldCancel = lock.withLock {
+            guard completion == nil else { return true }
+            self.deadline = deadline
+            return false
+        }
+        if shouldCancel {
+            deadline.cancel()
+        }
+    }
+
+    func resolve(_ value: Value?) {
+        let terminal: (CheckedContinuation<Value?, Never>?, MediaRemoteDeadlineToken?)? = lock.withLock {
+            guard completion == nil else { return nil }
+            completion = .value(value)
+            let terminal = (continuation, deadline)
+            continuation = nil
+            deadline = nil
+            return terminal
+        }
+        guard let terminal else { return }
+        terminal.1?.cancel()
+        terminal.0?.resume(returning: value)
+    }
+}
+
+@MainActor
+final class MediaRemoteClient: MediaRemoteProviding {
     private typealias NowPlayingInfoCompletion = @convention(block) (CFDictionary?) -> Void
     private typealias GetNowPlayingInfoFunction = @convention(c) (DispatchQueue, NowPlayingInfoCompletion) -> Void
     private typealias AppDisplayNameCompletion = @convention(block) (CFString?) -> Void
@@ -188,6 +302,10 @@ private final class MediaRemoteClient {
     private let handle: UnsafeMutableRawPointer?
     private let getNowPlayingInfo: GetNowPlayingInfoFunction?
     private let copyAppDisplayName: CopyAppDisplayNameFunction?
+
+    // MediaRemote normally answers immediately; this bounds a missing private-framework callback
+    // below the ordinary refresh cadence while allowing reasonable run-loop scheduling headroom.
+    static let callbackTimeout: TimeInterval = 0.5
 
     var isAvailable: Bool {
         getNowPlayingInfo != nil
@@ -214,22 +332,22 @@ private final class MediaRemoteClient {
 
     func nowPlayingInfo() async -> NSDictionary? {
         guard let getNowPlayingInfo else { return nil }
-        return await withCheckedContinuation { continuation in
-            let completion: NowPlayingInfoCompletion = { info in
+        return await MediaRemoteCallbackBridge.wait(timeout: Self.callbackTimeout) { completion in
+            let nativeCompletion: NowPlayingInfoCompletion = { info in
                 let dictionary = info.map { MediaRemoteDictionary(value: $0 as NSDictionary) }
-                continuation.resume(returning: dictionary)
+                completion(dictionary)
             }
-            getNowPlayingInfo(.main, completion)
+            getNowPlayingInfo(.main, nativeCompletion)
         }?.value
     }
 
     func nowPlayingApplicationDisplayName() async -> String? {
         guard let copyAppDisplayName else { return nil }
-        return await withCheckedContinuation { continuation in
-            let completion: AppDisplayNameCompletion = { value in
-                continuation.resume(returning: value as String?)
+        return await MediaRemoteCallbackBridge.wait(timeout: Self.callbackTimeout) { completion in
+            let nativeCompletion: AppDisplayNameCompletion = { value in
+                completion(value as String?)
             }
-            copyAppDisplayName(.main, completion)
+            copyAppDisplayName(.main, nativeCompletion)
         }
     }
 
