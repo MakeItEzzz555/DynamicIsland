@@ -84,16 +84,16 @@
     "semantic_hash": "4b13b4d126b30ad2c8c7b0a3dcedbccf"
   },
   "Sources/DynamicIsland/Modules/ClipboardHistoryStore.swift": {
-    "mtime": 1784882363.9614391,
-    "seen": 1789768544.301533,
-    "ast_hash": "d81ad996075178f12e3194236444d9f0",
-    "semantic_hash": "d81ad996075178f12e3194236444d9f0"
+    "mtime": 1789772574.4149194,
+    "seen": 1789772949.027113,
+    "ast_hash": "0d07c3570b2369b58d3db32e8b96775a",
+    "semantic_hash": ""
   },
   "Sources/DynamicIsland/Modules/ClipboardPasteboardClient.swift": {
-    "mtime": 1784997464.7663798,
-    "seen": 1789768544.301534,
-    "ast_hash": "26236364af47370c67e5e65ffe98e8c1",
-    "semantic_hash": "26236364af47370c67e5e65ffe98e8c1"
+    "mtime": 1789772901.0844634,
+    "seen": 1789772949.027123,
+    "ast_hash": "328bedee4e424e86a89d9c532895f800",
+    "semantic_hash": ""
   },
   "Sources/DynamicIsland/Modules/FileShelfStore.swift": {
     "mtime": 1784595893.6234963,
@@ -114,10 +114,10 @@
     "semantic_hash": "3cccb1ddcc76df8124a3b20c384e9696"
   },
   "Sources/DynamicIsland/Modules/MediaController.swift": {
-    "mtime": 1784879972.8212724,
-    "seen": 1789768544.301536,
-    "ast_hash": "a5b16a05491fc08a3ebf0d187c91240d",
-    "semantic_hash": "a5b16a05491fc08a3ebf0d187c91240d"
+    "mtime": 1789824141.5864327,
+    "seen": 1789824369.919015,
+    "ast_hash": "4cfe979e7c56b060027451b556b8cb63",
+    "semantic_hash": ""
   },
   "Sources/DynamicIsland/Modules/MediaDetectionProvider.swift": {
     "mtime": 1784595893.6252117,
@@ -471,6 +471,36 @@
     "mtime": 1789772097.974027,
     "seen": 1789772166.152138,
     "ast_hash": "9ebd633e25808ee90256181f30761aca",
+    "semantic_hash": ""
+  },
+  "Sources/DynamicIsland/Modules/ClipboardImageNormalizer.swift": {
+    "mtime": 1789772782.5299916,
+    "seen": 1789772949.02712,
+    "ast_hash": "3a049011b66eb4b26a269dfee95e60b3",
+    "semantic_hash": ""
+  },
+  "Tests/DynamicIslandTests/ClipboardImageCaptureLifecycleTests.swift": {
+    "mtime": 1789772863.3047566,
+    "seen": 1789772949.027155,
+    "ast_hash": "d675e42c39605d1d9cca77718ddf6286",
+    "semantic_hash": ""
+  },
+  "Tests/DynamicIslandTests/ClipboardImageNormalizerTests.swift": {
+    "mtime": 1789772840.9268348,
+    "seen": 1789772949.0271559,
+    "ast_hash": "6791ad9ef50e2200364cb8a700ad4eca",
+    "semantic_hash": ""
+  },
+  "Sources/DynamicIsland/Modules/MediaAutomationExecutor.swift": {
+    "mtime": 1789824395.904759,
+    "seen": 1789824457.672332,
+    "ast_hash": "9a7a10281c8861addcabbac3078529f8",
+    "semantic_hash": ""
+  },
+  "Tests/DynamicIslandTests/MediaAutomationExecutorTests.swift": {
+    "mtime": 1789824395.905768,
+    "seen": 1789824457.67237,
+    "ast_hash": "7d8e8414c749d012389aa9a52f145a82",
     "semantic_hash": ""
   }
 }

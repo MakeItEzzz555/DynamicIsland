@@ -1208,9 +1208,7 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
         case .mediaNextTrack:
             guard settings.mediaEnabled,
                   modules.media.isTransportControlAvailable else { return true }
-            modules.media.requestGestureArtworkFlip(direction: .next)
             modules.media.nextTrack()
-            scheduleMediaRefreshAfterTransportGesture(reason: "expandedGestureNext")
             expandedScrollGestureHandled = true
             expandedScrollLastActionAt = CACurrentMediaTime()
             expandedScrollDelta = .zero
@@ -1218,9 +1216,7 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
         case .mediaPreviousTrack:
             guard settings.mediaEnabled,
                   modules.media.isTransportControlAvailable else { return true }
-            modules.media.requestGestureArtworkFlip(direction: .previous)
             modules.media.previousTrack()
-            scheduleMediaRefreshAfterTransportGesture(reason: "expandedGesturePrevious")
             expandedScrollGestureHandled = true
             expandedScrollLastActionAt = CACurrentMediaTime()
             expandedScrollDelta = .zero
@@ -1623,15 +1619,11 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
         case .mediaNextTrack:
             debugGesture("media swipe finish quiet=\(String(format: "%.2f", mediaSwipeQuietPeriod)) x=\(accumulatedX) y=\(accumulatedY) action=\(action.rawValue)")
             debugGesture("media swipe finished; ACTION mediaNextTrack")
-            modules.media.requestGestureArtworkFlip(direction: .next)
             modules.media.nextTrack()
-            scheduleMediaRefreshAfterTransportGesture(reason: "gestureNext")
         case .mediaPreviousTrack:
             debugGesture("media swipe finish quiet=\(String(format: "%.2f", mediaSwipeQuietPeriod)) x=\(accumulatedX) y=\(accumulatedY) action=\(action.rawValue)")
             debugGesture("media swipe finished; ACTION mediaPreviousTrack")
-            modules.media.requestGestureArtworkFlip(direction: .previous)
             modules.media.previousTrack()
-            scheduleMediaRefreshAfterTransportGesture(reason: "gesturePrevious")
         default:
             break
         }
@@ -1746,36 +1738,6 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
     private func collapsedScrollCooldownAllowsAction() -> Bool {
         guard let collapsedScrollLastActionAt else { return true }
         return CACurrentMediaTime() - collapsedScrollLastActionAt >= settings.gestureCooldownSeconds
-    }
-
-    private func scheduleMediaRefreshAfterTransportGesture(reason: String) {
-        guard canPresentOverlay else { return }
-        let generation = presentationSession.generation
-        debugGesture("scheduling media refresh sequence reason=\(reason)")
-        debugGesture("media refresh scheduled reason=\(reason)")
-        debugMedia("artwork refresh requested reason=\(reason)")
-        modules.media.refresh()
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-            guard let self, self.allowsOverlayWork(generation: generation) else { return }
-            self.debugGesture("media refresh firing reason=\(reason) delayed=0.25")
-            self.debugMedia("artwork refresh requested reason=\(reason) delayed=0.25")
-            self.modules.media.refresh()
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) { [weak self] in
-            guard let self, self.allowsOverlayWork(generation: generation) else { return }
-            self.debugGesture("media refresh firing reason=\(reason) delayed=0.75")
-            self.debugMedia("artwork refresh requested reason=\(reason) delayed=0.75")
-            self.modules.media.refresh()
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.20) { [weak self] in
-            guard let self, self.allowsOverlayWork(generation: generation) else { return }
-            self.debugGesture("media refresh firing reason=\(reason) delayed=1.20")
-            self.debugMedia("artwork refresh requested reason=\(reason) delayed=1.20")
-            self.modules.media.refresh()
-        }
     }
 
     private func collapsedMediaPillAction(for gesture: IslandPointerGesture) -> IslandGestureAction {

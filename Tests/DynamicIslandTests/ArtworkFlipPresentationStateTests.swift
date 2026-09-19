@@ -260,6 +260,62 @@ final class ArtworkFlipPresentationStateTests: XCTestCase {
         XCTAssertEqual(state.displayed, new)
     }
 
+    func testImmediatelyAvailableArtworkEmitsFlipWithoutIntermediateState() {
+        let old = snapshot("old", fingerprint: "old")
+        let cached = snapshot("cached", fingerprint: "cached")
+        var state = ArtworkFlipPresentationState(initial: old)
+
+        let effect = state.receive(
+            cached,
+            direction: .next,
+            requestID: UUID(),
+            shouldAnimate: true
+        )
+
+        XCTAssertEqual(effect, .firstHalfStarted(generation: 1, direction: .next))
+        XCTAssertEqual(state.phase, .firstHalf)
+        XCTAssertEqual(state.pending, cached)
+    }
+
+    func testDelayedArtworkStartsFlipAtNewestValidCompletion() {
+        let old = snapshot("old", fingerprint: "old")
+        let newest = snapshot("newest", fingerprint: "newest")
+        var state = ArtworkFlipPresentationState(initial: old)
+
+        XCTAssertEqual(state.phase, .idle)
+        XCTAssertEqual(state.displayed, old)
+
+        let effect = state.receive(
+            newest,
+            direction: .next,
+            requestID: UUID(),
+            shouldAnimate: true
+        )
+
+        XCTAssertEqual(effect, .firstHalfStarted(generation: 1, direction: .next))
+        XCTAssertEqual(state.pending, newest)
+        XCTAssertEqual(state.displayed, old)
+    }
+
+    func testSameTrackArtworkRefinementDoesNotStartDuplicateFlip() {
+        let old = snapshot("old", fingerprint: "old")
+        let embedded = snapshot("new", fingerprint: "embedded")
+        let downloaded = snapshot("new", fingerprint: "downloaded")
+        var state = ArtworkFlipPresentationState(initial: old)
+        _ = state.receive(embedded, direction: .next, requestID: UUID(), shouldAnimate: true)
+        _ = state.receive(downloaded, direction: .next, requestID: UUID(), shouldAnimate: true)
+        _ = state.commitMidpoint(generation: 1)
+
+        let effect = state.complete(generation: 1)
+
+        guard case .displayedDirectly = effect else {
+            return XCTFail("Same-track refinement should not begin another flip")
+        }
+        XCTAssertEqual(state.phase, .idle)
+        XCTAssertEqual(state.displayed, downloaded)
+        XCTAssertNil(state.pending)
+    }
+
     private func snapshot(
         _ identity: String,
         fingerprint: String,
