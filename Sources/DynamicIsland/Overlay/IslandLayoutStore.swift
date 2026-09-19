@@ -2,6 +2,7 @@ import Foundation
 
 @MainActor
 final class IslandLayoutStore: ObservableObject {
+    @Published var overlayPresentationGeneration = 0
     @Published var canvasSize: CGSize = CGSize(width: 760, height: 260)
     @Published var collapsedSurfaceFrame: CGRect = CGRect(x: 272, y: 226, width: 216, height: 34)
     @Published var expandedSurfaceFrame: CGRect = CGRect(x: 0, y: 0, width: 760, height: 260)

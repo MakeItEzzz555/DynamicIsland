@@ -393,72 +393,75 @@ struct IslandRootView: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            IslandSurface(
-                settings: settings,
-                isExpanded: isExpanded,
-                visualProgress: shellVisualProgress
-            ) {
-                if showsExpandedContent {
-                    ExpandedIslandView(
-                        settings: settings,
-                        modules: modules,
-                        contentVisible: contentVisible,
-                        shouldRenderContent: expandedContentMounted,
-                        isContentRemoving: isContentRemoving,
-                        onShortcutLaunched: onRequestCollapse,
-                        onTimerStarted: {
-                            if settings.collapseAfterStartingTimer {
-                                onRequestCollapse()
-                            }
-                        },
-                        rendersExpandedVisualContent: rendersExpandedVisualContent,
-                        onOpenSettings: onOpenSettings,
-                        layoutStore: layoutStore,
-                        escapeRouter: escapeRouter,
-                        islandGestureCoordinator: gestureCoordinator,
-                        islandGestureContext: gestureContext,
-                        islandGestureCallbacks: gestureCallbacks,
-                        islandSwipeSensitivity: settings.gestureSensitivity
-                    )
-                } else {
-                    CompactIslandView(
-                        settings: settings,
-                        modules: modules,
-                        contentMode: collapsedContentMode,
-                        previewContent: CollapsedPreviewContent.mounted(
-                            collapsedPreviewContent,
-                            previewActive: isCollapsedPreviewActive
-                        ),
-                        previewActive: isCollapsedPreviewActive,
-                        hardwareNotchWidth: layoutStore.hardwareNotchWidth,
-                        collapsedLeftRegionWidth: layoutStore.collapsedLeftRegionWidth,
-                        collapsedNotchCoreWidth: layoutStore.collapsedNotchCoreWidth,
-                        collapsedRightRegionWidth: layoutStore.collapsedRightRegionWidth,
-                        isNotchIntegratedShell: layoutStore.hasHardwareNotch
-                    )
-                        .contentShape(Rectangle())
-                        .onHover(perform: handleCollapsedHover)
-                        .onTapGesture {
-                            guard settings.expandOnClick else { return }
-                            deactivateCollapsedPreview()
-                            onRequestExpand()
-                        }
-                        .modifier(
-                            IslandPointerGestureModifier(
-                                settings: settings,
-                                coordinator: gestureCoordinator,
-                                context: gestureContext,
-                                callbacks: gestureCallbacks,
-                                swipeSensitivity: settings.gestureSensitivity
-                            )
+            if settings.overlayEnabled {
+                IslandSurface(
+                    settings: settings,
+                    isExpanded: isExpanded,
+                    visualProgress: shellVisualProgress
+                ) {
+                    if showsExpandedContent {
+                        ExpandedIslandView(
+                            settings: settings,
+                            modules: modules,
+                            contentVisible: contentVisible,
+                            shouldRenderContent: expandedContentMounted,
+                            isContentRemoving: isContentRemoving,
+                            onShortcutLaunched: onRequestCollapse,
+                            onTimerStarted: {
+                                if settings.collapseAfterStartingTimer {
+                                    onRequestCollapse()
+                                }
+                            },
+                            rendersExpandedVisualContent: rendersExpandedVisualContent,
+                            onOpenSettings: onOpenSettings,
+                            layoutStore: layoutStore,
+                            escapeRouter: escapeRouter,
+                            islandGestureCoordinator: gestureCoordinator,
+                            islandGestureContext: gestureContext,
+                            islandGestureCallbacks: gestureCallbacks,
+                            islandSwipeSensitivity: settings.gestureSensitivity
                         )
+                    } else {
+                        CompactIslandView(
+                            settings: settings,
+                            modules: modules,
+                            contentMode: collapsedContentMode,
+                            previewContent: CollapsedPreviewContent.mounted(
+                                collapsedPreviewContent,
+                                previewActive: isCollapsedPreviewActive
+                            ),
+                            previewActive: isCollapsedPreviewActive,
+                            hardwareNotchWidth: layoutStore.hardwareNotchWidth,
+                            collapsedLeftRegionWidth: layoutStore.collapsedLeftRegionWidth,
+                            collapsedNotchCoreWidth: layoutStore.collapsedNotchCoreWidth,
+                            collapsedRightRegionWidth: layoutStore.collapsedRightRegionWidth,
+                            isNotchIntegratedShell: layoutStore.hasHardwareNotch
+                        )
+                            .contentShape(Rectangle())
+                            .onHover(perform: handleCollapsedHover)
+                            .onTapGesture {
+                                guard settings.expandOnClick else { return }
+                                deactivateCollapsedPreview()
+                                onRequestExpand()
+                            }
+                            .modifier(
+                                IslandPointerGestureModifier(
+                                    settings: settings,
+                                    coordinator: gestureCoordinator,
+                                    context: gestureContext,
+                                    callbacks: gestureCallbacks,
+                                    swipeSensitivity: settings.gestureSensitivity
+                                )
+                            )
+                    }
                 }
+                .notchIntegrated(layoutStore.hasHardwareNotch)
+                .shellMorphing(layoutStore.isShellMorphing)
+                .collapseShellOnly(layoutStore.isCollapseShellOnly)
+                .frame(width: surfaceSize.width, height: surfaceSize.height)
+                .position(x: surfaceFrame.midX, y: layoutStore.canvasSize.height - surfaceFrame.midY)
+                .id(layoutStore.overlayPresentationGeneration)
             }
-            .notchIntegrated(layoutStore.hasHardwareNotch)
-            .shellMorphing(layoutStore.isShellMorphing)
-            .collapseShellOnly(layoutStore.isCollapseShellOnly)
-            .frame(width: surfaceSize.width, height: surfaceSize.height)
-            .position(x: surfaceFrame.midX, y: layoutStore.canvasSize.height - surfaceFrame.midY)
         }
         .shellMorphing(layoutStore.isShellMorphing)
         .collapseShellOnly(layoutStore.isCollapseShellOnly)
@@ -467,6 +470,11 @@ struct IslandRootView: View {
             modules.navigation.ensureValidSelection(using: settings)
             synchronizePresentationForCurrentState()
             updateCollapsedPreviewLayout()
+        }
+        .onChange(of: layoutStore.overlayPresentationGeneration) { _, _ in
+            sequenceGeneration += 1
+            deactivateCollapsedPreview()
+            finalizeCompactPresentation()
         }
         .onChange(of: islandState.state) { _, newValue in
             handleStateChange(newValue)
@@ -832,6 +840,7 @@ struct IslandRootView: View {
     }
 
     private func synchronizePresentationForCurrentState() {
+        guard settings.overlayEnabled else { return }
         if islandState.state == .expanded {
             startExpansionSequence()
         } else {
@@ -840,6 +849,11 @@ struct IslandRootView: View {
     }
 
     private func handleStateChange(_ state: IslandPresentationState) {
+        guard settings.overlayEnabled else {
+            sequenceGeneration += 1
+            finalizeCompactPresentation()
+            return
+        }
         switch state {
         case .expanded:
             deactivateCollapsedPreview()
@@ -851,6 +865,8 @@ struct IslandRootView: View {
     }
 
     private func startExpansionSequence() {
+        guard settings.overlayEnabled else { return }
+        let sessionGeneration = layoutStore.overlayPresentationGeneration
         sequenceGeneration += 1
         let generation = sequenceGeneration
         if !modules.navigation.isFileDropTargeted {
@@ -874,7 +890,8 @@ struct IslandRootView: View {
             ? 0
             : IslandContentTransitionTiming.expansionContentDelay(shellDuration: shellDuration)
         DispatchQueue.main.asyncAfter(deadline: .now() + revealDelay) {
-            guard generation == sequenceGeneration else { return }
+            guard settings.overlayEnabled, sessionGeneration == layoutStore.overlayPresentationGeneration,
+                  generation == sequenceGeneration else { return }
             guard islandState.state == .expanded else { return }
             guard !layoutStore.isExpandedContentExiting else { return }
             isContentRemoving = false
@@ -909,6 +926,8 @@ struct IslandRootView: View {
     }
 
     private func handleCollapsedHover(_ isHovering: Bool) {
+        guard settings.overlayEnabled else { return }
+        let sessionGeneration = layoutStore.overlayPresentationGeneration
         isCollapsedHovering = isHovering
         collapsedPreviewGeneration += 1
         let generation = collapsedPreviewGeneration
@@ -929,7 +948,8 @@ struct IslandRootView: View {
             ? 0
             : settings.collapsedHoverPreviewDelay
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-            guard generation == collapsedPreviewGeneration else { return }
+            guard settings.overlayEnabled, sessionGeneration == layoutStore.overlayPresentationGeneration,
+                  generation == collapsedPreviewGeneration else { return }
             guard isCollapsedHovering, isCollapsedPreviewAllowed else { return }
             collapsedPreviewVisible = true
             updateCollapsedPreviewLayout()
@@ -2118,6 +2138,7 @@ struct ExpandedIslandView: View {
     }
 
     private func beginTabFadeOut() {
+        let sessionGeneration = layoutStore.overlayPresentationGeneration
         tabTransitionGeneration += 1
         let generation = tabTransitionGeneration
         tabTransitionPhase = .fadingOut
@@ -2129,7 +2150,8 @@ struct ExpandedIslandView: View {
         DispatchQueue.main.asyncAfter(
             deadline: .now() + IslandContentTransitionTiming.tabFadeOutDuration + IslandContentTransitionTiming.tabHandoffDelay
         ) {
-            guard generation == tabTransitionGeneration else { return }
+            guard settings.overlayEnabled, sessionGeneration == layoutStore.overlayPresentationGeneration,
+                  generation == tabTransitionGeneration else { return }
             guard shouldRenderContent,
                   contentVisible,
                   !isCollapseShellOnly else {
@@ -2144,14 +2166,16 @@ struct ExpandedIslandView: View {
             tabContentVisible = false
 
             DispatchQueue.main.async {
-                guard generation == tabTransitionGeneration else { return }
+                guard settings.overlayEnabled, sessionGeneration == layoutStore.overlayPresentationGeneration,
+                      generation == tabTransitionGeneration else { return }
                 withAnimation(tabFadeInAnimation) {
                     tabContentVisible = true
                 }
             }
 
             DispatchQueue.main.asyncAfter(deadline: .now() + IslandContentTransitionTiming.tabFadeInDuration) {
-                guard generation == tabTransitionGeneration else { return }
+                guard settings.overlayEnabled, sessionGeneration == layoutStore.overlayPresentationGeneration,
+                      generation == tabTransitionGeneration else { return }
                 tabTransitionPhase = .idle
                 if let pendingPage, pendingPage != displayedPage {
                     beginTabFadeOut()
@@ -2173,7 +2197,8 @@ struct ExpandedIslandView: View {
     }
 
     private func openClipboardHistory() {
-        guard settings.clipboardHistoryEnabled else { return }
+        let sessionGeneration = layoutStore.overlayPresentationGeneration
+        guard settings.overlayEnabled, settings.clipboardHistoryEnabled else { return }
         var presentation = clipboardPresentation
         let generation = presentation.open()
         updateClipboardPresentation(presentation)
@@ -2190,6 +2215,7 @@ struct ExpandedIslandView: View {
             : IslandContentTransitionTiming.expansionContentDelay(shellDuration: shellDuration)
 
         DispatchQueue.main.asyncAfter(deadline: .now() + revealDelay) {
+            guard settings.overlayEnabled, sessionGeneration == layoutStore.overlayPresentationGeneration else { return }
             guard settings.clipboardHistoryEnabled,
                   contentVisible,
                   shouldRenderContent,
@@ -2203,6 +2229,7 @@ struct ExpandedIslandView: View {
     }
 
     private func closeClipboardHistoryAnimated() {
+        let sessionGeneration = layoutStore.overlayPresentationGeneration
         var presentation = clipboardPresentation
         guard let generation = presentation.beginAnimatedClose() else { return }
         updateClipboardPresentation(presentation)
@@ -2219,6 +2246,7 @@ struct ExpandedIslandView: View {
             : IslandContentTransitionTiming.collapseContentDuration(shellDuration: shellDuration)
 
         DispatchQueue.main.asyncAfter(deadline: .now() + exitDuration + 0.025) {
+            guard settings.overlayEnabled, sessionGeneration == layoutStore.overlayPresentationGeneration else { return }
             var presentation = clipboardPresentation
             guard presentation.completeAnimatedClose(generation: generation) else { return }
             updateClipboardPresentation(presentation)
@@ -2322,7 +2350,7 @@ struct ExpandedIslandView: View {
     }
 
     private func synchronizeStatsPolling() {
-        let shouldPoll = rendersExpandedVisualContent &&
+        let shouldPoll = settings.overlayEnabled && rendersExpandedVisualContent &&
             shouldRenderContent &&
             contentVisible &&
             tabContentVisible &&

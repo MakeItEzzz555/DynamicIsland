@@ -149,8 +149,16 @@ protocol ClipboardPasteboardClient: AnyObject {
         capturesImages: Bool
     ) -> ClipboardPasteboardReadResult
 
+    func prepareCapture(limits: ClipboardHistoryLimits, capturesImages: Bool) -> ClipboardPasteboardCapture
+
     @discardableResult
     func write(_ payload: ClipboardHistoryPayload) -> ClipboardPasteboardWriteResult
+}
+
+extension ClipboardPasteboardClient {
+    func prepareCapture(limits: ClipboardHistoryLimits, capturesImages: Bool) -> ClipboardPasteboardCapture {
+        .ready(readSupportedPayload(limits: limits, capturesImages: capturesImages))
+    }
 }
 
 enum ClipboardSensitivePasteboardTypes {
@@ -180,28 +188,31 @@ final class SystemClipboardPasteboardClient: ClipboardPasteboardClient {
         limits: ClipboardHistoryLimits,
         capturesImages: Bool
     ) -> ClipboardPasteboardReadResult {
+        // Synchronous compatibility entry point; monitoring uses prepareCapture so
+        // immutable image bytes can be normalized off the main actor.
+        switch prepareCapture(limits: limits, capturesImages: capturesImages) {
+        case let .ready(result): return result
+        case let .image(capture): return capture.resolve()
+        }
+    }
+
+    func prepareCapture(limits: ClipboardHistoryLimits, capturesImages: Bool) -> ClipboardPasteboardCapture {
         let items = pasteboard.pasteboardItems ?? []
-        guard !items.isEmpty else { return .empty }
+        guard !items.isEmpty else { return .ready(.empty) }
         guard !containsSensitiveMarker(items) else {
             #if DEBUG
             print("[ClipboardHistory] skipped sensitive item")
             #endif
-            return .sensitive
+            return .ready(.sensitive)
         }
-
-        if let fileResult = readFiles(limits: limits) {
-            return fileResult
-        }
-        if capturesImages, let imageResult = readImage(items: items, limits: limits) {
-            return imageResult
-        }
-        if let urlResult = readURL(items: items, limits: limits) {
-            return urlResult
-        }
-        if let textResult = readText(items: items, limits: limits) {
-            return textResult
-        }
-        return .unsupported
+        if let fileResult = readFiles(limits: limits) { return .ready(fileResult) }
+        let representations = capturesImages ? readImageRepresentations(items: items) : []
+        let fallback = readURL(items: items, limits: limits)
+            ?? readText(items: items, limits: limits) ?? .unsupported
+        guard !representations.isEmpty else { return .ready(fallback) }
+        return .image(ClipboardImageCapture(
+            representations: representations, maximumPNGBytes: limits.maximumImageBytes, fallback: fallback
+        ))
     }
 
     func write(_ payload: ClipboardHistoryPayload) -> ClipboardPasteboardWriteResult {
@@ -265,24 +276,18 @@ final class SystemClipboardPasteboardClient: ClipboardPasteboardClient {
         return .payload(.files(urls))
     }
 
-    private func readImage(
-        items: [NSPasteboardItem],
-        limits: ClipboardHistoryLimits
-    ) -> ClipboardPasteboardReadResult? {
-        let types: [NSPasteboard.PasteboardType] = [
-            .png,
-            .tiff,
-            NSPasteboard.PasteboardType("public.jpeg")
-        ]
+    private func readImageRepresentations(items: [NSPasteboardItem]) -> [ClipboardImageRepresentation] {
+        let types: [NSPasteboard.PasteboardType] = [.png, .tiff, .init("public.jpeg")]
+        var representations: [ClipboardImageRepresentation] = []
         for type in types {
             guard let data = items.lazy.compactMap({ $0.data(forType: type) }).first else { continue }
-            guard let normalized = Self.normalizedPNG(data: data, sourceType: type) else {
-                continue
+            if data.count > ClipboardImageResourcePolicy.maximumEncodedBytes {
+                representations.append(.oversized)
+                break
             }
-            guard normalized.count <= limits.maximumImageBytes else { return .oversized }
-            return .payload(.imagePNG(normalized))
+            representations.append(.encoded(data))
         }
-        return nil
+        return representations
     }
 
     private func readURL(
@@ -337,23 +342,6 @@ final class SystemClipboardPasteboardClient: ClipboardPasteboardClient {
     private func bounded(_ data: Data?, maximum: Int) -> Data? {
         guard let data, data.count <= maximum else { return nil }
         return data
-    }
-
-    static func normalizedPNG(
-        data: Data,
-        sourceType: NSPasteboard.PasteboardType
-    ) -> Data? {
-        if sourceType == .png,
-           let representation = NSBitmapImageRep(data: data),
-           representation.representation(using: .png, properties: [:]) != nil {
-            return representation.representation(using: .png, properties: [:])
-        }
-        guard let image = NSImage(data: data),
-              let tiff = image.tiffRepresentation,
-              let representation = NSBitmapImageRep(data: tiff) else {
-            return nil
-        }
-        return representation.representation(using: .png, properties: [:])
     }
 }
 

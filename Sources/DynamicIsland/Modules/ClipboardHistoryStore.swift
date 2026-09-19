@@ -100,6 +100,9 @@ final class ClipboardHistoryStore: ObservableObject {
     private let persistenceWriter: ClipboardHistoryPersistenceWriter
 
     private nonisolated(unsafe) var timer: Timer?
+    private var imageCaptureTask: Task<Void, Never>?
+    private var imageCaptureGeneration = 0
+    private let processImage: @Sendable (ClipboardImageCapture) async -> ClipboardPasteboardReadResult
     private var lastObservedChangeCount = 0
     private var cancellables: Set<AnyCancellable> = []
 
@@ -109,7 +112,10 @@ final class ClipboardHistoryStore: ObservableObject {
         persistence: ClipboardHistoryPersistence = FileClipboardHistoryPersistence(),
         limits: ClipboardHistoryLimits = .standard,
         now: @escaping () -> Date = Date.init,
-        automaticallySchedulesTimer: Bool = true
+        automaticallySchedulesTimer: Bool = true,
+        processImage: @escaping @Sendable (ClipboardImageCapture) async -> ClipboardPasteboardReadResult = { capture in
+            await Task.detached(priority: .utility) { capture.resolve() }.value
+        }
     ) {
         self.settings = settings
         self.pasteboard = pasteboard
@@ -117,6 +123,7 @@ final class ClipboardHistoryStore: ObservableObject {
         self.limits = limits
         self.now = now
         self.automaticallySchedulesTimer = automaticallySchedulesTimer
+        self.processImage = processImage
         persistenceWriter = ClipboardHistoryPersistenceWriter(
             persistence: persistence,
             enabled: settings.clipboardHistoryPersistenceEnabled
@@ -133,6 +140,7 @@ final class ClipboardHistoryStore: ObservableObject {
 
     deinit {
         timer?.invalidate()
+        imageCaptureTask?.cancel()
     }
 
     func startMonitoring() {
@@ -158,6 +166,7 @@ final class ClipboardHistoryStore: ObservableObject {
     }
 
     func stopMonitoring() {
+        imageCaptureGeneration += 1
         guard isMonitoring || timer != nil else { return }
         timer?.invalidate()
         timer = nil
@@ -168,20 +177,45 @@ final class ClipboardHistoryStore: ObservableObject {
     }
 
     func pollNow() {
-        guard isMonitoring, settings.clipboardHistoryEnabled else { return }
+        // Keep at most one image job in flight. Subsequent polls observe the latest
+        // change when it finishes rather than queueing decoded images without bound.
+        guard isMonitoring, settings.clipboardHistoryEnabled, imageCaptureTask == nil else { return }
         let currentChangeCount = pasteboard.changeCount
         guard currentChangeCount != lastObservedChangeCount else { return }
         lastObservedChangeCount = currentChangeCount
 
-        let result = pasteboard.readSupportedPayload(
+        let prepared = pasteboard.prepareCapture(
             limits: limits,
             capturesImages: settings.clipboardHistoryCaptureImagesEnabled
         )
-        guard case let .payload(payload) = result else { return }
-        capture(payload)
+        switch prepared {
+        case let .ready(result):
+            if case let .payload(payload) = result { capture(payload) }
+        case let .image(image):
+            let generation = imageCaptureGeneration
+            let processImage = self.processImage
+            imageCaptureTask = Task { @MainActor [weak self] in
+                let result = await processImage(image)
+                guard let self else { return }
+                self.imageCaptureTask = nil
+                if generation == self.imageCaptureGeneration,
+                   self.isMonitoring, self.settings.clipboardHistoryEnabled,
+                   self.settings.clipboardHistoryCaptureImagesEnabled,
+                   self.pasteboard.changeCount == currentChangeCount,
+                   case let .payload(payload) = result {
+                    self.capture(payload)
+                }
+                self.pollNow()
+            }
+        }
+    }
+
+    func waitForPendingImageCaptureForTesting() async {
+        await imageCaptureTask?.value
     }
 
     func clearHistory() {
+        imageCaptureGeneration += 1
         entries.removeAll()
         persistenceWriter.deleteWithoutDisabling()
     }
@@ -203,6 +237,7 @@ final class ClipboardHistoryStore: ObservableObject {
         let result = pasteboard.write(entry.payload)
         guard result.succeeded else { return false }
 
+        imageCaptureGeneration += 1
         lastObservedChangeCount = result.resultingChangeCount
         entries.remove(at: index)
         entries.insert(
@@ -268,6 +303,12 @@ final class ClipboardHistoryStore: ObservableObject {
                     self.stopMonitoring()
                 }
             }
+            .store(in: &cancellables)
+
+        settings.$clipboardHistoryCaptureImagesEnabled
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] _ in self?.imageCaptureGeneration += 1 }
             .store(in: &cancellables)
 
         settings.$clipboardHistoryMaximumItems

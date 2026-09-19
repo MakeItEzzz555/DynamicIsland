@@ -37,6 +37,40 @@ struct ExpandedScrollEventRoutingPolicy {
     }
 }
 
+// Enablement stays in AppSettings; only transient callback/input ownership lives here.
+struct OverlayPresentationSession {
+    private(set) var generation = 0
+    private var resumedAt: TimeInterval = 0
+    private var lastScrollAt: TimeInterval?
+    private var waitingForFreshScroll = false
+
+    mutating func invalidate(at timestamp: TimeInterval) {
+        generation += 1
+        resumedAt = timestamp
+        lastScrollAt = timestamp
+        waitingForFreshScroll = true
+    }
+
+    func allowsWork(overlayEnabled: Bool, generation callbackGeneration: Int? = nil) -> Bool {
+        overlayEnabled && (callbackGeneration == nil || callbackGeneration == generation)
+    }
+
+    mutating func acceptsScroll(
+        overlayEnabled: Bool, timestamp: TimeInterval, phase: NSEvent.Phase,
+        quietPeriod: TimeInterval
+    ) -> Bool {
+        guard allowsWork(overlayEnabled: overlayEnabled), timestamp >= resumedAt else { return false }
+        guard waitingForFreshScroll else { return true }
+        let followsQuietGap = lastScrollAt.map { timestamp - $0 > quietPeriod } ?? true
+        lastScrollAt = timestamp
+        // Explicit beginnings, or the existing quiet boundary for phase-less devices,
+        // distinguish a new swipe from the previous session's continuing tail.
+        guard phase.contains(.began) || phase.contains(.mayBegin) || (phase.isEmpty && followsQuietGap) else { return false }
+        waitingForFreshScroll = false
+        return true
+    }
+}
+
 @MainActor
 final class OverlayWindowController {
     private enum OverlayPersistence {
@@ -74,7 +108,7 @@ final class OverlayWindowController {
     private var lastAppliedGeometrySignature: OverlayGeometrySignature?
     private var canonicalPanelFrame: NSRect = .zero
     private var lastOrderedVisibilityState: IslandPresentationState?
-    private var lastOverlayEnabled: Bool
+    private var presentationSession = OverlayPresentationSession()
     private var visibilityGeneration: Int = 0
     private var morphGeneration: Int = 0
     private var collapseSequenceGeneration: Int = 0
@@ -115,7 +149,6 @@ final class OverlayWindowController {
         self.islandState = islandState
         self.modules = modules
         self.geometryService = geometryService
-        self.lastOverlayEnabled = settings.overlayEnabled
         #if DEBUG
         debugPrint(
             "DynamicIsland OverlayWindowController init",
@@ -168,8 +201,9 @@ final class OverlayWindowController {
 
         islandState.$state
             .sink { [weak self] _ in
+                let generation = self?.presentationSession.generation
                 DispatchQueue.main.async { [weak self] in
-                    guard let self else { return }
+                    guard let self, self.allowsOverlayWork(generation: generation) else { return }
                     let state = self.islandState.state
                     self.debugLog("state committed as \(state)")
                     self.debugLog("state changed to \(state)")
@@ -199,17 +233,22 @@ final class OverlayWindowController {
             }
             .store(in: &cancellables)
 
+        settings.$overlayEnabled
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] enabled in
+                // Published emits before commit. Suspend immediately; enabling is deferred
+                // until the preference commits, with the new session guarding the callback.
+                self?.setVisible(enabled)
+            }
+            .store(in: &cancellables)
+
         settings.objectWillChange
             .sink { [weak self] _ in
-                DispatchQueue.main.async {
-                    guard let self else { return }
-                    let overlayEnabled = self.settings.overlayEnabled
-                    if overlayEnabled != self.lastOverlayEnabled {
-                        self.lastOverlayEnabled = overlayEnabled
-                        self.setVisible(overlayEnabled)
-                    } else {
-                        self.reposition(animated: false, reason: "settingsChanged")
-                    }
+                let generation = self?.presentationSession.generation
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.allowsOverlayWork(generation: generation) else { return }
+                    self.reposition(animated: false, reason: "settingsChanged")
                 }
             }
             .store(in: &cancellables)
@@ -217,8 +256,10 @@ final class OverlayWindowController {
         layoutStore.$collapsedPreviewActive
             .combineLatest(layoutStore.$collapsedPreviewSurfaceFrame)
             .sink { [weak self] _, _ in
-                DispatchQueue.main.async {
-                    self?.updateMousePassthrough()
+                let generation = self?.presentationSession.generation
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.allowsOverlayWork(generation: generation) else { return }
+                    self.updateMousePassthrough()
                 }
             }
             .store(in: &cancellables)
@@ -226,7 +267,9 @@ final class OverlayWindowController {
         modules.media.$hasActiveMediaSource
             .removeDuplicates()
             .sink { [weak self] hasActiveMediaSource in
-                DispatchQueue.main.async {
+                let generation = self?.presentationSession.generation
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.allowsOverlayWork(generation: generation) else { return }
                     #if DEBUG
                     debugPrint(
                         "DynamicIsland Overlay media active changed",
@@ -234,7 +277,7 @@ final class OverlayWindowController {
                         "mediaInstance=\(ObjectIdentifier(modules.media))"
                     )
                     #endif
-                    self?.reposition(animated: true, reason: "mediaActiveChanged")
+                    self.reposition(animated: true, reason: "mediaActiveChanged")
                 }
             }
             .store(in: &cancellables)
@@ -245,8 +288,10 @@ final class OverlayWindowController {
             }
             .removeDuplicates()
             .sink { [weak self] _ in
-                DispatchQueue.main.async {
-                    self?.reposition(animated: true, reason: "collapsedActivityPresenceChanged")
+                let generation = self?.presentationSession.generation
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.allowsOverlayWork(generation: generation) else { return }
+                    self.reposition(animated: true, reason: "collapsedActivityPresenceChanged")
                 }
             }
             .store(in: &cancellables)
@@ -261,7 +306,24 @@ final class OverlayWindowController {
         installMouseDownMonitors()
     }
 
+    private var canPresentOverlay: Bool {
+        presentationSession.allowsWork(overlayEnabled: settings.overlayEnabled)
+    }
+
+    private func allowsOverlayWork(generation: Int?) -> Bool {
+        guard let generation else { return false }
+        return presentationSession.allowsWork(overlayEnabled: settings.overlayEnabled, generation: generation)
+    }
+
+    private func acceptsOverlayScroll(_ event: NSEvent) -> Bool {
+        presentationSession.acceptsScroll(
+            overlayEnabled: settings.overlayEnabled, timestamp: event.timestamp,
+            phase: event.phase, quietPeriod: collapsedScrollQuietResetDelay
+        )
+    }
+
     func show() {
+        guard canPresentOverlay else { return }
         islandState.collapse()
         reposition(animated: false, reason: "initialShow", force: true)
         updateWindowVisibility()
@@ -269,22 +331,46 @@ final class OverlayWindowController {
     }
 
     func setVisible(_ visible: Bool) {
+        presentationSession.invalidate(at: ProcessInfo.processInfo.systemUptime)
+        layoutStore.overlayPresentationGeneration = presentationSession.generation
         if visible {
-            show()
+            let generation = presentationSession.generation
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.allowsOverlayWork(generation: generation) else { return }
+                self.show()
+            }
         } else {
-            debugOverlayWindowState(reason: "ORDERING OUT reason=overlayDisabled before")
+            morphGeneration += 1
+            collapseSequenceGeneration += 1
+            visibilityGeneration += 1
+            stopMouseContainmentTimer()
+            modules.stats.stopPolling()
+            resetExpandedScrollTracking()
+            resetCollapsedScrollTracking()
+            resetMediaSwipeSession()
+            mediaSwipeUnlockWorkItem?.cancel()
+            mediaSwipeUnlockWorkItem = nil
+            mediaSwipeCommandInFlight = false
+            mediaSwipeLockedUntil = .distantPast
+            expandedScrollLockedUntil = .distantPast
+            collapsedScrollLastActionAt = nil
+            expandedScrollLastActionAt = nil
+            layoutStore.isShellMorphing = false
+            layoutStore.isCollapseShellOnly = false
+            layoutStore.isExpandedContentExiting = false
+            layoutStore.updateCollapsedPreview(active: false, frame: .zero)
+            layoutStore.setExpandedScrollGestureSuppressed(false)
+            escapeRouter.setTopmostPresentation(nil)
+            modules.navigation.setFileDropTargeted(false)
+            islandState.collapse()
             islandPanel.ignoresMouseEvents = true
-            debugOverlayWindowOperation(operation: "orderOut", reason: "overlayDisabled")
             islandPanel.orderOut(nil)
             lastOrderedVisibilityState = nil
-            debugOverlayWindowState(reason: "ORDERING OUT reason=overlayDisabled after")
-        }
-        if !visible {
-            stopMouseContainmentTimer()
         }
     }
 
     func reposition(animated: Bool = false, reason: String = "unspecified", force: Bool = false) {
+        guard canPresentOverlay else { return }
         let signature = currentGeometrySignature
         guard force || signature != lastAppliedGeometrySignature else {
             #if DEBUG
@@ -325,8 +411,9 @@ final class OverlayWindowController {
 
         updateMouseContainmentTimer()
 
+        let sessionGeneration = presentationSession.generation
         DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
+            guard let self, self.allowsOverlayWork(generation: sessionGeneration) else { return }
             let correctedSignature = self.currentGeometrySignature
             guard force || correctedSignature != self.lastAppliedGeometrySignature else {
                 return
@@ -531,6 +618,7 @@ final class OverlayWindowController {
     }
 
     private func updateWindowVisibility() {
+        guard canPresentOverlay else { return }
         visibilityGeneration += 1
         if !islandPanel.isVisible {
             debugOverlayWindowOperation(
@@ -545,6 +633,10 @@ final class OverlayWindowController {
     }
 
     private func updateMouseContainmentTimer() {
+        guard canPresentOverlay else {
+            stopMouseContainmentTimer()
+            return
+        }
         switch islandState.state {
         case .collapsed:
             stopMouseContainmentTimer()
@@ -554,16 +646,19 @@ final class OverlayWindowController {
     }
 
     private func startMouseContainmentTimer() {
+        guard canPresentOverlay else { return }
         guard mouseContainmentTimer == nil else {
             debugLog("timer start skipped; already running")
             return
         }
         debugLog("timer started")
+        let generation = presentationSession.generation
         let timer = Timer(timeInterval: 0.06, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                self?.debugLog("timer fired state=\(self?.islandState.state.rawValue ?? "nil") mouse=\(String(describing: self?.currentMouseScreenLocation()))")
-                self?.updateMousePassthrough()
-                self?.collapseIfExpandedMouseOutsideAfterGrace(source: "timer")
+                guard let self, self.allowsOverlayWork(generation: generation) else { return }
+                self.debugLog("timer fired state=\(self.islandState.state.rawValue) mouse=\(self.currentMouseScreenLocation())")
+                self.updateMousePassthrough()
+                self.collapseIfExpandedMouseOutsideAfterGrace(source: "timer")
             }
         }
         RunLoop.main.add(timer, forMode: .common)
@@ -590,9 +685,11 @@ final class OverlayWindowController {
         globalMouseMovedMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged]
         ) { [weak self] _ in
+            let generation = self?.presentationSession.generation
             Task { @MainActor in
-                self?.updateMousePassthrough()
-                self?.collapseIfExpandedMouseOutsideAfterGrace(source: "globalMouseMonitor")
+                guard let self, self.allowsOverlayWork(generation: generation) else { return }
+                self.updateMousePassthrough()
+                self.collapseIfExpandedMouseOutsideAfterGrace(source: "globalMouseMonitor")
             }
         }
 
@@ -616,8 +713,9 @@ final class OverlayWindowController {
 }
 
 globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollWheel]) { [weak self] event in
+    let generation = self?.presentationSession.generation
     Task { @MainActor in
-        guard let self else { return }
+        guard let self, self.allowsOverlayWork(generation: generation) else { return }
 
         self.debugScrollWheelReceived(event, source: "globalScrollMonitor")
         if self.handleExpandedScrollWheelFromMonitor(event, source: "globalScrollMonitor") {
@@ -629,7 +727,7 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
 }
 
         localKeyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
-            guard let self else { return event }
+            guard let self, self.canPresentOverlay else { return event }
             guard event.keyCode == 53 else {
                 return event
             }
@@ -661,6 +759,7 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
     }
 
     private func collapseIfExpandedMouseOutsideAfterGrace(source: String = "event") {
+        guard canPresentOverlay else { return }
         debugLog("collapse check entered source=\(source) state=\(islandState.state)")
         guard islandState.state == .expanded else {
             debugLog("collapse check ignored; state is not expanded")
@@ -750,7 +849,7 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
     }
 
     private func updateMousePassthrough(at screenPoint: NSPoint = NSEvent.mouseLocation) {
-        guard settings.overlayEnabled else {
+        guard canPresentOverlay else {
             islandPanel.ignoresMouseEvents = true
             return
         }
@@ -826,6 +925,8 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
     }
 
     private func beginVisualMorph(for state: IslandPresentationState) {
+        guard canPresentOverlay else { return }
+        let sessionGeneration = presentationSession.generation
         morphGeneration += 1
         let generation = morphGeneration
         layoutStore.isShellMorphing = true
@@ -838,7 +939,7 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
         let clearDelay = shellDuration + (state == .collapsed ? 0.025 : 0)
         DispatchQueue.main.asyncAfter(deadline: .now() + clearDelay) { [weak self] in
             guard let self else { return }
-            guard generation == self.morphGeneration else { return }
+            guard self.allowsOverlayWork(generation: sessionGeneration), generation == self.morphGeneration else { return }
             self.layoutStore.isShellMorphing = false
             self.layoutStore.isCollapseShellOnly = false
             if state == .collapsed {
@@ -849,6 +950,7 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
     }
 
     private func expandFromCollapsedPreparingGeometry() {
+        guard canPresentOverlay else { return }
         guard islandState.state == .collapsed else { return }
 
         let geometry = geometryService.geometry(
@@ -876,9 +978,7 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
 
         applyCanonicalPanelFrame(geometry.expandedFrame, reason: "expandFromCollapsedPreparingGeometry")
         lastAppliedGeometrySignature = currentGeometrySignature
-        debugOverlayWindowOperation(operation: "orderFrontRegardless", reason: "expandFromCollapsedPreparingGeometry")
-        islandPanel.orderFrontRegardless()
-        lastOrderedVisibilityState = islandState.state
+        updateWindowVisibility()
         hostingView?.needsLayout = true
         updateMousePassthrough()
 
@@ -886,6 +986,8 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
     }
 
     private func requestCollapseWithSequencing() {
+        guard canPresentOverlay else { return }
+        let sessionGeneration = presentationSession.generation
         guard islandState.state == .expanded else { return }
         guard !layoutStore.isExpandedContentExiting else { return }
 
@@ -905,7 +1007,7 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
 
         DispatchQueue.main.asyncAfter(deadline: .now() + collapseShellDelay) { [weak self] in
             guard let self else { return }
-            guard generation == self.collapseSequenceGeneration else { return }
+            guard self.allowsOverlayWork(generation: sessionGeneration), generation == self.collapseSequenceGeneration else { return }
             guard self.islandState.state == .expanded else { return }
             self.debugLog("requestCollapseWithSequencing committing collapse generation=\(generation)")
             self.islandState.collapse()
@@ -948,7 +1050,7 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
     }
 
     private func currentCollapsedGestureRegion() -> NSRect {
-        guard islandState.state == .collapsed,
+        guard canPresentOverlay, islandState.state == .collapsed,
               !layoutStore.isShellMorphing,
               !layoutStore.isCollapseShellOnly,
               !layoutStore.isExpandedContentExiting,
@@ -959,6 +1061,7 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
     }
 
     private func handleIslandScrollWheelFromMonitor(_ event: NSEvent, source: String) -> Bool {
+        guard acceptsOverlayScroll(event) else { return false }
         switch islandState.state {
         case .collapsed:
             return handleCollapsedScrollWheelFromMonitor(event, source: source)
@@ -968,6 +1071,7 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
     }
 
     private func handleIslandScrollWheel(_ event: NSEvent, localPoint: NSPoint, source: String) -> Bool {
+        guard acceptsOverlayScroll(event) else { return false }
         switch islandState.state {
         case .collapsed:
             return handleCollapsedScrollWheel(event, localPoint: localPoint, source: source)
@@ -977,6 +1081,7 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
     }
 
     private func handleExpandedScrollWheelFromMonitor(_ event: NSEvent, source: String) -> Bool {
+        guard acceptsOverlayScroll(event) else { return false }
         guard !shouldPassExpandedScrollThroughToContent() else {
             return false
         }
@@ -1003,6 +1108,7 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
     }
 
     private func handleExpandedScrollWheel(_ event: NSEvent, source: String) -> Bool {
+        guard acceptsOverlayScroll(event) else { return false }
         guard !shouldPassExpandedScrollThroughToContent() else {
             return false
         }
@@ -1196,12 +1302,14 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
 
     private func scheduleExpandedScrollGestureReset() {
         expandedScrollGestureResetWorkItem?.cancel()
+        let generation = presentationSession.generation
         let workItem = DispatchWorkItem { [weak self] in
             Task { @MainActor in
-                self?.expandedScrollDelta = .zero
-                self?.expandedScrollGestureHandled = false
-                self?.expandedScrollGestureResetWorkItem = nil
-                self?.debugGesture("expanded scroll quiet reset fired")
+                guard let self, self.allowsOverlayWork(generation: generation) else { return }
+                self.expandedScrollDelta = .zero
+                self.expandedScrollGestureHandled = false
+                self.expandedScrollGestureResetWorkItem = nil
+                self.debugGesture("expanded scroll quiet reset fired")
             }
         }
         expandedScrollGestureResetWorkItem = workItem
@@ -1209,6 +1317,7 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
     }
 
     private func handleCollapsedScrollWheelFromMonitor(_ event: NSEvent, source: String) -> Bool {
+        guard acceptsOverlayScroll(event) else { return false }
         debugGesture("entering collapsed scroll handler source=\(source)")
         logCollapsedScrollSettingsAndState()
         debugCollapsedScrollRegion(screenPoint: NSEvent.mouseLocation)
@@ -1240,6 +1349,7 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
     }
 
     private func handleCollapsedScrollWheel(_ event: NSEvent, localPoint: NSPoint, source: String) -> Bool {
+        guard acceptsOverlayScroll(event) else { return false }
         debugGesture("entering collapsed scroll handler source=\(source)")
         debugScrollWheelReceived(event, source: source)
         logCollapsedScrollSettingsAndState()
@@ -1362,12 +1472,14 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
 
     private func scheduleCollapsedScrollGestureReset() {
         collapsedScrollGestureResetWorkItem?.cancel()
+        let generation = presentationSession.generation
         let workItem = DispatchWorkItem { [weak self] in
             Task { @MainActor in
-                self?.collapsedScrollDelta = .zero
-                self?.collapsedScrollGestureHandled = false
-                self?.collapsedScrollGestureResetWorkItem = nil
-                self?.debugGesture("quiet reset fired")
+                guard let self, self.allowsOverlayWork(generation: generation) else { return }
+                self.collapsedScrollDelta = .zero
+                self.collapsedScrollGestureHandled = false
+                self.collapsedScrollGestureResetWorkItem = nil
+                self.debugGesture("quiet reset fired")
             }
         }
         collapsedScrollGestureResetWorkItem = workItem
@@ -1434,9 +1546,11 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
 
     private func scheduleMediaSwipeFinish() {
         mediaSwipeFinishWorkItem?.cancel()
+        let generation = presentationSession.generation
         let workItem = DispatchWorkItem { [weak self] in
             Task { @MainActor in
-                self?.finishCollapsedMediaSwipeSession()
+                guard let self, self.allowsOverlayWork(generation: generation) else { return }
+                self.finishCollapsedMediaSwipeSession()
             }
         }
         mediaSwipeFinishWorkItem = workItem
@@ -1445,6 +1559,7 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
     }
 
     private func finishCollapsedMediaSwipeSession() {
+        guard canPresentOverlay else { return }
         guard mediaSwipeSessionActive else {
             return
         }
@@ -1555,9 +1670,10 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
         mediaSwipeLockedUntil = Date().addingTimeInterval(mediaSwipePostCommandLockoutSeconds)
         mediaSwipeUnlockWorkItem?.cancel()
 
+        let generation = presentationSession.generation
         let workItem = DispatchWorkItem { [weak self] in
             Task { @MainActor in
-                guard let self else { return }
+                guard let self, self.allowsOverlayWork(generation: generation) else { return }
                 guard Date() >= self.mediaSwipeLockedUntil else {
                     self.debugGesture("media swipe unlock skipped; lockout extended")
                     return
@@ -1577,6 +1693,7 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
     }
 
     private func handleCollapsedMediaPillGesture(_ gesture: IslandPointerGesture) -> Bool {
+        guard canPresentOverlay else { return false }
         guard !settings.requireGestureConfirmation else {
             debugGesture("blocked reason=require-confirmation gesture=\(gesture.rawValue)")
             return false
@@ -1632,27 +1749,29 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
     }
 
     private func scheduleMediaRefreshAfterTransportGesture(reason: String) {
+        guard canPresentOverlay else { return }
+        let generation = presentationSession.generation
         debugGesture("scheduling media refresh sequence reason=\(reason)")
         debugGesture("media refresh scheduled reason=\(reason)")
         debugMedia("artwork refresh requested reason=\(reason)")
         modules.media.refresh()
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-            guard let self else { return }
+            guard let self, self.allowsOverlayWork(generation: generation) else { return }
             self.debugGesture("media refresh firing reason=\(reason) delayed=0.25")
             self.debugMedia("artwork refresh requested reason=\(reason) delayed=0.25")
             self.modules.media.refresh()
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) { [weak self] in
-            guard let self else { return }
+            guard let self, self.allowsOverlayWork(generation: generation) else { return }
             self.debugGesture("media refresh firing reason=\(reason) delayed=0.75")
             self.debugMedia("artwork refresh requested reason=\(reason) delayed=0.75")
             self.modules.media.refresh()
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.20) { [weak self] in
-            guard let self else { return }
+            guard let self, self.allowsOverlayWork(generation: generation) else { return }
             self.debugGesture("media refresh firing reason=\(reason) delayed=1.20")
             self.debugMedia("artwork refresh requested reason=\(reason) delayed=1.20")
             self.modules.media.refresh()
