@@ -90,6 +90,156 @@ final class ArtworkFlipPresentationStateTests: XCTestCase {
         XCTAssertEqual(state.queuedSnapshot, queued)
     }
 
+    func testQueuedNonanimatedUpdateDisplaysDirectlyAfterActiveFlipCompletes() {
+        let old = snapshot("old", fingerprint: "old")
+        let active = snapshot("active", fingerprint: "active")
+        let queued = snapshot("queued", fingerprint: "queued")
+        let queuedRequestID = UUID()
+        var state = ArtworkFlipPresentationState(initial: old)
+        _ = state.receive(active, direction: .next, requestID: UUID(), shouldAnimate: true)
+
+        XCTAssertEqual(
+            state.receive(
+                queued,
+                direction: .previous,
+                requestID: queuedRequestID,
+                shouldAnimate: false
+            ),
+            .queued
+        )
+        _ = state.commitMidpoint(generation: 1)
+
+        XCTAssertEqual(
+            state.complete(generation: 1),
+            .displayedDirectly(requestID: queuedRequestID)
+        )
+        XCTAssertEqual(state.displayed, queued)
+        XCTAssertEqual(state.phase, .idle)
+        XCTAssertEqual(state.generation, 1)
+        XCTAssertNil(state.pending)
+    }
+
+    func testQueuedAnimatedUpdateStartsNextFlipWithItsOwnDirection() {
+        let old = snapshot("old", fingerprint: "old")
+        let active = snapshot("active", fingerprint: "active")
+        let queued = snapshot("queued", fingerprint: "queued")
+        var state = ArtworkFlipPresentationState(initial: old)
+        _ = state.receive(active, direction: .next, requestID: UUID(), shouldAnimate: true)
+        _ = state.receive(queued, direction: .previous, requestID: UUID(), shouldAnimate: true)
+        _ = state.commitMidpoint(generation: 1)
+
+        XCTAssertEqual(
+            state.complete(generation: 1),
+            .firstHalfStarted(generation: 2, direction: .previous)
+        )
+        XCTAssertEqual(state.displayed, active)
+        XCTAssertEqual(state.pending, queued)
+        XCTAssertEqual(state.phase, .firstHalf)
+    }
+
+    func testQueuedRequestFreeUpdateRemainsNonanimated() {
+        let old = snapshot("old", fingerprint: "old")
+        let active = snapshot("active", fingerprint: "active")
+        let refinement = snapshot("refinement", fingerprint: "refinement")
+        var state = ArtworkFlipPresentationState(initial: old)
+        _ = state.receive(active, direction: .next, requestID: UUID(), shouldAnimate: true)
+        _ = state.receive(refinement, direction: nil, requestID: nil, shouldAnimate: false)
+        _ = state.commitMidpoint(generation: 1)
+
+        XCTAssertEqual(
+            state.complete(generation: 1),
+            .displayedDirectly(requestID: nil)
+        )
+        XCTAssertEqual(state.displayed, refinement)
+        XCTAssertEqual(state.phase, .idle)
+        XCTAssertNil(state.pending)
+    }
+
+    func testQueuedReducedMotionPolicyDoesNotInheritActiveAnimation() {
+        let old = snapshot("old", fingerprint: "old")
+        let active = snapshot("active", fingerprint: "active")
+        let reducedMotion = snapshot("reduced motion", fingerprint: "reduced-motion")
+        var state = ArtworkFlipPresentationState(initial: old)
+        _ = state.receive(active, direction: .next, requestID: UUID(), shouldAnimate: true)
+        _ = state.commitMidpoint(generation: 1)
+        _ = state.receive(
+            reducedMotion,
+            direction: .previous,
+            requestID: UUID(),
+            shouldAnimate: false
+        )
+
+        guard case .displayedDirectly = state.complete(generation: 1) else {
+            return XCTFail("Reduced-motion update should not begin a queued flip")
+        }
+        XCTAssertEqual(state.displayed, reducedMotion)
+        XCTAssertEqual(state.phase, .idle)
+        XCTAssertEqual(state.generation, 1)
+    }
+
+    func testQueuedPlaceholderRetainsNonanimatedPolicy() {
+        let old = snapshot("old", fingerprint: "old")
+        let active = snapshot("active", fingerprint: "active")
+        let placeholder = snapshot("placeholder", fingerprint: "placeholder", hasImage: false)
+        var state = ArtworkFlipPresentationState(initial: old)
+        _ = state.receive(active, direction: .next, requestID: UUID(), shouldAnimate: true)
+        _ = state.receive(placeholder, direction: .next, requestID: UUID(), shouldAnimate: false)
+        _ = state.commitMidpoint(generation: 1)
+
+        guard case .displayedDirectly = state.complete(generation: 1) else {
+            return XCTFail("Queued placeholder should retain its nonanimated policy")
+        }
+        XCTAssertEqual(state.displayed, placeholder)
+        XCTAssertNil(state.displayed?.image)
+        XCTAssertEqual(state.phase, .idle)
+    }
+
+    func testLatestQueuedUpdateRetainsWinningAnimationPolicy() {
+        let old = snapshot("old", fingerprint: "old")
+        let active = snapshot("active", fingerprint: "active")
+        let superseded = snapshot("superseded", fingerprint: "superseded")
+        let latest = snapshot("latest", fingerprint: "latest")
+        var state = ArtworkFlipPresentationState(initial: old)
+        _ = state.receive(active, direction: .next, requestID: UUID(), shouldAnimate: true)
+        _ = state.receive(superseded, direction: .previous, requestID: UUID(), shouldAnimate: true)
+        _ = state.receive(latest, direction: nil, requestID: nil, shouldAnimate: false)
+        _ = state.commitMidpoint(generation: 1)
+
+        XCTAssertEqual(
+            state.complete(generation: 1),
+            .displayedDirectly(requestID: nil)
+        )
+        XCTAssertEqual(state.displayed, latest)
+        XCTAssertEqual(state.phase, .idle)
+        XCTAssertEqual(state.generation, 1)
+    }
+
+    func testStaleCompletionCannotActivateAQueuedObsoleteUpdate() {
+        let old = snapshot("old", fingerprint: "old")
+        let first = snapshot("first", fingerprint: "first")
+        let second = snapshot("second", fingerprint: "second")
+        let latest = snapshot("latest", fingerprint: "latest")
+        var state = ArtworkFlipPresentationState(initial: old)
+        _ = state.receive(first, direction: .next, requestID: UUID(), shouldAnimate: true)
+        _ = state.receive(second, direction: .previous, requestID: UUID(), shouldAnimate: true)
+        _ = state.commitMidpoint(generation: 1)
+        _ = state.complete(generation: 1)
+        _ = state.receive(latest, direction: nil, requestID: nil, shouldAnimate: false)
+
+        XCTAssertEqual(state.complete(generation: 1), .staleTransitionDiscarded)
+        XCTAssertEqual(state.displayed, first)
+        XCTAssertEqual(state.pending, second)
+        XCTAssertEqual(state.queuedSnapshot, latest)
+
+        _ = state.commitMidpoint(generation: 2)
+        XCTAssertEqual(
+            state.complete(generation: 2),
+            .displayedDirectly(requestID: nil)
+        )
+        XCTAssertEqual(state.displayed, latest)
+        XCTAssertEqual(state.phase, .idle)
+    }
+
     func testStaleGenerationCannotModifyNewerTransition() {
         let old = snapshot("old", fingerprint: "old")
         let first = snapshot("first", fingerprint: "first")

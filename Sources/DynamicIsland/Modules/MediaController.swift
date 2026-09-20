@@ -51,8 +51,9 @@ enum ArtworkFlipPresentationEffect: Equatable {
 struct ArtworkFlipPresentationState: Equatable {
     private struct QueuedTransition: Equatable {
         let snapshot: ArtworkPresentationSnapshot
-        let direction: MediaArtworkFlipDirection
+        let direction: MediaArtworkFlipDirection?
         let requestID: UUID?
+        let shouldAnimate: Bool
     }
 
     private(set) var displayed: ArtworkPresentationSnapshot?
@@ -85,8 +86,9 @@ struct ArtworkFlipPresentationState: Equatable {
         if phase != .idle {
             queued = QueuedTransition(
                 snapshot: snapshot,
-                direction: requestedDirection ?? direction ?? .next,
-                requestID: requestID
+                direction: requestedDirection,
+                requestID: requestID,
+                shouldAnimate: shouldAnimate
             )
             return .queued
         }
@@ -138,15 +140,11 @@ struct ArtworkFlipPresentationState: Equatable {
             return .displayedDirectly(requestID: queued.requestID)
         }
 
-        guard let displayed, isMeaningfulTransition(from: displayed, to: queued.snapshot) else {
-            self.displayed = queued.snapshot
-            return .displayedDirectly(requestID: queued.requestID)
-        }
-
-        return stageFirstHalf(
-            snapshot: queued.snapshot,
+        return receive(
+            queued.snapshot,
             direction: queued.direction,
-            requestID: queued.requestID
+            requestID: queued.requestID,
+            shouldAnimate: queued.shouldAnimate
         )
     }
 

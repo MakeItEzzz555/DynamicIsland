@@ -114,9 +114,9 @@
     "semantic_hash": "3cccb1ddcc76df8124a3b20c384e9696"
   },
   "Sources/DynamicIsland/Modules/MediaController.swift": {
-    "mtime": 1789826071.0898027,
-    "seen": 1789826228.122761,
-    "ast_hash": "bec6a0d29a43fe96cadaae55d38a5653",
+    "mtime": 1789857040.9882774,
+    "seen": 1789857340.6282082,
+    "ast_hash": "b1b955814d2332326d318e70ea4d512b",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Modules/MediaDetectionProvider.swift": {
@@ -240,9 +240,9 @@
     "semantic_hash": "19dc1d82d8235566dfa782ab4126d3ae"
   },
   "Tests/DynamicIslandTests/ArtworkFlipPresentationStateTests.swift": {
-    "mtime": 1789826019.3434696,
-    "seen": 1789826228.122781,
-    "ast_hash": "60c72e6f03f5c9ed01c4adcda1de38bb",
+    "mtime": 1789857090.2912083,
+    "seen": 1789857340.6282291,
+    "ast_hash": "83b6b7b905445f9bf0b97568dd9ffef4",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/BatteryActivityProviderTests.swift": {
