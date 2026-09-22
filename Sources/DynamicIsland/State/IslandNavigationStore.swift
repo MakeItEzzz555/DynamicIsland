@@ -117,6 +117,10 @@ final class IslandNavigationStore: ObservableObject {
         isFileDropTargeted = targeted
     }
 
+    func endFileDropTargeting() {
+        setFileDropTargeted(false)
+    }
+
     private func logPageChange(reason: String = "manual") {
         #if DEBUG
         guard ProcessInfo.processInfo.environment["DYNAMIC_ISLAND_VERBOSE_UI_LOGS"] == "1" else { return }

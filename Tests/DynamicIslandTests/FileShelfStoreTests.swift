@@ -93,6 +93,36 @@ final class FileShelfStoreTests: XCTestCase {
         XCTAssertEqual(secondStore.files, [keptFile.standardizedFileURL])
     }
 
+    @MainActor
+    func testRemovingOwnedTemporaryFileDeletesMaterializedCopy() throws {
+        let settings = AppSettings(defaults: defaults)
+        let store = FileShelfStore(settings: settings, defaults: defaults)
+        let source = makeFile(named: "provider-owned.txt")
+        let ownedURL = try FileShelfTemporaryStorage.shared.copyIntoShelf(source)
+
+        store.add([ownedURL])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: ownedURL.path))
+
+        store.remove(ownedURL)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: ownedURL.path))
+        XCTAssertTrue(store.files.isEmpty)
+    }
+
+    @MainActor
+    func testAddingOwnedTemporaryFileTwiceDoesNotDeleteShelfItem() throws {
+        let settings = AppSettings(defaults: defaults)
+        let store = FileShelfStore(settings: settings, defaults: defaults)
+        let source = makeFile(named: "duplicate-provider-owned.txt")
+        let ownedURL = try FileShelfTemporaryStorage.shared.copyIntoShelf(source)
+
+        store.add([ownedURL, ownedURL])
+
+        XCTAssertEqual(store.files, [ownedURL.standardizedFileURL])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: ownedURL.path))
+        store.clear()
+    }
+
     private func makeFile(named name: String) -> URL {
         let url = temporaryDirectory.appendingPathComponent(name)
         _ = FileManager.default.createFile(atPath: url.path, contents: Data(name.utf8))

@@ -18,26 +18,41 @@ final class FileShelfStore: ObservableObject {
     }
 
     func add(_ urls: [URL]) {
-        guard settings.fileShelfEnabled else { return }
+        guard settings.fileShelfEnabled else {
+            FileShelfTemporaryStorage.shared.removeIfOwned(urls)
+            return
+        }
         var seen = Set(files.map(\.standardizedFileURL))
+        var rejectedOwnedURLs: [URL] = []
         let newFiles = urls.compactMap { incoming -> URL? in
-            guard incoming.isFileURL else { return nil }
+            guard incoming.isFileURL else {
+                rejectedOwnedURLs.append(incoming)
+                return nil
+            }
             let standardizedURL = incoming.standardizedFileURL
-            guard FileManager.default.fileExists(atPath: standardizedURL.path) else { return nil }
+            guard FileManager.default.fileExists(atPath: standardizedURL.path) else {
+                rejectedOwnedURLs.append(standardizedURL)
+                return nil
+            }
             guard !seen.contains(standardizedURL) else { return nil }
             seen.insert(standardizedURL)
             return standardizedURL
         }
-        files = Array((files + newFiles).prefix(settings.maxShelfFiles))
+        let combinedFiles = files + newFiles
+        files = Array(combinedFiles.prefix(settings.maxShelfFiles))
+        rejectedOwnedURLs.append(contentsOf: combinedFiles.dropFirst(settings.maxShelfFiles))
+        FileShelfTemporaryStorage.shared.removeIfOwned(rejectedOwnedURLs)
         persistFilesIfNeeded()
     }
 
     func remove(_ url: URL) {
         files.removeAll { $0.standardizedFileURL == url.standardizedFileURL }
+        FileShelfTemporaryStorage.shared.removeIfOwned(url)
         persistFilesIfNeeded()
     }
 
     func clear() {
+        FileShelfTemporaryStorage.shared.removeIfOwned(files)
         files.removeAll()
         persistFilesIfNeeded()
     }
@@ -120,7 +135,9 @@ final class FileShelfStore: ObservableObject {
             .sink { [weak self] maxFiles in
                 guard let self else { return }
                 if self.files.count > maxFiles {
+                    let removedFiles = Array(self.files.dropFirst(maxFiles))
                     self.files = Array(self.files.prefix(maxFiles))
+                    FileShelfTemporaryStorage.shared.removeIfOwned(removedFiles)
                     self.persistFilesIfNeeded()
                 }
             }

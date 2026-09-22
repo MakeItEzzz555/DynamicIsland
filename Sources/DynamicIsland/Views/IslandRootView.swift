@@ -517,9 +517,8 @@ struct IslandRootView: View {
                 modules.navigation.ensureValidSelection(using: settings)
             }
         }
-        .onDrop(of: [.fileURL], isTargeted: fileDropTargetBinding) { providers in
-            loadDroppedFiles(from: providers)
-            return true
+        .onDrop(of: FileDropProviderLoader.acceptedTypes, isTargeted: fileDropTargetBinding) { providers in
+            loadDroppedFilesFromCollapsedIsland(from: providers)
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("DynamicIsland")
@@ -810,33 +809,34 @@ struct IslandRootView: View {
                     modules.navigation.showTrayForFileDrag(using: settings)
                     onRequestExpand()
                 } else {
-                    modules.navigation.setFileDropTargeted(false)
+                    modules.navigation.endFileDropTargeting()
                 }
             }
         )
     }
 
-    private func loadDroppedFiles(from providers: [NSItemProvider]) {
-        for provider in providers where provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
-                let url: URL?
-                if let data = item as? Data,
-                   let fileURL = URL(dataRepresentation: data, relativeTo: nil) {
-                    url = fileURL
-                } else if let fileURL = item as? URL {
-                    url = fileURL
-                } else {
-                    url = nil
-                }
+    private func loadDroppedFilesFromCollapsedIsland(from providers: [NSItemProvider]) -> Bool {
+        let loader = FileDropProviderLoader()
+        guard canAcceptCollapsedFileDrop, loader.canLoad(providers) else {
+            modules.navigation.endFileDropTargeting()
+            return false
+        }
+        modules.navigation.endFileDropTargeting()
 
-                if let url {
-                    Task { @MainActor in
-                        modules.fileShelf.add([url])
-                        modules.navigation.setFileDropTargeted(false)
-                    }
+        loader.loadURLs(from: providers) { urls in
+            Task { @MainActor in
+                guard canAcceptCollapsedFileDrop else {
+                    FileShelfTemporaryStorage.shared.removeIfOwned(urls)
+                    return
                 }
+                modules.fileShelf.add(urls)
             }
         }
+        return true
+    }
+
+    private var canAcceptCollapsedFileDrop: Bool {
+        FileDropPolicy.allowsCollapsedDrop(settings: settings)
     }
 
     private func synchronizePresentationForCurrentState() {
@@ -2482,9 +2482,8 @@ struct ExpandedIslandView: View {
                                 FileDropHighlightView(reduceMotion: reduceMotion)
                             }
                         }
-                        .onDrop(of: [.fileURL], isTargeted: filesTargetBinding) { providers in
+                        .onDrop(of: FileDropProviderLoader.acceptedTypes, isTargeted: filesTargetBinding) { providers in
                             loadDroppedFiles(from: providers)
-                            return true
                         }
                         .innerBlurScaleClean(
                             settings: settings,
@@ -2541,7 +2540,7 @@ struct ExpandedIslandView: View {
                    settings.showTrayTab {
                     navigation.showTrayForFileDrag(using: settings)
                 } else {
-                    navigation.setFileDropTargeted(false)
+                    navigation.endFileDropTargeting()
                 }
             }
         )
@@ -2570,26 +2569,37 @@ struct ExpandedIslandView: View {
                    settings.allowFileDropsOnExpandedTray,
                    settings.showTrayTab {
                     navigation.showTrayForFileDrag(using: settings)
+                } else {
+                    navigation.endFileDropTargeting()
                 }
             }
         )
     }
 
-    private func loadDroppedFiles(from providers: [NSItemProvider]) {
-        guard settings.fileShelfEnabled, settings.allowFileDropsOnExpandedTray else {
+    private func loadDroppedFiles(from providers: [NSItemProvider]) -> Bool {
+        let loader = FileDropProviderLoader()
+        guard canAcceptExpandedFileDrop, loader.canLoad(providers) else {
             isFilesTargeted = false
-            navigation.setFileDropTargeted(false)
-            return
+            navigation.endFileDropTargeting()
+            return false
         }
-        loadFileURLs(from: providers) { urls in
+        isFilesTargeted = false
+        navigation.endFileDropTargeting()
+
+        loader.loadURLs(from: providers) { urls in
             Task { @MainActor in
-                if !urls.isEmpty {
-                    modules.fileShelf.add(urls)
+                guard canAcceptExpandedFileDrop else {
+                    FileShelfTemporaryStorage.shared.removeIfOwned(urls)
+                    return
                 }
-                isFilesTargeted = false
-                navigation.setFileDropTargeted(false)
+                modules.fileShelf.add(urls)
             }
         }
+        return true
+    }
+
+    private var canAcceptExpandedFileDrop: Bool {
+        FileDropPolicy.allowsExpandedDrop(settings: settings)
     }
 
     private func shareDroppedFiles(from providers: [NSItemProvider]) {
@@ -2625,7 +2635,7 @@ struct ExpandedIslandView: View {
         }
 
         let group = DispatchGroup()
-        let accumulator = FileDropURLAccumulator()
+        let accumulator = AirDropURLAccumulator()
 
         for provider in fileProviders {
             group.enter()
@@ -2654,7 +2664,7 @@ struct ExpandedIslandView: View {
 
 }
 
-private final class FileDropURLAccumulator: @unchecked Sendable {
+private final class AirDropURLAccumulator: @unchecked Sendable {
     private let lock = NSLock()
     private var storage: [URL] = []
 
