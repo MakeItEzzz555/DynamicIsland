@@ -107,6 +107,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        let clipboardFinalization = clipboardHistory.finalizePersistenceForTermination()
+        #if DEBUG
+        if clipboardFinalization != .completed {
+            print("[ClipboardHistory] termination finalization \(clipboardFinalization)")
+        }
+        #endif
         if let eventMonitor {
             NSEvent.removeMonitor(eventMonitor)
         }
