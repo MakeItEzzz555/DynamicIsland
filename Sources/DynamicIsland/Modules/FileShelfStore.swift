@@ -102,6 +102,10 @@ final class FileShelfStore: ObservableObject {
         guard settings.persistFileShelfAcrossLaunches else {
             return
         }
+        persistFiles()
+    }
+
+    private func persistFiles() {
         let bookmarks = files.compactMap { url in
             try? url.bookmarkData(
                 options: [],
@@ -123,7 +127,7 @@ final class FileShelfStore: ObservableObject {
                 guard let self else { return }
                 if shouldPersist {
                     self.removeMissingFiles()
-                    self.persistFilesIfNeeded()
+                    self.persistFiles()
                 } else {
                     self.clearPersistedFiles()
                 }

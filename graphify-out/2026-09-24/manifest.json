@@ -522,9 +522,9 @@
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/LiveActivitySettingsSubscriberTests.swift": {
-    "mtime": 1790252259.8251479,
-    "seen": 1790252305.053775,
-    "ast_hash": "c7c03efbedb4df29fb322a16d36b832a",
+    "mtime": 1790252035.4539607,
+    "seen": 1790252196.205121,
+    "ast_hash": "31748e22b69e56af3db630d6fbe0caaf",
     "semantic_hash": ""
   }
 }

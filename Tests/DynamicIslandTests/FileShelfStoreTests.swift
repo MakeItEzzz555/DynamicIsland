@@ -1,15 +1,34 @@
 import XCTest
 @testable import DynamicIsland
 
+private final class RecordingFileShelfDefaults: UserDefaults, @unchecked Sendable {
+    var persistedBookmarksSetCount = 0
+    var persistedBookmarksRemovalCount = 0
+
+    override func set(_ value: Any?, forKey defaultName: String) {
+        if defaultName == "fileShelfPersistedBookmarks" {
+            persistedBookmarksSetCount += 1
+        }
+        super.set(value, forKey: defaultName)
+    }
+
+    override func removeObject(forKey defaultName: String) {
+        if defaultName == "fileShelfPersistedBookmarks" {
+            persistedBookmarksRemovalCount += 1
+        }
+        super.removeObject(forKey: defaultName)
+    }
+}
+
 final class FileShelfStoreTests: XCTestCase {
-    private var defaults: UserDefaults!
+    private var defaults: RecordingFileShelfDefaults!
     private var defaultsSuiteName: String!
     private var temporaryDirectory: URL!
 
     override func setUp() {
         super.setUp()
         defaultsSuiteName = "FileShelfStoreTests-\(UUID().uuidString)"
-        defaults = UserDefaults(suiteName: defaultsSuiteName)!
+        defaults = RecordingFileShelfDefaults(suiteName: defaultsSuiteName)!
         temporaryDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("FileShelfStoreTests-\(UUID().uuidString)", isDirectory: true)
         try? FileManager.default.createDirectory(
@@ -67,12 +86,31 @@ final class FileShelfStoreTests: XCTestCase {
         let file = makeFile(named: "runtime-only.txt")
 
         firstStore.add([file])
+        defaults.persistedBookmarksRemovalCount = 0
         firstSettings.persistFileShelfAcrossLaunches = false
+
+        XCTAssertEqual(defaults.persistedBookmarksRemovalCount, 1)
 
         let secondSettings = AppSettings(defaults: defaults)
         let secondStore = FileShelfStore(settings: secondSettings, defaults: defaults)
 
         XCTAssertTrue(secondStore.files.isEmpty)
+    }
+
+    @MainActor
+    func testEnablingPersistenceImmediatelySavesExistingFiles() {
+        let firstSettings = AppSettings(defaults: defaults)
+        let firstStore = FileShelfStore(settings: firstSettings, defaults: defaults)
+        let file = makeFile(named: "enabled-after-add.txt")
+        firstStore.add([file])
+
+        defaults.persistedBookmarksSetCount = 0
+        firstSettings.persistFileShelfAcrossLaunches = true
+
+        XCTAssertEqual(defaults.persistedBookmarksSetCount, 1)
+        let secondSettings = AppSettings(defaults: defaults)
+        let secondStore = FileShelfStore(settings: secondSettings, defaults: defaults)
+        XCTAssertEqual(secondStore.files, [file.standardizedFileURL])
     }
 
     @MainActor
