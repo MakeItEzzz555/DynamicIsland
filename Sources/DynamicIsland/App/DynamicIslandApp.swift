@@ -85,6 +85,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let batteryActivityProvider = BatteryActivityProvider()
     private let navigation = IslandNavigationStore()
     private let geometryService = NotchGeometryService()
+    private let agentEvents = AgentEventStore()
+    private lazy var agentBridge = AgentBridge(eventStore: agentEvents)
 
     private var overlayController: OverlayWindowController?
     private var menuController: MenuBarController?
@@ -172,6 +174,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             name: NSWorkspace.screensDidWakeNotification,
             object: nil
         )
+
+        // A11 will add user-facing enablement. Until then the transport starts
+        // internally and degrades independently if credentials or binding fail.
+        Task { await agentBridge.start() }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -181,6 +187,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             print("[ClipboardHistory] termination finalization \(clipboardFinalization)")
         }
         #endif
+        agentBridge.stop()
         if let eventMonitor {
             NSEvent.removeMonitor(eventMonitor)
         }

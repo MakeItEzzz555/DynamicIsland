@@ -89,6 +89,35 @@ final class AgentEventStore: ObservableObject {
         return result.application
     }
 
+    /// Applies a batch to an isolated copy and publishes only when every event is
+    /// semantically acceptable. This gives the transport an atomic A1 boundary
+    /// without duplicating reducer logic or exposing mutable session state.
+    func ingestAtomically(_ events: [AgentEvent]) -> AgentEventBatchApplication {
+        let working = AgentEventStore(limits: limits)
+        working.sessionsByID = sessionsByID
+        working.currentGeneration = currentGeneration
+        working.sessions = sessions
+        working.attentionEvents = attentionEvents
+
+        var applications: [AgentEventApplication] = []
+        applications.reserveCapacity(events.count)
+        for (index, event) in events.enumerated() {
+            let application = working.ingest(event)
+            switch application {
+            case .applied, .duplicate, .ignoredAfterTerminal, .ignoredWeakerEvidence:
+                applications.append(application)
+            case .staleGeneration, .rejected:
+                return .rejected(index: index, application: application)
+            }
+        }
+
+        sessionsByID = working.sessionsByID
+        currentGeneration = working.currentGeneration
+        sessions = working.sessions
+        attentionEvents = working.attentionEvents
+        return .applied(applications)
+    }
+
     func session(for id: AgentSessionInstanceID) -> AgentSession? {
         sessionsByID[id]
     }

@@ -54,6 +54,11 @@ enum AgentEventApplication: Equatable, Sendable {
     case rejected(AgentEventRejection)
 }
 
+enum AgentEventBatchApplication: Equatable, Sendable {
+    case applied([AgentEventApplication])
+    case rejected(index: Int, application: AgentEventApplication)
+}
+
 struct AgentReductionResult: Equatable, Sendable {
     let session: AgentSession?
     let application: AgentEventApplication
