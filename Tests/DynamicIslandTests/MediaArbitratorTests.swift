@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 @testable import DynamicIsland
 
@@ -154,6 +155,84 @@ final class MediaArbitratorTests: XCTestCase {
         )
     }
 
+    func testEarlierArtworkCompletionCannotPublishAfterNewerTrackGenerationWins() {
+        let track = spotifyCandidate(isPlaying: true)
+
+        XCTAssertFalse(
+            MediaPublishGuard.canApplyAsyncUpdate(
+                selectedIdentity: track.identity,
+                selectedGeneration: 8,
+                requestIdentity: track.identity,
+                requestGeneration: 7
+            )
+        )
+    }
+
+    func testImmediateSystemHandoffRequiresSameSourceArtwork() {
+        let current = mediaCandidate(
+            providerName: "Spotify AppleScript",
+            sourceKind: .spotify,
+            sourceName: "Spotify",
+            bundleIdentifier: "com.spotify.client",
+            title: "Old",
+            artist: "Artist",
+            isPlaying: true
+        )
+        let next = mediaCandidate(
+            providerName: "System Now Playing",
+            sourceKind: .spotify,
+            sourceName: "Spotify",
+            bundleIdentifier: "com.spotify.client",
+            title: "New",
+            artist: "Artist",
+            isPlaying: false,
+            artwork: NSImage(size: CGSize(width: 20, height: 20))
+        )
+
+        XCTAssertTrue(
+            MediaImmediateSystemHandoff.canPublish(
+                candidate: next,
+                currentIdentity: current.identity
+            )
+        )
+    }
+
+    func testImmediateSystemHandoffRejectsMissingArtworkAndSourceSwitches() {
+        let current = spotifyCandidate(isPlaying: true)
+        let missingArtwork = mediaCandidate(
+            providerName: "System Now Playing",
+            sourceKind: .spotify,
+            sourceName: "Spotify",
+            bundleIdentifier: "com.spotify.client",
+            title: "New",
+            artist: "Artist",
+            isPlaying: true
+        )
+        let otherSource = mediaCandidate(
+            providerName: "System Now Playing",
+            sourceKind: .music,
+            sourceName: "Music",
+            bundleIdentifier: "com.apple.Music",
+            title: "New",
+            artist: "Artist",
+            isPlaying: true,
+            artwork: NSImage(size: CGSize(width: 20, height: 20))
+        )
+
+        XCTAssertFalse(
+            MediaImmediateSystemHandoff.canPublish(
+                candidate: missingArtwork,
+                currentIdentity: current.identity
+            )
+        )
+        XCTAssertFalse(
+            MediaImmediateSystemHandoff.canPublish(
+                candidate: otherSource,
+                currentIdentity: current.identity
+            )
+        )
+    }
+
     func testPausedSwitchFirstPollIsBlockedWhenCurrentWasPlaying() {
         let spotify = spotifyCandidate(isPlaying: true)
         let youtube = youtubeCandidate(isPlaying: false)
@@ -269,6 +348,7 @@ final class MediaArbitratorTests: XCTestCase {
         title: String,
         artist: String?,
         isPlaying: Bool,
+        artwork: NSImage? = nil,
         artworkURL: String? = nil,
         youtubePageURL: String? = nil,
         youtubeVideoID: String? = nil
@@ -282,7 +362,7 @@ final class MediaArbitratorTests: XCTestCase {
                 title: title,
                 artist: artist,
                 album: nil,
-                artwork: nil,
+                artwork: artwork,
                 isPlaying: isPlaying,
                 duration: nil,
                 elapsedTime: nil,

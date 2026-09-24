@@ -2,6 +2,63 @@ import AppKit
 import Combine
 import SwiftUI
 
+struct LiveActivitySettingsSnapshot: Equatable {
+    let liveActivitiesEnabled: Bool
+    let showMusicLiveActivity: Bool
+    let showTimerLiveActivity: Bool
+    let showFileDropLiveActivity: Bool
+    let showBatteryLiveActivity: Bool
+
+    init(
+        liveActivitiesEnabled: Bool,
+        showMusicLiveActivity: Bool,
+        showTimerLiveActivity: Bool,
+        showFileDropLiveActivity: Bool,
+        showBatteryLiveActivity: Bool
+    ) {
+        self.liveActivitiesEnabled = liveActivitiesEnabled
+        self.showMusicLiveActivity = showMusicLiveActivity
+        self.showTimerLiveActivity = showTimerLiveActivity
+        self.showFileDropLiveActivity = showFileDropLiveActivity
+        self.showBatteryLiveActivity = showBatteryLiveActivity
+    }
+
+    @MainActor
+    init(settings: AppSettings) {
+        self.init(
+            liveActivitiesEnabled: settings.liveActivitiesEnabled,
+            showMusicLiveActivity: settings.showMusicLiveActivity,
+            showTimerLiveActivity: settings.showTimerLiveActivity,
+            showFileDropLiveActivity: settings.showFileDropLiveActivity,
+            showBatteryLiveActivity: settings.showBatteryLiveActivity
+        )
+    }
+}
+
+@MainActor
+extension AppSettings {
+    var liveActivitySettingsPublisher: AnyPublisher<LiveActivitySettingsSnapshot, Never> {
+        Publishers.CombineLatest4(
+            $liveActivitiesEnabled,
+            $showMusicLiveActivity,
+            $showTimerLiveActivity,
+            $showFileDropLiveActivity
+        )
+        .combineLatest($showBatteryLiveActivity)
+        .map { settings, showBatteryLiveActivity in
+            LiveActivitySettingsSnapshot(
+                liveActivitiesEnabled: settings.0,
+                showMusicLiveActivity: settings.1,
+                showTimerLiveActivity: settings.2,
+                showFileDropLiveActivity: settings.3,
+                showBatteryLiveActivity: showBatteryLiveActivity
+            )
+        }
+        .removeDuplicates()
+        .eraseToAnyPublisher()
+    }
+}
+
 @main
 struct DynamicIslandApp {
     static func main() {
@@ -21,6 +78,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let shortcuts = ShortcutsStore()
     private let media = MediaController()
     private let timer = TimerController()
+    private let timerNotifications = TimerCompletionNotificationCoordinator()
     private let stats = SystemStatsController()
     private let liveActivities = LiveActivityStore()
     private lazy var clipboardHistory = ClipboardHistoryStore(settings: settings)
@@ -37,6 +95,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         shortcuts.seedDefaultsIfNeeded()
+        timer.setLifecycleHandler { [weak self] event in
+            guard let self else { return }
+            timerNotifications.handle(
+                event,
+                preferences: TimerCompletionNotificationPreferences(
+                    notificationsEnabled: settings.timerNotificationEnabled,
+                    soundEnabled: settings.timerSoundEnabled
+                )
+            )
+        }
 
         let modules = IslandModules(
             media: media,
@@ -107,6 +175,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        let clipboardFinalization = clipboardHistory.finalizePersistenceForTermination()
+        #if DEBUG
+        if clipboardFinalization != .completed {
+            print("[ClipboardHistory] termination finalization \(clipboardFinalization)")
+        }
+        #endif
         if let eventMonitor {
             NSEvent.removeMonitor(eventMonitor)
         }
@@ -174,21 +248,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .store(in: &cancellables)
 
-        Publishers.CombineLatest4(
-            settings.$liveActivitiesEnabled,
-            settings.$showMusicLiveActivity,
-            settings.$showTimerLiveActivity,
-            settings.$showFileDropLiveActivity
-        )
-        .sink { [weak self] _, _, _, _ in
-            self?.refreshLiveActivitiesForSettingsChange()
-        }
-        .store(in: &cancellables)
-
-        settings.$showBatteryLiveActivity
-            .removeDuplicates()
-            .sink { [weak self] _ in
-                self?.refreshLiveActivitiesForSettingsChange()
+        settings.liveActivitySettingsPublisher
+            .sink { [weak self] settings in
+                self?.refreshLiveActivitiesForSettingsChange(settings)
             }
             .store(in: &cancellables)
 
@@ -202,7 +264,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateBatteryLiveActivity()
     }
 
-    private func refreshLiveActivitiesForSettingsChange() {
+    private func refreshLiveActivitiesForSettingsChange(_ settings: LiveActivitySettingsSnapshot) {
         guard settings.liveActivitiesEnabled else {
             liveActivities.removeAll()
             return
@@ -210,19 +272,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateTimerLiveActivity(
             remainingSeconds: timer.remainingSeconds,
             totalSeconds: timer.totalSeconds,
-            isRunning: timer.isRunning
+            isRunning: timer.isRunning,
+            settings: settings
         )
-        updateMediaLiveActivity()
-        updateFileTrayLiveActivity(files: fileShelf.files)
-        updateBatteryLiveActivity()
+        updateMediaLiveActivity(settings: settings)
+        updateFileTrayLiveActivity(files: fileShelf.files, settings: settings)
+        updateBatteryLiveActivity(settings: settings)
     }
 
     private func updateTimerLiveActivity(
         remainingSeconds: Int,
         totalSeconds: Int,
-        isRunning: Bool
+        isRunning: Bool,
+        settings liveActivitySettings: LiveActivitySettingsSnapshot? = nil
     ) {
-        guard settings.liveActivitiesEnabled, settings.showTimerLiveActivity else {
+        let liveActivitySettings = liveActivitySettings ?? LiveActivitySettingsSnapshot(settings: settings)
+        guard liveActivitySettings.liveActivitiesEnabled, liveActivitySettings.showTimerLiveActivity else {
             liveActivities.remove(id: LiveActivityStore.timerActivityID)
             return
         }
@@ -251,8 +316,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
     }
 
-    private func updateMediaLiveActivity() {
-        guard settings.liveActivitiesEnabled, settings.showMusicLiveActivity, media.hasActiveMediaSource else {
+    private func updateMediaLiveActivity(settings liveActivitySettings: LiveActivitySettingsSnapshot? = nil) {
+        let liveActivitySettings = liveActivitySettings ?? LiveActivitySettingsSnapshot(settings: settings)
+        guard liveActivitySettings.liveActivitiesEnabled,
+              liveActivitySettings.showMusicLiveActivity,
+              media.hasActiveMediaSource else {
             liveActivities.remove(id: LiveActivityStore.mediaActivityID)
             return
         }
@@ -280,8 +348,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
     }
 
-    private func updateFileTrayLiveActivity(files: [URL]) {
-        guard settings.liveActivitiesEnabled, settings.showFileDropLiveActivity else {
+    private func updateFileTrayLiveActivity(
+        files: [URL],
+        settings liveActivitySettings: LiveActivitySettingsSnapshot? = nil
+    ) {
+        let liveActivitySettings = liveActivitySettings ?? LiveActivitySettingsSnapshot(settings: settings)
+        guard liveActivitySettings.liveActivitiesEnabled, liveActivitySettings.showFileDropLiveActivity else {
             liveActivities.remove(id: LiveActivityStore.fileTrayActivityID)
             lastObservedFileShelfCount = files.count
             return
@@ -310,8 +382,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
     }
 
-    private func updateBatteryLiveActivity() {
-        guard settings.liveActivitiesEnabled, settings.showBatteryLiveActivity else {
+    private func updateBatteryLiveActivity(settings liveActivitySettings: LiveActivitySettingsSnapshot? = nil) {
+        let liveActivitySettings = liveActivitySettings ?? LiveActivitySettingsSnapshot(settings: settings)
+        guard liveActivitySettings.liveActivitiesEnabled, liveActivitySettings.showBatteryLiveActivity else {
             BatteryActivityProvider.debugRemoving(reason: "disabled")
             liveActivities.remove(id: LiveActivityStore.batteryActivityID)
             return

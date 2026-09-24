@@ -55,6 +55,81 @@ private final class MemoryClipboardPersistence: ClipboardHistoryPersistence, @un
     }
 }
 
+private enum ControlledClipboardPersistenceError: Error {
+    case requestedFailure
+}
+
+private final class ControlledClipboardPersistence: ClipboardHistoryPersistence, @unchecked Sendable {
+    let archiveURL = URL(fileURLWithPath: "/controlled/clipboard-history.json")
+
+    private let lock = NSLock()
+    private let blockedSaveStarted = DispatchSemaphore(value: 0)
+    private let allowBlockedSave = DispatchSemaphore(value: 0)
+    private let failsSave: Bool
+    private let failsDelete: Bool
+    private var blocksNextSave: Bool
+    private var storage: Data?
+    private var saveOperations = 0
+    private var deleteOperations = 0
+
+    init(
+        data: Data? = nil,
+        blocksNextSave: Bool = false,
+        failsSave: Bool = false,
+        failsDelete: Bool = false
+    ) {
+        storage = data
+        self.blocksNextSave = blocksNextSave
+        self.failsSave = failsSave
+        self.failsDelete = failsDelete
+    }
+
+    func loadData() -> Data? {
+        lock.withLock { storage }
+    }
+
+    func saveDataAtomically(_ data: Data) throws {
+        let shouldBlock = lock.withLock { () -> Bool in
+            saveOperations += 1
+            guard blocksNextSave else { return false }
+            blocksNextSave = false
+            return true
+        }
+        if shouldBlock {
+            blockedSaveStarted.signal()
+            allowBlockedSave.wait()
+        }
+        if failsSave { throw ControlledClipboardPersistenceError.requestedFailure }
+        lock.withLock { storage = data }
+    }
+
+    func deleteArchive() throws {
+        lock.withLock { deleteOperations += 1 }
+        if failsDelete { throw ControlledClipboardPersistenceError.requestedFailure }
+        lock.withLock { storage = nil }
+    }
+
+    func waitForBlockedSaveToStart(timeout: TimeInterval = 1) -> Bool {
+        blockedSaveStarted.wait(timeout: .now() + timeout) == .success
+    }
+
+    func unblockSave() {
+        allowBlockedSave.signal()
+    }
+
+    var data: Data? {
+        lock.withLock { storage }
+    }
+
+    var saveCount: Int {
+        lock.withLock { saveOperations }
+    }
+
+    var deleteCount: Int {
+        lock.withLock { deleteOperations }
+    }
+}
+
 final class ClipboardHistoryStoreTests: XCTestCase {
     private var suiteName: String!
     private var defaults: UserDefaults!
@@ -463,6 +538,228 @@ final class ClipboardHistoryStoreTests: XCTestCase {
         )
         XCTAssertEqual(archive.entries.map(\.payload), store.entries.map(\.payload))
         XCTAssertEqual(archive.entries.first?.payload, text("newest"))
+    }
+
+    @MainActor
+    func testClearHistoryThenImmediateTerminationDoesNotRestoreEntries() {
+        let persistence = MemoryClipboardPersistence()
+        let settings = AppSettings(defaults: defaults)
+        settings.clipboardHistoryEnabled = true
+        settings.clipboardHistoryPersistenceEnabled = true
+        let pasteboard = FakeClipboardPasteboardClient()
+        let store = makeStore(settings: settings, pasteboard: pasteboard, persistence: persistence)
+        capture(text("persisted"), with: pasteboard, store: store)
+        store.waitForPendingPersistenceForTesting()
+
+        store.clearHistory()
+        XCTAssertEqual(
+            store.finalizePersistenceForTermination(timeout: 1),
+            .completed
+        )
+
+        let restarted = makeStore(
+            settings: AppSettings(defaults: defaults),
+            pasteboard: FakeClipboardPasteboardClient(),
+            persistence: persistence
+        )
+        XCTAssertNil(persistence.data)
+        XCTAssertTrue(restarted.entries.isEmpty)
+    }
+
+    @MainActor
+    func testDisablePersistenceThenImmediateTerminationDeletesArchiveBeforeRestart() {
+        let persistence = MemoryClipboardPersistence()
+        let settings = AppSettings(defaults: defaults)
+        settings.clipboardHistoryEnabled = true
+        settings.clipboardHistoryPersistenceEnabled = true
+        let pasteboard = FakeClipboardPasteboardClient()
+        let store = makeStore(settings: settings, pasteboard: pasteboard, persistence: persistence)
+        capture(text("persisted"), with: pasteboard, store: store)
+        store.waitForPendingPersistenceForTesting()
+
+        settings.clipboardHistoryPersistenceEnabled = false
+        XCTAssertEqual(
+            store.finalizePersistenceForTermination(timeout: 1),
+            .completed
+        )
+        settings.clipboardHistoryPersistenceEnabled = true
+
+        let restarted = makeStore(
+            settings: AppSettings(defaults: defaults),
+            pasteboard: FakeClipboardPasteboardClient(),
+            persistence: persistence
+        )
+        XCTAssertNil(persistence.data)
+        XCTAssertTrue(restarted.entries.isEmpty)
+    }
+
+    @MainActor
+    func testTerminationPersistsLatestPendingStateBeforeRestart() {
+        let persistence = MemoryClipboardPersistence()
+        let settings = AppSettings(defaults: defaults)
+        settings.clipboardHistoryEnabled = true
+        settings.clipboardHistoryPersistenceEnabled = true
+        let pasteboard = FakeClipboardPasteboardClient()
+        let store = makeStore(settings: settings, pasteboard: pasteboard, persistence: persistence)
+        capture(text("older"), with: pasteboard, store: store)
+        capture(text("latest"), with: pasteboard, store: store)
+
+        XCTAssertEqual(
+            store.finalizePersistenceForTermination(timeout: 1),
+            .completed
+        )
+
+        let restarted = makeStore(
+            settings: AppSettings(defaults: defaults),
+            pasteboard: FakeClipboardPasteboardClient(),
+            persistence: persistence
+        )
+        XCTAssertEqual(restarted.entries.map(\.payload), [text("latest"), text("older")])
+    }
+
+    @MainActor
+    func testOlderInFlightSaveCannotRecreateArchiveAfterNewerDelete() {
+        let persistence = ControlledClipboardPersistence(blocksNextSave: true)
+        let settings = AppSettings(defaults: defaults)
+        settings.clipboardHistoryEnabled = true
+        settings.clipboardHistoryPersistenceEnabled = true
+        let pasteboard = FakeClipboardPasteboardClient()
+        let store = makeStore(settings: settings, pasteboard: pasteboard, persistence: persistence)
+        capture(text("obsolete"), with: pasteboard, store: store)
+        XCTAssertTrue(persistence.waitForBlockedSaveToStart())
+
+        store.clearHistory()
+        persistence.unblockSave()
+        XCTAssertEqual(
+            store.finalizePersistenceForTermination(timeout: 1),
+            .completed
+        )
+
+        XCTAssertNil(persistence.data)
+        XCTAssertGreaterThanOrEqual(persistence.deleteCount, 1)
+    }
+
+    @MainActor
+    func testMultiplePendingSavesFinalizeNewestArchive() throws {
+        let persistence = ControlledClipboardPersistence()
+        let settings = AppSettings(defaults: defaults)
+        settings.clipboardHistoryEnabled = true
+        settings.clipboardHistoryPersistenceEnabled = true
+        let pasteboard = FakeClipboardPasteboardClient()
+        let store = makeStore(settings: settings, pasteboard: pasteboard, persistence: persistence)
+        for value in ["first", "second", "third"] {
+            capture(text(value), with: pasteboard, store: store)
+        }
+
+        XCTAssertEqual(
+            store.finalizePersistenceForTermination(timeout: 1),
+            .completed
+        )
+        let archive = try JSONDecoder().decode(
+            ClipboardHistoryArchive.self,
+            from: XCTUnwrap(persistence.data)
+        )
+        XCTAssertEqual(archive.entries.map(\.payload), store.entries.map(\.payload))
+        XCTAssertEqual(archive.entries.first?.payload, text("third"))
+    }
+
+    @MainActor
+    func testBlockedWriterTimesOutWithoutWaitingIndefinitely() {
+        let persistence = ControlledClipboardPersistence(blocksNextSave: true)
+        let settings = AppSettings(defaults: defaults)
+        settings.clipboardHistoryEnabled = true
+        settings.clipboardHistoryPersistenceEnabled = true
+        let pasteboard = FakeClipboardPasteboardClient()
+        let store = makeStore(settings: settings, pasteboard: pasteboard, persistence: persistence)
+        capture(text("blocked"), with: pasteboard, store: store)
+        XCTAssertTrue(persistence.waitForBlockedSaveToStart())
+
+        XCTAssertEqual(
+            store.finalizePersistenceForTermination(timeout: 0),
+            .timedOut
+        )
+
+        persistence.unblockSave()
+        XCTAssertEqual(
+            store.finalizePersistenceForTermination(timeout: 1),
+            .completed
+        )
+        XCTAssertNotNil(persistence.data)
+    }
+
+    @MainActor
+    func testFinalPersistenceFailuresReturnFailureWithoutCrashing() {
+        let saveFailure = ControlledClipboardPersistence(failsSave: true)
+        let saveSettings = AppSettings(defaults: defaults)
+        saveSettings.clipboardHistoryEnabled = true
+        saveSettings.clipboardHistoryPersistenceEnabled = true
+        let pasteboard = FakeClipboardPasteboardClient()
+        let saveStore = makeStore(
+            settings: saveSettings,
+            pasteboard: pasteboard,
+            persistence: saveFailure
+        )
+        capture(text("fails"), with: pasteboard, store: saveStore)
+        XCTAssertEqual(
+            saveStore.finalizePersistenceForTermination(timeout: 1),
+            .failed
+        )
+
+        let deleteFailure = ControlledClipboardPersistence(
+            data: Data("existing".utf8),
+            failsDelete: true
+        )
+        let deleteSettings = AppSettings(defaults: defaults)
+        let deleteStore = makeStore(
+            settings: deleteSettings,
+            pasteboard: FakeClipboardPasteboardClient(),
+            persistence: deleteFailure
+        )
+        XCTAssertEqual(
+            deleteStore.finalizePersistenceForTermination(timeout: 1),
+            .failed
+        )
+    }
+
+    @MainActor
+    func testTerminationWithNoPendingWorkCompletesAndDeletesAuthoritatively() {
+        let persistence = ControlledClipboardPersistence()
+        let store = makeStore(
+            settings: AppSettings(defaults: defaults),
+            pasteboard: FakeClipboardPasteboardClient(),
+            persistence: persistence
+        )
+
+        XCTAssertEqual(
+            store.finalizePersistenceForTermination(timeout: 1),
+            .completed
+        )
+        XCTAssertEqual(persistence.saveCount, 0)
+        XCTAssertEqual(persistence.deleteCount, 1)
+    }
+
+    @MainActor
+    func testMonitoringCannotEnqueueNewPersistenceAfterTerminationBegins() {
+        let persistence = ControlledClipboardPersistence()
+        let settings = AppSettings(defaults: defaults)
+        settings.clipboardHistoryEnabled = true
+        settings.clipboardHistoryPersistenceEnabled = true
+        let pasteboard = FakeClipboardPasteboardClient()
+        let store = makeStore(settings: settings, pasteboard: pasteboard, persistence: persistence)
+
+        XCTAssertEqual(
+            store.finalizePersistenceForTermination(timeout: 1),
+            .completed
+        )
+        pasteboard.changeCount += 1
+        pasteboard.readResult = .payload(text("late"))
+        store.startMonitoring()
+        store.pollNow()
+
+        XCTAssertFalse(store.isMonitoring)
+        XCTAssertTrue(store.entries.isEmpty)
+        XCTAssertEqual(persistence.saveCount, 0)
+        XCTAssertEqual(persistence.deleteCount, 1)
     }
 
     @MainActor

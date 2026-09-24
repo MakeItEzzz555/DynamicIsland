@@ -51,8 +51,9 @@ enum ArtworkFlipPresentationEffect: Equatable {
 struct ArtworkFlipPresentationState: Equatable {
     private struct QueuedTransition: Equatable {
         let snapshot: ArtworkPresentationSnapshot
-        let direction: MediaArtworkFlipDirection
+        let direction: MediaArtworkFlipDirection?
         let requestID: UUID?
+        let shouldAnimate: Bool
     }
 
     private(set) var displayed: ArtworkPresentationSnapshot?
@@ -85,8 +86,9 @@ struct ArtworkFlipPresentationState: Equatable {
         if phase != .idle {
             queued = QueuedTransition(
                 snapshot: snapshot,
-                direction: requestedDirection ?? direction ?? .next,
-                requestID: requestID
+                direction: requestedDirection,
+                requestID: requestID,
+                shouldAnimate: shouldAnimate
             )
             return .queued
         }
@@ -133,15 +135,16 @@ struct ArtworkFlipPresentationState: Equatable {
         }
         self.queued = nil
 
-        guard let displayed, isMeaningfulTransition(from: displayed, to: queued.snapshot) else {
-            self.displayed = queued.snapshot
+        if displayed?.identity == queued.snapshot.identity {
+            displayed = queued.snapshot
             return .displayedDirectly(requestID: queued.requestID)
         }
 
-        return stageFirstHalf(
-            snapshot: queued.snapshot,
+        return receive(
+            queued.snapshot,
             direction: queued.direction,
-            requestID: queued.requestID
+            requestID: queued.requestID,
+            shouldAnimate: queued.shouldAnimate
         )
     }
 
@@ -221,7 +224,7 @@ final class ArtworkPresentationCoordinator: ObservableObject {
             )
         case .firstHalfStarted(let generation, let direction):
             debugArtworkFlip(
-                "transition staged identity=\(state.pending?.identity ?? "nil") generation=\(generation)"
+                "latency T4 flip request emitted identity=\(state.pending?.identity ?? "nil") generation=\(generation)"
             )
             startFirstHalf(
                 generation: generation,
@@ -240,7 +243,7 @@ final class ArtworkPresentationCoordinator: ObservableObject {
     ) {
         let firstHalfDegrees = direction == .next ? -90.0 : 90.0
         debugArtworkFlip(
-            "first half started direction=\(direction.rawValue) generation=\(generation)"
+            "latency T5 visible first half started direction=\(direction.rawValue) generation=\(generation)"
         )
 
         withAnimation(.easeInOut(duration: Self.halfDuration)) {
@@ -313,8 +316,16 @@ final class ArtworkPresentationCoordinator: ObservableObject {
 
     private func debugArtworkFlip(_ message: String) {
         #if DEBUG
-        print("[ArtworkFlip] \(message)")
+        print("[ArtworkFlip][\(String(format: "%.6f", ProcessInfo.processInfo.systemUptime))] \(message)")
         #endif
+    }
+}
+
+private final class MediaRefreshTimerLifetime: @unchecked Sendable {
+    var timer: Timer?
+
+    deinit {
+        timer?.invalidate()
     }
 }
 
@@ -341,10 +352,11 @@ final class MediaController: ObservableObject {
     @Published private(set) var artworkFlipRequest: MediaArtworkFlipRequest?
     let artworkPresentation = ArtworkPresentationCoordinator()
 
-    private let systemNowPlayingProvider = NowPlayingMediaProvider()
+    private let systemNowPlayingProvider: any MediaDetectionProvider
+    private let automationExecutor: MediaAutomationExecutor
     private let youtubeMetadataProvider = YouTubeMetadataProvider()
     private var activePlayer: MediaPlayer = .spotify
-    private var refreshTimer: Timer?
+    private let refreshTimerLifetime = MediaRefreshTimerLifetime()
     private var currentArtworkURL: String?
     private var currentArtworkKey: String?
     private var currentArtworkImageKey: String?
@@ -362,7 +374,8 @@ final class MediaController: ObservableObject {
     private var pendingPausedSwitchFirstSeenAt: Date?
     private var pendingPausedSwitchCount = 0
     private var isScrubbing = false
-    private var isRefreshInFlight = false
+    private var refreshCoordinator = MediaRefreshCoordinator()
+    private var refreshCandidatesByGeneration: [Int: [MediaCandidate]] = [:]
 
     enum MediaPlayer: String, CaseIterable {
         case spotify = "Spotify"
@@ -382,50 +395,123 @@ final class MediaController: ObservableObject {
         }
     }
 
-    init() {
+    init(
+        automationExecutor: MediaAutomationExecutor = MediaAutomationExecutor(),
+        systemNowPlayingProvider: any MediaDetectionProvider = NowPlayingMediaProvider(),
+        startsAutomatically: Bool = true
+    ) {
+        self.automationExecutor = automationExecutor
+        self.systemNowPlayingProvider = systemNowPlayingProvider
+        guard startsAutomatically else { return }
         refresh()
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 0.75, repeats: true) { [weak self] _ in
+        refreshTimerLifetime.timer = Timer.scheduledTimer(withTimeInterval: 0.75, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }
     }
 
+    deinit {
+        refreshCoordinator.invalidate()
+        automationExecutor.invalidate()
+    }
+
     func refresh() {
-        guard !isRefreshInFlight else { return }
-        isRefreshInFlight = true
-        Task { @MainActor in
-            await refreshFromProviders()
-            isRefreshInFlight = false
+        guard let start = refreshCoordinator.request() else { return }
+        beginRefresh(start)
+    }
+
+    private func beginRefresh(_ start: MediaRefreshCoordinator.Start) {
+        logProviderAttempt("System Now Playing")
+        let provider = systemNowPlayingProvider
+        Task { @MainActor [weak self, provider] in
+            let snapshot = await provider.snapshot()
+            self?.continueRefresh(start, systemSnapshot: snapshot)
         }
     }
 
-    private func refreshFromProviders() async {
+    private func continueRefresh(
+        _ start: MediaRefreshCoordinator.Start,
+        systemSnapshot: MediaSnapshot?
+    ) {
         var candidates: [MediaCandidate] = []
 
-        logProviderAttempt("System Now Playing")
-        if let snapshot = await systemNowPlayingProvider.snapshot() {
+        if let snapshot = systemSnapshot {
             logProviderResult("System Now Playing", succeeded: true, snapshot: snapshot)
-            candidates.append(MediaCandidate(providerName: "System Now Playing", snapshot: snapshot))
+            let candidate = MediaCandidate(providerName: "System Now Playing", snapshot: snapshot)
+            candidates.append(candidate)
+            publishImmediateSystemArtworkIfSafe(candidate, generation: start.generation)
         } else {
             logProviderResult("System Now Playing", succeeded: false)
         }
 
+        guard refreshCoordinator.accepts(start.generation) else {
+            finishRefresh(start.generation)
+            return
+        }
+
         logProviderAttempt("Spotify AppleScript")
-        if let spotify = readPlayerCandidate(.spotify) {
+        logProviderAttempt("Music AppleScript")
+        logProviderAttempt("Browser AppleScript")
+        let browsers = runningBrowserOperations()
+        refreshCandidatesByGeneration[start.generation] = candidates
+
+        let request = MediaAutomationDetectionRequest(
+            spotify: MediaAutomationOperation(target: .spotify, source: playerScript(for: .spotify)),
+            music: MediaAutomationOperation(target: .music, source: playerScript(for: .music)),
+            browsers: browsers,
+            cancellation: start.cancellation
+        )
+        automationExecutor.submitDetection(request) { [weak self] result in
+            Task { @MainActor [weak self] in
+                self?.applyAutomationRefresh(result, generation: start.generation)
+            }
+        }
+    }
+
+    private func publishImmediateSystemArtworkIfSafe(
+        _ candidate: MediaCandidate,
+        generation: Int
+    ) {
+        guard refreshCoordinator.accepts(generation),
+              MediaImmediateSystemHandoff.canPublish(
+                  candidate: candidate,
+                  currentIdentity: lastSelectedSourceIdentity
+              )
+        else {
+            return
+        }
+
+        debugArtworkFlip(
+            "System Now Playing confirmed same-source track and embedded artwork; publishing before automation arbitration"
+        )
+        publishSelectedCandidate(
+            candidate,
+            reason: "System Now Playing confirmed same-source artwork handoff"
+        )
+    }
+
+    private func applyAutomationRefresh(
+        _ result: MediaAutomationDetectionResult,
+        generation: Int
+    ) {
+        var candidates = refreshCandidatesByGeneration.removeValue(forKey: generation) ?? []
+        guard refreshCoordinator.accepts(generation) else {
+            finishRefresh(generation)
+            return
+        }
+
+        if let spotify = readPlayerCandidate(.spotify, execution: result.spotify) {
             candidates.append(spotify)
         }
-
-        logProviderAttempt("Music AppleScript")
-        if let music = readPlayerCandidate(.music) {
+        if let music = readPlayerCandidate(.music, execution: result.music) {
             candidates.append(music)
         }
-
-        logProviderAttempt("Browser AppleScript")
-        if let browser = readBrowserCandidate() {
+        if let browser = readBrowserCandidate(from: result.browsers) {
             candidates.append(browser)
         }
 
         guard let selected = selectBestSnapshot(from: candidates) else {
             clearMediaState()
+            finishRefresh(generation)
             return
         }
 
@@ -435,9 +521,18 @@ final class MediaController: ObservableObject {
             currentIdentity: lastSelectedSourceIdentity
         )
         guard let publishCandidate = candidateConfirmedForPublishing(selected, reason: reason) else {
+            finishRefresh(generation)
             return
         }
         publishSelectedCandidate(publishCandidate.candidate, reason: publishCandidate.reason)
+        finishRefresh(generation)
+    }
+
+    private func finishRefresh(_ generation: Int) {
+        refreshCandidatesByGeneration[generation] = nil
+        if let next = refreshCoordinator.complete(generation) {
+            beginRefresh(next)
+        }
     }
 
     private func clearMediaState() {
@@ -477,44 +572,42 @@ final class MediaController: ObservableObject {
     func nextTrack() {
         guard isTransportControlAvailable else { return }
         requestArtworkFlip(direction: .next, reason: "nextTrack command")
-        send(command: "next track", to: activePlayer)
-        refreshAfterTransportCommand(reason: "next track")
+        sendTransportCommand(
+            "next track",
+            to: activePlayer,
+            artworkRequestID: artworkFlipRequest?.id
+        )
     }
 
     func previousTrack() {
         guard isTransportControlAvailable else { return }
         requestArtworkFlip(direction: .previous, reason: "previousTrack command")
-        send(command: "previous track", to: activePlayer)
-        refreshAfterTransportCommand(reason: "previous track")
+        sendTransportCommand(
+            "previous track",
+            to: activePlayer,
+            artworkRequestID: artworkFlipRequest?.id
+        )
     }
 
-    private func refreshAfterTransportCommand(reason: String) {
-        debugArtworkFlip("transport refresh sequence started reason=\(reason)")
-
-        refresh()
-
-        let delays: [TimeInterval] = [
-            0.08,
-            0.18,
-            0.32,
-            0.55,
-            0.85,
-            1.25
-        ]
-
-        for delay in delays {
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+    private func sendTransportCommand(
+        _ command: String,
+        to player: MediaPlayer,
+        artworkRequestID: UUID?
+    ) {
+        debugArtworkFlip("latency T0 transport command submitted command=\(command)")
+        send(command: command, to: player) { [weak self] result in
+            Task { @MainActor [weak self] in
                 guard let self else { return }
-                self.debugArtworkFlip(
-                    "transport refresh tick reason=\(reason) delay=\(String(format: "%.2f", delay))"
-                )
+                guard result.failure == nil else {
+                    if let artworkRequestID {
+                        self.consumeArtworkFlipRequest(id: artworkRequestID)
+                    }
+                    return
+                }
+                self.debugArtworkFlip("transport command succeeded; requesting immediate refresh command=\(command)")
                 self.refresh()
             }
         }
-    }
-
-    func requestGestureArtworkFlip(direction: MediaArtworkFlipDirection) {
-        requestArtworkFlip(direction: direction, reason: "gesture")
     }
 
     private func requestArtworkFlipIfNeeded(direction: MediaArtworkFlipDirection, reason: String) {
@@ -572,7 +665,8 @@ final class MediaController: ObservableObject {
         guard isVolumeControlAvailable else { return }
 
         let scriptVolume = Int((clampedVolume * 100).rounded())
-        send(command: "set sound volume to \(scriptVolume)", to: activePlayer)
+        send(command: "set sound volume to \(scriptVolume)", to: activePlayer, isVolume: true)
+        refresh()
     }
 
     func openMusicApp() {
@@ -628,8 +722,8 @@ final class MediaController: ObservableObject {
         return succeeded
     }
 
-    private func readPlayerCandidate(_ player: MediaPlayer) -> MediaCandidate? {
-        let script = """
+    private func playerScript(for player: MediaPlayer) -> String {
+        """
         with timeout of 1 seconds
             tell application "\(player.rawValue)"
                 if it is running then
@@ -645,8 +739,14 @@ final class MediaController: ObservableObject {
         end timeout
         return ""
         """
-        if let result = runAppleScript(script), !result.isEmpty {
-            let parts = result.components(separatedBy: "||")
+    }
+
+    private func readPlayerCandidate(
+        _ player: MediaPlayer,
+        execution: MediaAutomationScriptResult
+    ) -> MediaCandidate? {
+        if !execution.output.isEmpty {
+            let parts = execution.output.components(separatedBy: "||")
             if parts.count >= 4 {
                 let trackTitle = parts[0]
                 let trackArtist = parts[1]
@@ -682,8 +782,8 @@ final class MediaController: ObservableObject {
         return nil
     }
 
-    private func readBrowserCandidate() -> MediaCandidate? {
-        let browsers = [
+    private func browserTargets() -> [BrowserScriptTarget] {
+        [
             BrowserScriptTarget(
                 applicationName: "Brave Browser",
                 bundleIdentifier: "com.brave.Browser",
@@ -710,15 +810,30 @@ final class MediaController: ObservableObject {
                 usesChromeScripting: true
             )
         ]
+    }
 
-        for browser in browsers {
+    private func runningBrowserOperations() -> [MediaAutomationBrowserOperation] {
+        browserTargets().compactMap { browser in
             let isRunning = isApplicationRunning(browser)
             logBrowserDetectionAttempt(browser: browser, isRunning: isRunning, phase: "start")
-            guard isRunning else {
-                continue
-            }
+            guard isRunning else { return nil }
+            return MediaAutomationBrowserOperation(
+                applicationName: browser.applicationName,
+                bundleIdentifier: browser.bundleIdentifier,
+                source: browserScript(for: browser)
+            )
+        }
+    }
 
-            let execution = runAppleScriptDetailed(browserScript(for: browser))
+    private func readBrowserCandidate(
+        from results: [MediaAutomationBrowserResult]
+    ) -> MediaCandidate? {
+        for browserResult in results {
+            guard let browser = browserTargets().first(where: {
+                $0.bundleIdentifier == browserResult.bundleIdentifier
+            }) else { continue }
+            let execution = browserResult.result
+            let isRunning = true
             logBrowserDetectionAttempt(
                 browser: browser,
                 isRunning: isRunning,
@@ -964,6 +1079,11 @@ final class MediaController: ObservableObject {
         let hadDisplayedArtwork = artworkImage != nil && artworkImageKey != nil
 
         logSelectedCandidatePublish(candidate, reason: reason, identityChanged: identityChanged)
+        if identityChanged {
+            debugArtworkFlip(
+                "latency T1 selected track identity observed identity=\(candidate.identity.debugDescription)"
+            )
+        }
 
         if identityChanged, previousIdentity != nil, hadDisplayedArtwork {
             requestArtworkFlipIfNeeded(
@@ -1131,6 +1251,7 @@ final class MediaController: ObservableObject {
 
         if let embeddedArtwork = candidate.snapshot.artwork,
            let key {
+            debugArtworkFlip("latency T2 embedded artwork identity known key=\(key)")
             assignArtwork(
                 embeddedArtwork,
                 key: key,
@@ -1142,6 +1263,7 @@ final class MediaController: ObservableObject {
         }
 
         if let key, let cachedArtwork = artworkCache[key] {
+            debugArtworkFlip("latency T2 cached artwork identity known key=\(key)")
             assignArtwork(
                 cachedArtwork,
                 key: key,
@@ -1154,6 +1276,7 @@ final class MediaController: ObservableObject {
 
         if let artworkURL = candidate.artworkURL,
            let key {
+            debugArtworkFlip("latency T2 artwork URL known key=\(key)")
             if currentArtworkSourceIdentity == candidate.identity,
                currentArtworkKey == key,
                artworkImage != nil {
@@ -1256,6 +1379,9 @@ final class MediaController: ObservableObject {
         currentArtworkURL = key.hasPrefix("url:") ? String(key.dropFirst(4)) : currentArtworkURL
         artworkImage = image
         artworkImageRevision += 1
+        debugArtworkFlip(
+            "latency T3 artwork image available key=\(key) revision=\(artworkImageRevision)"
+        )
         synchronizeArtworkPresentation(reason: reason)
         debugArtworkFlip("artwork image assigned key=\(key) revision=\(artworkImageRevision) reason=\(reason)")
         logArtworkAssignment(
@@ -1339,8 +1465,21 @@ final class MediaController: ObservableObject {
         }
     }
 
-    private func send(command: String, to player: MediaPlayer) {
-        _ = runAppleScript("tell application \"\(player.rawValue)\" to \(command)")
+    private func send(
+        command: String,
+        to player: MediaPlayer,
+        isVolume: Bool = false,
+        completion: @escaping @Sendable (MediaAutomationScriptResult) -> Void = { _ in }
+    ) {
+        let target: MediaAutomationTarget = player == .spotify ? .spotify : .music
+        automationExecutor.submitCommand(
+            MediaAutomationOperation(
+                target: target,
+                source: "tell application \"\(player.rawValue)\" to \(command)"
+            ),
+            isVolume: isVolume,
+            completion: completion
+        )
     }
 
     private func logMediaDetection(source: String, usesPlaceholderArtwork: Bool = false) {
@@ -1367,7 +1506,7 @@ final class MediaController: ObservableObject {
 
     private func debugArtworkFlip(_ message: String) {
         #if DEBUG
-        print("[ArtworkFlip] \(message)")
+        print("[ArtworkFlip][\(String(format: "%.6f", ProcessInfo.processInfo.systemUptime))] \(message)")
         #endif
     }
 
@@ -1729,36 +1868,6 @@ final class MediaController: ObservableObject {
         }
     }
 
-    private func runAppleScript(_ source: String) -> String? {
-        runAppleScriptDetailed(source).output
-    }
-
-    private func runAppleScriptDetailed(_ source: String) -> AppleScriptExecutionResult {
-        var error: NSDictionary?
-        guard let script = NSAppleScript(source: source) else {
-            return AppleScriptExecutionResult(output: "", errorDescription: "Unable to compile AppleScript")
-        }
-
-        let output = script.executeAndReturnError(&error)
-        return AppleScriptExecutionResult(
-            output: output.stringValue ?? "",
-            errorDescription: Self.appleScriptErrorDescription(error)
-        )
-    }
-
-    private static func appleScriptErrorDescription(_ error: NSDictionary?) -> String? {
-        guard let error else { return nil }
-        let message = error[NSAppleScript.errorMessage] as? String
-        let number = error[NSAppleScript.errorNumber] as? NSNumber
-        if let message, let number {
-            return "\(message) (\(number))"
-        }
-        if let message {
-            return message
-        }
-        return error.description
-    }
-
     private static func appleScriptEscaped(_ value: String) -> String {
         value
             .replacingOccurrences(of: "\\", with: "\\\\")
@@ -1789,6 +1898,26 @@ struct MediaSourceIdentity: Hashable {
             bundleIdentifier ?? "nil",
             persistentID ?? "nil"
         ].joined(separator: "|")
+    }
+}
+
+enum MediaImmediateSystemHandoff {
+    static func canPublish(
+        candidate: MediaCandidate,
+        currentIdentity: MediaSourceIdentity?
+    ) -> Bool {
+        guard candidate.providerName == "System Now Playing",
+              candidate.snapshot.artwork != nil,
+              let currentIdentity,
+              candidate.identity != currentIdentity,
+              candidate.identity.sourceKind == currentIdentity.sourceKind,
+              let candidateBundle = candidate.identity.bundleIdentifier,
+              !candidateBundle.isEmpty,
+              candidateBundle == currentIdentity.bundleIdentifier
+        else {
+            return false
+        }
+        return true
     }
 }
 
@@ -2103,11 +2232,6 @@ struct MediaCandidate {
         }
         return nil
     }
-}
-
-private struct AppleScriptExecutionResult {
-    let output: String
-    let errorDescription: String?
 }
 
 private extension Array {

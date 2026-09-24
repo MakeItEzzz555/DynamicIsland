@@ -1,6 +1,39 @@
 import Combine
 import Foundation
 
+enum ClipboardHistoryPersistenceFinalizationResult: Equatable {
+    case completed
+    case failed
+    case timedOut
+}
+
+private enum ClipboardHistoryFinalPersistenceOperation {
+    case save(Data, count: Int)
+    case delete
+}
+
+private final class ClipboardHistoryPersistenceFinalizationCompletion: @unchecked Sendable {
+    private let group = DispatchGroup()
+    private let lock = NSLock()
+    private var result: ClipboardHistoryPersistenceFinalizationResult?
+
+    init() {
+        group.enter()
+    }
+
+    func finish(with result: ClipboardHistoryPersistenceFinalizationResult) {
+        lock.withLock { self.result = result }
+        group.leave()
+    }
+
+    func wait(timeout: TimeInterval) -> ClipboardHistoryPersistenceFinalizationResult {
+        guard group.wait(timeout: .now() + max(0, timeout)) == .success else {
+            return .timedOut
+        }
+        return lock.withLock { result ?? .failed }
+    }
+}
+
 private final class ClipboardHistoryPersistenceWriter: @unchecked Sendable {
     private let persistence: ClipboardHistoryPersistence
     private let queue = DispatchQueue(
@@ -10,6 +43,8 @@ private final class ClipboardHistoryPersistenceWriter: @unchecked Sendable {
     private let lock = NSLock()
     private var generation = 0
     private var enabled: Bool
+    private var isFinalizing = false
+    private var finalizationCompletion: ClipboardHistoryPersistenceFinalizationCompletion?
 
     init(persistence: ClipboardHistoryPersistence, enabled: Bool) {
         self.persistence = persistence
@@ -17,7 +52,7 @@ private final class ClipboardHistoryPersistenceWriter: @unchecked Sendable {
     }
 
     func scheduleSave(_ data: Data, count: Int) {
-        let token = updateState(enabled: true)
+        guard let token = updateState(enabled: true) else { return }
         queue.async { [persistence, weak self] in
             guard let self, self.isCurrent(token, requiresEnabled: true) else { return }
             do {
@@ -34,7 +69,7 @@ private final class ClipboardHistoryPersistenceWriter: @unchecked Sendable {
     }
 
     func disableAndDelete() {
-        let token = updateState(enabled: false)
+        guard let token = updateState(enabled: false) else { return }
         queue.async { [persistence, weak self] in
             guard let self, self.isCurrent(token, requiresEnabled: false) else { return }
             do {
@@ -51,7 +86,7 @@ private final class ClipboardHistoryPersistenceWriter: @unchecked Sendable {
     }
 
     func deleteWithoutDisabling() {
-        let token = invalidate()
+        guard let token = invalidate() else { return }
         queue.async { [persistence, weak self] in
             guard let self, self.isCurrent(token, requiresEnabled: nil) else { return }
             try? persistence.deleteArchive()
@@ -62,17 +97,71 @@ private final class ClipboardHistoryPersistenceWriter: @unchecked Sendable {
         queue.sync {}
     }
 
-    private func updateState(enabled: Bool) -> Int {
+    func finalize(
+        with operation: ClipboardHistoryFinalPersistenceOperation,
+        timeout: TimeInterval
+    ) -> ClipboardHistoryPersistenceFinalizationResult {
+        let (completion, token, shouldEnqueue) = lock.withLock {
+            if let finalizationCompletion {
+                return (finalizationCompletion, generation, false)
+            }
+
+            generation += 1
+            isFinalizing = true
+            enabled = switch operation {
+            case .save: true
+            case .delete: false
+            }
+            let completion = ClipboardHistoryPersistenceFinalizationCompletion()
+            finalizationCompletion = completion
+            return (completion, generation, true)
+        }
+
+        if shouldEnqueue {
+            queue.async { [persistence, self] in
+                guard isCurrent(token, requiresEnabled: nil) else {
+                    completion.finish(with: .failed)
+                    return
+                }
+                do {
+                    switch operation {
+                    case let .save(data, count):
+                        try persistence.saveDataAtomically(data)
+                        #if DEBUG
+                        print("[ClipboardHistory] final persistence saved count=\(count)")
+                        #endif
+                    case .delete:
+                        try persistence.deleteArchive()
+                        #if DEBUG
+                        print("[ClipboardHistory] final persistence deleted")
+                        #endif
+                    }
+                    completion.finish(with: .completed)
+                } catch {
+                    #if DEBUG
+                    print("[ClipboardHistory] final persistence failed")
+                    #endif
+                    completion.finish(with: .failed)
+                }
+            }
+        }
+
+        return completion.wait(timeout: timeout)
+    }
+
+    private func updateState(enabled: Bool) -> Int? {
         lock.lock()
         defer { lock.unlock() }
+        guard !isFinalizing else { return nil }
         generation += 1
         self.enabled = enabled
         return generation
     }
 
-    private func invalidate() -> Int {
+    private func invalidate() -> Int? {
         lock.lock()
         defer { lock.unlock() }
+        guard !isFinalizing else { return nil }
         generation += 1
         return generation
     }
@@ -88,6 +177,9 @@ private final class ClipboardHistoryPersistenceWriter: @unchecked Sendable {
 
 @MainActor
 final class ClipboardHistoryStore: ObservableObject {
+    /// A short lifecycle-only grace period for ordinary local archive writes/deletes.
+    static let terminationPersistenceWaitSeconds: TimeInterval = 0.5
+
     @Published private(set) var entries: [ClipboardHistoryEntry] = []
     @Published private(set) var isMonitoring = false
 
@@ -105,6 +197,7 @@ final class ClipboardHistoryStore: ObservableObject {
     private let processImage: @Sendable (ClipboardImageCapture) async -> ClipboardPasteboardReadResult
     private var lastObservedChangeCount = 0
     private var cancellables: Set<AnyCancellable> = []
+    private var isFinalizing = false
 
     init(
         settings: AppSettings,
@@ -148,7 +241,7 @@ final class ClipboardHistoryStore: ObservableObject {
     }
 
     private func startMonitoring(assumingEnabled: Bool) {
-        guard assumingEnabled, !isMonitoring else { return }
+        guard !isFinalizing, assumingEnabled, !isMonitoring else { return }
         lastObservedChangeCount = pasteboard.changeCount
         isMonitoring = true
         if automaticallySchedulesTimer {
@@ -179,7 +272,9 @@ final class ClipboardHistoryStore: ObservableObject {
     func pollNow() {
         // Keep at most one image job in flight. Subsequent polls observe the latest
         // change when it finishes rather than queueing decoded images without bound.
-        guard isMonitoring, settings.clipboardHistoryEnabled, imageCaptureTask == nil else { return }
+        guard !isFinalizing,
+              isMonitoring, settings.clipboardHistoryEnabled,
+              imageCaptureTask == nil else { return }
         let currentChangeCount = pasteboard.changeCount
         guard currentChangeCount != lastObservedChangeCount else { return }
         lastObservedChangeCount = currentChangeCount
@@ -231,6 +326,32 @@ final class ClipboardHistoryStore: ObservableObject {
     }
 
     @discardableResult
+    func finalizePersistenceForTermination(
+        timeout: TimeInterval = ClipboardHistoryStore.terminationPersistenceWaitSeconds
+    ) -> ClipboardHistoryPersistenceFinalizationResult {
+        if !isFinalizing {
+            isFinalizing = true
+            stopMonitoring()
+            imageCaptureTask?.cancel()
+            cancellables.removeAll()
+        }
+
+        let operation: ClipboardHistoryFinalPersistenceOperation
+        if settings.clipboardHistoryPersistenceEnabled, !entries.isEmpty {
+            let archive = ClipboardHistoryArchive(
+                schemaVersion: ClipboardHistoryArchive.currentSchemaVersion,
+                entries: entries
+            )
+            guard let data = try? JSONEncoder().encode(archive) else { return .failed }
+            operation = .save(data, count: archive.entries.count)
+        } else {
+            operation = .delete
+        }
+
+        return persistenceWriter.finalize(with: operation, timeout: timeout)
+    }
+
+    @discardableResult
     func copyEntryToPasteboard(id: UUID) -> Bool {
         guard let index = entries.firstIndex(where: { $0.id == id }) else { return false }
         let entry = entries[index]
@@ -257,6 +378,7 @@ final class ClipboardHistoryStore: ObservableObject {
     }
 
     private func capture(_ payload: ClipboardHistoryPayload) {
+        guard !isFinalizing else { return }
         guard let payload = sanitized(payload) else { return }
         let fingerprint = ClipboardHistoryFingerprint.make(for: payload)
         let captureDate = now()
@@ -437,6 +559,7 @@ final class ClipboardHistoryStore: ObservableObject {
     }
 
     private func persistHistoryIfNeeded(assumingEnabled: Bool? = nil) {
+        guard !isFinalizing else { return }
         guard assumingEnabled ?? settings.clipboardHistoryPersistenceEnabled else { return }
         let archive = ClipboardHistoryArchive(
             schemaVersion: ClipboardHistoryArchive.currentSchemaVersion,

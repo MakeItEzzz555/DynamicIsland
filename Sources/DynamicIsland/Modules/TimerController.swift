@@ -1,5 +1,33 @@
 import Foundation
 
+protocol CountdownClock: Sendable {
+    var now: Duration { get }
+    func sleep(for duration: Duration) async throws
+}
+
+struct SystemCountdownClock: CountdownClock {
+    private let clock = ContinuousClock()
+    private let origin: ContinuousClock.Instant
+
+    init() {
+        origin = clock.now
+    }
+
+    var now: Duration {
+        origin.duration(to: clock.now)
+    }
+
+    func sleep(for duration: Duration) async throws {
+        try await clock.sleep(for: duration)
+    }
+}
+
+enum CountdownLifecycleEvent: Equatable {
+    case scheduled(generation: UInt64, remaining: Duration)
+    case cancelled(generation: UInt64)
+    case completed(generation: UInt64)
+}
+
 enum TimerProgressColorStage: Equatable {
     case high
     case mid
@@ -30,7 +58,26 @@ final class TimerController: ObservableObject {
     @Published private(set) var totalSeconds = 0
     @Published private(set) var isRunning = false
 
+    private let clock: any CountdownClock
+    private let refreshInterval: Duration?
+    private let onCompletion: @MainActor () -> Void
+    private var lifecycleHandler: @MainActor (CountdownLifecycleEvent) -> Void = { _ in }
     private var task: Task<Void, Never>?
+    private(set) var currentGeneration: UInt64 = 0
+    private var activeGeneration: UInt64?
+    private var deadline: Duration?
+    private var preciseRemaining: Duration = .zero
+    private var completionHandled = false
+
+    init(
+        clock: any CountdownClock = SystemCountdownClock(),
+        refreshInterval: Duration? = .seconds(1),
+        onCompletion: @escaping @MainActor () -> Void = {}
+    ) {
+        self.clock = clock
+        self.refreshInterval = refreshInterval
+        self.onCompletion = onCompletion
+    }
 
     var displayText: String {
         let minutes = remainingSeconds / 60
@@ -38,54 +85,129 @@ final class TimerController: ObservableObject {
         return String(format: "%d:%02d", minutes, seconds)
     }
 
+    func setLifecycleHandler(
+        _ handler: @escaping @MainActor (CountdownLifecycleEvent) -> Void
+    ) {
+        lifecycleHandler = handler
+    }
+
     func start(minutes: Int) {
-        task?.cancel()
-        totalSeconds = max(1, minutes * 60)
+        start(seconds: max(1, minutes * 60))
+    }
+
+    func start(seconds: Int) {
+        invalidateCurrentRun()
+        let duration = Duration.seconds(max(1, seconds))
+        totalSeconds = Self.displaySeconds(for: duration)
+        preciseRemaining = duration
         remainingSeconds = totalSeconds
+        deadline = clock.now + duration
+        completionHandled = false
         isRunning = true
-        runCountdown()
+        activeGeneration = currentGeneration
+        lifecycleHandler(.scheduled(generation: currentGeneration, remaining: duration))
+        runCountdown(generation: currentGeneration)
     }
 
     func pause() {
         guard isRunning else { return }
-        task?.cancel()
-        task = nil
+        refresh(generation: currentGeneration)
+        guard isRunning else { return }
+        invalidateCurrentRun()
+        deadline = nil
         isRunning = false
     }
 
     func resume() {
         guard !isRunning, remainingSeconds > 0 else { return }
+        invalidateCurrentRun()
+        deadline = clock.now + preciseRemaining
+        completionHandled = false
         isRunning = true
-        runCountdown()
+        activeGeneration = currentGeneration
+        lifecycleHandler(.scheduled(generation: currentGeneration, remaining: preciseRemaining))
+        runCountdown(generation: currentGeneration)
     }
 
     func reset() {
-        task?.cancel()
-        task = nil
+        invalidateCurrentRun()
+        deadline = nil
+        preciseRemaining = .seconds(totalSeconds)
         remainingSeconds = totalSeconds
+        completionHandled = false
         isRunning = false
     }
 
     func stop() {
-        task?.cancel()
-        task = nil
+        invalidateCurrentRun()
+        deadline = nil
+        preciseRemaining = .zero
         remainingSeconds = 0
+        completionHandled = false
         isRunning = false
     }
 
-    private func runCountdown() {
-        task = Task { [weak self] in
+    func refresh() {
+        refresh(generation: currentGeneration)
+    }
+
+    func refresh(generation: UInt64) {
+        guard generation == currentGeneration,
+              isRunning,
+              let deadline else { return }
+        let remaining = deadline - clock.now
+        guard remaining > .zero else {
+            complete(generation: generation)
+            return
+        }
+        preciseRemaining = remaining
+        remainingSeconds = Self.displaySeconds(for: remaining)
+    }
+
+    private func runCountdown(generation: UInt64) {
+        guard let refreshInterval else { return }
+        task = Task { [weak self, clock] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(1))
-                guard !Task.isCancelled else { break }
-                await MainActor.run {
-                    guard let self, self.isRunning else { return }
-                    self.remainingSeconds -= 1
-                    if self.remainingSeconds <= 0 {
-                        self.stop()
-                    }
+                do {
+                    try await clock.sleep(for: refreshInterval)
+                } catch {
+                    return
                 }
+                guard !Task.isCancelled, let self else { return }
+                self.refresh(generation: generation)
+                guard self.isRunning, generation == self.currentGeneration else { return }
             }
         }
+    }
+
+    private func complete(generation: UInt64) {
+        guard generation == currentGeneration, isRunning, !completionHandled else { return }
+        completionHandled = true
+        task?.cancel()
+        task = nil
+        deadline = nil
+        preciseRemaining = .zero
+        remainingSeconds = 0
+        isRunning = false
+        activeGeneration = nil
+        lifecycleHandler(.completed(generation: generation))
+        onCompletion()
+    }
+
+    private func invalidateCurrentRun() {
+        task?.cancel()
+        task = nil
+        if let activeGeneration {
+            lifecycleHandler(.cancelled(generation: activeGeneration))
+            self.activeGeneration = nil
+        }
+        currentGeneration &+= 1
+    }
+
+    private static func displaySeconds(for duration: Duration) -> Int {
+        let components = duration.components
+        let seconds = Double(components.seconds)
+            + Double(components.attoseconds) / 1_000_000_000_000_000_000
+        return max(0, Int(ceil(seconds)))
     }
 }
