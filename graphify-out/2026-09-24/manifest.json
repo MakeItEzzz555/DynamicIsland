@@ -24,9 +24,9 @@
     "semantic_hash": "0b4b7c29df007001c39c574a0dda9bd2"
   },
   "Sources/DynamicIsland/App/DynamicIslandApp.swift": {
-    "mtime": 1790252035.360274,
-    "seen": 1790252196.205068,
-    "ast_hash": "38eaaabb11fab09276810054fcd62fd1",
+    "mtime": 1790254245.138711,
+    "seen": 1790254454.8700001,
+    "ast_hash": "1e8a9fbe4d6b9092f272ae044bc2143e",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/App/LaunchAtLoginController.swift": {
@@ -144,10 +144,10 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Modules/TimerController.swift": {
-    "mtime": 1784595893.6271033,
-    "seen": 1789768544.3015401,
-    "ast_hash": "33a214def8a04a257e28215b1efff7bb",
-    "semantic_hash": "33a214def8a04a257e28215b1efff7bb"
+    "mtime": 1790254195.282526,
+    "seen": 1790254454.870028,
+    "ast_hash": "bceeb84bbd07d43d129100e34a55e16f",
+    "semantic_hash": ""
   },
   "Sources/DynamicIsland/Modules/YouTubeMetadataProvider.swift": {
     "mtime": 1784595893.627415,
@@ -222,10 +222,10 @@
     "semantic_hash": "c76f150200af08b7611b8e7aceae26a4"
   },
   "Sources/DynamicIsland/Views/SettingsView.swift": {
-    "mtime": 1784882363.9633043,
-    "seen": 1789768544.301552,
-    "ast_hash": "57976c2ddc873f85037e5b49adfcaf3c",
-    "semantic_hash": "57976c2ddc873f85037e5b49adfcaf3c"
+    "mtime": 1790254415.4284456,
+    "seen": 1790254454.8700402,
+    "ast_hash": "941d4bbace03be3d767709eee6acc309",
+    "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/AppSettingsTests.swift": {
     "mtime": 1784882363.963982,
@@ -525,6 +525,24 @@
     "mtime": 1790252259.8251479,
     "seen": 1790252305.053775,
     "ast_hash": "c7c03efbedb4df29fb322a16d36b832a",
+    "semantic_hash": ""
+  },
+  "Sources/DynamicIsland/Modules/TimerCompletionNotifications.swift": {
+    "mtime": 1790254415.3437788,
+    "seen": 1790254454.870027,
+    "ast_hash": "f0f19d265fe8cef721a34c3cf5e4ddb0",
+    "semantic_hash": ""
+  },
+  "Tests/DynamicIslandTests/TimerCompletionNotificationTests.swift": {
+    "mtime": 1790254428.0649588,
+    "seen": 1790254454.870068,
+    "ast_hash": "b1ad847e8ddd3646ffbaa73ffbe7c077",
+    "semantic_hash": ""
+  },
+  "Tests/DynamicIslandTests/TimerControllerTests.swift": {
+    "mtime": 1790254289.6649048,
+    "seen": 1790254454.870069,
+    "ast_hash": "bc6dc022c8bfd4303b97dd216ff822dd",
     "semantic_hash": ""
   }
 }
