@@ -319,14 +319,17 @@ struct SettingsView: View {
                 Stepper("Preset 3: \(settings.timerPreset3Minutes)m", value: $settings.timerPreset3Minutes, in: 1...180)
             }
 
-            SettingsGroup("Future Options") {
-                Toggle("Timer sound", isOn: $settings.timerSoundEnabled)
-                    .disabled(true)
+            SettingsGroup("Completion") {
                 Toggle("Timer notification", isOn: $settings.timerNotificationEnabled)
-                    .disabled(true)
+                Toggle("Timer sound", isOn: $settings.timerSoundEnabled)
+                    .disabled(!settings.timerNotificationEnabled)
+                HelpText("Timer completion notifications use the native macOS alert and system sound.")
+            }
+
+            SettingsGroup("Future Options") {
                 Toggle("Show timer in collapsed island", isOn: $settings.showTimerInCollapsedIsland)
                     .disabled(true)
-                HelpText("Timer sound, notifications, and collapsed-timer presentation are stored now and not implemented yet.")
+                HelpText("Collapsed-timer presentation is stored now and not implemented yet.")
             }
         }
     }

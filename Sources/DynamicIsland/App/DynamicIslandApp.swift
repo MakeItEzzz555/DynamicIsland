@@ -78,6 +78,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let shortcuts = ShortcutsStore()
     private let media = MediaController()
     private let timer = TimerController()
+    private let timerNotifications = TimerCompletionNotificationCoordinator()
     private let stats = SystemStatsController()
     private let liveActivities = LiveActivityStore()
     private lazy var clipboardHistory = ClipboardHistoryStore(settings: settings)
@@ -94,6 +95,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         shortcuts.seedDefaultsIfNeeded()
+        timer.setLifecycleHandler { [weak self] event in
+            guard let self else { return }
+            timerNotifications.handle(
+                event,
+                preferences: TimerCompletionNotificationPreferences(
+                    notificationsEnabled: settings.timerNotificationEnabled,
+                    soundEnabled: settings.timerSoundEnabled
+                )
+            )
+        }
 
         let modules = IslandModules(
             media: media,

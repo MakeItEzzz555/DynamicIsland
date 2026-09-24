@@ -1,7 +1,7 @@
 # Graph Report - DynamicIsland  (2026-09-24)
 
 ## Corpus Check
-- 88 files · ~127,305 words
+- 88 files · ~127,332 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 3 file(s) not represented in the graph (top: (none) 2, .plist 1)
 
