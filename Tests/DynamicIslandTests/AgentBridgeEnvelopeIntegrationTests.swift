@@ -162,7 +162,19 @@ final class AgentBridgeEnvelopeIntegrationTests: XCTestCase {
     }
 
     func testProducerReplacementAllocatesNewGenerationAndRejectsStaleProducerWork() async throws {
-        let (processor, store) = makeProcessor()
+        let store = AgentEventStore()
+        let ingress = AgentBridgeIngress(store: store)
+        ingress.activate(launchID: "test-launch")
+        let firstProcessor = makeProcessor(
+            store: store,
+            ingress: ingress,
+            producerID: "producer-a"
+        )
+        let replacementProcessor = makeProcessor(
+            store: store,
+            ingress: ingress,
+            producerID: "producer-b"
+        )
         let first = try AgentBridgeTestSupport.body(
             producerID: "producer-a",
             event: AgentBridgeTestSupport.event(id: "start-1")
@@ -177,14 +189,26 @@ final class AgentBridgeEnvelopeIntegrationTests: XCTestCase {
                 id: "late-work", type: "agentWorking", payload: ["activity": ["summary": "late"]]
             )
         )
-        await assertResponse(processor, signed(body: first, nonce: "n1"), equals: .accepted)
-        await assertResponse(processor, signed(body: replacement, nonce: "n2"), equals: .accepted)
-        await assertResponse(processor, signed(body: stale, nonce: "n3"), equals: .unprocessableContent)
+        await assertResponse(firstProcessor, signed(body: first, nonce: "n1"), equals: .accepted)
+        await assertResponse(replacementProcessor, signed(body: replacement, nonce: "n2"), equals: .accepted)
+        await assertResponse(firstProcessor, signed(body: stale, nonce: "n3"), equals: .unprocessableContent)
         XCTAssertEqual(Set(store.sessions.map(\.id.generation.rawValue)), [1, 2])
         XCTAssertEqual(store.sessions.first(where: { $0.id.generation.rawValue == 2 })?.state, .idle)
         XCTAssertFalse(store.sessions.contains { session in
             session.recentActivity.contains { $0.id.rawValue == "late-work" }
         })
+    }
+
+    func testAuthenticatedProducerCannotClaimAnotherProducerIdentity() async throws {
+        let body = try AgentBridgeTestSupport.body(
+            producerID: "producer-b",
+            event: AgentBridgeTestSupport.event(id: "hijack")
+        )
+        let (processor, store) = makeProcessor(producerID: "producer-a")
+
+        await assertResponse(processor, signed(body: body), equals: .unprocessableContent)
+
+        XCTAssertTrue(store.sessions.isEmpty)
     }
 
     func testConcurrentProvidersAndSessionsRemainIsolated() async throws {
@@ -221,20 +245,33 @@ final class AgentBridgeEnvelopeIntegrationTests: XCTestCase {
         XCTAssertTrue(store.sessions.isEmpty)
     }
 
-    private func makeProcessor() -> (AgentBridgeRequestProcessor, AgentEventStore) {
+    private func makeProcessor(
+        producerID: String = "producer-1"
+    ) -> (AgentBridgeRequestProcessor, AgentEventStore) {
         let store = AgentEventStore()
         let ingress = AgentBridgeIngress(store: store)
         ingress.activate(launchID: "test-launch")
-        let processor = AgentBridgeRequestProcessor(
+        return (
+            makeProcessor(store: store, ingress: ingress, producerID: producerID),
+            store
+        )
+    }
+
+    private func makeProcessor(
+        store: AgentEventStore,
+        ingress: AgentBridgeIngress,
+        producerID: String
+    ) -> AgentBridgeRequestProcessor {
+        AgentBridgeRequestProcessor(
             authenticator: AgentBridgeAuthenticator(
                 keyData: AgentBridgeTestSupport.launchKey,
                 now: { AgentBridgeTestSupport.now }
             ),
             ingress: ingress,
             launchID: "test-launch",
+            authenticatedProducerID: producerID,
             now: { AgentBridgeTestSupport.now }
         )
-        return (processor, store)
     }
 
     private func signed(

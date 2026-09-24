@@ -21,7 +21,10 @@ final class AgentBridgeNetworkTests: XCTestCase {
         let record = try decodeRecord(at: recordURL)
         XCTAssertEqual(record.host, "127.0.0.1")
         XCTAssertGreaterThan(record.port, 0)
-        let body = try AgentBridgeTestSupport.body(event: AgentBridgeTestSupport.event())
+        let body = try AgentBridgeTestSupport.body(
+            producerID: record.producerID,
+            event: AgentBridgeTestSupport.event()
+        )
         let key = try XCTUnwrap(Data(base64Encoded: record.authenticationToken))
         let response = try await send(
             AgentBridgeTestSupport.signedRequest(

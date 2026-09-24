@@ -40,6 +40,9 @@ struct AgentBridgeDiscoveryRecord: Codable, Equatable, Sendable {
     let host: String
     let port: UInt16
     let launchID: String
+    /// Identity bound by the server to this discovery credential. Clients echo
+    /// it in envelopes but cannot select another producer epoch with this key.
+    let producerID: String
     /// A derived per-launch key. The persistent installation secret never leaves Keychain.
     let authenticationToken: String
     let processID: Int32

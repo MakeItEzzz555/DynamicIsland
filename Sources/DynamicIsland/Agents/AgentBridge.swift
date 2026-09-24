@@ -31,6 +31,7 @@ final class AgentBridgeIngress {
 
     func ingest(
         request: AgentBridgeWireRequest,
+        authenticatedProducerID: String,
         launchID: String,
         receivedAt: Date
     ) -> Result<AgentBridgeIngestionResult, AgentBridgeEnvelopeError> {
@@ -38,7 +39,8 @@ final class AgentBridgeIngress {
         guard request.protocolVersion == AgentBridgeLimits.protocolVersion else {
             return .failure(.unsupportedProtocol)
         }
-        guard Self.validProducerID(request.producerID),
+        guard request.producerID == authenticatedProducerID,
+              Self.validProducerID(authenticatedProducerID),
               let batch = request.eventBatch,
               !batch.isEmpty,
               batch.count <= AgentBridgeLimits.maximumBatchEvents else {
@@ -52,7 +54,7 @@ final class AgentBridgeIngress {
             for wire in batch {
                 let event = try normalize(
                     wire,
-                    producerID: request.producerID,
+                    producerID: authenticatedProducerID,
                     receivedAt: receivedAt,
                     generations: &proposedGenerations
                 )
@@ -338,17 +340,20 @@ actor AgentBridgeRequestProcessor {
     private let authenticator: AgentBridgeAuthenticator
     private let ingress: AgentBridgeIngress
     private let launchID: String
+    private let authenticatedProducerID: String
     private let now: @Sendable () -> Date
 
     init(
         authenticator: AgentBridgeAuthenticator,
         ingress: AgentBridgeIngress,
         launchID: String,
+        authenticatedProducerID: String,
         now: @escaping @Sendable () -> Date = Date.init
     ) {
         self.authenticator = authenticator
         self.ingress = ingress
         self.launchID = launchID
+        self.authenticatedProducerID = authenticatedProducerID
         self.now = now
     }
 
@@ -387,7 +392,12 @@ actor AgentBridgeRequestProcessor {
 
         do {
             let wire = try AgentBridgeEnvelopeDecoder.decode(request.body)
-            let result = await ingress.ingest(request: wire, launchID: launchID, receivedAt: now())
+            let result = await ingress.ingest(
+                request: wire,
+                authenticatedProducerID: authenticatedProducerID,
+                launchID: launchID,
+                receivedAt: now()
+            )
             switch result {
             case .success:
                 return AgentBridgeHTTPResponse(status: .accepted, code: "accepted")
@@ -541,7 +551,8 @@ final class AgentBridge: ObservableObject {
             let processor = AgentBridgeRequestProcessor(
                 authenticator: authenticator,
                 ingress: ingress,
-                launchID: launchID
+                launchID: launchID,
+                authenticatedProducerID: launchID
             )
             let server = serverFactory { [weak self] request in
                 let response = await processor.handle(request)
@@ -558,6 +569,7 @@ final class AgentBridge: ObservableObject {
                 host: "127.0.0.1",
                 port: port,
                 launchID: launchID,
+                producerID: launchID,
                 authenticationToken: material.1.base64EncodedString(),
                 processID: getpid(),
                 createdAt: Date()
