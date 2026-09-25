@@ -295,6 +295,20 @@ actor AgentIngestionCoordinator {
         let id = event.sessionID
         if var current = leases[id] {
             if current.isTerminal, event.type == .sessionStarted {
+                // A secondary producer discovering the same immutable provider
+                // session after a stronger lifecycle source has already ended it
+                // must converge on that generation rather than manufacture a
+                // fresh run. The producer that already owns the lease may start
+                // a new local incarnation explicitly.
+                if !current.owners.contains(handle),
+                   let currentContinuity = current.continuity,
+                   let incomingContinuity = event.continuity,
+                   currentContinuity == incomingContinuity {
+                    current.owners.insert(handle)
+                    leases[id] = current
+                    try assertGeneration(event.assertedGeneration, equals: current.instanceID.generation)
+                    return current
+                }
                 return try allocateLease(
                     id: id,
                     continuity: event.continuity,

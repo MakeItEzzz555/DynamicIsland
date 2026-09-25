@@ -276,3 +276,10 @@ Genuinely deferred: exact provider support for attaching App Server to independe
 The authoritative Codex hook path uses a route-scoped producer credential instead of the generic relay credential. The bridge publishes `codex-hook-v1.json` beside the generic discovery record, bound to `/v1/events/codex-hook` and to an `officialHook` producer whose policy permits only provider `codex`, source `unknown`, documented hook event domains, and observation-only capabilities. Route selection happens before authentication, while the selected HMAC still binds the exact route and body.
 
 The Codex hook relay is deliberately fail-open from Codex's perspective: malformed input, DynamicIsland absence, authentication failure, or semantic rejection never blocks the provider. This is an observability integration, not a policy hook. Raw prompts, tool inputs, tool outputs, assistant text, and transcript contents are discarded before the normalized event crosses the bridge.
+
+
+## A3.1 Codex recovery authority
+
+Codex rollout persistence is treated as a compatibility/recovery source, not as a peer of official hooks. Complete LF-delimited records are read through the generic A2.2 tailer and parsed only after framing. Session metadata establishes the provider-native session ID and continuity identity; turn context may enrich model/CWD; token records may enrich observed token/context metrics; explicit persisted turn-start/complete/abort records may provide fallback lifecycle at `localStructuredRecord` authority.
+
+The adapter intentionally ignores content-rich rollout items. No response body, raw reasoning, user message, tool arguments/results, or assistant text enters normalized state. Schema changes degrade the recovery source rather than causing guessed mappings.

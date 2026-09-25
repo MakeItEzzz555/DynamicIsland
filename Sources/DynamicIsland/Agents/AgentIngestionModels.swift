@@ -136,6 +136,25 @@ struct AgentProducerPolicy: Equatable, Sendable {
         allowedSchemaVersions: [AgentEvent.normalizedSchemaVersion]
     )
 
+    static let codexStructuredRecovery = AgentProducerPolicy(
+        allowedProviders: [.codex],
+        allowedSources: [.unknown],
+        allowedSourceKinds: [.structuredRecovery],
+        allowedEventTypes: [
+            .sessionStarted, .sessionMetadataUpdated, .agentWorking,
+            .usageUpdated, .capabilitiesUpdated, .projectContextUpdated,
+            .taskCompleted, .interrupted, .heartbeat
+        ],
+        authorityCeilings: Dictionary(uniqueKeysWithValues: AgentAuthorityDomain.allCases.map {
+            ($0, AgentEvidenceAuthority.localStructuredRecord)
+        }),
+        allowedCapabilities: [
+            .sessionLifecycle, .taskLifecycle, .tokenUsage, .contextUsage,
+            .modelMetadata, .projectContext, .gitMetadata
+        ],
+        allowedSchemaVersions: [AgentEvent.normalizedSchemaVersion]
+    )
+
     static let genericAuthenticatedBridge = AgentProducerPolicy(
         allowedProviders: [.other("unverified")],
         allowedSources: [.unknown],

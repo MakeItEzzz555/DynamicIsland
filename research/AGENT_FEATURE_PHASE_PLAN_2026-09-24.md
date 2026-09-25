@@ -245,3 +245,12 @@ None blocks A1 because normalized identity, reduction, replay, privacy and capab
 A3 uses Codex's official command-hook lifecycle as the first authoritative Codex source. DynamicIsland publishes a dedicated per-launch, mode-0600 Codex hook bridge profile with a separate credential and a server-side `codexOfficialHook` policy. The bundled `DynamicIslandCodexHookRelay` consumes the documented hook JSON on stdin, privacy-reduces it before transport, and fails open so DynamicIsland availability can never block Codex.
 
 Mapped hook events are SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, PermissionRequest, Stop, Interrupt, SessionEnd, SubagentStart, and SubagentStop. Prompt text, tool input/output, assistant output, transcript contents, and full commands are never forwarded. Compact hooks are intentionally not configured by this integration. A3 does not edit Codex configuration; guided hook installation remains A11.
+
+
+## A3.1 implementation refinement — Codex structured recovery
+
+A3.1 reuses `AppendOnlyRecordTailer` as the only physical JSONL reader. `CodexRolloutRecoveryParser` understands a deliberately narrow, version-pinned subset of the current official rollout envelope: `session_meta`, `turn_context`, `token_usage_record`, and selected `event_msg` lifecycle/usage records. Raw response items, prompts, reasoning text, tool output, assistant content, and account identifiers are never normalized.
+
+The recovery producer uses `structuredRecovery` and `localStructuredRecord` authority. It can establish a fallback session when hooks are absent and can enrich an existing hook-owned session when immutable Codex session continuity matches. When a stronger hook-owned session is already terminal, a late secondary recovery `session_meta` joins that generation rather than manufacturing a new run. Recovery never gains approval control or verified source identity.
+
+App Server remains an optional richer future source only when DynamicIsland owns or is explicitly connected to the App Server lifecycle. Current public App Server APIs do not justify claiming universal passive attachment to independently launched Codex clients, so A3.1 does not fabricate that capability.
