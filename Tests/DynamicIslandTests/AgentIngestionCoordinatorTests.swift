@@ -180,6 +180,100 @@ final class AgentIngestionCoordinatorTests: XCTestCase {
         XCTAssertFalse(store.sessions.single?.state.isTerminal == true)
     }
 
+    func testWeakerRecoveryTerminalCannotCloseLifecycleOwnedLeaseOrForceGeneration() async throws {
+        let (store, coordinator) = makeRuntime()
+        let hook = try await registered(coordinator, id: "authority-hook", kind: .officialHook)
+        let recoveryPolicy = AgentIngestionTestSupport.policy(
+            kinds: [.structuredRecovery],
+            ceiling: .localStructuredRecord
+        )
+        let recovery = try await registered(
+            coordinator,
+            id: "authority-recovery",
+            kind: .structuredRecovery,
+            policy: recoveryPolicy
+        )
+
+        XCTAssertSuccess(await coordinator.ingest(event("hook-start", continuity: "same"), from: hook))
+        XCTAssertSuccess(await coordinator.ingest(
+            event(
+                "recovery-join",
+                authority: .localStructuredRecord,
+                continuity: "same"
+            ),
+            from: recovery
+        ))
+        XCTAssertSuccess(await coordinator.ingest(
+            event(
+                "recovery-complete",
+                type: .taskCompleted,
+                authority: .localStructuredRecord,
+                payload: .terminal(.init(summary: "Recovered completion")),
+                continuity: "same"
+            ),
+            from: recovery
+        ))
+
+        XCTAssertEqual(store.sessions.single?.state, .idle)
+        var lease = (await coordinator.sessionLeases()).single
+        XCTAssertEqual(lease?.instanceID.generation.rawValue, 1)
+        XCTAssertFalse(lease?.isTerminal == true)
+        XCTAssertEqual(lease?.terminalAuthority, .lifecycle)
+
+        XCTAssertSuccess(await coordinator.ingest(
+            event(
+                "recovery-start-again",
+                authority: .localStructuredRecord,
+                continuity: "same"
+            ),
+            from: recovery
+        ))
+
+        lease = (await coordinator.sessionLeases()).single
+        XCTAssertEqual(lease?.instanceID.generation.rawValue, 1)
+        XCTAssertEqual(Set(store.sessions.map(\.id.generation.rawValue)), [1])
+    }
+
+    func testCapabilitySnapshotAuthorityTracksStrongestObservedAggregateWithoutFabrication() async throws {
+        let (store, coordinator) = makeRuntime()
+        let recoveryPolicy = AgentIngestionTestSupport.policy(
+            kinds: [.structuredRecovery],
+            ceiling: .localStructuredRecord
+        )
+        let recovery = try await registered(
+            coordinator,
+            id: "caps-recovery",
+            kind: .structuredRecovery,
+            policy: recoveryPolicy
+        )
+        let hook = try await registered(coordinator, id: "caps-hook", kind: .officialHook)
+
+        XCTAssertSuccess(await coordinator.ingest(
+            event("recovery-start", authority: .localStructuredRecord, continuity: "same"),
+            from: recovery
+        ))
+        XCTAssertSuccess(await coordinator.ingest(
+            capabilityEvent("recovery-caps", [.toolLifecycle], authority: .localStructuredRecord),
+            from: recovery
+        ))
+        XCTAssertEqual(store.sessions.single?.capabilitySnapshotAuthority, .localStructuredRecord)
+        XCTAssertEqual((await coordinator.sessionLeases()).single?.capabilitySnapshotAuthority, .localStructuredRecord)
+
+        XCTAssertSuccess(await coordinator.ingest(event("hook-join", continuity: "same"), from: hook))
+        XCTAssertSuccess(await coordinator.ingest(
+            capabilityEvent("hook-caps", [.approvalObservation]),
+            from: hook
+        ))
+        XCTAssertEqual(store.sessions.single?.capabilitySnapshotAuthority, .lifecycle)
+        XCTAssertTrue(store.sessions.single?.capabilities.contains(.toolLifecycle) == true)
+        XCTAssertTrue(store.sessions.single?.capabilities.contains(.approvalObservation) == true)
+
+        XCTAssertSuccess(await coordinator.unregisterProducer(hook, at: AgentIngestionTestSupport.now.addingTimeInterval(1)))
+        XCTAssertEqual(store.sessions.single?.capabilitySnapshotAuthority, .lifecycle)
+        XCTAssertTrue(store.sessions.single?.capabilities.contains(.toolLifecycle) == true)
+        XCTAssertFalse(store.sessions.single?.capabilities.contains(.approvalObservation) == true)
+    }
+
     func testCapabilityEvidenceAggregatesAndWithdrawsPerProducer() async throws {
         let (store, coordinator) = makeRuntime()
         let first = try await registered(coordinator, id: "caps-a")

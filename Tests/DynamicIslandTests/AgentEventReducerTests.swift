@@ -217,6 +217,66 @@ final class AgentEventReducerTests: XCTestCase {
         XCTAssertTrue(session.capabilities.contains(.approvalObservation))
     }
 
+    func testWeakerTerminalCannotOverrideStrongerActiveLifecycle() throws {
+        let id = AgentTestFixture.sessionID(.codex, "weak-terminal")
+        let session = try startedSession(id)
+        let weakerTerminal = AgentTestFixture.event(
+            "weak-complete",
+            sessionID: id,
+            type: .taskCompleted,
+            offset: 1,
+            authority: .localStructuredRecord,
+            payload: .terminal(AgentTerminalEvent(summary: "Recovered completion"))
+        )
+
+        let result = AgentEventReducer.reduce(session: session, event: weakerTerminal)
+
+        XCTAssertEqual(result.application, .ignoredWeakerEvidence)
+        XCTAssertEqual(result.session?.state, .idle)
+        XCTAssertEqual(result.session?.terminalAuthority, .lifecycle)
+        XCTAssertNil(result.session?.endedAt)
+        XCTAssertNil(result.attention)
+    }
+
+    func testStrongerJoiningStartRaisesLifecycleThreshold() throws {
+        let id = AgentTestFixture.sessionID(.codex, "authority-upgrade")
+        let recoveryStart = AgentTestFixture.event(
+            "recovery-start",
+            sessionID: id,
+            type: .sessionStarted,
+            offset: 0,
+            authority: .localStructuredRecord,
+            payload: .sessionMetadata(AgentSessionMetadata(project: nil))
+        )
+        var session = try XCTUnwrap(AgentEventReducer.reduce(session: nil, event: recoveryStart).session)
+        XCTAssertEqual(session.terminalAuthority, .localStructuredRecord)
+
+        session = try apply(AgentTestFixture.event(
+            "hook-start",
+            sessionID: id,
+            type: .sessionStarted,
+            offset: 1,
+            authority: .lifecycle,
+            payload: .sessionMetadata(AgentSessionMetadata(project: nil))
+        ), to: session)
+        XCTAssertEqual(session.terminalAuthority, .lifecycle)
+
+        let result = AgentEventReducer.reduce(
+            session: session,
+            event: AgentTestFixture.event(
+                "late-recovery-complete",
+                sessionID: id,
+                type: .taskCompleted,
+                offset: 2,
+                authority: .localStructuredRecord,
+                payload: .terminal(AgentTerminalEvent(summary: "Late recovery"))
+            )
+        )
+
+        XCTAssertEqual(result.application, .ignoredWeakerEvidence)
+        XCTAssertEqual(result.session?.state, .idle)
+    }
+
     func testTerminalTransitionOccursOnceAndLaterWorkCannotResurrectGeneration() throws {
         let id = AgentTestFixture.sessionID(.codex, "terminal")
         var session = try startedSession(id)

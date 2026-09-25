@@ -111,6 +111,16 @@ enum AgentEventReducer {
             )
         }
 
+        if isTerminalTransition(event.type),
+           event.authority < session.terminalAuthority {
+            remember(event, in: &session, limits: limits)
+            return AgentReductionResult(
+                session: session,
+                application: .ignoredWeakerEvidence,
+                attention: nil
+            )
+        }
+
         if session.state.isTerminal && !isAllowedAfterTerminal(event.type) {
             remember(event, in: &session, limits: limits)
             return AgentReductionResult(
@@ -165,7 +175,7 @@ enum AgentEventReducer {
         } else {
             project = AgentProjectContext()
         }
-        return AgentSession(
+        var session = AgentSession(
             id: event.instanceID,
             source: event.source,
             state: .idle,
@@ -181,6 +191,8 @@ enum AgentEventReducer {
             endedAt: nil,
             lastUpdatedAt: event.receivedTimestamp
         )
+        session.terminalAuthority = event.authority
+        return session
     }
 
     private static func apply(
@@ -191,6 +203,7 @@ enum AgentEventReducer {
         expireApprovals(in: &session, at: event.receivedTimestamp)
         switch event.type {
         case .sessionStarted:
+            session.terminalAuthority = max(session.terminalAuthority, event.authority)
             mergeSessionMetadata(event.payload, source: event.source, into: &session)
             appendActivity(
                 event: event,
@@ -203,6 +216,7 @@ enum AgentEventReducer {
             )
 
         case .sessionResumed:
+            session.terminalAuthority = max(session.terminalAuthority, event.authority)
             session.endedAt = nil
             session.state = .working
             session.isWorking = true
@@ -678,6 +692,15 @@ enum AgentEventReducer {
         }
 
         return .applied(nil)
+    }
+
+    private static func isTerminalTransition(_ type: AgentEventType) -> Bool {
+        switch type {
+        case .sessionEnded, .taskCompleted, .taskFailed, .interrupted:
+            true
+        default:
+            false
+        }
     }
 
     private static func isAllowedAfterTerminal(_ type: AgentEventType) -> Bool {

@@ -319,6 +319,8 @@ struct AgentSessionLease: Equatable, Sendable {
     let continuity: AgentSessionContinuity?
     var owners: Set<AgentProducerHandle>
     var isTerminal: Bool
+    var terminalAuthority: AgentEvidenceAuthority = .heuristic
+    var capabilitySnapshotAuthority: AgentEvidenceAuthority = .heuristic
 }
 
 struct AgentIdentityConflict: Equatable, Sendable {
