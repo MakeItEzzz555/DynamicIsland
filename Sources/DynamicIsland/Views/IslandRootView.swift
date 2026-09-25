@@ -2499,6 +2499,165 @@ struct ExpandedIslandView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
+    private func agentActivityPage(metrics: ExpandedIslandLayoutMetrics) -> some View {
+        Group {
+            if agentEvents.sessions.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: "cpu")
+                        .font(.system(size: 24, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.45))
+                    Text("No agent sessions")
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    Text("Codex and Claude activity will appear here when a verified integration is active.")
+                        .font(.system(size: 10, weight: .medium, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 340)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView(.vertical, showsIndicators: true) {
+                    LazyVStack(spacing: 10) {
+                        ForEach(agentEvents.sessions, id: \.id) { session in
+                            agentSessionCard(session)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+        }
+        .innerBlurScaleClean(
+            settings: settings,
+            isVisible: contentVisible,
+            isRemoval: isContentRemoving,
+            index: 1,
+            reduceMotion: reduceMotion
+        )
+        .frame(maxWidth: .infinity, maxHeight: metrics.pageHeight, alignment: .topLeading)
+    }
+
+    private func agentSessionCard(_ session: AgentSession) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text(session.id.sessionID.provider.stableName.capitalized)
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(.white.opacity(0.08), in: Capsule())
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(session.project.displayName ?? "Agent session")
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .lineLimit(1)
+                    HStack(spacing: 5) {
+                        if let model = session.project.model {
+                            Text(model)
+                        }
+                        if session.source != .unknown {
+                            Text(session.source.rawValue)
+                        }
+                    }
+                    .font(.system(size: 8, weight: .medium, design: .rounded))
+                    .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 8)
+
+                Text(agentStateLabel(session.state))
+                    .font(.system(size: 9, weight: .bold, design: .rounded))
+                    .foregroundStyle(agentStateAccent(session.state))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(agentStateAccent(session.state).opacity(0.12), in: Capsule())
+            }
+
+            if let current = session.recentActivity.last {
+                HStack(alignment: .top, spacing: 7) {
+                    Image(systemName: "waveform.path.ecg")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(current.title)
+                            .font(.system(size: 10, weight: .semibold, design: .rounded))
+                            .lineLimit(1)
+                        if let summary = current.summary {
+                            Text(summary)
+                                .font(.system(size: 9, weight: .regular, design: .rounded))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+                    }
+                }
+            }
+
+            if session.state == .waitingForApproval || session.state == .waitingForUser {
+                Label(
+                    session.state == .waitingForApproval ? "Approval required" : "User input required",
+                    systemImage: "exclamationmark.bubble.fill"
+                )
+                .font(.system(size: 9, weight: .semibold, design: .rounded))
+                .foregroundStyle(.orange)
+            }
+
+            if session.recentActivity.count > 1 {
+                VStack(alignment: .leading, spacing: 3) {
+                    ForEach(Array(session.recentActivity.suffix(3).reversed()), id: \.id) { activity in
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(.white.opacity(0.22))
+                                .frame(width: 4, height: 4)
+                            Text(activity.title)
+                                .font(.system(size: 8, weight: .medium, design: .rounded))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(.white.opacity(0.06), lineWidth: 1)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(
+            session.id.sessionID.provider.stableName.capitalized +
+            ", " + (session.project.displayName ?? "agent session") +
+            ", " + agentStateLabel(session.state)
+        )
+    }
+
+    private func agentStateLabel(_ state: AgentState) -> String {
+        switch state {
+        case .idle: "Idle"
+        case .thinking: "Thinking"
+        case .planning: "Planning"
+        case .working: "Working"
+        case .runningTool: "Tool"
+        case .runningCommand: "Command"
+        case .waitingForApproval: "Approval"
+        case .waitingForUser: "Input"
+        case .planReady: "Plan ready"
+        case .completed: "Completed"
+        case .failed: "Failed"
+        case .interrupted: "Interrupted"
+        }
+    }
+
+    private func agentStateAccent(_ state: AgentState) -> Color {
+        switch state {
+        case .completed: .green
+        case .failed: .red
+        case .waitingForApproval, .waitingForUser: .orange
+        case .planReady, .planning: .cyan
+        case .interrupted: .yellow
+        default: .white.opacity(0.72)
+        }
+    }
+
     private func trayPage(metrics: ExpandedIslandLayoutMetrics) -> some View {
         GeometryReader { proxy in
             HStack(alignment: .top, spacing: metrics.pageColumnSpacing) {
