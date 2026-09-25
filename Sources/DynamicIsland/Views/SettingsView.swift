@@ -9,6 +9,7 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
     case tray = "Tray"
     case timer = "Timer"
     case stats = "Stats"
+    case agents = "AI Agents"
     case clipboard = "Clipboard"
     case liveActivities = "Live Activities"
     case gestures = "Gestures"
@@ -26,6 +27,7 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
         case .tray: "tray.full"
         case .timer: "timer"
         case .stats: "chart.xyaxis.line"
+        case .agents: "cpu"
         case .clipboard: "doc.on.clipboard"
         case .liveActivities: "waveform.path.ecg"
         case .gestures: "hand.raised"
@@ -66,6 +68,8 @@ struct SettingsView: View {
                         timerSection
                     case .stats:
                         statsSection
+                    case .agents:
+                        agentsSection
                     case .clipboard:
                         clipboardSection
                     case .liveActivities:
