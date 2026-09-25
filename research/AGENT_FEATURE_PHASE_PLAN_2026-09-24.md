@@ -99,7 +99,7 @@ Exit: synthetic hook/protocol/recovery/telemetry producers converge only with ve
 
 Entrance: A2.1 producer handles, policy, lease and health APIs are stable.
 
-Scope: a bundled production client reusing discovery parsing, canonical HMAC and bounded request framing; producer-specific credential handoff; bounded retry/failure reporting; and a provider-neutral append-only record tailer with byte cursors, partial-line/UTF-8 safety, truncation/rotation identity, bounded catch-up, sleep/wake recovery and deterministic teardown. No Codex/Claude semantics.
+Scope: the tiny `AgentBridgeShared` protocol/client module; `DynamicIslandAgentRelay` packaged at `Contents/Helpers`; bounded stdin, safe output and stable exit codes; validated generic discovery with a future provider-profile seam; one changed-profile retry for stale connection/authentication; and a provider-neutral LF record tailer with device/inode identity, 64 KiB delta reads, 1 MiB/2,000-record catch-up, 1 MiB record/fragment bounds, partial-line safety, truncation/rotation handling, event-driven missing/recreate observation, explicit wake reconciliation and deterministic teardown. No Codex/Claude semantics.
 
 Exit: client interoperability fixtures and tailer adversarial tests pass without duplicating server crypto or session state; no provider configuration changes; full validation and checkpoint clean.
 
@@ -107,7 +107,7 @@ Exit: client interoperability fixtures and tailer adversarial tests pass without
 
 Entrance: A2.2 client/tailer primitives stable; supported minimum Codex version and authoritative surface matrix frozen for this phase.
 
-Scope: the strongest supported official Codex lifecycle surface, with authoritative thread/turn/item/tool/approval/plan/subagent correlations. Detect configuration but do not modify it. No filesystem recovery, OTLP or UI.
+Scope: the strongest supported official Codex lifecycle surface, with authoritative thread/turn/item/tool/approval/plan/subagent correlations. Detect configuration but do not modify it. Reuse A2.2 transport/profile/relay packaging when an external producer is needed; do not create another HTTP client, signing scheme or discovery reader. No filesystem recovery, OTLP or UI.
 
 Adversarial tests: independent CLI/IDE sessions, resume/fork, two threads same repo, protocol disconnect/reconnect, out-of-order item completion, schema drift, hosted-tool gap, quota absence and version mismatch.
 
@@ -117,7 +117,7 @@ Exit: replayed raw Codex fixtures normalize deterministically; completion/interr
 
 Entrance: A3 authoritative Codex lifecycle mapping and correlation IDs stable.
 
-Scope: supported App Server detail, structured local recovery and IDE/source enrichment. Recovery may fill bounded history/metadata but cannot override explicit lifecycle. No UI or configuration writes.
+Scope: supported App Server detail, structured local recovery and IDE/source enrichment. Recovery uses the A2.2 append-only tailer and adds only version-pinned Codex parsing/correlation. It may fill bounded history/metadata but cannot override explicit lifecycle. No UI or configuration writes.
 
 Exit: lifecycle/recovery duplicate and contradiction fixtures prove authority rules; bounded catch-up and teardown pass; full validation and checkpoint clean.
 

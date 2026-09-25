@@ -86,6 +86,8 @@ Adapters have no reference to `IslandStateStore`, `IslandLayoutStore`, views, au
 - `AgentEventStore`: session state, operation correlation, ordering, deduplication, bounded history, terminal semantics and projections.
 - `AgentAttentionCoordinator`: significant-event classification, coalescing, attention generation, sound throttle, persistent badge obligations, monotonic retract deadline.
 - `AgentBridge`: authenticated local transport and ingress limits; no provider semantics and no arbitrary execution.
+- `AgentBridgeShared`: the deliberately small cross-process protocol surface: v1 constants, discovery/profile validation, canonical request authentication, bounded envelope construction, and the loopback client.
+- `AppendOnlyRecordTailer`: provider-neutral physical record framing and file-cursor lifecycle only; it emits complete bounded `Data` records and never parses provider schemas.
 - provider adapters: raw-source parsing and provider-specific correlation only.
 - SwiftUI: renders immutable projections and emits user intent. It never parses raw events.
 
@@ -137,7 +139,7 @@ Defaults retain no full prompt, source code, tool output, shell output, environm
 
 The bridge HMAC proves possession of the current per-launch credential and binds requests to the server-issued producer ID. It does not prove OS process identity against another process running as the same user that can read the private discovery credential, and it does not prove provider semantics. `AgentSourceRegistry` policy therefore limits provider/source claims, event-specific authority and capabilities before the coordinator allocates a lease. Adapters enforce schema/version/size limits and strip content. Config setup in A11 is detect → diff → user confirmation → backup where appropriate → minimal patch → verification → rollback. It never overwrites whole Codex or Claude config files and never silently enables content-rich telemetry.
 
-The current discovery-wide generic bridge producer is restricted to provider `unverified`, source `unknown`, local-structured-record authority or lower, and a non-action capability allowlist. It cannot claim Codex, Claude, a verified editor/source, lifecycle authority, or `approvalControl`. A2.2 must register source-specific producers under separate server-side policies before real provider identities are accepted.
+The current discovery-wide generic bridge producer is restricted to provider `unverified`, source `unknown`, local-structured-record authority or lower, and a non-action capability allowlist. It cannot claim Codex, Claude, a verified editor/source, lifecycle authority, or `approvalControl`. A3/A4 must register source-specific producers under separate server-side policies before real provider identities are accepted.
 
 ### A2.1 ingress boundary and A2.2 handoff
 
@@ -145,7 +147,11 @@ All authenticated bridge and future in-process sources converge through the same
 
 Capabilities use a per-producer evidence ledger. Withdrawal or revocation removes only that producer's proof, and an effective capability remains while another permitted source still proves it. Authority is event-specific: lifecycle protocols/hooks may own lifecycle, telemetry may enrich usage and duration, recovery may fill bounded history, and weak evidence cannot resolve approval or declare completion.
 
-A2.2 may add a bundled `AgentBridgeClient` that reuses the discovery schema, canonical HMAC and request framing, plus a generic append-only tailer. It must not duplicate signing logic or session allocation. The tailer contract covers byte cursors, partial UTF-8/line buffering, truncation and replacement, file identity, bounded startup catch-up, sleep/wake recovery and deterministic teardown; provider interpretation remains in A3/A4.
+A2.2 implements `AgentBridgeShared` and bundles `DynamicIslandAgentRelay` at `DynamicIsland.app/Contents/Helpers/DynamicIslandAgentRelay`. The relay accepts one normalized event or batch from bounded stdin via `send-event`, or performs bounded authenticated diagnostics via `health`. It rebuilds protocol version and producer identity from a validated profile, signs the exact v1 canonical request, connects only to literal `127.0.0.1`, and reports stable exit categories without printing credentials or payloads. Connect failure, connect timeout, or stale authentication may reload discovery once and retry only when the profile changed; request timeout and semantic rejection are never retried. The default profile remains the conservative generic discovery credential. A future source-specific profile conforms to the same client-profile abstraction and gains no authority until its server registration policy grants it.
+
+`AppendOnlyRecordTailer` separates an LF byte framer from device/inode identity, cursor management, and event-driven vnode lifecycle. It supports `fromEnd` and `boundedCatchUp`; catch-up is capped at 1 MiB and the newest 2,000 complete records, live reads use 64 KiB chunks, and one raw record/trailing fragment is capped at 1 MiB. It retains partial bytes until LF, strips one CR for CRLF, drops an oversize record through its next delimiter, and then recovers. Same-inode truncation and path replacement clear incompatible partial bytes. Parent/file dispatch sources handle missing/recreated files without polling; lifecycle and file generations reject stale callbacks; `reconcile()` is the future sleep/wake hook; `stop()` closes descriptors and drains watcher callbacks.
+
+A3 and A4 must reuse these contracts. They add provider semantics, provider-specific policy/profile provisioning, normalization, and fixtures; they do not reinvent HTTP, signing, discovery/profile reading, relay packaging, or append-only tailing.
 
 Approval control is disabled by default. A9 may enable it only when the provider exposes a documented action channel bound to the exact request/session/generation. No terminal keystrokes, accessibility clicks, or inferred button coordinates are permitted. Failures and uncertainty default to observation-only, never approval.
 

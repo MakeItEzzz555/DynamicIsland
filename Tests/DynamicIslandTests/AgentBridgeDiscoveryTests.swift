@@ -1,3 +1,4 @@
+import AgentBridgeShared
 import XCTest
 @testable import DynamicIsland
 

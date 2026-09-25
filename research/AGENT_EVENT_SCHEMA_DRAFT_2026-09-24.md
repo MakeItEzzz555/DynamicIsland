@@ -127,6 +127,8 @@ Conceptual JSON shape:
 
 Wire clients do not get to choose `receivedTimestamp`; the bridge stamps it. Wire `producerID`, provider, source, authority, capabilities and generation are claims. Authentication supplies producer identity separately; A2.1 checks claims against server-side policy and resolves continuity to a locally allocated generation. `sessionGeneration`, when present, is only an assertion and cannot allocate or advance state.
 
+The A2.2 relay accepts a caller's normalized `event` or `events` object but reconstructs transport-owned `protocolVersion` and `producerID` from its validated `AgentBridgeClientProfile`. Its v1 signature remains byte-compatible with A2: `UPPERCASE_METHOD`, route, protocol version, Unix timestamp, nonce and lowercase SHA-256 body digest joined by LF with no trailing LF, authenticated with HMAC-SHA256. The default discovery profile is generic and cannot elevate provider, source, lifecycle authority, or action capabilities; stronger future profiles require matching server-side producer policy.
+
 ### Limits and validation
 
 - Maximum decoded event: 64 KiB; maximum HTTP request/batch: 1 MiB; maximum 100 events per batch. Reject before unbounded allocation.
