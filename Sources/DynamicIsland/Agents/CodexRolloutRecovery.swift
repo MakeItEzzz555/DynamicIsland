@@ -310,7 +310,7 @@ struct CodexRolloutRecoveryParser: Sendable {
         let eventIdentity = [
             nativeID,
             String(sequence ?? 0),
-            type.rawValue,
+            type.stableName,
             correlationID?.rawValue ?? "",
             discriminator
         ].joined(separator: "|")
@@ -395,9 +395,12 @@ struct CodexRolloutRecoveryParser: Sendable {
         case let number as NSNumber:
             let signed = number.int64Value
             return signed >= 0 ? UInt64(signed) : nil
-        case let value as UInt64: value
-        case let value as Int where value >= 0: UInt64(value)
-        default: nil
+        case let value as UInt64:
+            return value
+        case let value as Int where value >= 0:
+            return UInt64(value)
+        default:
+            return nil
         }
     }
 
