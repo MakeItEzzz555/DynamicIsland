@@ -336,9 +336,7 @@ final class AgentAttentionCoordinator: ObservableObject {
             if $0.createdAt != $1.createdAt { return $0.createdAt > $1.createdAt }
             return $0.eventID.rawValue < $1.eventID.rawValue
         }
-        if let newSoundIntent {
-            soundIntent = newSoundIntent
-        }
+        soundIntent = newSoundIntent
     }
 
     private func scheduleRetractIfNeeded() {
