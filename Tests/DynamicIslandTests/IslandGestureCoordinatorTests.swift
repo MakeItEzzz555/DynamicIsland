@@ -242,6 +242,7 @@ final class IslandGestureCoordinatorTests: XCTestCase {
         settings.showTrayTab = false
         settings.showTimerTab = true
         settings.showStatsTab = true
+        settings.showAgentsTab = false
 
         let navigation = IslandNavigationStore()
         XCTAssertEqual(navigation.selectedPage, .island)
