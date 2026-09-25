@@ -187,6 +187,8 @@ package struct AgentBridgeDiscoveryReader: AgentBridgeClientProfileProviding {
         }
         guard record.host == "127.0.0.1" else { throw AgentBridgeDiscoveryReadError.invalidHost }
         guard record.port != 0 else { throw AgentBridgeDiscoveryReadError.invalidPort }
+        let eventsRoute = record.eventsRoute ?? AgentBridgeProtocol.eventsRoute
+        guard Self.validRoute(eventsRoute) else { throw AgentBridgeDiscoveryReadError.malformed }
         guard Self.validIdentifier(record.launchID), Self.validIdentifier(record.producerID) else {
             throw AgentBridgeDiscoveryReadError.invalidIdentifier
         }
@@ -206,8 +208,17 @@ package struct AgentBridgeDiscoveryReader: AgentBridgeClientProfileProviding {
             protocolVersion: record.protocolVersion,
             launchID: record.launchID,
             producerID: record.producerID,
-            authenticationKey: key
+            authenticationKey: key,
+            eventsRoute: eventsRoute
         )
+    }
+
+    private static func validRoute(_ value: String) -> Bool {
+        guard value.hasPrefix("/v1/"), value.utf8.count <= 128 else { return false }
+        return value.unicodeScalars.allSatisfy {
+            $0.isASCII && !CharacterSet.whitespacesAndNewlines.contains($0) &&
+                !CharacterSet.controlCharacters.contains($0)
+        }
     }
 
     private static func validIdentifier(_ value: String) -> Bool {

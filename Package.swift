@@ -9,7 +9,8 @@ let package = Package(
     ],
     products: [
         .executable(name: "DynamicIsland", targets: ["DynamicIsland"]),
-        .executable(name: "DynamicIslandAgentRelay", targets: ["DynamicIslandAgentRelay"])
+        .executable(name: "DynamicIslandAgentRelay", targets: ["DynamicIslandAgentRelay"]),
+        .executable(name: "DynamicIslandCodexHookRelay", targets: ["DynamicIslandCodexHookRelay"])
     ],
     targets: [
         .target(
@@ -24,14 +25,24 @@ let package = Package(
                 .process("Assets.xcassets")
             ]
         ),
+        .target(
+            name: "CodexHookShared",
+            dependencies: ["AgentBridgeShared"],
+            path: "Sources/CodexHookShared"
+        ),
         .executableTarget(
             name: "DynamicIslandAgentRelay",
             dependencies: ["AgentBridgeShared"],
             path: "Sources/DynamicIslandAgentRelay"
         ),
+        .executableTarget(
+            name: "DynamicIslandCodexHookRelay",
+            dependencies: ["AgentBridgeShared", "CodexHookShared"],
+            path: "Sources/DynamicIslandCodexHookRelay"
+        ),
         .testTarget(
             name: "DynamicIslandTests",
-            dependencies: ["DynamicIsland", "AgentBridgeShared"],
+            dependencies: ["DynamicIsland", "AgentBridgeShared", "CodexHookShared"],
             path: "Tests/DynamicIslandTests"
         )
     ]

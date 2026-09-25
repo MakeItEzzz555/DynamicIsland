@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="DynamicIsland"
 RELAY_NAME="DynamicIslandAgentRelay"
+CODEX_RELAY_NAME="DynamicIslandCodexHookRelay"
 BUILD_DIR="$ROOT_DIR/.build/release"
 DIST_DIR="$ROOT_DIR/dist"
 APP_DIR="$DIST_DIR/$APP_NAME.app"
@@ -21,7 +22,9 @@ mkdir -p "$RESOURCES_DIR"
 mkdir -p "$HELPERS_DIR"
 cp "$BUILD_DIR/$APP_NAME" "$MACOS_DIR/$APP_NAME"
 cp "$BUILD_DIR/$RELAY_NAME" "$HELPERS_DIR/$RELAY_NAME"
+cp "$BUILD_DIR/$CODEX_RELAY_NAME" "$HELPERS_DIR/$CODEX_RELAY_NAME"
 chmod 755 "$HELPERS_DIR/$RELAY_NAME"
+chmod 755 "$HELPERS_DIR/$CODEX_RELAY_NAME"
 
 while IFS= read -r resource_bundle; do
   cp -R "$resource_bundle" "$RESOURCES_DIR/"
@@ -60,9 +63,11 @@ PLIST
 
 if [[ -n "${DEVELOPER_ID_APP:-}" ]]; then
   codesign --force --options runtime --timestamp --sign "$DEVELOPER_ID_APP" "$HELPERS_DIR/$RELAY_NAME"
+  codesign --force --options runtime --timestamp --sign "$DEVELOPER_ID_APP" "$HELPERS_DIR/$CODEX_RELAY_NAME"
   codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS_FILE" --sign "$DEVELOPER_ID_APP" "$APP_DIR"
 else
   codesign --force --sign - "$HELPERS_DIR/$RELAY_NAME"
+  codesign --force --sign - "$HELPERS_DIR/$CODEX_RELAY_NAME"
   codesign --force --sign - "$APP_DIR"
 fi
 

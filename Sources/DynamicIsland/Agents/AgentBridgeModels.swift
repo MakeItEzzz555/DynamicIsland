@@ -57,6 +57,7 @@ struct AgentBridgeWireEvent: Decodable, Sendable {
     let provider: String
     let source: String
     let nativeSessionID: String
+    let continuityIdentity: String?
     let sessionGeneration: UInt64?
     let eventType: String
     let providerTimestamp: String?

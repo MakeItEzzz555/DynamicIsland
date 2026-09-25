@@ -116,6 +116,26 @@ struct AgentProducerPolicy: Equatable, Sendable {
         allowedSources?.contains(source) ?? true
     }
 
+    static let codexOfficialHook = AgentProducerPolicy(
+        allowedProviders: [.codex],
+        allowedSources: [.unknown],
+        allowedSourceKinds: [.officialHook],
+        allowedEventTypes: [
+            .sessionStarted, .sessionResumed, .sessionMetadataUpdated, .sessionEnded,
+            .agentWorking, .toolStarted, .toolCompleted, .commandStarted, .commandCompleted,
+            .approvalRequested, .capabilitiesUpdated, .projectContextUpdated,
+            .taskCompleted, .interrupted, .subagentStarted, .subagentEnded, .heartbeat
+        ],
+        authorityCeilings: Dictionary(uniqueKeysWithValues: AgentAuthorityDomain.allCases.map {
+            ($0, AgentEvidenceAuthority.lifecycle)
+        }),
+        allowedCapabilities: [
+            .sessionLifecycle, .toolLifecycle, .commandLifecycle, .approvalObservation,
+            .subagentLifecycle, .taskLifecycle, .modelMetadata, .projectContext
+        ],
+        allowedSchemaVersions: [AgentEvent.normalizedSchemaVersion]
+    )
+
     static let genericAuthenticatedBridge = AgentProducerPolicy(
         allowedProviders: [.other("unverified")],
         allowedSources: [.unknown],

@@ -269,3 +269,10 @@ Starting after a session began is handled by App Server/thread listing where sup
 - AgentNotch licensing remains a hard boundary for copying; only independently described concepts are used.
 
 Genuinely deferred: exact provider support for attaching App Server to independently launched Codex clients; stable source identity for every Codex/Claude Desktop or JetBrains session; official quota APIs usable by a third-party local app; and safe action-control availability per source. These do not block A1 because A1 implements provider-independent reduction and replay only.
+
+
+## A3 Codex hook transport checkpoint
+
+The authoritative Codex hook path uses a route-scoped producer credential instead of the generic relay credential. The bridge publishes `codex-hook-v1.json` beside the generic discovery record, bound to `/v1/events/codex-hook` and to an `officialHook` producer whose policy permits only provider `codex`, source `unknown`, documented hook event domains, and observation-only capabilities. Route selection happens before authentication, while the selected HMAC still binds the exact route and body.
+
+The Codex hook relay is deliberately fail-open from Codex's perspective: malformed input, DynamicIsland absence, authentication failure, or semantic rejection never blocks the provider. This is an observability integration, not a policy hook. Raw prompts, tool inputs, tool outputs, assistant text, and transcript contents are discarded before the normalized event crosses the bridge.

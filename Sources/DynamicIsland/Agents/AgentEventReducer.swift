@@ -682,7 +682,7 @@ enum AgentEventReducer {
 
     private static func isAllowedAfterTerminal(_ type: AgentEventType) -> Bool {
         switch type {
-        case .sessionResumed, .sessionMetadataUpdated, .usageUpdated,
+        case .sessionResumed, .sessionEnded, .sessionMetadataUpdated, .usageUpdated,
              .capabilitiesUpdated, .projectContextUpdated, .heartbeat:
             true
         default:

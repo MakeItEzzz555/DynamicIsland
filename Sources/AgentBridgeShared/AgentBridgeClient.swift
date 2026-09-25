@@ -53,26 +53,36 @@ package struct AgentBridgeClient: Sendable {
     }
 
     package func sendEvents(input: Data) async throws -> AgentBridgeClientResult {
-        try await perform(method: "POST", route: AgentBridgeProtocol.eventsRoute, input: input)
+        try await perform(method: "POST", explicitRoute: nil, input: input)
     }
 
     package func health() async throws -> AgentBridgeClientResult {
-        try await perform(method: "GET", route: AgentBridgeProtocol.healthRoute, input: nil)
+        try await perform(method: "GET", explicitRoute: AgentBridgeProtocol.healthRoute, input: nil)
     }
 
     private func perform(
         method: String,
-        route: String,
+        explicitRoute: String?,
         input: Data?
     ) async throws -> AgentBridgeClientResult {
         let initial = try await loadProfile()
         do {
-            return try await attempt(method: method, route: route, input: input, profile: initial)
+            return try await attempt(
+                method: method,
+                route: explicitRoute ?? initial.eventsRoute,
+                input: input,
+                profile: initial
+            )
         } catch let error as AttemptError where error.isEligibleForProfileReload {
             let refreshed = try await loadProfile()
             guard refreshed != initial else { throw error.clientError }
             do {
-                return try await attempt(method: method, route: route, input: input, profile: refreshed)
+                return try await attempt(
+                    method: method,
+                    route: explicitRoute ?? refreshed.eventsRoute,
+                    input: input,
+                    profile: refreshed
+                )
             } catch let retryError as AttemptError {
                 throw retryError.clientError
             }

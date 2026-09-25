@@ -238,3 +238,10 @@ These must be resolved in their owning phase, not guessed in A1:
 - bidirectional approval support per source.
 
 None blocks A1 because normalized identity, reduction, replay, privacy and capability absence are provider-independent.
+
+
+## A3 implementation refinement — Codex authoritative hooks
+
+A3 uses Codex's official command-hook lifecycle as the first authoritative Codex source. DynamicIsland publishes a dedicated per-launch, mode-0600 Codex hook bridge profile with a separate credential and a server-side `codexOfficialHook` policy. The bundled `DynamicIslandCodexHookRelay` consumes the documented hook JSON on stdin, privacy-reduces it before transport, and fails open so DynamicIsland availability can never block Codex.
+
+Mapped hook events are SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, PermissionRequest, Stop, Interrupt, SessionEnd, SubagentStart, and SubagentStop. Prompt text, tool input/output, assistant output, transcript contents, and full commands are never forwarded. Compact hooks are intentionally not configured by this integration. A3 does not edit Codex configuration; guided hook installation remains A11.
