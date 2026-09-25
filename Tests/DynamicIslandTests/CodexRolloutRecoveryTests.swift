@@ -90,10 +90,41 @@ final class CodexRolloutRecoveryTests: XCTestCase {
         let end = try parser.parse(Data("""
         {"timestamp":"2026-09-25T09:05:00Z","ordinal":6,"type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-1","last_agent_message":"PRIVATE"}}
         """.utf8))
-        XCTAssertEqual(start[0].type, .agentWorking)
+        XCTAssertEqual(start.map(\.type), [.sessionResumed, .agentWorking])
         XCTAssertEqual(end[0].type, .taskCompleted)
         XCTAssertEqual(start[0].authority, .localStructuredRecord)
         XCTAssertEqual(end[0].authority, .localStructuredRecord)
+    }
+
+    func testRecoveryStartsNextTurnAfterPriorTerminalState() async throws {
+        var parser = CodexRolloutRecoveryParser()
+        let store = await MainActor.run { AgentEventStore() }
+        let coordinator = await MainActor.run { AgentIngestionCoordinator(eventStore: store) }
+        let registration = await coordinator.registerProducer(
+            descriptor: AgentProducerDescriptor(
+                sourceInstanceID: AgentSourceInstanceID(rawValue: "test.codex.multiturn"),
+                sourceKind: .structuredRecovery
+            ),
+            policy: .codexStructuredRecovery
+        )
+        guard case .success(let handle) = registration else {
+            return XCTFail("registration failed")
+        }
+
+        let records = [
+            #"{"type":"session_meta","payload":{"session_id":"s-1","cwd":"/tmp/project"}}"#,
+            #"{"ordinal":2,"type":"event_msg","payload":{"type":"turn_started","turn_id":"turn-1"}}"#,
+            #"{"ordinal":3,"type":"event_msg","payload":{"type":"turn_complete","turn_id":"turn-1"}}"#,
+            #"{"ordinal":4,"type":"event_msg","payload":{"type":"turn_started","turn_id":"turn-2"}}"#
+        ]
+        for record in records {
+            for event in try parser.parse(Data(record.utf8)) {
+                _ = await coordinator.ingest(event, from: handle)
+            }
+        }
+
+        let state = await MainActor.run { store.sessions.first?.state }
+        XCTAssertEqual(state, .working)
     }
 
     func testUnsupportedRawResponseContentIsIgnoredByParser() throws {

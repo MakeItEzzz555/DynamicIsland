@@ -255,16 +255,32 @@ struct CodexRolloutRecoveryParser: Sendable {
 
         case "task_started", "turn_started":
             let turn = Self.boundedString(payload["turn_id"], maximumBytes: AgentDomainLimits.identifierLength)
-            return [event(
-                nativeID: nativeID,
-                type: .agentWorking,
-                providerTimestamp: providerTimestamp,
-                receivedAt: receivedAt,
-                sequence: sequence,
-                correlationID: turn.map(AgentCorrelationID.init(rawValue:)),
-                payload: .activity(AgentActivityDescriptor(title: "Working", summary: nil)),
-                discriminator: eventType
-            )]
+            let correlation = turn.map(AgentCorrelationID.init(rawValue:))
+            // Recovery observes a provider-native turn boundary. Resuming here
+            // lets a later turn continue the same generation after the prior
+            // turn completed without treating weaker recovery as a new session.
+            return [
+                event(
+                    nativeID: nativeID,
+                    type: .sessionResumed,
+                    providerTimestamp: providerTimestamp,
+                    receivedAt: receivedAt,
+                    sequence: sequence,
+                    correlationID: correlation,
+                    payload: .sessionMetadata(AgentSessionMetadata(project: nil)),
+                    discriminator: eventType + "-resume"
+                ),
+                event(
+                    nativeID: nativeID,
+                    type: .agentWorking,
+                    providerTimestamp: providerTimestamp,
+                    receivedAt: receivedAt,
+                    sequence: sequence,
+                    correlationID: correlation,
+                    payload: .activity(AgentActivityDescriptor(title: "Working", summary: nil)),
+                    discriminator: eventType
+                )
+            ]
 
         case "task_complete", "turn_complete":
             let turn = Self.boundedString(payload["turn_id"], maximumBytes: AgentDomainLimits.identifierLength)

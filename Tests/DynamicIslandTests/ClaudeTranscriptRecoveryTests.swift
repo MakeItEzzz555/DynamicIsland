@@ -66,6 +66,49 @@ final class ClaudeTranscriptRecoveryTests: XCTestCase {
         XCTAssertEqual(completed.authority, .localStructuredRecord)
     }
 
+    func testHumanPromptResumesRecoverySessionAfterCompletedTurn() async throws {
+        var parser = ClaudeTranscriptRecoveryParser()
+        let store = await MainActor.run { AgentEventStore() }
+        let coordinator = await MainActor.run { AgentIngestionCoordinator(eventStore: store) }
+        let registration = await coordinator.registerProducer(
+            descriptor: AgentProducerDescriptor(
+                sourceInstanceID: AgentSourceInstanceID(rawValue: "test.claude.multiturn"),
+                sourceKind: .structuredRecovery
+            ),
+            policy: .claudeStructuredRecovery
+        )
+        guard case .success(let handle) = registration else {
+            return XCTFail("registration failed")
+        }
+
+        let records = [
+            #"{"sessionId":"s-1","uuid":"m-1","message":{"role":"user","content":"PRIVATE FIRST PROMPT"}}"#,
+            #"{"sessionId":"s-1","uuid":"m-2","message":{"role":"assistant","stop_reason":"end_turn","content":[]}}"#,
+            #"{"sessionId":"s-1","uuid":"m-3","message":{"role":"user","content":"PRIVATE SECOND PROMPT"}}"#,
+            #"{"sessionId":"s-1","uuid":"m-4","message":{"role":"assistant","content":[{"type":"thinking","thinking":"PRIVATE"}]}}"#
+        ]
+        for record in records {
+            for event in try parser.parse(Data(record.utf8)) {
+                _ = await coordinator.ingest(event, from: handle)
+            }
+        }
+
+        let session = await MainActor.run { store.sessions.first }
+        XCTAssertEqual(session?.state, .thinking)
+        XCTAssertFalse(session?.recentActivity.contains(where: {
+            $0.title.contains("PRIVATE") || $0.summary?.contains("PRIVATE") == true
+        }) ?? true)
+    }
+
+    func testToolResultUserRecordDoesNotResumeCompletedSession() throws {
+        var parser = ClaudeTranscriptRecoveryParser()
+        _ = try parser.parse(Data(#"{"sessionId":"s-1","uuid":"m-1","message":{"role":"assistant","content":[{"type":"tool_use","id":"tool-1","name":"Bash","input":{"command":"PRIVATE"}}]}}"#.utf8))
+        _ = try parser.parse(Data(#"{"sessionId":"s-1","uuid":"m-2","message":{"role":"assistant","stop_reason":"end_turn","content":[]}}"#.utf8))
+        let events = try parser.parse(Data(#"{"sessionId":"s-1","uuid":"m-3","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"PRIVATE"}]}}"#.utf8))
+        XCTAssertFalse(events.contains { $0.type == .sessionResumed })
+        XCTAssertTrue(events.contains { $0.type == .commandCompleted })
+    }
+
     func testUncorrelatedToolResultDoesNotFabricateOperation() throws {
         var parser = ClaudeTranscriptRecoveryParser()
         let events = try parser.parse(Data("""

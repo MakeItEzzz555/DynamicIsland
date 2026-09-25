@@ -40,7 +40,8 @@ struct ClaudeTranscriptRecoveryParser: Sendable {
         let gitBranch = Self.boundedString(root["gitBranch"], maximumBytes: AgentDomainLimits.summaryLength)
         var events: [AgentIngestionEvent] = []
 
-        if !emittedSessionStart {
+        let startedSession = !emittedSessionStart
+        if startedSession {
             emittedSessionStart = true
             let context = Self.projectContext(cwd: cwd, gitBranch: gitBranch, model: nil)
             events.append(event(
@@ -95,6 +96,22 @@ struct ClaudeTranscriptRecoveryParser: Sendable {
 
         let role = Self.boundedString(message["role"], maximumBytes: AgentDomainLimits.tokenLength)
         let model = Self.boundedString(message["model"], maximumBytes: AgentDomainLimits.summaryLength)
+        if !startedSession,
+           role == "user",
+           Self.isHumanPrompt(message["content"]) {
+            events.append(event(
+                nativeID: nativeID,
+                type: .sessionResumed,
+                timestamp: timestamp,
+                receivedAt: receivedAt,
+                correlationID: uuid.map(AgentCorrelationID.init(rawValue:)),
+                payload: .sessionMetadata(AgentSessionMetadata(
+                    project: Self.projectContext(cwd: cwd, gitBranch: gitBranch, model: model)
+                )),
+                recordID: uuid,
+                discriminator: "user-turn-resume"
+            ))
+        }
         if let model {
             events.append(event(
                 nativeID: nativeID,
@@ -317,6 +334,14 @@ struct ClaudeTranscriptRecoveryParser: Sendable {
             source: "claude-transcript",
             observedAt: date
         )
+    }
+
+    /// Claude transcript tool results also use role=user. Only a non-empty
+    /// string record is treated as an observed human turn boundary; structured
+    /// result arrays are deliberately not guessed to be user prompts.
+    private static func isHumanPrompt(_ content: Any?) -> Bool {
+        guard let text = content as? String else { return false }
+        return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private static func projectContext(

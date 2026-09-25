@@ -141,7 +141,7 @@ struct AgentProducerPolicy: Equatable, Sendable {
         allowedSources: [.unknown],
         allowedSourceKinds: [.structuredRecovery],
         allowedEventTypes: [
-            .sessionStarted, .sessionMetadataUpdated, .agentWorking,
+            .sessionStarted, .sessionResumed, .sessionMetadataUpdated, .agentWorking,
             .usageUpdated, .capabilitiesUpdated, .projectContextUpdated,
             .taskCompleted, .interrupted, .heartbeat
         ],
@@ -184,7 +184,7 @@ struct AgentProducerPolicy: Equatable, Sendable {
         allowedSources: [.unknown],
         allowedSourceKinds: [.structuredRecovery],
         allowedEventTypes: [
-            .sessionStarted, .sessionMetadataUpdated,
+            .sessionStarted, .sessionResumed, .sessionMetadataUpdated,
             .thinkingStarted, .thinkingEnded,
             .toolStarted, .toolCompleted,
             .commandStarted, .commandCompleted,
