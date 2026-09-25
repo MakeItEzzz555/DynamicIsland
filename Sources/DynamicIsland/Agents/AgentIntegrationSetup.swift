@@ -354,15 +354,12 @@ private struct AgentIntegrationBackupEnvelope: Codable, Sendable {
 
 struct AgentIntegrationSetupService: Sendable {
     private let paths: AgentIntegrationSetupPaths
-    private let fileManager: FileManager
 
-    init(
-        paths: AgentIntegrationSetupPaths = .production(),
-        fileManager: FileManager = .default
-    ) {
+    init(paths: AgentIntegrationSetupPaths = .production()) {
         self.paths = paths
-        self.fileManager = fileManager
     }
+
+    private var fileManager: FileManager { .default }
 
     func snapshot(for provider: AgentIntegrationProvider) -> AgentIntegrationSetupSnapshot {
         let config = paths.configURL(for: provider)
