@@ -1,2 +1,0 @@
-import Foundation
-struct TestValue { let value: Int }
