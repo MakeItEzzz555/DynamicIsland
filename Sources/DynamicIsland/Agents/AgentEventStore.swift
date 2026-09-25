@@ -233,3 +233,137 @@ final class AgentEventStore: ObservableObject {
         return lhs.eventID.rawValue < rhs.eventID.rawValue
     }
 }
+
+
+@MainActor
+final class AgentAttentionCoordinator: ObservableObject {
+    @Published private(set) var presentation: AgentAttentionPresentation?
+    @Published private(set) var badges: [AgentAttentionBadge] = []
+    @Published private(set) var soundIntent: AgentAttentionSoundIntent?
+    @Published private(set) var isEnabled = true
+
+    private var policyState = AgentAttentionPolicyState()
+    private var options: AgentAttentionPolicyOptions
+    private let clock = ContinuousClock()
+    private var retractTask: Task<Void, Never>?
+
+    init(options: AgentAttentionPolicyOptions = AgentAttentionPolicyOptions()) {
+        self.options = options
+    }
+
+    deinit {
+        retractTask?.cancel()
+    }
+
+    func configure(
+        peekDuration: TimeInterval? = nil,
+        completionAlertsEnabled: Bool? = nil,
+        approvalAlertsEnabled: Bool? = nil,
+        soundsEnabled: Bool? = nil
+    ) {
+        if let peekDuration {
+            options.peekDuration = min(max(peekDuration, 1), 15)
+        }
+        if let completionAlertsEnabled {
+            options.completionAlertsEnabled = completionAlertsEnabled
+        }
+        if let approvalAlertsEnabled {
+            options.approvalAlertsEnabled = approvalAlertsEnabled
+        }
+        if let soundsEnabled {
+            options.soundsEnabled = soundsEnabled
+        }
+    }
+
+    func setEnabled(_ enabled: Bool) {
+        guard isEnabled != enabled else { return }
+        isEnabled = enabled
+        if !enabled {
+            retractTask?.cancel()
+            retractTask = nil
+            policyState = AgentAttentionPolicyEngine.dismissPresentation(state: policyState)
+            publish(soundIntent: nil)
+        }
+    }
+
+    func synchronize(
+        attentionEvents: [AgentAttentionEvent],
+        sessions: [AgentSession],
+        now: Date = Date()
+    ) {
+        guard isEnabled else { return }
+        let result = AgentAttentionPolicyEngine.apply(
+            events: attentionEvents,
+            sessions: sessions,
+            now: now,
+            state: policyState,
+            options: options
+        )
+        policyState = result.state
+        publish(soundIntent: result.soundIntent)
+        scheduleRetractIfNeeded()
+    }
+
+    func dismissForExpansion() {
+        retractTask?.cancel()
+        retractTask = nil
+        policyState = AgentAttentionPolicyEngine.dismissPresentation(state: policyState)
+        publish(soundIntent: nil)
+    }
+
+    func markViewed(session: AgentSessionInstanceID) {
+        policyState = AgentAttentionPolicyEngine.markViewed(session: session, state: policyState)
+        publish(soundIntent: nil)
+    }
+
+    func expirePresentation(
+        generation: AgentAttentionGeneration,
+        now: Date = Date()
+    ) {
+        let previous = policyState.presentation
+        policyState = AgentAttentionPolicyEngine.expire(
+            generation: generation,
+            now: now,
+            state: policyState
+        )
+        if previous != policyState.presentation {
+            retractTask?.cancel()
+            retractTask = nil
+            publish(soundIntent: nil)
+        }
+    }
+
+    private func publish(soundIntent newSoundIntent: AgentAttentionSoundIntent?) {
+        presentation = policyState.presentation
+        badges = policyState.badges.values.sorted {
+            if $0.priority != $1.priority { return $0.priority > $1.priority }
+            if $0.createdAt != $1.createdAt { return $0.createdAt > $1.createdAt }
+            return $0.eventID.rawValue < $1.eventID.rawValue
+        }
+        if let newSoundIntent {
+            soundIntent = newSoundIntent
+        }
+    }
+
+    private func scheduleRetractIfNeeded() {
+        retractTask?.cancel()
+        guard let current = policyState.presentation else {
+            retractTask = nil
+            return
+        }
+
+        let generation = current.generation
+        let delay = max(0.1, options.peekDuration)
+        let deadline = clock.now.advanced(by: .seconds(delay))
+        retractTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await clock.sleep(until: deadline)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            expirePresentation(generation: generation, now: current.retractAt)
+        }
+    }
+}
