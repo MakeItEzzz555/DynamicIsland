@@ -210,11 +210,19 @@ public final class AppSettings: ObservableObject {
     @Published public var showTrayTab: Bool { didSet { save(showTrayTab, for: Key.showTrayTab) } }
     @Published public var showTimerTab: Bool { didSet { save(showTimerTab, for: Key.showTimerTab) } }
     @Published public var showStatsTab: Bool { didSet { save(showStatsTab, for: Key.showStatsTab) } }
+    @Published public var showAgentsTab: Bool { didSet { save(showAgentsTab, for: Key.showAgentsTab) } }
     @Published public var showActivitiesTab: Bool { didSet { save(showActivitiesTab, for: Key.showActivitiesTab) } }
     @Published public var showLiveActivitiesTab: Bool { didSet { save(showLiveActivitiesTab, for: Key.showLiveActivitiesTab) } }
     @Published public var showGesturesTab: Bool { didSet { save(showGesturesTab, for: Key.showGesturesTab) } }
     @Published public var rememberLastSelectedTab: Bool { didSet { save(rememberLastSelectedTab, for: Key.rememberLastSelectedTab) } }
     @Published public var defaultExpandedTab: DefaultExpandedTab { didSet { save(defaultExpandedTab.rawValue, for: Key.defaultExpandedTab) } }
+
+    @Published public var agentActivityEnabled: Bool { didSet { save(agentActivityEnabled, for: Key.agentActivityEnabled) } }
+    @Published public var agentCompletionAlertsEnabled: Bool { didSet { save(agentCompletionAlertsEnabled, for: Key.agentCompletionAlertsEnabled) } }
+    @Published public var agentApprovalAlertsEnabled: Bool { didSet { save(agentApprovalAlertsEnabled, for: Key.agentApprovalAlertsEnabled) } }
+    @Published public var agentSoundsEnabled: Bool { didSet { save(agentSoundsEnabled, for: Key.agentSoundsEnabled) } }
+    @Published public var agentUsageMetricsEnabled: Bool { didSet { save(agentUsageMetricsEnabled, for: Key.agentUsageMetricsEnabled) } }
+    @Published public var agentPeekDurationSeconds: Double { didSet { save(agentPeekDurationSeconds, for: Key.agentPeekDurationSeconds) } }
 
     @Published public var mediaEnabled: Bool { didSet { save(mediaEnabled, for: Key.mediaEnabled) } }
     @Published public var showMediaWhenPaused: Bool { didSet { save(showMediaWhenPaused, for: Key.showMediaWhenPaused) } }
@@ -432,6 +440,13 @@ public final class AppSettings: ObservableObject {
         showTrayTab = Self.bool(defaults, Key.showTrayTab, true)
         showTimerTab = Self.bool(defaults, Key.showTimerTab, true)
         showStatsTab = Self.bool(defaults, Key.showStatsTab, true)
+        showAgentsTab = Self.bool(defaults, Key.showAgentsTab, true)
+        agentActivityEnabled = Self.bool(defaults, Key.agentActivityEnabled, true)
+        agentCompletionAlertsEnabled = Self.bool(defaults, Key.agentCompletionAlertsEnabled, true)
+        agentApprovalAlertsEnabled = Self.bool(defaults, Key.agentApprovalAlertsEnabled, true)
+        agentSoundsEnabled = Self.bool(defaults, Key.agentSoundsEnabled, true)
+        agentUsageMetricsEnabled = Self.bool(defaults, Key.agentUsageMetricsEnabled, true)
+        agentPeekDurationSeconds = Self.double(defaults, Key.agentPeekDurationSeconds, 5.0)
         showActivitiesTab = Self.bool(defaults, Key.showActivitiesTab, false)
         showLiveActivitiesTab = Self.bool(defaults, Key.showLiveActivitiesTab, false)
         showGesturesTab = Self.bool(defaults, Key.showGesturesTab, false)
@@ -629,7 +644,10 @@ public final class AppSettings: ObservableObject {
 
     public func resetModuleSettings() {
         reset(keys: [
-            Key.showTrayTab, Key.showTimerTab, Key.showStatsTab, Key.defaultExpandedTab,
+            Key.showTrayTab, Key.showTimerTab, Key.showStatsTab, Key.showAgentsTab,
+            Key.agentActivityEnabled, Key.agentCompletionAlertsEnabled, Key.agentApprovalAlertsEnabled,
+            Key.agentSoundsEnabled, Key.agentUsageMetricsEnabled, Key.agentPeekDurationSeconds,
+            Key.defaultExpandedTab,
             Key.mediaEnabled, Key.showMediaWhenPaused, Key.showMediaWhenNoSource,
             Key.showAlbumArtwork, Key.showMediaTitle, Key.showMediaArtist, Key.showMediaSourceName,
             Key.showPlaybackControls, Key.showProgressSlider, Key.showVolumeSlider, Key.showVisualizer,
@@ -1216,6 +1234,13 @@ private enum Key {
     static let showTrayTab = "showTrayTab"
     static let showTimerTab = "showTimerTab"
     static let showStatsTab = "showStatsTab"
+    static let showAgentsTab = "showAgentsTab"
+    static let agentActivityEnabled = "agentActivityEnabled"
+    static let agentCompletionAlertsEnabled = "agentCompletionAlertsEnabled"
+    static let agentApprovalAlertsEnabled = "agentApprovalAlertsEnabled"
+    static let agentSoundsEnabled = "agentSoundsEnabled"
+    static let agentUsageMetricsEnabled = "agentUsageMetricsEnabled"
+    static let agentPeekDurationSeconds = "agentPeekDurationSeconds"
     static let showActivitiesTab = "showActivitiesTab"
     static let showLiveActivitiesTab = "showLiveActivitiesTab"
     static let showGesturesTab = "showGesturesTab"
@@ -1355,7 +1380,10 @@ private enum Key {
         collapsedHoverPreviewTitleIconName, collapsedHoverPreviewArtistIconName, animationPreset, reduceExtraMotion,
         shellAnimationSpeed, contentAnimationEnabled, contentStaggerEnabled, contentStaggerAmount,
         useBlurTransitions, useScaleTransitions, showIslandTab, showTrayTab,
-        showTimerTab, showStatsTab, showActivitiesTab, showLiveActivitiesTab, showGesturesTab,
+        showTimerTab, showStatsTab, showAgentsTab, agentActivityEnabled,
+        agentCompletionAlertsEnabled, agentApprovalAlertsEnabled, agentSoundsEnabled,
+        agentUsageMetricsEnabled, agentPeekDurationSeconds,
+        showActivitiesTab, showLiveActivitiesTab, showGesturesTab,
         rememberLastSelectedTab, defaultExpandedTab, mediaEnabled, showMediaWhenPaused,
         showMediaWhenNoSource, showAlbumArtwork, showMediaTitle, showMediaArtist, showMediaSourceName,
         showPlaybackControls, showProgressSlider, showVolumeSlider, showVisualizer,
