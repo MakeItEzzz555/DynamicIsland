@@ -422,8 +422,7 @@ final class MediaControllerAutomationIntegrationTests: XCTestCase {
         let controller = MediaController(
             automationExecutor: executor,
             systemNowPlayingProvider: provider,
-            startsAutomatically: false,
-            reduceMotionProvider: { false }
+            startsAutomatically: false
         )
         let oldPublished = expectation(description: "old track published")
         let newPublished = expectation(description: "new system track published")
@@ -438,7 +437,11 @@ final class MediaControllerAutomationIntegrationTests: XCTestCase {
         await fulfillment(of: [newPublished, secondDetectionStarted], timeout: 2)
 
         XCTAssertEqual(controller.title, "New")
-        XCTAssertEqual(controller.artworkPresentation.state.phase, .firstHalf)
+        XCTAssertEqual(controller.artworkImageRevision, 2)
+        XCTAssertEqual(
+            controller.artworkImageKey,
+            "embedded:spotify|com.spotify.client|spotify|new|artist"
+        )
         releaseSecondDetection.signal()
         subscription.cancel()
     }
