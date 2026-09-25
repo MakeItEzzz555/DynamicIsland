@@ -437,7 +437,11 @@ final class MediaControllerAutomationIntegrationTests: XCTestCase {
         await fulfillment(of: [newPublished, secondDetectionStarted], timeout: 2)
 
         XCTAssertEqual(controller.title, "New")
-        XCTAssertEqual(controller.artworkPresentation.state.phase, .firstHalf)
+        XCTAssertEqual(controller.artworkImage?.size, CGSize(width: 20, height: 20))
+        XCTAssertEqual(
+            controller.artworkImageKey,
+            "embedded:spotify|com.spotify.client|spotify|new|artist"
+        )
         releaseSecondDetection.signal()
         subscription.cancel()
     }
