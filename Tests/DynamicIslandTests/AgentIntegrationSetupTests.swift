@@ -172,6 +172,101 @@ final class AgentIntegrationSetupTests: XCTestCase {
         XCTAssertFalse(preview.text.lowercased().contains("secret"))
     }
 
+    func testApplyRejectsConfigurationChangedAfterPreview() throws {
+        let fixture = try Fixture()
+        let service = AgentIntegrationSetupService(paths: fixture.paths)
+        let preview = try service.preview(for: .codex)
+        let target = fixture.paths.configURL(for: .codex)
+        try FileManager.default.createDirectory(
+            at: target.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let external = Data("{\"external\":true}".utf8)
+        try external.write(to: target)
+
+        XCTAssertThrowsError(try service.apply(.codex, expecting: preview.expectedConfiguration)) { error in
+            XCTAssertEqual(error as? AgentIntegrationSetupError, .changedExternally)
+        }
+        XCTAssertEqual(try Data(contentsOf: target), external)
+    }
+
+    func testRepeatedApplyPreservesOriginalRollbackBackup() throws {
+        let fixture = try Fixture()
+        let target = fixture.paths.configURL(for: .claude)
+        try FileManager.default.createDirectory(
+            at: target.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let original = Data("{\n  \"original\" : true\n}\n".utf8)
+        try original.write(to: target)
+        let service = AgentIntegrationSetupService(paths: fixture.paths)
+
+        _ = try service.apply(.claude)
+        _ = try service.apply(.claude)
+        _ = try service.rollback(.claude)
+
+        XCTAssertEqual(try Data(contentsOf: target), original)
+    }
+
+    func testSymlinkParentDirectoryIsRejected() throws {
+        let fixture = try Fixture()
+        let redirected = fixture.root.appendingPathComponent("redirected", isDirectory: true)
+        try FileManager.default.createDirectory(at: redirected, withIntermediateDirectories: true)
+        let providerDirectory = fixture.paths.homeDirectory.appendingPathComponent(".codex", isDirectory: true)
+        try FileManager.default.createSymbolicLink(at: providerDirectory, withDestinationURL: redirected)
+
+        let service = AgentIntegrationSetupService(paths: fixture.paths)
+        XCTAssertThrowsError(try service.apply(.codex)) { error in
+            XCTAssertEqual(error as? AgentIntegrationSetupError, .unsafePath)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: redirected.appendingPathComponent("hooks.json").path))
+    }
+
+    func testUnsafeWritableConfigurationPermissionsAreRejected() throws {
+        let fixture = try Fixture()
+        let target = fixture.paths.configURL(for: .claude)
+        try FileManager.default.createDirectory(
+            at: target.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("{}".utf8).write(to: target)
+        try FileManager.default.setAttributes([.posixPermissions: 0o666], ofItemAtPath: target.path)
+
+        XCTAssertThrowsError(try AgentIntegrationSetupService(paths: fixture.paths).apply(.claude)) { error in
+            XCTAssertEqual(error as? AgentIntegrationSetupError, .unsafePath)
+        }
+    }
+
+    func testDeeplyNestedConfigurationIsRejected() throws {
+        var nested = "true"
+        for _ in 0..<40 {
+            nested = "{\"nested\":" + nested + "}"
+        }
+        XCTAssertThrowsError(
+            try AgentHookConfigurationPlanner.install(
+                existing: Data(nested.utf8),
+                provider: .codex,
+                helperURL: URL(fileURLWithPath: "/tmp/DynamicIslandCodexHookRelay")
+            )
+        ) { error in
+            XCTAssertEqual(error as? AgentIntegrationSetupError, .invalidJSON)
+        }
+    }
+
+    func testSymlinkHelperIsRejected() throws {
+        let fixture = try Fixture()
+        let helper = fixture.paths.helperURL(for: .codex)
+        let realHelper = helper.deletingLastPathComponent().appendingPathComponent("real-helper")
+        try FileManager.default.moveItem(at: helper, to: realHelper)
+        try FileManager.default.createSymbolicLink(at: helper, withDestinationURL: realHelper)
+
+        let service = AgentIntegrationSetupService(paths: fixture.paths)
+        XCTAssertThrowsError(try service.preview(for: .codex)) { error in
+            XCTAssertEqual(error as? AgentIntegrationSetupError, .helperUnavailable)
+        }
+        XCTAssertEqual(service.snapshot(for: .codex).state, .helperUnavailable)
+    }
+
     private func canonicalJSONObject(_ data: Data) throws -> String {
         let object = try JSONSerialization.jsonObject(with: data)
         let canonical = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])

@@ -79,6 +79,12 @@ struct AgentIntegrationSetupPreview: Equatable, Sendable {
     let provider: AgentIntegrationProvider
     let configPath: String
     let text: String
+    let expectedConfiguration: AgentIntegrationConfigurationExpectation
+}
+
+enum AgentIntegrationConfigurationExpectation: Equatable, Sendable {
+    case absent
+    case digest(String)
 }
 
 enum AgentIntegrationSetupError: Error, Equatable, Sendable {
@@ -134,6 +140,9 @@ struct AgentIntegrationSetupPaths: Sendable {
 
 enum AgentHookConfigurationPlanner {
     static let maximumConfigBytes = 1_048_576
+    static let maximumBackupBytes = 2_097_152
+    private static let maximumJSONDepth = 32
+    private static let maximumJSONContainers = 10_000
 
     static func install(
         existing: Data?,
@@ -217,7 +226,8 @@ enum AgentHookConfigurationPlanner {
     static func preview(
         provider: AgentIntegrationProvider,
         helperURL: URL,
-        configURL: URL
+        configURL: URL,
+        expectedConfiguration: AgentIntegrationConfigurationExpectation = .absent
     ) throws -> AgentIntegrationSetupPreview {
         let command = shellQuote(helperURL.path)
         var additions: [String: Any] = [:]
@@ -234,7 +244,8 @@ enum AgentHookConfigurationPlanner {
         return AgentIntegrationSetupPreview(
             provider: provider,
             configPath: configURL.path,
-            text: "DynamicIsland will merge these observer hooks into \(configURL.path). Existing unrelated keys and hook handlers are preserved.\n\n" + body
+            text: "DynamicIsland will merge these exact observer-hook additions into \(configURL.path). Existing unrelated keys and hook handlers are preserved.\n\n" + body,
+            expectedConfiguration: expectedConfiguration
         )
     }
 
@@ -260,10 +271,34 @@ enum AgentHookConfigurationPlanner {
         } catch {
             throw AgentIntegrationSetupError.invalidJSON
         }
+        try validateJSONStructure(object)
         guard let root = object as? [String: Any] else {
             throw AgentIntegrationSetupError.invalidJSON
         }
         return root
+    }
+
+    private static func validateJSONStructure(_ root: Any) throws {
+        var pending: [(value: Any, depth: Int)] = [(root, 1)]
+        var containers = 0
+        while let next = pending.popLast() {
+            guard next.depth <= maximumJSONDepth else {
+                throw AgentIntegrationSetupError.invalidJSON
+            }
+            if let object = next.value as? [String: Any] {
+                containers += 1
+                guard containers <= maximumJSONContainers else {
+                    throw AgentIntegrationSetupError.invalidJSON
+                }
+                pending.append(contentsOf: object.values.map { ($0, next.depth + 1) })
+            } else if let array = next.value as? [Any] {
+                containers += 1
+                guard containers <= maximumJSONContainers else {
+                    throw AgentIntegrationSetupError.invalidJSON
+                }
+                pending.append(contentsOf: array.map { ($0, next.depth + 1) })
+            }
+        }
     }
 
     private static func hooksObject(_ raw: Any?) throws -> [String: Any] {
@@ -365,9 +400,7 @@ struct AgentIntegrationSetupService: Sendable {
         let config = paths.configURL(for: provider)
         let helper = paths.helperURL(for: provider)
         do {
-            guard fileManager.isExecutableFile(atPath: helper.path) else {
-                return snapshot(provider, .helperUnavailable, "The bundled helper is not available in this app build.")
-            }
+            try validateHelper(helper)
             let data = try secureReadIfPresent(config)
             let state = try AgentHookConfigurationPlanner.configurationState(
                 existing: data,
@@ -388,6 +421,8 @@ struct AgentIntegrationSetupService: Sendable {
                 detail = message
             }
             return snapshot(provider, state, detail)
+        } catch AgentIntegrationSetupError.helperUnavailable {
+            return snapshot(provider, .helperUnavailable, "The bundled helper is not available in this app build.")
         } catch let error as AgentIntegrationSetupError {
             return snapshot(provider, .blocked(error.safeDescription), error.safeDescription)
         } catch {
@@ -397,40 +432,51 @@ struct AgentIntegrationSetupService: Sendable {
 
     func preview(for provider: AgentIntegrationProvider) throws -> AgentIntegrationSetupPreview {
         let helper = paths.helperURL(for: provider)
-        guard fileManager.isExecutableFile(atPath: helper.path) else {
-            throw AgentIntegrationSetupError.helperUnavailable
-        }
-        _ = try secureReadIfPresent(paths.configURL(for: provider))
+        try validateHelper(helper)
+        let current = try secureReadIfPresent(paths.configURL(for: provider))
+        let expectation = current.map { AgentIntegrationConfigurationExpectation.digest(digest($0)) }
+            ?? .absent
         return try AgentHookConfigurationPlanner.preview(
             provider: provider,
             helperURL: helper,
-            configURL: paths.configURL(for: provider)
+            configURL: paths.configURL(for: provider),
+            expectedConfiguration: expectation
         )
     }
 
-    func apply(_ provider: AgentIntegrationProvider) throws -> AgentIntegrationSetupSnapshot {
+    func apply(
+        _ provider: AgentIntegrationProvider,
+        expecting expectation: AgentIntegrationConfigurationExpectation? = nil
+    ) throws -> AgentIntegrationSetupSnapshot {
         let target = paths.configURL(for: provider)
         let helper = paths.helperURL(for: provider)
-        guard fileManager.isExecutableFile(atPath: helper.path) else {
-            throw AgentIntegrationSetupError.helperUnavailable
-        }
+        try validateHelper(helper)
 
         let before = try secureReadIfPresent(target)
         let beforeDigest = before.map(digest)
+        if let expectation {
+            switch expectation {
+            case .absent:
+                guard before == nil else { throw AgentIntegrationSetupError.changedExternally }
+            case .digest(let expectedDigest):
+                guard beforeDigest == expectedDigest else {
+                    throw AgentIntegrationSetupError.changedExternally
+                }
+            }
+        }
         let installed = try AgentHookConfigurationPlanner.install(
             existing: before,
             provider: provider,
             helperURL: helper
         )
+        guard installed != before else { return snapshot(for: provider) }
         let originalPermissions = try existingPermissions(target)
-        let backup = AgentIntegrationBackupEnvelope(
-            version: 1,
-            provider: provider.rawValue,
-            targetPath: target.path,
-            originalExisted: before != nil,
-            originalDataBase64: before?.base64EncodedString(),
-            originalPermissions: originalPermissions,
-            installedDigest: digest(installed)
+        let backup = try backupEnvelope(
+            provider: provider,
+            target: target,
+            before: before,
+            permissions: originalPermissions,
+            installed: installed
         )
 
         try writeBackup(backup, to: paths.backupURL(for: provider))
@@ -461,7 +507,10 @@ struct AgentIntegrationSetupService: Sendable {
 
     func rollback(_ provider: AgentIntegrationProvider) throws -> AgentIntegrationSetupSnapshot {
         let backupURL = paths.backupURL(for: provider)
-        guard let backupData = try secureReadIfPresent(backupURL) else {
+        guard let backupData = try secureReadIfPresent(
+            backupURL,
+            maximumBytes: AgentHookConfigurationPlanner.maximumBackupBytes
+        ) else {
             throw AgentIntegrationSetupError.backupUnavailable
         }
         let backup: AgentIntegrationBackupEnvelope
@@ -518,42 +567,137 @@ struct AgentIntegrationSetupService: Sendable {
             provider: provider,
             state: state,
             configPath: paths.configURL(for: provider).path,
-            backupAvailable: fileManager.fileExists(atPath: paths.backupURL(for: provider).path),
+            backupAvailable: (try? secureReadIfPresent(
+                paths.backupURL(for: provider),
+                maximumBytes: AgentHookConfigurationPlanner.maximumBackupBytes
+            )) != nil,
             detail: detail
         )
     }
 
-    private func secureReadIfPresent(_ url: URL) throws -> Data? {
-        guard fileManager.fileExists(atPath: url.path) else { return nil }
-        var info = stat()
-        guard lstat(url.path, &info) == 0 else { throw AgentIntegrationSetupError.unsafePath }
-        guard (info.st_mode & S_IFMT) == S_IFREG,
-              info.st_uid == geteuid(),
-              info.st_size >= 0,
-              info.st_size <= AgentHookConfigurationPlanner.maximumConfigBytes else {
-            if info.st_size > AgentHookConfigurationPlanner.maximumConfigBytes {
-                throw AgentIntegrationSetupError.fileTooLarge
-            }
+    private func backupEnvelope(
+        provider: AgentIntegrationProvider,
+        target: URL,
+        before: Data?,
+        permissions: Int?,
+        installed: Data
+    ) throws -> AgentIntegrationBackupEnvelope {
+        let backupURL = paths.backupURL(for: provider)
+        if let existingData = try secureReadIfPresent(
+            backupURL,
+            maximumBytes: AgentHookConfigurationPlanner.maximumBackupBytes
+        ),
+           let existing = try? JSONDecoder().decode(AgentIntegrationBackupEnvelope.self, from: existingData),
+           existing.version == 1,
+           existing.provider == provider.rawValue,
+           existing.targetPath == target.path,
+           before.map(digest) == existing.installedDigest {
+            return AgentIntegrationBackupEnvelope(
+                version: existing.version,
+                provider: existing.provider,
+                targetPath: existing.targetPath,
+                originalExisted: existing.originalExisted,
+                originalDataBase64: existing.originalDataBase64,
+                originalPermissions: existing.originalPermissions,
+                installedDigest: digest(installed)
+            )
+        }
+        return AgentIntegrationBackupEnvelope(
+            version: 1,
+            provider: provider.rawValue,
+            targetPath: target.path,
+            originalExisted: before != nil,
+            originalDataBase64: before?.base64EncodedString(),
+            originalPermissions: permissions,
+            installedDigest: digest(installed)
+        )
+    }
+
+    private func secureReadIfPresent(
+        _ url: URL,
+        maximumBytes: Int = AgentHookConfigurationPlanner.maximumConfigBytes
+    ) throws -> Data? {
+        try validateParentChain(for: url, createMissing: false)
+        var pathStatus = stat()
+        guard lstat(url.path, &pathStatus) == 0 else {
+            if errno == ENOENT { return nil }
             throw AgentIntegrationSetupError.unsafePath
         }
-        do {
-            let data = try Data(contentsOf: url, options: [.mappedIfSafe])
-            guard data.count <= AgentHookConfigurationPlanner.maximumConfigBytes else {
+        guard (pathStatus.st_mode & S_IFMT) == S_IFREG,
+              pathStatus.st_uid == geteuid(),
+              pathStatus.st_mode & 0o022 == 0 else {
+            throw AgentIntegrationSetupError.unsafePath
+        }
+        let descriptor = open(url.path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
+        guard descriptor >= 0 else { throw AgentIntegrationSetupError.unsafePath }
+        defer { close(descriptor) }
+
+        var openedStatus = stat()
+        guard fstat(descriptor, &openedStatus) == 0,
+              openedStatus.st_dev == pathStatus.st_dev,
+              openedStatus.st_ino == pathStatus.st_ino,
+              (openedStatus.st_mode & S_IFMT) == S_IFREG,
+              openedStatus.st_uid == geteuid(),
+              openedStatus.st_size >= 0 else {
+            throw AgentIntegrationSetupError.unsafePath
+        }
+        guard openedStatus.st_size <= maximumBytes else {
+            throw AgentIntegrationSetupError.fileTooLarge
+        }
+
+        var data = Data()
+        data.reserveCapacity(Int(openedStatus.st_size))
+        var buffer = [UInt8](repeating: 0, count: 16 * 1_024)
+        while true {
+            let count = buffer.withUnsafeMutableBytes {
+                Darwin.read(descriptor, $0.baseAddress, $0.count)
+            }
+            if count == 0 { break }
+            guard count > 0 else {
+                if errno == EINTR { continue }
+                throw AgentIntegrationSetupError.unsafePath
+            }
+            guard data.count <= maximumBytes - count else {
                 throw AgentIntegrationSetupError.fileTooLarge
             }
-            return data
-        } catch let error as AgentIntegrationSetupError {
-            throw error
-        } catch {
-            throw AgentIntegrationSetupError.unsafePath
+            data.append(contentsOf: buffer.prefix(count))
+        }
+
+        var finalStatus = stat()
+        guard fstat(descriptor, &finalStatus) == 0,
+              finalStatus.st_dev == openedStatus.st_dev,
+              finalStatus.st_ino == openedStatus.st_ino,
+              finalStatus.st_size == openedStatus.st_size,
+              data.count == Int(openedStatus.st_size) else {
+            throw AgentIntegrationSetupError.changedExternally
+        }
+        return data
+    }
+
+    private func validateHelper(_ url: URL) throws {
+        var pathStatus = stat()
+        guard lstat(url.path, &pathStatus) == 0,
+              (pathStatus.st_mode & S_IFMT) == S_IFREG,
+              pathStatus.st_uid == geteuid(),
+              pathStatus.st_mode & 0o111 != 0,
+              fileManager.isExecutableFile(atPath: url.path) else {
+            throw AgentIntegrationSetupError.helperUnavailable
         }
     }
 
     private func existingPermissions(_ url: URL) throws -> Int? {
-        guard fileManager.fileExists(atPath: url.path) else { return nil }
-        let attributes = try fileManager.attributesOfItem(atPath: url.path)
-        let permissions = (attributes[.posixPermissions] as? NSNumber)?.intValue
-        if let permissions, permissions & 0o200 == 0 {
+        var info = stat()
+        guard lstat(url.path, &info) == 0 else {
+            if errno == ENOENT { return nil }
+            throw AgentIntegrationSetupError.unsafePath
+        }
+        guard (info.st_mode & S_IFMT) == S_IFREG,
+              info.st_uid == geteuid(),
+              info.st_mode & 0o022 == 0 else {
+            throw AgentIntegrationSetupError.unsafePath
+        }
+        let permissions = Int(info.st_mode & 0o777)
+        if permissions & 0o200 == 0 {
             throw AgentIntegrationSetupError.readOnly
         }
         return permissions
@@ -565,16 +709,7 @@ struct AgentIntegrationSetupService: Sendable {
         expectedExistingDigest: String?,
         permissions: Int
     ) throws {
-        let parent = target.deletingLastPathComponent()
-        do {
-            try fileManager.createDirectory(
-                at: parent,
-                withIntermediateDirectories: true,
-                attributes: [.posixPermissions: 0o700]
-            )
-        } catch {
-            throw AgentIntegrationSetupError.writeFailed
-        }
+        try validateParentChain(for: target, createMissing: true)
 
         let current = try secureReadIfPresent(target)
         guard current.map(digest) == expectedExistingDigest else {
@@ -590,18 +725,55 @@ struct AgentIntegrationSetupService: Sendable {
     }
 
     private func writeBackup(_ backup: AgentIntegrationBackupEnvelope, to url: URL) throws {
-        let parent = url.deletingLastPathComponent()
         do {
-            try fileManager.createDirectory(
-                at: parent,
-                withIntermediateDirectories: true,
-                attributes: [.posixPermissions: 0o700]
-            )
+            try validateParentChain(for: url, createMissing: true)
             let data = try JSONEncoder().encode(backup)
             try data.write(to: url, options: [.atomic])
             try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
         } catch {
             throw AgentIntegrationSetupError.writeFailed
+        }
+    }
+
+    private func validateParentChain(for target: URL, createMissing: Bool) throws {
+        let standardizedTarget = target.standardizedFileURL
+        let bases = [paths.homeDirectory.standardizedFileURL, paths.applicationSupportDirectory.standardizedFileURL]
+        guard let base = bases.first(where: {
+            standardizedTarget.path == $0.path || standardizedTarget.path.hasPrefix($0.path + "/")
+        }) else {
+            throw AgentIntegrationSetupError.unsafePath
+        }
+
+        try validateDirectory(base)
+        let relative = String(standardizedTarget.deletingLastPathComponent().path.dropFirst(base.path.count))
+        let components = relative.split(separator: "/").map(String.init)
+        var current = base
+        for component in components {
+            guard component != ".", component != "..", !component.isEmpty else {
+                throw AgentIntegrationSetupError.unsafePath
+            }
+            current.appendPathComponent(component, isDirectory: true)
+            var info = stat()
+            if lstat(current.path, &info) != 0 {
+                guard errno == ENOENT, createMissing else {
+                    if errno == ENOENT { return }
+                    throw AgentIntegrationSetupError.unsafePath
+                }
+                guard mkdir(current.path, 0o700) == 0 || errno == EEXIST else {
+                    throw AgentIntegrationSetupError.writeFailed
+                }
+            }
+            try validateDirectory(current)
+        }
+    }
+
+    private func validateDirectory(_ url: URL) throws {
+        var info = stat()
+        guard lstat(url.path, &info) == 0,
+              (info.st_mode & S_IFMT) == S_IFDIR,
+              info.st_uid == geteuid(),
+              info.st_mode & 0o022 == 0 else {
+            throw AgentIntegrationSetupError.unsafePath
         }
     }
 
@@ -680,9 +852,11 @@ final class AgentIntegrationSetupController: ObservableObject {
     }
 
     func applyPreview() {
-        guard let provider = preview?.provider, !isWorking else { return }
-        preview = nil
-        perform(provider) { service, provider in try service.apply(provider) }
+        guard let preview, !isWorking else { return }
+        self.preview = nil
+        perform(preview.provider) { service, provider in
+            try service.apply(provider, expecting: preview.expectedConfiguration)
+        }
     }
 
     func remove(_ provider: AgentIntegrationProvider) {
