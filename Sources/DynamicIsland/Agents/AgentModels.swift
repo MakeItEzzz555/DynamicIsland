@@ -801,3 +801,32 @@ enum AgentAttentionPolicyEngine {
         }
     }
 }
+
+
+enum AgentActionControlMode: Equatable, Sendable {
+    case observationOnly
+}
+
+struct AgentActionControlAssessment: Equatable, Sendable {
+    let session: AgentSessionInstanceID
+    let mode: AgentActionControlMode
+    let reason: String
+}
+
+/// A9 intentionally remains observation-only until a provider exposes a documented,
+/// versioned bidirectional action channel that can be bound to an exact request,
+/// session generation and expiry. Hook/stdout/terminal injection is never accepted.
+enum AgentActionControlGate {
+    static func assess(_ session: AgentSession) -> AgentActionControlAssessment {
+        AgentActionControlAssessment(
+            session: session.id,
+            mode: .observationOnly,
+            reason: "No verified provider action channel is registered."
+        )
+    }
+
+    static func canRenderApprovalControls(for session: AgentSession) -> Bool {
+        _ = session
+        return false
+    }
+}
