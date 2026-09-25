@@ -1,3 +1,4 @@
+// Agent continuation
 import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
