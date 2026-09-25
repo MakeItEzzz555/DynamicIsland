@@ -261,3 +261,12 @@ App Server remains an optional richer future source only when DynamicIsland owns
 A4 uses Claude Code's official command-hook lifecycle as the first authoritative Claude source. The current hook surface spans terminal, IDE, Desktop and web execution contexts, while DynamicIsland still reports the user-facing source as `unknown` until A10 can verify exact app/editor identity. DynamicIsland publishes a dedicated per-launch `claude-hook-v1.json` profile with its own credential and `claudeOfficialHook` policy. The bundled `DynamicIslandClaudeHookRelay` privacy-reduces hook stdin and fails open so monitoring never blocks Claude.
 
 The normalized subset is deliberately lifecycle-focused: SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, PostToolUseFailure, PermissionDenied, PermissionRequest, Elicitation/ElicitationResult, SubagentStart/SubagentStop, Stop, StopFailure, SessionEnd and CwdChanged. Stop becomes successful completion only when no background task or session cron remains; StopFailure uses only the provider's bounded error category. Prompt text, transcript contents, tool input/output, assistant messages, elicitation text/results and error details are never forwarded. No hook configuration is written in A4; A11 owns detect/diff/confirm/minimal-patch setup.
+
+
+## A4.1 implementation refinement — Claude transcript recovery
+
+A4.1 adds a version-pinned compatibility parser over the generic A2.2 append-only tailer. Claude's official hook contract exposes a transcript path but does not promise the local transcript JSONL as a stable public API, so transcript records are always lower-authority `structuredRecovery` evidence and schema mismatches degrade the adapter rather than triggering guessed mappings.
+
+The compatibility parser retains only structural facts needed for recovery: session ID, CWD, branch, model, explicit thinking block presence, tool-use/tool-result correlation, bounded aggregate token counters and explicit `stop_reason == end_turn`. Prompt text, thinking text, tool arguments/results, assistant text, top-level result content and account data are ignored. No permission need is inferred from tool duration and no idle timeout synthesizes completion.
+
+Exact IDE/Desktop window identity is not inferred from lock files or foreground applications in A4.1. That remains A10 work and requires verified source evidence; recovery therefore reports source `unknown`.

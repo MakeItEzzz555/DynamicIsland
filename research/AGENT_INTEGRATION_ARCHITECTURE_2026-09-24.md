@@ -290,3 +290,10 @@ The adapter intentionally ignores content-rich rollout items. No response body, 
 The Claude hook producer is isolated from both the generic relay and Codex hook producer by a separate launch credential, route (`/v1/events/claude-hook`) and server-side policy. Authentication therefore proves possession of that Claude hook profile, while the policy constrains semantic claims to provider `claude`, source `unknown`, official-hook authority and observation-only capabilities. It still does not prove OS process identity against another same-user process that can read the private profile.
 
 Claude Stop is interpreted narrowly: if the official hook reports background tasks or session crons, normalized state remains working rather than becoming completed. StopFailure may create a failed terminal event because it is an explicit provider lifecycle failure, but only the bounded error category is retained. PermissionRequest remains observation-only; A9 must separately prove a safe bidirectional action channel before any Approve/Deny control exists.
+
+
+## A4.1 Claude recovery authority
+
+Claude transcript recovery is intentionally a compatibility layer beneath official hooks. `ClaudeTranscriptRecoveryAdapter` tails only caller-supplied transcript files; it does not scan `~/.claude`, poll project directories, or inspect editor lock files. Complete records are framed by the generic tailer before the parser sees them.
+
+A matching Claude session ID is immutable continuity evidence that lets transcript recovery enrich the same normalized generation as an official hook producer. Explicit structured transcript fields may recover model/project metadata, tool lifecycle, thinking presence, message-level usage and an `end_turn` completion at `localStructuredRecord` authority. Stronger hook evidence remains authoritative. Content-bearing fields are discarded without being logged or stored.
