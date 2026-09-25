@@ -1372,6 +1372,12 @@ struct CompactIslandView: View {
         let visualizerColor = visualizerAccentColor
         let attentionPresentation = agentAttention.presentation
         let attentionSession = attentionPresentation?.primary.flatMap { agentEvents.session(for: $0.session) }
+        let attentionAccent: Color = switch attentionPresentation?.style {
+        case .success: .green
+        case .actionRequired: .orange
+        case .failure: .red
+        case .informational, .none: .cyan
+        }
         let _ = Self.debugRender(
             hasActiveMediaSource: media.hasActiveMediaSource,
             isPlaying: media.isPlaying,
