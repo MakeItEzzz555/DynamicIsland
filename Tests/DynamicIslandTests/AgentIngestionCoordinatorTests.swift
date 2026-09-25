@@ -527,7 +527,7 @@ final class AgentTelemetryFusionTests: XCTestCase {
             correlationID: nil,
             sequence: nil,
             authority: .lifecycle,
-            payload: .sessionMetadata(AgentSessionMetadata()),
+            payload: .sessionMetadata(AgentSessionMetadata(project: nil)),
             continuity: AgentSessionContinuity(immutableIdentity: nativeID)
         )
     }

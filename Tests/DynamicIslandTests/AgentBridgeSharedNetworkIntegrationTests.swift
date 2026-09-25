@@ -86,7 +86,13 @@ final class AgentBridgeSharedNetworkIntegrationTests: XCTestCase {
         let bridge = AgentBridge(
             eventStore: store,
             credentialStore: FixedAgentBridgeCredentialStore(secret: AgentBridgeTestSupport.secret),
-            discoveryPublisher: try AgentBridgeDiscoveryPublisher(recordURL: recordURL)
+            discoveryPublisher: try AgentBridgeDiscoveryPublisher(recordURL: recordURL),
+            codexDiscoveryPublisher: try AgentBridgeDiscoveryPublisher(
+                recordURL: directory.appendingPathComponent("codex-hook-v1.json")
+            ),
+            claudeDiscoveryPublisher: try AgentBridgeDiscoveryPublisher(
+                recordURL: directory.appendingPathComponent("claude-hook-v1.json")
+            )
         )
         return (directory, recordURL, store, bridge)
     }
