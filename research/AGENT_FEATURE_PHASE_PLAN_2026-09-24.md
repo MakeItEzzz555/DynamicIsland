@@ -270,3 +270,10 @@ A4.1 adds a version-pinned compatibility parser over the generic A2.2 append-onl
 The compatibility parser retains only structural facts needed for recovery: session ID, CWD, branch, model, explicit thinking block presence, tool-use/tool-result correlation, bounded aggregate token counters and explicit `stop_reason == end_turn`. Prompt text, thinking text, tool arguments/results, assistant text, top-level result content and account data are ignored. No permission need is inferred from tool duration and no idle timeout synthesizes completion.
 
 Exact IDE/Desktop window identity is not inferred from lock files or foreground applications in A4.1. That remains A10 work and requires verified source evidence; recovery therefore reports source `unknown`.
+
+
+## A4.5 implementation refinement — bounded OTLP JSON enrichment
+
+A4.5 treats OpenTelemetry strictly as enrichment, never lifecycle truth. AgentOTLPJSONDecoder accepts only bounded OTLP/HTTP JSON with a 1 MiB payload ceiling plus depth and cardinality limits, ignores log bodies, and extracts only provider/session correlation, model metadata and aggregate usage values. Binary/protobuf transport remains unsupported until an equally bounded decoder is justified.
+
+AgentTelemetryFusion never creates a normalized session. It joins an existing coordinator lease only when provider-native identity and immutable continuity are already established. Telemetry may update usage, model and capability evidence at structuredTelemetry authority, including after a terminal event, but it cannot reopen a terminal session, resolve an approval, synthesize completion/failure, or create action capabilities. Samples arriving before a correlatable session are deferred instead of being promoted into lifecycle state.
