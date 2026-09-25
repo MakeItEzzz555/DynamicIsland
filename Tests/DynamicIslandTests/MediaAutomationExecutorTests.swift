@@ -426,9 +426,18 @@ final class MediaControllerAutomationIntegrationTests: XCTestCase {
         )
         let oldPublished = expectation(description: "old track published")
         let newPublished = expectation(description: "new system track published")
+        let postBatchNewPublished = expectation(description: "new track republished after automation batch")
+        var newPublishCount = 0
         let subscription = controller.$title.sink { title in
             if title == "Old" { oldPublished.fulfill() }
-            if title == "New" { newPublished.fulfill() }
+            if title == "New" {
+                newPublishCount += 1
+                if newPublishCount == 1 {
+                    newPublished.fulfill()
+                } else if newPublishCount == 2 {
+                    postBatchNewPublished.fulfill()
+                }
+            }
         }
 
         controller.refresh()
@@ -442,7 +451,10 @@ final class MediaControllerAutomationIntegrationTests: XCTestCase {
             controller.artworkImageKey,
             "embedded:spotify|com.spotify.client|spotify|new|artist"
         )
+
+        // Drain the blocked detection batch before tearing down the controller/executor.
         releaseSecondDetection.signal()
+        await fulfillment(of: [postBatchNewPublished], timeout: 2)
         subscription.cancel()
     }
 
