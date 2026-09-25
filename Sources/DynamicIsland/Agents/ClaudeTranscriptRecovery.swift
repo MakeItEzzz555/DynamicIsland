@@ -55,15 +55,15 @@ struct ClaudeTranscriptRecoveryParser: Sendable {
             ))
             let observedAt = timestamp ?? receivedAt
             let capabilities = AgentCapabilities(evidence: [
-                .sessionLifecycle: evidence(observedAt),
-                .explicitThinking: evidence(observedAt),
-                .toolLifecycle: evidence(observedAt),
-                .commandLifecycle: evidence(observedAt),
-                .taskLifecycle: evidence(observedAt),
-                .tokenUsage: evidence(observedAt),
-                .modelMetadata: evidence(observedAt),
-                .projectContext: evidence(observedAt),
-                .gitMetadata: evidence(observedAt)
+                .sessionLifecycle: Self.evidence(observedAt),
+                .explicitThinking: Self.evidence(observedAt),
+                .toolLifecycle: Self.evidence(observedAt),
+                .commandLifecycle: Self.evidence(observedAt),
+                .taskLifecycle: Self.evidence(observedAt),
+                .tokenUsage: Self.evidence(observedAt),
+                .modelMetadata: Self.evidence(observedAt),
+                .projectContext: Self.evidence(observedAt),
+                .gitMetadata: Self.evidence(observedAt)
             ])
             events.append(event(
                 nativeID: nativeID,
@@ -289,7 +289,7 @@ struct ClaudeTranscriptRecoveryParser: Sendable {
         let identity = [
             nativeID,
             recordID ?? Self.timestampIdentity(timestamp ?? receivedAt),
-            type.rawValue,
+            type.stableName,
             correlationID?.rawValue ?? "",
             discriminator
         ].joined(separator: "|")
