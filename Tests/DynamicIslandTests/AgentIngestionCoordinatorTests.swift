@@ -257,7 +257,8 @@ final class AgentIngestionCoordinatorTests: XCTestCase {
             from: recovery
         ))
         XCTAssertEqual(store.sessions.single?.capabilitySnapshotAuthority, .localStructuredRecord)
-        XCTAssertEqual((await coordinator.sessionLeases()).single?.capabilitySnapshotAuthority, .localStructuredRecord)
+        let recoveryOnlyLease = (await coordinator.sessionLeases()).single
+        XCTAssertEqual(recoveryOnlyLease?.capabilitySnapshotAuthority, .localStructuredRecord)
 
         XCTAssertSuccess(await coordinator.ingest(event("hook-join", continuity: "same"), from: hook))
         XCTAssertSuccess(await coordinator.ingest(
