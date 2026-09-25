@@ -1333,6 +1333,7 @@ struct CompactIslandView: View {
     @ObservedObject private var media: MediaController
     @ObservedObject private var liveActivities: LiveActivityStore
     @ObservedObject private var agentAttention: AgentAttentionCoordinator
+    @ObservedObject private var agentEvents: AgentEventStore
     @ObservedObject private var accentCache = ArtworkAccentColorCache.shared
     @ObservedObject private var artworkPresentation: ArtworkPresentationCoordinator
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -1362,6 +1363,7 @@ struct CompactIslandView: View {
         media = modules.media
         liveActivities = modules.liveActivities
         agentAttention = modules.agentAttention
+        agentEvents = modules.agentEvents
         artworkPresentation = modules.media.artworkPresentation
     }
 
