@@ -241,6 +241,18 @@ final class MediaAutomationExecutor: @unchecked Sendable {
         cancelled.forEach { $0.completeAsCancelled() }
     }
 
+    /// Invalidates queued work and waits until the serial worker has returned
+    /// from any in-flight native call. This provides a deterministic lifecycle
+    /// boundary for owners that must not outlive executor callbacks.
+    func invalidateAndWaitForIdle() async {
+        invalidate()
+        await withCheckedContinuation { continuation in
+            workerQueue.async {
+                continuation.resume()
+            }
+        }
+    }
+
     private func enqueue(_ work: Work) {
         var replaced: Work?
         var rejection: MediaAutomationFailure?
