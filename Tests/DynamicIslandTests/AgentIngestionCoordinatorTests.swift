@@ -422,7 +422,8 @@ final class AgentTelemetryFusionTests: XCTestCase {
         let fusion = AgentTelemetryFusion(coordinator: coordinator)
         let observation = Self.telemetryObservation(provider: .codex, nativeID: "missing", input: 10)
 
-        XCTAssertEqual(await fusion.ingest(observation), .deferredNoSession)
+        let outcome = await fusion.ingest(observation)
+        XCTAssertEqual(outcome, .deferredNoSession)
         XCTAssertTrue(store.sessions.isEmpty)
     }
 
