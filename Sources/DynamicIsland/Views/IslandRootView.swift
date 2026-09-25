@@ -2599,6 +2599,12 @@ struct ExpandedIslandView: View {
                 .foregroundStyle(.orange)
             }
 
+            if hasVisibleAgentUsage(session) {
+                Divider()
+                    .overlay(.white.opacity(0.06))
+                agentUsageSection(session)
+            }
+
             if session.recentActivity.count > 1 {
                 VStack(alignment: .leading, spacing: 3) {
                     ForEach(Array(session.recentActivity.suffix(3).reversed()), id: \.id) { activity in
@@ -2628,6 +2634,83 @@ struct ExpandedIslandView: View {
             ", " + (session.project.displayName ?? "agent session") +
             ", " + agentStateLabel(session.state)
         )
+    }
+
+    @ViewBuilder
+    private func agentUsageSection(_ session: AgentSession) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if session.capabilities.contains(.tokenUsage) {
+                if let sample = session.usage[.inputTokens] {
+                    agentUsageRow("Input", sample: sample)
+                }
+                if let sample = session.usage[.outputTokens] {
+                    agentUsageRow("Output", sample: sample)
+                }
+                if let sample = session.usage[.cachedInputTokens] {
+                    agentUsageRow("Cached", sample: sample)
+                }
+                if let sample = session.usage[.reasoningTokens] {
+                    agentUsageRow("Reasoning", sample: sample)
+                }
+            }
+            if session.capabilities.contains(.contextUsage) {
+                if let sample = session.usage[.contextUsed] {
+                    agentUsageRow("Context", sample: sample)
+                }
+                if let sample = session.usage[.contextLimit] {
+                    agentUsageRow("Context limit", sample: sample)
+                }
+            }
+            if session.capabilities.contains(.quotaUsage) {
+                if let sample = session.usage[.quotaUsed] {
+                    agentUsageRow("Quota", sample: sample)
+                }
+                if let sample = session.usage[.quotaLimit] {
+                    agentUsageRow("Quota limit", sample: sample)
+                }
+                if let sample = session.usage[.rateLimitRemaining] {
+                    agentUsageRow("Rate remaining", sample: sample)
+                }
+            }
+            if session.capabilities.contains(.costUsage),
+               let sample = session.usage[.cost] {
+                agentUsageRow("Cost", sample: sample)
+            }
+        }
+    }
+
+    private func agentUsageRow(_ label: String, sample: AgentUsageSample) -> some View {
+        HStack(spacing: 6) {
+            Text(label)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 6)
+            Text(agentUsageValue(sample))
+                .monospacedDigit()
+            if Date().timeIntervalSince(sample.observedAt) > 300 {
+                Text("stale")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .font(.system(size: 8, weight: .medium, design: .rounded))
+        .help("Source: " + String(sample.source.prefix(120)))
+    }
+
+    private func agentUsageValue(_ sample: AgentUsageSample) -> String {
+        let value = sample.value.formatted(.number.precision(.fractionLength(0...2)))
+        if let limit = sample.limit {
+            let limitText = limit.formatted(.number.precision(.fractionLength(0...2)))
+            return value + " / " + limitText + " " + sample.unit.rawValue
+        }
+        return value + " " + sample.unit.rawValue
+    }
+
+    private func hasVisibleAgentUsage(_ session: AgentSession) -> Bool {
+        let supported =
+            session.capabilities.contains(.tokenUsage) ||
+            session.capabilities.contains(.contextUsage) ||
+            session.capabilities.contains(.quotaUsage) ||
+            session.capabilities.contains(.costUsage)
+        return supported && !session.usage.samples.isEmpty
     }
 
     private func agentStateLabel(_ state: AgentState) -> String {
