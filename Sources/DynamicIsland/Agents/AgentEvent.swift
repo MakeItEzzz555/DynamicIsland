@@ -34,6 +34,40 @@ enum AgentEventType: Hashable, Codable, Sendable {
     case subagentEnded
     case heartbeat
     case unsupported(String)
+
+    /// Stable privacy-safe token for deterministic IDs and diagnostics.
+    var stableName: String {
+        switch self {
+        case .sessionStarted: "sessionStarted"
+        case .sessionResumed: "sessionResumed"
+        case .sessionMetadataUpdated: "sessionMetadataUpdated"
+        case .sessionEnded: "sessionEnded"
+        case .agentWorking: "agentWorking"
+        case .thinkingStarted: "thinkingStarted"
+        case .thinkingEnded: "thinkingEnded"
+        case .planningStarted: "planningStarted"
+        case .planUpdated: "planUpdated"
+        case .planReady: "planReady"
+        case .toolStarted: "toolStarted"
+        case .toolCompleted: "toolCompleted"
+        case .commandStarted: "commandStarted"
+        case .commandCompleted: "commandCompleted"
+        case .approvalRequested: "approvalRequested"
+        case .approvalResolved: "approvalResolved"
+        case .waitingForUser: "waitingForUser"
+        case .userInputResolved: "userInputResolved"
+        case .usageUpdated: "usageUpdated"
+        case .capabilitiesUpdated: "capabilitiesUpdated"
+        case .projectContextUpdated: "projectContextUpdated"
+        case .taskCompleted: "taskCompleted"
+        case .taskFailed: "taskFailed"
+        case .interrupted: "interrupted"
+        case .subagentStarted: "subagentStarted"
+        case .subagentEnded: "subagentEnded"
+        case .heartbeat: "heartbeat"
+        case .unsupported: "unsupported"
+        }
+    }
 }
 
 struct AgentSessionMetadata: Equatable, Codable, Sendable {
