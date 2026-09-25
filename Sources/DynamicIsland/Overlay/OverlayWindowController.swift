@@ -223,6 +223,15 @@ final class OverlayWindowController {
             }
             .store(in: &cancellables)
 
+        modules.agentAttention.$presentation
+            .removeDuplicates()
+            .sink { [weak self] presentation in
+                guard let self else { return }
+                let shouldWiden = presentation != nil && self.islandState.state == .collapsed
+                self.layoutStore.setAgentAttentionWidthExpansion(shouldWiden ? 204 : 0)
+            }
+            .store(in: &cancellables)
+
         layoutStore.$isExpandedScrollGestureSuppressed
             .removeDuplicates()
             .sink { [weak self] _ in

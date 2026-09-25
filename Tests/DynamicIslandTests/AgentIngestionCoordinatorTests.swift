@@ -180,6 +180,101 @@ final class AgentIngestionCoordinatorTests: XCTestCase {
         XCTAssertFalse(store.sessions.single?.state.isTerminal == true)
     }
 
+    func testWeakerRecoveryTerminalCannotCloseLifecycleOwnedLeaseOrForceGeneration() async throws {
+        let (store, coordinator) = makeRuntime()
+        let hook = try await registered(coordinator, id: "authority-hook", kind: .officialHook)
+        let recoveryPolicy = AgentIngestionTestSupport.policy(
+            kinds: [.structuredRecovery],
+            ceiling: .localStructuredRecord
+        )
+        let recovery = try await registered(
+            coordinator,
+            id: "authority-recovery",
+            kind: .structuredRecovery,
+            policy: recoveryPolicy
+        )
+
+        XCTAssertSuccess(await coordinator.ingest(event("hook-start", continuity: "same"), from: hook))
+        XCTAssertSuccess(await coordinator.ingest(
+            event(
+                "recovery-join",
+                authority: .localStructuredRecord,
+                continuity: "same"
+            ),
+            from: recovery
+        ))
+        XCTAssertSuccess(await coordinator.ingest(
+            event(
+                "recovery-complete",
+                type: .taskCompleted,
+                authority: .localStructuredRecord,
+                payload: .terminal(.init(summary: "Recovered completion")),
+                continuity: "same"
+            ),
+            from: recovery
+        ))
+
+        XCTAssertEqual(store.sessions.single?.state, .idle)
+        var lease = (await coordinator.sessionLeases()).single
+        XCTAssertEqual(lease?.instanceID.generation.rawValue, 1)
+        XCTAssertFalse(lease?.isTerminal == true)
+        XCTAssertEqual(lease?.terminalAuthority, .lifecycle)
+
+        XCTAssertSuccess(await coordinator.ingest(
+            event(
+                "recovery-start-again",
+                authority: .localStructuredRecord,
+                continuity: "same"
+            ),
+            from: recovery
+        ))
+
+        lease = (await coordinator.sessionLeases()).single
+        XCTAssertEqual(lease?.instanceID.generation.rawValue, 1)
+        XCTAssertEqual(Set(store.sessions.map(\.id.generation.rawValue)), [1])
+    }
+
+    func testCapabilitySnapshotAuthorityTracksStrongestObservedAggregateWithoutFabrication() async throws {
+        let (store, coordinator) = makeRuntime()
+        let recoveryPolicy = AgentIngestionTestSupport.policy(
+            kinds: [.structuredRecovery],
+            ceiling: .localStructuredRecord
+        )
+        let recovery = try await registered(
+            coordinator,
+            id: "caps-recovery",
+            kind: .structuredRecovery,
+            policy: recoveryPolicy
+        )
+        let hook = try await registered(coordinator, id: "caps-hook", kind: .officialHook)
+
+        XCTAssertSuccess(await coordinator.ingest(
+            event("recovery-start", authority: .localStructuredRecord, continuity: "same"),
+            from: recovery
+        ))
+        XCTAssertSuccess(await coordinator.ingest(
+            capabilityEvent("recovery-caps", [.toolLifecycle], authority: .localStructuredRecord),
+            from: recovery
+        ))
+        XCTAssertEqual(store.sessions.single?.capabilitySnapshotAuthority, .localStructuredRecord)
+        let recoveryOnlyLease = (await coordinator.sessionLeases()).single
+        XCTAssertEqual(recoveryOnlyLease?.capabilitySnapshotAuthority, .localStructuredRecord)
+
+        XCTAssertSuccess(await coordinator.ingest(event("hook-join", continuity: "same"), from: hook))
+        XCTAssertSuccess(await coordinator.ingest(
+            capabilityEvent("hook-caps", [.approvalObservation]),
+            from: hook
+        ))
+        XCTAssertEqual(store.sessions.single?.capabilitySnapshotAuthority, .lifecycle)
+        XCTAssertTrue(store.sessions.single?.capabilities.contains(.toolLifecycle) == true)
+        XCTAssertTrue(store.sessions.single?.capabilities.contains(.approvalObservation) == true)
+
+        XCTAssertSuccess(await coordinator.unregisterProducer(hook, at: AgentIngestionTestSupport.now.addingTimeInterval(1)))
+        XCTAssertEqual(store.sessions.single?.capabilitySnapshotAuthority, .lifecycle)
+        XCTAssertTrue(store.sessions.single?.capabilities.contains(.toolLifecycle) == true)
+        XCTAssertFalse(store.sessions.single?.capabilities.contains(.approvalObservation) == true)
+    }
+
     func testCapabilityEvidenceAggregatesAndWithdrawsPerProducer() async throws {
         let (store, coordinator) = makeRuntime()
         let first = try await registered(coordinator, id: "caps-a")
@@ -344,4 +439,217 @@ private func XCTAssertFailure<Success>(
         return XCTFail("Expected failure \(expected)", file: file, line: line)
     }
     XCTAssertEqual(error, expected, file: file, line: line)
+}
+
+
+@MainActor
+final class AgentTelemetryFusionTests: XCTestCase {
+    func testCodexOTLPMetricDecodesBoundedUsage() throws {
+        let data = Data(#"""
+        {
+          "resourceMetrics": [{
+            "resource": {"attributes": [
+              {"key":"service.name","value":{"stringValue":"codex"}},
+              {"key":"session.id","value":{"stringValue":"thread-1"}},
+              {"key":"model","value":{"stringValue":"gpt-5.6-sol"}}
+            ]},
+            "scopeMetrics": [{
+              "metrics": [{
+                "name":"codex.input_tokens",
+                "gauge":{"dataPoints":[{"asInt":"42","timeUnixNano":"1700000000000000000"}]}
+              }]
+            }]
+          }]
+        }
+        """#.utf8)
+
+        let decoded = try AgentOTLPJSONDecoder().decode(
+            data,
+            receivedAt: Date(timeIntervalSince1970: 1_700_000_001)
+        )
+
+        XCTAssertEqual(decoded.count, 1)
+        XCTAssertEqual(decoded[0].provider, .codex)
+        XCTAssertEqual(decoded[0].nativeSessionID, "thread-1")
+        XCTAssertEqual(decoded[0].model, "gpt-5.6-sol")
+        XCTAssertEqual(decoded[0].usage[.inputTokens]?.value, 42)
+    }
+
+    func testClaudeOTLPLogIgnoresBodyAndUsesOnlySafeAttributes() throws {
+        let data = Data(#"""
+        {
+          "resourceLogs": [{
+            "resource":{"attributes":[
+              {"key":"service.name","value":{"stringValue":"claude_code"}},
+              {"key":"session.id","value":{"stringValue":"claude-1"}}
+            ]},
+            "scopeLogs":[{
+              "logRecords":[{
+                "body":{"stringValue":"content-that-must-not-be-read"},
+                "attributes":[
+                  {"key":"input_tokens","value":{"intValue":"12"}},
+                  {"key":"model","value":{"stringValue":"claude-opus"}}
+                ]
+              }]
+            }]
+          }]
+        }
+        """#.utf8)
+
+        let decoded = try AgentOTLPJSONDecoder().decode(data)
+
+        XCTAssertEqual(decoded.count, 1)
+        XCTAssertEqual(decoded[0].provider, .claude)
+        XCTAssertEqual(decoded[0].usage[.inputTokens]?.value, 12)
+        XCTAssertEqual(decoded[0].model, "claude-opus")
+    }
+
+    func testTelemetryRejectsOversizedPayloadBeforeDecode() {
+        let data = Data(repeating: 0x20, count: AgentTelemetryLimits.maximumPayloadBytes + 1)
+        XCTAssertThrowsError(try AgentOTLPJSONDecoder().decode(data)) { error in
+            XCTAssertEqual(error as? AgentOTLPJSONError, .payloadTooLarge)
+        }
+    }
+
+    func testTelemetryWithoutExistingLeaseIsDeferred() async {
+        let store = AgentEventStore()
+        let coordinator = AgentIngestionCoordinator(eventStore: store)
+        let fusion = AgentTelemetryFusion(coordinator: coordinator)
+        let observation = Self.telemetryObservation(provider: .codex, nativeID: "missing", input: 10)
+
+        let outcome = await fusion.ingest(observation)
+        XCTAssertEqual(outcome, .deferredNoSession)
+        XCTAssertTrue(store.sessions.isEmpty)
+    }
+
+    func testTelemetryEnrichesExistingSessionWithoutOwningLifecycle() async throws {
+        let store = AgentEventStore()
+        let coordinator = AgentIngestionCoordinator(eventStore: store)
+        let hook = try await Self.registerTelemetryLifecycleProducer(coordinator, provider: .codex)
+
+        guard case .success = await coordinator.ingest(
+            Self.telemetryLifecycleStart(provider: .codex, nativeID: "session-1"),
+            from: hook
+        ) else {
+            return XCTFail("Expected lifecycle start")
+        }
+
+        let fusion = AgentTelemetryFusion(coordinator: coordinator)
+        guard case .applied = await fusion.ingest(
+            Self.telemetryObservation(provider: .codex, nativeID: "session-1", input: 21)
+        ) else {
+            return XCTFail("Expected telemetry enrichment")
+        }
+
+        let session = try XCTUnwrap(store.sessions.first)
+        XCTAssertEqual(session.state, .idle)
+        XCTAssertEqual(session.usage[.inputTokens]?.value, 21)
+        XCTAssertTrue(session.capabilities.contains(.tokenUsage))
+    }
+
+    func testTelemetryAfterLifecycleCompletionCannotResurrectSession() async throws {
+        let store = AgentEventStore()
+        let coordinator = AgentIngestionCoordinator(eventStore: store)
+        let hook = try await Self.registerTelemetryLifecycleProducer(coordinator, provider: .claude)
+
+        guard case .success = await coordinator.ingest(
+            Self.telemetryLifecycleStart(provider: .claude, nativeID: "session-2"),
+            from: hook
+        ) else {
+            return XCTFail("Expected lifecycle start")
+        }
+
+        let completed = AgentIngestionEvent(
+            schemaVersion: AgentEvent.normalizedSchemaVersion,
+            eventID: AgentEventID(rawValue: "complete-session-2"),
+            provider: .claude,
+            source: .unknown,
+            nativeSessionID: "session-2",
+            assertedGeneration: nil,
+            type: .taskCompleted,
+            providerTimestamp: nil,
+            receivedTimestamp: Date(timeIntervalSince1970: 20),
+            correlationID: nil,
+            sequence: nil,
+            authority: .lifecycle,
+            payload: .terminal(AgentTerminalEvent(summary: "Done")),
+            continuity: AgentSessionContinuity(immutableIdentity: "session-2")
+        )
+        guard case .success = await coordinator.ingest(completed, from: hook) else {
+            return XCTFail("Expected lifecycle completion")
+        }
+
+        let fusion = AgentTelemetryFusion(coordinator: coordinator)
+        _ = await fusion.ingest(
+            Self.telemetryObservation(provider: .claude, nativeID: "session-2", input: 9)
+        )
+
+        XCTAssertEqual(store.sessions.first?.state, .completed)
+        XCTAssertEqual(store.sessions.first?.usage[.inputTokens]?.value, 9)
+    }
+
+    private static func registerTelemetryLifecycleProducer(
+        _ coordinator: AgentIngestionCoordinator,
+        provider: AgentProvider
+    ) async throws -> AgentProducerHandle {
+        let descriptor = AgentProducerDescriptor(
+            sourceInstanceID: AgentSourceInstanceID(rawValue: "test-" + provider.stableName + "-hook"),
+            sourceKind: .officialHook,
+            runtimeVersion: "test"
+        )
+        let policy: AgentProducerPolicy = provider == .codex ? .codexOfficialHook : .claudeOfficialHook
+        return try await coordinator.registerProducer(
+            descriptor: descriptor,
+            policy: policy,
+            authenticatedProducerID: "test-hook"
+        ).get()
+    }
+
+    private static func telemetryLifecycleStart(
+        provider: AgentProvider,
+        nativeID: String
+    ) -> AgentIngestionEvent {
+        AgentIngestionEvent(
+            schemaVersion: AgentEvent.normalizedSchemaVersion,
+            eventID: AgentEventID(rawValue: "start-" + provider.stableName + "-" + nativeID),
+            provider: provider,
+            source: .unknown,
+            nativeSessionID: nativeID,
+            assertedGeneration: nil,
+            type: .sessionStarted,
+            providerTimestamp: nil,
+            receivedTimestamp: Date(timeIntervalSince1970: 10),
+            correlationID: nil,
+            sequence: nil,
+            authority: .lifecycle,
+            payload: .sessionMetadata(AgentSessionMetadata(project: nil)),
+            continuity: AgentSessionContinuity(immutableIdentity: nativeID)
+        )
+    }
+
+    private static func telemetryObservation(
+        provider: AgentProvider,
+        nativeID: String,
+        input: Double
+    ) -> AgentTelemetryObservation {
+        let date = Date(timeIntervalSince1970: 30)
+        return AgentTelemetryObservation(
+            provider: provider,
+            nativeSessionID: nativeID,
+            source: .unknown,
+            observedAt: date,
+            receivedAt: date,
+            usage: AgentUsage(samples: [
+                .inputTokens: AgentUsageSample(
+                    value: input,
+                    limit: nil,
+                    unit: .tokens,
+                    scope: "session",
+                    source: "test-otlp",
+                    observedAt: date
+                )
+            ]),
+            model: nil
+        )
+    }
 }

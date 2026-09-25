@@ -111,6 +111,16 @@ enum AgentEventReducer {
             )
         }
 
+        if isTerminalTransition(event.type),
+           event.authority < session.terminalAuthority {
+            remember(event, in: &session, limits: limits)
+            return AgentReductionResult(
+                session: session,
+                application: .ignoredWeakerEvidence,
+                attention: nil
+            )
+        }
+
         if session.state.isTerminal && !isAllowedAfterTerminal(event.type) {
             remember(event, in: &session, limits: limits)
             return AgentReductionResult(
@@ -165,7 +175,7 @@ enum AgentEventReducer {
         } else {
             project = AgentProjectContext()
         }
-        return AgentSession(
+        var session = AgentSession(
             id: event.instanceID,
             source: event.source,
             state: .idle,
@@ -181,6 +191,8 @@ enum AgentEventReducer {
             endedAt: nil,
             lastUpdatedAt: event.receivedTimestamp
         )
+        session.terminalAuthority = event.authority
+        return session
     }
 
     private static func apply(
@@ -191,6 +203,7 @@ enum AgentEventReducer {
         expireApprovals(in: &session, at: event.receivedTimestamp)
         switch event.type {
         case .sessionStarted:
+            session.terminalAuthority = max(session.terminalAuthority, event.authority)
             mergeSessionMetadata(event.payload, source: event.source, into: &session)
             appendActivity(
                 event: event,
@@ -203,6 +216,7 @@ enum AgentEventReducer {
             )
 
         case .sessionResumed:
+            session.terminalAuthority = max(session.terminalAuthority, event.authority)
             session.endedAt = nil
             session.state = .working
             session.isWorking = true
@@ -342,6 +356,11 @@ enum AgentEventReducer {
                     session.pendingOperationOrder.removeAll { $0 == pendingKey }
                 }
                 session.tools[correlationID] = tool
+                resolveMatchingPendingApproval(
+                    operationName: tool.name,
+                    at: event.effectiveTimestamp,
+                    in: &session
+                )
                 appendActivity(
                     event: event,
                     kind: .tool,
@@ -409,6 +428,11 @@ enum AgentEventReducer {
                     session.pendingOperationOrder.removeAll { $0 == pendingKey }
                 }
                 session.commands[correlationID] = command
+                resolveMatchingPendingApproval(
+                    operationName: command.displaySummary,
+                    at: event.effectiveTimestamp,
+                    in: &session
+                )
                 appendActivity(
                     event: event,
                     kind: .command,
@@ -458,7 +482,10 @@ enum AgentEventReducer {
             ) else {
                 return .rejected(.operationCapacity)
             }
-            guard session.approvals[correlationID] == nil else { return .applied(nil) }
+            if let existing = session.approvals[correlationID],
+               existing.state == .pending {
+                return .applied(nil)
+            }
             var approval = AgentApproval(
                 requestID: correlationID,
                 summary: AgentPrivacyProjection.title(request.summary, fallback: "Approval required"),
@@ -680,9 +707,18 @@ enum AgentEventReducer {
         return .applied(nil)
     }
 
+    private static func isTerminalTransition(_ type: AgentEventType) -> Bool {
+        switch type {
+        case .sessionEnded, .taskCompleted, .taskFailed, .interrupted:
+            true
+        default:
+            false
+        }
+    }
+
     private static func isAllowedAfterTerminal(_ type: AgentEventType) -> Bool {
         switch type {
-        case .sessionResumed, .sessionMetadataUpdated, .usageUpdated,
+        case .sessionResumed, .sessionEnded, .sessionMetadataUpdated, .usageUpdated,
              .capabilitiesUpdated, .projectContextUpdated, .heartbeat:
             true
         default:
@@ -782,6 +818,27 @@ enum AgentEventReducer {
             let expired = session.recentEventOrder.removeFirst()
             session.eventFingerprints.removeValue(forKey: expired)
         }
+    }
+
+    private static func resolveMatchingPendingApproval(
+        operationName: String,
+        at date: Date,
+        in session: inout AgentSession
+    ) {
+        guard let normalized = AgentPrivacyProjection.normalized(operationName)?.lowercased() else {
+            return
+        }
+        let hint = AgentCorrelationID(rawValue: "operation-" + normalized)
+        let matches = session.approvals.compactMap { key, approval -> AgentCorrelationID? in
+            approval.state == .pending && approval.operationCorrelationID == hint ? key : nil
+        }
+        guard matches.count == 1, let requestID = matches.first,
+              var approval = session.approvals[requestID] else {
+            return
+        }
+        approval.state = .approved
+        approval.resolvedAt = max(approval.requestedAt, date)
+        session.approvals[requestID] = approval
     }
 
     private static func storePending(

@@ -24,4 +24,6 @@ struct IslandModules {
     let liveActivities: LiveActivityStore
     let clipboardHistory: ClipboardHistoryStore
     let navigation: IslandNavigationStore
+    let agentEvents: AgentEventStore
+    let agentAttention: AgentAttentionCoordinator
 }

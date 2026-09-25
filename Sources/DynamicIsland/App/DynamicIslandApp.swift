@@ -86,6 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let navigation = IslandNavigationStore()
     private let geometryService = NotchGeometryService()
     private let agentEvents = AgentEventStore()
+    private let agentAttention = AgentAttentionCoordinator()
     private lazy var agentIngestion = AgentIngestionCoordinator(eventStore: agentEvents)
     private lazy var agentBridge = AgentBridge(coordinator: agentIngestion)
 
@@ -117,7 +118,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             stats: stats,
             liveActivities: liveActivities,
             clipboardHistory: clipboardHistory,
-            navigation: navigation
+            navigation: navigation,
+            agentEvents: agentEvents,
+            agentAttention: agentAttention
         )
         #if DEBUG
         debugPrint(
@@ -154,6 +157,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .store(in: &cancellables)
 
         installLiveActivityObservers()
+        installAgentActivityObservers()
 
         menuController = MenuBarController(
             settings: settings,
@@ -176,9 +180,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil
         )
 
-        // A11 will add user-facing enablement. Until then the transport starts
-        // internally and degrades independently if credentials or binding fail.
-        Task { await agentBridge.start() }
+        if settings.agentActivityEnabled {
+            Task { await agentBridge.start() }
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -210,6 +214,74 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func toggleOverlay() {
         settings.overlayEnabled.toggle()
+    }
+
+    private func installAgentActivityObservers() {
+        Publishers.CombineLatest(agentEvents.$attentionEvents, agentEvents.$sessions)
+            .sink { [weak self] attentionEvents, sessions in
+                self?.agentAttention.synchronize(
+                    attentionEvents: attentionEvents,
+                    sessions: sessions
+                )
+            }
+            .store(in: &cancellables)
+
+        agentAttention.$soundIntent
+            .compactMap { $0 }
+            .removeDuplicates()
+            .sink { _ in
+                NSSound.beep()
+            }
+            .store(in: &cancellables)
+
+        islandState.$state
+            .removeDuplicates()
+            .sink { [weak self] state in
+                if state == .expanded {
+                    self?.agentAttention.dismissForExpansion()
+                }
+            }
+            .store(in: &cancellables)
+
+        settings.$overlayEnabled
+            .removeDuplicates()
+            .sink { [weak self] _ in
+                self?.synchronizeAgentActivitySettings()
+            }
+            .store(in: &cancellables)
+
+        settings.$agentActivityEnabled
+            .removeDuplicates()
+            .sink { [weak self] enabled in
+                guard let self else { return }
+                synchronizeAgentActivitySettings()
+                if enabled {
+                    Task { await self.agentBridge.start() }
+                } else {
+                    self.agentBridge.stop()
+                }
+            }
+            .store(in: &cancellables)
+
+        settings.objectWillChange
+            .sink { [weak self] in
+                DispatchQueue.main.async {
+                    self?.synchronizeAgentActivitySettings()
+                }
+            }
+            .store(in: &cancellables)
+
+        synchronizeAgentActivitySettings()
+    }
+
+    private func synchronizeAgentActivitySettings() {
+        agentAttention.configure(
+            peekDuration: settings.agentPeekDurationSeconds,
+            completionAlertsEnabled: settings.agentCompletionAlertsEnabled,
+            approvalAlertsEnabled: settings.agentApprovalAlertsEnabled,
+            soundsEnabled: settings.agentSoundsEnabled
+        )
+        agentAttention.setEnabled(settings.overlayEnabled && settings.agentActivityEnabled)
     }
 
     private func installLiveActivityObservers() {

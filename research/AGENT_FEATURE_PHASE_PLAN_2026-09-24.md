@@ -238,3 +238,42 @@ These must be resolved in their owning phase, not guessed in A1:
 - bidirectional approval support per source.
 
 None blocks A1 because normalized identity, reduction, replay, privacy and capability absence are provider-independent.
+
+
+## A3 implementation refinement — Codex authoritative hooks
+
+A3 uses Codex's official command-hook lifecycle as the first authoritative Codex source. DynamicIsland publishes a dedicated per-launch, mode-0600 Codex hook bridge profile with a separate credential and a server-side `codexOfficialHook` policy. The bundled `DynamicIslandCodexHookRelay` consumes the documented hook JSON on stdin, privacy-reduces it before transport, and fails open so DynamicIsland availability can never block Codex.
+
+Mapped hook events are SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, PermissionRequest, Stop, Interrupt, SessionEnd, SubagentStart, and SubagentStop. Prompt text, tool input/output, assistant output, transcript contents, and full commands are never forwarded. Compact hooks are intentionally not configured by this integration. A3 does not edit Codex configuration; guided hook installation remains A11.
+
+
+## A3.1 implementation refinement — Codex structured recovery
+
+A3.1 reuses `AppendOnlyRecordTailer` as the only physical JSONL reader. `CodexRolloutRecoveryParser` understands a deliberately narrow, version-pinned subset of the current official rollout envelope: `session_meta`, `turn_context`, `token_usage_record`, and selected `event_msg` lifecycle/usage records. Raw response items, prompts, reasoning text, tool output, assistant content, and account identifiers are never normalized.
+
+The recovery producer uses `structuredRecovery` and `localStructuredRecord` authority. It can establish a fallback session when hooks are absent and can enrich an existing hook-owned session when immutable Codex session continuity matches. When a stronger hook-owned session is already terminal, a late secondary recovery `session_meta` joins that generation rather than manufacturing a new run. Recovery never gains approval control or verified source identity.
+
+App Server remains an optional richer future source only when DynamicIsland owns or is explicitly connected to the App Server lifecycle. Current public App Server APIs do not justify claiming universal passive attachment to independently launched Codex clients, so A3.1 does not fabricate that capability.
+
+
+## A4 implementation refinement — Claude authoritative hooks
+
+A4 uses Claude Code's official command-hook lifecycle as the first authoritative Claude source. The current hook surface spans terminal, IDE, Desktop and web execution contexts, while DynamicIsland still reports the user-facing source as `unknown` until A10 can verify exact app/editor identity. DynamicIsland publishes a dedicated per-launch `claude-hook-v1.json` profile with its own credential and `claudeOfficialHook` policy. The bundled `DynamicIslandClaudeHookRelay` privacy-reduces hook stdin and fails open so monitoring never blocks Claude.
+
+The normalized subset is deliberately lifecycle-focused: SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, PostToolUseFailure, PermissionDenied, PermissionRequest, Elicitation/ElicitationResult, SubagentStart/SubagentStop, Stop, StopFailure, SessionEnd and CwdChanged. Stop becomes successful completion only when no background task or session cron remains; StopFailure uses only the provider's bounded error category. Prompt text, transcript contents, tool input/output, assistant messages, elicitation text/results and error details are never forwarded. No hook configuration is written in A4; A11 owns detect/diff/confirm/minimal-patch setup.
+
+
+## A4.1 implementation refinement — Claude transcript recovery
+
+A4.1 adds a version-pinned compatibility parser over the generic A2.2 append-only tailer. Claude's official hook contract exposes a transcript path but does not promise the local transcript JSONL as a stable public API, so transcript records are always lower-authority `structuredRecovery` evidence and schema mismatches degrade the adapter rather than triggering guessed mappings.
+
+The compatibility parser retains only structural facts needed for recovery: session ID, CWD, branch, model, explicit thinking block presence, tool-use/tool-result correlation, bounded aggregate token counters and explicit `stop_reason == end_turn`. Prompt text, thinking text, tool arguments/results, assistant text, top-level result content and account data are ignored. No permission need is inferred from tool duration and no idle timeout synthesizes completion.
+
+Exact IDE/Desktop window identity is not inferred from lock files or foreground applications in A4.1. That remains A10 work and requires verified source evidence; recovery therefore reports source `unknown`.
+
+
+## A4.5 implementation refinement — bounded OTLP JSON enrichment
+
+A4.5 treats OpenTelemetry strictly as enrichment, never lifecycle truth. AgentOTLPJSONDecoder accepts only bounded OTLP/HTTP JSON with a 1 MiB payload ceiling plus depth and cardinality limits, ignores log bodies, and extracts only provider/session correlation, model metadata and aggregate usage values. Binary/protobuf transport remains unsupported until an equally bounded decoder is justified.
+
+AgentTelemetryFusion never creates a normalized session. It joins an existing coordinator lease only when provider-native identity and immutable continuity are already established. Telemetry may update usage, model and capability evidence at structuredTelemetry authority, including after a terminal event, but it cannot reopen a terminal session, resolve an approval, synthesize completion/failure, or create action capabilities. Samples arriving before a correlatable session are deferred instead of being promoted into lifecycle state.

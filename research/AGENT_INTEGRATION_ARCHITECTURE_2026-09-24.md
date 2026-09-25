@@ -269,3 +269,31 @@ Starting after a session began is handled by App Server/thread listing where sup
 - AgentNotch licensing remains a hard boundary for copying; only independently described concepts are used.
 
 Genuinely deferred: exact provider support for attaching App Server to independently launched Codex clients; stable source identity for every Codex/Claude Desktop or JetBrains session; official quota APIs usable by a third-party local app; and safe action-control availability per source. These do not block A1 because A1 implements provider-independent reduction and replay only.
+
+
+## A3 Codex hook transport checkpoint
+
+The authoritative Codex hook path uses a route-scoped producer credential instead of the generic relay credential. The bridge publishes `codex-hook-v1.json` beside the generic discovery record, bound to `/v1/events/codex-hook` and to an `officialHook` producer whose policy permits only provider `codex`, source `unknown`, documented hook event domains, and observation-only capabilities. Route selection happens before authentication, while the selected HMAC still binds the exact route and body.
+
+The Codex hook relay is deliberately fail-open from Codex's perspective: malformed input, DynamicIsland absence, authentication failure, or semantic rejection never blocks the provider. This is an observability integration, not a policy hook. Raw prompts, tool inputs, tool outputs, assistant text, and transcript contents are discarded before the normalized event crosses the bridge.
+
+
+## A3.1 Codex recovery authority
+
+Codex rollout persistence is treated as a compatibility/recovery source, not as a peer of official hooks. Complete LF-delimited records are read through the generic A2.2 tailer and parsed only after framing. Session metadata establishes the provider-native session ID and continuity identity; turn context may enrich model/CWD; token records may enrich observed token/context metrics; explicit persisted turn-start/complete/abort records may provide fallback lifecycle at `localStructuredRecord` authority.
+
+The adapter intentionally ignores content-rich rollout items. No response body, raw reasoning, user message, tool arguments/results, or assistant text enters normalized state. Schema changes degrade the recovery source rather than causing guessed mappings.
+
+
+## A4 Claude hook transport checkpoint
+
+The Claude hook producer is isolated from both the generic relay and Codex hook producer by a separate launch credential, route (`/v1/events/claude-hook`) and server-side policy. Authentication therefore proves possession of that Claude hook profile, while the policy constrains semantic claims to provider `claude`, source `unknown`, official-hook authority and observation-only capabilities. It still does not prove OS process identity against another same-user process that can read the private profile.
+
+Claude Stop is interpreted narrowly: if the official hook reports background tasks or session crons, normalized state remains working rather than becoming completed. StopFailure may create a failed terminal event because it is an explicit provider lifecycle failure, but only the bounded error category is retained. PermissionRequest remains observation-only; A9 must separately prove a safe bidirectional action channel before any Approve/Deny control exists.
+
+
+## A4.1 Claude recovery authority
+
+Claude transcript recovery is intentionally a compatibility layer beneath official hooks. `ClaudeTranscriptRecoveryAdapter` tails only caller-supplied transcript files; it does not scan `~/.claude`, poll project directories, or inspect editor lock files. Complete records are framed by the generic tailer before the parser sees them.
+
+A matching Claude session ID is immutable continuity evidence that lets transcript recovery enrich the same normalized generation as an official hook producer. Explicit structured transcript fields may recover model/project metadata, tool lifecycle, thinking presence, message-level usage and an `end_turn` completion at `localStructuredRecord` authority. Stronger hook evidence remains authoritative. Content-bearing fields are discarded without being logged or stored.

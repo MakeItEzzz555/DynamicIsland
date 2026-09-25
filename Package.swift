@@ -9,7 +9,9 @@ let package = Package(
     ],
     products: [
         .executable(name: "DynamicIsland", targets: ["DynamicIsland"]),
-        .executable(name: "DynamicIslandAgentRelay", targets: ["DynamicIslandAgentRelay"])
+        .executable(name: "DynamicIslandAgentRelay", targets: ["DynamicIslandAgentRelay"]),
+        .executable(name: "DynamicIslandCodexHookRelay", targets: ["DynamicIslandCodexHookRelay"]),
+        .executable(name: "DynamicIslandClaudeHookRelay", targets: ["DynamicIslandClaudeHookRelay"])
     ],
     targets: [
         .target(
@@ -24,14 +26,34 @@ let package = Package(
                 .process("Assets.xcassets")
             ]
         ),
+        .target(
+            name: "CodexHookShared",
+            dependencies: ["AgentBridgeShared"],
+            path: "Sources/CodexHookShared"
+        ),
+        .target(
+            name: "ClaudeHookShared",
+            dependencies: ["AgentBridgeShared"],
+            path: "Sources/ClaudeHookShared"
+        ),
         .executableTarget(
             name: "DynamicIslandAgentRelay",
             dependencies: ["AgentBridgeShared"],
             path: "Sources/DynamicIslandAgentRelay"
         ),
+        .executableTarget(
+            name: "DynamicIslandCodexHookRelay",
+            dependencies: ["AgentBridgeShared", "CodexHookShared"],
+            path: "Sources/DynamicIslandCodexHookRelay"
+        ),
+        .executableTarget(
+            name: "DynamicIslandClaudeHookRelay",
+            dependencies: ["AgentBridgeShared", "ClaudeHookShared"],
+            path: "Sources/DynamicIslandClaudeHookRelay"
+        ),
         .testTarget(
             name: "DynamicIslandTests",
-            dependencies: ["DynamicIsland", "AgentBridgeShared"],
+            dependencies: ["DynamicIsland", "AgentBridgeShared", "CodexHookShared", "ClaudeHookShared"],
             path: "Tests/DynamicIslandTests"
         )
     ]

@@ -1332,6 +1332,8 @@ struct CompactIslandView: View {
     let isNotchIntegratedShell: Bool
     @ObservedObject private var media: MediaController
     @ObservedObject private var liveActivities: LiveActivityStore
+    @ObservedObject private var agentAttention: AgentAttentionCoordinator
+    @ObservedObject private var agentEvents: AgentEventStore
     @ObservedObject private var accentCache = ArtworkAccentColorCache.shared
     @ObservedObject private var artworkPresentation: ArtworkPresentationCoordinator
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -1360,12 +1362,22 @@ struct CompactIslandView: View {
         self.isNotchIntegratedShell = isNotchIntegratedShell
         media = modules.media
         liveActivities = modules.liveActivities
+        agentAttention = modules.agentAttention
+        agentEvents = modules.agentEvents
         artworkPresentation = modules.media.artworkPresentation
     }
 
     var body: some View {
         let activeBranch = contentMode == .media && shouldShowMediaSession
         let visualizerColor = visualizerAccentColor
+        let attentionPresentation = agentAttention.presentation
+        let attentionSession = attentionPresentation?.primary.flatMap { agentEvents.session(for: $0.session) }
+        let attentionAccent: Color = switch attentionPresentation?.style {
+        case .success: .green
+        case .actionRequired: .orange
+        case .failure: .red
+        case .informational, .none: .cyan
+        }
         let _ = Self.debugRender(
             hasActiveMediaSource: media.hasActiveMediaSource,
             isPlaying: media.isPlaying,
@@ -1385,8 +1397,40 @@ struct CompactIslandView: View {
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
                     .animation(previewRowAnimation, value: previewActive)
             }
+
+            if let attentionPresentation, let primary = attentionPresentation.primary {
+                HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(primary.session.sessionID.provider.stableName.capitalized)
+                            .font(.system(size: 10, weight: .bold, design: .rounded))
+                        if let project = attentionSession?.project.displayName, !project.isEmpty {
+                            Text(project)
+                                .font(.system(size: 8, weight: .medium, design: .rounded))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                    Spacer(minLength: 6)
+                    Text(attentionPresentation.totalCount > 1
+                        ? "\(attentionPresentation.totalCount) agents"
+                        : String(primary.displaySummary.prefix(72)))
+                        .font(.system(size: 9, weight: .semibold, design: .rounded))
+                        .lineLimit(1)
+                }
+                .padding(.horizontal, 11)
+                .foregroundStyle(.white)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .overlay(alignment: .bottom) {
+            if attentionPresentation != nil {
+                Capsule(style: .continuous)
+                    .fill(attentionAccent.opacity(0.55))
+                    .frame(height: 2)
+                    .padding(.horizontal, 12)
+                    .allowsHitTesting(false)
+            }
+        }
         .animation(compactContentAnimation, value: media.hasActiveMediaSource)
         .animation(compactContentAnimation, value: liveActivities.activities)
         .animation(compactContentAnimation, value: contentMode)
@@ -1843,6 +1887,7 @@ struct ExpandedIslandView: View {
     let islandSwipeSensitivity: Double
     @ObservedObject private var navigation: IslandNavigationStore
     @ObservedObject private var liveActivities: LiveActivityStore
+    @ObservedObject private var agentEvents: AgentEventStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.isCollapseShellOnly) private var isCollapseShellOnly
     @Environment(\.isNotchIntegratedShell) private var isNotchIntegratedShell
@@ -1890,6 +1935,7 @@ struct ExpandedIslandView: View {
         self.islandSwipeSensitivity = islandSwipeSensitivity
         navigation = modules.navigation
         liveActivities = modules.liveActivities
+        agentEvents = modules.agentEvents
         _displayedPage = State(initialValue: modules.navigation.selectedPage)
     }
 
@@ -2066,6 +2112,8 @@ struct ExpandedIslandView: View {
         switch page {
         case .island:
             islandPage(metrics: metrics)
+        case .agents:
+            agentActivityPage(metrics: metrics)
         case .tray:
             trayPage(metrics: metrics)
         case .timer:
@@ -2451,6 +2499,281 @@ struct ExpandedIslandView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
+    private func agentActivityPage(metrics: ExpandedIslandLayoutMetrics) -> some View {
+        Group {
+            if agentEvents.sessions.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: "cpu")
+                        .font(.system(size: 24, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.45))
+                    Text("No agent sessions")
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    Text("Codex and Claude activity will appear here when a verified integration is active.")
+                        .font(.system(size: 10, weight: .medium, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 340)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView(.vertical, showsIndicators: true) {
+                    LazyVStack(spacing: 10) {
+                        ForEach(agentEvents.sessions, id: \.id) { session in
+                            agentSessionCard(session)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+        }
+        .innerBlurScaleClean(
+            settings: settings,
+            isVisible: contentVisible,
+            isRemoval: isContentRemoving,
+            index: 1,
+            reduceMotion: reduceMotion
+        )
+        .frame(maxWidth: .infinity, maxHeight: metrics.pageHeight, alignment: .topLeading)
+    }
+
+    private func agentSessionCard(_ session: AgentSession) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            agentSessionHeader(session)
+
+            if let current = session.recentActivity.last {
+                agentCurrentActivity(current)
+            }
+
+            if session.state == .waitingForApproval || session.state == .waitingForUser {
+                agentAttentionRequirement(session)
+            }
+
+            if let openTarget = AgentSourceAssociationResolver.openTarget(for: session) {
+                Button {
+                    _ = AppLaunchService.openApp(bundleIdentifier: openTarget.bundleIdentifier)
+                } label: {
+                    Label("Open \(openTarget.displayName)", systemImage: "arrow.up.forward.app")
+                        .font(.system(size: 9, weight: .semibold, design: .rounded))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.white.opacity(0.78))
+                .accessibilityLabel("Open \(openTarget.displayName)")
+            }
+
+            if hasVisibleAgentUsage(session) {
+                Divider()
+                    .overlay(.white.opacity(0.06))
+                agentUsageSection(session)
+            }
+
+            if session.recentActivity.count > 1 {
+                agentRecentActivity(session)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(.white.opacity(0.06), lineWidth: 1)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(agentSessionAccessibilityLabel(session))
+    }
+
+    private func agentSessionHeader(_ session: AgentSession) -> some View {
+        HStack(spacing: 8) {
+            Text(session.id.sessionID.provider.stableName.capitalized)
+                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(.white.opacity(0.08), in: Capsule())
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(session.project.displayName ?? "Agent session")
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .lineLimit(1)
+                HStack(spacing: 5) {
+                    if let model = session.project.model {
+                        Text(model)
+                    }
+                    if session.source != .unknown {
+                        Text(session.source.rawValue)
+                    }
+                }
+                .font(.system(size: 8, weight: .medium, design: .rounded))
+                .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 8)
+
+            Text(agentStateLabel(session.state))
+                .font(.system(size: 9, weight: .bold, design: .rounded))
+                .foregroundStyle(agentStateAccent(session.state))
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(agentStateAccent(session.state).opacity(0.12), in: Capsule())
+        }
+    }
+
+    private func agentCurrentActivity(_ current: AgentActivity) -> some View {
+        HStack(alignment: .top, spacing: 7) {
+            Image(systemName: "waveform.path.ecg")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(current.title)
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .lineLimit(1)
+                if let summary = current.summary {
+                    Text(summary)
+                        .font(.system(size: 9, weight: .regular, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+            }
+        }
+    }
+
+    private func agentAttentionRequirement(_ session: AgentSession) -> some View {
+        Label(
+            session.state == .waitingForApproval ? "Approval required" : "User input required",
+            systemImage: "exclamationmark.bubble.fill"
+        )
+        .font(.system(size: 9, weight: .semibold, design: .rounded))
+        .foregroundStyle(.orange)
+    }
+
+    private func agentRecentActivity(_ session: AgentSession) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            ForEach(Array(session.recentActivity.suffix(3).reversed()), id: \.id) { activity in
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(.white.opacity(0.22))
+                        .frame(width: 4, height: 4)
+                    Text(activity.title)
+                        .font(.system(size: 8, weight: .medium, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+        }
+    }
+
+    private func agentSessionAccessibilityLabel(_ session: AgentSession) -> String {
+        [
+            session.id.sessionID.provider.stableName.capitalized,
+            session.project.displayName ?? "agent session",
+            agentStateLabel(session.state)
+        ].joined(separator: ", ")
+    }
+
+    @ViewBuilder
+    private func agentUsageSection(_ session: AgentSession) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if session.capabilities.contains(.tokenUsage) {
+                if let sample = session.usage[.inputTokens] {
+                    agentUsageRow("Input", sample: sample)
+                }
+                if let sample = session.usage[.outputTokens] {
+                    agentUsageRow("Output", sample: sample)
+                }
+                if let sample = session.usage[.cachedInputTokens] {
+                    agentUsageRow("Cached", sample: sample)
+                }
+                if let sample = session.usage[.reasoningTokens] {
+                    agentUsageRow("Reasoning", sample: sample)
+                }
+            }
+            if session.capabilities.contains(.contextUsage) {
+                if let sample = session.usage[.contextUsed] {
+                    agentUsageRow("Context", sample: sample)
+                }
+                if let sample = session.usage[.contextLimit] {
+                    agentUsageRow("Context limit", sample: sample)
+                }
+            }
+            if session.capabilities.contains(.quotaUsage) {
+                if let sample = session.usage[.quotaUsed] {
+                    agentUsageRow("Quota", sample: sample)
+                }
+                if let sample = session.usage[.quotaLimit] {
+                    agentUsageRow("Quota limit", sample: sample)
+                }
+                if let sample = session.usage[.rateLimitRemaining] {
+                    agentUsageRow("Rate remaining", sample: sample)
+                }
+            }
+            if session.capabilities.contains(.costUsage),
+               let sample = session.usage[.cost] {
+                agentUsageRow("Cost", sample: sample)
+            }
+        }
+    }
+
+    private func agentUsageRow(_ label: String, sample: AgentUsageSample) -> some View {
+        HStack(spacing: 6) {
+            Text(label)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 6)
+            Text(agentUsageValue(sample))
+                .monospacedDigit()
+            if Date().timeIntervalSince(sample.observedAt) > 300 {
+                Text("stale")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .font(.system(size: 8, weight: .medium, design: .rounded))
+        .help("Source: " + String(sample.source.prefix(120)))
+    }
+
+    private func agentUsageValue(_ sample: AgentUsageSample) -> String {
+        let value = sample.value.formatted(.number.precision(.fractionLength(0...2)))
+        if let limit = sample.limit {
+            let limitText = limit.formatted(.number.precision(.fractionLength(0...2)))
+            return value + " / " + limitText + " " + sample.unit.rawValue
+        }
+        return value + " " + sample.unit.rawValue
+    }
+
+    private func hasVisibleAgentUsage(_ session: AgentSession) -> Bool {
+        guard settings.agentUsageMetricsEnabled else { return false }
+        let supported =
+            session.capabilities.contains(.tokenUsage) ||
+            session.capabilities.contains(.contextUsage) ||
+            session.capabilities.contains(.quotaUsage) ||
+            session.capabilities.contains(.costUsage)
+        return supported && !session.usage.samples.isEmpty
+    }
+
+    private func agentStateLabel(_ state: AgentState) -> String {
+        switch state {
+        case .idle: "Idle"
+        case .thinking: "Thinking"
+        case .planning: "Planning"
+        case .working: "Working"
+        case .runningTool: "Tool"
+        case .runningCommand: "Command"
+        case .waitingForApproval: "Approval"
+        case .waitingForUser: "Input"
+        case .planReady: "Plan ready"
+        case .completed: "Completed"
+        case .failed: "Failed"
+        case .interrupted: "Interrupted"
+        }
+    }
+
+    private func agentStateAccent(_ state: AgentState) -> Color {
+        switch state {
+        case .completed: .green
+        case .failed: .red
+        case .waitingForApproval, .waitingForUser: .orange
+        case .planReady, .planning: .cyan
+        case .interrupted: .yellow
+        default: .white.opacity(0.72)
+        }
+    }
+
     private func trayPage(metrics: ExpandedIslandLayoutMetrics) -> some View {
         GeometryReader { proxy in
             HStack(alignment: .top, spacing: metrics.pageColumnSpacing) {
@@ -2755,6 +3078,8 @@ private struct ExpandedIslandPageSwitcher: View {
                         navigation.showTimer()
                     case .stats:
                         navigation.showStats()
+                    case .agents:
+                        navigation.showAgents()
                     }
                 } label: {
                     Image(systemName: page.symbolName)

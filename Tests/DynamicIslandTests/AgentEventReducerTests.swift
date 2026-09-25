@@ -217,6 +217,66 @@ final class AgentEventReducerTests: XCTestCase {
         XCTAssertTrue(session.capabilities.contains(.approvalObservation))
     }
 
+    func testWeakerTerminalCannotOverrideStrongerActiveLifecycle() throws {
+        let id = AgentTestFixture.sessionID(.codex, "weak-terminal")
+        let session = try startedSession(id)
+        let weakerTerminal = AgentTestFixture.event(
+            "weak-complete",
+            sessionID: id,
+            type: .taskCompleted,
+            offset: 1,
+            authority: .localStructuredRecord,
+            payload: .terminal(AgentTerminalEvent(summary: "Recovered completion"))
+        )
+
+        let result = AgentEventReducer.reduce(session: session, event: weakerTerminal)
+
+        XCTAssertEqual(result.application, .ignoredWeakerEvidence)
+        XCTAssertEqual(result.session?.state, .idle)
+        XCTAssertEqual(result.session?.terminalAuthority, .lifecycle)
+        XCTAssertNil(result.session?.endedAt)
+        XCTAssertNil(result.attention)
+    }
+
+    func testStrongerJoiningStartRaisesLifecycleThreshold() throws {
+        let id = AgentTestFixture.sessionID(.codex, "authority-upgrade")
+        let recoveryStart = AgentTestFixture.event(
+            "recovery-start",
+            sessionID: id,
+            type: .sessionStarted,
+            offset: 0,
+            authority: .localStructuredRecord,
+            payload: .sessionMetadata(AgentSessionMetadata(project: nil))
+        )
+        var session = try XCTUnwrap(AgentEventReducer.reduce(session: nil, event: recoveryStart).session)
+        XCTAssertEqual(session.terminalAuthority, .localStructuredRecord)
+
+        session = try apply(AgentTestFixture.event(
+            "hook-start",
+            sessionID: id,
+            type: .sessionStarted,
+            offset: 1,
+            authority: .lifecycle,
+            payload: .sessionMetadata(AgentSessionMetadata(project: nil))
+        ), to: session)
+        XCTAssertEqual(session.terminalAuthority, .lifecycle)
+
+        let result = AgentEventReducer.reduce(
+            session: session,
+            event: AgentTestFixture.event(
+                "late-recovery-complete",
+                sessionID: id,
+                type: .taskCompleted,
+                offset: 2,
+                authority: .localStructuredRecord,
+                payload: .terminal(AgentTerminalEvent(summary: "Late recovery"))
+            )
+        )
+
+        XCTAssertEqual(result.application, .ignoredWeakerEvidence)
+        XCTAssertEqual(result.session?.state, .idle)
+    }
+
     func testTerminalTransitionOccursOnceAndLaterWorkCannotResurrectGeneration() throws {
         let id = AgentTestFixture.sessionID(.codex, "terminal")
         var session = try startedSession(id)
@@ -353,6 +413,117 @@ final class AgentEventReducerTests: XCTestCase {
         XCTAssertEqual(result.session?.approvals[AgentTestFixture.correlation("approval")]?.state, .approved)
         XCTAssertNotEqual(result.session?.state, .waitingForApproval)
         XCTAssertNil(result.attention)
+    }
+
+    func testMatchingOperationStartResolvesObservedApprovalWithoutFabricatedRequestID() throws {
+        let id = AgentTestFixture.sessionID(.codex, "approval-operation")
+        var session = try startedSession(id)
+        session = try apply(AgentTestFixture.event(
+            "approval-request",
+            sessionID: id,
+            type: .approvalRequested,
+            offset: 1,
+            correlationID: "semantic-request",
+            payload: .approvalRequest(AgentApprovalRequest(
+                summary: "Bash approval required",
+                operationCorrelationID: AgentTestFixture.correlation("operation-bash"),
+                expiresAt: nil
+            ))
+        ), to: session)
+        XCTAssertEqual(session.state, .waitingForApproval)
+
+        session = try apply(AgentTestFixture.event(
+            "command-start",
+            sessionID: id,
+            type: .commandStarted,
+            offset: 2,
+            correlationID: "provider-tool-use-id",
+            payload: .command(AgentCommandEvent(executable: "bash", success: nil, exitCode: nil))
+        ), to: session)
+
+        XCTAssertEqual(session.approvals[AgentTestFixture.correlation("semantic-request")]?.state, .approved)
+        XCTAssertEqual(session.state, .runningCommand)
+        XCTAssertEqual(
+            session.commands[AgentTestFixture.correlation("provider-tool-use-id")]?.status,
+            .active
+        )
+    }
+
+    func testMismatchedOperationDoesNotResolvePendingApproval() throws {
+        let id = AgentTestFixture.sessionID(.claude, "approval-mismatch")
+        var session = try startedSession(id)
+        session = try apply(AgentTestFixture.event(
+            "approval-request",
+            sessionID: id,
+            type: .approvalRequested,
+            offset: 1,
+            correlationID: "semantic-request",
+            payload: .approvalRequest(AgentApprovalRequest(
+                summary: "Bash approval required",
+                operationCorrelationID: AgentTestFixture.correlation("operation-bash"),
+                expiresAt: nil
+            ))
+        ), to: session)
+
+        session = try apply(AgentTestFixture.event(
+            "read-start",
+            sessionID: id,
+            type: .toolStarted,
+            offset: 2,
+            correlationID: "read-1",
+            payload: .tool(AgentToolEvent(name: "Read", category: "read", summary: nil, success: nil))
+        ), to: session)
+
+        XCTAssertEqual(session.approvals[AgentTestFixture.correlation("semantic-request")]?.state, .pending)
+        XCTAssertEqual(session.state, .waitingForApproval)
+    }
+
+    func testResolvedSemanticApprovalCorrelationCanBeRequestedAgain() throws {
+        let id = AgentTestFixture.sessionID(.claude, "approval-repeat")
+        var session = try startedSession(id)
+        let operation = AgentTestFixture.correlation("operation-bash")
+        let requestID = "same-semantic-request"
+
+        session = try apply(AgentTestFixture.event(
+            "request-1",
+            sessionID: id,
+            type: .approvalRequested,
+            offset: 1,
+            correlationID: requestID,
+            payload: .approvalRequest(AgentApprovalRequest(
+                summary: "Bash approval required",
+                operationCorrelationID: operation,
+                expiresAt: nil
+            ))
+        ), to: session)
+        session = try apply(AgentTestFixture.event(
+            "resolve-1",
+            sessionID: id,
+            type: .approvalResolved,
+            offset: 2,
+            correlationID: requestID,
+            payload: .approvalResolution(AgentApprovalResolution(state: .denied))
+        ), to: session)
+
+        let second = AgentEventReducer.reduce(
+            session: session,
+            event: AgentTestFixture.event(
+                "request-2",
+                sessionID: id,
+                type: .approvalRequested,
+                offset: 3,
+                correlationID: requestID,
+                payload: .approvalRequest(AgentApprovalRequest(
+                    summary: "Bash approval required",
+                    operationCorrelationID: operation,
+                    expiresAt: nil
+                ))
+            )
+        )
+
+        XCTAssertEqual(second.application, .applied)
+        XCTAssertEqual(second.session?.approvals[AgentTestFixture.correlation(requestID)]?.state, .pending)
+        XCTAssertEqual(second.attention?.reason, .approvalRequired)
     }
 
     func testPendingApprovalExpiresDeterministicallyOnLaterEvent() throws {

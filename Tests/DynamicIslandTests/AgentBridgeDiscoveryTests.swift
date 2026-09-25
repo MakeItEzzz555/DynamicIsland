@@ -54,6 +54,48 @@ final class AgentBridgeDiscoveryTests: XCTestCase {
         XCTAssertEqual(try decode().launchID, "fresh")
     }
 
+    func testPublishRejectsSymlinkRecordWithoutTouchingTarget() throws {
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let target = directory.appendingPathComponent("target.json")
+        let original = Data("do-not-touch".utf8)
+        try original.write(to: target)
+        try FileManager.default.createSymbolicLink(at: recordURL, withDestinationURL: target)
+
+        let publisher = try AgentBridgeDiscoveryPublisher(recordURL: recordURL)
+        XCTAssertThrowsError(try publisher.publish(record(launchID: "attacker"))) {
+            XCTAssertEqual($0 as? AgentBridgeDiscoveryError, .insecurePermissions)
+        }
+        XCTAssertEqual(try Data(contentsOf: target), original)
+    }
+
+    func testShutdownDoesNotReadOrDeleteOversizedUnprovenRecord() throws {
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let oversized = Data(
+            repeating: 0x41,
+            count: AgentBridgeProtocol.maximumDiscoveryBytes + 1
+        )
+        try oversized.write(to: recordURL)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: recordURL.path
+        )
+
+        let publisher = try AgentBridgeDiscoveryPublisher(recordURL: recordURL)
+        XCTAssertNoThrow(try publisher.removeIfOwned(launchID: "unknown"))
+        XCTAssertEqual(
+            try FileManager.default.attributesOfItem(atPath: recordURL.path)[.size] as? NSNumber,
+            NSNumber(value: oversized.count)
+        )
+    }
+
     func testOwnedRecordIsRemovedOnCleanShutdown() throws {
         let publisher = try AgentBridgeDiscoveryPublisher(recordURL: recordURL)
         try publisher.publish(record(launchID: "owner"))

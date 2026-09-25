@@ -2,6 +2,7 @@ import Foundation
 
 enum ExpandedIslandPage: CaseIterable {
     case island
+    case agents
     case tray
     case timer
     case stats
@@ -10,6 +11,8 @@ enum ExpandedIslandPage: CaseIterable {
         switch self {
         case .island:
             "Island"
+        case .agents:
+            "Agents"
         case .tray:
             "Tray"
         case .timer:
@@ -23,6 +26,8 @@ enum ExpandedIslandPage: CaseIterable {
         switch self {
         case .island:
             "sparkles"
+        case .agents:
+            "cpu"
         case .tray:
             "tray.fill"
         case .timer:
@@ -44,6 +49,9 @@ final class IslandNavigationStore: ObservableObject {
 
     func availablePages(using settings: AppSettings) -> [ExpandedIslandPage] {
         var pages: [ExpandedIslandPage] = [.island]
+        if settings.agentActivityEnabled && settings.showAgentsTab {
+            pages.append(.agents)
+        }
         if settings.trayEnabled && settings.showTrayTab {
             pages.append(.tray)
         }
@@ -71,6 +79,12 @@ final class IslandNavigationStore: ObservableObject {
     func showIsland() {
         guard selectedPage != .island else { return }
         selectedPage = .island
+        logPageChange()
+    }
+
+    func showAgents() {
+        guard selectedPage != .agents else { return }
+        selectedPage = .agents
         logPageChange()
     }
 

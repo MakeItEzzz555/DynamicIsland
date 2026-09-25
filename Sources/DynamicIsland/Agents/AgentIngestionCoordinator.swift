@@ -154,11 +154,17 @@ actor AgentIngestionCoordinator {
                 }
                 var event = normalize(evidence, lease: lease, registration: registration)
                 if case .capabilities(let capabilities) = evidence.payload {
+                    let snapshotAuthority = max(
+                        stagedLeases[evidence.sessionID]?.capabilitySnapshotAuthority ?? .heuristic,
+                        event.authority
+                    )
+                    stagedLeases[evidence.sessionID]?.capabilitySnapshotAuthority = snapshotAuthority
                     event = try capabilitySnapshotEvent(
                         from: event,
                         supplied: capabilities,
                         handle: handle,
                         registration: registration,
+                        snapshotAuthority: snapshotAuthority,
                         ledger: &stagedLedger
                     )
                 }
@@ -167,11 +173,7 @@ actor AgentIngestionCoordinator {
                     throw AgentIngestionError.invalidEvent
                 }
                 normalized.append(event)
-                if event.type == .taskCompleted || event.type == .taskFailed || event.type == .interrupted || event.type == .sessionEnded {
-                    stagedLeases[event.sessionID]?.isTerminal = true
-                } else if event.type == .sessionResumed {
-                    stagedLeases[event.sessionID]?.isTerminal = false
-                }
+                applyLifecycleAuthority(of: event, to: &stagedLeases)
             }
 
             let application = await storeSink(normalized)
@@ -295,6 +297,20 @@ actor AgentIngestionCoordinator {
         let id = event.sessionID
         if var current = leases[id] {
             if current.isTerminal, event.type == .sessionStarted {
+                // A secondary producer discovering the same immutable provider
+                // session after a stronger lifecycle source has already ended it
+                // must converge on that generation rather than manufacture a
+                // fresh run. The producer that already owns the lease may start
+                // a new local incarnation explicitly.
+                if !current.owners.contains(handle),
+                   let currentContinuity = current.continuity,
+                   let incomingContinuity = event.continuity,
+                   currentContinuity == incomingContinuity {
+                    current.owners.insert(handle)
+                    leases[id] = current
+                    try assertGeneration(event.assertedGeneration, equals: current.instanceID.generation)
+                    return current
+                }
                 return try allocateLease(
                     id: id,
                     continuity: event.continuity,
@@ -405,6 +421,7 @@ actor AgentIngestionCoordinator {
         supplied: AgentCapabilities,
         handle: AgentProducerHandle,
         registration: AgentSourceRegistry.Registration,
+        snapshotAuthority: AgentEvidenceAuthority,
         ledger: inout [AgentSessionInstanceID: [AgentProducerHandle: AgentCapabilities]]
     ) throws -> AgentEvent {
         var byProducer = ledger[event.instanceID, default: [:]]
@@ -436,9 +453,11 @@ actor AgentIngestionCoordinator {
             receivedTimestamp: event.receivedTimestamp,
             correlationID: event.correlationID,
             sequence: event.sequence,
-            // This event is a coordinator-owned complete aggregate snapshot;
-            // individual evidence retains its actual source authority.
-            authority: .lifecycle,
+            // This event is a coordinator-owned complete aggregate snapshot.
+            // Its snapshot authority is the strongest authority legitimately
+            // observed for this generation; individual capability evidence
+            // retains its actual source authority.
+            authority: snapshotAuthority,
             origin: event.origin,
             payload: .capabilities(aggregateCapabilities(byProducer)),
             provenance: event.provenance
@@ -463,7 +482,13 @@ actor AgentIngestionCoordinator {
         for instanceID in ledger.keys.sorted(by: instanceSort) {
             guard ledger[instanceID]?.removeValue(forKey: handle) != nil else { continue }
             let aggregate = aggregateCapabilities(ledger[instanceID] ?? [:])
-            events.append(syntheticCapabilityEvent(instanceID: instanceID, capabilities: aggregate, date: date))
+            let authority = capabilitySnapshotAuthority(for: instanceID, leases: leases)
+            events.append(syntheticCapabilityEvent(
+                instanceID: instanceID,
+                capabilities: aggregate,
+                authority: authority,
+                date: date
+            ))
         }
         return events
     }
@@ -485,6 +510,7 @@ actor AgentIngestionCoordinator {
             events.append(syntheticCapabilityEvent(
                 instanceID: instanceID,
                 capabilities: aggregateCapabilities(ledger[instanceID] ?? [:]),
+                authority: capabilitySnapshotAuthority(for: instanceID, leases: leases),
                 date: date
             ))
         }
@@ -494,6 +520,7 @@ actor AgentIngestionCoordinator {
     private func syntheticCapabilityEvent(
         instanceID: AgentSessionInstanceID,
         capabilities: AgentCapabilities,
+        authority: AgentEvidenceAuthority,
         date: Date
     ) -> AgentEvent {
         syntheticEventSequence = syntheticEventSequence == UInt64.max ? 1 : syntheticEventSequence + 1
@@ -504,9 +531,42 @@ actor AgentIngestionCoordinator {
             source: .unknown,
             type: .capabilitiesUpdated,
             receivedTimestamp: date,
-            authority: .lifecycle,
+            authority: authority,
             payload: .capabilities(capabilities)
         )
+    }
+
+    private func applyLifecycleAuthority(
+        of event: AgentEvent,
+        to leases: inout [AgentSessionID: AgentSessionLease]
+    ) {
+        guard var lease = leases[event.sessionID] else { return }
+        switch event.type {
+        case .sessionStarted:
+            lease.terminalAuthority = max(lease.terminalAuthority, event.authority)
+        case .sessionResumed:
+            guard event.authority >= lease.terminalAuthority else { return }
+            lease.terminalAuthority = event.authority
+            lease.isTerminal = false
+        case .sessionEnded, .taskCompleted, .taskFailed, .interrupted:
+            guard event.authority >= lease.terminalAuthority else { return }
+            lease.terminalAuthority = event.authority
+            lease.isTerminal = true
+        default:
+            return
+        }
+        leases[event.sessionID] = lease
+    }
+
+    private func capabilitySnapshotAuthority(
+        for instanceID: AgentSessionInstanceID,
+        leases: [AgentSessionID: AgentSessionLease]
+    ) -> AgentEvidenceAuthority {
+        guard let lease = leases[instanceID.sessionID],
+              lease.instanceID == instanceID else {
+            return .heuristic
+        }
+        return lease.capabilitySnapshotAuthority
     }
 
     private func recordConflict(

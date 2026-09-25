@@ -20,6 +20,32 @@ final class IslandLayoutStore: ObservableObject {
     @Published var collapsedPreviewSurfaceFrame: CGRect = .zero
     @Published var panelFrame: CGRect = .zero
     @Published private(set) var isExpandedScrollGestureSuppressed = false
+    @Published private(set) var agentAttentionWidthExpansion: CGFloat = 0
+
+    private var baseCollapsedSurfaceFrame: CGRect = CGRect(x: 272, y: 226, width: 216, height: 34)
+
+    func setAgentAttentionWidthExpansion(_ expansion: CGFloat) {
+        let normalized = min(max(expansion, 0), 240)
+        guard agentAttentionWidthExpansion != normalized else { return }
+        agentAttentionWidthExpansion = normalized
+        applyAgentAttentionWidth()
+    }
+
+    private func applyAgentAttentionWidth() {
+        let maximumExtra = max(0, expandedSurfaceFrame.width - baseCollapsedSurfaceFrame.width)
+        let extra = min(agentAttentionWidthExpansion, maximumExtra)
+        let width = baseCollapsedSurfaceFrame.width + extra
+        let proposedX = baseCollapsedSurfaceFrame.midX - (width / 2)
+        let maximumX = max(0, canvasSize.width - width)
+        let clampedX = min(max(0, proposedX), maximumX)
+        collapsedSurfaceFrame = CGRect(
+            x: clampedX,
+            y: baseCollapsedSurfaceFrame.minY,
+            width: width,
+            height: baseCollapsedSurfaceFrame.height
+        ).integral
+        collapsedSize = collapsedSurfaceFrame.size
+    }
 
     func setExpandedScrollGestureSuppressed(_ suppressed: Bool) {
         guard isExpandedScrollGestureSuppressed != suppressed else { return }
@@ -43,11 +69,12 @@ final class IslandLayoutStore: ObservableObject {
     ) {
         panelFrame = canvas.frame
         canvasSize = canvas.frame.size
-        collapsedSurfaceFrame = canvas.collapsedSurfaceFrame
+        baseCollapsedSurfaceFrame = canvas.collapsedSurfaceFrame
         expandedSurfaceFrame = canvas.expandedSurfaceFrame
+        applyAgentAttentionWidth()
         collapsedPreviewActive = false
         collapsedPreviewSurfaceFrame = .zero
-        collapsedSize = canvas.collapsedSurfaceFrame.size
+        collapsedSize = collapsedSurfaceFrame.size
         expandedSize = canvas.expandedSurfaceFrame.size
         self.hasHardwareNotch = hasHardwareNotch
         self.hardwareNotchWidth = hasHardwareNotch ? max(hardwareNotchWidth, 0) : 0
@@ -82,12 +109,13 @@ final class IslandLayoutStore: ObservableObject {
 
         self.panelFrame = integralPanelFrame
         canvasSize = integralPanelFrame.size
-        collapsedSurfaceFrame = localCollapsedFrame
+        baseCollapsedSurfaceFrame = localCollapsedFrame
         expandedSurfaceFrame = localExpandedFrame
+        applyAgentAttentionWidth()
         if !collapsedPreviewActive {
             collapsedPreviewSurfaceFrame = .zero
         }
-        collapsedSize = localCollapsedFrame.size
+        collapsedSize = collapsedSurfaceFrame.size
         expandedSize = localExpandedFrame.size
         self.hasHardwareNotch = hasHardwareNotch
         self.hardwareNotchWidth = hasHardwareNotch ? max(hardwareNotchWidth, 0) : 0

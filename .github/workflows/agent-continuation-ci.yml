@@ -1,0 +1,56 @@
+name: Agent Continuation CI
+
+on:
+  push:
+    branches:
+      - feature/agent-activity-chatgpt-continuation
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-continuation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+
+      - name: Diff hygiene
+        run: git diff --check HEAD^
+
+      - name: Debug build
+        run: swift build
+
+      - name: Tests
+        run: swift test
+
+      - name: Release build
+        run: swift build -c release
+
+      - name: Package app
+        run: |
+          chmod +x Scripts/package_app.sh
+          Scripts/package_app.sh
+
+      - name: Verify helper signatures
+        run: |
+          codesign --verify --strict dist/DynamicIsland.app/Contents/Helpers/DynamicIslandAgentRelay
+          codesign --verify --strict dist/DynamicIsland.app/Contents/Helpers/DynamicIslandCodexHookRelay
+          codesign --verify --strict dist/DynamicIsland.app/Contents/Helpers/DynamicIslandClaudeHookRelay
+
+      - name: Verify app signature
+        run: codesign --verify --deep --strict dist/DynamicIsland.app

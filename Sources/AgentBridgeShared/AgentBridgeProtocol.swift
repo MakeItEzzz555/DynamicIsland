@@ -3,6 +3,8 @@ import Foundation
 package enum AgentBridgeProtocol {
     package static let version = 1
     package static let eventsRoute = "/v1/events"
+    package static let codexHookEventsRoute = "/v1/events/codex-hook"
+    package static let claudeHookEventsRoute = "/v1/events/claude-hook"
     package static let healthRoute = "/v1/health"
 
     package static let maximumSingleEventBodyBytes = 64 * 1_024
@@ -26,6 +28,7 @@ package struct AgentBridgeDiscoveryRecord: Codable, Equatable, Sendable {
     package let launchID: String
     package let producerID: String
     package let authenticationToken: String
+    package let eventsRoute: String?
     package let processID: Int32
     package let createdAt: Date
 
@@ -36,6 +39,7 @@ package struct AgentBridgeDiscoveryRecord: Codable, Equatable, Sendable {
         launchID: String,
         producerID: String,
         authenticationToken: String,
+        eventsRoute: String? = nil,
         processID: Int32,
         createdAt: Date
     ) {
@@ -45,6 +49,7 @@ package struct AgentBridgeDiscoveryRecord: Codable, Equatable, Sendable {
         self.launchID = launchID
         self.producerID = producerID
         self.authenticationToken = authenticationToken
+        self.eventsRoute = eventsRoute
         self.processID = processID
         self.createdAt = createdAt
     }
@@ -59,6 +64,7 @@ package struct AgentBridgeClientProfile: Equatable, Sendable {
     package let launchID: String
     package let producerID: String
     package let authenticationKey: Data
+    package let eventsRoute: String
 
     package init(
         host: String,
@@ -66,7 +72,8 @@ package struct AgentBridgeClientProfile: Equatable, Sendable {
         protocolVersion: Int,
         launchID: String,
         producerID: String,
-        authenticationKey: Data
+        authenticationKey: Data,
+        eventsRoute: String = AgentBridgeProtocol.eventsRoute
     ) {
         self.host = host
         self.port = port
@@ -74,6 +81,7 @@ package struct AgentBridgeClientProfile: Equatable, Sendable {
         self.launchID = launchID
         self.producerID = producerID
         self.authenticationKey = authenticationKey
+        self.eventsRoute = eventsRoute
     }
 }
 
