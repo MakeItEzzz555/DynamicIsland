@@ -180,9 +180,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil
         )
 
-        // A11 will add user-facing enablement. Until then the transport starts
-        // internally and degrades independently if credentials or binding fail.
-        Task { await agentBridge.start() }
+        if settings.agentActivityEnabled {
+            Task { await agentBridge.start() }
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -245,10 +245,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         settings.$overlayEnabled
             .removeDuplicates()
-            .sink { [weak self] enabled in
-                self?.agentAttention.setEnabled(enabled)
+            .sink { [weak self] _ in
+                self?.synchronizeAgentActivitySettings()
             }
             .store(in: &cancellables)
+
+        settings.$agentActivityEnabled
+            .removeDuplicates()
+            .sink { [weak self] enabled in
+                guard let self else { return }
+                synchronizeAgentActivitySettings()
+                if enabled {
+                    Task { await self.agentBridge.start() }
+                } else {
+                    self.agentBridge.stop()
+                }
+            }
+            .store(in: &cancellables)
+
+        settings.objectWillChange
+            .sink { [weak self] in
+                DispatchQueue.main.async {
+                    self?.synchronizeAgentActivitySettings()
+                }
+            }
+            .store(in: &cancellables)
+
+        synchronizeAgentActivitySettings()
+    }
+
+    private func synchronizeAgentActivitySettings() {
+        agentAttention.configure(
+            peekDuration: settings.agentPeekDurationSeconds,
+            completionAlertsEnabled: settings.agentCompletionAlertsEnabled,
+            approvalAlertsEnabled: settings.agentApprovalAlertsEnabled,
+            soundsEnabled: settings.agentSoundsEnabled
+        )
+        agentAttention.setEnabled(settings.overlayEnabled && settings.agentActivityEnabled)
     }
 
     private func installLiveActivityObservers() {
