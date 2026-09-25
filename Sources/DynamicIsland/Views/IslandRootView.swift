@@ -1422,6 +1422,15 @@ struct CompactIslandView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .overlay(alignment: .bottom) {
+            if attentionPresentation != nil {
+                Capsule(style: .continuous)
+                    .fill(attentionAccent.opacity(0.55))
+                    .frame(height: 2)
+                    .padding(.horizontal, 12)
+                    .allowsHitTesting(false)
+            }
+        }
         .animation(compactContentAnimation, value: media.hasActiveMediaSource)
         .animation(compactContentAnimation, value: liveActivities.activities)
         .animation(compactContentAnimation, value: contentMode)
