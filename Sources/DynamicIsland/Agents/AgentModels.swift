@@ -1,3 +1,4 @@
+// Continuation validation marker.
 import Foundation
 
 enum AgentDomainLimits {
