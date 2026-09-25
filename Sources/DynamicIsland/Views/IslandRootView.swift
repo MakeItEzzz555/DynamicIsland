@@ -2538,65 +2538,14 @@ struct ExpandedIslandView: View {
 
     private func agentSessionCard(_ session: AgentSession) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Text(session.id.sessionID.provider.stableName.capitalized)
-                    .font(.system(size: 10, weight: .bold, design: .rounded))
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(.white.opacity(0.08), in: Capsule())
-
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(session.project.displayName ?? "Agent session")
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .lineLimit(1)
-                    HStack(spacing: 5) {
-                        if let model = session.project.model {
-                            Text(model)
-                        }
-                        if session.source != .unknown {
-                            Text(session.source.rawValue)
-                        }
-                    }
-                    .font(.system(size: 8, weight: .medium, design: .rounded))
-                    .foregroundStyle(.secondary)
-                }
-
-                Spacer(minLength: 8)
-
-                Text(agentStateLabel(session.state))
-                    .font(.system(size: 9, weight: .bold, design: .rounded))
-                    .foregroundStyle(agentStateAccent(session.state))
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(agentStateAccent(session.state).opacity(0.12), in: Capsule())
-            }
+            agentSessionHeader(session)
 
             if let current = session.recentActivity.last {
-                HStack(alignment: .top, spacing: 7) {
-                    Image(systemName: "waveform.path.ecg")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(current.title)
-                            .font(.system(size: 10, weight: .semibold, design: .rounded))
-                            .lineLimit(1)
-                        if let summary = current.summary {
-                            Text(summary)
-                                .font(.system(size: 9, weight: .regular, design: .rounded))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
-                        }
-                    }
-                }
+                agentCurrentActivity(current)
             }
 
             if session.state == .waitingForApproval || session.state == .waitingForUser {
-                Label(
-                    session.state == .waitingForApproval ? "Approval required" : "User input required",
-                    systemImage: "exclamationmark.bubble.fill"
-                )
-                .font(.system(size: 9, weight: .semibold, design: .rounded))
-                .foregroundStyle(.orange)
+                agentAttentionRequirement(session)
             }
 
             if hasVisibleAgentUsage(session) {
@@ -2606,19 +2555,7 @@ struct ExpandedIslandView: View {
             }
 
             if session.recentActivity.count > 1 {
-                VStack(alignment: .leading, spacing: 3) {
-                    ForEach(Array(session.recentActivity.suffix(3).reversed()), id: \.id) { activity in
-                        HStack(spacing: 6) {
-                            Circle()
-                                .fill(.white.opacity(0.22))
-                                .frame(width: 4, height: 4)
-                            Text(activity.title)
-                                .font(.system(size: 8, weight: .medium, design: .rounded))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-                    }
-                }
+                agentRecentActivity(session)
             }
         }
         .padding(10)
@@ -2629,11 +2566,94 @@ struct ExpandedIslandView: View {
                 .stroke(.white.opacity(0.06), lineWidth: 1)
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(
-            session.id.sessionID.provider.stableName.capitalized +
-            ", " + (session.project.displayName ?? "agent session") +
-            ", " + agentStateLabel(session.state)
+        .accessibilityLabel(agentSessionAccessibilityLabel(session))
+    }
+
+    private func agentSessionHeader(_ session: AgentSession) -> some View {
+        HStack(spacing: 8) {
+            Text(session.id.sessionID.provider.stableName.capitalized)
+                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(.white.opacity(0.08), in: Capsule())
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(session.project.displayName ?? "Agent session")
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .lineLimit(1)
+                HStack(spacing: 5) {
+                    if let model = session.project.model {
+                        Text(model)
+                    }
+                    if session.source != .unknown {
+                        Text(session.source.rawValue)
+                    }
+                }
+                .font(.system(size: 8, weight: .medium, design: .rounded))
+                .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 8)
+
+            Text(agentStateLabel(session.state))
+                .font(.system(size: 9, weight: .bold, design: .rounded))
+                .foregroundStyle(agentStateAccent(session.state))
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(agentStateAccent(session.state).opacity(0.12), in: Capsule())
+        }
+    }
+
+    private func agentCurrentActivity(_ current: AgentActivity) -> some View {
+        HStack(alignment: .top, spacing: 7) {
+            Image(systemName: "waveform.path.ecg")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(current.title)
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .lineLimit(1)
+                if let summary = current.summary {
+                    Text(summary)
+                        .font(.system(size: 9, weight: .regular, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+            }
+        }
+    }
+
+    private func agentAttentionRequirement(_ session: AgentSession) -> some View {
+        Label(
+            session.state == .waitingForApproval ? "Approval required" : "User input required",
+            systemImage: "exclamationmark.bubble.fill"
         )
+        .font(.system(size: 9, weight: .semibold, design: .rounded))
+        .foregroundStyle(.orange)
+    }
+
+    private func agentRecentActivity(_ session: AgentSession) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            ForEach(Array(session.recentActivity.suffix(3).reversed()), id: \.id) { activity in
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(.white.opacity(0.22))
+                        .frame(width: 4, height: 4)
+                    Text(activity.title)
+                        .font(.system(size: 8, weight: .medium, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+        }
+    }
+
+    private func agentSessionAccessibilityLabel(_ session: AgentSession) -> String {
+        [
+            session.id.sessionID.provider.stableName.capitalized,
+            session.project.displayName ?? "agent session",
+            agentStateLabel(session.state)
+        ].joined(separator: ", ")
     }
 
     @ViewBuilder
@@ -3045,6 +3065,8 @@ private struct ExpandedIslandPageSwitcher: View {
                         navigation.showTimer()
                     case .stats:
                         navigation.showStats()
+                    case .agents:
+                        navigation.showAgents()
                     }
                 } label: {
                     Image(systemName: page.symbolName)
