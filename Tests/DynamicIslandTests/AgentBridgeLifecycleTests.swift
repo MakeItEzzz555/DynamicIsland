@@ -70,6 +70,8 @@ final class AgentBridgeLifecycleTests: XCTestCase {
             eventStore: AgentEventStore(),
             credentialStore: FixedAgentBridgeCredentialStore(secret: nil),
             discoveryPublisher: discovery,
+            codexDiscoveryPublisher: DiscoverySpy(),
+            claudeDiscoveryPublisher: DiscoverySpy(),
             serverFactory: servers.factory
         )
         await bridge.start()
@@ -139,6 +141,8 @@ final class AgentBridgeLifecycleTests: XCTestCase {
             eventStore: AgentEventStore(),
             credentialStore: FixedAgentBridgeCredentialStore(secret: AgentBridgeTestSupport.secret),
             discoveryPublisher: discovery,
+            codexDiscoveryPublisher: DiscoverySpy(),
+            claudeDiscoveryPublisher: DiscoverySpy(),
             serverFactory: { _ in server }
         )
         let startTask = Task { await bridge.start() }
@@ -161,6 +165,8 @@ final class AgentBridgeLifecycleTests: XCTestCase {
             eventStore: store,
             credentialStore: FixedAgentBridgeCredentialStore(secret: AgentBridgeTestSupport.secret),
             discoveryPublisher: discovery,
+            codexDiscoveryPublisher: DiscoverySpy(),
+            claudeDiscoveryPublisher: DiscoverySpy(),
             serverFactory: servers.factory
         )
     }
