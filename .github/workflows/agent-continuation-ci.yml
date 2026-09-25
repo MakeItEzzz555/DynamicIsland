@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: agent-continuation-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   validate:
     runs-on: macos-15
@@ -42,8 +46,11 @@ jobs:
           chmod +x Scripts/package_app.sh
           Scripts/package_app.sh
 
-      - name: Verify relay signature
-        run: codesign --verify --strict dist/DynamicIsland.app/Contents/Helpers/DynamicIslandAgentRelay
+      - name: Verify helper signatures
+        run: |
+          codesign --verify --strict dist/DynamicIsland.app/Contents/Helpers/DynamicIslandAgentRelay
+          codesign --verify --strict dist/DynamicIsland.app/Contents/Helpers/DynamicIslandCodexHookRelay
+          codesign --verify --strict dist/DynamicIsland.app/Contents/Helpers/DynamicIslandClaudeHookRelay
 
       - name: Verify app signature
         run: codesign --verify --deep --strict dist/DynamicIsland.app
