@@ -331,12 +331,12 @@ final class MediaRemoteRefreshRecoveryTests: XCTestCase {
         let remote = ControlledMediaRemoteProvider(scheduler: scheduler)
         remote.onInfoRequest = { _ in nativeRequest.fulfill() }
         var provider: NowPlayingMediaProvider? = NowPlayingMediaProvider(mediaRemote: remote)
-        weak let weakProvider = provider
+        weak var weakProvider = provider
         var controller: MediaController? = MediaController(
             systemNowPlayingProvider: provider!,
             startsAutomatically: false
         )
-        weak let weakController = controller
+        weak var weakController = controller
 
         controller?.refresh()
         await fulfillment(of: [nativeRequest], timeout: 1)
