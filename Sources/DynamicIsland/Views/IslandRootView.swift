@@ -1370,6 +1370,8 @@ struct CompactIslandView: View {
     var body: some View {
         let activeBranch = contentMode == .media && shouldShowMediaSession
         let visualizerColor = visualizerAccentColor
+        let attentionPresentation = agentAttention.presentation
+        let attentionSession = attentionPresentation?.primary.flatMap { agentEvents.session(for: $0.session) }
         let _ = Self.debugRender(
             hasActiveMediaSource: media.hasActiveMediaSource,
             isPlaying: media.isPlaying,
