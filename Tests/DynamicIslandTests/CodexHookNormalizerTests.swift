@@ -54,7 +54,12 @@ final class CodexHookNormalizerTests: XCTestCase {
         """.utf8)
         let output = try CodexHookNormalizer.normalize(input)
         let text = String(decoding: output, as: UTF8.self)
+        let root = try XCTUnwrap(try JSONSerialization.jsonObject(with: output) as? [String: Any])
+        let event = try XCTUnwrap(root["event"] as? [String: Any])
+        let payload = try XCTUnwrap(event["payload"] as? [String: Any])
+        let request = try XCTUnwrap(payload["approvalRequest"] as? [String: Any])
         XCTAssertTrue(text.contains("approvalRequested"))
+        XCTAssertEqual(request["operationCorrelationID"] as? String, "operation-bash")
         XCTAssertFalse(text.contains("approvalControl"))
         XCTAssertFalse(text.contains("hidden-value"))
     }

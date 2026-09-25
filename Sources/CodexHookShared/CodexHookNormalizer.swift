@@ -116,17 +116,24 @@ package enum CodexHookNormalizer {
             }
 
         case "PermissionRequest":
-            guard let tool = boundedString(root["tool_name"], maximumBytes: maximumTokenBytes) else {
+            guard let tool = boundedString(root["tool_name"], maximumBytes: maximumTokenBytes),
+                  let approvalID = approvalCorrelation(
+                      prefix: "approval",
+                      sessionID: sessionID,
+                      turnID: turnID,
+                      tool: tool,
+                      toolInput: root["tool_input"]
+                  ) else {
                 throw CodexHookNormalizationError.invalidHook
             }
-            let approvalID = "approval-" + String(
-                digest(Data("\(sessionID)|\(turnID ?? "")|\(tool)|\(observationNonce)".utf8)).prefix(40)
-            )
             events.append(baseEvent(
                 "approvalRequested",
                 correlationID: approvalID,
                 uniqueness: observationNonce,
-                payload: ["approvalRequest": ["summary": "\(String(tool.prefix(96))) approval required"]]
+                payload: ["approvalRequest": [
+                    "summary": "\(String(tool.prefix(96))) approval required",
+                    "operationCorrelationID": operationHint(tool)
+                ]]
             ))
 
         case "Stop":
@@ -165,6 +172,30 @@ package enum CodexHookNormalizer {
         catch { throw CodexHookNormalizationError.malformedJSON }
         guard output.count <= 64 * 1_024 else { throw CodexHookNormalizationError.outputTooLarge }
         return output
+    }
+
+    private static func approvalCorrelation(
+        prefix: String,
+        sessionID: String,
+        turnID: String?,
+        tool: String,
+        toolInput: Any?
+    ) -> String? {
+        guard let toolInput,
+              JSONSerialization.isValidJSONObject(["input": toolInput]),
+              let canonicalInput = try? JSONSerialization.data(
+                  withJSONObject: ["input": toolInput],
+                  options: [.sortedKeys]
+              ) else {
+            return nil
+        }
+        var material = Data("\(sessionID)|\(turnID ?? "")|\(tool.lowercased())|".utf8)
+        material.append(canonicalInput)
+        return prefix + "-" + String(digest(material).prefix(40))
+    }
+
+    private static func operationHint(_ tool: String) -> String {
+        "operation-" + tool.lowercased()
     }
 
     private static func isCommandTool(_ name: String) -> Bool {

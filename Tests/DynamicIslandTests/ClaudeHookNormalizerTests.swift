@@ -62,9 +62,36 @@ final class ClaudeHookNormalizerTests: XCTestCase {
         """.utf8)
         let output = try ClaudeHookNormalizer.normalize(input)
         let text = String(decoding: output, as: UTF8.self)
+        let root = try XCTUnwrap(try JSONSerialization.jsonObject(with: output) as? [String: Any])
+        let event = try XCTUnwrap(root["event"] as? [String: Any])
+        let payload = try XCTUnwrap(event["payload"] as? [String: Any])
+        let request = try XCTUnwrap(payload["approvalRequest"] as? [String: Any])
         XCTAssertTrue(text.contains("approvalRequested"))
+        XCTAssertEqual(request["operationCorrelationID"] as? String, "operation-bash")
         XCTAssertFalse(text.contains("approvalControl"))
         XCTAssertFalse(text.contains("secret command"))
+    }
+
+    func testPermissionDeniedResolvesMatchingObservedRequestWithoutInputLeak() throws {
+        let request = Data("""
+        {"session_id":"claude-1","prompt_id":"p1","cwd":"/tmp/project","permission_mode":"auto","hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"secret command"},"permission_suggestions":[]}
+        """.utf8)
+        let denied = Data("""
+        {"session_id":"claude-1","prompt_id":"p1","cwd":"/tmp/project","permission_mode":"auto","hook_event_name":"PermissionDenied","tool_name":"Bash","tool_input":{"command":"secret command"},"tool_use_id":"tool-1","reason":"private reason"}
+        """.utf8)
+
+        let requestOutput = try ClaudeHookNormalizer.normalize(request, now: Date(timeIntervalSince1970: 10))
+        let deniedOutput = try ClaudeHookNormalizer.normalize(denied, now: Date(timeIntervalSince1970: 11))
+        let requestRoot = try XCTUnwrap(try JSONSerialization.jsonObject(with: requestOutput) as? [String: Any])
+        let requestEvent = try XCTUnwrap(requestRoot["event"] as? [String: Any])
+        let deniedRoot = try XCTUnwrap(try JSONSerialization.jsonObject(with: deniedOutput) as? [String: Any])
+        let deniedEvents = try XCTUnwrap(deniedRoot["events"] as? [[String: Any]])
+
+        XCTAssertEqual(deniedEvents.first?["eventType"] as? String, "approvalResolved")
+        XCTAssertEqual(deniedEvents.first?["correlationID"] as? String, requestEvent["correlationID"] as? String)
+        XCTAssertTrue(String(decoding: deniedOutput, as: UTF8.self).contains("\"state\":\"denied\""))
+        XCTAssertFalse(String(decoding: deniedOutput, as: UTF8.self).contains("secret command"))
+        XCTAssertFalse(String(decoding: deniedOutput, as: UTF8.self).contains("private reason"))
     }
 
     func testStopCompletesOnlyWithoutBackgroundWork() throws {

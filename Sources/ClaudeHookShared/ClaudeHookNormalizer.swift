@@ -106,20 +106,43 @@ package enum ClaudeHookNormalizer {
             try appendToolLifecycle(root: root, success: false, completed: true, baseEvent: baseEvent, events: &events)
 
         case "PermissionDenied":
+            guard let tool = boundedString(root["tool_name"], maximumBytes: maximumTokenBytes),
+                  let approvalID = approvalCorrelation(
+                      prefix: "permission",
+                      sessionID: sessionID,
+                      promptID: promptID,
+                      tool: tool,
+                      toolInput: root["tool_input"]
+                  ) else {
+                throw ClaudeHookNormalizationError.invalidHook
+            }
+            events.append(baseEvent(
+                "approvalResolved",
+                correlationID: approvalID,
+                uniqueness: observationNonce,
+                payload: ["approvalResolution": ["state": "denied"]]
+            ))
             try appendToolLifecycle(root: root, success: false, completed: true, baseEvent: baseEvent, events: &events)
 
         case "PermissionRequest":
-            guard let tool = boundedString(root["tool_name"], maximumBytes: maximumTokenBytes) else {
+            guard let tool = boundedString(root["tool_name"], maximumBytes: maximumTokenBytes),
+                  let approvalID = approvalCorrelation(
+                      prefix: "permission",
+                      sessionID: sessionID,
+                      promptID: promptID,
+                      tool: tool,
+                      toolInput: root["tool_input"]
+                  ) else {
                 throw ClaudeHookNormalizationError.invalidHook
             }
-            let approvalID = "permission-" + String(
-                digest("\(sessionID)|\(promptID ?? "")|\(tool)|\(observationNonce)").prefix(40)
-            )
             events.append(baseEvent(
                 "approvalRequested",
                 correlationID: approvalID,
                 uniqueness: observationNonce,
-                payload: ["approvalRequest": ["summary": "\(String(tool.prefix(96))) approval required"]]
+                payload: ["approvalRequest": [
+                    "summary": "\(String(tool.prefix(96))) approval required",
+                    "operationCorrelationID": operationHint(tool)
+                ]]
             ))
 
         case "Elicitation":
@@ -210,6 +233,30 @@ package enum ClaudeHookNormalizer {
         return output
     }
 
+    private static func approvalCorrelation(
+        prefix: String,
+        sessionID: String,
+        promptID: String?,
+        tool: String,
+        toolInput: Any?
+    ) -> String? {
+        guard let toolInput,
+              JSONSerialization.isValidJSONObject(["input": toolInput]),
+              let canonicalInput = try? JSONSerialization.data(
+                  withJSONObject: ["input": toolInput],
+                  options: [.sortedKeys]
+              ) else {
+            return nil
+        }
+        var material = Data("\(sessionID)|\(promptID ?? "")|\(tool.lowercased())|".utf8)
+        material.append(canonicalInput)
+        return prefix + "-" + String(digest(material).prefix(40))
+    }
+
+    private static func operationHint(_ tool: String) -> String {
+        "operation-" + tool.lowercased()
+    }
+
     private static func appendToolLifecycle(
         root: [String: Any],
         success: Bool?,
@@ -278,7 +325,11 @@ package enum ClaudeHookNormalizer {
     }
 
     private static func digest(_ value: String) -> String {
-        SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
+        digest(Data(value.utf8))
+    }
+
+    private static func digest(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
     private static func iso8601(_ date: Date) -> String {
