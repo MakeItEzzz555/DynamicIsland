@@ -2110,6 +2110,8 @@ struct ExpandedIslandView: View {
         switch page {
         case .island:
             islandPage(metrics: metrics)
+        case .agents:
+            agentActivityPage(metrics: metrics)
         case .tray:
             trayPage(metrics: metrics)
         case .timer:
