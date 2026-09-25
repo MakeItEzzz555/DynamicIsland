@@ -251,10 +251,6 @@ final class AgentAttentionCoordinator: ObservableObject {
         self.options = options
     }
 
-    deinit {
-        retractTask?.cancel()
-    }
-
     func configure(
         peekDuration: TimeInterval? = nil,
         completionAlertsEnabled: Bool? = nil,
