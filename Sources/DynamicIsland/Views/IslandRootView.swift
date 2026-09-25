@@ -1332,6 +1332,7 @@ struct CompactIslandView: View {
     let isNotchIntegratedShell: Bool
     @ObservedObject private var media: MediaController
     @ObservedObject private var liveActivities: LiveActivityStore
+    @ObservedObject private var agentAttention: AgentAttentionCoordinator
     @ObservedObject private var accentCache = ArtworkAccentColorCache.shared
     @ObservedObject private var artworkPresentation: ArtworkPresentationCoordinator
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -1360,6 +1361,7 @@ struct CompactIslandView: View {
         self.isNotchIntegratedShell = isNotchIntegratedShell
         media = modules.media
         liveActivities = modules.liveActivities
+        agentAttention = modules.agentAttention
         artworkPresentation = modules.media.artworkPresentation
     }
 
