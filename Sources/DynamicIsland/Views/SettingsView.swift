@@ -338,6 +338,32 @@ struct SettingsView: View {
         }
     }
 
+    private var agentsSection: some View {
+        settingsForm("AI Agents") {
+            SettingsGroup("Agent Activity") {
+                Toggle("Enable agent activity", isOn: $settings.agentActivityEnabled)
+                Toggle("Show Agents tab", isOn: $settings.showAgentsTab)
+                    .disabled(!settings.agentActivityEnabled)
+                Toggle("Completion alerts", isOn: $settings.agentCompletionAlertsEnabled)
+                    .disabled(!settings.agentActivityEnabled)
+                Toggle("Input alerts", isOn: $settings.agentApprovalAlertsEnabled)
+                    .disabled(!settings.agentActivityEnabled)
+                Toggle("Alert sounds", isOn: $settings.agentSoundsEnabled)
+                    .disabled(!settings.agentActivityEnabled)
+                Toggle("Usage metrics", isOn: $settings.agentUsageMetricsEnabled)
+                    .disabled(!settings.agentActivityEnabled)
+                SliderRow(
+                    title: "Alert duration",
+                    value: $settings.agentPeekDurationSeconds,
+                    range: 1...10,
+                    format: "%.1fs",
+                    disabled: !settings.agentActivityEnabled
+                )
+                HelpText("Usage values are shown only when supported data is available.")
+            }
+        }
+    }
+
     private var statsSection: some View {
         settingsForm("Stats") {
             SettingsGroup("Stats") {
