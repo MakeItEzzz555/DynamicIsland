@@ -505,7 +505,7 @@ final class MediaControllerAutomationIntegrationTests: XCTestCase {
             systemNowPlayingProvider: EmptyMediaDetectionProvider(),
             startsAutomatically: true
         )
-        weak let weakController = controller
+        weak var weakController = controller
 
         await fulfillment(of: [queryStarted], timeout: 2)
         controller = nil
