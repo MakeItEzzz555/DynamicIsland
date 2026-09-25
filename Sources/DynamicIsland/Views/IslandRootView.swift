@@ -1392,9 +1392,27 @@ struct CompactIslandView: View {
                     .animation(previewRowAnimation, value: previewActive)
             }
 
-            if agentAttention.presentation != nil {
-                Text("Agent activity")
-                    .font(.system(size: 9, weight: .semibold))
+            if let attentionPresentation, let primary = attentionPresentation.primary {
+                HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(primary.session.sessionID.provider.stableName.capitalized)
+                            .font(.system(size: 10, weight: .bold, design: .rounded))
+                        if let project = attentionSession?.project.displayName, !project.isEmpty {
+                            Text(project)
+                                .font(.system(size: 8, weight: .medium, design: .rounded))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                    Spacer(minLength: 6)
+                    Text(attentionPresentation.totalCount > 1
+                        ? "\(attentionPresentation.totalCount) agents"
+                        : String(primary.displaySummary.prefix(72)))
+                        .font(.system(size: 9, weight: .semibold, design: .rounded))
+                        .lineLimit(1)
+                }
+                .padding(.horizontal, 11)
+                .foregroundStyle(.white)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
