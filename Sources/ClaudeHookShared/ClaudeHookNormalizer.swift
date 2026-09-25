@@ -146,8 +146,13 @@ package enum ClaudeHookNormalizer {
             ))
 
         case "Elicitation":
-            let correlation = boundedString(root["elicitation_id"], maximumBytes: maximumIdentifierBytes)
-                ?? "elicitation-" + String(digest("\(sessionID)|\(promptID ?? "")|\(observationNonce)").prefix(32))
+            guard let correlation = elicitationCorrelation(
+                root: root,
+                sessionID: sessionID,
+                promptID: promptID
+            ) else {
+                throw ClaudeHookNormalizationError.invalidHook
+            }
             events.append(baseEvent(
                 "waitingForUser",
                 correlationID: correlation,
@@ -156,7 +161,11 @@ package enum ClaudeHookNormalizer {
             ))
 
         case "ElicitationResult":
-            guard let correlation = boundedString(root["elicitation_id"], maximumBytes: maximumIdentifierBytes) else {
+            guard let correlation = elicitationCorrelation(
+                root: root,
+                sessionID: sessionID,
+                promptID: promptID
+            ) else {
                 throw ClaudeHookNormalizationError.invalidHook
             }
             events.append(baseEvent("userInputResolved", correlationID: correlation))
@@ -231,6 +240,23 @@ package enum ClaudeHookNormalizer {
         catch { throw ClaudeHookNormalizationError.malformedJSON }
         guard output.count <= 64 * 1_024 else { throw ClaudeHookNormalizationError.outputTooLarge }
         return output
+    }
+
+    private static func elicitationCorrelation(
+        root: [String: Any],
+        sessionID: String,
+        promptID: String?
+    ) -> String? {
+        if let explicit = boundedString(root["elicitation_id"], maximumBytes: maximumIdentifierBytes) {
+            return explicit
+        }
+        guard let server = boundedString(root["mcp_server_name"], maximumBytes: maximumTokenBytes) else {
+            return nil
+        }
+        let mode = boundedString(root["mode"], maximumBytes: maximumTokenBytes) ?? "unspecified"
+        return "elicitation-" + String(
+            digest("\(sessionID)|\(promptID ?? "")|\(server.lowercased())|\(mode.lowercased())").prefix(40)
+        )
     }
 
     private static func approvalCorrelation(

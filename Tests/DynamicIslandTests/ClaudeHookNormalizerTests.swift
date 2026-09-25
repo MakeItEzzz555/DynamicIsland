@@ -136,6 +136,28 @@ final class ClaudeHookNormalizerTests: XCTestCase {
         XCTAssertFalse(String(decoding: resultOutput, as: UTF8.self).contains("PRIVATE ANSWER"))
     }
 
+    func testElicitationWithoutProviderIDUsesSafeStableFallback() throws {
+        let request = Data("""
+        {"session_id":"claude-1","cwd":"/tmp/project","permission_mode":"default","hook_event_name":"Elicitation","mcp_server_name":"private-mcp","mode":"form","message":"PRIVATE QUESTION","requested_schema":{"type":"object"}}
+        """.utf8)
+        let result = Data("""
+        {"session_id":"claude-1","cwd":"/tmp/project","permission_mode":"default","hook_event_name":"ElicitationResult","mcp_server_name":"private-mcp","mode":"form","action":"accept","content":{"secret":"PRIVATE ANSWER"}}
+        """.utf8)
+
+        let requestOutput = try ClaudeHookNormalizer.normalize(request, now: Date(timeIntervalSince1970: 10))
+        let resultOutput = try ClaudeHookNormalizer.normalize(result, now: Date(timeIntervalSince1970: 20))
+        let requestRoot = try XCTUnwrap(try JSONSerialization.jsonObject(with: requestOutput) as? [String: Any])
+        let resultRoot = try XCTUnwrap(try JSONSerialization.jsonObject(with: resultOutput) as? [String: Any])
+        let requestEvent = try XCTUnwrap(requestRoot["event"] as? [String: Any])
+        let resultEvent = try XCTUnwrap(resultRoot["event"] as? [String: Any])
+
+        XCTAssertEqual(requestEvent["eventType"] as? String, "waitingForUser")
+        XCTAssertEqual(resultEvent["eventType"] as? String, "userInputResolved")
+        XCTAssertEqual(requestEvent["correlationID"] as? String, resultEvent["correlationID"] as? String)
+        XCTAssertFalse(String(decoding: requestOutput, as: UTF8.self).contains("PRIVATE QUESTION"))
+        XCTAssertFalse(String(decoding: resultOutput, as: UTF8.self).contains("PRIVATE ANSWER"))
+    }
+
     func testCwdChangedEmitsOnlySafeProjectContext() throws {
         let input = Data("""
         {"session_id":"claude-1","prompt_id":"p1","cwd":"/tmp/old","permission_mode":"default","hook_event_name":"CwdChanged","old_cwd":"/tmp/old","new_cwd":"/tmp/new-project"}
