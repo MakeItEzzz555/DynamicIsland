@@ -43,11 +43,15 @@ Patterns to reuse:
 ## 3. Component boundaries
 
 ```text
-provider hook / App Server / OTel / transcript watcher
+provider hook / App Server / OTel / transcript watcher / bridge
                     │
                     ▼
-              AgentAdapter(s)
-       validate, correlate, normalize
+             AgentSourceRegistry
+    producer epoch + server-side policy
+                    │
+                    ▼
+         AgentIngestionCoordinator
+ provenance + lease + local generation
                     │ AgentEvent
                     ▼
               AgentEventStore
@@ -77,7 +81,9 @@ Adapters have no reference to `IslandStateStore`, `IslandLayoutStore`, views, au
 
 ### State ownership
 
-- `AgentEventStore`: session identity, generation, operation correlation, ordering, deduplication, bounded history, capabilities, and projections.
+- `AgentSourceRegistry`: immutable source-instance registration, producer epochs, claim policy, capability allowlists and source health. Health never synthesizes agent state.
+- `AgentIngestionCoordinator`: event-specific policy enforcement, continuity leases, local generation allocation, multi-source capability evidence and atomic routing. It does not reduce session state.
+- `AgentEventStore`: session state, operation correlation, ordering, deduplication, bounded history, terminal semantics and projections.
 - `AgentAttentionCoordinator`: significant-event classification, coalescing, attention generation, sound throttle, persistent badge obligations, monotonic retract deadline.
 - `AgentBridge`: authenticated local transport and ingress limits; no provider semantics and no arbitrary execution.
 - provider adapters: raw-source parsing and provider-specific correlation only.
@@ -129,7 +135,17 @@ A2 may expose a separate authenticated OTLP/HTTP-compatible ingress only after f
 
 Defaults retain no full prompt, source code, tool output, shell output, environment, raw transcript line, or provider/account token. Command/tool data is reduced before entering the store. No event leaves the Mac. Logs contain IDs, event kinds, sizes, and error categories only.
 
-The bridge authenticates the producer, but an authenticated provider payload remains untrusted. Adapters enforce schema/version/size limits and strip content. Config setup in A11 is detect → diff → user confirmation → backup where appropriate → minimal patch → verification → rollback. It never overwrites whole Codex or Claude config files and never silently enables content-rich telemetry.
+The bridge HMAC proves possession of the current per-launch credential and binds requests to the server-issued producer ID. It does not prove OS process identity against another process running as the same user that can read the private discovery credential, and it does not prove provider semantics. `AgentSourceRegistry` policy therefore limits provider/source claims, event-specific authority and capabilities before the coordinator allocates a lease. Adapters enforce schema/version/size limits and strip content. Config setup in A11 is detect → diff → user confirmation → backup where appropriate → minimal patch → verification → rollback. It never overwrites whole Codex or Claude config files and never silently enables content-rich telemetry.
+
+The current discovery-wide generic bridge producer is restricted to provider `unverified`, source `unknown`, local-structured-record authority or lower, and a non-action capability allowlist. It cannot claim Codex, Claude, a verified editor/source, lifecycle authority, or `approvalControl`. A2.2 must register source-specific producers under separate server-side policies before real provider identities are accepted.
+
+### A2.1 ingress boundary and A2.2 handoff
+
+All authenticated bridge and future in-process sources converge through the same coordinator API: register producer, ingest normalized evidence, update source health, unregister. A producer epoch identifies a runtime incarnation; a session generation identifies a mutable provider-native session incarnation. They are deliberately independent. Wire generations are assertions only; the coordinator allocates generations and returns opaque leases after continuity checks.
+
+Capabilities use a per-producer evidence ledger. Withdrawal or revocation removes only that producer's proof, and an effective capability remains while another permitted source still proves it. Authority is event-specific: lifecycle protocols/hooks may own lifecycle, telemetry may enrich usage and duration, recovery may fill bounded history, and weak evidence cannot resolve approval or declare completion.
+
+A2.2 may add a bundled `AgentBridgeClient` that reuses the discovery schema, canonical HMAC and request framing, plus a generic append-only tailer. It must not duplicate signing logic or session allocation. The tailer contract covers byte cursors, partial UTF-8/line buffering, truncation and replacement, file identity, bounded startup catch-up, sleep/wake recovery and deterministic teardown; provider interpretation remains in A3/A4.
 
 Approval control is disabled by default. A9 may enable it only when the provider exposes a documented action channel bound to the exact request/session/generation. No terminal keystrokes, accessibility clicks, or inferred button coordinates are permitted. Failures and uncertainty default to observation-only, never approval.
 

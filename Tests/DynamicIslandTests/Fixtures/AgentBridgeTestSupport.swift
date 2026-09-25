@@ -18,19 +18,20 @@ enum AgentBridgeTestSupport {
 
     static func event(
         id: String = "event-1",
-        provider: String = "codex",
+        provider: String = "unverified",
         nativeSessionID: String = "session-1",
         generation: UInt64? = nil,
         type: String = "sessionStarted",
         correlationID: String? = nil,
-        authority: String = "lifecycle",
+        authority: String = "localStructuredRecord",
+        source: String = "unknown",
         payload: [String: Any] = ["sessionMetadata": [:]]
     ) -> [String: Any] {
         var value: [String: Any] = [
             "schemaVersion": 1,
             "eventID": id,
             "provider": provider,
-            "source": "terminal",
+            "source": source,
             "nativeSessionID": nativeSessionID,
             "eventType": type,
             "authority": authority,

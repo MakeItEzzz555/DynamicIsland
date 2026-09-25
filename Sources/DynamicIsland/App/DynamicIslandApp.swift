@@ -86,7 +86,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let navigation = IslandNavigationStore()
     private let geometryService = NotchGeometryService()
     private let agentEvents = AgentEventStore()
-    private lazy var agentBridge = AgentBridge(eventStore: agentEvents)
+    private lazy var agentIngestion = AgentIngestionCoordinator(eventStore: agentEvents)
+    private lazy var agentBridge = AgentBridge(coordinator: agentIngestion)
 
     private var overlayController: OverlayWindowController?
     private var menuController: MenuBarController?

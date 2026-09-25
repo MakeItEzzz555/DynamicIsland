@@ -38,7 +38,7 @@ final class AgentBridgeNetworkTests: XCTestCase {
 
         XCTAssertEqual(response.statusCode, AgentBridgeHTTPStatus.accepted.rawValue)
         XCTAssertEqual(store.sessions.count, 1)
-        XCTAssertEqual(store.sessions.first?.id.sessionID.provider, .codex)
+        XCTAssertEqual(store.sessions.first?.id.sessionID.provider, .other("unverified"))
     }
 
     func testCleanStopRemovesRealOwnedDiscoveryRecord() async throws {

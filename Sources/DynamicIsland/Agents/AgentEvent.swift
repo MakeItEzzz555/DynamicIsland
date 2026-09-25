@@ -120,6 +120,7 @@ struct AgentEvent: Equatable, Codable, Sendable {
     let authority: AgentEvidenceAuthority
     let origin: AgentEventOrigin
     let payload: AgentEventPayload
+    let provenance: AgentEventProvenance?
 
     init(
         schemaVersion: Int = AgentEvent.normalizedSchemaVersion,
@@ -134,7 +135,8 @@ struct AgentEvent: Equatable, Codable, Sendable {
         sequence: UInt64? = nil,
         authority: AgentEvidenceAuthority = .lifecycle,
         origin: AgentEventOrigin = .live,
-        payload: AgentEventPayload = .none
+        payload: AgentEventPayload = .none,
+        provenance: AgentEventProvenance? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.eventID = eventID
@@ -149,6 +151,7 @@ struct AgentEvent: Equatable, Codable, Sendable {
         self.authority = authority
         self.origin = origin
         self.payload = payload
+        self.provenance = provenance
     }
 
     var instanceID: AgentSessionInstanceID {

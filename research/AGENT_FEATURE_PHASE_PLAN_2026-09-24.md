@@ -23,9 +23,21 @@ A1 normalized model + reducer + replay
         ▼
 A2 authenticated bridge
         │
-        ├─────────────┐
-        ▼             ▼
-A3 Codex adapter   A4 Claude adapter
+        ▼
+A2.1 ingestion coordinator + source registry
+        │
+        ▼
+A2.2 relay client + append-only tailer primitives
+        │
+        ├──────────────────────┐
+        ▼                      ▼
+A3 Codex lifecycle        A4 Claude lifecycle
+        │                      │
+        ▼                      ▼
+A3.1 protocol/recovery    A4.1 recovery/IDE
+        └──────────┬───────────┘
+                   ▼
+          A4.5 OTLP enrichment/fusion
         └──────┬──────┘
                ▼
        A5 attention coordinator
@@ -43,7 +55,7 @@ A3 Codex adapter   A4 Claude adapter
        A11 setup, migration, hardening
 ```
 
-A3 and A4 can be developed in either order after A2, but A5 requires at least one validated real adapter and replay coverage for both provider vocabularies. A9 does not block observation/UI delivery; unsupported providers remain read-only.
+A3 and A4 can be developed in either order after A2.2. Their enrichment subphases remain separately gated so recovery and telemetry cannot accidentally become lifecycle authority. A5 requires at least one validated real adapter and replay coverage for both provider vocabularies. A9 does not block observation/UI delivery; unsupported providers remain read-only.
 
 ## 3. Phase gates
 
@@ -75,25 +87,65 @@ Adversarial tests: wrong/missing auth, replay nonce, clock skew, oversized/chunk
 
 Exit: packet/socket inspection proves loopback-only; no arbitrary execution/file access; provider failure cannot affect other app features; full validation, security review, Graphify, commit/push clean.
 
-### A3 — Codex adapter
+### A2.1 — Ingestion coordination and source registry
 
-Entrance: A2 authenticated ingestion stable; supported minimum Codex version and surface matrix frozen for this phase.
+Entrance: A2 authentication, credential-bound producer identity, HTTP framing and atomic transport batches are stable.
 
-Scope: official App Server/structured stream and hook/OTel mappings as supported; bounded recovery from local state only where necessary. Correlate thread/turn/item/tool/approval/plan/subagent/usage IDs. Detect configuration but do not modify it. No UI.
+Scope: provider-independent producer registration/epochs, server-side claim policy, event-specific provenance ceilings, source health, opaque session leases with locally allocated generations, multi-source capability evidence and atomic routing into the A1 store. A2 HTTP is rerouted through this layer. No provider parser, relay executable, file tailer, OTLP decoder or UI.
 
-Adversarial tests: independent CLI/IDE sessions, resume/fork, two threads same repo, App Server disconnect/reconnect, hook+OTel duplicates, out-of-order item completion, stale SQLite/rollout data, partial line/rotation, schema drift, hosted-tool gap, quota absence and version mismatch.
+Exit: synthetic hook/protocol/recovery/telemetry producers converge only with verified continuity; weak evidence cannot own lifecycle/actions; source withdrawal cannot erase another source's evidence; old epochs and generation assertions are rejected; A1/A2 regressions and full validation pass; commit/push clean.
+
+### A2.2 — Relay client and append-only ingestion primitives
+
+Entrance: A2.1 producer handles, policy, lease and health APIs are stable.
+
+Scope: a bundled production client reusing discovery parsing, canonical HMAC and bounded request framing; producer-specific credential handoff; bounded retry/failure reporting; and a provider-neutral append-only record tailer with byte cursors, partial-line/UTF-8 safety, truncation/rotation identity, bounded catch-up, sleep/wake recovery and deterministic teardown. No Codex/Claude semantics.
+
+Exit: client interoperability fixtures and tailer adversarial tests pass without duplicating server crypto or session state; no provider configuration changes; full validation and checkpoint clean.
+
+### A3 — Codex authoritative lifecycle
+
+Entrance: A2.2 client/tailer primitives stable; supported minimum Codex version and authoritative surface matrix frozen for this phase.
+
+Scope: the strongest supported official Codex lifecycle surface, with authoritative thread/turn/item/tool/approval/plan/subagent correlations. Detect configuration but do not modify it. No filesystem recovery, OTLP or UI.
+
+Adversarial tests: independent CLI/IDE sessions, resume/fork, two threads same repo, protocol disconnect/reconnect, out-of-order item completion, schema drift, hosted-tool gap, quota absence and version mismatch.
 
 Exit: replayed raw Codex fixtures normalize deterministically; completion/interruption/approval semantics match official evidence; unsupported sources advertise reduced capabilities; CPU/watchers bounded; full validation, Graphify, commit/push clean.
 
-### A4 — Claude adapter
+### A3.1 — Codex protocol and recovery enrichment
 
-Entrance: A2 stable; minimum Claude versions mapped for base and newer hook events.
+Entrance: A3 authoritative Codex lifecycle mapping and correlation IDs stable.
 
-Scope: HTTP hooks as lifecycle authority, stream-json/Agent SDK mapping for launched sessions, OTel enrichment, and version-pinned bounded transcript recovery. Correlate session/prompt/tool/agent/task IDs. Detect setup only; no config writes or UI.
+Scope: supported App Server detail, structured local recovery and IDE/source enrichment. Recovery may fill bounded history/metadata but cannot override explicit lifecycle. No UI or configuration writes.
 
-Adversarial tests: local-version skew, hook+OTel duplicate, CLI/VS Code/Desktop source differences, resume with sequence reset, partial/truncated/rotated JSONL, permission vs slow tool, subagent/task lifecycle, interruption uncertainty, cloud hook reachability loss and config change.
+Exit: lifecycle/recovery duplicate and contradiction fixtures prove authority rules; bounded catch-up and teardown pass; full validation and checkpoint clean.
+
+### A4 — Claude authoritative lifecycle
+
+Entrance: A2.2 stable; minimum Claude hook/lifecycle versions mapped.
+
+Scope: HTTP hooks and supported stream/SDK lifecycle mapping. Correlate session/prompt/tool/agent/task IDs. Detect setup only; no config writes, transcript recovery, OTLP or UI.
+
+Adversarial tests: local-version skew, duplicate lifecycle callbacks, CLI/VS Code/Desktop source differences, resume with sequence reset, permission vs slow tool, subagent/task lifecycle, interruption uncertainty, cloud hook reachability loss and config change.
 
 Exit: raw Claude fixtures normalize deterministically with declared capability reductions; no timeout becomes permission/success; no transcript content retained; teardown and sleep/wake verified; full validation, Graphify, commit/push clean.
+
+### A4.1 — Claude recovery and IDE enrichment
+
+Entrance: A4 authoritative lifecycle and correlation contract stable.
+
+Scope: version-pinned bounded transcript recovery plus verified IDE/source enrichment using A2.2 primitives. Recovery cannot resolve permissions, declare success or override explicit hooks.
+
+Exit: partial/truncated/rotated record and IDE coexistence fixtures pass; privacy projection and teardown remain bounded; full validation and checkpoint clean.
+
+### A4.5 — OTLP enrichment and fusion hardening
+
+Entrance: Codex/Claude lifecycle and recovery correlations are stable enough to deduplicate telemetry.
+
+Scope: bounded OTLP decoding and event-specific fusion for usage, duration, model and tool metrics. OTLP never owns lifecycle, approval resolution or task success.
+
+Exit: duplicate/out-of-order telemetry cannot regress lifecycle; body/cardinality limits and flood behavior pass; full validation and checkpoint clean.
 
 ### A5 — Agent Attention Coordinator
 

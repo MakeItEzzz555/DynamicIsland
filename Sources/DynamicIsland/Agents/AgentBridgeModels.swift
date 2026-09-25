@@ -40,8 +40,9 @@ struct AgentBridgeDiscoveryRecord: Codable, Equatable, Sendable {
     let host: String
     let port: UInt16
     let launchID: String
-    /// Identity bound by the server to this discovery credential. Clients echo
-    /// it in envelopes but cannot select another producer epoch with this key.
+    /// Identity bound by the server to this per-launch credential. HMAC proves
+    /// possession of that credential, not OS process identity or provider truth;
+    /// server-side producer policy constrains all semantic claims.
     let producerID: String
     /// A derived per-launch key. The persistent installation secret never leaves Keychain.
     let authenticationToken: String
@@ -136,6 +137,7 @@ enum AgentBridgeEnvelopeError: String, Error, Equatable, Sendable {
     case invalidPayload
     case invalidCapability
     case invalidUsage
+    case policyViolation
     case generationConflict
     case semanticValidation
     case storeRejected
