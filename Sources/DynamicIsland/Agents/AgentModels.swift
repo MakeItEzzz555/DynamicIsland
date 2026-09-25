@@ -655,7 +655,13 @@ enum AgentAttentionPolicyEngine {
 
             if let index = items.firstIndex(where: { $0.session == event.session }) {
                 let current = items[index]
-                if event.priority >= current.priority || event.timestamp >= current.timestamp {
+                let withinWindow =
+                    now.timeIntervalSince(previous.updatedAt) <= max(0, options.coalescingWindow)
+                if withinWindow {
+                    if event.priority >= current.priority || event.timestamp >= current.timestamp {
+                        items[index] = event
+                    }
+                } else {
                     items[index] = event
                 }
             } else if items.count < max(1, options.maximumPresentedItems) {
@@ -788,7 +794,9 @@ enum AgentAttentionPolicyEngine {
         order.append(value)
         let safeLimit = max(1, limit)
         if order.count > safeLimit {
-            let removed = order.removeFirst(order.count - safeLimit)
+            let removalCount = order.count - safeLimit
+            let removed = Array(order.prefix(removalCount))
+            order.removeFirst(removalCount)
             for item in removed { set.remove(item) }
         }
     }
