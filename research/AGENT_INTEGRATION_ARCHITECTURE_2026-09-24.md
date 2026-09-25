@@ -283,3 +283,10 @@ The Codex hook relay is deliberately fail-open from Codex's perspective: malform
 Codex rollout persistence is treated as a compatibility/recovery source, not as a peer of official hooks. Complete LF-delimited records are read through the generic A2.2 tailer and parsed only after framing. Session metadata establishes the provider-native session ID and continuity identity; turn context may enrich model/CWD; token records may enrich observed token/context metrics; explicit persisted turn-start/complete/abort records may provide fallback lifecycle at `localStructuredRecord` authority.
 
 The adapter intentionally ignores content-rich rollout items. No response body, raw reasoning, user message, tool arguments/results, or assistant text enters normalized state. Schema changes degrade the recovery source rather than causing guessed mappings.
+
+
+## A4 Claude hook transport checkpoint
+
+The Claude hook producer is isolated from both the generic relay and Codex hook producer by a separate launch credential, route (`/v1/events/claude-hook`) and server-side policy. Authentication therefore proves possession of that Claude hook profile, while the policy constrains semantic claims to provider `claude`, source `unknown`, official-hook authority and observation-only capabilities. It still does not prove OS process identity against another same-user process that can read the private profile.
+
+Claude Stop is interpreted narrowly: if the official hook reports background tasks or session crons, normalized state remains working rather than becoming completed. StopFailure may create a failed terminal event because it is an explicit provider lifecycle failure, but only the bounded error category is retained. PermissionRequest remains observation-only; A9 must separately prove a safe bidirectional action channel before any Approve/Deny control exists.

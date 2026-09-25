@@ -155,6 +155,30 @@ struct AgentProducerPolicy: Equatable, Sendable {
         allowedSchemaVersions: [AgentEvent.normalizedSchemaVersion]
     )
 
+    static let claudeOfficialHook = AgentProducerPolicy(
+        allowedProviders: [.claude],
+        allowedSources: [.unknown],
+        allowedSourceKinds: [.officialHook],
+        allowedEventTypes: [
+            .sessionStarted, .sessionResumed, .sessionEnded,
+            .agentWorking, .toolStarted, .toolCompleted,
+            .commandStarted, .commandCompleted,
+            .approvalRequested, .waitingForUser, .userInputResolved,
+            .capabilitiesUpdated, .projectContextUpdated,
+            .taskCompleted, .taskFailed,
+            .subagentStarted, .subagentEnded, .heartbeat
+        ],
+        authorityCeilings: Dictionary(uniqueKeysWithValues: AgentAuthorityDomain.allCases.map {
+            ($0, AgentEvidenceAuthority.lifecycle)
+        }),
+        allowedCapabilities: [
+            .sessionLifecycle, .toolLifecycle, .commandLifecycle,
+            .approvalObservation, .userInputObservation,
+            .subagentLifecycle, .taskLifecycle, .modelMetadata, .projectContext
+        ],
+        allowedSchemaVersions: [AgentEvent.normalizedSchemaVersion]
+    )
+
     static let genericAuthenticatedBridge = AgentProducerPolicy(
         allowedProviders: [.other("unverified")],
         allowedSources: [.unknown],

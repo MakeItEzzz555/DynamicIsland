@@ -430,6 +430,7 @@ final class AgentBridge: ObservableObject {
     private let credentialStore: any AgentBridgeCredentialStore
     private let discoveryPublisher: (any AgentBridgeDiscoveryPublishing)?
     private let codexDiscoveryPublisher: (any AgentBridgeDiscoveryPublishing)?
+    private let claudeDiscoveryPublisher: (any AgentBridgeDiscoveryPublishing)?
     private let coordinator: AgentIngestionCoordinator
     private let ingress: AgentBridgeIngress
     private let serverFactory: AgentBridgeServerFactory
@@ -445,6 +446,7 @@ final class AgentBridge: ObservableObject {
     private struct Runtime {
         let generic: ProducerRuntime
         let codex: ProducerRuntime
+        let claude: ProducerRuntime
         let server: any AgentBridgeServing
     }
 
@@ -453,6 +455,8 @@ final class AgentBridge: ObservableObject {
         let genericKey: Data
         let codexLaunchID: String
         let codexKey: Data
+        let claudeLaunchID: String
+        let claudeKey: Data
     }
 
     init(
@@ -475,8 +479,12 @@ final class AgentBridge: ObservableObject {
             self.codexDiscoveryPublisher = try? AgentBridgeDiscoveryPublisher(
                 recordURL: baseURL.appendingPathComponent("codex-hook-v1.json")
             )
+            self.claudeDiscoveryPublisher = try? AgentBridgeDiscoveryPublisher(
+                recordURL: baseURL.appendingPathComponent("claude-hook-v1.json")
+            )
         } else {
             self.codexDiscoveryPublisher = nil
+            self.claudeDiscoveryPublisher = nil
         }
         self.coordinator = coordinator
         ingress = AgentBridgeIngress(coordinator: coordinator)
@@ -508,7 +516,7 @@ final class AgentBridge: ObservableObject {
         health.lastSafeError = nil
 
         do {
-            guard let discoveryPublisher, let codexDiscoveryPublisher else {
+            guard let discoveryPublisher, let codexDiscoveryPublisher, let claudeDiscoveryPublisher else {
                 throw AgentBridgeDiscoveryError.unavailableDirectory
             }
             let credentialStore = credentialStore
@@ -519,8 +527,10 @@ final class AgentBridge: ObservableObject {
                 }
                 let genericLaunchID = UUID().uuidString.lowercased()
                 let codexLaunchID = "codex-" + UUID().uuidString.lowercased()
+                let claudeLaunchID = "claude-" + UUID().uuidString.lowercased()
                 let genericNonce = try AgentBridgeCrypto.randomBytes(count: AgentBridgeLimits.launchKeyBytes)
                 let codexNonce = try AgentBridgeCrypto.randomBytes(count: AgentBridgeLimits.launchKeyBytes)
+                let claudeNonce = try AgentBridgeCrypto.randomBytes(count: AgentBridgeLimits.launchKeyBytes)
                 return LaunchMaterial(
                     genericLaunchID: genericLaunchID,
                     genericKey: AgentBridgeCrypto.launchKey(
@@ -533,6 +543,12 @@ final class AgentBridge: ObservableObject {
                         installationSecret: installationSecret,
                         launchID: codexLaunchID,
                         launchNonce: codexNonce
+                    ),
+                    claudeLaunchID: claudeLaunchID,
+                    claudeKey: AgentBridgeCrypto.launchKey(
+                        installationSecret: installationSecret,
+                        launchID: claudeLaunchID,
+                        launchNonce: claudeNonce
                     )
                 )
             }.value
@@ -565,8 +581,24 @@ final class AgentBridge: ObservableObject {
                 throw AgentIngestionError.invalidProducer
             }
 
+            let claudeRegistration = await coordinator.registerProducer(
+                descriptor: AgentProducerDescriptor(
+                    sourceInstanceID: AgentSourceInstanceID(rawValue: "dynamic-island.claude-hook"),
+                    sourceKind: .officialHook,
+                    runtimeVersion: "claude-hooks-v1"
+                ),
+                policy: .claudeOfficialHook,
+                authenticatedProducerID: material.claudeLaunchID
+            )
+            guard case .success(let claudeProducer) = claudeRegistration else {
+                _ = await coordinator.unregisterProducer(genericProducer)
+                _ = await coordinator.unregisterProducer(codexProducer)
+                throw AgentIngestionError.invalidProducer
+            }
+
             let genericAuthenticator = AgentBridgeAuthenticator(keyData: material.genericKey)
             let codexAuthenticator = AgentBridgeAuthenticator(keyData: material.codexKey)
+            let claudeAuthenticator = AgentBridgeAuthenticator(keyData: material.claudeKey)
             let genericProcessor = AgentBridgeRequestProcessor(
                 authenticator: genericAuthenticator,
                 ingress: ingress,
@@ -579,6 +611,13 @@ final class AgentBridge: ObservableObject {
                 eventsRoute: AgentBridgeProtocol.codexHookEventsRoute,
                 allowsHealth: false
             )
+            let claudeProcessor = AgentBridgeRequestProcessor(
+                authenticator: claudeAuthenticator,
+                ingress: ingress,
+                producer: claudeProducer,
+                eventsRoute: AgentBridgeProtocol.claudeHookEventsRoute,
+                allowsHealth: false
+            )
             let server = serverFactory { [weak self] request in
                 let response: AgentBridgeHTTPResponse
                 switch request.route {
@@ -586,6 +625,8 @@ final class AgentBridge: ObservableObject {
                     response = await genericProcessor.handle(request)
                 case AgentBridgeProtocol.codexHookEventsRoute:
                     response = await codexProcessor.handle(request)
+                case AgentBridgeProtocol.claudeHookEventsRoute:
+                    response = await claudeProcessor.handle(request)
                 default:
                     response = AgentBridgeHTTPResponse(status: .notFound, code: "unknown-route")
                 }
@@ -603,6 +644,11 @@ final class AgentBridge: ObservableObject {
                     launchID: material.codexLaunchID,
                     producer: codexProducer,
                     authenticator: codexAuthenticator
+                ),
+                claude: ProducerRuntime(
+                    launchID: material.claudeLaunchID,
+                    producer: claudeProducer,
+                    authenticator: claudeAuthenticator
                 ),
                 server: server
             )
@@ -635,10 +681,22 @@ final class AgentBridge: ObservableObject {
                 processID: getpid(),
                 createdAt: Date()
             ))
+            try claudeDiscoveryPublisher.publish(AgentBridgeDiscoveryRecord(
+                protocolVersion: AgentBridgeLimits.protocolVersion,
+                host: "127.0.0.1",
+                port: port,
+                launchID: material.claudeLaunchID,
+                producerID: material.claudeLaunchID,
+                authenticationToken: material.claudeKey.base64EncodedString(),
+                eventsRoute: AgentBridgeProtocol.claudeHookEventsRoute,
+                processID: getpid(),
+                createdAt: Date()
+            ))
 
             guard startAttemptID == attemptID, runtime?.generic.launchID == material.genericLaunchID else {
                 try? discoveryPublisher.removeIfOwned(launchID: material.genericLaunchID)
                 try? codexDiscoveryPublisher.removeIfOwned(launchID: material.codexLaunchID)
+                try? claudeDiscoveryPublisher.removeIfOwned(launchID: material.claudeLaunchID)
                 return
             }
             startAttemptID = nil
@@ -667,13 +725,16 @@ final class AgentBridge: ObservableObject {
         Task {
             _ = await coordinator.unregisterProducer(runtime.generic.producer)
             _ = await coordinator.unregisterProducer(runtime.codex.producer)
+            _ = await coordinator.unregisterProducer(runtime.claude.producer)
         }
         Task {
             await runtime.generic.authenticator.invalidate()
             await runtime.codex.authenticator.invalidate()
+            await runtime.claude.authenticator.invalidate()
         }
         try? discoveryPublisher?.removeIfOwned(launchID: runtime.generic.launchID)
         try? codexDiscoveryPublisher?.removeIfOwned(launchID: runtime.codex.launchID)
+        try? claudeDiscoveryPublisher?.removeIfOwned(launchID: runtime.claude.launchID)
     }
 
     private func record(_ response: AgentBridgeHTTPResponse, launchID: String) {

@@ -254,3 +254,10 @@ A3.1 reuses `AppendOnlyRecordTailer` as the only physical JSONL reader. `CodexRo
 The recovery producer uses `structuredRecovery` and `localStructuredRecord` authority. It can establish a fallback session when hooks are absent and can enrich an existing hook-owned session when immutable Codex session continuity matches. When a stronger hook-owned session is already terminal, a late secondary recovery `session_meta` joins that generation rather than manufacturing a new run. Recovery never gains approval control or verified source identity.
 
 App Server remains an optional richer future source only when DynamicIsland owns or is explicitly connected to the App Server lifecycle. Current public App Server APIs do not justify claiming universal passive attachment to independently launched Codex clients, so A3.1 does not fabricate that capability.
+
+
+## A4 implementation refinement — Claude authoritative hooks
+
+A4 uses Claude Code's official command-hook lifecycle as the first authoritative Claude source. The current hook surface spans terminal, IDE, Desktop and web execution contexts, while DynamicIsland still reports the user-facing source as `unknown` until A10 can verify exact app/editor identity. DynamicIsland publishes a dedicated per-launch `claude-hook-v1.json` profile with its own credential and `claudeOfficialHook` policy. The bundled `DynamicIslandClaudeHookRelay` privacy-reduces hook stdin and fails open so monitoring never blocks Claude.
+
+The normalized subset is deliberately lifecycle-focused: SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, PostToolUseFailure, PermissionDenied, PermissionRequest, Elicitation/ElicitationResult, SubagentStart/SubagentStop, Stop, StopFailure, SessionEnd and CwdChanged. Stop becomes successful completion only when no background task or session cron remains; StopFailure uses only the provider's bounded error category. Prompt text, transcript contents, tool input/output, assistant messages, elicitation text/results and error details are never forwarded. No hook configuration is written in A4; A11 owns detect/diff/confirm/minimal-patch setup.
