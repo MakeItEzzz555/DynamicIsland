@@ -398,3 +398,162 @@ final class AgentEventStoreTests: XCTestCase {
         )
     }
 }
+
+
+final class AgentAttentionPolicyTests: XCTestCase {
+    func testNewerGenerationCannotBeRetractedByOlderDeadline() {
+        let base = Date(timeIntervalSince1970: 100)
+        var state = AgentAttentionPolicyState()
+        let options = AgentAttentionPolicyOptions()
+
+        state = AgentAttentionPolicyEngine.apply(
+            events: [attention("a", reason: .completed, priority: .completed, at: base)],
+            sessions: [],
+            now: base,
+            state: state,
+            options: options
+        ).state
+        let staleGeneration = try! XCTUnwrap(state.presentation?.generation)
+
+        state = AgentAttentionPolicyEngine.apply(
+            events: [attention("b", reason: .failed, priority: .failure, at: base.addingTimeInterval(1))],
+            sessions: [],
+            now: base.addingTimeInterval(1),
+            state: state,
+            options: options
+        ).state
+        let currentGeneration = try! XCTUnwrap(state.presentation?.generation)
+
+        let afterStaleExpiry = AgentAttentionPolicyEngine.expire(
+            generation: staleGeneration,
+            now: base.addingTimeInterval(10),
+            state: state
+        )
+        XCTAssertEqual(afterStaleExpiry.presentation?.generation, currentGeneration)
+    }
+
+    func testTenCompletionsAggregateWithoutUnboundedPresentation() {
+        let now = Date(timeIntervalSince1970: 200)
+        let events = (0..<10).map {
+            attention(
+                "completion-\($0)",
+                sessionSuffix: "\($0)",
+                reason: .completed,
+                priority: .completed,
+                at: now
+            )
+        }
+        let result = AgentAttentionPolicyEngine.apply(
+            events: events,
+            sessions: [],
+            now: now,
+            state: AgentAttentionPolicyState(),
+            options: AgentAttentionPolicyOptions()
+        )
+
+        XCTAssertEqual(result.state.presentation?.items.count, 3)
+        XCTAssertEqual(result.state.presentation?.totalCount, 10)
+    }
+
+    func testFailureWinsSameSessionCoalescingWindow() {
+        let now = Date(timeIntervalSince1970: 300)
+        var state = AgentAttentionPolicyState()
+        let options = AgentAttentionPolicyOptions()
+        state = AgentAttentionPolicyEngine.apply(
+            events: [attention("complete", reason: .completed, priority: .completed, at: now)],
+            sessions: [],
+            now: now,
+            state: state,
+            options: options
+        ).state
+        state = AgentAttentionPolicyEngine.apply(
+            events: [attention("fail", reason: .failed, priority: .failure, at: now.addingTimeInterval(0.2))],
+            sessions: [],
+            now: now.addingTimeInterval(0.2),
+            state: state,
+            options: options
+        ).state
+
+        XCTAssertEqual(state.presentation?.primary?.reason, .failed)
+        XCTAssertEqual(state.presentation?.items.count, 1)
+    }
+
+    func testSoundIntentIsOncePerEventAndGloballyThrottled() {
+        let now = Date(timeIntervalSince1970: 400)
+        let options = AgentAttentionPolicyOptions()
+        let first = AgentAttentionPolicyEngine.apply(
+            events: [attention("one", reason: .completed, priority: .completed, at: now)],
+            sessions: [],
+            now: now,
+            state: AgentAttentionPolicyState(),
+            options: options
+        )
+        XCTAssertNotNil(first.soundIntent)
+
+        let duplicate = AgentAttentionPolicyEngine.apply(
+            events: [attention("one", reason: .completed, priority: .completed, at: now)],
+            sessions: [],
+            now: now.addingTimeInterval(0.1),
+            state: first.state,
+            options: options
+        )
+        XCTAssertNil(duplicate.soundIntent)
+
+        let throttled = AgentAttentionPolicyEngine.apply(
+            events: [attention("two", sessionSuffix: "two", reason: .completed, priority: .completed, at: now.addingTimeInterval(1))],
+            sessions: [],
+            now: now.addingTimeInterval(1),
+            state: duplicate.state,
+            options: options
+        )
+        XCTAssertNil(throttled.soundIntent)
+
+        let allowed = AgentAttentionPolicyEngine.apply(
+            events: [attention("three", sessionSuffix: "three", reason: .failed, priority: .failure, at: now.addingTimeInterval(2))],
+            sessions: [],
+            now: now.addingTimeInterval(2),
+            state: throttled.state,
+            options: options
+        )
+        XCTAssertNotNil(allowed.soundIntent)
+    }
+
+    func testApprovalCreatesPersistentBadgeWhileCompletionDoesNot() {
+        let now = Date(timeIntervalSince1970: 500)
+        var state = AgentAttentionPolicyState()
+        state = AgentAttentionPolicyEngine.apply(
+            events: [
+                attention("approval", reason: .approvalRequired, priority: .approvalRequired, at: now),
+                attention("done", sessionSuffix: "done", reason: .completed, priority: .completed, at: now)
+            ],
+            sessions: [],
+            now: now,
+            state: state,
+            options: AgentAttentionPolicyOptions()
+        ).state
+
+        XCTAssertEqual(state.badges.count, 1)
+        XCTAssertEqual(state.badges.values.first?.reason, .approvalRequired)
+    }
+
+    private func attention(
+        _ id: String,
+        sessionSuffix: String = "shared",
+        reason: AgentAttentionReason,
+        priority: AgentAttentionPriority,
+        at date: Date
+    ) -> AgentAttentionEvent {
+        AgentAttentionEvent(
+            eventID: AgentEventID(rawValue: id),
+            session: AgentSessionInstanceID(
+                sessionID: AgentSessionID(provider: .codex, nativeID: "session-" + sessionSuffix),
+                generation: AgentSessionGeneration(rawValue: 1)
+            ),
+            source: .unknown,
+            reason: reason,
+            priority: priority,
+            timestamp: date,
+            displaySummary: id
+        )
+    }
+}
