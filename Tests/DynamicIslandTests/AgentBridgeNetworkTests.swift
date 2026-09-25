@@ -13,7 +13,13 @@ final class AgentBridgeNetworkTests: XCTestCase {
         let bridge = AgentBridge(
             eventStore: store,
             credentialStore: FixedAgentBridgeCredentialStore(secret: AgentBridgeTestSupport.secret),
-            discoveryPublisher: publisher
+            discoveryPublisher: publisher,
+            codexDiscoveryPublisher: try AgentBridgeDiscoveryPublisher(
+                recordURL: directory.appendingPathComponent("codex-hook-v1.json")
+            ),
+            claudeDiscoveryPublisher: try AgentBridgeDiscoveryPublisher(
+                recordURL: directory.appendingPathComponent("claude-hook-v1.json")
+            )
         )
         await bridge.start()
         defer { bridge.stop() }
@@ -49,7 +55,13 @@ final class AgentBridgeNetworkTests: XCTestCase {
         let bridge = AgentBridge(
             eventStore: AgentEventStore(),
             credentialStore: FixedAgentBridgeCredentialStore(secret: AgentBridgeTestSupport.secret),
-            discoveryPublisher: publisher
+            discoveryPublisher: publisher,
+            codexDiscoveryPublisher: try AgentBridgeDiscoveryPublisher(
+                recordURL: directory.appendingPathComponent("codex-hook-v1.json")
+            ),
+            claudeDiscoveryPublisher: try AgentBridgeDiscoveryPublisher(
+                recordURL: directory.appendingPathComponent("claude-hook-v1.json")
+            )
         )
         await bridge.start()
         XCTAssertTrue(FileManager.default.fileExists(atPath: recordURL.path))
