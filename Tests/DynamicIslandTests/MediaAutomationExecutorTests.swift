@@ -426,14 +426,15 @@ final class MediaControllerAutomationIntegrationTests: XCTestCase {
         )
         let oldPublished = expectation(description: "old track published")
         let newPublished = expectation(description: "new system track published")
-        let firstHalfStarted = expectation(description: "new artwork flip started")
+        let newArtworkPublished = expectation(description: "new artwork reached presentation")
         let subscription = controller.$title.sink { title in
             if title == "Old" { oldPublished.fulfill() }
             if title == "New" { newPublished.fulfill() }
         }
         let artworkSubscription = controller.artworkPresentation.$state.sink { state in
-            if state.phase == .firstHalf {
-                firstHalfStarted.fulfill()
+            let identities = [state.displayed?.identity, state.pending?.identity].compactMap { $0 }
+            if identities.contains(where: { $0.contains("|new|") }) {
+                newArtworkPublished.fulfill()
             }
         }
 
@@ -441,7 +442,7 @@ final class MediaControllerAutomationIntegrationTests: XCTestCase {
         await fulfillment(of: [oldPublished], timeout: 2)
         controller.refresh()
         await fulfillment(
-            of: [newPublished, firstHalfStarted, secondDetectionStarted],
+            of: [newPublished, newArtworkPublished, secondDetectionStarted],
             timeout: 2
         )
 
