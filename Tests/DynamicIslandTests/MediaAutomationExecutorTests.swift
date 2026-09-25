@@ -566,7 +566,6 @@ final class MediaControllerAutomationIntegrationTests: XCTestCase {
             volumeAvailable: true
         )
     }
-
 }
 
 final class MediaRefreshCoordinatorTests: XCTestCase {
