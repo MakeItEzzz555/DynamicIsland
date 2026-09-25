@@ -2548,6 +2548,18 @@ struct ExpandedIslandView: View {
                 agentAttentionRequirement(session)
             }
 
+            if let openTarget = AgentSourceAssociationResolver.openTarget(for: session) {
+                Button {
+                    _ = AppLaunchService.openApp(bundleIdentifier: openTarget.bundleIdentifier)
+                } label: {
+                    Label("Open \(openTarget.displayName)", systemImage: "arrow.up.forward.app")
+                        .font(.system(size: 9, weight: .semibold, design: .rounded))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.white.opacity(0.78))
+                .accessibilityLabel("Open \(openTarget.displayName)")
+            }
+
             if hasVisibleAgentUsage(session) {
                 Divider()
                     .overlay(.white.opacity(0.06))
