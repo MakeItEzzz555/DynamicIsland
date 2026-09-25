@@ -1,3 +1,4 @@
+import AgentBridgeShared
 import CryptoKit
 import Foundation
 import Security
@@ -82,7 +83,7 @@ enum AgentBridgeCrypto {
     }
 
     static func bodyDigest(_ body: Data) -> String {
-        SHA256.hash(data: body).map { String(format: "%02x", $0) }.joined()
+        AgentBridgeRequestAuthentication.bodyDigest(body)
     }
 
     static func canonicalMessage(
@@ -93,14 +94,14 @@ enum AgentBridgeCrypto {
         nonce: String,
         body: Data
     ) -> Data {
-        Data([
-            method.uppercased(),
-            route,
-            String(protocolVersion),
-            String(timestamp),
-            nonce,
-            bodyDigest(body)
-        ].joined(separator: "\n").utf8)
+        AgentBridgeRequestAuthentication.canonicalMessage(
+            method: method,
+            route: route,
+            protocolVersion: protocolVersion,
+            timestamp: timestamp,
+            nonce: nonce,
+            body: body
+        )
     }
 
     static func signature(
@@ -112,7 +113,8 @@ enum AgentBridgeCrypto {
         nonce: String,
         body: Data
     ) -> String {
-        let message = canonicalMessage(
+        AgentBridgeRequestAuthentication.signature(
+            keyData: keyData,
             method: method,
             route: route,
             protocolVersion: protocolVersion,
@@ -120,10 +122,6 @@ enum AgentBridgeCrypto {
             nonce: nonce,
             body: body
         )
-        return HMAC<SHA256>.authenticationCode(
-            for: message,
-            using: SymmetricKey(data: keyData)
-        ).map { String(format: "%02x", $0) }.joined()
     }
 
     static func validateSignature(
@@ -136,8 +134,9 @@ enum AgentBridgeCrypto {
         nonce: String,
         body: Data
     ) -> Bool {
-        guard let code = Data(hex: signature), code.count == SHA256.byteCount else { return false }
-        let message = canonicalMessage(
+        AgentBridgeRequestAuthentication.validateSignature(
+            signature,
+            keyData: keyData,
             method: method,
             route: route,
             protocolVersion: protocolVersion,
@@ -145,26 +144,6 @@ enum AgentBridgeCrypto {
             nonce: nonce,
             body: body
         )
-        return HMAC<SHA256>.isValidAuthenticationCode(
-            code,
-            authenticating: message,
-            using: SymmetricKey(data: keyData)
-        )
-    }
-}
-
-private extension Data {
-    init?(hex: String) {
-        guard hex.utf8.count.isMultiple(of: 2) else { return nil }
-        var result = Data(capacity: hex.utf8.count / 2)
-        var index = hex.startIndex
-        while index < hex.endIndex {
-            let next = hex.index(index, offsetBy: 2)
-            guard let byte = UInt8(hex[index..<next], radix: 16) else { return nil }
-            result.append(byte)
-            index = next
-        }
-        self = result
     }
 }
 

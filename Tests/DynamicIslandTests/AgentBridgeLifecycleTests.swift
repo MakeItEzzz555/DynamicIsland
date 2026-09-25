@@ -1,4 +1,5 @@
 import Foundation
+import AgentBridgeShared
 import XCTest
 @testable import DynamicIsland
 
@@ -17,6 +18,7 @@ final class AgentBridgeLifecycleTests: XCTestCase {
         XCTAssertEqual(discovery.records.first?.host, "127.0.0.1")
         XCTAssertEqual(discovery.records.first?.port, 49_321)
         XCTAssertNotNil(discovery.records.first?.authenticationToken)
+        XCTAssertEqual(discovery.records.first?.producerID, discovery.records.first?.launchID)
     }
 
     func testRepeatedStartCreatesOnlyOneListener() async {
@@ -112,7 +114,10 @@ final class AgentBridgeLifecycleTests: XCTestCase {
         bridge.stop()
         await bridge.start()
 
-        let body = try AgentBridgeTestSupport.body(event: AgentBridgeTestSupport.event())
+        let body = try AgentBridgeTestSupport.body(
+            producerID: firstRecord.producerID,
+            event: AgentBridgeTestSupport.event()
+        )
         let key = try XCTUnwrap(Data(base64Encoded: firstRecord.authenticationToken))
         let staleRequest = AgentBridgeTestSupport.signedRequest(
             body: body,

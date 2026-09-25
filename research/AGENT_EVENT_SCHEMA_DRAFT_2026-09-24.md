@@ -82,7 +82,7 @@ Reducers must reject:
 
 Generation increases when a new authoritative session start conflicts with an ended/disconnected incarnation, when an adapter reconnect cannot prove continuity, when a native ID is reused with incompatible immutable metadata, or when the store restores a session whose producer epoch cannot be authenticated. Ordinary resume with an authoritative matching native ID may retain the logical session but must establish a fresh producer epoch and reject callbacks from the prior epoch.
 
-The store allocates generation; adapters cannot decrement or choose it. Each adapter start receives an opaque producer token bound to `(session, generation, adapterInstance)`.
+The A2.1 ingestion coordinator allocates generation before the A1 store validates/reduces the normalized event; adapters and wire clients cannot decrement, jump or choose it. Each registered source has a credential-independent source-instance identity and a producer epoch. A coordinator-issued opaque lease binds `(provider, nativeSessionID, generation, producer evidence)`. Producer restart may retain a generation only when compatible immutable continuity is proven.
 
 ### Project identity
 
@@ -125,7 +125,9 @@ Conceptual JSON shape:
 }
 ```
 
-Wire clients do not get to choose `receivedTimestamp`; the bridge stamps it. Untrusted bridge clients normally omit `sessionGeneration`; A2 resolves their authenticated producer epoch to a store generation. The field exists in internal/replay serialization and in authenticated acknowledgements.
+Wire clients do not get to choose `receivedTimestamp`; the bridge stamps it. Wire `producerID`, provider, source, authority, capabilities and generation are claims. Authentication supplies producer identity separately; A2.1 checks claims against server-side policy and resolves continuity to a locally allocated generation. `sessionGeneration`, when present, is only an assertion and cannot allocate or advance state.
+
+The A2.2 relay accepts a caller's normalized `event` or `events` object but reconstructs transport-owned `protocolVersion` and `producerID` from its validated `AgentBridgeClientProfile`. Its v1 signature remains byte-compatible with A2: `UPPERCASE_METHOD`, route, protocol version, Unix timestamp, nonce and lowercase SHA-256 body digest joined by LF with no trailing LF, authenticated with HMAC-SHA256. The default discovery profile is generic and cannot elevate provider, source, lifecycle authority, or action capabilities; stronger future profiles require matching server-side producer policy.
 
 ### Limits and validation
 
@@ -154,7 +156,7 @@ Capabilities are scoped to a provider, source, session, and generation, with pro
 - `tokenUsage`, `contextUsage`, `quotaUsage`, `costUsage`
 - `projectContext`, `gitMetadata`, `verifiedSourceIdentity`, `sourceAppOpen`
 
-Capabilities are not promises made by an adapter class. They are evidence-derived runtime values. A provider schema downgrade can remove a capability; the UI must immediately hide/disable dependent controls. An adapter claiming a capability without the required verified source is treated as unhealthy and the store rejects capability-dependent actions.
+Capabilities are not promises made by an adapter class. They are evidence-derived runtime values ledgered by producer/source instance. Withdrawal from source A does not remove source B's proof; when all valid evidence disappears, the effective capability disappears. A provider schema downgrade or policy revocation removes only affected evidence and the UI must immediately hide/disable dependent controls. Security-sensitive `approvalControl` remains unavailable until A9 registers a supported action surface; an arbitrary authenticated bridge claim cannot create it.
 
 ## 7. Privacy projection
 

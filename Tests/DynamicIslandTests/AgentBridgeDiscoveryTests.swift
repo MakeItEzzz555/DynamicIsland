@@ -1,3 +1,4 @@
+import AgentBridgeShared
 import XCTest
 @testable import DynamicIsland
 
@@ -91,6 +92,7 @@ final class AgentBridgeDiscoveryTests: XCTestCase {
             host: "127.0.0.1",
             port: port,
             launchID: launchID,
+            producerID: launchID,
             authenticationToken: AgentBridgeTestSupport.launchKey.base64EncodedString(),
             processID: 123,
             createdAt: AgentBridgeTestSupport.now

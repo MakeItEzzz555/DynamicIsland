@@ -3,12 +3,14 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="DynamicIsland"
+RELAY_NAME="DynamicIslandAgentRelay"
 BUILD_DIR="$ROOT_DIR/.build/release"
 DIST_DIR="$ROOT_DIR/dist"
 APP_DIR="$DIST_DIR/$APP_NAME.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
+HELPERS_DIR="$CONTENTS_DIR/Helpers"
 ENTITLEMENTS_FILE="$ROOT_DIR/Scripts/DynamicIsland.entitlements.plist"
 
 swift build -c release --package-path "$ROOT_DIR"
@@ -16,7 +18,10 @@ swift build -c release --package-path "$ROOT_DIR"
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR"
 mkdir -p "$RESOURCES_DIR"
+mkdir -p "$HELPERS_DIR"
 cp "$BUILD_DIR/$APP_NAME" "$MACOS_DIR/$APP_NAME"
+cp "$BUILD_DIR/$RELAY_NAME" "$HELPERS_DIR/$RELAY_NAME"
+chmod 755 "$HELPERS_DIR/$RELAY_NAME"
 
 while IFS= read -r resource_bundle; do
   cp -R "$resource_bundle" "$RESOURCES_DIR/"
@@ -54,9 +59,11 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 PLIST
 
 if [[ -n "${DEVELOPER_ID_APP:-}" ]]; then
-  codesign --force --deep --options runtime --timestamp --entitlements "$ENTITLEMENTS_FILE" --sign "$DEVELOPER_ID_APP" "$APP_DIR"
+  codesign --force --options runtime --timestamp --sign "$DEVELOPER_ID_APP" "$HELPERS_DIR/$RELAY_NAME"
+  codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS_FILE" --sign "$DEVELOPER_ID_APP" "$APP_DIR"
 else
-  codesign --force --deep --sign - "$APP_DIR"
+  codesign --force --sign - "$HELPERS_DIR/$RELAY_NAME"
+  codesign --force --sign - "$APP_DIR"
 fi
 
 echo "$APP_DIR"

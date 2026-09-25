@@ -1,3 +1,4 @@
+import AgentBridgeShared
 import Darwin
 import Foundation
 

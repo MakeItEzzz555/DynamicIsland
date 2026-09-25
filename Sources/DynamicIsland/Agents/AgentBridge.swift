@@ -1,63 +1,37 @@
+import AgentBridgeShared
 import Combine
 import CoreFoundation
 import Darwin
 import Foundation
 
-private struct AgentBridgeGenerationEntry: Sendable {
-    let producerID: String
-    let generation: AgentSessionGeneration
-}
+final class AgentBridgeIngress: Sendable {
+    private let coordinator: AgentIngestionCoordinator
 
-@MainActor
-final class AgentBridgeIngress {
-    private let store: AgentEventStore
-    private var activeLaunchID: String?
-    private var generations: [AgentSessionID: AgentBridgeGenerationEntry] = [:]
-
-    init(store: AgentEventStore) {
-        self.store = store
-    }
-
-    func activate(launchID: String) {
-        activeLaunchID = launchID
-        generations.removeAll(keepingCapacity: false)
-    }
-
-    func deactivate(launchID: String) {
-        guard activeLaunchID == launchID else { return }
-        activeLaunchID = nil
-        generations.removeAll(keepingCapacity: false)
+    init(coordinator: AgentIngestionCoordinator) {
+        self.coordinator = coordinator
     }
 
     func ingest(
         request: AgentBridgeWireRequest,
-        launchID: String,
+        producer: AgentProducerHandle,
         receivedAt: Date
-    ) -> Result<AgentBridgeIngestionResult, AgentBridgeEnvelopeError> {
-        guard activeLaunchID == launchID else { return .failure(.storeRejected) }
+    ) async -> Result<AgentBridgeIngestionResult, AgentBridgeEnvelopeError> {
         guard request.protocolVersion == AgentBridgeLimits.protocolVersion else {
             return .failure(.unsupportedProtocol)
         }
-        guard Self.validProducerID(request.producerID),
+        guard request.producerID == producer.authenticatedProducerID,
+              Self.validProducerID(producer.authenticatedProducerID),
               let batch = request.eventBatch,
               !batch.isEmpty,
               batch.count <= AgentBridgeLimits.maximumBatchEvents else {
             return .failure(request.eventBatch?.isEmpty == true ? .emptyBatch : .invalidProducer)
         }
 
-        var proposedGenerations = generations
-        var normalized: [AgentEvent] = []
+        var normalized: [AgentIngestionEvent] = []
         normalized.reserveCapacity(batch.count)
         do {
             for wire in batch {
-                let event = try normalize(
-                    wire,
-                    producerID: request.producerID,
-                    receivedAt: receivedAt,
-                    generations: &proposedGenerations
-                )
-                if event.validationError() != nil { return .failure(.semanticValidation) }
-                normalized.append(event)
+                normalized.append(try normalize(wire, receivedAt: receivedAt))
             }
         } catch let error as AgentBridgeEnvelopeError {
             return .failure(error)
@@ -65,36 +39,25 @@ final class AgentBridgeIngress {
             return .failure(.malformedEnvelope)
         }
 
-        switch store.ingestAtomically(normalized) {
-        case .applied(let applications):
-            generations = proposedGenerations
+        switch await coordinator.ingestAtomically(normalized, from: producer) {
+        case .success(let result):
             return .success(AgentBridgeIngestionResult(
-                acceptedEvents: normalized.count,
-                applications: applications
+                acceptedEvents: result.acceptedEvents,
+                applications: result.applications
             ))
-        case .rejected:
-            return .failure(.storeRejected)
+        case .failure(let error):
+            return .failure(Self.bridgeError(error))
         }
     }
 
     private func normalize(
         _ wire: AgentBridgeWireEvent,
-        producerID: String,
-        receivedAt: Date,
-        generations: inout [AgentSessionID: AgentBridgeGenerationEntry]
-    ) throws -> AgentEvent {
+        receivedAt: Date
+    ) throws -> AgentIngestionEvent {
         let provider = try Self.provider(wire.provider)
         guard let source = AgentSource(rawValue: wire.source) else { throw AgentBridgeEnvelopeError.invalidSource }
-        let sessionID = AgentSessionID(provider: provider, nativeID: wire.nativeSessionID)
         let type = try Self.eventType(wire.eventType)
         let authority = try Self.authority(wire.authority)
-        let generation = try Self.resolveGeneration(
-            sessionID: sessionID,
-            producerID: producerID,
-            supplied: wire.sessionGeneration,
-            isStart: type == .sessionStarted,
-            generations: &generations
-        )
         let providerTimestamp: Date?
         if let timestamp = wire.providerTimestamp {
             guard let parsed = Self.date(timestamp) else { throw AgentBridgeEnvelopeError.invalidTimestamp }
@@ -103,56 +66,33 @@ final class AgentBridgeIngress {
             providerTimestamp = nil
         }
         let payload = try Self.payload(wire.payload, for: type, eventAuthority: authority)
-        return AgentEvent(
+        return AgentIngestionEvent(
             schemaVersion: wire.schemaVersion,
             eventID: AgentEventID(rawValue: wire.eventID),
-            sessionID: sessionID,
-            generation: generation,
+            provider: provider,
             source: source,
+            nativeSessionID: wire.nativeSessionID,
+            assertedGeneration: wire.sessionGeneration.map(AgentSessionGeneration.init(rawValue:)),
             type: type,
             providerTimestamp: providerTimestamp,
             receivedTimestamp: receivedAt,
             correlationID: wire.correlationID.map(AgentCorrelationID.init(rawValue:)),
             sequence: wire.sequence,
             authority: authority,
-            origin: .live,
-            payload: payload
+            payload: payload,
+            continuity: nil
         )
     }
 
-    private static func resolveGeneration(
-        sessionID: AgentSessionID,
-        producerID: String,
-        supplied: UInt64?,
-        isStart: Bool,
-        generations: inout [AgentSessionID: AgentBridgeGenerationEntry]
-    ) throws -> AgentSessionGeneration {
-        let resolved: AgentSessionGeneration
-        if let current = generations[sessionID] {
-            if current.producerID == producerID {
-                resolved = current.generation
-            } else {
-                guard isStart, current.generation.rawValue < UInt64.max else {
-                    throw AgentBridgeEnvelopeError.generationConflict
-                }
-                resolved = AgentSessionGeneration(rawValue: current.generation.rawValue + 1)
-                generations[sessionID] = AgentBridgeGenerationEntry(
-                    producerID: producerID,
-                    generation: resolved
-                )
-            }
-        } else {
-            guard isStart else { throw AgentBridgeEnvelopeError.generationConflict }
-            resolved = AgentSessionGeneration(rawValue: 1)
-            generations[sessionID] = AgentBridgeGenerationEntry(
-                producerID: producerID,
-                generation: resolved
-            )
+    private static func bridgeError(_ error: AgentIngestionError) -> AgentBridgeEnvelopeError {
+        switch error {
+        case .unsupportedSchema: .semanticValidation
+        case .generationConflict, .identityConflict: .generationConflict
+        case .policyViolation: .policyViolation
+        case .invalidProducer, .staleProducer: .invalidProducer
+        case .invalidEvent: .semanticValidation
+        default: .storeRejected
         }
-        if let supplied, supplied != resolved.rawValue {
-            throw AgentBridgeEnvelopeError.generationConflict
-        }
-        return resolved
     }
 
     private static func provider(_ value: String) throws -> AgentProvider {
@@ -337,18 +277,18 @@ final class AgentBridgeIngress {
 actor AgentBridgeRequestProcessor {
     private let authenticator: AgentBridgeAuthenticator
     private let ingress: AgentBridgeIngress
-    private let launchID: String
+    private let producer: AgentProducerHandle
     private let now: @Sendable () -> Date
 
     init(
         authenticator: AgentBridgeAuthenticator,
         ingress: AgentBridgeIngress,
-        launchID: String,
+        producer: AgentProducerHandle,
         now: @escaping @Sendable () -> Date = Date.init
     ) {
         self.authenticator = authenticator
         self.ingress = ingress
-        self.launchID = launchID
+        self.producer = producer
         self.now = now
     }
 
@@ -387,7 +327,11 @@ actor AgentBridgeRequestProcessor {
 
         do {
             let wire = try AgentBridgeEnvelopeDecoder.decode(request.body)
-            let result = await ingress.ingest(request: wire, launchID: launchID, receivedAt: now())
+            let result = await ingress.ingest(
+                request: wire,
+                producer: producer,
+                receivedAt: now()
+            )
             switch result {
             case .success:
                 return AgentBridgeHTTPResponse(status: .accepted, code: "accepted")
@@ -478,6 +422,7 @@ final class AgentBridge: ObservableObject {
 
     private let credentialStore: any AgentBridgeCredentialStore
     private let discoveryPublisher: (any AgentBridgeDiscoveryPublishing)?
+    private let coordinator: AgentIngestionCoordinator
     private let ingress: AgentBridgeIngress
     private let serverFactory: AgentBridgeServerFactory
     private var runtime: Runtime?
@@ -485,12 +430,13 @@ final class AgentBridge: ObservableObject {
 
     private struct Runtime {
         let launchID: String
+        let producer: AgentProducerHandle
         let authenticator: AgentBridgeAuthenticator
         let server: any AgentBridgeServing
     }
 
     init(
-        eventStore: AgentEventStore,
+        coordinator: AgentIngestionCoordinator,
         credentialStore: any AgentBridgeCredentialStore = SystemAgentBridgeCredentialStore(),
         discoveryPublisher: (any AgentBridgeDiscoveryPublishing)? = nil,
         serverFactory: @escaping AgentBridgeServerFactory = {
@@ -503,8 +449,25 @@ final class AgentBridge: ObservableObject {
         } else {
             self.discoveryPublisher = try? AgentBridgeDiscoveryPublisher()
         }
-        ingress = AgentBridgeIngress(store: eventStore)
+        self.coordinator = coordinator
+        ingress = AgentBridgeIngress(coordinator: coordinator)
         self.serverFactory = serverFactory
+    }
+
+    convenience init(
+        eventStore: AgentEventStore,
+        credentialStore: any AgentBridgeCredentialStore = SystemAgentBridgeCredentialStore(),
+        discoveryPublisher: (any AgentBridgeDiscoveryPublishing)? = nil,
+        serverFactory: @escaping AgentBridgeServerFactory = {
+            AgentBridgeNetworkServer(requestHandler: $0)
+        }
+    ) {
+        self.init(
+            coordinator: AgentIngestionCoordinator(eventStore: eventStore),
+            credentialStore: credentialStore,
+            discoveryPublisher: discoveryPublisher,
+            serverFactory: serverFactory
+        )
     }
 
     func start() async {
@@ -537,18 +500,35 @@ final class AgentBridge: ObservableObject {
 
             let launchID = material.0
             let authenticator = AgentBridgeAuthenticator(keyData: material.1)
-            ingress.activate(launchID: launchID)
+            let descriptor = AgentProducerDescriptor(
+                sourceInstanceID: AgentSourceInstanceID(rawValue: "dynamic-island.generic-bridge"),
+                sourceKind: .authenticatedBridge,
+                runtimeVersion: "bridge-v1"
+            )
+            let registration = await coordinator.registerProducer(
+                descriptor: descriptor,
+                policy: .genericAuthenticatedBridge,
+                authenticatedProducerID: launchID
+            )
+            guard case .success(let producer) = registration else {
+                throw AgentIngestionError.invalidProducer
+            }
             let processor = AgentBridgeRequestProcessor(
                 authenticator: authenticator,
                 ingress: ingress,
-                launchID: launchID
+                producer: producer
             )
             let server = serverFactory { [weak self] request in
                 let response = await processor.handle(request)
                 await self?.record(response, launchID: launchID)
                 return response
             }
-            runtime = Runtime(launchID: launchID, authenticator: authenticator, server: server)
+            runtime = Runtime(
+                launchID: launchID,
+                producer: producer,
+                authenticator: authenticator,
+                server: server
+            )
             let port = try await withCheckedThrowingContinuation { continuation in
                 server.start { result in continuation.resume(with: result) }
             }
@@ -558,6 +538,7 @@ final class AgentBridge: ObservableObject {
                 host: "127.0.0.1",
                 port: port,
                 launchID: launchID,
+                producerID: launchID,
                 authenticationToken: material.1.base64EncodedString(),
                 processID: getpid(),
                 createdAt: Date()
@@ -590,7 +571,7 @@ final class AgentBridge: ObservableObject {
         guard let runtime else { return }
         self.runtime = nil
         runtime.server.stop()
-        ingress.deactivate(launchID: runtime.launchID)
+        Task { await coordinator.unregisterProducer(runtime.producer) }
         Task { await runtime.authenticator.invalidate() }
         try? discoveryPublisher?.removeIfOwned(launchID: runtime.launchID)
     }

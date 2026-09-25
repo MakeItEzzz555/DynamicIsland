@@ -1,10 +1,11 @@
+import AgentBridgeShared
 import Foundation
 
 enum AgentBridgeLimits {
-    static let protocolVersion = 1
-    static let maximumSingleEventBodyBytes = 64 * 1_024
-    static let maximumRequestBodyBytes = 1_024 * 1_024
-    static let maximumBatchEvents = 100
+    static let protocolVersion = AgentBridgeProtocol.version
+    static let maximumSingleEventBodyBytes = AgentBridgeProtocol.maximumSingleEventBodyBytes
+    static let maximumRequestBodyBytes = AgentBridgeProtocol.maximumRequestBodyBytes
+    static let maximumBatchEvents = AgentBridgeProtocol.maximumBatchEvents
     static let maximumHeaderBytes = 16 * 1_024
     static let maximumHeaderValueBytes = 4 * 1_024
     static let maximumJSONDepth = 12
@@ -15,7 +16,7 @@ enum AgentBridgeLimits {
     static let acceptedClockSkew: TimeInterval = 60
     static let nonceRetention: TimeInterval = 120
     static let installationSecretBytes = 32
-    static let launchKeyBytes = 32
+    static let launchKeyBytes = AgentBridgeProtocol.launchKeyBytes
 }
 
 enum AgentBridgeState: String, Equatable, Sendable {
@@ -33,17 +34,6 @@ struct AgentBridgeHealth: Equatable, Sendable {
     var lastSafeError: String?
     var acceptedRequestCount: UInt64 = 0
     var rejectedRequestCount: UInt64 = 0
-}
-
-struct AgentBridgeDiscoveryRecord: Codable, Equatable, Sendable {
-    let protocolVersion: Int
-    let host: String
-    let port: UInt16
-    let launchID: String
-    /// A derived per-launch key. The persistent installation secret never leaves Keychain.
-    let authenticationToken: String
-    let processID: Int32
-    let createdAt: Date
 }
 
 struct AgentBridgeWireRequest: Decodable, Sendable {
@@ -133,6 +123,7 @@ enum AgentBridgeEnvelopeError: String, Error, Equatable, Sendable {
     case invalidPayload
     case invalidCapability
     case invalidUsage
+    case policyViolation
     case generationConflict
     case semanticValidation
     case storeRejected

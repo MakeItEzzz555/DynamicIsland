@@ -642,9 +642,9 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Agents/AgentBridge.swift": {
-    "mtime": 1790276461.204273,
-    "seen": 1790279179.369963,
-    "ast_hash": "078298e333e253d1e4eddb40f2b7f5a2",
+    "mtime": 1790279930.6493313,
+    "seen": 1790280199.244257,
+    "ast_hash": "abfe8d2c6cf1f80b220187d9506563e3",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Agents/AgentBridgeDiscovery.swift": {
@@ -660,33 +660,33 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Agents/AgentBridgeModels.swift": {
-    "mtime": 1790262257.7402873,
-    "seen": 1790279179.369966,
-    "ast_hash": "c98a4f32069258f24cabbaa7956d8f17",
+    "mtime": 1790279930.5631475,
+    "seen": 1790280199.244261,
+    "ast_hash": "8d2a0ec6253171448cfd09120aba486c",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Agents/AgentBridgeSecurity.swift": {
-    "mtime": 1790261893.7825801,
-    "seen": 1790279179.3699672,
-    "ast_hash": "3a95307d06daf06019c7f5d753d0718d",
+    "mtime": 1790279222.5391564,
+    "seen": 1790279307.538795,
+    "ast_hash": "d0cf62729e2777f54ab934824d4a29ec",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/AgentBridgeAuthenticationTests.swift": {
-    "mtime": 1790262191.3668838,
-    "seen": 1790279179.370019,
-    "ast_hash": "2f01ed3be5eff94c21a8daa185df6018",
+    "mtime": 1790279241.0497944,
+    "seen": 1790279307.538843,
+    "ast_hash": "b6c7ee25d1516d67cd123f0986caac24",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/AgentBridgeDiscoveryTests.swift": {
-    "mtime": 1790262032.5345812,
-    "seen": 1790279179.3700202,
-    "ast_hash": "55d10fdef7df13fef07cc9640b3277c8",
+    "mtime": 1790279930.7366486,
+    "seen": 1790280199.244307,
+    "ast_hash": "4d4d8ab090a52a1bd4eb15504c6f1ae8",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/AgentBridgeEnvelopeIntegrationTests.swift": {
-    "mtime": 1790276461.2840526,
-    "seen": 1790279179.370021,
-    "ast_hash": "d9c77811d37c7bdb725d7f91f66d3e67",
+    "mtime": 1790280017.8089163,
+    "seen": 1790280199.244308,
+    "ast_hash": "f0a61593719c88f15f220c5ca46de263",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/AgentBridgeHTTPParserTests.swift": {
@@ -696,15 +696,15 @@
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/AgentBridgeLifecycleTests.swift": {
-    "mtime": 1790276409.7974596,
-    "seen": 1790279179.3700218,
-    "ast_hash": "19b5346b573645288996b00f50ee8a41",
+    "mtime": 1790280017.8882997,
+    "seen": 1790280199.244309,
+    "ast_hash": "4a1d55115532ec27d0d6f0995bed4eaa",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/AgentBridgeNetworkTests.swift": {
-    "mtime": 1790276361.9861505,
-    "seen": 1790279179.370023,
-    "ast_hash": "a1b5cb835d6dd57a831ff47e73ad3f2d",
+    "mtime": 1790279930.902769,
+    "seen": 1790280199.24431,
+    "ast_hash": "495f117b4ade29aa11975f7e6ee0ad61",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/Fixtures/AgentBridgeTestSupport.swift": {
