@@ -3,7 +3,12 @@ name: Agent Continuation CI
 on:
   push:
     branches:
+      - main
       - feature/agent-activity-chatgpt-continuation
+      - feature/agent-activity-finalize
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
