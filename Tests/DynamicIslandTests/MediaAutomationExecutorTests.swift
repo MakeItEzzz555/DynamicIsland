@@ -531,7 +531,7 @@ final class MediaControllerAutomationIntegrationTests: XCTestCase {
             title: title,
             artist: "Artist",
             album: "Album",
-            artwork: NSImage(size: CGSize(width: imageSize, height: imageSize)),
+            artwork: bitmapBackedArtwork(size: imageSize),
             isPlaying: true,
             duration: 180,
             elapsedTime: 1,
@@ -539,6 +539,27 @@ final class MediaControllerAutomationIntegrationTests: XCTestCase {
             seekAvailable: true,
             volumeAvailable: true
         )
+    }
+
+    private static func bitmapBackedArtwork(size: CGFloat) -> NSImage {
+        let pixels = max(1, Int(size.rounded()))
+        let representation = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: pixels,
+            pixelsHigh: pixels,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        )!
+        representation.size = CGSize(width: size, height: size)
+
+        let image = NSImage(size: CGSize(width: size, height: size))
+        image.addRepresentation(representation)
+        return image
     }
 }
 
