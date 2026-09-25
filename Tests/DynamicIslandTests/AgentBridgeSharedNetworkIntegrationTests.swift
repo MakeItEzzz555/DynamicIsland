@@ -33,7 +33,13 @@ final class AgentBridgeSharedNetworkIntegrationTests: XCTestCase {
         let firstBridge = AgentBridge(
             eventStore: firstStore,
             credentialStore: FixedAgentBridgeCredentialStore(secret: AgentBridgeTestSupport.secret),
-            discoveryPublisher: try AgentBridgeDiscoveryPublisher(recordURL: recordURL)
+            discoveryPublisher: try AgentBridgeDiscoveryPublisher(recordURL: recordURL),
+            codexDiscoveryPublisher: try AgentBridgeDiscoveryPublisher(
+                recordURL: directory.appendingPathComponent("codex-hook-v1.json")
+            ),
+            claudeDiscoveryPublisher: try AgentBridgeDiscoveryPublisher(
+                recordURL: directory.appendingPathComponent("claude-hook-v1.json")
+            )
         )
         await firstBridge.start()
         let stale = try await AgentBridgeDiscoveryReader(recordURL: recordURL).loadProfile()
@@ -43,7 +49,13 @@ final class AgentBridgeSharedNetworkIntegrationTests: XCTestCase {
         let secondBridge = AgentBridge(
             eventStore: secondStore,
             credentialStore: FixedAgentBridgeCredentialStore(secret: AgentBridgeTestSupport.secret),
-            discoveryPublisher: try AgentBridgeDiscoveryPublisher(recordURL: recordURL)
+            discoveryPublisher: try AgentBridgeDiscoveryPublisher(recordURL: recordURL),
+            codexDiscoveryPublisher: try AgentBridgeDiscoveryPublisher(
+                recordURL: directory.appendingPathComponent("codex-hook-v1.json")
+            ),
+            claudeDiscoveryPublisher: try AgentBridgeDiscoveryPublisher(
+                recordURL: directory.appendingPathComponent("claude-hook-v1.json")
+            )
         )
         await secondBridge.start()
         defer { secondBridge.stop() }
