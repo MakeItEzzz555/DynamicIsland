@@ -39,6 +39,7 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
 struct SettingsView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var shortcuts: ShortcutsStore
+    @StateObject private var agentSetup = AgentIntegrationSetupController()
     @State private var selectedSection: SettingsSection = .island
 
     var body: some View {
@@ -361,6 +362,125 @@ struct SettingsView: View {
                 )
                 HelpText("Usage values are shown only when supported data is available.")
             }
+
+            SettingsGroup("Provider Setup") {
+                agentProviderSetupRow(.codex)
+                Divider()
+                agentProviderSetupRow(.claude)
+
+                HStack(spacing: 8) {
+                    Button("Refresh status") {
+                        agentSetup.refresh()
+                    }
+                    .disabled(agentSetup.isWorking)
+
+                    if agentSetup.isWorking {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                }
+
+                if let error = agentSetup.lastError {
+                    Text(error)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.orange)
+                        .textSelection(.enabled)
+                }
+
+                HelpText(
+                    "Setup is opt-in. DynamicIsland previews the exact observer hooks before writing, " +
+                    "backs up the existing file, preserves unrelated JSON keys and handlers, and refuses " +
+                    "unsafe, malformed, read-only, or externally changed files."
+                )
+            }
+
+            if let preview = agentSetup.preview {
+                SettingsGroup("Setup Preview") {
+                    Text(preview.provider.displayName + " • " + preview.configPath)
+                        .font(.system(size: 11, weight: .semibold))
+                        .textSelection(.enabled)
+
+                    ScrollView(.vertical) {
+                        Text(preview.text)
+                            .font(.system(size: 9, design: .monospaced))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                    }
+                    .frame(maxHeight: 220)
+
+                    HStack(spacing: 8) {
+                        Button("Apply") {
+                            agentSetup.applyPreview()
+                        }
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(agentSetup.isWorking)
+
+                        Button("Cancel") {
+                            agentSetup.cancelPreview()
+                        }
+                        .disabled(agentSetup.isWorking)
+                    }
+                }
+            }
+        }
+        .onAppear {
+            agentSetup.refresh()
+        }
+    }
+
+    @ViewBuilder
+    private func agentProviderSetupRow(_ provider: AgentIntegrationProvider) -> some View {
+        let snapshot = agentSetup.snapshots[provider]
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 8) {
+                Text(provider.displayName)
+                    .font(.system(size: 12, weight: .semibold))
+                Spacer()
+                Text(snapshot?.state.label ?? "Checking…")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(agentSetupStatusColor(snapshot?.state))
+            }
+
+            if let snapshot {
+                Text(snapshot.detail)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                Text(snapshot.configPath)
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .textSelection(.enabled)
+
+                HStack(spacing: 8) {
+                    switch snapshot.state {
+                    case .configured:
+                        Button("Reconfigure…") { agentSetup.prepare(provider) }
+                        Button("Remove") { agentSetup.remove(provider) }
+                    case .needsSetup, .repairRequired:
+                        Button(snapshot.state == .repairRequired ? "Repair…" : "Configure…") {
+                            agentSetup.prepare(provider)
+                        }
+                    case .helperUnavailable, .blocked:
+                        Button("Configure…") { agentSetup.prepare(provider) }
+                            .disabled(true)
+                    }
+
+                    if snapshot.backupAvailable {
+                        Button("Rollback") { agentSetup.rollback(provider) }
+                    }
+                }
+                .disabled(agentSetup.isWorking)
+            }
+        }
+    }
+
+    private func agentSetupStatusColor(_ state: AgentIntegrationSetupState?) -> Color {
+        guard let state else { return .secondary }
+        switch state {
+        case .configured: return .green
+        case .needsSetup: return .secondary
+        case .repairRequired: return .orange
+        case .helperUnavailable, .blocked: return .red
         }
     }
 
