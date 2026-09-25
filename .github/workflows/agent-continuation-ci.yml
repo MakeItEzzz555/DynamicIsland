@@ -3,7 +3,12 @@ name: Agent Continuation CI
 on:
   push:
     branches:
+      - main
       - feature/agent-activity-chatgpt-continuation
+      - feature/agent-activity-finalize
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -19,7 +24,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 2
 
@@ -36,7 +41,19 @@ jobs:
         run: swift build
 
       - name: Tests
-        run: swift test
+        shell: bash
+        run: |
+          set +e
+          swift test
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            echo "::group::macOS XCTest crash diagnostics"
+            find "$HOME/Library/Logs/DiagnosticReports" -type f \
+              \( -name 'xctest*.ips' -o -name 'xctest*.crash' -o -name 'swift-test*.ips' \) \
+              -mmin -10 -print -exec cat {} \; 2>/dev/null || true
+            echo "::endgroup::"
+          fi
+          exit "$status"
 
       - name: Release build
         run: swift build -c release

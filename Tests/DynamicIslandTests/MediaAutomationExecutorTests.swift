@@ -373,9 +373,18 @@ final class MediaControllerAutomationIntegrationTests: XCTestCase {
         )
         let oldPublished = expectation(description: "old track published")
         let newPublished = expectation(description: "new track published")
+        let postBatchNewPublished = expectation(description: "new track published after automation batch")
+        var newPublishCount = 0
         let subscription = controller.$title.sink { title in
             if title == "Old" { oldPublished.fulfill() }
-            if title == "New" { newPublished.fulfill() }
+            if title == "New" {
+                newPublishCount += 1
+                if newPublishCount == 1 {
+                    newPublished.fulfill()
+                } else if newPublishCount == 2 {
+                    postBatchNewPublished.fulfill()
+                }
+            }
         }
 
         controller.refresh()
@@ -394,6 +403,8 @@ final class MediaControllerAutomationIntegrationTests: XCTestCase {
         }
         XCTAssertNotNil(commandIndex)
         XCTAssertNotNil(followingDetectionIndex)
+        await fulfillment(of: [postBatchNewPublished], timeout: 2)
+        await executor.invalidateAndWaitForIdle()
         subscription.cancel()
     }
 
@@ -426,9 +437,18 @@ final class MediaControllerAutomationIntegrationTests: XCTestCase {
         )
         let oldPublished = expectation(description: "old track published")
         let newPublished = expectation(description: "new system track published")
+        let postBatchNewPublished = expectation(description: "new track republished after automation batch")
+        var newPublishCount = 0
         let subscription = controller.$title.sink { title in
             if title == "Old" { oldPublished.fulfill() }
-            if title == "New" { newPublished.fulfill() }
+            if title == "New" {
+                newPublishCount += 1
+                if newPublishCount == 1 {
+                    newPublished.fulfill()
+                } else if newPublishCount == 2 {
+                    postBatchNewPublished.fulfill()
+                }
+            }
         }
 
         controller.refresh()
@@ -437,8 +457,16 @@ final class MediaControllerAutomationIntegrationTests: XCTestCase {
         await fulfillment(of: [newPublished, secondDetectionStarted], timeout: 2)
 
         XCTAssertEqual(controller.title, "New")
-        XCTAssertEqual(controller.artworkPresentation.state.phase, .firstHalf)
+        XCTAssertEqual(controller.artworkImageRevision, 2)
+        XCTAssertEqual(
+            controller.artworkImageKey,
+            "embedded:spotify|com.spotify.client|spotify|new|artist"
+        )
+
+        // Drain the blocked detection batch before tearing down the controller/executor.
         releaseSecondDetection.signal()
+        await fulfillment(of: [postBatchNewPublished], timeout: 2)
+        await executor.invalidateAndWaitForIdle()
         subscription.cancel()
     }
 
@@ -486,6 +514,7 @@ final class MediaControllerAutomationIntegrationTests: XCTestCase {
         XCTAssertEqual(controller.sourceName, "Music")
         XCTAssertEqual(controller.title, "New")
         XCTAssertFalse(publishedSources.contains("Spotify"))
+        await executor.invalidateAndWaitForIdle()
         subscription.cancel()
     }
 
@@ -513,6 +542,7 @@ final class MediaControllerAutomationIntegrationTests: XCTestCase {
 
         release.signal()
         await fulfillment(of: [queryReleased], timeout: 2)
+        await executor.invalidateAndWaitForIdle()
     }
 
     private static func scriptSuccess(_ output: String) -> MediaAutomationScriptResult {
