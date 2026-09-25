@@ -673,12 +673,12 @@ enum AgentAttentionPolicyEngine {
             items = [event]
         }
 
-        let style = items.map { style(for: $0.reason) }.max(by: styleRank) ?? style(for: event.reason)
+        let presentationStyle = items.map { Self.style(for: $0.reason) }.max(by: styleRank) ?? Self.style(for: event.reason)
         return AgentAttentionPresentation(
             generation: generation,
             items: items,
             overflowCount: overflow,
-            style: style,
+            style: presentationStyle,
             createdAt: createdAt,
             updatedAt: now,
             retractAt: now.addingTimeInterval(max(0.1, options.peekDuration))
@@ -737,9 +737,9 @@ enum AgentAttentionPolicyEngine {
         guard options.soundsEnabled else { return false }
         switch event.reason {
         case .planReady, .completed, .approvalRequired, .userInputRequired, .failed:
-            true
+            return true
         case .interrupted:
-            false
+            return false
         }
     }
 
@@ -755,13 +755,13 @@ enum AgentAttentionPolicyEngine {
     private static func style(for reason: AgentAttentionReason) -> AgentAttentionStyle {
         switch reason {
         case .planReady, .interrupted:
-            .informational
+            return .informational
         case .completed:
-            .success
+            return .success
         case .approvalRequired, .userInputRequired:
-            .actionRequired
+            return .actionRequired
         case .failed:
-            .failure
+            return .failure
         }
     }
 
@@ -771,10 +771,10 @@ enum AgentAttentionPolicyEngine {
 
     private static func rank(_ style: AgentAttentionStyle) -> Int {
         switch style {
-        case .informational: 0
-        case .success: 1
-        case .actionRequired: 2
-        case .failure: 3
+        case .informational: return 0
+        case .success: return 1
+        case .actionRequired: return 2
+        case .failure: return 3
         }
     }
 
