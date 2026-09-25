@@ -109,6 +109,32 @@ final class AgentIntegrationSetupTests: XCTestCase {
                 helperURL: URL(fileURLWithPath: "/tmp/DynamicIslandClaudeHookRelay")
             )
         )
+
+        let invalidEvent = try JSONSerialization.data(withJSONObject: [
+            "hooks": ["PreToolUse": "not-an-array"]
+        ])
+        XCTAssertThrowsError(
+            try AgentHookConfigurationPlanner.install(
+                existing: invalidEvent,
+                provider: .codex,
+                helperURL: URL(fileURLWithPath: "/tmp/DynamicIslandCodexHookRelay")
+            )
+        ) { error in
+            XCTAssertEqual(error as? AgentIntegrationSetupError, .invalidHooks)
+        }
+
+        let invalidHandler = try JSONSerialization.data(withJSONObject: [
+            "hooks": ["CustomEvent": [["hooks": ["not-an-object"]]]]
+        ])
+        XCTAssertThrowsError(
+            try AgentHookConfigurationPlanner.install(
+                existing: invalidHandler,
+                provider: .claude,
+                helperURL: URL(fileURLWithPath: "/tmp/DynamicIslandClaudeHookRelay")
+            )
+        ) { error in
+            XCTAssertEqual(error as? AgentIntegrationSetupError, .invalidHooks)
+        }
     }
 
     func testApplyCreatesBackupAndRollbackRestoresExactOriginalBytes() throws {
@@ -147,6 +173,7 @@ final class AgentIntegrationSetupTests: XCTestCase {
         XCTAssertThrowsError(try service.rollback(.codex)) { error in
             XCTAssertEqual(error as? AgentIntegrationSetupError, .changedExternally)
         }
+        XCTAssertFalse(service.snapshot(for: .codex).backupAvailable)
     }
 
     func testApplyToAbsentFileRollsBackByDeletingOwnedCreatedFile() throws {

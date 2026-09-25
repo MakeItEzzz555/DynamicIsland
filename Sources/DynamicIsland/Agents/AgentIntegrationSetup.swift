@@ -315,6 +315,18 @@ enum AgentHookConfigurationPlanner {
         guard let hooks = raw as? [String: Any] else {
             throw AgentIntegrationSetupError.invalidHooks
         }
+        for rawGroups in hooks.values {
+            guard let groups = rawGroups as? [Any] else {
+                throw AgentIntegrationSetupError.invalidHooks
+            }
+            for rawGroup in groups {
+                guard let group = rawGroup as? [String: Any],
+                      let handlers = group["hooks"] as? [Any],
+                      handlers.allSatisfy({ $0 is [String: Any] }) else {
+                    throw AgentIntegrationSetupError.invalidHooks
+                }
+            }
+        }
         return hooks
     }
 
@@ -419,7 +431,9 @@ struct AgentIntegrationSetupService: Sendable {
             let detail: String
             switch state {
             case .configured:
-                detail = "Observer hooks point to this DynamicIsland app bundle."
+                detail = provider == .codex
+                    ? "Observer hooks point to this DynamicIsland app bundle. Review and trust them with /hooks in Codex."
+                    : "Observer hooks point to this DynamicIsland app bundle."
             case .repairRequired:
                 detail = "DynamicIsland hooks exist but reference a different app location or incomplete event set."
             case .needsSetup:
@@ -576,12 +590,30 @@ struct AgentIntegrationSetupService: Sendable {
             provider: provider,
             state: state,
             configPath: paths.configURL(for: provider).path,
-            backupAvailable: (try? secureReadIfPresent(
-                paths.backupURL(for: provider),
-                maximumBytes: AgentHookConfigurationPlanner.maximumBackupBytes
-            )) != nil,
+            backupAvailable: rollbackIsAvailable(for: provider),
             detail: detail
         )
+    }
+
+    private func rollbackIsAvailable(for provider: AgentIntegrationProvider) -> Bool {
+        let target = paths.configURL(for: provider)
+        do {
+            guard let backupData = try secureReadIfPresent(
+                paths.backupURL(for: provider),
+                maximumBytes: AgentHookConfigurationPlanner.maximumBackupBytes
+            ),
+                  let backup = try? JSONDecoder().decode(AgentIntegrationBackupEnvelope.self, from: backupData),
+                  backup.version == 1,
+                  backup.provider == provider.rawValue,
+                  backup.targetPath == target.path,
+                  let current = try secureReadIfPresent(target),
+                  digest(current) == backup.installedDigest else {
+                return false
+            }
+            return true
+        } catch {
+            return false
+        }
     }
 
     private func backupEnvelope(

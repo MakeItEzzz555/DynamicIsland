@@ -391,7 +391,8 @@ struct SettingsView: View {
                     "Setup is opt-in. DynamicIsland previews the exact observer hooks before writing, " +
                     "backs up the existing file, preserves unrelated JSON keys and handlers, and refuses " +
                     "unsafe, malformed, read-only, or externally changed files. Hooks are observer-only " +
-                    "and cannot approve or deny actions. Restart the provider or start a new session after changes."
+                    "and cannot approve or deny actions. Restart the provider or start a new session after changes. " +
+                    "Codex also requires reviewing and trusting the installed hooks with /hooks."
                 )
             }
 
