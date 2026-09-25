@@ -457,3 +457,339 @@ struct AgentSession: Identifiable, Equatable, Sendable {
         endedAt == nil && !state.isTerminal
     }
 }
+
+
+struct AgentAttentionGeneration: RawRepresentable, Hashable, Comparable, Sendable {
+    let rawValue: UInt64
+
+    init(rawValue: UInt64) {
+        self.rawValue = rawValue
+    }
+
+    static func < (lhs: Self, rhs: Self) -> Bool {
+        lhs.rawValue < rhs.rawValue
+    }
+}
+
+enum AgentAttentionStyle: String, Equatable, Sendable {
+    case informational
+    case success
+    case actionRequired
+    case failure
+}
+
+struct AgentAttentionPresentation: Equatable, Sendable {
+    let generation: AgentAttentionGeneration
+    let items: [AgentAttentionEvent]
+    let overflowCount: Int
+    let style: AgentAttentionStyle
+    let createdAt: Date
+    let updatedAt: Date
+    let retractAt: Date
+
+    var primary: AgentAttentionEvent? {
+        items.max {
+            if $0.priority != $1.priority { return $0.priority < $1.priority }
+            return $0.timestamp < $1.timestamp
+        }
+    }
+
+    var totalCount: Int {
+        items.count + overflowCount
+    }
+}
+
+struct AgentAttentionBadge: Equatable, Sendable {
+    let session: AgentSessionInstanceID
+    let reason: AgentAttentionReason
+    let priority: AgentAttentionPriority
+    let eventID: AgentEventID
+    let summary: String
+    let createdAt: Date
+}
+
+struct AgentAttentionSoundIntent: Equatable, Sendable {
+    let generation: AgentAttentionGeneration
+    let eventID: AgentEventID
+    let reason: AgentAttentionReason
+}
+
+struct AgentAttentionPolicyOptions: Equatable, Sendable {
+    var peekDuration: TimeInterval = 5.0
+    var coalescingWindow: TimeInterval = 0.75
+    var soundThrottle: TimeInterval = 1.5
+    var maximumPresentedItems = 3
+    var maximumRememberedEvents = 256
+    var completionAlertsEnabled = true
+    var approvalAlertsEnabled = true
+    var soundsEnabled = true
+}
+
+struct AgentAttentionPolicyState: Equatable, Sendable {
+    var generation = AgentAttentionGeneration(rawValue: 0)
+    var presentation: AgentAttentionPresentation?
+    var badges: [AgentSessionInstanceID: AgentAttentionBadge] = [:]
+    var rememberedEventOrder: [AgentAttentionEventID] = []
+    var rememberedEventIDs: Set<AgentAttentionEventID> = []
+    var soundedEventOrder: [AgentAttentionEventID] = []
+    var soundedEventIDs: Set<AgentAttentionEventID> = []
+    var lastSoundAt: Date?
+}
+
+struct AgentAttentionPolicyResult: Equatable, Sendable {
+    let state: AgentAttentionPolicyState
+    let soundIntent: AgentAttentionSoundIntent?
+}
+
+/// Pure attention policy. Delayed execution belongs to AgentAttentionCoordinator;
+/// this reducer is deterministic and contains no sleeps or UI behavior.
+enum AgentAttentionPolicyEngine {
+    static func apply(
+        events: [AgentAttentionEvent],
+        sessions: [AgentSession],
+        now: Date,
+        state initialState: AgentAttentionPolicyState,
+        options: AgentAttentionPolicyOptions
+    ) -> AgentAttentionPolicyResult {
+        var state = initialState
+        var soundIntent: AgentAttentionSoundIntent?
+
+        reconcileBadges(with: sessions, state: &state)
+
+        for event in events.sorted(by: eventOrder) {
+            guard !state.rememberedEventIDs.contains(event.id) else { continue }
+            remember(event.id, order: &state.rememberedEventOrder, set: &state.rememberedEventIDs, limit: options.maximumRememberedEvents)
+
+            if shouldPersist(event.reason) {
+                state.badges[event.session] = AgentAttentionBadge(
+                    session: event.session,
+                    reason: event.reason,
+                    priority: event.priority,
+                    eventID: event.eventID,
+                    summary: event.displaySummary,
+                    createdAt: event.timestamp
+                )
+            } else if event.reason == .completed {
+                state.badges.removeValue(forKey: event.session)
+            }
+
+            guard shouldPresent(event, options: options) else { continue }
+
+            let nextGeneration = AgentAttentionGeneration(rawValue: state.generation.rawValue &+ 1)
+            state.generation = nextGeneration
+            let previous = state.presentation
+            let presentation = mergedPresentation(
+                previous,
+                event: event,
+                generation: nextGeneration,
+                now: now,
+                options: options
+            )
+            state.presentation = presentation
+
+            if soundIntent == nil,
+               shouldSound(event, options: options),
+               !state.soundedEventIDs.contains(event.id),
+               soundThrottleAllows(now: now, state: state, options: options) {
+                remember(event.id, order: &state.soundedEventOrder, set: &state.soundedEventIDs, limit: options.maximumRememberedEvents)
+                state.lastSoundAt = now
+                soundIntent = AgentAttentionSoundIntent(
+                    generation: nextGeneration,
+                    eventID: event.eventID,
+                    reason: event.reason
+                )
+            }
+        }
+
+        return AgentAttentionPolicyResult(state: state, soundIntent: soundIntent)
+    }
+
+    static func expire(
+        generation: AgentAttentionGeneration,
+        now: Date,
+        state initialState: AgentAttentionPolicyState
+    ) -> AgentAttentionPolicyState {
+        var state = initialState
+        guard let presentation = state.presentation,
+              presentation.generation == generation,
+              now >= presentation.retractAt else {
+            return state
+        }
+        state.presentation = nil
+        return state
+    }
+
+    static func dismissPresentation(
+        state initialState: AgentAttentionPolicyState
+    ) -> AgentAttentionPolicyState {
+        var state = initialState
+        state.generation = AgentAttentionGeneration(rawValue: state.generation.rawValue &+ 1)
+        state.presentation = nil
+        return state
+    }
+
+    static func markViewed(
+        session: AgentSessionInstanceID,
+        state initialState: AgentAttentionPolicyState
+    ) -> AgentAttentionPolicyState {
+        var state = initialState
+        state.badges.removeValue(forKey: session)
+        return state
+    }
+
+    private static func mergedPresentation(
+        _ previous: AgentAttentionPresentation?,
+        event: AgentAttentionEvent,
+        generation: AgentAttentionGeneration,
+        now: Date,
+        options: AgentAttentionPolicyOptions
+    ) -> AgentAttentionPresentation {
+        var items: [AgentAttentionEvent] = []
+        var overflow = 0
+        var createdAt = now
+
+        if let previous {
+            items = previous.items
+            overflow = previous.overflowCount
+            createdAt = previous.createdAt
+
+            if let index = items.firstIndex(where: { $0.session == event.session }) {
+                let current = items[index]
+                if event.priority >= current.priority || event.timestamp >= current.timestamp {
+                    items[index] = event
+                }
+            } else if items.count < max(1, options.maximumPresentedItems) {
+                items.append(event)
+            } else {
+                overflow += 1
+            }
+        } else {
+            items = [event]
+        }
+
+        let style = items.map { style(for: $0.reason) }.max(by: styleRank) ?? style(for: event.reason)
+        return AgentAttentionPresentation(
+            generation: generation,
+            items: items,
+            overflowCount: overflow,
+            style: style,
+            createdAt: createdAt,
+            updatedAt: now,
+            retractAt: now.addingTimeInterval(max(0.1, options.peekDuration))
+        )
+    }
+
+    private static func reconcileBadges(
+        with sessions: [AgentSession],
+        state: inout AgentAttentionPolicyState
+    ) {
+        let sessionsByID = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })
+        state.badges = state.badges.filter { instanceID, badge in
+            guard let session = sessionsByID[instanceID] else { return false }
+            switch badge.reason {
+            case .approvalRequired:
+                return session.state == .waitingForApproval
+            case .userInputRequired:
+                return session.state == .waitingForUser
+            case .failed:
+                return session.state == .failed
+            case .planReady:
+                return session.state == .planReady
+            case .completed, .interrupted:
+                return false
+            }
+        }
+    }
+
+    private static func shouldPersist(_ reason: AgentAttentionReason) -> Bool {
+        switch reason {
+        case .approvalRequired, .userInputRequired, .failed:
+            true
+        case .planReady, .completed, .interrupted:
+            false
+        }
+    }
+
+    private static func shouldPresent(
+        _ event: AgentAttentionEvent,
+        options: AgentAttentionPolicyOptions
+    ) -> Bool {
+        switch event.reason {
+        case .approvalRequired, .userInputRequired:
+            return options.approvalAlertsEnabled
+        case .completed, .planReady, .failed:
+            return options.completionAlertsEnabled
+        case .interrupted:
+            return options.completionAlertsEnabled
+        }
+    }
+
+    private static func shouldSound(
+        _ event: AgentAttentionEvent,
+        options: AgentAttentionPolicyOptions
+    ) -> Bool {
+        guard options.soundsEnabled else { return false }
+        switch event.reason {
+        case .planReady, .completed, .approvalRequired, .userInputRequired, .failed:
+            true
+        case .interrupted:
+            false
+        }
+    }
+
+    private static func soundThrottleAllows(
+        now: Date,
+        state: AgentAttentionPolicyState,
+        options: AgentAttentionPolicyOptions
+    ) -> Bool {
+        guard let lastSoundAt = state.lastSoundAt else { return true }
+        return now.timeIntervalSince(lastSoundAt) >= max(0, options.soundThrottle)
+    }
+
+    private static func style(for reason: AgentAttentionReason) -> AgentAttentionStyle {
+        switch reason {
+        case .planReady, .interrupted:
+            .informational
+        case .completed:
+            .success
+        case .approvalRequired, .userInputRequired:
+            .actionRequired
+        case .failed:
+            .failure
+        }
+    }
+
+    private static func styleRank(_ lhs: AgentAttentionStyle, _ rhs: AgentAttentionStyle) -> Bool {
+        rank(lhs) < rank(rhs)
+    }
+
+    private static func rank(_ style: AgentAttentionStyle) -> Int {
+        switch style {
+        case .informational: 0
+        case .success: 1
+        case .actionRequired: 2
+        case .failure: 3
+        }
+    }
+
+    private static func eventOrder(_ lhs: AgentAttentionEvent, _ rhs: AgentAttentionEvent) -> Bool {
+        if lhs.timestamp != rhs.timestamp { return lhs.timestamp < rhs.timestamp }
+        if lhs.priority != rhs.priority { return lhs.priority < rhs.priority }
+        return lhs.eventID.rawValue < rhs.eventID.rawValue
+    }
+
+    private static func remember<T: Hashable>(
+        _ value: T,
+        order: inout [T],
+        set: inout Set<T>,
+        limit: Int
+    ) {
+        set.insert(value)
+        order.append(value)
+        let safeLimit = max(1, limit)
+        if order.count > safeLimit {
+            let removed = order.removeFirst(order.count - safeLimit)
+            for item in removed { set.remove(item) }
+        }
+    }
+}
