@@ -18,14 +18,14 @@ final class CodexHookNormalizerTests: XCTestCase {
         XCTAssertFalse(String(decoding: output, as: UTF8.self).contains("transcript_path"))
     }
 
-    func testResumeMapsToSessionResumed() throws {
+    func testResumeSessionStartCreatesLocalSessionIncarnation() throws {
         let input = Data("""
         {"session_id":"session-1","transcript_path":null,"cwd":"/tmp/project","hook_event_name":"SessionStart","model":"gpt-5.6-sol","permission_mode":"default","source":"resume"}
         """.utf8)
         let output = try CodexHookNormalizer.normalize(input)
         let root = try XCTUnwrap(try JSONSerialization.jsonObject(with: output) as? [String: Any])
         let events = try XCTUnwrap(root["events"] as? [[String: Any]])
-        XCTAssertEqual(events[0]["eventType"] as? String, "sessionResumed")
+        XCTAssertEqual(events[0]["eventType"] as? String, "sessionStarted")
     }
 
     func testPromptContentIsNeverForwarded() throws {
