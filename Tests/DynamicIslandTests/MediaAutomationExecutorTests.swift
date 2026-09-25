@@ -422,7 +422,8 @@ final class MediaControllerAutomationIntegrationTests: XCTestCase {
         let controller = MediaController(
             automationExecutor: executor,
             systemNowPlayingProvider: provider,
-            startsAutomatically: false
+            startsAutomatically: false,
+            reduceMotionProvider: { false }
         )
         let oldPublished = expectation(description: "old track published")
         let newPublished = expectation(description: "new system track published")
@@ -437,11 +438,7 @@ final class MediaControllerAutomationIntegrationTests: XCTestCase {
         await fulfillment(of: [newPublished, secondDetectionStarted], timeout: 2)
 
         XCTAssertEqual(controller.title, "New")
-        XCTAssertEqual(controller.artworkImage?.size, CGSize(width: 20, height: 20))
-        XCTAssertEqual(
-            controller.artworkImageKey,
-            "embedded:spotify|com.spotify.client|spotify|new|artist"
-        )
+        XCTAssertEqual(controller.artworkPresentation.state.phase, .firstHalf)
         releaseSecondDetection.signal()
         subscription.cancel()
     }
@@ -531,7 +528,7 @@ final class MediaControllerAutomationIntegrationTests: XCTestCase {
             title: title,
             artist: "Artist",
             album: "Album",
-            artwork: bitmapBackedArtwork(size: imageSize),
+            artwork: NSImage(size: CGSize(width: imageSize, height: imageSize)),
             isPlaying: true,
             duration: 180,
             elapsedTime: 1,
@@ -539,15 +536,6 @@ final class MediaControllerAutomationIntegrationTests: XCTestCase {
             seekAvailable: true,
             volumeAvailable: true
         )
-    }
-
-    private static func bitmapBackedArtwork(size: CGFloat) -> NSImage {
-        let png = Data(base64Encoded:
-            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
-        )!
-        let image = NSImage(data: png)!
-        image.size = CGSize(width: size, height: size)
-        return image
     }
 
 }
