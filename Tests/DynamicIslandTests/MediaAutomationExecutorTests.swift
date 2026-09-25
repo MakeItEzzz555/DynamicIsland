@@ -426,19 +426,28 @@ final class MediaControllerAutomationIntegrationTests: XCTestCase {
         )
         let oldPublished = expectation(description: "old track published")
         let newPublished = expectation(description: "new system track published")
+        let firstHalfStarted = expectation(description: "new artwork flip started")
         let subscription = controller.$title.sink { title in
             if title == "Old" { oldPublished.fulfill() }
             if title == "New" { newPublished.fulfill() }
+        }
+        let artworkSubscription = controller.artworkPresentation.$state.sink { state in
+            if state.phase == .firstHalf {
+                firstHalfStarted.fulfill()
+            }
         }
 
         controller.refresh()
         await fulfillment(of: [oldPublished], timeout: 2)
         controller.refresh()
-        await fulfillment(of: [newPublished, secondDetectionStarted], timeout: 2)
+        await fulfillment(
+            of: [newPublished, firstHalfStarted, secondDetectionStarted],
+            timeout: 2
+        )
 
         XCTAssertEqual(controller.title, "New")
-        XCTAssertEqual(controller.artworkPresentation.state.phase, .firstHalf)
         releaseSecondDetection.signal()
+        artworkSubscription.cancel()
         subscription.cancel()
     }
 
