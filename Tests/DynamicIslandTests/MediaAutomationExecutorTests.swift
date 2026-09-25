@@ -542,25 +542,14 @@ final class MediaControllerAutomationIntegrationTests: XCTestCase {
     }
 
     private static func bitmapBackedArtwork(size: CGFloat) -> NSImage {
-        let pixels = max(1, Int(size.rounded()))
-        let representation = NSBitmapImageRep(
-            bitmapDataPlanes: nil,
-            pixelsWide: pixels,
-            pixelsHigh: pixels,
-            bitsPerSample: 8,
-            samplesPerPixel: 4,
-            hasAlpha: true,
-            isPlanar: false,
-            colorSpaceName: .deviceRGB,
-            bytesPerRow: 0,
-            bitsPerPixel: 0
+        let png = Data(base64Encoded:
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
         )!
-        representation.size = CGSize(width: size, height: size)
-
-        let image = NSImage(size: CGSize(width: size, height: size))
-        image.addRepresentation(representation)
+        let image = NSImage(data: png)!
+        image.size = CGSize(width: size, height: size)
         return image
     }
+
 }
 
 final class MediaRefreshCoordinatorTests: XCTestCase {
