@@ -167,7 +167,7 @@ final class AgentIntegrationSetupTests: XCTestCase {
         let service = AgentIntegrationSetupService(paths: fixture.paths)
         let preview = try service.preview(for: .codex)
         XCTAssertTrue(preview.text.contains("DynamicIslandCodexHookRelay"))
-        XCTAssertTrue(preview.text.contains("'\\''"))
+        XCTAssertTrue(preview.text.contains("'\\\\''"))
         XCTAssertFalse(preview.text.lowercased().contains("token"))
         XCTAssertFalse(preview.text.lowercased().contains("secret"))
     }
