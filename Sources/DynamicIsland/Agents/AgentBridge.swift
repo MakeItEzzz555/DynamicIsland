@@ -463,6 +463,8 @@ final class AgentBridge: ObservableObject {
         coordinator: AgentIngestionCoordinator,
         credentialStore: any AgentBridgeCredentialStore = SystemAgentBridgeCredentialStore(),
         discoveryPublisher: (any AgentBridgeDiscoveryPublishing)? = nil,
+        codexDiscoveryPublisher: (any AgentBridgeDiscoveryPublishing)? = nil,
+        claudeDiscoveryPublisher: (any AgentBridgeDiscoveryPublishing)? = nil,
         serverFactory: @escaping AgentBridgeServerFactory = {
             AgentBridgeNetworkServer(requestHandler: $0)
         }
@@ -475,17 +477,29 @@ final class AgentBridge: ObservableObject {
             resolvedDiscovery = try? AgentBridgeDiscoveryPublisher()
         }
         self.discoveryPublisher = resolvedDiscovery
-        if let baseURL = resolvedDiscovery?.recordURL.deletingLastPathComponent() {
+
+        if let codexDiscoveryPublisher {
+            self.codexDiscoveryPublisher = codexDiscoveryPublisher
+        } else if discoveryPublisher == nil,
+                  let baseURL = resolvedDiscovery?.recordURL.deletingLastPathComponent() {
             self.codexDiscoveryPublisher = try? AgentBridgeDiscoveryPublisher(
                 recordURL: baseURL.appendingPathComponent("codex-hook-v1.json")
             )
+        } else {
+            self.codexDiscoveryPublisher = nil
+        }
+
+        if let claudeDiscoveryPublisher {
+            self.claudeDiscoveryPublisher = claudeDiscoveryPublisher
+        } else if discoveryPublisher == nil,
+                  let baseURL = resolvedDiscovery?.recordURL.deletingLastPathComponent() {
             self.claudeDiscoveryPublisher = try? AgentBridgeDiscoveryPublisher(
                 recordURL: baseURL.appendingPathComponent("claude-hook-v1.json")
             )
         } else {
-            self.codexDiscoveryPublisher = nil
             self.claudeDiscoveryPublisher = nil
         }
+
         self.coordinator = coordinator
         ingress = AgentBridgeIngress(coordinator: coordinator)
         self.serverFactory = serverFactory
@@ -495,6 +509,8 @@ final class AgentBridge: ObservableObject {
         eventStore: AgentEventStore,
         credentialStore: any AgentBridgeCredentialStore = SystemAgentBridgeCredentialStore(),
         discoveryPublisher: (any AgentBridgeDiscoveryPublishing)? = nil,
+        codexDiscoveryPublisher: (any AgentBridgeDiscoveryPublishing)? = nil,
+        claudeDiscoveryPublisher: (any AgentBridgeDiscoveryPublishing)? = nil,
         serverFactory: @escaping AgentBridgeServerFactory = {
             AgentBridgeNetworkServer(requestHandler: $0)
         }
@@ -503,6 +519,8 @@ final class AgentBridge: ObservableObject {
             coordinator: AgentIngestionCoordinator(eventStore: eventStore),
             credentialStore: credentialStore,
             discoveryPublisher: discoveryPublisher,
+            codexDiscoveryPublisher: codexDiscoveryPublisher,
+            claudeDiscoveryPublisher: claudeDiscoveryPublisher,
             serverFactory: serverFactory
         )
     }
