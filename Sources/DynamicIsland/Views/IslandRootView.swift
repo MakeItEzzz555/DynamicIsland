@@ -1,4 +1,3 @@
-// Agent continuation
 import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
@@ -326,6 +325,7 @@ struct IslandRootView: View {
     @ObservedObject private var media: MediaController
     @ObservedObject private var navigation: IslandNavigationStore
     @ObservedObject private var liveActivities: LiveActivityStore
+    @ObservedObject private var agentAttention: AgentAttentionCoordinator
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var contentPhase: IslandContentPhase = .compact
     @State private var renderedContentMode: RenderedContentMode = .compact
