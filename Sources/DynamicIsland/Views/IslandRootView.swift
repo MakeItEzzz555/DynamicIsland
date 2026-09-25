@@ -2725,6 +2725,7 @@ struct ExpandedIslandView: View {
     }
 
     private func hasVisibleAgentUsage(_ session: AgentSession) -> Bool {
+        guard settings.agentUsageMetricsEnabled else { return false }
         let supported =
             session.capabilities.contains(.tokenUsage) ||
             session.capabilities.contains(.contextUsage) ||
