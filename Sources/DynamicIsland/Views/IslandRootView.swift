@@ -1887,6 +1887,7 @@ struct ExpandedIslandView: View {
     let islandSwipeSensitivity: Double
     @ObservedObject private var navigation: IslandNavigationStore
     @ObservedObject private var liveActivities: LiveActivityStore
+    @ObservedObject private var agentEvents: AgentEventStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.isCollapseShellOnly) private var isCollapseShellOnly
     @Environment(\.isNotchIntegratedShell) private var isNotchIntegratedShell
@@ -1934,6 +1935,7 @@ struct ExpandedIslandView: View {
         self.islandSwipeSensitivity = islandSwipeSensitivity
         navigation = modules.navigation
         liveActivities = modules.liveActivities
+        agentEvents = modules.agentEvents
         _displayedPage = State(initialValue: modules.navigation.selectedPage)
     }
 
