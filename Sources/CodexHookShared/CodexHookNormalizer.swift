@@ -37,13 +37,20 @@ package enum CodexHookNormalizer {
         let turnID = boundedString(root["turn_id"], maximumBytes: maximumIdentifierBytes)
         let cwd = boundedString(root["cwd"], maximumBytes: maximumPathBytes)
         let model = boundedString(root["model"], maximumBytes: maximumTokenBytes)
-        let rawDigest = digest(data)
+        let observationNonce = String(format: "%.6f", now.timeIntervalSince1970)
         var events: [[String: Any]] = []
 
-        func baseEvent(_ type: String, correlationID: String? = nil, payload: [String: Any]? = nil) -> [String: Any] {
+        func baseEvent(
+            _ type: String,
+            correlationID: String? = nil,
+            uniqueness: String? = nil,
+            payload: [String: Any]? = nil
+        ) -> [String: Any] {
+            let stableIdentity = [hookName, sessionID, turnID ?? "", type, correlationID ?? "", uniqueness ?? ""]
+                .joined(separator: "|")
             var event: [String: Any] = [
                 "schemaVersion": 1,
-                "eventID": "codex-hook-\(digest(Data("\(hookName)|\(sessionID)|\(turnID ?? "")|\(type)|\(rawDigest)".utf8)).prefix(40))",
+                "eventID": "codex-hook-\(digest(Data(stableIdentity.utf8)).prefix(40))",
                 "provider": "codex",
                 "source": "unknown",
                 "nativeSessionID": sessionID,
@@ -70,14 +77,17 @@ package enum CodexHookNormalizer {
         switch hookName {
         case "SessionStart":
             let source = boundedString(root["source"], maximumBytes: maximumTokenBytes) ?? "startup"
-            events.append(baseEvent(source == "startup" ? "sessionStarted" : "sessionResumed", payload: metadataPayload()))
+            // SessionStart is the first authoritative observation for this local
+            // integration incarnation even when Codex itself is resuming a thread.
+            // Later turn continuations use UserPromptSubmit/sessionResumed.
+            events.append(baseEvent("sessionStarted", uniqueness: source, payload: metadataPayload()))
             let capabilities = [
                 "sessionLifecycle", "toolLifecycle", "commandLifecycle", "approvalObservation",
                 "subagentLifecycle", "taskLifecycle", "modelMetadata", "projectContext"
             ].map {
                 ["name": $0, "authority": "lifecycle", "source": "codex-hooks-v1", "observedAt": timestamp]
             }
-            events.append(baseEvent("capabilitiesUpdated", payload: ["capabilities": capabilities]))
+            events.append(baseEvent("capabilitiesUpdated", uniqueness: source, payload: ["capabilities": capabilities]))
 
         case "UserPromptSubmit":
             events.append(baseEvent("sessionResumed", payload: metadataPayload()))
@@ -109,8 +119,15 @@ package enum CodexHookNormalizer {
             guard let tool = boundedString(root["tool_name"], maximumBytes: maximumTokenBytes) else {
                 throw CodexHookNormalizationError.invalidHook
             }
-            let approvalID = "approval-" + String(digest(Data("\(sessionID)|\(turnID ?? "")|\(tool)|\(rawDigest)".utf8)).prefix(40))
-            events.append(baseEvent("approvalRequested", correlationID: approvalID, payload: ["approvalRequest": ["summary": "\(String(tool.prefix(96))) approval required"]]))
+            let approvalID = "approval-" + String(
+                digest(Data("\(sessionID)|\(turnID ?? "")|\(tool)|\(observationNonce)".utf8)).prefix(40)
+            )
+            events.append(baseEvent(
+                "approvalRequested",
+                correlationID: approvalID,
+                uniqueness: observationNonce,
+                payload: ["approvalRequest": ["summary": "\(String(tool.prefix(96))) approval required"]]
+            ))
 
         case "Stop":
             events.append(baseEvent("taskCompleted", correlationID: turnID, payload: ["terminal": ["summary": "Codex turn completed"]]))
