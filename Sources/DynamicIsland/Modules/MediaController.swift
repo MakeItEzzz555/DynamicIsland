@@ -354,6 +354,7 @@ final class MediaController: ObservableObject {
 
     private let systemNowPlayingProvider: any MediaDetectionProvider
     private let automationExecutor: MediaAutomationExecutor
+    private let reduceMotionProvider: @MainActor () -> Bool
     private let youtubeMetadataProvider = YouTubeMetadataProvider()
     private var activePlayer: MediaPlayer = .spotify
     private let refreshTimerLifetime = MediaRefreshTimerLifetime()
@@ -398,10 +399,14 @@ final class MediaController: ObservableObject {
     init(
         automationExecutor: MediaAutomationExecutor = MediaAutomationExecutor(),
         systemNowPlayingProvider: any MediaDetectionProvider = NowPlayingMediaProvider(),
-        startsAutomatically: Bool = true
+        startsAutomatically: Bool = true,
+        reduceMotionProvider: @escaping @MainActor () -> Bool = {
+            NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        }
     ) {
         self.automationExecutor = automationExecutor
         self.systemNowPlayingProvider = systemNowPlayingProvider
+        self.reduceMotionProvider = reduceMotionProvider
         guard startsAutomatically else { return }
         refresh()
         refreshTimerLifetime.timer = Timer.scheduledTimer(withTimeInterval: 0.75, repeats: true) { [weak self] _ in
@@ -1522,7 +1527,7 @@ final class MediaController: ObservableObject {
         artworkPresentation.receiveRawArtwork(
             snapshot,
             request: artworkFlipRequest,
-            reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            reduceMotion: reduceMotionProvider()
         ) { [weak self] requestID in
             self?.consumeArtworkFlipRequest(id: requestID)
         }
