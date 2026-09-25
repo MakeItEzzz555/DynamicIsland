@@ -75,6 +75,24 @@ final class AgentIntegrationSetupTests: XCTestCase {
         XCTAssertFalse(String(data: removed, encoding: .utf8)?.contains("DynamicIslandCodexHookRelay") ?? true)
     }
 
+    func testRemovePreservesWrapperThatOnlyMentionsDynamicIslandHelper() throws {
+        let helper = URL(fileURLWithPath: "/Apps/DynamicIsland.app/Contents/Helpers/DynamicIslandCodexHookRelay")
+        let installed = try AgentHookConfigurationPlanner.install(existing: nil, provider: .codex, helperURL: helper)
+        var root = try XCTUnwrap(try JSONSerialization.jsonObject(with: installed) as? [String: Any])
+        var hooks = try XCTUnwrap(root["hooks"] as? [String: Any])
+        let wrapper = "/usr/bin/logger " + helper.path
+        hooks["CustomEvent"] = [["hooks": [["type": "command", "command": wrapper]]]]
+        root["hooks"] = hooks
+
+        let removed = try AgentHookConfigurationPlanner.remove(
+            existing: try JSONSerialization.data(withJSONObject: root),
+            provider: .codex
+        )
+        let text = try XCTUnwrap(String(data: removed, encoding: .utf8))
+        XCTAssertTrue(text.contains(wrapper))
+        XCTAssertFalse(text.contains("'" + helper.path + "'"))
+    }
+
     func testMalformedOrInvalidHookShapeFailsClosed() throws {
         XCTAssertThrowsError(
             try AgentHookConfigurationPlanner.install(

@@ -251,10 +251,19 @@ enum AgentHookConfigurationPlanner {
 
     static func isOwnedCommand(_ command: String, provider: AgentIntegrationProvider) -> Bool {
         let name = provider.helperExecutableName
-        return command.contains("/Contents/Helpers/" + name) ||
-            command == name ||
-            command.hasSuffix("/" + name + "'") ||
-            command.hasSuffix("/" + name + "\"")
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        let executable: String
+        if trimmed.first == "'", trimmed.last == "'", trimmed.count >= 2 {
+            executable = String(trimmed.dropFirst().dropLast())
+                .replacingOccurrences(of: "'\\''", with: "'")
+        } else if trimmed.first == "\"", trimmed.last == "\"", trimmed.count >= 2 {
+            executable = String(trimmed.dropFirst().dropLast())
+        } else {
+            guard !trimmed.contains(where: { $0.isWhitespace }) else { return false }
+            executable = trimmed
+        }
+        return executable == name ||
+            executable.hasSuffix("/Contents/Helpers/" + name)
     }
 
     static func shellQuote(_ value: String) -> String {
