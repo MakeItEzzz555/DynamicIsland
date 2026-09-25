@@ -145,7 +145,7 @@ final class CodexRolloutRecoveryTests: XCTestCase {
             correlationID: nil,
             sequence: 1,
             authority: .lifecycle,
-            payload: .none,
+            payload: .sessionMetadata(AgentSessionMetadata()),
             continuity: AgentSessionContinuity(immutableIdentity: "same-session")
         )
         let done = AgentIngestionEvent(
@@ -180,7 +180,7 @@ final class CodexRolloutRecoveryTests: XCTestCase {
             correlationID: nil,
             sequence: 1,
             authority: .localStructuredRecord,
-            payload: .none,
+            payload: .sessionMetadata(AgentSessionMetadata()),
             continuity: AgentSessionContinuity(immutableIdentity: "same-session")
         )
         _ = await coordinator.ingest(recoveryStart, from: recoveryHandle)
