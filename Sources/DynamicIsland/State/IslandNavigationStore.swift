@@ -48,7 +48,10 @@ final class IslandNavigationStore: ObservableObject {
     @Published private(set) var isFileDropTargeted = false
 
     func availablePages(using settings: AppSettings) -> [ExpandedIslandPage] {
-        var pages: [ExpandedIslandPage] = [.island, .agents]
+        var pages: [ExpandedIslandPage] = [.island]
+        if settings.agentActivityEnabled && settings.showAgentsTab {
+            pages.append(.agents)
+        }
         if settings.trayEnabled && settings.showTrayTab {
             pages.append(.tray)
         }
