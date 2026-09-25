@@ -1389,6 +1389,11 @@ struct CompactIslandView: View {
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
                     .animation(previewRowAnimation, value: previewActive)
             }
+
+            if agentAttention.presentation != nil {
+                Text("Agent activity")
+                    .font(.system(size: 9, weight: .semibold))
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(compactContentAnimation, value: media.hasActiveMediaSource)
