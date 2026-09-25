@@ -109,7 +109,7 @@ package enum CodexHookNormalizer {
             guard let tool = boundedString(root["tool_name"], maximumBytes: maximumTokenBytes) else {
                 throw CodexHookNormalizationError.invalidHook
             }
-            let approvalID = "approval-" + digest(Data("\(sessionID)|\(turnID ?? "")|\(tool)|\(rawDigest)".utf8)).prefix(40)
+            let approvalID = "approval-" + String(digest(Data("\(sessionID)|\(turnID ?? "")|\(tool)|\(rawDigest)".utf8)).prefix(40))
             events.append(baseEvent("approvalRequested", correlationID: approvalID, payload: ["approvalRequest": ["summary": "\(String(tool.prefix(96))) approval required"]]))
 
         case "Stop":
