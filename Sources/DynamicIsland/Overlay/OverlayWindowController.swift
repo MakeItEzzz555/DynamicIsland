@@ -489,11 +489,11 @@ final class OverlayWindowController {
     }
 
     private var collapsedPresentationProfile: CollapsedPresentationProfile {
-        guard case .inactive = collapsedContentMode else { return .normal }
         if let attention = modules.agentAttention.presentation {
             let session = attention.primary.flatMap { modules.agentEvents.session(for: $0.session) }
             return AgentCollapsedShellPresentation.attention(attention, session: session)
         }
+        guard case .inactive = collapsedContentMode else { return .normal }
         return AgentCollapsedShellPresentation.routine(
             sessions: modules.agentEvents.sessions,
             enabled: settings.agentActivityEnabled
