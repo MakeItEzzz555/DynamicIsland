@@ -89,6 +89,11 @@ struct AgentDashboardContentView: View {
                             previewMode = true
                         }
                     } else {
+                        if !previewMode && !sessions.contains(where: \.isActive) {
+                            AgentDashboardIdleBanner {
+                                previewMode = true
+                            }
+                        }
                         AgentDashboardStack(
                             sessions: previewMode ? AgentDashboardPreviewFactory.sessions() : sessions,
                             showsUsage: showsUsage,
@@ -108,6 +113,33 @@ struct AgentDashboardContentView: View {
                 previewMode = false
             }
         }
+    }
+}
+
+private struct AgentDashboardIdleBanner: View {
+    let showPreview: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "moon.zzz")
+                .foregroundStyle(.white.opacity(0.44))
+            Text("No active agents")
+                .font(.system(size: 9.5, weight: .semibold))
+            Text("Recent sessions remain available below.")
+                .font(.system(size: 8.5, weight: .medium))
+                .foregroundStyle(.white.opacity(0.44))
+            Spacer(minLength: 8)
+            Button(action: showPreview) {
+                Label("Preview", systemImage: "eye")
+            }
+            .buttonStyle(.borderless)
+            .font(.system(size: 8.5, weight: .semibold))
+            .help("Inspect the complete Agents dashboard with synthetic preview data")
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 7)
+        .background(.white.opacity(0.025))
+        .accessibilityElement(children: .contain)
     }
 }
 
