@@ -418,9 +418,13 @@ private struct AgentSessionRowContent: View {
                 } label: {
                     Label("Continue in \(target.displayName)", systemImage: "arrow.up.forward.app")
                         .font(.system(size: 8.5, weight: .semibold))
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 4)
+                        .background(.white.opacity(0.12), in: Capsule(style: .continuous))
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.white.opacity(0.78))
+                .foregroundStyle(.white.opacity(0.88))
+                .help("Open the verified source application")
                 .accessibilityLabel("Open verified source application \(target.displayName)")
             }
         }
