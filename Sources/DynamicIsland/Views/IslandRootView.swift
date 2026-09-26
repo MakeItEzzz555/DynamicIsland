@@ -1429,17 +1429,6 @@ struct CompactIslandView: View {
         )
 
         ZStack(alignment: .bottom) {
-            compactContentRow(activeBranch: activeBranch, visualizerColor: visualizerColor)
-                .frame(height: 16)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: previewActive ? .top : .center)
-                .padding(.top, previewActive ? 2 : 0)
-
-            if previewActive, let previewContent {
-                CollapsedPreviewRow(content: previewContent)
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
-                    .animation(previewRowAnimation, value: previewActive)
-            }
-
             if let attentionPresentation, let primary = attentionPresentation.primary {
                 sideSlotLayout {
                     AgentCompactAttentionLeadingView(
@@ -1455,6 +1444,17 @@ struct CompactIslandView: View {
                     )
                 }
                 .transition(.opacity)
+            } else {
+                compactContentRow(activeBranch: activeBranch, visualizerColor: visualizerColor)
+                    .frame(height: 16)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: previewActive ? .top : .center)
+                    .padding(.top, previewActive ? 2 : 0)
+
+                if previewActive, let previewContent {
+                    CollapsedPreviewRow(content: previewContent)
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
+                        .animation(previewRowAnimation, value: previewActive)
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
