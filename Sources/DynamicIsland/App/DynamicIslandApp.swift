@@ -185,9 +185,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil
         )
 
-        if settings.agentActivityEnabled {
-            Task { await agentBridge.start() }
-        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
