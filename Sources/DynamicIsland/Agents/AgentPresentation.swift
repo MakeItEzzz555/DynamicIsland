@@ -23,8 +23,10 @@ struct AgentCompactPresentation: Equatable, Sendable {
 
     static func make(sessions: [AgentSession], enabled: Bool = true) -> AgentCompactPresentation? {
         guard enabled, !sessions.isEmpty else { return nil }
-        let ordered = sessions.sorted(by: AgentSessionPresentation.isOrderedBefore)
-        guard ordered.contains(where: \.isActive) else { return nil }
+        let ordered = sessions
+            .filter(\.isActive)
+            .sorted(by: AgentSessionPresentation.isOrderedBefore)
+        guard !ordered.isEmpty else { return nil }
         let visible = Array(ordered.prefix(maximumVisibleSessions))
         return AgentCompactPresentation(
             sessions: visible,
@@ -94,7 +96,7 @@ enum AgentCollapsedShellPresentation {
 enum AgentSessionPresentation {
     static func requiresAttention(_ session: AgentSession) -> Bool {
         switch session.state {
-        case .waitingForApproval, .waitingForUser, .failed, .interrupted:
+        case .waitingForApproval, .waitingForUser, .planReady, .failed, .interrupted:
             true
         default:
             false
@@ -173,6 +175,50 @@ enum AgentSessionPresentation {
         case .completed: "checkmark.circle.fill"
         case .failed: "xmark.octagon.fill"
         case .interrupted: "stop.circle.fill"
+        }
+    }
+
+    static func primaryTitle(for session: AgentSession) -> String {
+        if requiresAttention(session) {
+            if let plan = session.recentActivity.reversed().first(where: {
+                $0.kind == .plan && !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }) {
+                return plan.title
+            }
+            if let project = session.project.displayName?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !project.isEmpty {
+                return project
+            }
+        }
+        if let activity = session.recentActivity.last,
+           !activity.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return activity.title
+        }
+        if let project = session.project.displayName?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !project.isEmpty {
+            return project
+        }
+        return stateLabel(session.state)
+    }
+
+    static func attentionDetail(for session: AgentSession) -> String {
+        switch session.state {
+        case .waitingForApproval:
+            return session.approvals.values
+                .filter { $0.state == .pending }
+                .sorted { $0.requestedAt > $1.requestedAt }
+                .first?.summary ?? "Waiting for approval in \(session.id.sessionID.provider.stableName.capitalized)"
+        case .waitingForUser:
+            return "Waiting for input in \(session.id.sessionID.provider.stableName.capitalized)"
+        case .planReady:
+            return session.recentActivity.reversed().first(where: { $0.kind == .plan })?.summary
+                ?? "Plan ready in \(session.id.sessionID.provider.stableName.capitalized)"
+        case .failed:
+            return session.recentActivity.last?.summary ?? "The provider reported a failure"
+        case .interrupted:
+            return session.recentActivity.last?.summary ?? "The provider reported an interruption"
+        default:
+            return stateLabel(session.state)
         }
     }
 }
@@ -259,21 +305,27 @@ struct AgentOperationSummary: Identifiable, Equatable, Sendable {
 }
 
 enum AgentOperationAggregation {
-    static func make(for session: AgentSession, limit: Int = 3) -> [AgentOperationSummary] {
+    static func make(
+        for session: AgentSession,
+        limit: Int = 3,
+        includePendingApprovals: Bool = true
+    ) -> [AgentOperationSummary] {
         var operations: [AgentOperationSummary] = []
-        operations += session.approvals.values
-            .filter { $0.state == .pending }
-            .map {
-                AgentOperationSummary(
-                    id: "approval:\($0.requestID.rawValue)",
-                    symbol: "checkmark.shield",
-                    title: "Approval requested",
-                    detail: $0.summary,
-                    status: .pending,
-                    count: 1,
-                    date: $0.requestedAt
-                )
-            }
+        if includePendingApprovals {
+            operations += session.approvals.values
+                .filter { $0.state == .pending }
+                .map {
+                    AgentOperationSummary(
+                        id: "approval:\($0.requestID.rawValue)",
+                        symbol: "checkmark.shield",
+                        title: "Approval requested",
+                        detail: $0.summary,
+                        status: .pending,
+                        count: 1,
+                        date: $0.requestedAt
+                    )
+                }
+        }
         operations += session.tools.values.map {
             AgentOperationSummary(
                 id: "tool:\($0.correlationID.rawValue)",
@@ -413,16 +465,23 @@ struct AgentGlobalUsagePresentation: Identifiable, Equatable, Sendable {
     let metric: AgentUsagePresentation
 
     static func make(sessions: [AgentSession], limit: Int) -> [Self] {
-        var seen: Set<String> = []
-        var values: [Self] = []
+        var order: [String] = []
+        var selected: [String: Self] = [:]
         for session in sessions.sorted(by: AgentSessionPresentation.isOrderedBefore) {
             for metric in AgentUsagePresentation.make(for: session) {
                 let key = "\(session.id.sessionID.provider.deterministicSortKey):\(metric.id)"
-                guard seen.insert(key).inserted else { continue }
-                values.append(Self(id: key, provider: session.id.sessionID.provider, metric: metric))
+                let candidate = Self(id: key, provider: session.id.sessionID.provider, metric: metric)
+                if let existing = selected[key] {
+                    if metric.sample.observedAt > existing.metric.sample.observedAt {
+                        selected[key] = candidate
+                    }
+                } else {
+                    order.append(key)
+                    selected[key] = candidate
+                }
             }
         }
-        return Array(values.prefix(max(limit, 0)))
+        return Array(order.compactMap { selected[$0] }.prefix(max(limit, 0)))
     }
 }
 
