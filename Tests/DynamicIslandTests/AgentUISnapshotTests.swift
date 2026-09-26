@@ -1,0 +1,292 @@
+import AppKit
+import SwiftUI
+import XCTest
+@testable import DynamicIsland
+
+@MainActor
+final class AgentUISnapshotTests: XCTestCase {
+    private let now = Date()
+
+    func testRenderAgentUIReviewSnapshots() throws {
+        guard let outputPath = ProcessInfo.processInfo.environment["DYNAMIC_ISLAND_AGENT_SNAPSHOT_DIR"] else {
+            throw XCTSkip("Set DYNAMIC_ISLAND_AGENT_SNAPSHOT_DIR to render review screenshots.")
+        }
+        let output = URL(fileURLWithPath: outputPath, isDirectory: true)
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+
+        let working = session(provider: .codex, nativeID: "working", project: "DynamicIsland", state: .runningTool, progress: 0.56)
+        let approval = session(provider: .codex, nativeID: "approval", project: "storefront", state: .waitingForApproval, progress: 0.43)
+        let claude = session(provider: .claude, nativeID: "claude", project: "design-system", state: .thinking, progress: nil)
+        let completed = session(provider: .codex, nativeID: "completed", project: "DynamicIsland", state: .completed, progress: 0.82)
+
+        try renderCompact(
+            name: "01-normal-compact",
+            profile: .normal,
+            content: AnyView(Color.clear),
+            output: output
+        )
+
+        let routinePresentation = try XCTUnwrap(AgentCompactPresentation.make(sessions: [working]))
+        let routineProfile = try XCTUnwrap(AgentCollapsedShellPresentation.routine(sessions: [working], enabled: true))
+        try renderCompact(
+            name: "02-routine-agent-compact",
+            profile: routineProfile,
+            content: AnyView(AgentCompactOverviewView(presentation: routinePresentation)),
+            output: output
+        )
+
+        try renderCompact(
+            name: "03-compact-attention",
+            profile: .agentAttention(leftContentWidth: 92, rightContentWidth: 118),
+            content: AnyView(
+                HStack(spacing: 12) {
+                    AgentCompactAttentionLeadingView(provider: .codex, project: "storefront")
+                    Spacer(minLength: 20)
+                    AgentCompactAttentionTrailingView(text: "Approval needed", accent: .orange)
+                }
+            ),
+            glowColor: .orange,
+            output: output
+        )
+
+        XCTAssertNil(AgentCollapsedShellPresentation.routine(sessions: [completed], enabled: true))
+        try renderCompact(
+            name: "04-completed-retraction",
+            profile: .normal,
+            content: AnyView(Color.clear),
+            output: output
+        )
+
+        try renderDashboard(name: "05-expanded-single-session", sessions: [working], output: output)
+        try renderDashboard(name: "06-expanded-multi-session", sessions: [approval, working, claude], output: output)
+        try renderDashboard(name: "07-multiple-project-groups", sessions: [working, approval, claude], output: output)
+        try renderDashboard(name: "08-attention-row", sessions: [approval, claude], showsUsage: false, output: output)
+        try renderDashboard(name: "09-usage-gauges", sessions: [working, approval], output: output)
+        try renderDiagnostics(output: output)
+    }
+
+    private func renderCompact(
+        name: String,
+        profile: CollapsedPresentationProfile,
+        content: AnyView,
+        glowColor: Color = .cyan,
+        output: URL
+    ) throws {
+        let size = CGSize(
+            width: profile.kind == .normal
+                ? 190
+                : max(300, 190 + profile.widthDelta + profile.minimumFloatingWidth),
+            height: 44 + profile.heightDelta
+        )
+        let settings = AppSettings()
+        let view = ZStack {
+            LinearGradient(
+                colors: [Color(red: 0.035, green: 0.04, blue: 0.10), Color(red: 0.13, green: 0.055, blue: 0.09)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            IslandSurface(
+                settings: settings,
+                isExpanded: false,
+                visualProgress: 0,
+                collapsedPresentationProfile: profile,
+                collapsedGlowColor: glowColor
+            ) {
+                content.padding(.horizontal, profile.horizontalContentInset)
+            }
+            .notchIntegrated(true)
+            .frame(width: size.width, height: size.height)
+        }
+        .frame(width: size.width + 48, height: size.height + 34)
+        try render(view, size: CGSize(width: size.width + 48, height: size.height + 34), to: output.appendingPathComponent(name + ".png"))
+    }
+
+    private func renderDashboard(
+        name: String,
+        sessions: [AgentSession],
+        showsUsage: Bool = true,
+        output: URL
+    ) throws {
+        let view = VStack(spacing: 0) {
+            AgentDashboardStack(
+                sessions: sessions,
+                showsUsage: showsUsage,
+                layout: AgentDashboardLayoutProjection.make(width: 792),
+                reduceMotion: false
+            )
+            .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+            .padding(14)
+            .background(Color(red: 0.025, green: 0.027, blue: 0.055))
+            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .padding(12)
+            .background(Color(red: 0.055, green: 0.06, blue: 0.12))
+        try render(view, size: CGSize(width: 820, height: 440), to: output.appendingPathComponent(name + ".png"))
+    }
+
+    private func renderDiagnostics(output: URL) throws {
+        let diagnostics = AgentIntegrationDiagnostics(
+            state: .active,
+            lastAcceptedEventAt: Date().addingTimeInterval(-4),
+            acceptedCount: 124,
+            rejectedCount: 0,
+            droppedCount: 0,
+            schemaMismatchCount: 0,
+            lastError: nil
+        )
+        let view = VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("Codex", systemImage: "terminal")
+                    .font(.system(size: 13, weight: .semibold))
+                Spacer()
+                Label("Active", systemImage: "checkmark.circle.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.green)
+            }
+            Text("Receiving events · 4s ago")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.secondary)
+            AgentSourceHealthRow(provider: .codex, diagnostics: diagnostics)
+            HStack {
+                Spacer()
+                Text("Reconfigure…")
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                Text("Remove")
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            }
+            .font(.system(size: 10, weight: .semibold))
+        }
+        .padding(16)
+        .frame(width: 620, alignment: .leading)
+        .foregroundStyle(.white)
+        .background(Color(red: 0.055, green: 0.058, blue: 0.075))
+        .preferredColorScheme(.dark)
+        try render(view, size: CGSize(width: 620, height: 190), to: output.appendingPathComponent("10-diagnostics-settings.png"))
+    }
+
+    private func render<V: View>(_ view: V, size: CGSize, to url: URL) throws {
+        let renderer = ImageRenderer(
+            content: view
+                .frame(width: size.width, height: size.height)
+                .preferredColorScheme(.dark)
+        )
+        renderer.scale = 2
+        guard let image = renderer.nsImage,
+              let data = image.tiffRepresentation,
+              let representation = NSBitmapImageRep(data: data),
+              let png = representation.representation(using: .png, properties: [:]) else {
+            XCTFail("Could not render \(url.lastPathComponent)")
+            return
+        }
+        try png.write(to: url, options: .atomic)
+    }
+
+    private func session(
+        provider: AgentProvider,
+        nativeID: String,
+        project: String,
+        state: AgentState,
+        progress: Double?
+    ) -> AgentSession {
+        let usage: AgentUsage
+        let capabilities: AgentCapabilities
+        if let progress {
+            usage = AgentUsage(samples: [
+                .contextUsed: AgentUsageSample(
+                    value: progress * 100,
+                    limit: 100,
+                    unit: .tokens,
+                    scope: "session",
+                    source: "structured snapshot fixture",
+                    observedAt: now
+                )
+            ])
+            capabilities = AgentCapabilities(evidence: [
+                .contextUsage: AgentCapabilityEvidence(
+                    authority: .lifecycle,
+                    source: "snapshot fixture",
+                    observedAt: now
+                )
+            ])
+        } else {
+            usage = AgentUsage()
+            capabilities = AgentCapabilities()
+        }
+
+        let correlation = AgentCorrelationID(rawValue: nativeID + "-operation")
+        let activity = AgentActivity(
+            id: AgentEventID(rawValue: nativeID + "-activity"),
+            kind: state == .waitingForApproval ? .approval : .tool,
+            title: state == .waitingForApproval ? "Improve the checkout flow" : title(for: state),
+            summary: state == .waitingForApproval ? "Apply the checkout schema migration" : nil,
+            status: state == .completed ? .completed : .active,
+            correlationID: correlation,
+            timestamp: now.addingTimeInterval(-6)
+        )
+        let approval: [AgentCorrelationID: AgentApproval] = state == .waitingForApproval
+            ? [correlation: AgentApproval(
+                requestID: correlation,
+                summary: "Apply the checkout schema migration",
+                operationCorrelationID: correlation,
+                requestedAt: now.addingTimeInterval(-6),
+                resolvedAt: nil,
+                expiresAt: nil,
+                state: .pending
+            )]
+            : [:]
+        let tools: [AgentCorrelationID: AgentTool] = state == .runningTool
+            ? Dictionary(uniqueKeysWithValues: (0..<3).map { index in
+                let id = AgentCorrelationID(rawValue: nativeID + "-bash-\(index)")
+                return (id, AgentTool(
+                    correlationID: id,
+                    name: "bash",
+                    category: "shell",
+                    summary: nil,
+                    status: .active,
+                    startedAt: now.addingTimeInterval(Double(-8 + index)),
+                    completedAt: nil,
+                    success: nil
+                ))
+            })
+            : [:]
+
+        return AgentSession(
+            id: AgentSessionInstanceID(
+                sessionID: AgentSessionID(provider: provider, nativeID: nativeID),
+                generation: AgentSessionGeneration(rawValue: 1)
+            ),
+            source: .terminal,
+            state: state,
+            project: AgentProjectContext(
+                displayName: project,
+                repositoryIdentity: "makeit/\(project.lowercased())",
+                gitBranch: project == "storefront" ? "checkout" : "main",
+                model: provider == .codex ? "gpt-5.6-sol" : "claude-sonnet"
+            ),
+            capabilities: capabilities,
+            usage: usage,
+            tools: tools,
+            commands: [:],
+            approvals: approval,
+            subagents: [:],
+            recentActivity: [activity],
+            startedAt: now.addingTimeInterval(-300),
+            endedAt: state.isTerminal ? now.addingTimeInterval(-6) : nil,
+            lastUpdatedAt: now.addingTimeInterval(-6)
+        )
+    }
+
+    private func title(for state: AgentState) -> String {
+        switch state {
+        case .runningTool: "Polish the agent dashboard"
+        case .thinking: "Plan component refinements"
+        case .completed: "Dashboard refinement complete"
+        default: AgentSessionPresentation.stateLabel(state)
+        }
+    }
+}

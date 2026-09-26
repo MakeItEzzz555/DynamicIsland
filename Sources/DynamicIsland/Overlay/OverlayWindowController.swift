@@ -7,11 +7,12 @@ struct OverlayGeometrySignature: Equatable, CustomStringConvertible {
     let collapsedSize: CGSize
     let expandedSize: CGSize
     let collapsedActivityProfile: CollapsedActivityLayoutProfile?
+    let collapsedPresentationProfile: CollapsedPresentationProfile
     let useAdaptiveNotchSizing: Bool
     let respectHardwareNotch: Bool
 
     var description: String {
-        "collapsedSize=\(collapsedSize) expandedSize=\(expandedSize) collapsedActivityProfile=\(String(describing: collapsedActivityProfile)) useAdaptiveNotchSizing=\(useAdaptiveNotchSizing) respectHardwareNotch=\(respectHardwareNotch)"
+        "collapsedSize=\(collapsedSize) expandedSize=\(expandedSize) collapsedActivityProfile=\(String(describing: collapsedActivityProfile)) collapsedPresentationProfile=\(collapsedPresentationProfile.kind.rawValue) useAdaptiveNotchSizing=\(useAdaptiveNotchSizing) respectHardwareNotch=\(respectHardwareNotch)"
     }
 }
 
@@ -224,11 +225,24 @@ final class OverlayWindowController {
             .store(in: &cancellables)
 
         modules.agentAttention.$presentation
+            .combineLatest(modules.agentEvents.$sessions, settings.$agentActivityEnabled)
+            .map { presentation, sessions, enabled in
+                if let presentation {
+                    let session = presentation.primary.flatMap { primary in
+                        sessions.first { $0.id == primary.session }
+                    }
+                    return AgentCollapsedShellPresentation.attention(presentation, session: session)
+                }
+                return AgentCollapsedShellPresentation.routine(sessions: sessions, enabled: enabled) ?? .normal
+            }
             .removeDuplicates()
-            .sink { [weak self] presentation in
-                guard let self else { return }
-                let shouldWiden = presentation != nil && self.islandState.state == .collapsed
-                self.layoutStore.setAgentAttentionWidthExpansion(shouldWiden ? 204 : 0)
+            .sink { [weak self] _ in
+                let generation = self?.presentationSession.generation
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.allowsOverlayWork(generation: generation) else { return }
+                    self.beginCollapsedPresentationMorph()
+                    self.reposition(animated: true, reason: "agentCollapsedPresentationChanged", force: true)
+                }
             }
             .store(in: &cancellables)
 
@@ -396,13 +410,14 @@ final class OverlayWindowController {
             collapsedSize: settings.collapsedSize,
             expandedSize: settings.expandedSize,
             collapsedActivityProfile: collapsedActivityLayoutProfile,
+            collapsedPresentationProfile: collapsedPresentationProfile,
             useAdaptiveNotchSizing: settings.useAdaptiveNotchSizing,
             respectHardwareNotch: settings.respectHardwareNotch
         )
         debugGeometryRefresh(geometry)
         targetCollapsedFrame = geometry.collapsedFrame
         targetExpandedFrame = geometry.expandedFrame
-        updateLayoutWithoutAnimation(
+        updateLayout(
             panelFrame: geometry.expandedFrame,
             collapsedFrame: geometry.collapsedFrame,
             expandedFrame: geometry.expandedFrame,
@@ -410,7 +425,9 @@ final class OverlayWindowController {
             hardwareNotchWidth: geometry.hardwareNotchWidth,
             collapsedLeftRegionWidth: geometry.collapsedLeftRegionWidth,
             collapsedNotchCoreWidth: geometry.collapsedNotchCoreWidth,
-            collapsedRightRegionWidth: geometry.collapsedRightRegionWidth
+            collapsedRightRegionWidth: geometry.collapsedRightRegionWidth,
+            collapsedPresentationProfile: geometry.collapsedPresentationProfile,
+            animated: animated
         )
         applyCanonicalPanelFrame(geometry.expandedFrame, reason: "\(reason) initial animated=\(animated)")
         lastAppliedGeometrySignature = signature
@@ -431,6 +448,7 @@ final class OverlayWindowController {
                 collapsedSize: self.settings.collapsedSize,
                 expandedSize: self.settings.expandedSize,
                 collapsedActivityProfile: self.collapsedActivityLayoutProfile,
+                collapsedPresentationProfile: self.collapsedPresentationProfile,
                 useAdaptiveNotchSizing: self.settings.useAdaptiveNotchSizing,
                 respectHardwareNotch: self.settings.respectHardwareNotch
             )
@@ -438,7 +456,7 @@ final class OverlayWindowController {
                 self.debugGeometryRefresh(correctedGeometry)
                 self.targetCollapsedFrame = correctedGeometry.collapsedFrame
                 self.targetExpandedFrame = correctedGeometry.expandedFrame
-                self.updateLayoutWithoutAnimation(
+                self.updateLayout(
                     panelFrame: correctedGeometry.expandedFrame,
                     collapsedFrame: correctedGeometry.collapsedFrame,
                     expandedFrame: correctedGeometry.expandedFrame,
@@ -446,7 +464,9 @@ final class OverlayWindowController {
                     hardwareNotchWidth: correctedGeometry.hardwareNotchWidth,
                     collapsedLeftRegionWidth: correctedGeometry.collapsedLeftRegionWidth,
                     collapsedNotchCoreWidth: correctedGeometry.collapsedNotchCoreWidth,
-                    collapsedRightRegionWidth: correctedGeometry.collapsedRightRegionWidth
+                    collapsedRightRegionWidth: correctedGeometry.collapsedRightRegionWidth,
+                    collapsedPresentationProfile: correctedGeometry.collapsedPresentationProfile,
+                    animated: false
                 )
                 self.applyCanonicalPanelFrame(
                     correctedGeometry.expandedFrame,
@@ -466,6 +486,18 @@ final class OverlayWindowController {
 
     private var collapsedActivityLayoutProfile: CollapsedActivityLayoutProfile? {
         collapsedActivityLayoutProfile(activities: modules.liveActivities.activities)
+    }
+
+    private var collapsedPresentationProfile: CollapsedPresentationProfile {
+        guard case .inactive = collapsedContentMode else { return .normal }
+        if let attention = modules.agentAttention.presentation {
+            let session = attention.primary.flatMap { modules.agentEvents.session(for: $0.session) }
+            return AgentCollapsedShellPresentation.attention(attention, session: session)
+        }
+        return AgentCollapsedShellPresentation.routine(
+            sessions: modules.agentEvents.sessions,
+            enabled: settings.agentActivityEnabled
+        ) ?? .normal
     }
 
     private func collapsedActivityLayoutProfile(
@@ -511,6 +543,7 @@ final class OverlayWindowController {
             collapsedSize: settings.collapsedSize,
             expandedSize: settings.expandedSize,
             collapsedActivityProfile: collapsedActivityLayoutProfile,
+            collapsedPresentationProfile: collapsedPresentationProfile,
             useAdaptiveNotchSizing: settings.useAdaptiveNotchSizing,
             respectHardwareNotch: settings.respectHardwareNotch
         )
@@ -599,7 +632,7 @@ final class OverlayWindowController {
             abs(lhs.size.height - rhs.size.height) <= tolerance
     }
 
-    private func updateLayoutWithoutAnimation(
+    private func updateLayout(
         panelFrame: NSRect,
         collapsedFrame: NSRect,
         expandedFrame: NSRect,
@@ -607,13 +640,12 @@ final class OverlayWindowController {
         hardwareNotchWidth: CGFloat,
         collapsedLeftRegionWidth: CGFloat,
         collapsedNotchCoreWidth: CGFloat,
-        collapsedRightRegionWidth: CGFloat
+        collapsedRightRegionWidth: CGFloat,
+        collapsedPresentationProfile: CollapsedPresentationProfile,
+        animated: Bool
     ) {
-        var transaction = Transaction(animation: nil)
-        transaction.disablesAnimations = true
-
-        withTransaction(transaction) {
-            layoutStore.updateLocal(
+        let updates = { [self] in
+            self.layoutStore.updateLocal(
                 panelFrame: panelFrame,
                 collapsedScreenFrame: collapsedFrame,
                 expandedScreenFrame: expandedFrame,
@@ -621,8 +653,24 @@ final class OverlayWindowController {
                 hardwareNotchWidth: hardwareNotchWidth,
                 collapsedLeftRegionWidth: collapsedLeftRegionWidth,
                 collapsedNotchCoreWidth: collapsedNotchCoreWidth,
-                collapsedRightRegionWidth: collapsedRightRegionWidth
+                collapsedRightRegionWidth: collapsedRightRegionWidth,
+                collapsedPresentationProfile: collapsedPresentationProfile
             )
+        }
+        if animated {
+            let reduceMotion = settings.reduceExtraMotion || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            let duration = reduceMotion || settings.animationPreset == .instant
+                ? 0.01
+                : min(max(0.22 / max(settings.shellAnimationSpeed, 0.25), 0.16), 0.34)
+            withAnimation(.smooth(duration: duration)) {
+                updates()
+            }
+        } else {
+            var transaction = Transaction(animation: nil)
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                updates()
+            }
         }
     }
 
@@ -958,6 +1006,27 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
         }
     }
 
+    private func beginCollapsedPresentationMorph() {
+        guard canPresentOverlay, islandState.state == .collapsed else { return }
+        let sessionGeneration = presentationSession.generation
+        morphGeneration += 1
+        let generation = morphGeneration
+        layoutStore.isShellMorphing = true
+        layoutStore.isCollapseShellOnly = false
+
+        let reduceMotion = settings.reduceExtraMotion || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let clearDelay = IslandContentTransitionTiming.shellDuration(
+            settings: settings,
+            reduceMotion: reduceMotion
+        )
+        DispatchQueue.main.asyncAfter(deadline: .now() + clearDelay) { [weak self] in
+            guard let self else { return }
+            guard self.allowsOverlayWork(generation: sessionGeneration), generation == self.morphGeneration else { return }
+            self.layoutStore.isShellMorphing = false
+            self.updateWindowVisibility()
+        }
+    }
+
     private func expandFromCollapsedPreparingGeometry() {
         guard canPresentOverlay else { return }
         guard islandState.state == .collapsed else { return }
@@ -966,6 +1035,7 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
             collapsedSize: settings.collapsedSize,
             expandedSize: settings.expandedSize,
             collapsedActivityProfile: collapsedActivityLayoutProfile,
+            collapsedPresentationProfile: collapsedPresentationProfile,
             useAdaptiveNotchSizing: settings.useAdaptiveNotchSizing,
             respectHardwareNotch: settings.respectHardwareNotch
         )
@@ -974,7 +1044,7 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
         targetCollapsedFrame = geometry.collapsedFrame
         targetExpandedFrame = geometry.expandedFrame
 
-        updateLayoutWithoutAnimation(
+        updateLayout(
             panelFrame: geometry.expandedFrame,
             collapsedFrame: geometry.collapsedFrame,
             expandedFrame: geometry.expandedFrame,
@@ -982,7 +1052,9 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
             hardwareNotchWidth: geometry.hardwareNotchWidth,
             collapsedLeftRegionWidth: geometry.collapsedLeftRegionWidth,
             collapsedNotchCoreWidth: geometry.collapsedNotchCoreWidth,
-            collapsedRightRegionWidth: geometry.collapsedRightRegionWidth
+            collapsedRightRegionWidth: geometry.collapsedRightRegionWidth,
+            collapsedPresentationProfile: geometry.collapsedPresentationProfile,
+            animated: false
         )
 
         applyCanonicalPanelFrame(geometry.expandedFrame, reason: "expandFromCollapsedPreparingGeometry")

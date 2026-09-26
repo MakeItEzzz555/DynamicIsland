@@ -460,10 +460,24 @@ struct SettingsView: View {
                 stopped: agentDiagnostics.stoppedHealth
             )
         }
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 8) {
-                Label(provider.displayName, systemImage: provider == .codex ? "terminal" : "brain.head.profile")
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: provider == .codex ? "terminal" : "brain.head.profile")
                     .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(provider == .codex ? .cyan : .orange)
+                    .frame(width: 28, height: 28)
+                    .background(.primary.opacity(0.055), in: Circle())
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(provider.displayName)
+                        .font(.system(size: 12, weight: .semibold))
+                    if let snapshot {
+                        Text(snapshot.detail)
+                            .font(.system(size: 9.5, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                }
                 Spacer()
                 if let diagnostics {
                     Label(diagnostics.state.label, systemImage: agentOperationalStatusSymbol(diagnostics.state))
@@ -478,35 +492,35 @@ struct SettingsView: View {
             }
 
             if let snapshot {
-                Text(snapshot.detail)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-                Text(snapshot.configPath)
-                    .font(.system(size: 9, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .textSelection(.enabled)
-
                 if let diagnostics {
                     AgentSourceHealthRow(provider: provider, diagnostics: diagnostics)
                 }
 
-                HStack(spacing: 8) {
-                    switch snapshot.state {
-                    case .configured:
-                        Button("Reconfigure…") { agentSetup.prepare(provider) }
-                        Button("Remove") { agentSetup.remove(provider) }
-                    case .needsSetup, .repairRequired:
-                        Button(snapshot.state == .repairRequired ? "Repair…" : "Configure…") {
-                            agentSetup.prepare(provider)
+                HStack(alignment: .center, spacing: 10) {
+                    Text(snapshot.configPath)
+                        .font(.system(size: 8.5, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                    Spacer(minLength: 8)
+                    HStack(spacing: 8) {
+                        switch snapshot.state {
+                        case .configured:
+                            Button("Reconfigure…") { agentSetup.prepare(provider) }
+                            Button("Remove") { agentSetup.remove(provider) }
+                        case .needsSetup, .repairRequired:
+                            Button(snapshot.state == .repairRequired ? "Repair…" : "Configure…") {
+                                agentSetup.prepare(provider)
+                            }
+                        case .helperUnavailable, .blocked:
+                            Button("Configure…") { agentSetup.prepare(provider) }
+                                .disabled(true)
                         }
-                    case .helperUnavailable, .blocked:
-                        Button("Configure…") { agentSetup.prepare(provider) }
-                            .disabled(true)
-                    }
 
-                    if snapshot.backupAvailable {
-                        Button("Rollback") { agentSetup.rollback(provider) }
+                        if snapshot.backupAvailable {
+                            Button("Rollback") { agentSetup.rollback(provider) }
+                        }
                     }
                 }
                 .disabled(agentSetup.isWorking)
@@ -810,7 +824,7 @@ struct SettingsView: View {
     }
 }
 
-private struct AgentSourceHealthRow: View {
+struct AgentSourceHealthRow: View {
     let provider: AgentIntegrationProvider
     let diagnostics: AgentIntegrationDiagnostics
 
@@ -824,7 +838,7 @@ private struct AgentSourceHealthRow: View {
             }
 
             if diagnostics.acceptedCount > 0 || diagnostics.rejectedCount > 0 || diagnostics.droppedCount > 0 {
-                HStack(spacing: 14) {
+                HStack(spacing: 16) {
                     healthMetric("Accepted", value: diagnostics.acceptedCount)
                     healthMetric("Rejected", value: diagnostics.rejectedCount)
                     healthMetric("Dropped", value: diagnostics.droppedCount)
@@ -841,8 +855,10 @@ private struct AgentSourceHealthRow: View {
                         .accessibilityLabel("Last accepted event \(lastAccepted.formatted())")
                     }
                 }
-                .padding(9)
-                .background(.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .padding(.vertical, 5)
+                .overlay(alignment: .top) {
+                    Divider().opacity(0.35)
+                }
             }
 
             if diagnostics.schemaMismatchCount > 0 {

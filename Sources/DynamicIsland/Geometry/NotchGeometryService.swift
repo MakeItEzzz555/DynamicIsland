@@ -44,6 +44,73 @@ public struct IslandGeometry: Equatable {
     public let collapsedLeftRegionWidth: CGFloat
     public let collapsedNotchCoreWidth: CGFloat
     public let collapsedRightRegionWidth: CGFloat
+    public let collapsedPresentationProfile: CollapsedPresentationProfile
+}
+
+public enum CollapsedPresentationKind: String, Equatable, Sendable {
+    case normal
+    case agentRoutine
+    case agentAttention
+}
+
+/// Transient visual geometry for the collapsed shell. These profiles never become
+/// island states; they only let the canonical geometry service resolve one shell.
+public struct CollapsedPresentationProfile: Equatable, Sendable {
+    public let kind: CollapsedPresentationKind
+    public let contentProfile: CollapsedActivityLayoutProfile?
+    public let widthDelta: CGFloat
+    public let heightDelta: CGFloat
+    public let bottomCornerRadius: CGFloat
+    public let horizontalContentInset: CGFloat
+    public let glowStrength: CGFloat
+
+    public static let normal = Self(
+        kind: .normal,
+        contentProfile: nil,
+        widthDelta: 0,
+        heightDelta: 0,
+        bottomCornerRadius: 14,
+        horizontalContentInset: 8,
+        glowStrength: 0
+    )
+
+    public static func agentRoutine(leftContentWidth: CGFloat, rightContentWidth: CGFloat) -> Self {
+        Self(
+            kind: .agentRoutine,
+            contentProfile: CollapsedActivityLayoutProfile(
+                leftContentWidth: leftContentWidth,
+                rightContentWidth: rightContentWidth
+            ),
+            widthDelta: 16,
+            heightDelta: 2,
+            bottomCornerRadius: 16,
+            horizontalContentInset: 10,
+            glowStrength: 0.16
+        )
+    }
+
+    public static func agentAttention(leftContentWidth: CGFloat, rightContentWidth: CGFloat) -> Self {
+        Self(
+            kind: .agentAttention,
+            contentProfile: CollapsedActivityLayoutProfile(
+                leftContentWidth: leftContentWidth,
+                rightContentWidth: rightContentWidth
+            ),
+            widthDelta: 34,
+            heightDelta: 4,
+            bottomCornerRadius: 19,
+            horizontalContentInset: 12,
+            glowStrength: 0.62
+        )
+    }
+
+    var minimumFloatingWidth: CGFloat {
+        guard let contentProfile else { return 0 }
+        return contentProfile.leftContentWidth
+            + contentProfile.rightContentWidth
+            + (horizontalContentInset * 2)
+            + 18
+    }
 }
 
 public struct CollapsedActivityLayoutProfile: Equatable, Sendable {
@@ -98,7 +165,8 @@ struct CollapsedActivityResolvedGeometry: Equatable {
         existingWidth: CGFloat,
         collapsedHeight: CGFloat,
         topY: CGFloat,
-        profile: CollapsedActivityLayoutProfile
+        profile: CollapsedActivityLayoutProfile,
+        outerHorizontalPadding: CGFloat = CollapsedActivityResolvedGeometry.outerHorizontalPadding
     ) -> Self {
         let minimumWingWidth = profile.symmetricWingContentWidth + notchSideSafetyClearance
         let requiredMinX = notchRect.minX - outerHorizontalPadding - minimumWingWidth
@@ -160,6 +228,7 @@ public final class NotchGeometryService {
             showsArtwork: true,
             showsVisualizer: true
         ),
+        collapsedPresentationProfile: CollapsedPresentationProfile = .normal,
         useAdaptiveNotchSizing: Bool = true,
         respectHardwareNotch: Bool = true
     ) -> IslandGeometry {
@@ -176,6 +245,7 @@ public final class NotchGeometryService {
             collapsedSize: collapsedSize,
             expandedSize: expandedSize,
             collapsedActivityProfile: collapsedActivityProfile,
+            collapsedPresentationProfile: collapsedPresentationProfile,
             useAdaptiveNotchSizing: useAdaptiveNotchSizing,
             respectHardwareNotch: respectHardwareNotch
         )
@@ -189,6 +259,7 @@ public final class NotchGeometryService {
             showsArtwork: true,
             showsVisualizer: true
         ),
+        collapsedPresentationProfile: CollapsedPresentationProfile = .normal,
         useAdaptiveNotchSizing: Bool = true,
         respectHardwareNotch: Bool = true
     ) -> IslandGeometry {
@@ -200,25 +271,39 @@ public final class NotchGeometryService {
         let resolvedExpandedWidth = max(min(screenSafeExpandedWidth, expandedSize.width), 1)
         let resolvedExpandedHeight = max(expandedSize.height, 1)
 
+        let effectiveActivityProfile = collapsedPresentationProfile.contentProfile ?? collapsedActivityProfile
+        let resolvedOuterHorizontalPadding = collapsedPresentationProfile.kind == .normal
+            ? CollapsedActivityResolvedGeometry.outerHorizontalPadding
+            : collapsedPresentationProfile.horizontalContentInset
+        let presentedCollapsedSize = CGSize(
+            width: max(
+                collapsedSize.width + collapsedPresentationProfile.widthDelta,
+                collapsedPresentationProfile.minimumFloatingWidth
+            ),
+            height: collapsedSize.height + collapsedPresentationProfile.heightDelta
+        )
         let collapsedGeometry: CollapsedActivityResolvedGeometry
         if let notchRect, useAdaptiveNotchSizing {
             let notchMinimumActiveWidth = min(max((notchRect.width + 50) * 1.05, 226), 254)
             let notchMinimumInactiveWidth = min(notchMinimumActiveWidth - 28, max(172, notchRect.width * 0.94))
-            let hasActiveContent = collapsedActivityProfile != nil
-            let preferredCollapsedWidth = hasActiveContent ? collapsedSize.width : max(126, collapsedSize.width * 0.70)
+            let hasActiveContent = effectiveActivityProfile != nil
+            let preferredCollapsedWidth = hasActiveContent
+                ? presentedCollapsedSize.width
+                : max(126, presentedCollapsedSize.width * 0.70)
             let resolvedCollapsedWidth = max(
                 preferredCollapsedWidth,
                 hasActiveContent ? notchMinimumActiveWidth : notchMinimumInactiveWidth
             )
-            let resolvedCollapsedHeight = max(collapsedSize.height, 1)
+            let resolvedCollapsedHeight = max(presentedCollapsedSize.height, 1)
 
-            if let collapsedActivityProfile {
+            if let effectiveActivityProfile {
                 collapsedGeometry = CollapsedActivityResolvedGeometry.resolve(
                     notchRect: notchRect,
                     existingWidth: resolvedCollapsedWidth,
                     collapsedHeight: resolvedCollapsedHeight,
                     topY: topY,
-                    profile: collapsedActivityProfile
+                    profile: effectiveActivityProfile,
+                    outerHorizontalPadding: resolvedOuterHorizontalPadding
                 )
             } else {
                 collapsedGeometry = .inactive(
@@ -231,15 +316,15 @@ public final class NotchGeometryService {
                 )
             }
         } else {
-            let resolvedCollapsedWidth = collapsedActivityProfile != nil
-                ? collapsedSize.width
-                : max(126, collapsedSize.width * 0.70)
+            let resolvedCollapsedWidth = effectiveActivityProfile != nil
+                ? presentedCollapsedSize.width
+                : max(126, presentedCollapsedSize.width * 0.70)
             collapsedGeometry = .inactive(
                 frame: CGRect(
                     x: snapshot.frame.midX - resolvedCollapsedWidth / 2,
-                    y: topY - collapsedSize.height - 8,
+                    y: topY - presentedCollapsedSize.height - 8,
                     width: resolvedCollapsedWidth,
-                    height: collapsedSize.height
+                    height: presentedCollapsedSize.height
                 )
             )
         }
@@ -259,11 +344,11 @@ public final class NotchGeometryService {
         let resolvedRightRegionWidth: CGFloat
         if collapsedGeometry.notchCoreWidth > 0, let notchRect {
             resolvedLeftRegionWidth = max(
-                notchRect.minX - integralCollapsedFrame.minX - CollapsedActivityResolvedGeometry.outerHorizontalPadding,
+                notchRect.minX - integralCollapsedFrame.minX - resolvedOuterHorizontalPadding,
                 0
             )
             resolvedRightRegionWidth = max(
-                integralCollapsedFrame.maxX - notchRect.maxX - CollapsedActivityResolvedGeometry.outerHorizontalPadding,
+                integralCollapsedFrame.maxX - notchRect.maxX - resolvedOuterHorizontalPadding,
                 0
             )
         } else {
@@ -286,7 +371,8 @@ public final class NotchGeometryService {
             hardwareNotchWidth: inferredNotchRect?.width ?? 0,
             collapsedLeftRegionWidth: resolvedLeftRegionWidth,
             collapsedNotchCoreWidth: collapsedGeometry.notchCoreWidth,
-            collapsedRightRegionWidth: resolvedRightRegionWidth
+            collapsedRightRegionWidth: resolvedRightRegionWidth,
+            collapsedPresentationProfile: collapsedPresentationProfile
         )
     }
 

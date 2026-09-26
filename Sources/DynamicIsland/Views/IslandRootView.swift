@@ -325,6 +325,7 @@ struct IslandRootView: View {
     @ObservedObject private var media: MediaController
     @ObservedObject private var navigation: IslandNavigationStore
     @ObservedObject private var liveActivities: LiveActivityStore
+    @ObservedObject private var agentAttention: AgentAttentionCoordinator
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var contentPhase: IslandContentPhase = .compact
     @State private var renderedContentMode: RenderedContentMode = .compact
@@ -360,6 +361,7 @@ struct IslandRootView: View {
         media = modules.media
         navigation = modules.navigation
         liveActivities = modules.liveActivities
+        agentAttention = modules.agentAttention
     }
 
     private var isExpanded: Bool {
@@ -397,7 +399,9 @@ struct IslandRootView: View {
                 IslandSurface(
                     settings: settings,
                     isExpanded: isExpanded,
-                    visualProgress: shellVisualProgress
+                    visualProgress: shellVisualProgress,
+                    collapsedPresentationProfile: layoutStore.collapsedPresentationProfile,
+                    collapsedGlowColor: collapsedAgentGlowColor
                 ) {
                     if showsExpandedContent {
                         ExpandedIslandView(
@@ -524,7 +528,18 @@ struct IslandRootView: View {
         .accessibilityLabel("DynamicIsland")
         .animation(shellAnimation, value: islandState.state)
         .animation(shellAnimation, value: layoutStore.isShellMorphing)
+        .animation(shellAnimation, value: layoutStore.collapsedSurfaceFrame)
+        .animation(shellAnimation, value: layoutStore.collapsedPresentationProfile)
         .animation(collapsedPreviewAnimation, value: isCollapsedPreviewActive)
+    }
+
+    private var collapsedAgentGlowColor: Color {
+        switch agentAttention.presentation?.style {
+        case .success: .green
+        case .actionRequired: .orange
+        case .failure: .red
+        case .informational, .none: .cyan
+        }
     }
 
     private var surfaceSize: CGSize {
@@ -1199,6 +1214,8 @@ struct IslandSurface<Content: View>: View {
     @ObservedObject var settings: AppSettings
     let isExpanded: Bool
     let visualProgress: CGFloat
+    var collapsedPresentationProfile: CollapsedPresentationProfile = .normal
+    var collapsedGlowColor: Color = .cyan
     @ViewBuilder var content: Content
     @Environment(\.isNotchIntegratedShell) private var isNotchIntegratedShell
     @Environment(\.isShellMorphing) private var isShellMorphing
@@ -1207,16 +1224,17 @@ struct IslandSurface<Content: View>: View {
     var body: some View {
         let radii = IslandShellRadii.interpolated(
             progress: visualProgress,
-            isNotchIntegrated: isNotchIntegratedShell
+            isNotchIntegrated: isNotchIntegratedShell,
+            collapsedBottom: collapsedPresentationProfile.bottomCornerRadius
         )
         let shellShape = IslandShellShape(
             topCornerRadius: radii.top,
             bottomCornerRadius: radii.bottom
         )
         let usesExpandedContentPadding = isExpanded || isCollapseShellOnly
-        let collapsedHorizontalPadding = IslandShellLayout.collapsedHorizontalPadding(
-            isNotchIntegrated: isNotchIntegratedShell
-        )
+        let collapsedHorizontalPadding = collapsedPresentationProfile.kind == .normal
+            ? IslandShellLayout.collapsedHorizontalPadding(isNotchIntegrated: isNotchIntegratedShell)
+            : collapsedPresentationProfile.horizontalContentInset
         let strokeOpacity = 0.035 + ((0.07 - 0.035) * Double(visualProgress))
 
         ZStack {
@@ -1231,6 +1249,25 @@ struct IslandSurface<Content: View>: View {
                     if settings.shellStrokeEnabled {
                         shellShape
                             .stroke(Color.white.opacity(strokeOpacity), lineWidth: 1)
+                    }
+                }
+                .overlay {
+                    if !isExpanded, collapsedPresentationProfile.glowStrength > 0 {
+                        shellShape
+                            .stroke(
+                                collapsedGlowColor.opacity(collapsedPresentationProfile.glowStrength),
+                                style: StrokeStyle(lineWidth: 2.2, lineCap: .round)
+                            )
+                            .blur(radius: collapsedPresentationProfile.kind == .agentAttention ? 5.5 : 3)
+                            .mask(alignment: .bottom) {
+                                LinearGradient(
+                                    colors: [.clear, .black.opacity(0.2), .black],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
+                                .frame(height: 22)
+                            }
+                            .allowsHitTesting(false)
                     }
                 }
 
@@ -1253,10 +1290,15 @@ struct IslandShellRadii: Equatable {
     let top: CGFloat
     let bottom: CGFloat
 
-    static func interpolated(progress: CGFloat, isNotchIntegrated: Bool) -> IslandShellRadii {
+    static func interpolated(
+        progress: CGFloat,
+        isNotchIntegrated: Bool,
+        collapsedBottom: CGFloat = IslandShellRadii.collapsedBottom
+    ) -> IslandShellRadii {
         let clampedProgress = progress.isFinite ? min(max(progress, 0), 1) : 0
         let top = collapsedTop + ((expandedTop - collapsedTop) * clampedProgress)
-        let bottom = collapsedBottom + ((expandedBottom - collapsedBottom) * clampedProgress)
+        let resolvedCollapsedBottom = collapsedBottom.isFinite ? max(collapsedBottom, 0) : Self.collapsedBottom
+        let bottom = resolvedCollapsedBottom + ((expandedBottom - resolvedCollapsedBottom) * clampedProgress)
         return IslandShellRadii(
             top: isNotchIntegrated ? top : 0,
             bottom: bottom
@@ -1399,38 +1441,23 @@ struct CompactIslandView: View {
             }
 
             if let attentionPresentation, let primary = attentionPresentation.primary {
-                HStack(spacing: 8) {
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text(primary.session.sessionID.provider.stableName.capitalized)
-                            .font(.system(size: 10, weight: .bold, design: .rounded))
-                        if let project = attentionSession?.project.displayName, !project.isEmpty {
-                            Text(project)
-                                .font(.system(size: 8, weight: .medium, design: .rounded))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-                    }
-                    Spacer(minLength: 6)
-                    Text(attentionPresentation.totalCount > 1
-                        ? "\(attentionPresentation.totalCount) agents"
-                        : String(primary.displaySummary.prefix(72)))
-                        .font(.system(size: 9, weight: .semibold, design: .rounded))
-                        .lineLimit(1)
+                sideSlotLayout {
+                    AgentCompactAttentionLeadingView(
+                        provider: primary.session.sessionID.provider,
+                        project: attentionSession?.project.displayName
+                    )
+                } right: {
+                    AgentCompactAttentionTrailingView(
+                        text: attentionPresentation.totalCount > 1
+                            ? "\(attentionPresentation.totalCount) agents"
+                            : String(primary.displaySummary.prefix(72)),
+                        accent: attentionAccent
+                    )
                 }
-                .padding(.horizontal, 11)
-                .foregroundStyle(.white)
+                .transition(.opacity)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .overlay(alignment: .bottom) {
-            if attentionPresentation != nil {
-                Capsule(style: .continuous)
-                    .fill(attentionAccent.opacity(0.55))
-                    .frame(height: 2)
-                    .padding(.horizontal, 12)
-                    .allowsHitTesting(false)
-            }
-        }
         .animation(compactContentAnimation, value: media.hasActiveMediaSource)
         .animation(compactContentAnimation, value: liveActivities.activities)
         .animation(compactContentAnimation, value: contentMode)
@@ -1483,7 +1510,11 @@ struct CompactIslandView: View {
                        sessions: agentEvents.sessions,
                        enabled: settings.agentActivityEnabled
                    ) {
-                    AgentCompactOverviewView(presentation: presentation)
+                    sideSlotLayout {
+                        AgentCompactMarkerCluster(presentation: presentation)
+                    } right: {
+                        AgentCompactSummaryLabel(presentation: presentation)
+                    }
                         .transition(.opacity)
                 } else {
                     Color.clear
@@ -1580,7 +1611,7 @@ struct CompactIslandView: View {
     }
 }
 
-private struct CompactCollapsedSideSlotGeometry {
+struct CompactCollapsedSideSlotGeometry {
     let isNotchIntegrated: Bool
     let leftRegionWidth: CGFloat
     let notchCoreWidth: CGFloat
@@ -1591,7 +1622,7 @@ private struct CompactCollapsedSideSlotGeometry {
     }
 }
 
-private struct CompactCollapsedSideSlotLayout<Left: View, Right: View>: View {
+struct CompactCollapsedSideSlotLayout<Left: View, Right: View>: View {
     let geometry: CompactCollapsedSideSlotGeometry
     @ViewBuilder let left: () -> Left
     @ViewBuilder let right: () -> Right

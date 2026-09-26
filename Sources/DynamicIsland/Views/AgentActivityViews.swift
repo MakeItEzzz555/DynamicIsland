@@ -1,9 +1,6 @@
 import SwiftUI
 
-private enum AgentVisualStyle {
-    static let cardRadius: CGFloat = 14
-    static let sectionRadius: CGFloat = 10
-
+enum AgentVisualStyle {
     static func accent(for state: AgentState) -> Color {
         switch state {
         case .completed: .green
@@ -23,467 +20,476 @@ private enum AgentVisualStyle {
         case .other: .purple
         }
     }
+
+    static func providerSymbol(_ provider: AgentProvider) -> String {
+        switch provider {
+        case .codex: "terminal"
+        case .claude: "brain.head.profile"
+        case .other: "cube"
+        }
+    }
 }
 
 struct AgentActivityDashboardView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var agentEvents: AgentEventStore
     let availableHeight: CGFloat
+
+    var body: some View {
+        AgentDashboardContentView(
+            sessions: agentEvents.sessions,
+            showsUsage: settings.agentUsageMetricsEnabled,
+            availableHeight: availableHeight
+        )
+    }
+}
+
+struct AgentDashboardContentView: View {
+    let sessions: [AgentSession]
+    let showsUsage: Bool
+    let availableHeight: CGFloat
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Group {
-            if agentEvents.sessions.isEmpty {
+            if sessions.isEmpty {
                 emptyState
             } else {
-                ScrollView(.vertical, showsIndicators: true) {
-                    LazyVGrid(
-                        columns: [GridItem(.adaptive(minimum: 310), spacing: 10, alignment: .top)],
-                        alignment: .leading,
-                        spacing: 10
-                    ) {
-                        ForEach(agentEvents.sessions.sorted(by: AgentSessionPresentation.isOrderedBefore), id: \.id) { session in
-                            AgentSessionCard(
-                                session: session,
-                                showsUsage: settings.agentUsageMetricsEnabled,
-                                reduceMotion: reduceMotion
-                            )
-                        }
+                GeometryReader { proxy in
+                    let layout = AgentDashboardLayoutProjection.make(width: proxy.size.width)
+                    ScrollView(.vertical, showsIndicators: true) {
+                        AgentDashboardStack(
+                            sessions: sessions,
+                            showsUsage: showsUsage,
+                            layout: layout,
+                            reduceMotion: reduceMotion
+                        )
                     }
-                    .padding(.vertical, 2)
                 }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: availableHeight, alignment: .topLeading)
+        .foregroundStyle(.white)
     }
 
     private var emptyState: some View {
-        VStack(spacing: 9) {
+        VStack(spacing: 8) {
             Image(systemName: "cpu")
-                .font(.system(size: 23, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.42))
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.38))
             Text("No agent sessions")
                 .font(.system(size: 13, weight: .semibold, design: .rounded))
-            Text("Verified Codex and Claude activity will appear here when an integration sends its first event.")
-                .font(.system(size: 10, weight: .medium, design: .rounded))
+            Text("Verified Codex and Claude activity will appear after the first accepted event.")
+                .font(.system(size: 9.5, weight: .medium, design: .rounded))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-                .frame(maxWidth: 360)
+                .frame(maxWidth: 350)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityElement(children: .combine)
     }
 }
 
-struct AgentSessionCard: View {
-    let session: AgentSession
+struct AgentDashboardStack: View {
+    let sessions: [AgentSession]
+    let showsUsage: Bool
+    let layout: AgentDashboardLayoutProjection
+    let reduceMotion: Bool
+
+    var body: some View {
+        let dashboard = AgentDashboardPresentation.make(sessions: sessions)
+        let metrics = showsUsage
+            ? AgentGlobalUsagePresentation.make(sessions: sessions, limit: layout.maximumGaugeCount)
+            : []
+
+        VStack(alignment: .leading, spacing: 0) {
+            if !metrics.isEmpty {
+                AgentGlobalSummaryStrip(metrics: metrics, layout: layout)
+                    .padding(.bottom, 11)
+            }
+
+            ForEach(Array(dashboard.groups.enumerated()), id: \.element.id) { index, group in
+                if index > 0 {
+                    Divider()
+                        .overlay(.white.opacity(0.045))
+                        .padding(.vertical, 4)
+                }
+                AgentProjectSection(
+                    group: group,
+                    layout: layout,
+                    showsUsage: showsUsage,
+                    reduceMotion: reduceMotion
+                )
+            }
+        }
+        .padding(.vertical, 2)
+    }
+}
+
+private struct AgentGlobalSummaryStrip: View {
+    let metrics: [AgentGlobalUsagePresentation]
+    let layout: AgentDashboardLayoutProjection
+
+    var body: some View {
+        HStack(spacing: layout.isNarrow ? 14 : 22) {
+            ForEach(metrics) { metric in
+                AgentUsageGauge(metric: metric)
+                    .frame(maxWidth: layout.isNarrow ? .infinity : nil, alignment: .leading)
+            }
+            if !layout.isNarrow {
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 7)
+        .background(.white.opacity(0.025))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Agent usage summary")
+    }
+}
+
+private struct AgentUsageGauge: View {
+    let metric: AgentGlobalUsagePresentation
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ZStack {
+                Circle()
+                    .stroke(.white.opacity(0.10), lineWidth: 4)
+                if let progress = metric.metric.progress {
+                    Circle()
+                        .trim(from: 0, to: progress)
+                        .stroke(
+                            AgentVisualStyle.providerAccent(metric.provider).opacity(0.92),
+                            style: StrokeStyle(lineWidth: 4, lineCap: .round)
+                        )
+                        .rotationEffect(.degrees(-90))
+                }
+                Image(systemName: AgentVisualStyle.providerSymbol(metric.provider))
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.78))
+            }
+            .frame(width: 48, height: 48)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(metric.provider.stableName.capitalized)
+                    .font(.system(size: 8.5, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.50))
+                Text(metric.metric.label)
+                    .font(.system(size: 9, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.82))
+                    .lineLimit(1)
+                Text(gaugeValue)
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.92))
+                    .monospacedDigit()
+                    .lineLimit(1)
+                if metric.metric.isStale {
+                    Label("Stale", systemImage: "clock.badge.exclamationmark")
+                        .font(.system(size: 7.5, weight: .semibold))
+                        .foregroundStyle(.orange)
+                }
+            }
+        }
+        .help("Source: " + String(metric.metric.sample.source.prefix(120)))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(metric.provider.stableName), \(metric.metric.label), \(gaugeValue)\(metric.metric.isStale ? ", stale" : "")")
+    }
+
+    private var gaugeValue: String {
+        if let progress = metric.metric.progress {
+            return "\(Int((progress * 100).rounded()))%"
+        }
+        return metric.metric.sample.value.formatted(.number.precision(.fractionLength(0...1)))
+    }
+}
+
+private struct AgentProjectSection: View {
+    let group: AgentProjectGroupPresentation
+    let layout: AgentDashboardLayoutProjection
     let showsUsage: Bool
     let reduceMotion: Bool
 
-    private var activeTools: [AgentTool] {
-        session.tools.values.filter { $0.status == .active || $0.status == .pending }
-            .sorted { $0.startedAt > $1.startedAt }
-    }
-
-    private var activeCommands: [AgentCommand] {
-        session.commands.values.filter { $0.status == .active || $0.status == .pending }
-            .sorted { $0.startedAt > $1.startedAt }
-    }
-
-    private var pendingApprovals: [AgentApproval] {
-        session.approvals.values.filter { $0.state == .pending }
-            .sorted { $0.requestedAt > $1.requestedAt }
-    }
-
-    private var visibleSubagents: [AgentSubagent] {
-        session.subagents.values.sorted {
-            if $0.status != $1.status { return $0.status == .active }
-            return $0.startedAt > $1.startedAt
-        }
-    }
-
-    private var recentOperations: [AgentOperationPresentation] {
-        let tools = session.tools.values.compactMap { tool -> AgentOperationPresentation? in
-            guard tool.status != .active, tool.status != .pending else { return nil }
-            return AgentOperationPresentation(
-                id: "tool:\(tool.correlationID.rawValue)",
-                symbol: "wrench.and.screwdriver",
-                title: tool.name,
-                detail: tool.summary,
-                status: tool.status,
-                date: tool.completedAt ?? tool.startedAt
-            )
-        }
-        let commands = session.commands.values.compactMap { command -> AgentOperationPresentation? in
-            guard command.status != .active, command.status != .pending else { return nil }
-            return AgentOperationPresentation(
-                id: "command:\(command.correlationID.rawValue)",
-                symbol: "terminal",
-                title: command.displaySummary,
-                detail: command.exitCode.map { "Exit \($0)" },
-                status: command.status,
-                date: command.completedAt ?? command.startedAt
-            )
-        }
-        return Array((tools + commands).sorted { $0.date > $1.date }.prefix(3))
-    }
-
-    private var hasOperations: Bool {
-        !activeTools.isEmpty || !activeCommands.isEmpty || !pendingApprovals.isEmpty ||
-            !visibleSubagents.isEmpty || !recentOperations.isEmpty
-    }
-
-    private var showsAttention: Bool {
-        switch session.state {
-        case .waitingForApproval, .waitingForUser, .failed, .interrupted, .planReady: true
-        default: false
-        }
-    }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            header
-            AgentPrimaryStateRow(session: session)
+        VStack(alignment: .leading, spacing: 0) {
+            AgentProjectHeader(group: group)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 7)
 
-            if showsAttention {
-                attentionSection
-                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top)))
-            }
-
-            if hasOperations {
-                sectionLabel("Operations")
-                operations
-            }
-
-            metadata
-
-            if showsUsage, hasVisibleUsage {
-                usage
-            }
-        }
-        .padding(11)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.white.opacity(0.065), in: RoundedRectangle(cornerRadius: AgentVisualStyle.cardRadius, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: AgentVisualStyle.cardRadius, style: .continuous)
-                .stroke(.white.opacity(0.075), lineWidth: 1)
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(accessibilityLabel)
-    }
-
-    private var header: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Text(session.id.sessionID.provider.stableName.capitalized)
-                .font(.system(size: 9, weight: .bold, design: .rounded))
-                .foregroundStyle(AgentVisualStyle.providerAccent(session.id.sessionID.provider))
-                .padding(.horizontal, 7)
-                .padding(.vertical, 3)
-                .background(AgentVisualStyle.providerAccent(session.id.sessionID.provider).opacity(0.13), in: Capsule())
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(session.project.displayName ?? "Agent session")
-                    .font(.system(size: 12, weight: .bold, design: .rounded))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                if let model = session.project.model, !model.isEmpty {
-                    Text(model)
-                        .font(.system(size: 8.5, weight: .medium, design: .rounded))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-            }
-
-            Spacer(minLength: 5)
-            AgentStatusBadge(state: session.state)
-        }
-    }
-
-    private var attentionSection: some View {
-        let content: (String, String, String) = switch session.state {
-        case .waitingForApproval:
-            ("Approval requested", pendingApprovals.first?.summary ?? "The provider is waiting for an approval decision.", "checkmark.shield.fill")
-        case .waitingForUser:
-            ("Waiting for input", "The session cannot continue until the user responds.", "person.crop.circle.badge.questionmark")
-        case .failed:
-            ("Session failed", session.recentActivity.last?.summary ?? "The provider reported a failure.", "xmark.octagon.fill")
-        case .interrupted:
-            ("Session interrupted", session.recentActivity.last?.summary ?? "The provider reported an interruption.", "stop.circle.fill")
-        case .planReady:
-            ("Plan ready", session.recentActivity.last?.summary ?? "The provider reported that a plan is ready.", "list.bullet.clipboard.fill")
-        default:
-            ("Attention", "This session needs attention.", "exclamationmark.circle.fill")
-        }
-        return HStack(alignment: .top, spacing: 8) {
-            Image(systemName: content.2)
-                .font(.system(size: 11, weight: .bold))
-                .frame(width: 15)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(content.0)
-                    .font(.system(size: 10, weight: .bold, design: .rounded))
-                Text(content.1)
-                    .font(.system(size: 8.5, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.72))
-                    .lineLimit(2)
-            }
-        }
-        .foregroundStyle(AgentVisualStyle.accent(for: session.state))
-        .padding(8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(AgentVisualStyle.accent(for: session.state).opacity(0.11), in: RoundedRectangle(cornerRadius: AgentVisualStyle.sectionRadius, style: .continuous))
-    }
-
-    @ViewBuilder
-    private var operations: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            ForEach(Array(pendingApprovals.prefix(2)), id: \.requestID) { approval in
-                AgentOperationRow(symbol: "checkmark.shield", title: approval.summary, detail: "Pending approval", status: .pending)
-            }
-            ForEach(Array(activeTools.prefix(2)), id: \.correlationID) { tool in
-                AgentOperationRow(symbol: "wrench.and.screwdriver", title: tool.name, detail: tool.summary, status: tool.status)
-            }
-            ForEach(Array(activeCommands.prefix(2)), id: \.correlationID) { command in
-                AgentOperationRow(symbol: "terminal", title: command.displaySummary, detail: nil, status: command.status)
-            }
-            ForEach(Array(visibleSubagents.prefix(2)), id: \.correlationID) { subagent in
-                AgentOperationRow(
-                    symbol: "person.2",
-                    title: subagent.displayName ?? "Subagent",
-                    detail: subagent.status == .active ? "Active" : "\(subagent.status.rawValue.capitalized)",
-                    status: subagent.status
-                )
-            }
-            ForEach(recentOperations) { operation in
-                AgentOperationRow(
-                    symbol: operation.symbol,
-                    title: operation.title,
-                    detail: operation.detail,
-                    status: operation.status
-                )
-            }
-        }
-    }
-
-    private var metadata: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            sectionLabel("Session")
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 5) {
-                    AgentMetadataChip(symbol: "cpu", text: session.id.sessionID.provider.stableName.capitalized)
-                    if let project = session.project.displayName, !project.isEmpty {
-                        AgentMetadataChip(symbol: "folder", text: project)
-                    }
-                    if let repo = session.project.repositoryIdentity, !repo.isEmpty {
-                        AgentMetadataChip(symbol: "externaldrive", text: repo)
-                    }
-                    if let branch = session.project.gitBranch, !branch.isEmpty {
-                        AgentMetadataChip(symbol: "arrow.triangle.branch", text: branch)
-                    }
-                    if let model = session.project.model, !model.isEmpty {
-                        AgentMetadataChip(symbol: "brain", text: model)
-                    }
-                    if session.capabilities.contains(.verifiedSourceIdentity), session.source != .unknown {
-                        AgentMetadataChip(symbol: "checkmark.seal.fill", text: verifiedSourceLabel)
+            ForEach(Array(group.sessions.enumerated()), id: \.element.id) { index, session in
+                Group {
+                    if AgentSessionPresentation.requiresAttention(session) {
+                        AgentAttentionSessionRow(session: session, layout: layout, showsUsage: showsUsage)
+                    } else {
+                        AgentSessionRow(session: session, layout: layout, showsUsage: showsUsage)
                     }
                 }
-            }
+                .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top)))
 
-            if let openTarget = AgentSourceAssociationResolver.openTarget(for: session) {
-                Button {
-                    _ = AppLaunchService.openApp(bundleIdentifier: openTarget.bundleIdentifier)
-                } label: {
-                    Label("Open \(openTarget.displayName)", systemImage: "arrow.up.forward.app")
-                        .font(.system(size: 8.5, weight: .semibold, design: .rounded))
+                if index < group.sessions.count - 1 {
+                    Divider()
+                        .overlay(.white.opacity(0.035))
+                        .padding(.leading, 42)
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.white.opacity(0.76))
-                .accessibilityLabel("Open verified source application \(openTarget.displayName)")
             }
         }
-    }
-
-    @ViewBuilder
-    private var usage: some View {
-        sectionLabel("Usage")
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 118), spacing: 6)], spacing: 6) {
-            ForEach(usageMetrics) { metric in
-                AgentUsageMetricView(metric: metric)
-            }
-        }
-    }
-
-    private var usageMetrics: [AgentUsagePresentation] {
-        AgentUsagePresentation.make(for: session)
-    }
-
-    private var hasVisibleUsage: Bool { !usageMetrics.isEmpty }
-
-    private var verifiedSourceLabel: String {
-        if let name = session.project.sourceApplication?.displayName, !name.isEmpty { return name }
-        return session.source.rawValue.capitalized
-    }
-
-    private var accessibilityLabel: String {
-        "\(session.id.sessionID.provider.stableName.capitalized), \(session.project.displayName ?? "agent session"), \(AgentSessionPresentation.stateLabel(session.state))"
-    }
-
-    private func sectionLabel(_ label: String) -> some View {
-        Text(label.uppercased())
-            .font(.system(size: 7.5, weight: .bold, design: .rounded))
-            .tracking(0.5)
-            .foregroundStyle(.secondary)
     }
 }
 
-struct AgentStatusBadge: View {
-    let state: AgentState
+private struct AgentProjectHeader: View {
+    let group: AgentProjectGroupPresentation
 
     var body: some View {
-        Label(AgentSessionPresentation.shortStateLabel(state), systemImage: AgentSessionPresentation.stateSymbol(state))
-            .font(.system(size: 8.5, weight: .bold, design: .rounded))
-            .foregroundStyle(AgentVisualStyle.accent(for: state))
-            .lineLimit(1)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(AgentVisualStyle.accent(for: state).opacity(0.12), in: Capsule())
-            .accessibilityLabel("Status: \(AgentSessionPresentation.stateLabel(state))")
-    }
-}
-
-struct AgentPrimaryStateRow: View {
-    let session: AgentSession
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: AgentSessionPresentation.stateSymbol(session.state))
-                .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(AgentVisualStyle.accent(for: session.state))
-                .frame(width: 17)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(AgentSessionPresentation.stateLabel(session.state))
-                    .font(.system(size: 11, weight: .bold, design: .rounded))
-                if let current = session.recentActivity.last {
-                    Text(current.summary ?? current.title)
-                        .font(.system(size: 8.5, weight: .medium, design: .rounded))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
-            }
-            Spacer(minLength: 4)
-            Text(session.lastUpdatedAt, style: .relative)
-                .font(.system(size: 7.5, weight: .medium, design: .rounded))
-                .foregroundStyle(.tertiary)
-                .lineLimit(1)
-        }
-        .padding(.vertical, 1)
-    }
-}
-
-struct AgentOperationRow: View {
-    let symbol: String
-    let title: String
-    let detail: String?
-    let status: AgentOperationStatus
-
-    var body: some View {
-        HStack(spacing: 7) {
-            Image(systemName: symbol)
-                .font(.system(size: 8.5, weight: .semibold))
-                .foregroundStyle(statusColor)
-                .frame(width: 13)
-            Text(title)
-                .font(.system(size: 8.5, weight: .semibold, design: .rounded))
+        HStack(spacing: 9) {
+            Text(group.title)
+                .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.82))
                 .lineLimit(1)
                 .truncationMode(.middle)
-            Spacer(minLength: 4)
-            if let detail, !detail.isEmpty {
-                Text(detail)
-                    .font(.system(size: 7.5, weight: .medium, design: .rounded))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+            Spacer(minLength: 8)
+            Label("\(group.sessions.count)", systemImage: "rectangle.stack")
+            if group.subagentCount > 0 {
+                Label("\(group.subagentCount)", systemImage: "point.3.connected.trianglepath.dotted")
             }
-            Image(systemName: statusSymbol)
-                .font(.system(size: 7.5, weight: .bold))
-                .foregroundStyle(statusColor)
-                .accessibilityLabel(status.rawValue.capitalized)
         }
-        .padding(.horizontal, 7)
-        .padding(.vertical, 5)
-        .background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-    }
-
-    private var statusColor: Color {
-        switch status {
-        case .failed: .red
-        case .cancelled: .yellow
-        case .active, .pending: .cyan
-        case .completed, .resolved: .green
-        case .unknown: .secondary
-        }
-    }
-
-    private var statusSymbol: String {
-        switch status {
-        case .failed: "xmark.circle.fill"
-        case .cancelled: "stop.circle.fill"
-        case .active: "bolt.fill"
-        case .pending: "clock.fill"
-        case .completed, .resolved: "checkmark.circle.fill"
-        case .unknown: "questionmark.circle"
-        }
+        .font(.system(size: 8.5, weight: .semibold, design: .rounded))
+        .foregroundStyle(.white.opacity(0.46))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(group.title), \(group.sessions.count) sessions, \(group.subagentCount) subagents")
     }
 }
 
-struct AgentMetadataChip: View {
-    let symbol: String
-    let text: String
+private struct AgentSessionRow: View {
+    let session: AgentSession
+    let layout: AgentDashboardLayoutProjection
+    let showsUsage: Bool
+    @State private var isHovering = false
 
     var body: some View {
-        Label(text, systemImage: symbol)
-            .font(.system(size: 7.5, weight: .semibold, design: .rounded))
-            .lineLimit(1)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
-            .background(.white.opacity(0.055), in: Capsule())
-            .accessibilityLabel(text)
+        HStack(alignment: .center, spacing: 10) {
+            AgentStateMarker(session: session)
+            AgentSessionRowContent(session: session, layout: layout, attention: false)
+            Spacer(minLength: 8)
+            AgentSessionTrailingStatus(session: session, layout: layout, showsUsage: showsUsage)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 9)
+        .background(isHovering ? Color.white.opacity(0.045) : Color.clear)
+        .contentShape(Rectangle())
+        .onHover { isHovering = $0 }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(sessionTitle), \(AgentSessionPresentation.stateLabel(session.state)), \(session.id.sessionID.provider.stableName)")
+    }
+
+    private var sessionTitle: String {
+        session.recentActivity.last?.title ?? AgentSessionPresentation.stateLabel(session.state)
     }
 }
 
-struct AgentUsageMetricView: View {
-    let metric: AgentUsagePresentation
+private struct AgentAttentionSessionRow: View {
+    let session: AgentSession
+    let layout: AgentDashboardLayoutProjection
+    let showsUsage: Bool
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Rectangle()
+                .fill(AgentVisualStyle.accent(for: session.state))
+                .frame(width: 3)
+                .accessibilityHidden(true)
+
+            HStack(alignment: .center, spacing: 10) {
+                AgentStateMarker(session: session, emphasized: true)
+                AgentSessionRowContent(session: session, layout: layout, attention: true)
+                Spacer(minLength: 8)
+                AgentSessionTrailingStatus(session: session, layout: layout, showsUsage: showsUsage)
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 11)
+        }
+        .background(AgentVisualStyle.accent(for: session.state).opacity(0.095))
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(AgentVisualStyle.accent(for: session.state).opacity(0.14))
+                .frame(height: 1)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Attention required, \(AgentSessionPresentation.stateLabel(session.state)), \(sessionTitle)")
+    }
+
+    private var sessionTitle: String {
+        session.recentActivity.last?.title ?? AgentSessionPresentation.stateLabel(session.state)
+    }
+}
+
+private struct AgentStateMarker: View {
+    let session: AgentSession
+    var emphasized = false
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(AgentVisualStyle.providerAccent(session.id.sessionID.provider).opacity(emphasized ? 0.18 : 0.10))
+            Image(systemName: AgentSessionPresentation.stateSymbol(session.state))
+                .font(.system(size: emphasized ? 12 : 10, weight: .bold))
+                .foregroundStyle(AgentVisualStyle.accent(for: session.state))
+        }
+        .frame(width: 26, height: 26)
+        .accessibilityLabel("\(session.id.sessionID.provider.stableName), \(AgentSessionPresentation.stateLabel(session.state))")
+    }
+}
+
+private struct AgentSessionRowContent: View {
+    let session: AgentSession
+    let layout: AgentDashboardLayoutProjection
+    let attention: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 4) {
-                Text(metric.label)
-                    .foregroundStyle(.secondary)
-                Spacer(minLength: 2)
-                if metric.isStale {
-                    Label("Stale", systemImage: "clock.badge.exclamationmark")
-                        .labelStyle(.iconOnly)
-                        .foregroundStyle(.orange)
-                        .accessibilityLabel("Stale usage sample")
+            HStack(spacing: 6) {
+                Text(title)
+                    .font(.system(size: attention ? 12.5 : 11.5, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.94))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if session.capabilities.contains(.verifiedSourceIdentity), session.source != .unknown {
+                    Image(systemName: "checkmark.seal.fill")
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel("Verified source")
                 }
             }
-            .font(.system(size: 7.5, weight: .semibold, design: .rounded))
 
-            Text(metric.valueText)
-                .font(.system(size: 9, weight: .bold, design: .rounded))
-                .monospacedDigit()
-                .lineLimit(1)
+            HStack(spacing: 5) {
+                Image(systemName: AgentVisualStyle.providerSymbol(session.id.sessionID.provider))
+                if let branch = session.project.gitBranch, !branch.isEmpty {
+                    Label(branch, systemImage: "arrow.triangle.branch")
+                }
+                Text(session.id.sessionID.provider.stableName.capitalized)
+                if layout.showsModel, let model = session.project.model, !model.isEmpty {
+                    Text("·")
+                    Text(model)
+                }
+            }
+            .font(.system(size: 8.5, weight: .medium, design: .rounded))
+            .foregroundStyle(.white.opacity(0.48))
+            .lineLimit(1)
 
-            if let progress = metric.progress {
-                ProgressView(value: progress)
-                    .progressViewStyle(.linear)
-                    .tint(.cyan)
-                    .accessibilityLabel("\(metric.label) usage")
-                    .accessibilityValue("\(Int(progress * 100)) percent")
+            if attention {
+                Text(attentionDetail)
+                    .font(.system(size: 9.5, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.74))
+                    .lineLimit(2)
+            }
+
+            let operations = AgentOperationAggregation.make(for: session)
+            if !operations.isEmpty {
+                HStack(spacing: 10) {
+                    ForEach(operations.prefix(layout.isNarrow ? 1 : 3)) { operation in
+                        Label(operation.displayTitle, systemImage: operation.symbol)
+                            .lineLimit(1)
+                    }
+                }
+                .font(.system(size: 8.5, weight: .medium, design: .rounded))
+                .foregroundStyle(.white.opacity(0.58))
+            }
+
+            if attention, let target = AgentSourceAssociationResolver.openTarget(for: session) {
+                Button {
+                    _ = AppLaunchService.openApp(bundleIdentifier: target.bundleIdentifier)
+                } label: {
+                    Label("Continue in \(target.displayName)", systemImage: "arrow.up.forward.app")
+                        .font(.system(size: 8.5, weight: .semibold, design: .rounded))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.white.opacity(0.78))
+                .accessibilityLabel("Open verified source application \(target.displayName)")
             }
         }
-        .padding(7)
-        .background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .help("Source: " + String(metric.sample.source.prefix(120)))
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var title: String {
+        if let activity = session.recentActivity.last, !activity.title.isEmpty {
+            return activity.title
+        }
+        return AgentSessionPresentation.stateLabel(session.state)
+    }
+
+    private var attentionDetail: String {
+        switch session.state {
+        case .waitingForApproval:
+            return session.approvals.values
+                .filter { $0.state == .pending }
+                .sorted { $0.requestedAt > $1.requestedAt }
+                .first?.summary ?? "Waiting for approval in \(session.id.sessionID.provider.stableName.capitalized)"
+        case .waitingForUser:
+            return "Waiting for input in \(session.id.sessionID.provider.stableName.capitalized)"
+        case .failed:
+            return session.recentActivity.last?.summary ?? "The provider reported a failure"
+        case .interrupted:
+            return session.recentActivity.last?.summary ?? "The provider reported an interruption"
+        default:
+            return AgentSessionPresentation.stateLabel(session.state)
+        }
+    }
+}
+
+private struct AgentSessionTrailingStatus: View {
+    let session: AgentSession
+    let layout: AgentDashboardLayoutProjection
+    let showsUsage: Bool
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 5) {
+            if let metric = progressMetric, let progress = metric.progress {
+                HStack(spacing: 6) {
+                    AgentProgressRail(progress: progress)
+                        .frame(width: layout.isNarrow ? 36 : 48, height: 4)
+                        .accessibilityLabel("\(metric.label) usage")
+                    Text("\(Int((progress * 100).rounded()))%")
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .monospacedDigit()
+                        .foregroundStyle(.white.opacity(0.72))
+                }
+            }
+            Label(
+                AgentSessionPresentation.shortStateLabel(session.state),
+                systemImage: AgentSessionPresentation.stateSymbol(session.state)
+            )
+            .font(.system(size: 8.5, weight: .semibold, design: .rounded))
+            .foregroundStyle(AgentVisualStyle.accent(for: session.state))
+            .lineLimit(1)
+
+            Text(session.lastUpdatedAt, style: .relative)
+                .font(.system(size: 8, weight: .medium, design: .monospaced))
+                .monospacedDigit()
+                .foregroundStyle(.white.opacity(0.30))
+                .lineLimit(1)
+        }
+        .frame(width: layout.trailingColumnWidth, alignment: .trailing)
+    }
+
+    private var progressMetric: AgentUsagePresentation? {
+        guard showsUsage else { return nil }
+        return AgentUsagePresentation.make(for: session).first { $0.progress != nil }
+    }
+}
+
+private struct AgentProgressRail: View {
+    let progress: Double
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                Capsule(style: .continuous)
+                    .fill(.white.opacity(0.11))
+                Capsule(style: .continuous)
+                    .fill(.white.opacity(0.72))
+                    .frame(width: proxy.size.width * min(max(progress, 0), 1))
+            }
+        }
+        .accessibilityValue("\(Int((min(max(progress, 0), 1) * 100).rounded())) percent")
     }
 }
 
@@ -503,90 +509,85 @@ struct AgentCompactSessionIndicator: View {
     }
 }
 
+struct AgentCompactMarkerCluster: View {
+    let presentation: AgentCompactPresentation
+
+    var body: some View {
+        HStack(spacing: 3) {
+            ForEach(presentation.sessions, id: \.id) { session in
+                AgentCompactSessionIndicator(session: session)
+            }
+            if presentation.overflowCount > 0 {
+                Text("+\(presentation.overflowCount)")
+                    .font(.system(size: 7.5, weight: .bold, design: .rounded))
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+struct AgentCompactSummaryLabel: View {
+    let presentation: AgentCompactPresentation
+
+    var body: some View {
+        Text(presentation.summary)
+            .font(.system(size: 8.5, weight: .semibold, design: .rounded))
+            .foregroundStyle(.white.opacity(0.90))
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .accessibilityLabel(presentation.summary)
+    }
+}
+
 struct AgentCompactOverviewView: View {
     let presentation: AgentCompactPresentation
 
     var body: some View {
-        HStack(spacing: 5) {
-            HStack(spacing: 3) {
-                ForEach(presentation.sessions, id: \.id) { session in
-                    AgentCompactSessionIndicator(session: session)
-                }
-                if presentation.overflowCount > 0 {
-                    Text("+\(presentation.overflowCount)")
-                        .font(.system(size: 7.5, weight: .bold, design: .rounded))
-                        .foregroundStyle(.secondary)
-                }
-            }
-            Text(presentation.summary)
-                .font(.system(size: 8.5, weight: .semibold, design: .rounded))
-                .lineLimit(1)
-                .truncationMode(.tail)
-            Spacer(minLength: 0)
+        HStack(spacing: 7) {
+            AgentCompactMarkerCluster(presentation: presentation)
+            Spacer(minLength: 6)
+            AgentCompactSummaryLabel(presentation: presentation)
         }
-        .padding(.horizontal, 10)
         .foregroundStyle(.white)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(presentation.summary)
     }
 }
 
-private struct AgentOperationPresentation: Identifiable {
-    let id: String
-    let symbol: String
-    let title: String
-    let detail: String?
-    let status: AgentOperationStatus
-    let date: Date
+struct AgentCompactAttentionLeadingView: View {
+    let provider: AgentProvider
+    let project: String?
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: AgentVisualStyle.providerSymbol(provider))
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(AgentVisualStyle.providerAccent(provider))
+            Text(project.flatMap { $0.isEmpty ? nil : $0 } ?? provider.stableName.capitalized)
+                .font(.system(size: 9, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.88))
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+    }
 }
 
-struct AgentUsagePresentation: Identifiable {
-    let id: String
-    let label: String
-    let sample: AgentUsageSample
-    let effectiveLimit: Double?
+struct AgentCompactAttentionTrailingView: View {
+    let text: String
+    let accent: Color
 
-    var isStale: Bool { isStale(at: Date()) }
-
-    func isStale(at date: Date) -> Bool {
-        date.timeIntervalSince(sample.observedAt) > 300
-    }
-
-    var progress: Double? {
-        guard let effectiveLimit, effectiveLimit.isFinite, effectiveLimit > 0 else { return nil }
-        return min(max(sample.value / effectiveLimit, 0), 1)
-    }
-
-    var valueText: String {
-        let value = sample.value.formatted(.number.precision(.fractionLength(0...2)))
-        guard let effectiveLimit else { return value + " " + sample.unit.rawValue }
-        let limit = effectiveLimit.formatted(.number.precision(.fractionLength(0...2)))
-        return value + " / " + limit + " " + sample.unit.rawValue
-    }
-
-    static func make(for session: AgentSession) -> [AgentUsagePresentation] {
-        var values: [AgentUsagePresentation] = []
-        if session.capabilities.contains(.contextUsage), let used = session.usage[.contextUsed] {
-            let limit = used.limit ?? session.usage[.contextLimit]?.value
-            values.append(.init(id: "context", label: "Context", sample: used, effectiveLimit: limit))
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "exclamationmark")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(accent)
+            Text(text)
+                .font(.system(size: 8.5, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.90))
+                .lineLimit(1)
+                .truncationMode(.tail)
         }
-        if session.capabilities.contains(.tokenUsage) {
-            for (metric, label) in [(AgentUsageMetric.inputTokens, "Input"), (.outputTokens, "Output"), (.cachedInputTokens, "Cached"), (.reasoningTokens, "Reasoning")] {
-                if let sample = session.usage[metric] {
-                    values.append(.init(id: metric.rawValue, label: label, sample: sample, effectiveLimit: sample.limit))
-                }
-            }
-        }
-        if session.capabilities.contains(.quotaUsage), let used = session.usage[.quotaUsed] {
-            let limit = used.limit ?? session.usage[.quotaLimit]?.value
-            values.append(.init(id: "quota", label: "Quota", sample: used, effectiveLimit: limit))
-        }
-        if session.capabilities.contains(.quotaUsage), let remaining = session.usage[.rateLimitRemaining] {
-            values.append(.init(id: "remaining", label: "Rate remaining", sample: remaining, effectiveLimit: remaining.limit))
-        }
-        if session.capabilities.contains(.costUsage), let cost = session.usage[.cost] {
-            values.append(.init(id: "cost", label: "Cost", sample: cost, effectiveLimit: cost.limit))
-        }
-        return values
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(text)
     }
 }

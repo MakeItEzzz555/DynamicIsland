@@ -7,6 +7,7 @@ final class AgentPresentationTests: XCTestCase {
     func testZeroSessionsAndDisabledActivityHaveNoCompactPresentation() {
         XCTAssertNil(AgentCompactPresentation.make(sessions: []))
         XCTAssertNil(AgentCompactPresentation.make(sessions: [session()], enabled: false))
+        XCTAssertNil(AgentCompactPresentation.make(sessions: [session(state: .completed)]))
     }
 
     func testSingleProviderSummaryUsesSemanticState() {
@@ -137,6 +138,85 @@ final class AgentPresentationTests: XCTestCase {
             stopped: []
         )
         XCTAssertEqual(diagnostics.acceptedCount, 3)
+    }
+
+    func testProjectGroupingUsesSourcedMetadataAndNeutralFallbacks() {
+        var storefrontOne = session(provider: .codex, nativeID: "one", projectName: "storefront")
+        storefrontOne.project.repositoryIdentity = "makeit/storefront"
+        var storefrontTwo = session(provider: .claude, nativeID: "two", projectName: "storefront")
+        storefrontTwo.project.repositoryIdentity = "makeit/storefront"
+        var unknown = session(provider: .claude, nativeID: "unknown", projectName: "")
+        unknown.project.displayName = nil
+        unknown.project.repositoryIdentity = nil
+
+        let dashboard = AgentDashboardPresentation.make(sessions: [unknown, storefrontTwo, storefrontOne])
+
+        XCTAssertEqual(dashboard.groups.count, 2)
+        XCTAssertEqual(dashboard.groups.first?.title, "storefront")
+        XCTAssertEqual(dashboard.groups.first?.sessions.count, 2)
+        XCTAssertEqual(dashboard.groups.last?.title, "Claude sessions")
+    }
+
+    func testAttentionRowSelectionIsLimitedToActionableOrFailureStates() {
+        XCTAssertTrue(AgentSessionPresentation.requiresAttention(session(state: .waitingForApproval)))
+        XCTAssertTrue(AgentSessionPresentation.requiresAttention(session(state: .waitingForUser)))
+        XCTAssertTrue(AgentSessionPresentation.requiresAttention(session(state: .failed)))
+        XCTAssertTrue(AgentSessionPresentation.requiresAttention(session(state: .interrupted)))
+        XCTAssertFalse(AgentSessionPresentation.requiresAttention(session(state: .working)))
+        XCTAssertFalse(AgentSessionPresentation.requiresAttention(session(state: .completed)))
+    }
+
+    func testRepeatedOperationsAggregateWithoutChangingUnderlyingEvents() throws {
+        var value = session(state: .runningTool)
+        for index in 0..<3 {
+            let correlation = AgentCorrelationID(rawValue: "bash-\(index)")
+            value.tools[correlation] = AgentTool(
+                correlationID: correlation,
+                name: "bash",
+                category: "shell",
+                summary: nil,
+                status: .active,
+                startedAt: now.addingTimeInterval(Double(index)),
+                completedAt: nil,
+                success: nil
+            )
+        }
+
+        let operation = try XCTUnwrap(AgentOperationAggregation.make(for: value).first)
+        XCTAssertEqual(operation.title, "Bash")
+        XCTAssertEqual(operation.displayTitle, "Bash ×3")
+        XCTAssertEqual(operation.count, 3)
+        XCTAssertEqual(value.tools.count, 3)
+    }
+
+    func testNarrowLayoutDropsLowerPriorityMetadataBeforeCoreState() {
+        let narrow = AgentDashboardLayoutProjection.make(width: 500)
+        let wide = AgentDashboardLayoutProjection.make(width: 800)
+
+        XCTAssertTrue(narrow.isNarrow)
+        XCTAssertFalse(narrow.showsModel)
+        XCTAssertEqual(narrow.maximumGaugeCount, 2)
+        XCTAssertFalse(wide.isNarrow)
+        XCTAssertTrue(wide.showsModel)
+        XCTAssertEqual(wide.maximumGaugeCount, 5)
+        XCTAssertLessThan(narrow.trailingColumnWidth, wide.trailingColumnWidth)
+    }
+
+    func testGlobalUsageKeepsOnlySourcedMetricsAndHonorsLimit() {
+        let unsupported = session(
+            nativeID: "unsupported",
+            capabilities: [],
+            usage: AgentUsage(samples: [.contextUsed: usageSample(value: 20, limit: 100)])
+        )
+        let supported = session(
+            nativeID: "supported",
+            capabilities: [.contextUsage],
+            usage: AgentUsage(samples: [.contextUsed: usageSample(value: 40, limit: 100)])
+        )
+
+        let metrics = AgentGlobalUsagePresentation.make(sessions: [unsupported, supported], limit: 1)
+        XCTAssertEqual(metrics.count, 1)
+        XCTAssertEqual(metrics.first?.metric.progress, 0.4)
     }
 
     private func session(

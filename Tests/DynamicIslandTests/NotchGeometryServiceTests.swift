@@ -253,4 +253,87 @@ final class NotchGeometryServiceTests: XCTestCase {
             XCTAssertEqual(resolved.leftRegionWidth, resolved.rightRegionWidth)
         }
     }
+
+    func testAgentCollapsedProfilesResolveOneCanonicalFrameAndRetractExactly() {
+        let service = NotchGeometryService()
+        let snapshot = ScreenSnapshot(
+            frame: CGRect(x: 0, y: 0, width: 1512, height: 982),
+            visibleFrame: CGRect(x: 0, y: 0, width: 1512, height: 944),
+            safeAreaInsets: NSEdgeInsets(top: 38, left: 0, bottom: 0, right: 0),
+            auxiliaryTopLeftArea: CGRect(x: 0, y: 944, width: 635, height: 38),
+            auxiliaryTopRightArea: CGRect(x: 877, y: 944, width: 635, height: 38)
+        )
+        let normal = service.geometry(
+            for: snapshot,
+            collapsedSize: CGSize(width: 190, height: 44),
+            expandedSize: CGSize(width: 860, height: 286),
+            collapsedActivityProfile: nil,
+            collapsedPresentationProfile: .normal
+        )
+        let routine = service.geometry(
+            for: snapshot,
+            collapsedSize: CGSize(width: 190, height: 44),
+            expandedSize: CGSize(width: 860, height: 286),
+            collapsedActivityProfile: nil,
+            collapsedPresentationProfile: .agentRoutine(leftContentWidth: 72, rightContentWidth: 96)
+        )
+        let attention = service.geometry(
+            for: snapshot,
+            collapsedSize: CGSize(width: 190, height: 44),
+            expandedSize: CGSize(width: 860, height: 286),
+            collapsedActivityProfile: nil,
+            collapsedPresentationProfile: .agentAttention(leftContentWidth: 104, rightContentWidth: 120)
+        )
+        let retracted = service.geometry(
+            for: snapshot,
+            collapsedSize: CGSize(width: 190, height: 44),
+            expandedSize: CGSize(width: 860, height: 286),
+            collapsedActivityProfile: nil,
+            collapsedPresentationProfile: .normal
+        )
+
+        XCTAssertLessThan(normal.collapsedFrame.width, routine.collapsedFrame.width)
+        XCTAssertLessThan(routine.collapsedFrame.width, attention.collapsedFrame.width)
+        XCTAssertEqual(routine.collapsedFrame.height, 46)
+        XCTAssertEqual(attention.collapsedFrame.height, 48)
+        XCTAssertEqual(normal.collapsedFrame, retracted.collapsedFrame)
+        XCTAssertEqual(normal.canvas.collapsedSurfaceFrame, retracted.canvas.collapsedSurfaceFrame)
+        XCTAssertEqual(retracted.collapsedPresentationProfile, .normal)
+    }
+
+    @MainActor
+    func testLayoutStoreDoesNotRetainAttentionGeometryAfterRetraction() {
+        let store = IslandLayoutStore()
+        let panel = CGRect(x: 300, y: 600, width: 860, height: 286)
+        let expanded = panel
+        let attention = CGRect(x: 470, y: 838, width: 520, height: 48)
+        let normal = CGRect(x: 635, y: 842, width: 190, height: 44)
+
+        store.updateLocal(
+            panelFrame: panel,
+            collapsedScreenFrame: attention,
+            expandedScreenFrame: expanded,
+            hasHardwareNotch: true,
+            hardwareNotchWidth: 242,
+            collapsedLeftRegionWidth: 117,
+            collapsedNotchCoreWidth: 242,
+            collapsedRightRegionWidth: 117,
+            collapsedPresentationProfile: .agentAttention(leftContentWidth: 104, rightContentWidth: 120)
+        )
+        store.updateLocal(
+            panelFrame: panel,
+            collapsedScreenFrame: normal,
+            expandedScreenFrame: expanded,
+            hasHardwareNotch: true,
+            hardwareNotchWidth: 242,
+            collapsedLeftRegionWidth: 0,
+            collapsedNotchCoreWidth: 0,
+            collapsedRightRegionWidth: 0,
+            collapsedPresentationProfile: .normal
+        )
+
+        XCTAssertEqual(store.collapsedSurfaceFrame, CGRect(x: 335, y: 242, width: 190, height: 44))
+        XCTAssertEqual(store.collapsedSize, CGSize(width: 190, height: 44))
+        XCTAssertEqual(store.collapsedPresentationProfile, .normal)
+    }
 }
