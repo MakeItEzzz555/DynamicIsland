@@ -185,7 +185,11 @@ actor AgentIngestionCoordinator {
             nextGeneration = stagedNextGeneration
             capabilityLedger = stagedLedger
             try registry.recordAccepted(events.count, at: events.last?.receivedTimestamp ?? Date(), for: handle)
-            return .success(AgentIngestionResult(acceptedEvents: events.count, applications: applications))
+            return .success(AgentIngestionResult(
+                acceptedEvents: events.count,
+                applications: applications,
+                sessionInstances: normalized.map(\.instanceID)
+            ))
         } catch let error as AgentIngestionError {
             let healthError: AgentSourceHealthError = switch error {
             case .unsupportedSchema: .schemaMismatch
@@ -281,7 +285,7 @@ actor AgentIngestionCoordinator {
         }
         if case .capabilities(let capabilities) = event.payload {
             guard capabilities.all.isSubset(of: policy.allowedCapabilities),
-                  !capabilities.contains(.approvalControl),
+                  (!capabilities.contains(.approvalControl) || policy.permitsApprovalControl),
                   capabilities.evidence.values.allSatisfy({ $0.authority <= ceiling && $0.authority <= event.authority }) else {
                 throw AgentIngestionError.policyViolation
             }

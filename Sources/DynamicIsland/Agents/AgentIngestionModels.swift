@@ -107,6 +107,27 @@ struct AgentProducerPolicy: Equatable, Sendable {
     let authorityCeilings: [AgentAuthorityDomain: AgentEvidenceAuthority]
     let allowedCapabilities: Set<AgentCapability>
     let allowedSchemaVersions: Set<Int>
+    let permitsApprovalControl: Bool
+
+    init(
+        allowedProviders: Set<AgentProvider>?,
+        allowedSources: Set<AgentSource>?,
+        allowedSourceKinds: Set<AgentSourceKind>,
+        allowedEventTypes: Set<AgentEventType>,
+        authorityCeilings: [AgentAuthorityDomain: AgentEvidenceAuthority],
+        allowedCapabilities: Set<AgentCapability>,
+        allowedSchemaVersions: Set<Int>,
+        permitsApprovalControl: Bool = false
+    ) {
+        self.allowedProviders = allowedProviders
+        self.allowedSources = allowedSources
+        self.allowedSourceKinds = allowedSourceKinds
+        self.allowedEventTypes = allowedEventTypes
+        self.authorityCeilings = authorityCeilings
+        self.allowedCapabilities = allowedCapabilities
+        self.allowedSchemaVersions = allowedSchemaVersions
+        self.permitsApprovalControl = permitsApprovalControl
+    }
 
     func permits(provider: AgentProvider) -> Bool {
         allowedProviders?.contains(provider) ?? true
@@ -134,6 +155,19 @@ struct AgentProducerPolicy: Equatable, Sendable {
             .subagentLifecycle, .taskLifecycle, .modelMetadata, .projectContext
         ],
         allowedSchemaVersions: [AgentEvent.normalizedSchemaVersion]
+    )
+
+    static let codexPermissionControl = AgentProducerPolicy(
+        allowedProviders: [.codex],
+        allowedSources: [.unknown],
+        allowedSourceKinds: [.officialHook],
+        allowedEventTypes: [.approvalRequested, .approvalResolved, .capabilitiesUpdated],
+        authorityCeilings: Dictionary(uniqueKeysWithValues: AgentAuthorityDomain.allCases.map {
+            ($0, AgentEvidenceAuthority.lifecycle)
+        }),
+        allowedCapabilities: [.approvalObservation, .approvalControl],
+        allowedSchemaVersions: [AgentEvent.normalizedSchemaVersion],
+        permitsApprovalControl: true
     )
 
     static let codexStructuredRecovery = AgentProducerPolicy(
@@ -348,6 +382,7 @@ enum AgentIngestionError: Error, Equatable, Sendable {
 struct AgentIngestionResult: Equatable, Sendable {
     let acceptedEvents: Int
     let applications: [AgentEventApplication]
+    let sessionInstances: [AgentSessionInstanceID]
 }
 
 
@@ -379,7 +414,7 @@ struct AgentTelemetryObservation: Equatable, Sendable {
     let model: String?
 
     var isEmpty: Bool {
-        usage.samples.isEmpty && model == nil
+        usage.isEmpty && model == nil
     }
 }
 
@@ -720,7 +755,7 @@ actor AgentTelemetryFusion {
             String(format: "%.6f", observation.observedAt.timeIntervalSince1970)
         )
 
-        if !observation.usage.samples.isEmpty {
+        if !observation.usage.isEmpty {
             events.append(AgentIngestionEvent(
                 schemaVersion: AgentEvent.normalizedSchemaVersion,
                 eventID: AgentEventID(rawValue: "otel-usage-" + stableBase),

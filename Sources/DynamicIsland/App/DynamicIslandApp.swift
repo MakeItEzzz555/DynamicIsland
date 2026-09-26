@@ -87,8 +87,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let geometryService = NotchGeometryService()
     private let agentEvents = AgentEventStore()
     private let agentAttention = AgentAttentionCoordinator()
+    private let agentApprovalControl = AgentApprovalController()
     private lazy var agentIngestion = AgentIngestionCoordinator(eventStore: agentEvents)
-    private lazy var agentBridge = AgentBridge(coordinator: agentIngestion)
+    private lazy var agentBridge = AgentBridge(
+        coordinator: agentIngestion,
+        approvals: agentApprovalControl
+    )
 
     private var overlayController: OverlayWindowController?
     private var menuController: MenuBarController?
@@ -120,7 +124,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             clipboardHistory: clipboardHistory,
             navigation: navigation,
             agentEvents: agentEvents,
-            agentAttention: agentAttention
+            agentAttention: agentAttention,
+            agentApprovalControl: agentApprovalControl
         )
         #if DEBUG
         debugPrint(

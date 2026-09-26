@@ -44,8 +44,14 @@ enum AgentIntegrationProvider: String, CaseIterable, Identifiable, Sendable {
     }
 
     var synchronousEvents: Set<String> {
-        // Session teardown must be observed before the provider process exits.
-        ["SessionEnd"]
+        switch self {
+        case .codex:
+            // PermissionRequest is the only interactive control hook. Session
+            // teardown remains synchronous so it is observed before exit.
+            ["PermissionRequest", "SessionEnd"]
+        case .claude:
+            ["SessionEnd"]
+        }
     }
 }
 
@@ -342,7 +348,7 @@ enum AgentHookConfigurationPlanner {
         if provider.synchronousEvents.contains(event) {
             // Codex timeout units are seconds. Claude command-hook timeout units
             // are also seconds for hook handlers.
-            handler["timeout"] = 3
+            handler["timeout"] = event == "PermissionRequest" ? 90 : 3
         } else {
             // Observation-only hooks cannot block, approve or rewrite provider behavior.
             handler["async"] = true

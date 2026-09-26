@@ -17,6 +17,9 @@ final class AgentBridgeNetworkTests: XCTestCase {
             codexDiscoveryPublisher: try AgentBridgeDiscoveryPublisher(
                 recordURL: directory.appendingPathComponent("codex-hook-v1.json")
             ),
+            codexPermissionDiscoveryPublisher: try AgentBridgeDiscoveryPublisher(
+                recordURL: directory.appendingPathComponent("codex-permission-v1.json")
+            ),
             claudeDiscoveryPublisher: try AgentBridgeDiscoveryPublisher(
                 recordURL: directory.appendingPathComponent("claude-hook-v1.json")
             )
@@ -58,6 +61,9 @@ final class AgentBridgeNetworkTests: XCTestCase {
             discoveryPublisher: publisher,
             codexDiscoveryPublisher: try AgentBridgeDiscoveryPublisher(
                 recordURL: directory.appendingPathComponent("codex-hook-v1.json")
+            ),
+            codexPermissionDiscoveryPublisher: try AgentBridgeDiscoveryPublisher(
+                recordURL: directory.appendingPathComponent("codex-permission-v1.json")
             ),
             claudeDiscoveryPublisher: try AgentBridgeDiscoveryPublisher(
                 recordURL: directory.appendingPathComponent("claude-hook-v1.json")

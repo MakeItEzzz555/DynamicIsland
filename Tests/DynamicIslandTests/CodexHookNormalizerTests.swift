@@ -48,20 +48,45 @@ final class CodexHookNormalizerTests: XCTestCase {
         XCTAssertFalse(String(decoding: output, as: UTF8.self).contains("hidden-value"))
     }
 
-    func testPermissionRequestIsObservationOnly() throws {
+    func testPermissionRequestCarriesControlCapabilityWithoutLeakingSecretCommand() throws {
         let input = Data("""
-        {"session_id":"session-1","turn_id":"turn-1","transcript_path":null,"cwd":"/tmp/project","hook_event_name":"PermissionRequest","model":"gpt-5.6-sol","permission_mode":"default","tool_name":"Bash","tool_input":{"command":"echo hidden-value"}}
+        {"session_id":"session-1","turn_id":"turn-1","transcript_path":null,"cwd":"/tmp/project","hook_event_name":"PermissionRequest","model":"gpt-5.6-sol","permission_mode":"default","tool_name":"Bash","tool_input":{"command":"echo api_token=hidden-value"}}
         """.utf8)
         let output = try CodexHookNormalizer.normalize(input)
         let text = String(decoding: output, as: UTF8.self)
         let root = try XCTUnwrap(try JSONSerialization.jsonObject(with: output) as? [String: Any])
-        let event = try XCTUnwrap(root["event"] as? [String: Any])
+        let events = try XCTUnwrap(root["events"] as? [[String: Any]])
+        XCTAssertEqual(events.count, 2)
+        let capability = try XCTUnwrap(events.first)
+        XCTAssertEqual(capability["eventType"] as? String, "capabilitiesUpdated")
+        let event = try XCTUnwrap(events.last)
         let payload = try XCTUnwrap(event["payload"] as? [String: Any])
         let request = try XCTUnwrap(payload["approvalRequest"] as? [String: Any])
         XCTAssertTrue(text.contains("approvalRequested"))
         XCTAssertEqual(request["operationCorrelationID"] as? String, "operation-bash")
-        XCTAssertFalse(text.contains("approvalControl"))
+        XCTAssertTrue(text.contains("approvalControl"))
         XCTAssertFalse(text.contains("hidden-value"))
+        XCTAssertEqual(request["summary"] as? String, "Bash approval required")
+        XCTAssertNotNil(request["expiresAt"] as? Double)
+    }
+
+    func testPermissionRequestUsesSafeDescriptionThenSanitizedCommandPreview() throws {
+        let described = Data("""
+        {"session_id":"session-1","turn_id":"turn-1","cwd":"/tmp/project","hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"git push origin feature/agents-ui-overhaul","description":"Push the current feature branch"}}
+        """.utf8)
+        XCTAssertEqual(try permissionSummary(described), "Push the current feature branch")
+
+        let command = Data("""
+        {"session_id":"session-1","turn_id":"turn-2","cwd":"/tmp/project","hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"git push origin feature/agents-ui-overhaul"}}
+        """.utf8)
+        XCTAssertEqual(try permissionSummary(command), "$ git push origin feature/agents-ui-overhaul")
+    }
+
+    func testOfficialPermissionDecisionOutputIsBoundedToAllowOrDeny() throws {
+        let allow = try XCTUnwrap(CodexPermissionHookOutput.encode(.allow))
+        let deny = try XCTUnwrap(CodexPermissionHookOutput.encode(.deny))
+        XCTAssertTrue(String(decoding: allow, as: UTF8.self).contains("allow"))
+        XCTAssertTrue(String(decoding: deny, as: UTF8.self).contains("Denied in DynamicIsland"))
     }
 
     func testStopAndInterruptMapToTerminalEventsWithoutAssistantText() throws {
@@ -104,5 +129,14 @@ final class CodexHookNormalizerTests: XCTestCase {
         XCTAssertThrowsError(try CodexHookNormalizer.normalize(data)) { error in
             XCTAssertEqual(error as? CodexHookNormalizationError, .inputTooLarge)
         }
+    }
+
+    private func permissionSummary(_ input: Data) throws -> String? {
+        let output = try CodexHookNormalizer.normalize(input)
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: output) as? [String: Any])
+        let events = try XCTUnwrap(root["events"] as? [[String: Any]])
+        let payload = try XCTUnwrap(events.last?["payload"] as? [String: Any])
+        let request = try XCTUnwrap(payload["approvalRequest"] as? [String: Any])
+        return request["summary"] as? String
     }
 }

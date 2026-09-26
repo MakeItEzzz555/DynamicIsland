@@ -190,18 +190,68 @@ final class AgentPresentationTests: XCTestCase {
                 name: "bash",
                 category: "shell",
                 summary: nil,
-                status: .active,
+                status: .completed,
                 startedAt: now.addingTimeInterval(Double(index)),
-                completedAt: nil,
-                success: nil
+                completedAt: now.addingTimeInterval(Double(index) + 0.5),
+                success: true
             )
         }
 
         let operation = try XCTUnwrap(AgentOperationAggregation.make(for: value).first)
-        XCTAssertEqual(operation.title, "Bash")
-        XCTAssertEqual(operation.displayTitle, "Bash ×3")
+        XCTAssertEqual(operation.title, "Run command")
+        XCTAssertEqual(operation.displayTitle, "Run command ×3")
         XCTAssertEqual(operation.count, 3)
         XCTAssertEqual(value.tools.count, 3)
+    }
+
+    func testActiveOperationsStayExplicitAndHistoryIsBounded() {
+        var value = session(state: .runningTool)
+        for index in 0..<8 {
+            let correlation = AgentCorrelationID(rawValue: "read-\(index)")
+            value.tools[correlation] = AgentTool(
+                correlationID: correlation,
+                name: "Read",
+                category: "filesystem",
+                summary: "File\(index).swift",
+                status: index >= 6 ? .active : .completed,
+                startedAt: now.addingTimeInterval(Double(index)),
+                completedAt: index >= 6 ? nil : now.addingTimeInterval(Double(index) + 0.5),
+                success: index >= 6 ? nil : true
+            )
+        }
+
+        let entries = AgentOperationAggregation.make(for: value, limit: 4)
+        XCTAssertLessThanOrEqual(entries.count, 4)
+        XCTAssertEqual(entries.filter { $0.status == .active }.count, 2)
+        XCTAssertEqual(entries.first { $0.status == .completed }?.displayTitle, "Read file ×6")
+    }
+
+    func testActivityStagesUseTypedEventsWithoutReasoningOrRawOutput() {
+        var value = session(state: .planning)
+        value.recentActivity = [
+            AgentActivity(
+                id: AgentEventID(rawValue: "plan"), kind: .plan,
+                title: "private chain of thought", summary: "raw terminal output",
+                status: .active, correlationID: nil, timestamp: now
+            )
+        ]
+
+        let entry = AgentOperationAggregation.make(for: value).first
+        XCTAssertEqual(entry?.title, "Planning")
+        XCTAssertNil(entry?.detail)
+        XCTAssertFalse(entry?.displayTitle.contains("private") ?? true)
+        XCTAssertFalse(entry?.displayTitle.contains("raw") ?? true)
+    }
+
+    func testSafeActivityDetailRejectsSecretLookingValues() {
+        var value = session(state: .runningTool)
+        let correlation = AgentCorrelationID(rawValue: "secret")
+        value.tools[correlation] = AgentTool(
+            correlationID: correlation, name: "Read", category: "filesystem",
+            summary: "Authorization: Bearer abc", status: .active,
+            startedAt: now, completedAt: nil, success: nil
+        )
+        XCTAssertNil(AgentOperationAggregation.make(for: value).first?.detail)
     }
 
     func testAttentionPrimaryTitleAvoidsRepeatingApprovalActivity() {
@@ -335,6 +385,40 @@ final class AgentPresentationTests: XCTestCase {
         XCTAssertEqual(metric.sample.observedAt, now.addingTimeInterval(30))
     }
 
+    func testFiveHourAndWeeklyQuotaScopesCoexistAndKeepFreshestPerScope() {
+        var usage = AgentUsage(samples: [
+            .quotaUsed: usageSample(value: 20, limit: 100, observedAt: now, scope: "5h")
+        ])
+        usage.merge(AgentUsage(samples: [
+            .quotaUsed: usageSample(value: 50, limit: 100, observedAt: now, scope: "weekly")
+        ]))
+        usage.merge(AgentUsage(samples: [
+            .quotaUsed: usageSample(value: 10, limit: 100, observedAt: now.addingTimeInterval(-10), scope: "5h")
+        ]))
+        let value = session(capabilities: [.quotaUsage], usage: usage)
+        let metrics = AgentUsagePresentation.make(for: value).filter { $0.id.hasPrefix("quota:") }
+
+        XCTAssertEqual(Set(metrics.map(\.label)), ["Quota · 5h", "Quota · Week"])
+        XCTAssertEqual(metrics.first { $0.label == "Quota · 5h" }?.sample.value, 20)
+        XCTAssertEqual(metrics.first { $0.label == "Quota · Week" }?.sample.value, 50)
+    }
+
+    func testApprovalControlsRequireExactPendingControlEvidence() {
+        var value = session(provider: .codex, state: .waitingForApproval, capabilities: [.approvalObservation])
+        let request = AgentApprovalControlRequest(
+            key: AgentApprovalControlKey(session: value.id, requestID: AgentCorrelationID(rawValue: "request")),
+            summary: "Run migration", expiresAt: now.addingTimeInterval(30)
+        )
+        XCTAssertFalse(AgentApprovalPresentation.isActionable(session: value, pending: request))
+        value.capabilities = AgentCapabilities(evidence: [
+            .approvalControl: AgentCapabilityEvidence(authority: .lifecycle, source: "official-hook", observedAt: now)
+        ])
+        XCTAssertTrue(AgentApprovalPresentation.isActionable(session: value, pending: request))
+
+        let claude = session(provider: .claude, state: .waitingForApproval, capabilities: [.approvalControl])
+        XCTAssertFalse(AgentApprovalPresentation.isActionable(session: claude, pending: request))
+    }
+
     private func session(
         provider: AgentProvider = .codex,
         nativeID: String = "session",
@@ -370,13 +454,14 @@ final class AgentPresentationTests: XCTestCase {
     private func usageSample(
         value: Double,
         limit: Double?,
-        observedAt: Date? = nil
+        observedAt: Date? = nil,
+        scope: String = "session"
     ) -> AgentUsageSample {
         AgentUsageSample(
             value: value,
             limit: limit,
             unit: .tokens,
-            scope: "session",
+            scope: scope,
             source: "structured-test",
             observedAt: observedAt ?? now
         )

@@ -60,18 +60,49 @@ package struct AgentBridgeClient: Sendable {
         try await perform(method: "GET", explicitRoute: AgentBridgeProtocol.healthRoute, input: nil)
     }
 
+    /// Only the dedicated Codex PermissionRequest relay uses this synchronous
+    /// route. A nil result means no hook decision, so Codex keeps its native
+    /// approval prompt.
+    package func requestCodexPermission(input: Data) async throws -> AgentBridgePermissionDecision? {
+        let response = try await performResponse(
+            method: "POST",
+            explicitRoute: AgentBridgeProtocol.codexPermissionRoute,
+            input: input,
+            requestTimeout: .seconds(80)
+        )
+        guard response.statusCode == 200 else { return nil }
+        return response.permissionDecision
+    }
+
     private func perform(
         method: String,
         explicitRoute: String?,
         input: Data?
     ) async throws -> AgentBridgeClientResult {
+        let response = try await performResponse(
+            method: method,
+            explicitRoute: explicitRoute,
+            input: input,
+            requestTimeout: .seconds(2)
+        )
+        if response.statusCode == 200 || response.statusCode == 202 { return .accepted }
+        return .rejected(statusCode: response.statusCode, code: response.code)
+    }
+
+    private func performResponse(
+        method: String,
+        explicitRoute: String?,
+        input: Data?,
+        requestTimeout: Duration
+    ) async throws -> AgentBridgeClientResponse {
         let initial = try await loadProfile()
         do {
             return try await attempt(
                 method: method,
                 route: explicitRoute ?? initial.eventsRoute,
                 input: input,
-                profile: initial
+                profile: initial,
+                requestTimeout: requestTimeout
             )
         } catch let error as AttemptError where error.isEligibleForProfileReload {
             let refreshed = try await loadProfile()
@@ -81,7 +112,8 @@ package struct AgentBridgeClient: Sendable {
                     method: method,
                     route: explicitRoute ?? refreshed.eventsRoute,
                     input: input,
-                    profile: refreshed
+                    profile: refreshed,
+                    requestTimeout: requestTimeout
                 )
             } catch let retryError as AttemptError {
                 throw retryError.clientError
@@ -119,8 +151,9 @@ package struct AgentBridgeClient: Sendable {
         method: String,
         route: String,
         input: Data?,
-        profile: AgentBridgeClientProfile
-    ) async throws -> AgentBridgeClientResult {
+        profile: AgentBridgeClientProfile,
+        requestTimeout: Duration
+    ) async throws -> AgentBridgeClientResponse {
         let body: Data
         do {
             body = if let input {
@@ -166,7 +199,7 @@ package struct AgentBridgeClient: Sendable {
                 request,
                 profile: profile,
                 connectTimeout: .seconds(1),
-                requestTimeout: .seconds(2)
+                requestTimeout: requestTimeout
             )
         } catch let error as AgentBridgeClientTransportError {
             switch error {
@@ -178,9 +211,8 @@ package struct AgentBridgeClient: Sendable {
         } catch {
             throw AttemptError.unavailable
         }
-        if response.statusCode == 200 || response.statusCode == 202 { return .accepted }
         if response.statusCode == 401 { throw AttemptError.authentication }
-        return .rejected(statusCode: response.statusCode, code: response.code)
+        return response
     }
 
     private enum AttemptError: Error, Equatable {
@@ -394,6 +426,7 @@ private final class AgentBridgeNetworkExchange: @unchecked Sendable {
               let code = object["code"] as? String else {
             throw AgentBridgeClientTransportError.malformedResponse
         }
-        return AgentBridgeClientResponse(statusCode: status, code: code)
+        let decision = (object["decision"] as? String).flatMap(AgentBridgePermissionDecision.init(rawValue:))
+        return AgentBridgeClientResponse(statusCode: status, code: code, permissionDecision: decision)
     }
 }

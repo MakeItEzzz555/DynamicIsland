@@ -230,7 +230,7 @@ struct AgentEvent: Equatable, Codable, Sendable {
         if case .unsupported = payload { return .unsupportedPayload }
         guard payloadIsCompatible else { return .payloadMismatch }
         if case .usage(let usage) = payload,
-           usage.samples.values.contains(where: { !$0.isValid }) {
+           usage.allSamples.contains(where: { !$0.isValid }) {
             return .invalidUsage
         }
         if case .approvalResolution(let resolution) = payload,
@@ -328,11 +328,16 @@ struct AgentEvent: Equatable, Codable, Sendable {
                 .joined(separator: "\n")
             data = Data(value.utf8)
         case .usage(let usage):
-            let value = usage.samples
-                .sorted { $0.key.rawValue < $1.key.rawValue }
-                .map { metric, sample in
+            let value = usage.scopedEntries
+                .sorted {
+                    if $0.key.metric.rawValue != $1.key.metric.rawValue {
+                        return $0.key.metric.rawValue < $1.key.metric.rawValue
+                    }
+                    return $0.key.scope < $1.key.scope
+                }
+                .map { key, sample in
                     [
-                        metric.rawValue,
+                        key.metric.rawValue,
                         String(sample.value.bitPattern),
                         sample.limit.map { String($0.bitPattern) } ?? "nil",
                         sample.unit.rawValue,

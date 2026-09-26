@@ -71,6 +71,7 @@ final class AgentBridgeLifecycleTests: XCTestCase {
             credentialStore: FixedAgentBridgeCredentialStore(secret: nil),
             discoveryPublisher: discovery,
             codexDiscoveryPublisher: DiscoverySpy(),
+            codexPermissionDiscoveryPublisher: DiscoverySpy(),
             claudeDiscoveryPublisher: DiscoverySpy(),
             serverFactory: servers.factory
         )
@@ -142,6 +143,7 @@ final class AgentBridgeLifecycleTests: XCTestCase {
             credentialStore: FixedAgentBridgeCredentialStore(secret: AgentBridgeTestSupport.secret),
             discoveryPublisher: discovery,
             codexDiscoveryPublisher: DiscoverySpy(),
+            codexPermissionDiscoveryPublisher: DiscoverySpy(),
             claudeDiscoveryPublisher: DiscoverySpy(),
             serverFactory: { _ in server }
         )
@@ -166,6 +168,7 @@ final class AgentBridgeLifecycleTests: XCTestCase {
             credentialStore: FixedAgentBridgeCredentialStore(secret: AgentBridgeTestSupport.secret),
             discoveryPublisher: discovery,
             codexDiscoveryPublisher: DiscoverySpy(),
+            codexPermissionDiscoveryPublisher: DiscoverySpy(),
             claudeDiscoveryPublisher: DiscoverySpy(),
             serverFactory: servers.factory
         )

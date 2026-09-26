@@ -2546,6 +2546,7 @@ struct ExpandedIslandView: View {
         AgentActivityDashboardView(
             settings: settings,
             agentEvents: agentEvents,
+            approvalControl: modules.agentApprovalControl,
             availableHeight: metrics.pageHeight
         )
         .innerBlurScaleClean(

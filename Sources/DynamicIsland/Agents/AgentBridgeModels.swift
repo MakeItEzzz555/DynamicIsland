@@ -133,6 +133,7 @@ enum AgentBridgeEnvelopeError: String, Error, Equatable, Sendable {
 struct AgentBridgeIngestionResult: Equatable, Sendable {
     let acceptedEvents: Int
     let applications: [AgentEventApplication]
+    let sessionInstances: [AgentSessionInstanceID]
 }
 
 enum AgentBridgeHTTPStatus: Int, Equatable, Sendable {
@@ -170,13 +171,19 @@ enum AgentBridgeHTTPStatus: Int, Equatable, Sendable {
 struct AgentBridgeHTTPResponse: Sendable {
     let status: AgentBridgeHTTPStatus
     let code: String
+    var permissionDecision: AgentBridgePermissionDecision? = nil
 
     var data: Data {
         let safeCode = code
             .unicodeScalars
             .filter { $0.isASCII && !CharacterSet.controlCharacters.contains($0) }
             .prefix(96)
-        let body = Data("{\"status\":\"\(status.rawValue < 400 ? "accepted" : "rejected")\",\"code\":\"\(String(safeCode))\"}".utf8)
+        var object: [String: Any] = [
+            "status": status.rawValue < 400 ? "accepted" : "rejected",
+            "code": String(safeCode)
+        ]
+        if let permissionDecision { object["decision"] = permissionDecision.rawValue }
+        let body = (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])) ?? Data()
         let header = "HTTP/1.1 \(status.rawValue) \(status.reason)\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n"
         return Data(header.utf8) + body
     }

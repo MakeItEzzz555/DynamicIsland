@@ -253,24 +253,93 @@ struct AgentUsageSample: Equatable, Codable, Sendable {
     }
 }
 
+struct AgentUsageKey: Hashable, Codable, Sendable {
+    let metric: AgentUsageMetric
+    let scope: String
+}
+
 struct AgentUsage: Equatable, Codable, Sendable {
-    private(set) var samples: [AgentUsageMetric: AgentUsageSample]
+    private var scopedSamples: [AgentUsageKey: AgentUsageSample]
+
+    var samples: [AgentUsageMetric: AgentUsageSample] {
+        var freshest: [AgentUsageMetric: AgentUsageSample] = [:]
+        for (key, sample) in scopedSamples {
+            if let current = freshest[key.metric], current.observedAt > sample.observedAt { continue }
+            freshest[key.metric] = sample
+        }
+        return freshest
+    }
+
+    var allSamples: [AgentUsageSample] { Array(scopedSamples.values) }
+    var scopedEntries: [(key: AgentUsageKey, value: AgentUsageSample)] { Array(scopedSamples) }
+    var isEmpty: Bool { scopedSamples.isEmpty }
 
     init(samples: [AgentUsageMetric: AgentUsageSample] = [:]) {
-        self.samples = samples
+        self.scopedSamples = Dictionary(uniqueKeysWithValues: samples.map {
+            (AgentUsageKey(metric: $0.key, scope: $0.value.scope), $0.value)
+        })
+    }
+
+    init(scopedSamples: [AgentUsageKey: AgentUsageSample]) {
+        self.scopedSamples = scopedSamples
     }
 
     subscript(metric: AgentUsageMetric) -> AgentUsageSample? {
         samples[metric]
     }
 
+    func samples(for metric: AgentUsageMetric) -> [AgentUsageSample] {
+        scopedSamples
+            .filter { $0.key.metric == metric }
+            .map(\.value)
+            .sorted {
+                if $0.observedAt != $1.observedAt { return $0.observedAt > $1.observedAt }
+                return $0.scope < $1.scope
+            }
+    }
+
+    func mapSamples(_ transform: (AgentUsageSample) -> AgentUsageSample) -> AgentUsage {
+        AgentUsage(scopedSamples: scopedSamples.mapValues(transform))
+    }
+
     mutating func merge(_ update: AgentUsage) {
-        for (metric, sample) in update.samples where sample.isValid {
-            if let current = samples[metric], current.observedAt > sample.observedAt {
+        for (key, sample) in update.scopedSamples where sample.isValid {
+            if let current = scopedSamples[key], current.observedAt > sample.observedAt {
                 continue
             }
-            samples[metric] = sample
+            scopedSamples[key] = sample
         }
+    }
+
+    private enum CodingKeys: String, CodingKey { case samples, scopedSamples }
+
+    private struct ScopedSample: Codable {
+        let metric: AgentUsageMetric
+        let sample: AgentUsageSample
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let values = try container.decodeIfPresent([ScopedSample].self, forKey: .scopedSamples) {
+            scopedSamples = Dictionary(uniqueKeysWithValues: values.map {
+                (AgentUsageKey(metric: $0.metric, scope: $0.sample.scope), $0.sample)
+            })
+        } else {
+            let legacy = try container.decodeIfPresent([AgentUsageMetric: AgentUsageSample].self, forKey: .samples) ?? [:]
+            scopedSamples = Dictionary(uniqueKeysWithValues: legacy.map {
+                (AgentUsageKey(metric: $0.key, scope: $0.value.scope), $0.value)
+            })
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        let values = scopedSamples.map { ScopedSample(metric: $0.key.metric, sample: $0.value) }
+            .sorted {
+                if $0.metric.rawValue != $1.metric.rawValue { return $0.metric.rawValue < $1.metric.rawValue }
+                return $0.sample.scope < $1.sample.scope
+            }
+        try container.encode(values, forKey: .scopedSamples)
     }
 }
 

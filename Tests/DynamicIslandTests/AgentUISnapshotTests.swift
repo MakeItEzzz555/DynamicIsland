@@ -111,6 +111,7 @@ final class AgentUISnapshotTests: XCTestCase {
             AgentDashboardStack(
                 sessions: sessions,
                 showsUsage: showsUsage,
+                approvalControl: AgentApprovalController(),
                 layout: AgentDashboardLayoutProjection.make(width: 792),
                 reduceMotion: false
             )

@@ -55,7 +55,7 @@ enum AgentPrivacyProjection {
     }
 
     static func usage(_ usage: AgentUsage) -> AgentUsage {
-        AgentUsage(samples: usage.samples.mapValues { sample in
+        usage.mapSamples { sample in
             AgentUsageSample(
                 value: sample.value,
                 limit: sample.limit,
@@ -64,7 +64,7 @@ enum AgentPrivacyProjection {
                 source: title(sample.source, fallback: "unknown"),
                 observedAt: sample.observedAt
             )
-        })
+        }
     }
 
     static func normalized(_ value: String?) -> String? {

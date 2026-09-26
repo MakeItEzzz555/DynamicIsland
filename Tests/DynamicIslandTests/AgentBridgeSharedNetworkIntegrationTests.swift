@@ -1,4 +1,5 @@
 import AgentBridgeShared
+import CodexHookShared
 import Foundation
 import XCTest
 @testable import DynamicIsland
@@ -37,6 +38,9 @@ final class AgentBridgeSharedNetworkIntegrationTests: XCTestCase {
             codexDiscoveryPublisher: try AgentBridgeDiscoveryPublisher(
                 recordURL: directory.appendingPathComponent("codex-hook-v1.json")
             ),
+            codexPermissionDiscoveryPublisher: try AgentBridgeDiscoveryPublisher(
+                recordURL: directory.appendingPathComponent("codex-permission-v1.json")
+            ),
             claudeDiscoveryPublisher: try AgentBridgeDiscoveryPublisher(
                 recordURL: directory.appendingPathComponent("claude-hook-v1.json")
             )
@@ -52,6 +56,9 @@ final class AgentBridgeSharedNetworkIntegrationTests: XCTestCase {
             discoveryPublisher: try AgentBridgeDiscoveryPublisher(recordURL: recordURL),
             codexDiscoveryPublisher: try AgentBridgeDiscoveryPublisher(
                 recordURL: directory.appendingPathComponent("codex-hook-v1.json")
+            ),
+            codexPermissionDiscoveryPublisher: try AgentBridgeDiscoveryPublisher(
+                recordURL: directory.appendingPathComponent("codex-permission-v1.json")
             ),
             claudeDiscoveryPublisher: try AgentBridgeDiscoveryPublisher(
                 recordURL: directory.appendingPathComponent("claude-hook-v1.json")
@@ -73,28 +80,115 @@ final class AgentBridgeSharedNetworkIntegrationTests: XCTestCase {
         XCTAssertEqual(secondStore.sessions.count, 1)
     }
 
+    func testDedicatedCodexPermissionRouteReturnsExactOneShotAllowAndDeny() async throws {
+        let fixture = try makeBridgeFixture()
+        defer {
+            fixture.bridge.stop()
+            try? FileManager.default.removeItem(at: fixture.directory)
+        }
+        await fixture.bridge.start()
+
+        let client = AgentBridgeClient(
+            profiles: try AgentBridgeDiscoveryReader(recordURL: fixture.permissionRecordURL)
+        )
+        let observerClient = AgentBridgeClient(
+            profiles: try AgentBridgeDiscoveryReader(recordURL: fixture.codexRecordURL)
+        )
+        for (index, expected) in [AgentBridgePermissionDecision.allow, .deny].enumerated() {
+            let start = Data("""
+            {"session_id":"permission-\(index)","cwd":"/tmp/project","hook_event_name":"SessionStart","source":"startup"}
+            """.utf8)
+            let startResult = try await observerClient.sendEvents(
+                input: CodexHookNormalizer.normalize(start)
+            )
+            XCTAssertEqual(startResult, .accepted)
+            let input = Data("""
+            {"session_id":"permission-\(index)","turn_id":"turn-\(index)","cwd":"/tmp/project","hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"git status"}}
+            """.utf8)
+            let normalized = try CodexHookNormalizer.normalize(input)
+            let response = Task { try await client.requestCodexPermission(input: normalized) }
+
+            for _ in 0..<100 where fixture.approvals.pendingRequests.isEmpty {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            let pending = try XCTUnwrap(fixture.approvals.pendingRequests.values.first)
+            XCTAssertEqual(
+                fixture.approvals.resolve(
+                    session: pending.key.session,
+                    requestID: pending.key.requestID,
+                    decision: expected
+                ),
+                .accepted
+            )
+            let received = try await response.value
+            XCTAssertEqual(received, expected)
+            XCTAssertEqual(
+                fixture.approvals.resolve(
+                    session: pending.key.session,
+                    requestID: pending.key.requestID,
+                    decision: expected
+                ),
+                .missing
+            )
+        }
+    }
+
+    func testGenericBridgeCredentialCannotControlCodexApproval() async throws {
+        let fixture = try makeBridgeFixture()
+        defer {
+            fixture.bridge.stop()
+            try? FileManager.default.removeItem(at: fixture.directory)
+        }
+        await fixture.bridge.start()
+        let genericClient = AgentBridgeClient(
+            profiles: try AgentBridgeDiscoveryReader(recordURL: fixture.recordURL)
+        )
+        let input = Data("""
+        {"session_id":"generic-denied","turn_id":"turn","cwd":"/tmp/project","hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"git status"}}
+        """.utf8)
+        let normalized = try CodexHookNormalizer.normalize(input)
+
+        do {
+            _ = try await genericClient.requestCodexPermission(input: normalized)
+            XCTFail("Generic bridge credential must not authenticate the permission route")
+        } catch let error as AgentBridgeClientError {
+            XCTAssertEqual(error, .authenticationFailed)
+        }
+        XCTAssertTrue(fixture.approvals.pendingRequests.isEmpty)
+    }
+
     private func makeBridgeFixture() throws -> (
         directory: URL,
         recordURL: URL,
+        codexRecordURL: URL,
+        permissionRecordURL: URL,
         store: AgentEventStore,
+        approvals: AgentApprovalController,
         bridge: AgentBridge
     ) {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("AgentBridgeSharedNetwork-\(UUID().uuidString)", isDirectory: true)
         let recordURL = directory.appendingPathComponent("bridge-v1.json")
+        let codexRecordURL = directory.appendingPathComponent("codex-hook-v1.json")
+        let permissionRecordURL = directory.appendingPathComponent("codex-permission-v1.json")
         let store = AgentEventStore()
+        let approvals = AgentApprovalController()
         let bridge = AgentBridge(
             eventStore: store,
             credentialStore: FixedAgentBridgeCredentialStore(secret: AgentBridgeTestSupport.secret),
             discoveryPublisher: try AgentBridgeDiscoveryPublisher(recordURL: recordURL),
             codexDiscoveryPublisher: try AgentBridgeDiscoveryPublisher(
-                recordURL: directory.appendingPathComponent("codex-hook-v1.json")
+                recordURL: codexRecordURL
+            ),
+            codexPermissionDiscoveryPublisher: try AgentBridgeDiscoveryPublisher(
+                recordURL: permissionRecordURL
             ),
             claudeDiscoveryPublisher: try AgentBridgeDiscoveryPublisher(
                 recordURL: directory.appendingPathComponent("claude-hook-v1.json")
-            )
+            ),
+            approvals: approvals
         )
-        return (directory, recordURL, store, bridge)
+        return (directory, recordURL, codexRecordURL, permissionRecordURL, store, approvals, bridge)
     }
 
     private func normalizedInput(eventID: String) throws -> Data {

@@ -1,3 +1,4 @@
+import AgentBridgeShared
 import SwiftUI
 
 enum AgentVisualStyle {
@@ -48,12 +49,14 @@ enum AgentVisualStyle {
 struct AgentActivityDashboardView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var agentEvents: AgentEventStore
+    @ObservedObject var approvalControl: AgentApprovalController
     let availableHeight: CGFloat
 
     var body: some View {
         AgentDashboardContentView(
             sessions: agentEvents.sessions,
             showsUsage: settings.agentUsageMetricsEnabled,
+            approvalControl: approvalControl,
             availableHeight: availableHeight
         )
     }
@@ -62,6 +65,7 @@ struct AgentActivityDashboardView: View {
 struct AgentDashboardContentView: View {
     let sessions: [AgentSession]
     let showsUsage: Bool
+    @ObservedObject var approvalControl: AgentApprovalController
     let availableHeight: CGFloat
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -76,6 +80,7 @@ struct AgentDashboardContentView: View {
                         AgentDashboardStack(
                             sessions: sessions,
                             showsUsage: showsUsage,
+                            approvalControl: approvalControl,
                             layout: layout,
                             reduceMotion: reduceMotion
                         )
@@ -108,6 +113,7 @@ struct AgentDashboardContentView: View {
 struct AgentDashboardStack: View {
     let sessions: [AgentSession]
     let showsUsage: Bool
+    @ObservedObject var approvalControl: AgentApprovalController
     let layout: AgentDashboardLayoutProjection
     let reduceMotion: Bool
 
@@ -133,6 +139,7 @@ struct AgentDashboardStack: View {
                     group: group,
                     layout: layout,
                     showsUsage: showsUsage,
+                    approvalControl: approvalControl,
                     reduceMotion: reduceMotion
                 )
             }
@@ -223,6 +230,7 @@ private struct AgentProjectSection: View {
     let group: AgentProjectGroupPresentation
     let layout: AgentDashboardLayoutProjection
     let showsUsage: Bool
+    @ObservedObject var approvalControl: AgentApprovalController
     let reduceMotion: Bool
 
     var body: some View {
@@ -234,9 +242,19 @@ private struct AgentProjectSection: View {
             ForEach(Array(group.sessions.enumerated()), id: \.element.id) { index, session in
                 Group {
                     if AgentSessionPresentation.requiresAttention(session) {
-                        AgentAttentionSessionRow(session: session, layout: layout, showsUsage: showsUsage)
+                        AgentAttentionSessionRow(
+                            session: session,
+                            layout: layout,
+                            showsUsage: showsUsage,
+                            approvalControl: approvalControl
+                        )
                     } else {
-                        AgentSessionRow(session: session, layout: layout, showsUsage: showsUsage)
+                        AgentSessionRow(
+                            session: session,
+                            layout: layout,
+                            showsUsage: showsUsage,
+                            approvalControl: approvalControl
+                        )
                     }
                 }
                 .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top)))
@@ -278,12 +296,18 @@ private struct AgentSessionRow: View {
     let session: AgentSession
     let layout: AgentDashboardLayoutProjection
     let showsUsage: Bool
+    @ObservedObject var approvalControl: AgentApprovalController
     @State private var isHovering = false
 
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
             AgentStateMarker(session: session)
-            AgentSessionRowContent(session: session, layout: layout, attention: false)
+            AgentSessionRowContent(
+                session: session,
+                layout: layout,
+                attention: false,
+                approvalControl: approvalControl
+            )
             Spacer(minLength: 8)
             AgentSessionTrailingStatus(session: session, layout: layout, showsUsage: showsUsage)
         }
@@ -305,6 +329,7 @@ private struct AgentAttentionSessionRow: View {
     let session: AgentSession
     let layout: AgentDashboardLayoutProjection
     let showsUsage: Bool
+    @ObservedObject var approvalControl: AgentApprovalController
 
     var body: some View {
         HStack(spacing: 0) {
@@ -315,7 +340,12 @@ private struct AgentAttentionSessionRow: View {
 
             HStack(alignment: .center, spacing: 10) {
                 AgentStateMarker(session: session, emphasized: true)
-                AgentSessionRowContent(session: session, layout: layout, attention: true)
+                AgentSessionRowContent(
+                    session: session,
+                    layout: layout,
+                    attention: true,
+                    approvalControl: approvalControl
+                )
                 Spacer(minLength: 8)
                 AgentSessionTrailingStatus(session: session, layout: layout, showsUsage: showsUsage)
             }
@@ -358,6 +388,7 @@ private struct AgentSessionRowContent: View {
     let session: AgentSession
     let layout: AgentDashboardLayoutProjection
     let attention: Bool
+    @ObservedObject var approvalControl: AgentApprovalController
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -397,19 +428,65 @@ private struct AgentSessionRowContent: View {
                     .lineLimit(2)
             }
 
+            if let actionableApproval {
+                HStack(spacing: 8) {
+                    Button(role: .destructive) {
+                        approvalControl.resolve(
+                            session: session.id,
+                            requestID: actionableApproval.key.requestID,
+                            decision: .deny
+                        )
+                    } label: {
+                        Label("Deny", systemImage: "xmark.circle.fill")
+                    }
+                    .keyboardShortcut(.cancelAction)
+                    .accessibilityHint("Deny this Codex permission request once")
+
+                    Button {
+                        approvalControl.resolve(
+                            session: session.id,
+                            requestID: actionableApproval.key.requestID,
+                            decision: .allow
+                        )
+                    } label: {
+                        Label("Approve", systemImage: "checkmark.circle.fill")
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .accessibilityHint("Approve this Codex permission request once")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .tint(.white.opacity(0.84))
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Codex approval controls")
+            }
+
             let operations = AgentOperationAggregation.make(
                 for: session,
                 includePendingApprovals: !(attention && session.state == .waitingForApproval)
             )
             if !operations.isEmpty {
-                HStack(spacing: 10) {
-                    ForEach(operations.prefix(layout.isNarrow ? 1 : 3)) { operation in
-                        Label(operation.displayTitle, systemImage: operation.symbol)
-                            .lineLimit(1)
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(operations.prefix(layout.isNarrow ? 3 : 6)) { operation in
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Image(systemName: operation.symbol)
+                                .frame(width: 11)
+                            Text(operation.displayTitle)
+                                .fontDesign(operation.isCommand ? .monospaced : .default)
+                                .lineLimit(1)
+                            if let detail = operation.detail, !detail.isEmpty {
+                                Text(detail)
+                                    .fontDesign(operation.isCommand ? .monospaced : .default)
+                                    .foregroundStyle(.white.opacity(0.42))
+                                    .lineLimit(1)
+                            }
+                        }
+                        .foregroundStyle(activityColor(operation.status))
                     }
                 }
                 .font(.system(size: 8.5, weight: .medium))
-                .foregroundStyle(.white.opacity(0.58))
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Live agent activity")
             }
 
             if attention, let target = AgentSourceAssociationResolver.openTarget(for: session) {
@@ -437,6 +514,22 @@ private struct AgentSessionRowContent: View {
 
     private var attentionDetail: String {
         AgentSessionPresentation.attentionDetail(for: session)
+    }
+
+    private var actionableApproval: AgentApprovalControlRequest? {
+        guard attention else { return nil }
+        let pending = approvalControl.pendingRequest(for: session.id)
+        return AgentApprovalPresentation.isActionable(session: session, pending: pending) ? pending : nil
+    }
+
+    private func activityColor(_ status: AgentOperationStatus) -> Color {
+        switch status {
+        case .active: return .white.opacity(0.90)
+        case .pending: return .orange.opacity(0.92)
+        case .failed: return .red.opacity(0.88)
+        case .completed, .resolved: return .white.opacity(0.48)
+        case .cancelled, .unknown: return .white.opacity(0.40)
+        }
     }
 }
 

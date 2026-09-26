@@ -330,6 +330,7 @@ struct AgentOperationSummary: Identifiable, Equatable, Sendable {
     let status: AgentOperationStatus
     let count: Int
     let date: Date
+    let isCommand: Bool
 
     var displayTitle: String {
         count > 1 ? "\(title) ×\(count)" : title
@@ -339,7 +340,7 @@ struct AgentOperationSummary: Identifiable, Equatable, Sendable {
 enum AgentOperationAggregation {
     static func make(
         for session: AgentSession,
-        limit: Int = 3,
+        limit: Int = 6,
         includePendingApprovals: Bool = true
     ) -> [AgentOperationSummary] {
         var operations: [AgentOperationSummary] = []
@@ -354,30 +355,33 @@ enum AgentOperationAggregation {
                         detail: $0.summary,
                         status: .pending,
                         count: 1,
-                        date: $0.requestedAt
+                        date: $0.requestedAt,
+                        isCommand: $0.summary.trimmingCharacters(in: .whitespaces).hasPrefix("$")
                     )
                 }
         }
         operations += session.tools.values.map {
             AgentOperationSummary(
                 id: "tool:\($0.correlationID.rawValue)",
-                symbol: symbol(for: $0.name, fallback: "wrench.and.screwdriver"),
-                title: friendlyTitle($0.name),
-                detail: $0.summary,
+                symbol: classification(name: $0.name, category: $0.category, summary: $0.summary).symbol,
+                title: classification(name: $0.name, category: $0.category, summary: $0.summary).title,
+                detail: safeDetail($0.summary),
                 status: $0.status,
                 count: 1,
-                date: $0.completedAt ?? $0.startedAt
+                date: $0.completedAt ?? $0.startedAt,
+                isCommand: classification(name: $0.name, category: $0.category, summary: $0.summary).isCommand
             )
         }
         operations += session.commands.values.map {
             AgentOperationSummary(
                 id: "command:\($0.correlationID.rawValue)",
-                symbol: symbol(for: $0.displaySummary, fallback: "terminal"),
-                title: friendlyTitle($0.displaySummary),
+                symbol: "terminal",
+                title: commandTitle($0.displaySummary),
                 detail: $0.exitCode.map { "Exit \($0)" },
                 status: $0.status,
                 count: 1,
-                date: $0.completedAt ?? $0.startedAt
+                date: $0.completedAt ?? $0.startedAt,
+                isCommand: true
             )
         }
         operations += session.subagents.values.map {
@@ -388,13 +392,37 @@ enum AgentOperationAggregation {
                 detail: $0.displayName,
                 status: $0.status,
                 count: 1,
-                date: $0.endedAt ?? $0.startedAt
+                date: $0.endedAt ?? $0.startedAt,
+                isCommand: false
+            )
+        }
+
+        operations += session.recentActivity.compactMap { activity in
+            let title: String
+            let symbol: String
+            switch activity.kind {
+            case .session: title = "Starting session"; symbol = "play.circle"
+            case .thinking: title = "Thinking"; symbol = "brain.head.profile"
+            case .plan: title = activity.status == .completed ? "Plan ready" : "Planning"; symbol = "list.bullet.clipboard"
+            case .userInput: title = "Waiting for input"; symbol = "person.crop.circle.badge.questionmark"
+            case .completion: title = "Completed"; symbol = "checkmark.circle.fill"
+            case .failure: title = "Failed"; symbol = "exclamationmark.triangle.fill"
+            case .interruption: title = "Interrupted"; symbol = "stop.circle.fill"
+            case .tool, .command, .approval, .subagent: return nil
+            }
+            return AgentOperationSummary(
+                id: "activity:\(activity.id.rawValue)", symbol: symbol, title: title,
+                detail: nil, status: activity.status, count: 1, date: activity.timestamp,
+                isCommand: false
             )
         }
 
         var aggregated: [String: AgentOperationSummary] = [:]
         for operation in operations.sorted(by: operationOrder) {
-            let key = "\(operation.title.lowercased())|\(operation.status.rawValue)"
+            let isCurrent = operation.status == .pending || operation.status == .active
+            let key = isCurrent
+                ? operation.id
+                : "\(operation.title.lowercased())|\(operation.status.rawValue)"
             if let existing = aggregated[key] {
                 aggregated[key] = AgentOperationSummary(
                     id: existing.id,
@@ -403,13 +431,18 @@ enum AgentOperationAggregation {
                     detail: existing.detail ?? operation.detail,
                     status: existing.status,
                     count: existing.count + 1,
-                    date: max(existing.date, operation.date)
+                    date: max(existing.date, operation.date),
+                    isCommand: existing.isCommand
                 )
             } else {
                 aggregated[key] = operation
             }
         }
-        return Array(aggregated.values.sorted(by: operationOrder).prefix(max(limit, 0)))
+        let selected = aggregated.values.sorted(by: operationOrder).prefix(max(limit, 0))
+        return selected.sorted {
+            if $0.date != $1.date { return $0.date < $1.date }
+            return $0.id < $1.id
+        }
     }
 
     private static func operationOrder(_ lhs: AgentOperationSummary, _ rhs: AgentOperationSummary) -> Bool {
@@ -420,23 +453,59 @@ enum AgentOperationAggregation {
         return lhs.id < rhs.id
     }
 
-    private static func friendlyTitle(_ raw: String) -> String {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        let lower = trimmed.lowercased()
-        if lower == "bash" || lower == "shell" || lower == "terminal" { return "Bash" }
-        if lower.contains("test") { return "Run tests" }
-        if lower.contains("search") || lower.contains("grep") || lower.contains("find") { return "Search repository" }
-        if lower.contains("read") || lower.contains("file") { return "Read file" }
-        guard let first = trimmed.first else { return "Operation" }
-        return String(first).uppercased() + trimmed.dropFirst()
+    private static func classification(name: String, category: String?, summary: String?) -> (title: String, symbol: String, isCommand: Bool) {
+        let value = [name, category, summary].compactMap { $0 }.joined(separator: " ").lowercased()
+        if value.contains("apply_patch") || value.contains("edit") || value.contains("write") {
+            return ("Edit file", "pencil.line", false)
+        }
+        if value.contains("search") || value.contains("grep") || value.contains("find") || value.contains("ripgrep") {
+            return ("Search repository", "magnifyingglass", false)
+        }
+        if value.contains("read") || value.contains("filesystem") {
+            return ("Read file", "doc.text", false)
+        }
+        if value.contains("browser") || value.contains("web") {
+            return ("Search web", "globe", false)
+        }
+        if value.contains("test") { return ("Run tests", "checkmark.circle", true) }
+        if value.contains("build") { return ("Build project", "hammer", true) }
+        if value.contains("bash") || value.contains("shell") || value.contains("terminal") || value.contains("command") {
+            return ("Run command", "terminal", true)
+        }
+        return ("Use tool", "wrench.and.screwdriver", false)
     }
 
-    private static func symbol(for raw: String, fallback: String) -> String {
+    private static func commandTitle(_ raw: String) -> String {
         let lower = raw.lowercased()
-        if lower.contains("test") { return "checkmark.circle" }
-        if lower.contains("search") || lower.contains("grep") || lower.contains("find") { return "magnifyingglass" }
-        if lower.contains("read") || lower.contains("file") { return "doc.text" }
-        return fallback
+        if lower.contains("test") { return "Run tests" }
+        if lower.contains("build") { return "Build project" }
+        if lower.contains("git status") { return "Git status" }
+        if lower.contains("git commit") { return "Commit changes" }
+        if lower.contains("git push") { return "Push branch" }
+        return "Run command"
+    }
+
+    private static func safeDetail(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty, value.count <= 160, !value.contains("\n") else { return nil }
+        let lower = value.lowercased()
+        let sensitive = ["token", "secret", "password", "authorization", "bearer", "api_key", "api-key", "cookie"]
+        guard !sensitive.contains(where: lower.contains) else { return nil }
+        if value.contains("/") {
+            let name = URL(fileURLWithPath: value).lastPathComponent
+            return name.isEmpty ? nil : name
+        }
+        return value
+    }
+}
+
+enum AgentApprovalPresentation {
+    static func isActionable(session: AgentSession, pending: AgentApprovalControlRequest?) -> Bool {
+        session.id.sessionID.provider == .codex &&
+            session.state == .waitingForApproval &&
+            session.capabilities.contains(.approvalControl) &&
+            pending?.key.session == session.id
     }
 }
 
@@ -477,9 +546,18 @@ struct AgentUsagePresentation: Identifiable, Equatable, Sendable {
                 }
             }
         }
-        if session.capabilities.contains(.quotaUsage), let used = session.usage[.quotaUsed] {
-            let limit = used.limit ?? session.usage[.quotaLimit]?.value
-            values.append(.init(id: "quota", label: "Quota", sample: used, effectiveLimit: limit))
+        if session.capabilities.contains(.quotaUsage) {
+            for used in session.usage.samples(for: .quotaUsed) {
+                let limit = used.limit ?? session.usage.samples(for: .quotaLimit)
+                    .first(where: { $0.scope == used.scope })?.value
+                let scope = quotaScopeLabel(used.scope)
+                values.append(.init(
+                    id: "quota:\(used.scope.lowercased())",
+                    label: scope.map { "Quota · \($0)" } ?? "Quota",
+                    sample: used,
+                    effectiveLimit: limit
+                ))
+            }
         }
         if session.capabilities.contains(.quotaUsage), let remaining = session.usage[.rateLimitRemaining] {
             values.append(.init(id: "remaining", label: "Rate remaining", sample: remaining, effectiveLimit: remaining.limit))
@@ -488,6 +566,13 @@ struct AgentUsagePresentation: Identifiable, Equatable, Sendable {
             values.append(.init(id: "cost", label: "Cost", sample: cost, effectiveLimit: cost.limit))
         }
         return values
+    }
+
+    private static func quotaScopeLabel(_ raw: String) -> String? {
+        let value = raw.lowercased().replacingOccurrences(of: "_", with: "-")
+        if value.contains("5h") || value.contains("five-hour") || value.contains("5-hour") { return "5h" }
+        if value.contains("week") || value == "7d" { return "Week" }
+        return nil
     }
 }
 
