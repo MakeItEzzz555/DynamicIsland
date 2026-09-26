@@ -78,9 +78,9 @@ struct AgentDashboardContentView: View {
                 .font(.system(size: 22, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.38))
             Text("No agent sessions")
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .font(.system(size: 13, weight: .semibold))
             Text("Verified Codex and Claude activity will appear after the first accepted event.")
-                .font(.system(size: 9.5, weight: .medium, design: .rounded))
+                .font(.system(size: 9.5, weight: .medium))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 350)
@@ -173,10 +173,10 @@ private struct AgentUsageGauge: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(metric.provider.stableName.capitalized)
-                    .font(.system(size: 8.5, weight: .semibold, design: .rounded))
+                    .font(.system(size: 8.5, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.50))
                 Text(metric.metric.label)
-                    .font(.system(size: 9, weight: .bold, design: .rounded))
+                    .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(.white.opacity(0.82))
                     .lineLimit(1)
                 Text(gaugeValue)
@@ -242,7 +242,7 @@ private struct AgentProjectHeader: View {
     var body: some View {
         HStack(spacing: 9) {
             Text(group.title)
-                .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                .font(.system(size: 11.5, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.82))
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -252,7 +252,7 @@ private struct AgentProjectHeader: View {
                 Label("\(group.subagentCount)", systemImage: "point.3.connected.trianglepath.dotted")
             }
         }
-        .font(.system(size: 8.5, weight: .semibold, design: .rounded))
+        .font(.system(size: 8.5, weight: .semibold))
         .foregroundStyle(.white.opacity(0.46))
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(group.title), \(group.sessions.count) sessions, \(group.subagentCount) subagents")
@@ -282,7 +282,7 @@ private struct AgentSessionRow: View {
     }
 
     private var sessionTitle: String {
-        session.recentActivity.last?.title ?? AgentSessionPresentation.stateLabel(session.state)
+        AgentSessionPresentation.primaryTitle(for: session)
     }
 }
 
@@ -307,10 +307,10 @@ private struct AgentAttentionSessionRow: View {
             .padding(.horizontal, 9)
             .padding(.vertical, 11)
         }
-        .background(AgentVisualStyle.accent(for: session.state).opacity(0.095))
+        .background(AgentVisualStyle.accent(for: session.state).opacity(0.14))
         .overlay(alignment: .bottom) {
             Rectangle()
-                .fill(AgentVisualStyle.accent(for: session.state).opacity(0.14))
+                .fill(AgentVisualStyle.accent(for: session.state).opacity(0.18))
                 .frame(height: 1)
         }
         .accessibilityElement(children: .contain)
@@ -348,7 +348,7 @@ private struct AgentSessionRowContent: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Text(title)
-                    .font(.system(size: attention ? 12.5 : 11.5, weight: .semibold, design: .rounded))
+                    .font(.system(size: attention ? 12.5 : 11.5, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.94))
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -371,18 +371,21 @@ private struct AgentSessionRowContent: View {
                     Text(model)
                 }
             }
-            .font(.system(size: 8.5, weight: .medium, design: .rounded))
+            .font(.system(size: 8.5, weight: .medium))
             .foregroundStyle(.white.opacity(0.48))
             .lineLimit(1)
 
             if attention {
                 Text(attentionDetail)
-                    .font(.system(size: 9.5, weight: .medium, design: .rounded))
+                    .font(.system(size: 9.5, weight: .medium))
                     .foregroundStyle(.white.opacity(0.74))
                     .lineLimit(2)
             }
 
-            let operations = AgentOperationAggregation.make(for: session)
+            let operations = AgentOperationAggregation.make(
+                for: session,
+                includePendingApprovals: !(attention && session.state == .waitingForApproval)
+            )
             if !operations.isEmpty {
                 HStack(spacing: 10) {
                     ForEach(operations.prefix(layout.isNarrow ? 1 : 3)) { operation in
@@ -390,7 +393,7 @@ private struct AgentSessionRowContent: View {
                             .lineLimit(1)
                     }
                 }
-                .font(.system(size: 8.5, weight: .medium, design: .rounded))
+                .font(.system(size: 8.5, weight: .medium))
                 .foregroundStyle(.white.opacity(0.58))
             }
 
@@ -399,7 +402,7 @@ private struct AgentSessionRowContent: View {
                     _ = AppLaunchService.openApp(bundleIdentifier: target.bundleIdentifier)
                 } label: {
                     Label("Continue in \(target.displayName)", systemImage: "arrow.up.forward.app")
-                        .font(.system(size: 8.5, weight: .semibold, design: .rounded))
+                        .font(.system(size: 8.5, weight: .semibold))
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.white.opacity(0.78))
@@ -410,28 +413,11 @@ private struct AgentSessionRowContent: View {
     }
 
     private var title: String {
-        if let activity = session.recentActivity.last, !activity.title.isEmpty {
-            return activity.title
-        }
-        return AgentSessionPresentation.stateLabel(session.state)
+        AgentSessionPresentation.primaryTitle(for: session)
     }
 
     private var attentionDetail: String {
-        switch session.state {
-        case .waitingForApproval:
-            return session.approvals.values
-                .filter { $0.state == .pending }
-                .sorted { $0.requestedAt > $1.requestedAt }
-                .first?.summary ?? "Waiting for approval in \(session.id.sessionID.provider.stableName.capitalized)"
-        case .waitingForUser:
-            return "Waiting for input in \(session.id.sessionID.provider.stableName.capitalized)"
-        case .failed:
-            return session.recentActivity.last?.summary ?? "The provider reported a failure"
-        case .interrupted:
-            return session.recentActivity.last?.summary ?? "The provider reported an interruption"
-        default:
-            return AgentSessionPresentation.stateLabel(session.state)
-        }
+        AgentSessionPresentation.attentionDetail(for: session)
     }
 }
 
@@ -457,7 +443,7 @@ private struct AgentSessionTrailingStatus: View {
                 AgentSessionPresentation.shortStateLabel(session.state),
                 systemImage: AgentSessionPresentation.stateSymbol(session.state)
             )
-            .font(.system(size: 8.5, weight: .semibold, design: .rounded))
+            .font(.system(size: 8.5, weight: .semibold))
             .foregroundStyle(AgentVisualStyle.accent(for: session.state))
             .lineLimit(1)
 
@@ -519,7 +505,7 @@ struct AgentCompactMarkerCluster: View {
             }
             if presentation.overflowCount > 0 {
                 Text("+\(presentation.overflowCount)")
-                    .font(.system(size: 7.5, weight: .bold, design: .rounded))
+                    .font(.system(size: 7.5, weight: .bold))
                     .foregroundStyle(.secondary)
             }
         }
@@ -531,7 +517,7 @@ struct AgentCompactSummaryLabel: View {
 
     var body: some View {
         Text(presentation.summary)
-            .font(.system(size: 8.5, weight: .semibold, design: .rounded))
+            .font(.system(size: 8.5, weight: .semibold))
             .foregroundStyle(.white.opacity(0.90))
             .lineLimit(1)
             .truncationMode(.tail)
@@ -564,7 +550,7 @@ struct AgentCompactAttentionLeadingView: View {
                 .font(.system(size: 9, weight: .semibold))
                 .foregroundStyle(AgentVisualStyle.providerAccent(provider))
             Text(project.flatMap { $0.isEmpty ? nil : $0 } ?? provider.stableName.capitalized)
-                .font(.system(size: 9, weight: .semibold, design: .rounded))
+                .font(.system(size: 9, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.88))
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -582,7 +568,7 @@ struct AgentCompactAttentionTrailingView: View {
                 .font(.system(size: 9, weight: .bold))
                 .foregroundStyle(accent)
             Text(text)
-                .font(.system(size: 8.5, weight: .semibold, design: .rounded))
+                .font(.system(size: 8.5, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.90))
                 .lineLimit(1)
                 .truncationMode(.tail)
