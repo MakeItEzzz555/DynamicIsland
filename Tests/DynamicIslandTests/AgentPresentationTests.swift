@@ -243,6 +243,36 @@ final class AgentPresentationTests: XCTestCase {
         )
     }
 
+    func testAttentionPrimaryTitlePreservesDistinctStructuredTaskTitle() {
+        var value = session(state: .waitingForApproval, projectName: "storefront")
+        let request = AgentCorrelationID(rawValue: "approval-task")
+        value.approvals[request] = AgentApproval(
+            requestID: request,
+            summary: "Apply the checkout schema migration",
+            operationCorrelationID: request,
+            requestedAt: now,
+            resolvedAt: nil,
+            expiresAt: nil,
+            state: .pending
+        )
+        value.recentActivity = [
+            AgentActivity(
+                id: AgentEventID(rawValue: "approval-task-event"),
+                kind: .approval,
+                title: "Improve the checkout flow",
+                summary: "Apply the checkout schema migration",
+                status: .pending,
+                correlationID: request,
+                timestamp: now
+            )
+        ]
+
+        XCTAssertEqual(
+            AgentSessionPresentation.primaryTitle(for: value),
+            "Improve the checkout flow"
+        )
+    }
+
     func testNarrowLayoutDropsLowerPriorityMetadataBeforeCoreState() {
         let narrow = AgentDashboardLayoutProjection.make(width: 500)
         let wide = AgentDashboardLayoutProjection.make(width: 800)
