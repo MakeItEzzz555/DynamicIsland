@@ -246,11 +246,11 @@ private struct AgentProjectHeader: View {
                 .foregroundStyle(.white.opacity(0.82))
                 .lineLimit(1)
                 .truncationMode(.middle)
-            Spacer(minLength: 8)
             Label("\(group.sessions.count)", systemImage: "rectangle.stack")
             if group.subagentCount > 0 {
                 Label("\(group.subagentCount)", systemImage: "point.3.connected.trianglepath.dotted")
             }
+            Spacer(minLength: 8)
         }
         .font(.system(size: 8.5, weight: .semibold))
         .foregroundStyle(.white.opacity(0.46))
