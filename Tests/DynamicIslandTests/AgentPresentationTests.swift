@@ -403,6 +403,23 @@ final class AgentPresentationTests: XCTestCase {
         XCTAssertEqual(metrics.first { $0.label == "Quota · Week" }?.sample.value, 50)
     }
 
+    func testDashboardPreviewUsesSyntheticScopedUsageWithoutControlAuthority() throws {
+        let sessions = AgentDashboardPreviewFactory.sessions(now: now)
+        XCTAssertEqual(sessions.count, 3)
+
+        let approval = try XCTUnwrap(
+            sessions.first { $0.state == .waitingForApproval }
+        )
+        XCTAssertFalse(approval.capabilities.contains(.approvalControl))
+        XCTAssertFalse(approval.capabilities.contains(.verifiedSourceIdentity))
+        XCTAssertFalse(approval.capabilities.contains(.sourceAppOpen))
+
+        let metrics = AgentGlobalUsagePresentation.make(sessions: sessions, limit: 5)
+        XCTAssertTrue(metrics.contains { $0.metric.label == "Quota · 5h" })
+        XCTAssertTrue(metrics.contains { $0.metric.label == "Quota · Week" })
+        XCTAssertTrue(metrics.contains { $0.metric.label == "Context" })
+    }
+
     func testApprovalControlsRequireExactPendingControlEvidence() {
         var value = session(provider: .codex, state: .waitingForApproval, capabilities: [.approvalObservation])
         let request = AgentApprovalControlRequest(
