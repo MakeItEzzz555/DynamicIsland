@@ -206,7 +206,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if settingsController == nil {
             settingsController = SettingsWindowController(
                 settings: settings,
-                shortcuts: shortcuts
+                shortcuts: shortcuts,
+                agentIngestion: agentIngestion,
+                agentEvents: agentEvents
             )
         }
         settingsController?.show()

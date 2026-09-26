@@ -5,7 +5,12 @@ import SwiftUI
 final class SettingsWindowController: NSObject, NSWindowDelegate {
     private let window: NSWindow
 
-    init(settings: AppSettings, shortcuts: ShortcutsStore) {
+    init(
+        settings: AppSettings,
+        shortcuts: ShortcutsStore,
+        agentIngestion: AgentIngestionCoordinator,
+        agentEvents: AgentEventStore
+    ) {
         window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 920, height: 700),
             styleMask: [.titled, .closable, .miniaturizable],
@@ -15,7 +20,14 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         window.title = "DynamicIsland Settings"
         window.center()
         window.isReleasedWhenClosed = false
-        window.contentView = NSHostingView(rootView: SettingsView(settings: settings, shortcuts: shortcuts))
+        window.contentView = NSHostingView(
+            rootView: SettingsView(
+                settings: settings,
+                shortcuts: shortcuts,
+                agentIngestion: agentIngestion,
+                agentEvents: agentEvents
+            )
+        )
         super.init()
         window.delegate = self
     }
