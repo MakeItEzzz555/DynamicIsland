@@ -30,9 +30,23 @@ final class AgentPresentationTests: XCTestCase {
             session(provider: .codex, nativeID: "approval", state: .waitingForApproval)
         ]
         let presentation = try! XCTUnwrap(AgentCompactPresentation.make(sessions: sessions))
-        XCTAssertEqual(presentation.sessions.map(\.state), [.waitingForApproval, .failed, .runningCommand])
-        XCTAssertEqual(presentation.overflowCount, 2)
-        XCTAssertEqual(presentation.summary, "1 waiting · 1 failed")
+        XCTAssertEqual(presentation.sessions.map(\.state), [.waitingForApproval, .runningCommand, .thinking])
+        XCTAssertEqual(presentation.overflowCount, 1)
+        XCTAssertEqual(presentation.summary, "1 waiting · 1 working")
+    }
+
+    func testRoutineCompactPresentationExcludesTerminalHistory() throws {
+        let active = session(provider: .codex, nativeID: "active", state: .working)
+        let completed = session(provider: .codex, nativeID: "completed", state: .completed)
+        let failed = session(provider: .claude, nativeID: "failed", state: .failed)
+
+        let presentation = try XCTUnwrap(
+            AgentCompactPresentation.make(sessions: [completed, failed, active])
+        )
+
+        XCTAssertEqual(presentation.sessions.map { $0.id.sessionID.nativeID }, ["active"])
+        XCTAssertEqual(presentation.overflowCount, 0)
+        XCTAssertEqual(presentation.summary, "Codex working")
     }
 
     func testStableTieBreakUsesProviderThenIdentity() {
@@ -162,6 +176,7 @@ final class AgentPresentationTests: XCTestCase {
         XCTAssertTrue(AgentSessionPresentation.requiresAttention(session(state: .waitingForUser)))
         XCTAssertTrue(AgentSessionPresentation.requiresAttention(session(state: .failed)))
         XCTAssertTrue(AgentSessionPresentation.requiresAttention(session(state: .interrupted)))
+        XCTAssertTrue(AgentSessionPresentation.requiresAttention(session(state: .planReady)))
         XCTAssertFalse(AgentSessionPresentation.requiresAttention(session(state: .working)))
         XCTAssertFalse(AgentSessionPresentation.requiresAttention(session(state: .completed)))
     }
@@ -187,6 +202,45 @@ final class AgentPresentationTests: XCTestCase {
         XCTAssertEqual(operation.displayTitle, "Bash ×3")
         XCTAssertEqual(operation.count, 3)
         XCTAssertEqual(value.tools.count, 3)
+    }
+
+    func testAttentionPrimaryTitleAvoidsRepeatingApprovalActivity() {
+        var value = session(state: .waitingForApproval, projectName: "DynamicIsland")
+        value.recentActivity = [
+            AgentActivity(
+                id: AgentEventID(rawValue: "approval-event"),
+                kind: .approval,
+                title: "Bash approval required",
+                summary: "Bash approval required",
+                status: .pending,
+                correlationID: AgentCorrelationID(rawValue: "approval"),
+                timestamp: now
+            )
+        ]
+
+        XCTAssertEqual(AgentSessionPresentation.primaryTitle(for: value), "DynamicIsland")
+    }
+
+    func testAttentionOperationListCanSuppressRedundantPendingApproval() {
+        var value = session(state: .waitingForApproval)
+        let request = AgentCorrelationID(rawValue: "approval")
+        value.approvals[request] = AgentApproval(
+            requestID: request,
+            summary: "Bash approval required",
+            operationCorrelationID: nil,
+            requestedAt: now,
+            resolvedAt: nil,
+            expiresAt: nil,
+            state: .pending
+        )
+
+        XCTAssertEqual(AgentOperationAggregation.make(for: value).first?.title, "Approval requested")
+        XCTAssertTrue(
+            AgentOperationAggregation.make(
+                for: value,
+                includePendingApprovals: false
+            ).isEmpty
+        )
     }
 
     func testNarrowLayoutDropsLowerPriorityMetadataBeforeCoreState() {
@@ -217,6 +271,38 @@ final class AgentPresentationTests: XCTestCase {
         let metrics = AgentGlobalUsagePresentation.make(sessions: [unsupported, supported], limit: 1)
         XCTAssertEqual(metrics.count, 1)
         XCTAssertEqual(metrics.first?.metric.progress, 0.4)
+    }
+
+    func testGlobalUsageChoosesFreshestSourcedMetricPerProvider() throws {
+        let stalePrioritySession = session(
+            nativeID: "waiting",
+            state: .waitingForApproval,
+            capabilities: [.contextUsage],
+            usage: AgentUsage(samples: [
+                .contextUsed: usageSample(value: 20, limit: 100, observedAt: now)
+            ])
+        )
+        let freshSession = session(
+            nativeID: "working",
+            state: .working,
+            capabilities: [.contextUsage],
+            usage: AgentUsage(samples: [
+                .contextUsed: usageSample(
+                    value: 70,
+                    limit: 100,
+                    observedAt: now.addingTimeInterval(30)
+                )
+            ])
+        )
+
+        let metric = try XCTUnwrap(
+            AgentGlobalUsagePresentation.make(
+                sessions: [stalePrioritySession, freshSession],
+                limit: 1
+            ).first?.metric
+        )
+        XCTAssertEqual(metric.progress, 0.7)
+        XCTAssertEqual(metric.sample.observedAt, now.addingTimeInterval(30))
     }
 
     private func session(
