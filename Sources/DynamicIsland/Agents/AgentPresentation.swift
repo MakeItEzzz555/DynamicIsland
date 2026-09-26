@@ -322,6 +322,271 @@ struct AgentDashboardLayoutProjection: Equatable, Sendable {
     }
 }
 
+enum AgentDashboardPreviewFactory {
+    static func sessions(now: Date = Date()) -> [AgentSession] {
+        [
+            approvalSession(now: now),
+            workingSession(now: now),
+            designSession(now: now)
+        ]
+    }
+
+    private static func approvalSession(now: Date) -> AgentSession {
+        let request = AgentCorrelationID(rawValue: "preview-approval")
+        let read = AgentCorrelationID(rawValue: "preview-read")
+        let edit = AgentCorrelationID(rawValue: "preview-edit")
+        let command = AgentCorrelationID(rawValue: "preview-command")
+        let subagent = AgentCorrelationID(rawValue: "preview-subagent")
+
+        return AgentSession(
+            id: instance(provider: .codex, nativeID: "preview-storefront-approval"),
+            source: .terminal,
+            state: .waitingForApproval,
+            project: AgentProjectContext(
+                displayName: "storefront",
+                repositoryIdentity: "preview/storefront",
+                gitBranch: "checkout",
+                model: "gpt-5.6-sol"
+            ),
+            capabilities: capabilities([.quotaUsage, .contextUsage, .approvalObservation, .subagentLifecycle]),
+            usage: usage(
+                provider: "preview",
+                fiveHour: 62,
+                weekly: 41,
+                context: 43,
+                now: now
+            ),
+            tools: [
+                read: AgentTool(
+                    correlationID: read,
+                    name: "read_file",
+                    category: "read",
+                    summary: "checkout.sql",
+                    status: .completed,
+                    startedAt: now.addingTimeInterval(-34),
+                    completedAt: now.addingTimeInterval(-31),
+                    success: true
+                ),
+                edit: AgentTool(
+                    correlationID: edit,
+                    name: "apply_patch",
+                    category: "edit",
+                    summary: "checkout.sql",
+                    status: .completed,
+                    startedAt: now.addingTimeInterval(-24),
+                    completedAt: now.addingTimeInterval(-18),
+                    success: true
+                )
+            ],
+            commands: [
+                command: AgentCommand(
+                    correlationID: command,
+                    displaySummary: "npm run db:migrate",
+                    status: .pending,
+                    startedAt: now.addingTimeInterval(-4),
+                    completedAt: nil,
+                    exitCode: nil,
+                    success: nil
+                )
+            ],
+            approvals: [
+                request: AgentApproval(
+                    requestID: request,
+                    summary: "$ npm run db:migrate",
+                    operationCorrelationID: command,
+                    requestedAt: now.addingTimeInterval(-3),
+                    resolvedAt: nil,
+                    expiresAt: now.addingTimeInterval(120),
+                    state: .pending
+                )
+            ],
+            subagents: [
+                subagent: AgentSubagent(
+                    nativeID: "preview-reviewer",
+                    correlationID: subagent,
+                    displayName: "Reviewer",
+                    status: .active,
+                    startedAt: now.addingTimeInterval(-42),
+                    endedAt: nil
+                )
+            ],
+            recentActivity: [
+                AgentActivity(
+                    id: AgentEventID(rawValue: "preview-plan"),
+                    kind: .plan,
+                    title: "Improve the checkout flow",
+                    summary: "Apply the checkout schema migration",
+                    status: .completed,
+                    correlationID: nil,
+                    timestamp: now.addingTimeInterval(-45)
+                ),
+                AgentActivity(
+                    id: AgentEventID(rawValue: "preview-approval-event"),
+                    kind: .approval,
+                    title: "Improve the checkout flow",
+                    summary: "Apply the checkout schema migration",
+                    status: .pending,
+                    correlationID: request,
+                    timestamp: now.addingTimeInterval(-3)
+                )
+            ],
+            startedAt: now.addingTimeInterval(-420),
+            endedAt: nil,
+            lastUpdatedAt: now.addingTimeInterval(-3)
+        )
+    }
+
+    private static func workingSession(now: Date) -> AgentSession {
+        let search = AgentCorrelationID(rawValue: "preview-search")
+        return AgentSession(
+            id: instance(provider: .codex, nativeID: "preview-storefront-search"),
+            source: .terminal,
+            state: .runningTool,
+            project: AgentProjectContext(
+                displayName: "storefront",
+                repositoryIdentity: "preview/storefront",
+                gitBranch: "catalog-search",
+                model: "gpt-5.6-sol"
+            ),
+            capabilities: capabilities([.quotaUsage, .contextUsage, .toolLifecycle]),
+            usage: usage(provider: "preview", fiveHour: 62, weekly: 41, context: 56, now: now),
+            tools: [
+                search: AgentTool(
+                    correlationID: search,
+                    name: "search",
+                    category: "read",
+                    summary: "catalog",
+                    status: .active,
+                    startedAt: now.addingTimeInterval(-7),
+                    completedAt: nil,
+                    success: nil
+                )
+            ],
+            commands: [:],
+            approvals: [:],
+            subagents: [:],
+            recentActivity: [
+                AgentActivity(
+                    id: AgentEventID(rawValue: "preview-search-activity"),
+                    kind: .tool,
+                    title: "Add catalog search",
+                    summary: "Search repository",
+                    status: .active,
+                    correlationID: search,
+                    timestamp: now.addingTimeInterval(-7)
+                )
+            ],
+            startedAt: now.addingTimeInterval(-180),
+            endedAt: nil,
+            lastUpdatedAt: now.addingTimeInterval(-7)
+        )
+    }
+
+    private static func designSession(now: Date) -> AgentSession {
+        let edit = AgentCorrelationID(rawValue: "preview-design-edit")
+        return AgentSession(
+            id: instance(provider: .claude, nativeID: "preview-design-system"),
+            source: .terminal,
+            state: .working,
+            project: AgentProjectContext(
+                displayName: "design-system",
+                repositoryIdentity: "preview/design-system",
+                gitBranch: "main",
+                model: "claude-sonnet"
+            ),
+            capabilities: capabilities([.contextUsage, .toolLifecycle]),
+            usage: AgentUsage(samples: [
+                .contextUsed: AgentUsageSample(
+                    value: 21,
+                    limit: 100,
+                    unit: .fraction,
+                    scope: "session",
+                    source: "preview",
+                    observedAt: now
+                )
+            ]),
+            tools: [
+                edit: AgentTool(
+                    correlationID: edit,
+                    name: "edit",
+                    category: "edit",
+                    summary: "ComponentLibrary.swift",
+                    status: .active,
+                    startedAt: now.addingTimeInterval(-6),
+                    completedAt: nil,
+                    success: nil
+                )
+            ],
+            commands: [:],
+            approvals: [:],
+            subagents: [:],
+            recentActivity: [
+                AgentActivity(
+                    id: AgentEventID(rawValue: "preview-design-activity"),
+                    kind: .tool,
+                    title: "Polish the component library",
+                    summary: "Edit component library",
+                    status: .active,
+                    correlationID: edit,
+                    timestamp: now.addingTimeInterval(-6)
+                )
+            ],
+            startedAt: now.addingTimeInterval(-240),
+            endedAt: nil,
+            lastUpdatedAt: now.addingTimeInterval(-6)
+        )
+    }
+
+    private static func instance(provider: AgentProvider, nativeID: String) -> AgentSessionInstanceID {
+        AgentSessionInstanceID(
+            sessionID: AgentSessionID(provider: provider, nativeID: nativeID),
+            generation: AgentSessionGeneration(rawValue: 1)
+        )
+    }
+
+    private static func capabilities(_ values: Set<AgentCapability>) -> AgentCapabilities {
+        let observedAt = Date(timeIntervalSince1970: 1)
+        return AgentCapabilities(evidence: Dictionary(uniqueKeysWithValues: values.map {
+            ($0, AgentCapabilityEvidence(authority: .lifecycle, source: "preview", observedAt: observedAt))
+        }))
+    }
+
+    private static func usage(
+        provider: String,
+        fiveHour: Double,
+        weekly: Double,
+        context: Double,
+        now: Date
+    ) -> AgentUsage {
+        AgentUsage(scopedSamples: [
+            AgentUsageKey(metric: .quotaUsed, scope: "5h"): AgentUsageSample(
+                value: fiveHour,
+                limit: 100,
+                unit: .fraction,
+                scope: "5h",
+                source: provider,
+                observedAt: now
+            ),
+            AgentUsageKey(metric: .quotaUsed, scope: "weekly"): AgentUsageSample(
+                value: weekly,
+                limit: 100,
+                unit: .fraction,
+                scope: "weekly",
+                source: provider,
+                observedAt: now
+            ),
+            AgentUsageKey(metric: .contextUsed, scope: "session"): AgentUsageSample(
+                value: context,
+                limit: 100,
+                unit: .fraction,
+                scope: "session",
+                source: provider,
+                observedAt: now
+            )
+        ])
+    }
+}
+
 struct AgentOperationSummary: Identifiable, Equatable, Sendable {
     let id: String
     let symbol: String
