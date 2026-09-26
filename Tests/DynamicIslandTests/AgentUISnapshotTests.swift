@@ -63,6 +63,8 @@ final class AgentUISnapshotTests: XCTestCase {
         try renderDashboard(name: "08-attention-row", sessions: [approval, claude], showsUsage: false, output: output)
         try renderDashboard(name: "09-usage-gauges", sessions: [working, approval], output: output)
         try renderDiagnostics(output: output)
+        try renderStandbyDashboard(output: output)
+        try renderPreviewDashboard(output: output)
     }
 
     private func renderCompact(
@@ -124,6 +126,60 @@ final class AgentUISnapshotTests: XCTestCase {
             .padding(12)
             .background(Color(red: 0.055, green: 0.06, blue: 0.12))
         try render(view, size: CGSize(width: 820, height: 440), to: output.appendingPathComponent(name + ".png"))
+    }
+
+    private func renderStandbyDashboard(output: URL) throws {
+        let view = AgentDashboardContentView(
+            sessions: [],
+            showsUsage: true,
+            approvalControl: AgentApprovalController(),
+            availableHeight: 440
+        )
+        .padding(14)
+        .background(Color(red: 0.025, green: 0.027, blue: 0.055))
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .padding(12)
+        .background(Color(red: 0.055, green: 0.06, blue: 0.12))
+
+        try render(
+            view,
+            size: CGSize(width: 820, height: 440),
+            to: output.appendingPathComponent("11-standby-dashboard.png")
+        )
+    }
+
+    private func renderPreviewDashboard(output: URL) throws {
+        let view = VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("Preview data", systemImage: "eye.fill")
+                    .foregroundStyle(.orange)
+                Text("Synthetic sessions and usage — nothing here is live.")
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+            .font(.system(size: 9, weight: .semibold))
+
+            AgentDashboardStack(
+                sessions: AgentDashboardPreviewFactory.sessions(now: now),
+                showsUsage: true,
+                approvalControl: AgentApprovalController(),
+                layout: AgentDashboardLayoutProjection.make(width: 792),
+                reduceMotion: false,
+                previewMode: true
+            )
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(14)
+        .background(Color(red: 0.025, green: 0.027, blue: 0.055))
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .padding(12)
+        .background(Color(red: 0.055, green: 0.06, blue: 0.12))
+
+        try render(
+            view,
+            size: CGSize(width: 820, height: 520),
+            to: output.appendingPathComponent("12-preview-dashboard.png")
+        )
     }
 
     private func renderDiagnostics(output: URL) throws {
