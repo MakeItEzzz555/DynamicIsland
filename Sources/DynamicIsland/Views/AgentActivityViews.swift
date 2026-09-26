@@ -272,7 +272,7 @@ struct AgentDashboardStack: View {
             : []
 
         VStack(alignment: .leading, spacing: 0) {
-            if !metrics.isEmpty {
+            if showsUsage {
                 AgentGlobalSummaryStrip(metrics: metrics, layout: layout)
                     .padding(.bottom, 11)
             }
@@ -301,10 +301,30 @@ private struct AgentGlobalSummaryStrip: View {
     let metrics: [AgentGlobalUsagePresentation]
     let layout: AgentDashboardLayoutProjection
 
+    private var missingSlots: [(String, String)] {
+        let labels = Set(metrics.map { $0.metric.label.lowercased() })
+        let canonical: [(String, String, (String) -> Bool)] = [
+            ("clock", "5h", { $0.contains("5h") }),
+            ("calendar", "Week", { $0.contains("week") }),
+            ("gauge.with.dots.needle.33percent", "Context", { $0 == "context" })
+        ]
+        let available = max(layout.maximumGaugeCount - metrics.count, 0)
+        return Array(
+            canonical
+                .filter { entry in !labels.contains(where: entry.2) }
+                .prefix(available)
+                .map { ($0.0, $0.1) }
+        )
+    }
+
     var body: some View {
         HStack(spacing: layout.isNarrow ? 14 : 22) {
             ForEach(metrics) { metric in
                 AgentUsageGauge(metric: metric)
+                    .frame(maxWidth: layout.isNarrow ? .infinity : nil, alignment: .leading)
+            }
+            ForEach(Array(missingSlots.enumerated()), id: \.offset) { _, slot in
+                AgentStandbyUsageGauge(symbol: slot.0, label: slot.1)
                     .frame(maxWidth: layout.isNarrow ? .infinity : nil, alignment: .leading)
             }
             if !layout.isNarrow {
@@ -315,7 +335,7 @@ private struct AgentGlobalSummaryStrip: View {
         .padding(.vertical, 7)
         .background(.white.opacity(0.025))
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Agent usage summary")
+        .accessibilityLabel(metrics.isEmpty ? "Usage metrics waiting for provider data" : "Agent usage summary")
     }
 }
 
