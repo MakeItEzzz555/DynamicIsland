@@ -179,6 +179,20 @@ enum AgentSessionPresentation {
     }
 
     static func primaryTitle(for session: AgentSession) -> String {
+        if session.state == .waitingForApproval,
+           let activity = session.recentActivity.last {
+            let title = activity.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            let approvalSummary = session.approvals.values
+                .filter { $0.state == .pending }
+                .sorted { $0.requestedAt > $1.requestedAt }
+                .first?.summary
+            if !title.isEmpty,
+               !isGenericApprovalTitle(title),
+               normalizedForComparison(title) != approvalSummary.map(normalizedForComparison) {
+                return title
+            }
+        }
+
         if requiresAttention(session) {
             if let plan = session.recentActivity.reversed().first(where: {
                 $0.kind == .plan && !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -190,6 +204,7 @@ enum AgentSessionPresentation {
                 return project
             }
         }
+
         if let activity = session.recentActivity.last,
            !activity.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return activity.title
@@ -199,6 +214,23 @@ enum AgentSessionPresentation {
             return project
         }
         return stateLabel(session.state)
+    }
+
+    private static func normalizedForComparison(_ value: String) -> String {
+        value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+    }
+
+    private static func isGenericApprovalTitle(_ value: String) -> Bool {
+        let normalized = normalizedForComparison(value)
+        return normalized == "approval" ||
+            normalized == "approval required" ||
+            normalized == "approval requested" ||
+            normalized.hasSuffix(" approval required") ||
+            normalized.hasSuffix(" approval requested")
     }
 
     static func attentionDetail(for session: AgentSession) -> String {
