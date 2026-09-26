@@ -28,6 +28,21 @@ enum AgentVisualStyle {
         case .other: "cube"
         }
     }
+
+    static func attentionSurfaceTint(for state: AgentState) -> Color {
+        switch state {
+        case .waitingForApproval, .waitingForUser:
+            Color(red: 0.72, green: 0.34, blue: 0.42)
+        case .failed:
+            .red
+        case .interrupted:
+            .yellow
+        case .planReady:
+            .cyan
+        default:
+            accent(for: state)
+        }
+    }
 }
 
 struct AgentActivityDashboardView: View {
@@ -160,7 +175,7 @@ private struct AgentUsageGauge: View {
                     Circle()
                         .trim(from: 0, to: progress)
                         .stroke(
-                            AgentVisualStyle.providerAccent(metric.provider).opacity(0.92),
+                            Color.white.opacity(0.88),
                             style: StrokeStyle(lineWidth: 4, lineCap: .round)
                         )
                         .rotationEffect(.degrees(-90))
@@ -307,10 +322,10 @@ private struct AgentAttentionSessionRow: View {
             .padding(.horizontal, 9)
             .padding(.vertical, 11)
         }
-        .background(AgentVisualStyle.accent(for: session.state).opacity(0.14))
+        .background(AgentVisualStyle.attentionSurfaceTint(for: session.state).opacity(0.18))
         .overlay(alignment: .bottom) {
             Rectangle()
-                .fill(AgentVisualStyle.accent(for: session.state).opacity(0.18))
+                .fill(AgentVisualStyle.attentionSurfaceTint(for: session.state).opacity(0.24))
                 .frame(height: 1)
         }
         .accessibilityElement(children: .contain)
