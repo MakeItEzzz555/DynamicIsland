@@ -58,7 +58,7 @@ Plan:
 - Active sessions first, recent sessions second.
 - Add deterministic selected-session state.
 - Preserve project grouping and attention precedence.
-- Reuse Preview mode for deterministic multi-session inspection.
+- Use DEBUG/test-only screenshot fixtures and deterministic synthetic data for multi-session inspection.
 - Add subtle selection and useful session context.
 
 Gate:
@@ -74,7 +74,7 @@ Plan:
 - Multiline prompt composer with selection, copy/paste, Cmd+Enter send, Shift+Enter newline.
 - Interrupt/stop affordance while a managed turn is active.
 - Acquire keyboard focus only when the composer is intentionally focused; release it on collapse/dismiss.
-- Preview-mode console is inspectable but cannot execute real work.
+- DEBUG/test fixture consoles are inspectable but cannot execute real work.
 - Render only provider-supported user-visible content and privacy-projected structured activity.
 
 Gate:
@@ -118,7 +118,7 @@ Goal: finish the complete Agents workspace to the target quality level.
 
 Plan:
 - Fixed usage overview + bounded session workspace + selected-session console/composer.
-- Refine typography, row density, session selection, approval controls, auto-approve status, idle/recent/preview states, and subtle attention glow.
+- Refine typography, row density, session selection, approval controls, auto-approve status, idle/recent live states, DEBUG/test screenshot fixtures, and subtle attention glow.
 - Expand deterministic screenshots for scroll, selection, console, auto-approve, and long histories.
 - Run full build/test/package/signature validation and real-device manual checks.
 

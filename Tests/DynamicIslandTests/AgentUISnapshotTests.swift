@@ -65,6 +65,33 @@ final class AgentUISnapshotTests: XCTestCase {
         try renderDiagnostics(output: output)
         try renderStandbyDashboard(output: output)
         try renderSyntheticDashboardFixture(output: output)
+        try renderWorkspaceDashboard(
+            name: "13-active-recent-workspace",
+            sessions: [approval, working, claude, completed],
+            selectedSessionID: working.id,
+            output: output
+        )
+        try renderWorkspaceDashboard(
+            name: "14-selected-attention-workspace",
+            sessions: [approval, working, completed],
+            selectedSessionID: nil,
+            output: output
+        )
+        let longWorkspace = (0..<9).map { index in
+            session(
+                provider: index.isMultiple(of: 3) ? .claude : .codex,
+                nativeID: "long-\(index)",
+                project: index < 6 ? "DynamicIsland" : "storefront",
+                state: index == 8 ? .completed : (index.isMultiple(of: 2) ? .runningTool : .thinking),
+                progress: index.isMultiple(of: 2) ? Double(index + 1) / 10 : nil
+            )
+        }
+        try renderWorkspaceDashboard(
+            name: "15-long-scroll-workspace",
+            sessions: longWorkspace,
+            selectedSessionID: longWorkspace[2].id,
+            output: output
+        )
     }
 
     private func renderCompact(
@@ -145,6 +172,32 @@ final class AgentUISnapshotTests: XCTestCase {
             view,
             size: CGSize(width: 820, height: 440),
             to: output.appendingPathComponent("11-standby-dashboard.png")
+        )
+    }
+
+    private func renderWorkspaceDashboard(
+        name: String,
+        sessions: [AgentSession],
+        selectedSessionID: AgentSessionInstanceID?,
+        output: URL
+    ) throws {
+        let view = AgentDashboardContentView(
+            sessions: sessions,
+            showsUsage: true,
+            approvalControl: AgentApprovalController(),
+            availableHeight: 440,
+            initialSelectedSessionID: selectedSessionID
+        )
+        .padding(14)
+        .background(Color(red: 0.025, green: 0.027, blue: 0.055))
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .padding(12)
+        .background(Color(red: 0.055, green: 0.06, blue: 0.12))
+
+        try renderHosted(
+            view,
+            size: CGSize(width: 820, height: 480),
+            to: output.appendingPathComponent(name + ".png")
         )
     }
 
@@ -236,6 +289,27 @@ final class AgentUISnapshotTests: XCTestCase {
               let data = image.tiffRepresentation,
               let representation = NSBitmapImageRep(data: data),
               let png = representation.representation(using: .png, properties: [:]) else {
+            XCTFail("Could not render \(url.lastPathComponent)")
+            return
+        }
+        try png.write(to: url, options: .atomic)
+    }
+
+    private func renderHosted<V: View>(_ view: V, size: CGSize, to url: URL) throws {
+        let hostingView = NSHostingView(
+            rootView: view
+                .frame(width: size.width, height: size.height)
+                .preferredColorScheme(.dark)
+        )
+        hostingView.frame = CGRect(origin: .zero, size: size)
+        hostingView.layoutSubtreeIfNeeded()
+
+        guard let representation = hostingView.bitmapImageRepForCachingDisplay(in: hostingView.bounds) else {
+            XCTFail("Could not allocate hosted render for \(url.lastPathComponent)")
+            return
+        }
+        hostingView.cacheDisplay(in: hostingView.bounds, to: representation)
+        guard let png = representation.representation(using: .png, properties: [:]) else {
             XCTFail("Could not render \(url.lastPathComponent)")
             return
         }
