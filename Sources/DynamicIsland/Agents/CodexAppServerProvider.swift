@@ -13,7 +13,8 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
         .resolveApprovals,
         .accountUsage,
         .contextUsage,
-        .streamToolActivity
+        .streamToolActivity,
+        .loadHistory
     ]
     nonisolated let modelSelectionScope: AgentModelSelectionScope? = .nextTurn
     private let client: CodexAppServerClient

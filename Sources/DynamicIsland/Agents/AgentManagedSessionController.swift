@@ -56,12 +56,26 @@ final class AgentManagedSessionController: ObservableObject {
     var managedProvider: AgentProvider? { provider?.provider }
 
     var managedProviders: [AgentProvider] {
-        guard let provider, !provider.interactiveCapabilities.isEmpty else { return [] }
+        guard let provider,
+              !provider.interactiveCapabilities.intersection([
+                .startSession, .resumeSession, .submitPrompt
+              ]).isEmpty else { return [] }
         return [provider.provider]
     }
 
     var modelSelectionScope: AgentModelSelectionScope? {
         provider?.modelSelectionScope
+    }
+
+    func capabilities(for agentProvider: AgentProvider) -> Set<AgentInteractiveCapability> {
+        guard let provider, provider.provider == agentProvider else { return [] }
+        return provider.interactiveCapabilities
+    }
+
+    func supportsManagedControl(for session: AgentSession) -> Bool {
+        !capabilities(for: session.id.sessionID.provider).intersection([
+            .resumeSession, .submitPrompt
+        ]).isEmpty
     }
 
     var interactiveCapabilities: Set<AgentInteractiveCapability> {
@@ -292,12 +306,13 @@ final class AgentManagedSessionController: ObservableObject {
     }
 
     func isManaged(_ session: AgentSession) -> Bool {
-        session.id.sessionID.provider == .codex &&
+        session.id.sessionID.provider == provider?.provider &&
             managed[session.id.sessionID.nativeID] != nil
     }
 
     func mode(for session: AgentSession) -> AgentConsoleMode {
         guard let state = managed[session.id.sessionID.nativeID],
+              capabilities(for: session.id.sessionID.provider).contains(.submitPrompt),
               state.acceptsDirectInput else {
             return .observed
         }
@@ -317,7 +332,8 @@ final class AgentManagedSessionController: ObservableObject {
 
     func refreshTranscript(for session: AgentSession, limit: Int = 80) async {
         guard let provider,
-              session.id.sessionID.provider == provider.provider else { return }
+              session.id.sessionID.provider == provider.provider,
+              provider.interactiveCapabilities.contains(.loadHistory) else { return }
         do {
             let entries = try await provider.readTranscript(
                 nativeSessionID: session.id.sessionID.nativeID,
@@ -339,15 +355,16 @@ final class AgentManagedSessionController: ObservableObject {
     }
 
     func canConnect(_ session: AgentSession) -> Bool {
-        provider != nil &&
-            session.id.sessionID.provider == .codex &&
+        guard let provider else { return false }
+        return session.id.sessionID.provider == provider.provider &&
+            provider.interactiveCapabilities.contains(.resumeSession) &&
             discoveredSessionIDs.contains(session.id.sessionID.nativeID) &&
             managed[session.id.sessionID.nativeID] == nil &&
             !connecting.contains(session.id.sessionID.nativeID)
     }
 
     func shouldPresent(_ session: AgentSession) -> Bool {
-        guard session.id.sessionID.provider == .codex else { return true }
+        guard session.id.sessionID.provider == provider?.provider else { return true }
         let nativeID = session.id.sessionID.nativeID
         guard knownDiscoveredSessionIDs.contains(nativeID) else { return true }
         if discoveredSessionIDs.contains(nativeID) || managed[nativeID] != nil { return true }
@@ -382,7 +399,8 @@ final class AgentManagedSessionController: ObservableObject {
 
     @discardableResult
     func startNewSession(cwd: String?) async -> AgentManagedSessionDescriptor? {
-        guard let provider else { return nil }
+        guard let provider,
+              provider.interactiveCapabilities.contains(.startSession) else { return nil }
         startObserving()
         do {
             let descriptor = try await provider.startSession(cwd: cwd)
@@ -419,6 +437,8 @@ final class AgentManagedSessionController: ObservableObject {
     /// The caller can therefore keep its draft intact across transport/RPC failure.
     func submit(_ prompt: String, for session: AgentSession) async -> Bool {
         guard let provider,
+              provider.interactiveCapabilities.contains(.submitPrompt),
+              provider.provider == session.id.sessionID.provider,
               let bounded = AgentPromptDraftPolicy.submission(from: prompt),
               var state = managed[session.id.sessionID.nativeID],
               state.acceptsDirectInput,
@@ -459,6 +479,8 @@ final class AgentManagedSessionController: ObservableObject {
 
     func interrupt(_ session: AgentSession) {
         guard let provider,
+              provider.provider == session.id.sessionID.provider,
+              provider.interactiveCapabilities.contains(.interrupt),
               let state = managed[session.id.sessionID.nativeID],
               let turnID = state.activeTurnID else {
             return
@@ -619,6 +641,9 @@ final class AgentManagedSessionController: ObservableObject {
     }
 
     private func handleApproval(_ request: AgentManagedApprovalRequest) async {
+        guard provider?.interactiveCapabilities.contains(.resolveApprovals) == true else {
+            return
+        }
         let approvalKey = "\(request.threadID):\(request.itemID)"
         defer { approvalTasks.removeValue(forKey: approvalKey) }
         let correlation = AgentCorrelationID(rawValue: request.itemID)

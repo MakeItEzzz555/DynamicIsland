@@ -420,13 +420,13 @@ private struct AgentSelectedSessionControlView: View {
             }
         } else {
             VStack(spacing: 5) {
-                if session.id.sessionID.provider == .codex {
+                if managedControl.supportsManagedControl(for: session) {
                     HStack(spacing: 8) {
                         Image(systemName: "link.badge.plus")
                             .foregroundStyle(.white.opacity(0.50))
                         Text(session.availability == .resumable
-                            ? "Resumable Codex session"
-                            : "Observed Codex session")
+                            ? "Resumable \(providerName(session)) session"
+                            : "Observed \(providerName(session)) session")
                             .font(.system(size: 8.5, weight: .semibold))
                             .foregroundStyle(.white.opacity(0.62))
                         if let status = managedControl.statusMessage(for: session) {
@@ -451,7 +451,7 @@ private struct AgentSelectedSessionControlView: View {
                             .buttonStyle(.borderless)
                             .font(.system(size: 8.5, weight: .semibold))
                             .disabled(!managedControl.canConnect(session))
-                            .help("Resume this Codex thread through the official app-server control plane")
+                            .help("Resume this provider session through its managed control plane")
                         }
                     }
                     .padding(.horizontal, 8)
@@ -477,6 +477,10 @@ private struct AgentSelectedSessionControlView: View {
             }
         }
     }
+
+    private func providerName(_ session: AgentSession) -> String {
+        session.id.sessionID.provider.stableName.capitalized
+    }
 }
 
 private struct AgentEmptyConsoleState: View {
@@ -484,11 +488,13 @@ private struct AgentEmptyConsoleState: View {
     @State private var starting = false
 
     var body: some View {
+        let provider = managedControl.managedProvider ?? .other("agent")
+        let providerName = provider.stableName.capitalized
         VStack(spacing: 10) {
-            Image(systemName: AgentVisualStyle.providerSymbol(.codex))
+            Image(systemName: AgentVisualStyle.providerSymbol(provider))
                 .font(.system(size: 18, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.52))
-            Text("No Codex session")
+            Text("No \(providerName) session")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.88))
             Text("Start a managed session to use the embedded agent console.")
@@ -520,7 +526,7 @@ private struct AgentEmptyConsoleState: View {
                 .stroke(.white.opacity(0.05), lineWidth: 1)
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("No Codex session")
+        .accessibilityLabel("No \(providerName) session")
     }
 }
 

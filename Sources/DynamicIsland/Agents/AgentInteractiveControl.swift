@@ -28,6 +28,7 @@ enum AgentInteractiveCapability: String, CaseIterable, Hashable, Sendable {
     case accountUsage
     case contextUsage
     case streamToolActivity
+    case loadHistory
 }
 
 struct AgentManagedModelDescriptor: Identifiable, Equatable, Sendable {

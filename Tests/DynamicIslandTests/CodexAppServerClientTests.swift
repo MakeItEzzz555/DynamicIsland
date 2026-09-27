@@ -102,6 +102,13 @@ final class CodexAppServerClientTests: XCTestCase {
         )
         let provider = CodexAppServerProvider(client: client)
 
+        XCTAssertEqual(provider.modelSelectionScope, .nextTurn)
+        XCTAssertEqual(provider.interactiveCapabilities, [
+            .startSession, .resumeSession, .submitPrompt, .interrupt, .selectModel,
+            .resolveApprovals, .accountUsage, .contextUsage, .streamToolActivity,
+            .loadHistory
+        ])
+
         let models = try await provider.listModels()
         XCTAssertEqual(models.map(\.model), ["model-a"])
         XCTAssertEqual(models.first?.displayName, "Model A")

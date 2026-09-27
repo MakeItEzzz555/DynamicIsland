@@ -276,7 +276,7 @@ struct AgentEmbeddedConsoleView: View {
         HStack(alignment: .bottom, spacing: 7) {
             AgentPromptEditor(
                 text: $draft,
-                placeholder: "Message Codex…",
+                placeholder: "Message \(session.id.sessionID.provider.stableName.capitalized)…",
                 onSubmit: submitDraft
             )
             .id(session.id)

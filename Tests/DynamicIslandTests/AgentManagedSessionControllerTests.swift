@@ -61,6 +61,11 @@ final class AgentManagedSessionControllerTests: XCTestCase {
         XCTAssertEqual(session.state, .idle)
         XCTAssertTrue(session.isActive)
         XCTAssertNil(session.endedAt)
+        XCTAssertFalse(session.capabilities.contains(.approvalControl))
+        XCTAssertTrue(controller.capabilities(for: .codex).contains(.loadHistory))
+        XCTAssertTrue(controller.capabilities(for: .claude).isEmpty)
+        XCTAssertEqual(controller.managedProviders, [.codex])
+        XCTAssertEqual(controller.mode(for: session), .observed)
     }
 
     @MainActor
@@ -475,7 +480,7 @@ private actor PersistentSnapshotFakeProvider: AgentInteractiveProvider {
     nonisolated let provider: AgentProvider = .codex
     nonisolated let interactiveCapabilities: Set<AgentInteractiveCapability> = [
         .startSession, .resumeSession, .submitPrompt, .interrupt, .selectModel,
-        .resolveApprovals, .accountUsage, .contextUsage, .streamToolActivity
+        .resolveApprovals, .accountUsage, .contextUsage, .streamToolActivity, .loadHistory
     ]
     nonisolated let modelSelectionScope: AgentModelSelectionScope? = .nextTurn
 
