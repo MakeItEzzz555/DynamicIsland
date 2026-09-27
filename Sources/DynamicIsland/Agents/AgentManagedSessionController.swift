@@ -13,6 +13,7 @@ final class AgentManagedSessionController: ObservableObject {
     @Published private(set) var selectedModelOverrides: [AgentSessionID: String] = [:]
     @Published private(set) var selectedProvider: AgentProvider?
     @Published private(set) var selectedSessionIDs: [AgentProvider: AgentSessionInstanceID] = [:]
+    @Published private(set) var approvalPolicies: [AgentApprovalPolicyKey: AgentApprovalPolicyState] = [:]
 
     private let providers: [AgentProvider: any AgentInteractiveProvider]
     private let coordinator: AgentIngestionCoordinator
@@ -120,6 +121,29 @@ final class AgentManagedSessionController: ObservableObject {
         })
     }
 
+
+    func approvalPolicy(for session: AgentSession) -> AgentApprovalPolicyMode {
+        approvalPolicies[AgentApprovalPolicyKey(session: session.id)]?.mode ?? .askEveryTime
+    }
+
+    func setApprovalPolicyChoice(_ choice: AgentApprovalPolicyChoice, for session: AgentSession) {
+        guard capabilities(for: session.id.sessionID.provider).contains(.resolveApprovals),
+              session.capabilities.contains(.approvalControl) else {
+            approvalPolicies.removeValue(forKey: AgentApprovalPolicyKey(session: session.id))
+            return
+        }
+        let key = AgentApprovalPolicyKey(session: session.id)
+        switch choice {
+        case .askEveryTime:
+            approvalPolicies.removeValue(forKey: key)
+        case .allowTurn:
+            guard let turnID = managed[session.id.sessionID]?.activeTurnID else { return }
+            approvalPolicies[key] = AgentApprovalPolicyState(key: key, mode: .allowTurn(turnID: turnID))
+        case .allowSession:
+            approvalPolicies[key] = AgentApprovalPolicyState(key: key, mode: .allowSession)
+        }
+    }
+
     func selectProvider(_ provider: AgentProvider) {
         guard managedProviders.contains(provider) else { return }
         selectedProvider = provider
@@ -135,6 +159,9 @@ final class AgentManagedSessionController: ObservableObject {
     }
 
     func reconcileSelection(with sessions: [AgentSession]) {
+        let validInstances = Set(sessions.map(\.id))
+        approvalPolicies = approvalPolicies.filter { validInstances.contains($0.key.session) }
+
         let candidates = selectedProvider.map { provider in
             sessions.filter { $0.id.sessionID.provider == provider }
         } ?? sessions
@@ -188,6 +215,7 @@ final class AgentManagedSessionController: ObservableObject {
         for task in approvalTasks.values { task.cancel() }
         approvalTasks.removeAll()
         managedApprovalKeys.removeAll()
+        approvalPolicies.removeAll()
         managed.removeAll()
         connecting.removeAll()
         discoveredSessionIDs.removeAll()
@@ -632,6 +660,11 @@ final class AgentManagedSessionController: ObservableObject {
 
         case .turnCompleted(let turn, let state, let summary):
             let sessionID = AgentSessionID(provider: agentProvider, nativeID: turn.nativeSessionID)
+            clearTurnApprovalPolicies(
+                provider: agentProvider,
+                sessionID: sessionID,
+                turnID: turn.turnID
+            )
             updateControl(sessionID) {
                 if $0.activeTurnID == turn.turnID {
                     $0.activeTurnID = nil
@@ -671,6 +704,7 @@ final class AgentManagedSessionController: ObservableObject {
                 }
             }
             for target in targets {
+                clearAllTurnApprovalPolicies(for: target)
                 updateControl(target) {
                     $0.activeTurnID = nil
                     $0.isSubmitting = false
@@ -720,6 +754,9 @@ final class AgentManagedSessionController: ObservableObject {
             }
 
         case .transportClosed:
+            approvalPolicies = approvalPolicies.filter {
+                $0.key.session.sessionID.provider != agentProvider
+            }
             let transportMessage = agentProvider == .codex
                 ? "Codex app-server disconnected"
                 : "\(providerName(agentProvider)) control transport disconnected"
@@ -790,11 +827,36 @@ final class AgentManagedSessionController: ObservableObject {
         )
         managedApprovalKeys.insert(controlRequest.key)
         defer { managedApprovalKeys.remove(controlRequest.key) }
-        let decision = await approvals.request(controlRequest)
 
-        // This isolated app-server has no secondary approval UI. Timeout or
-        // dismissal must fail closed so its turn cannot remain blocked forever.
-        let allow = decision == .allow
+        let policy = approvalPolicies[AgentApprovalPolicyKey(session: instance)]
+        let supportsApprovalControl =
+            provider.interactiveCapabilities.contains(.resolveApprovals) &&
+            eventStore.sessions.first(where: { $0.id == instance })?
+                .capabilities.contains(.approvalControl) == true
+        let policyDecision = AgentApprovalPolicyEvaluator.decision(
+            policy: policy,
+            provider: agentProvider,
+            session: instance,
+            turnID: request.turnID,
+            supportsApprovalControl: supportsApprovalControl,
+            requestIsCurrent: controlRequest.expiresAt > Date()
+        )
+
+        let allow: Bool
+        switch policyDecision {
+        case .allowAutomatically:
+            allow = true
+            projectAutomaticApproval(
+                request,
+                provider: agentProvider
+            )
+        case .manual:
+            let decision = await approvals.request(controlRequest)
+            // This isolated app-server has no secondary approval UI. Timeout or
+            // dismissal must fail closed so its turn cannot remain blocked forever.
+            allow = decision == .allow
+        }
+
         do {
             try await provider.resolveApproval(request, allow: allow)
             _ = await emit(
@@ -819,6 +881,48 @@ final class AgentManagedSessionController: ObservableObject {
                 nativeID: request.threadID
             ))
         }
+    }
+
+    private func clearTurnApprovalPolicies(
+        provider: AgentProvider,
+        sessionID: AgentSessionID,
+        turnID: String
+    ) {
+        approvalPolicies = approvalPolicies.filter { key, state in
+            guard key.session.sessionID == sessionID,
+                  key.session.sessionID.provider == provider else {
+                return true
+            }
+            if case .allowTurn(let allowedTurnID) = state.mode {
+                return allowedTurnID != turnID
+            }
+            return true
+        }
+    }
+
+    private func clearAllTurnApprovalPolicies(for sessionID: AgentSessionID) {
+        approvalPolicies = approvalPolicies.filter { key, state in
+            guard key.session.sessionID == sessionID else { return true }
+            if case .allowTurn = state.mode { return false }
+            return true
+        }
+    }
+
+    private func projectAutomaticApproval(
+        _ request: AgentManagedApprovalRequest,
+        provider: AgentProvider
+    ) {
+        let safeSummary = AgentPrivacyProjection.summary(request.summary) ?? "Approval request"
+        upsertTranscript(AgentManagedTranscriptEntry(
+            id: "auto-approval:\(request.threadID):\(request.turnID):\(request.itemID)",
+            nativeSessionID: request.threadID,
+            turnID: request.turnID,
+            role: .status,
+            text: AgentManagedTranscriptEntry.boundedText(
+                "Approved automatically\n\(safeSummary)"
+            ) ?? "Approved automatically",
+            timestamp: Date()
+        ), provider: provider)
     }
 
     private func markManaged(_ descriptor: AgentManagedSessionDescriptor) {

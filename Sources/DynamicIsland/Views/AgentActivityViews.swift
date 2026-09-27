@@ -231,6 +231,7 @@ private struct AgentCLIControlBar: View {
                 Spacer(minLength: compact ? 2 : 6)
                 modelControl(for: session, compact: compact)
                 statusControl(for: session, compact: compact)
+                approvalPolicyControl(for: session, compact: compact)
 
                 if managedControl.mode(for: session).canInterrupt {
                     Button {
@@ -351,6 +352,72 @@ private struct AgentCLIControlBar: View {
         switch managedControl.modelSelectionScope {
         case .nextTurn: "Applies to the next managed turn"
         case nil: "Thread model"
+        }
+    }
+
+    @ViewBuilder
+    private func approvalPolicyControl(for session: AgentSession, compact: Bool) -> some View {
+        let provider = session.id.sessionID.provider
+        if managedControl.capabilities(for: provider).contains(.resolveApprovals),
+           session.capabilities.contains(.approvalControl) {
+            let policy = managedControl.approvalPolicy(for: session)
+            Menu {
+                Button {
+                    managedControl.setApprovalPolicyChoice(.askEveryTime, for: session)
+                } label: {
+                    Label(
+                        "Ask every time",
+                        systemImage: policy == .askEveryTime ? "checkmark" : "hand.raised"
+                    )
+                }
+
+                Button {
+                    managedControl.setApprovalPolicyChoice(.allowTurn, for: session)
+                } label: {
+                    Label(
+                        "Allow this turn",
+                        systemImage: isTurnPolicy(policy) ? "checkmark" : "bolt"
+                    )
+                }
+                .disabled(!managedControl.activeManagedSessionIDs.contains(session.id.sessionID))
+
+                Button {
+                    managedControl.setApprovalPolicyChoice(.allowSession, for: session)
+                } label: {
+                    Label(
+                        "Allow this session",
+                        systemImage: policy == .allowSession ? "checkmark" : "bolt.shield"
+                    )
+                }
+            } label: {
+                adaptiveLabel(
+                    policy.isAutomatic ? approvalPolicyShortLabel(policy) : "Ask",
+                    systemImage: policy.isAutomatic ? "bolt.fill" : "hand.raised",
+                    compact: compact
+                )
+                .font(.system(size: 8, weight: .semibold))
+                .foregroundStyle(
+                    policy.isAutomatic
+                        ? Color.orange.opacity(0.92)
+                        : Color.white.opacity(0.48)
+                )
+            }
+            .menuStyle(.borderlessButton)
+            .help(policy.isAutomatic ? "Auto-approval enabled: \(policy.displayName)" : "Approval policy")
+            .accessibilityLabel("Approval policy: \(policy.displayName)")
+        }
+    }
+
+    private func isTurnPolicy(_ policy: AgentApprovalPolicyMode) -> Bool {
+        if case .allowTurn = policy { return true }
+        return false
+    }
+
+    private func approvalPolicyShortLabel(_ policy: AgentApprovalPolicyMode) -> String {
+        switch policy {
+        case .askEveryTime: "Ask"
+        case .allowTurn: "Auto · Turn"
+        case .allowSession: "Auto · Session"
         }
     }
 
