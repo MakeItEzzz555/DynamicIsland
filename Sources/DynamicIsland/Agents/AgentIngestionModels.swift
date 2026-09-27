@@ -108,6 +108,7 @@ struct AgentProducerPolicy: Equatable, Sendable {
     let allowedCapabilities: Set<AgentCapability>
     let allowedSchemaVersions: Set<Int>
     let permitsApprovalControl: Bool
+    let permitsLifecycleRecovery: Bool
 
     init(
         allowedProviders: Set<AgentProvider>?,
@@ -117,7 +118,8 @@ struct AgentProducerPolicy: Equatable, Sendable {
         authorityCeilings: [AgentAuthorityDomain: AgentEvidenceAuthority],
         allowedCapabilities: Set<AgentCapability>,
         allowedSchemaVersions: Set<Int>,
-        permitsApprovalControl: Bool = false
+        permitsApprovalControl: Bool = false,
+        permitsLifecycleRecovery: Bool = false
     ) {
         self.allowedProviders = allowedProviders
         self.allowedSources = allowedSources
@@ -127,6 +129,7 @@ struct AgentProducerPolicy: Equatable, Sendable {
         self.allowedCapabilities = allowedCapabilities
         self.allowedSchemaVersions = allowedSchemaVersions
         self.permitsApprovalControl = permitsApprovalControl
+        self.permitsLifecycleRecovery = permitsLifecycleRecovery
     }
 
     func permits(provider: AgentProvider) -> Bool {
@@ -154,7 +157,8 @@ struct AgentProducerPolicy: Equatable, Sendable {
             .sessionLifecycle, .toolLifecycle, .commandLifecycle, .approvalObservation,
             .subagentLifecycle, .taskLifecycle, .modelMetadata, .projectContext
         ],
-        allowedSchemaVersions: [AgentEvent.normalizedSchemaVersion]
+        allowedSchemaVersions: [AgentEvent.normalizedSchemaVersion],
+        permitsLifecycleRecovery: true
     )
 
     static let codexPermissionControl = AgentProducerPolicy(
@@ -167,7 +171,8 @@ struct AgentProducerPolicy: Equatable, Sendable {
         }),
         allowedCapabilities: [.approvalObservation, .approvalControl],
         allowedSchemaVersions: [AgentEvent.normalizedSchemaVersion],
-        permitsApprovalControl: true
+        permitsApprovalControl: true,
+        permitsLifecycleRecovery: true
     )
 
     static let codexStructuredRecovery = AgentProducerPolicy(

@@ -208,7 +208,7 @@ enum AgentEventReducer {
             appendActivity(
                 event: event,
                 kind: .session,
-                title: "Session started",
+                title: event.origin == .localRecovery ? "Session recovered" : "Session started",
                 summary: session.project.displayName,
                 status: .completed,
                 to: &session,

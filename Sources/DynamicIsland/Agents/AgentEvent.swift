@@ -3,6 +3,10 @@ import Foundation
 enum AgentEventOrigin: String, Hashable, Codable, Sendable {
     case live
     case replay
+    /// A local session shell created after DynamicIsland restarts while a
+    /// trusted provider session is already active. This is never presented as
+    /// a provider-emitted SessionStart.
+    case localRecovery
 }
 
 enum AgentEventType: Hashable, Codable, Sendable {
