@@ -7,6 +7,7 @@ final class AgentManagedSessionController: ObservableObject {
     @Published private(set) var connecting: Set<AgentSessionID> = []
     @Published private(set) var discoveredSessionIDs: Set<AgentSessionID> = []
     @Published private(set) var lastTransportError: String?
+    @Published private(set) var transportErrorsByProvider: [AgentProvider: String] = [:]
     @Published private(set) var accountUsageByProvider: [AgentProvider: AgentUsage] = [:]
     @Published private(set) var transcripts: [AgentSessionID: [AgentManagedTranscriptEntry]] = [:]
     @Published private(set) var modelsByProvider: [AgentProvider: [AgentManagedModelDescriptor]] = [:]
@@ -147,6 +148,7 @@ final class AgentManagedSessionController: ObservableObject {
     func selectProvider(_ provider: AgentProvider) {
         guard managedProviders.contains(provider) else { return }
         selectedProvider = provider
+        lastTransportError = transportErrorsByProvider[provider]
     }
 
     func selectSession(_ sessionID: AgentSessionInstanceID?) {
@@ -221,6 +223,7 @@ final class AgentManagedSessionController: ObservableObject {
         discoveredSessionIDs.removeAll()
         knownDiscoveredSessionIDs.removeAll()
         accountUsageByProvider.removeAll()
+        transportErrorsByProvider.removeAll()
         transcripts.removeAll()
         modelsByProvider.removeAll()
 
@@ -272,16 +275,21 @@ final class AgentManagedSessionController: ObservableObject {
             }
         }
 
-        do {
-            let refreshed = try await provider.readAccountUsage()
-            guard !Task.isCancelled else { return }
-            var retained = accountUsageByProvider[agentProvider] ?? AgentUsage()
-            retained.merge(refreshed)
-            accountUsageByProvider[agentProvider] = retained
-            lastTransportError = nil
-        } catch {
-            // Preserve the last trustworthy snapshot across transient transport/backend failures.
-            lastTransportError = Self.safeError(error)
+        if provider.interactiveCapabilities.contains(.accountUsage) {
+            do {
+                let refreshed = try await provider.readAccountUsage()
+                guard !Task.isCancelled else { return }
+                var retained = accountUsageByProvider[agentProvider] ?? AgentUsage()
+                retained.merge(refreshed)
+                accountUsageByProvider[agentProvider] = retained
+                setTransportError(nil, for: agentProvider)
+            } catch {
+                // Preserve the last trustworthy snapshot across transient provider failures.
+                setTransportError(Self.safeError(error, provider: agentProvider), for: agentProvider)
+            }
+        } else {
+            // Unsupported providers must never inherit/fabricate another provider's account usage.
+            accountUsageByProvider.removeValue(forKey: agentProvider)
         }
 
         do {
@@ -295,7 +303,7 @@ final class AgentManagedSessionController: ObservableObject {
                 await registerDiscoveredSession(descriptor)
             }
         } catch {
-            lastTransportError = Self.safeError(error)
+            setTransportError(Self.safeError(error, provider: agentProvider), for: agentProvider)
         }
     }
 
@@ -440,7 +448,9 @@ final class AgentManagedSessionController: ObservableObject {
               state.acceptsDirectInput else {
             return .observed
         }
-        return .interactive(canInterrupt: state.canInterrupt)
+        let canInterrupt = state.canInterrupt &&
+            capabilities(for: session.id.sessionID.provider).contains(.interrupt)
+        return .interactive(canInterrupt: canInterrupt)
     }
 
     func statusMessage(for session: AgentSession) -> String? {
@@ -532,7 +542,7 @@ final class AgentManagedSessionController: ObservableObject {
             _ = await emitSessionAvailability(descriptor, type: .sessionStarted)
             return descriptor
         } catch {
-            lastTransportError = Self.safeError(error)
+            setTransportError(Self.safeError(error, provider: selectedProvider), for: selectedProvider)
             return nil
         }
     }
@@ -594,9 +604,11 @@ final class AgentManagedSessionController: ObservableObject {
             )
             return true
         } catch {
+            let message = Self.safeError(error, provider: sessionID.provider)
+            setTransportError(message, for: sessionID.provider)
             updateControl(sessionID) {
                 $0.isSubmitting = false
-                $0.lastError = Self.safeError(error)
+                $0.lastError = message
             }
             return false
         }
@@ -748,7 +760,7 @@ final class AgentManagedSessionController: ObservableObject {
 
         case .approvalRequested(let request):
             let key = "\(agentProvider.stableName):\(request.threadID):\(request.itemID)"
-            approvalTasks[key]?.cancel()
+            guard approvalTasks[key] == nil else { return }
             approvalTasks[key] = Task { [weak self] in
                 await self?.handleApproval(request, provider: agentProvider)
             }
@@ -759,8 +771,8 @@ final class AgentManagedSessionController: ObservableObject {
             }
             let transportMessage = agentProvider == .codex
                 ? "Codex app-server disconnected"
-                : "\(providerName(agentProvider)) control transport disconnected"
-            lastTransportError = transportMessage
+                : "\(providerName(agentProvider)) unavailable"
+            setTransportError(transportMessage, for: agentProvider)
             for key in managedApprovalKeys where key.session.sessionID.provider == agentProvider {
                 _ = approvals.resolve(
                     session: key.session,
@@ -843,22 +855,27 @@ final class AgentManagedSessionController: ObservableObject {
         )
 
         let allow: Bool
+        let wasAutomatic: Bool
         switch policyDecision {
         case .allowAutomatically:
             allow = true
-            projectAutomaticApproval(
-                request,
-                provider: agentProvider
-            )
+            wasAutomatic = true
         case .manual:
             let decision = await approvals.request(controlRequest)
             // This isolated app-server has no secondary approval UI. Timeout or
             // dismissal must fail closed so its turn cannot remain blocked forever.
             allow = decision == .allow
+            wasAutomatic = false
         }
 
         do {
             try await provider.resolveApproval(request, allow: allow)
+            if allow && wasAutomatic {
+                projectAutomaticApproval(
+                    request,
+                    provider: agentProvider
+                )
+            }
             _ = await emit(
                 provider: agentProvider,
                 nativeSessionID: request.threadID,
@@ -948,9 +965,20 @@ final class AgentManagedSessionController: ObservableObject {
     }
 
     private func recordError(_ error: Error, for sessionID: AgentSessionID) {
-        let message = Self.safeError(error)
-        lastTransportError = message
+        let message = Self.safeError(error, provider: sessionID.provider)
+        setTransportError(message, for: sessionID.provider)
         updateControl(sessionID) { $0.lastError = message }
+    }
+
+    private func setTransportError(_ message: String?, for provider: AgentProvider) {
+        if let message {
+            transportErrorsByProvider[provider] = message
+        } else {
+            transportErrorsByProvider.removeValue(forKey: provider)
+        }
+        if selectedProvider == provider || (selectedProvider == nil && managedProvider == provider) {
+            lastTransportError = message
+        }
     }
 
     private func ensureProducer(for provider: AgentProvider) async -> AgentProducerHandle? {
@@ -967,7 +995,7 @@ final class AgentManagedSessionController: ObservableObject {
             authenticatedProducerID: "\(sourceID)-local"
         )
         guard case .success(let handle) = result else {
-            lastTransportError = "\(providerName(provider)) producer registration failed"
+            setTransportError("\(providerName(provider)) producer registration failed", for: provider)
             return nil
         }
         producerHandles[provider] = handle
@@ -1177,7 +1205,10 @@ final class AgentManagedSessionController: ObservableObject {
         transcripts[sessionID] = Self.boundedTranscript(entries)
     }
 
-    private nonisolated static func safeError(_ error: Error) -> String {
+    private nonisolated static func safeError(
+        _ error: Error,
+        provider: AgentProvider
+    ) -> String {
         let value: String
         if let error = error as? CodexAppServerError {
             switch error {
@@ -1190,9 +1221,28 @@ final class AgentManagedSessionController: ObservableObject {
             case .rpcError: value = "Codex app-server request failed"
             case .invalidResponse(let method): value = "Invalid \(method) response"
             }
+        } else if let error = error as? ClaudeCodeStreamingError {
+            switch error {
+            case .executableNotFound: value = "Claude CLI not installed"
+            case .launchFailed: value = "Claude unavailable"
+            case .turnAlreadyRunning: value = "Claude turn already running"
+            case .malformedMessage: value = "Claude returned an invalid response"
+            case .unsupported: value = "Claude control is unsupported"
+            }
         } else {
-            value = "Codex control request failed"
+            value = "\(providerNameStatic(provider)) control request failed"
         }
-        return AgentPrivacyProjection.title(value, fallback: "Codex control error")
+        return AgentPrivacyProjection.title(
+            value,
+            fallback: "\(providerNameStatic(provider)) control error"
+        )
+    }
+
+    private nonisolated static func providerNameStatic(_ provider: AgentProvider) -> String {
+        switch provider {
+        case .codex: "Codex"
+        case .claude: "Claude"
+        case .other: "Agent"
+        }
     }
 }
