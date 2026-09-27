@@ -254,6 +254,20 @@ final class NotchGeometryServiceTests: XCTestCase {
         }
     }
 
+    func testAgentsExpandedPresentationProfileScalesCanonicalSizeByTenPercent() {
+        let base = CGSize(width: 860, height: 286)
+
+        XCTAssertEqual(
+            ExpandedPresentationProfile.standard.resolvedSize(from: base),
+            base
+        )
+
+        let agents = ExpandedPresentationProfile.agentsWorkspace.resolvedSize(from: base)
+        XCTAssertEqual(agents.width, 946, accuracy: 0.001)
+        XCTAssertEqual(agents.height, 314.6, accuracy: 0.001)
+        XCTAssertEqual(ExpandedPresentationProfile.agentsWorkspace.kind, .agentsWorkspace)
+    }
+
     func testAgentCollapsedProfilesResolveOneCanonicalFrameAndRetractExactly() {
         let service = NotchGeometryService()
         let snapshot = ScreenSnapshot(
