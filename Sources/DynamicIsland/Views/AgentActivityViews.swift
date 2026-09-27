@@ -71,40 +71,28 @@ struct AgentDashboardContentView: View {
     var layoutStore: IslandLayoutStore? = nil
     let availableHeight: CGFloat
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var previewMode = false
     @State private var selectedSessionID: AgentSessionInstanceID?
 
     var body: some View {
         GeometryReader { proxy in
             let layout = AgentDashboardLayoutProjection.make(width: proxy.size.width)
-            let displayedSessions = previewMode ? AgentDashboardPreviewFactory.sessions() : sessions
             let metrics = showsUsage
                 ? AgentGlobalUsagePresentation.make(
-                    sessions: displayedSessions,
+                    sessions: sessions,
                     limit: layout.maximumGaugeCount
                 )
                 : []
-            let selectedSession = displayedSessions.first { $0.id == selectedSessionID }
+            let selectedSession = sessions.first { $0.id == selectedSessionID }
 
             VStack(alignment: .leading, spacing: 10) {
-                if previewMode {
-                    AgentDashboardPreviewBanner {
-                        previewMode = false
-                    }
-                }
-
-                if sessions.isEmpty && !previewMode {
+                if sessions.isEmpty {
                     AgentStandbyDashboard(
                         layout: layout,
                         showsUsage: showsUsage
-                    ) {
-                        previewMode = true
-                    }
+                    )
                 } else {
-                    if !previewMode && !sessions.contains(where: \.isActive) {
-                        AgentDashboardIdleBanner {
-                            previewMode = true
-                        }
+                    if !sessions.contains(where: \.isActive) {
+                        AgentDashboardIdleBanner()
                     }
 
                     if showsUsage {
@@ -112,12 +100,11 @@ struct AgentDashboardContentView: View {
                     }
 
                     AgentSessionWorkspaceView(
-                        sessions: displayedSessions,
+                        sessions: sessions,
                         showsUsage: showsUsage,
                         approvalControl: approvalControl,
                         layout: layout,
                         reduceMotion: reduceMotion,
-                        previewMode: previewMode,
                         layoutStore: layoutStore,
                         selectedSessionID: $selectedSessionID
                     )
@@ -125,7 +112,6 @@ struct AgentDashboardContentView: View {
                     if let selectedSession {
                         AgentEmbeddedConsoleView(
                             session: selectedSession,
-                            previewMode: previewMode,
                             canSubmit: false,
                             canInterrupt: false,
                             onSubmit: { _ in },
@@ -139,27 +125,16 @@ struct AgentDashboardContentView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: availableHeight, alignment: .topLeading)
         .foregroundStyle(.white)
-        .onChange(of: sessions.count) { count in
-            if count > 0 {
-                previewMode = false
-            }
-        }
         .onChange(of: sessions.map(\.id)) { _ in
             selectedSessionID = AgentWorkspaceSelection.resolve(
                 current: selectedSessionID,
-                sessions: previewMode ? AgentDashboardPreviewFactory.sessions() : sessions
-            )
-        }
-        .onChange(of: previewMode) { _ in
-            selectedSessionID = AgentWorkspaceSelection.resolve(
-                current: nil,
-                sessions: previewMode ? AgentDashboardPreviewFactory.sessions() : sessions
+                sessions: sessions
             )
         }
         .onAppear {
             selectedSessionID = AgentWorkspaceSelection.resolve(
                 current: selectedSessionID,
-                sessions: previewMode ? AgentDashboardPreviewFactory.sessions() : sessions
+                sessions: sessions
             )
         }
         .onDisappear {
@@ -169,8 +144,6 @@ struct AgentDashboardContentView: View {
 }
 
 private struct AgentDashboardIdleBanner: View {
-    let showPreview: () -> Void
-
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "moon.zzz")
@@ -181,12 +154,9 @@ private struct AgentDashboardIdleBanner: View {
                 .font(.system(size: 8.5, weight: .medium))
                 .foregroundStyle(.white.opacity(0.44))
             Spacer(minLength: 8)
-            Button(action: showPreview) {
-                Label("Preview", systemImage: "eye")
-            }
-            .buttonStyle(.borderless)
-            .font(.system(size: 8.5, weight: .semibold))
-            .help("Inspect the complete Agents dashboard with synthetic preview data")
+            Text("Waiting for live activity")
+                .font(.system(size: 8.5, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.36))
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 7)
@@ -195,39 +165,9 @@ private struct AgentDashboardIdleBanner: View {
     }
 }
 
-private struct AgentDashboardPreviewBanner: View {
-    let exitPreview: () -> Void
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Label("Preview data", systemImage: "eye.fill")
-                .font(.system(size: 9.5, weight: .bold))
-                .foregroundStyle(.orange)
-            Text("Synthetic sessions and usage — nothing here is live.")
-                .font(.system(size: 8.5, weight: .medium))
-                .foregroundStyle(.white.opacity(0.52))
-                .lineLimit(1)
-            Spacer(minLength: 8)
-            Button("Exit preview", action: exitPreview)
-                .buttonStyle(.borderless)
-                .font(.system(size: 8.5, weight: .semibold))
-        }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 7)
-        .background(.white.opacity(0.035))
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(.white.opacity(0.05))
-                .frame(height: 1)
-        }
-        .accessibilityElement(children: .contain)
-    }
-}
-
 private struct AgentStandbyDashboard: View {
     let layout: AgentDashboardLayoutProjection
     let showsUsage: Bool
-    let showPreview: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -256,13 +196,6 @@ private struct AgentStandbyDashboard: View {
                 }
 
                 Spacer(minLength: 10)
-
-                Button(action: showPreview) {
-                    Label("Preview dashboard", systemImage: "eye")
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .help("Show synthetic sessions to inspect the complete Agents interface")
             }
             .padding(.horizontal, 9)
             .padding(.vertical, 11)
@@ -272,7 +205,7 @@ private struct AgentStandbyDashboard: View {
 
             HStack(spacing: 6) {
                 Image(systemName: "checkmark.shield")
-                Text("Live percentages appear only when a provider supplies trustworthy limits. Preview mode is always labeled and never affects agent state.")
+                Text("Live percentages appear only when a provider supplies trustworthy limits.")
             }
             .font(.system(size: 8.5, weight: .medium))
             .foregroundStyle(.white.opacity(0.42))
@@ -347,7 +280,6 @@ struct AgentDashboardStack: View {
     @ObservedObject var approvalControl: AgentApprovalController
     let layout: AgentDashboardLayoutProjection
     let reduceMotion: Bool
-    var previewMode = false
 
     var body: some View {
         let metrics = showsUsage
@@ -365,7 +297,6 @@ struct AgentDashboardStack: View {
                 approvalControl: approvalControl,
                 layout: layout,
                 reduceMotion: reduceMotion,
-                previewMode: previewMode,
                 selectedSessionID: .constant(
                     AgentWorkspaceSelection.resolve(current: nil, sessions: sessions)
                 )
@@ -381,7 +312,6 @@ private struct AgentSessionWorkspaceView: View {
     @ObservedObject var approvalControl: AgentApprovalController
     let layout: AgentDashboardLayoutProjection
     let reduceMotion: Bool
-    let previewMode: Bool
     let layoutStore: IslandLayoutStore?
     @Binding var selectedSessionID: AgentSessionInstanceID?
 
@@ -394,7 +324,6 @@ private struct AgentSessionWorkspaceView: View {
                     approvalControl: approvalControl,
                     layout: layout,
                     reduceMotion: reduceMotion,
-                    previewMode: previewMode,
                     selectedSessionID: $selectedSessionID
                 )
                 .padding(.vertical, 3)
@@ -455,7 +384,6 @@ private struct AgentDashboardGroups: View {
     @ObservedObject var approvalControl: AgentApprovalController
     let layout: AgentDashboardLayoutProjection
     let reduceMotion: Bool
-    let previewMode: Bool
     @Binding var selectedSessionID: AgentSessionInstanceID?
 
     var body: some View {
@@ -473,7 +401,6 @@ private struct AgentDashboardGroups: View {
                     showsUsage: showsUsage,
                     approvalControl: approvalControl,
                     reduceMotion: reduceMotion,
-                    previewMode: previewMode,
                     selectedSessionID: $selectedSessionID
                 )
             }
@@ -585,7 +512,6 @@ private struct AgentProjectSection: View {
     let showsUsage: Bool
     @ObservedObject var approvalControl: AgentApprovalController
     let reduceMotion: Bool
-    var previewMode = false
     @Binding var selectedSessionID: AgentSessionInstanceID?
 
     var body: some View {
@@ -602,7 +528,6 @@ private struct AgentProjectSection: View {
                             layout: layout,
                             showsUsage: showsUsage,
                             approvalControl: approvalControl,
-                            previewMode: previewMode,
                             selected: selectedSessionID == session.id,
                             select: { selectedSessionID = session.id }
                         )
@@ -612,7 +537,6 @@ private struct AgentProjectSection: View {
                             layout: layout,
                             showsUsage: showsUsage,
                             approvalControl: approvalControl,
-                            previewMode: previewMode,
                             selected: selectedSessionID == session.id,
                             select: { selectedSessionID = session.id }
                         )
@@ -658,7 +582,6 @@ private struct AgentSessionRow: View {
     let layout: AgentDashboardLayoutProjection
     let showsUsage: Bool
     @ObservedObject var approvalControl: AgentApprovalController
-    var previewMode = false
     let selected: Bool
     let select: () -> Void
     @State private var isHovering = false
@@ -670,8 +593,7 @@ private struct AgentSessionRow: View {
                 session: session,
                 layout: layout,
                 attention: false,
-                approvalControl: approvalControl,
-                previewMode: previewMode
+                approvalControl: approvalControl
             )
             Spacer(minLength: 8)
             AgentSessionTrailingStatus(session: session, layout: layout, showsUsage: showsUsage)
@@ -707,7 +629,6 @@ private struct AgentAttentionSessionRow: View {
     let layout: AgentDashboardLayoutProjection
     let showsUsage: Bool
     @ObservedObject var approvalControl: AgentApprovalController
-    var previewMode = false
     let selected: Bool
     let select: () -> Void
 
@@ -724,8 +645,7 @@ private struct AgentAttentionSessionRow: View {
                     session: session,
                     layout: layout,
                     attention: true,
-                    approvalControl: approvalControl,
-                    previewMode: previewMode
+                    approvalControl: approvalControl
                 )
                 Spacer(minLength: 8)
                 AgentSessionTrailingStatus(session: session, layout: layout, showsUsage: showsUsage)
@@ -775,7 +695,6 @@ private struct AgentSessionRowContent: View {
     let layout: AgentDashboardLayoutProjection
     let attention: Bool
     @ObservedObject var approvalControl: AgentApprovalController
-    var previewMode = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -815,24 +734,7 @@ private struct AgentSessionRowContent: View {
                     .lineLimit(2)
             }
 
-            if previewMode && attention && session.state == .waitingForApproval {
-                HStack(spacing: 8) {
-                    Button(role: .destructive) {} label: {
-                        Label("Deny", systemImage: "xmark.circle.fill")
-                    }
-                    Button {} label: {
-                        Label("Approve", systemImage: "checkmark.circle.fill")
-                    }
-                    Text("Preview only")
-                        .font(.system(size: 7.5, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.40))
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(true)
-                .opacity(0.82)
-                .accessibilityLabel("Preview approval controls, disabled")
-            } else if let actionableApproval {
+            if let actionableApproval {
                 HStack(spacing: 8) {
                     Button(role: .destructive) {
                         approvalControl.resolve(

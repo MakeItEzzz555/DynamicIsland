@@ -334,6 +334,9 @@ struct AgentDashboardLayoutProjection: Equatable, Sendable {
     }
 }
 
+#if DEBUG
+/// Deterministic fixture for tests and screenshot export only. Production UI
+/// has no activation path for synthetic sessions.
 enum AgentDashboardPreviewFactory {
     static func sessions(now: Date = Date()) -> [AgentSession] {
         [
@@ -598,6 +601,7 @@ enum AgentDashboardPreviewFactory {
         ])
     }
 }
+#endif
 
 struct AgentOperationSummary: Identifiable, Equatable, Sendable {
     let id: String

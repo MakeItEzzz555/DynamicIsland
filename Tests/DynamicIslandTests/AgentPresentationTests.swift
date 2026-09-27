@@ -421,7 +421,7 @@ final class AgentPresentationTests: XCTestCase {
         XCTAssertNil(AgentWorkspaceSelection.resolve(current: approval.id, sessions: []))
     }
 
-    func testDashboardPreviewUsesSyntheticScopedUsageWithoutControlAuthority() throws {
+    func testScreenshotFixtureUsesSyntheticScopedUsageWithoutControlAuthority() throws {
         let sessions = AgentDashboardPreviewFactory.sessions(now: now)
         XCTAssertEqual(sessions.count, 3)
 

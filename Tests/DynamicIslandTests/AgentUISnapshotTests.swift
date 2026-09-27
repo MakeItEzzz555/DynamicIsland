@@ -64,7 +64,7 @@ final class AgentUISnapshotTests: XCTestCase {
         try renderDashboard(name: "09-usage-gauges", sessions: [working, approval], output: output)
         try renderDiagnostics(output: output)
         try renderStandbyDashboard(output: output)
-        try renderPreviewDashboard(output: output)
+        try renderSyntheticDashboardFixture(output: output)
     }
 
     private func renderCompact(
@@ -148,12 +148,12 @@ final class AgentUISnapshotTests: XCTestCase {
         )
     }
 
-    private func renderPreviewDashboard(output: URL) throws {
+    private func renderSyntheticDashboardFixture(output: URL) throws {
         let view = VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Label("Preview data", systemImage: "eye.fill")
+                Label("Synthetic screenshot fixture", systemImage: "camera.fill")
                     .foregroundStyle(.orange)
-                Text("Synthetic sessions and usage — nothing here is live.")
+                Text("Test-only data; unavailable in the application.")
                     .foregroundStyle(.secondary)
                 Spacer()
             }
@@ -164,8 +164,7 @@ final class AgentUISnapshotTests: XCTestCase {
                 showsUsage: true,
                 approvalControl: AgentApprovalController(),
                 layout: AgentDashboardLayoutProjection.make(width: 792),
-                reduceMotion: false,
-                previewMode: true
+                reduceMotion: false
             )
             .fixedSize(horizontal: false, vertical: true)
         }
@@ -178,7 +177,7 @@ final class AgentUISnapshotTests: XCTestCase {
         try render(
             view,
             size: CGSize(width: 820, height: 520),
-            to: output.appendingPathComponent("12-preview-dashboard.png")
+            to: output.appendingPathComponent("12-synthetic-dashboard-fixture.png")
         )
     }
 

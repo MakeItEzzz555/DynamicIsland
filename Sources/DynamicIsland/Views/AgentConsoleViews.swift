@@ -3,14 +3,12 @@ import SwiftUI
 
 struct AgentEmbeddedConsoleView: View {
     let session: AgentSession
-    let previewMode: Bool
     var canSubmit = false
     var canInterrupt = false
     let onSubmit: (String) -> Void
     let onInterrupt: () -> Void
 
     @State private var draft = ""
-    @State private var previewPrompts: [String] = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -42,11 +40,7 @@ struct AgentEmbeddedConsoleView: View {
                 .font(.system(size: 8, weight: .medium))
                 .foregroundStyle(.white.opacity(0.40))
             Spacer(minLength: 8)
-            if previewMode {
-                Label("Preview", systemImage: "eye")
-                    .font(.system(size: 7.5, weight: .semibold))
-                    .foregroundStyle(.orange.opacity(0.90))
-            } else if canSubmit {
+            if canSubmit {
                 Label("Interactive", systemImage: "bolt.fill")
                     .font(.system(size: 7.5, weight: .semibold))
                     .foregroundStyle(.green.opacity(0.82))
@@ -76,7 +70,7 @@ struct AgentEmbeddedConsoleView: View {
             ).suffix(4)
         )
         VStack(alignment: .leading, spacing: 3) {
-            if operations.isEmpty && previewPrompts.isEmpty {
+            if operations.isEmpty {
                 HStack(spacing: 6) {
                     Image(systemName: AgentSessionPresentation.stateSymbol(session.state))
                         .frame(width: 11)
@@ -101,16 +95,6 @@ struct AgentEmbeddedConsoleView: View {
                         }
                     }
                 }
-                ForEach(Array(previewPrompts.suffix(2).enumerated()), id: \.offset) { _, prompt in
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Image(systemName: "person.fill")
-                            .frame(width: 11)
-                            .foregroundStyle(.orange.opacity(0.76))
-                        Text(prompt)
-                            .foregroundStyle(.white.opacity(0.62))
-                            .lineLimit(1)
-                    }
-                }
             }
         }
         .font(.system(size: 8.5, weight: .medium))
@@ -121,10 +105,8 @@ struct AgentEmbeddedConsoleView: View {
         HStack(alignment: .bottom, spacing: 7) {
             AgentPromptEditor(
                 text: $draft,
-                enabled: previewMode || canSubmit,
-                placeholder: previewMode
-                    ? "Type a preview prompt…"
-                    : (canSubmit ? "Message Codex…" : "Observed session — interactive control unavailable"),
+                enabled: canSubmit,
+                placeholder: canSubmit ? "Message Codex…" : "Observed session — interactive control unavailable",
                 onSubmit: submitDraft
             )
             .frame(minHeight: 30, maxHeight: 48)
@@ -134,8 +116,8 @@ struct AgentEmbeddedConsoleView: View {
                     .font(.system(size: 18, weight: .semibold))
             }
             .buttonStyle(.borderless)
-            .foregroundStyle((previewMode || canSubmit) && !trimmedDraft.isEmpty ? .white : .white.opacity(0.24))
-            .disabled(!(previewMode || canSubmit) || trimmedDraft.isEmpty)
+            .foregroundStyle(canSubmit && !trimmedDraft.isEmpty ? .white : .white.opacity(0.24))
+            .disabled(!canSubmit || trimmedDraft.isEmpty)
             .keyboardShortcut(.return, modifiers: [.command])
             .help("Send prompt (Command-Return)")
         }
@@ -148,14 +130,7 @@ struct AgentEmbeddedConsoleView: View {
     private func submitDraft() {
         let value = String(trimmedDraft.prefix(8_000))
         guard !value.isEmpty else { return }
-        if previewMode {
-            previewPrompts.append(value)
-            if previewPrompts.count > 4 {
-                previewPrompts.removeFirst(previewPrompts.count - 4)
-            }
-        } else {
-            onSubmit(value)
-        }
+        onSubmit(value)
         draft = ""
     }
 
