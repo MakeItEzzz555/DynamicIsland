@@ -156,10 +156,13 @@ final class AgentUISnapshotTests: XCTestCase {
     }
 
     private func renderStandbyDashboard(output: URL) throws {
+        let approvals = AgentApprovalController()
+        let managed = makeManagedControl(approvals: approvals)
         let view = AgentDashboardContentView(
             sessions: [],
             showsUsage: true,
-            approvalControl: AgentApprovalController(),
+            approvalControl: approvals,
+            managedControl: managed,
             availableHeight: 440
         )
         .padding(14)
@@ -181,10 +184,13 @@ final class AgentUISnapshotTests: XCTestCase {
         selectedSessionID: AgentSessionInstanceID?,
         output: URL
     ) throws {
+        let approvals = AgentApprovalController()
+        let managed = makeManagedControl(approvals: approvals)
         let view = AgentDashboardContentView(
             sessions: sessions,
             showsUsage: true,
-            approvalControl: AgentApprovalController(),
+            approvalControl: approvals,
+            managedControl: managed,
             availableHeight: 440,
             initialSelectedSessionID: selectedSessionID
         )
@@ -198,6 +204,18 @@ final class AgentUISnapshotTests: XCTestCase {
             view,
             size: CGSize(width: 820, height: 480),
             to: output.appendingPathComponent(name + ".png")
+        )
+    }
+
+    private func makeManagedControl(
+        approvals: AgentApprovalController
+    ) -> AgentManagedSessionController {
+        let store = AgentEventStore()
+        return AgentManagedSessionController(
+            provider: nil,
+            coordinator: AgentIngestionCoordinator(eventStore: store),
+            eventStore: store,
+            approvals: approvals
         )
     }
 

@@ -175,6 +175,36 @@ struct AgentProducerPolicy: Equatable, Sendable {
         permitsLifecycleRecovery: true
     )
 
+    static let codexAppServer = AgentProducerPolicy(
+        allowedProviders: [.codex],
+        allowedSources: [.desktopApp],
+        allowedSourceKinds: [.officialLifecycleProtocol],
+        allowedEventTypes: [
+            .sessionStarted, .sessionResumed, .sessionMetadataUpdated, .sessionEnded,
+            .agentWorking, .thinkingStarted, .thinkingEnded,
+            .planningStarted, .planUpdated, .planReady,
+            .toolStarted, .toolCompleted, .commandStarted, .commandCompleted,
+            .approvalRequested, .approvalResolved, .waitingForUser, .userInputResolved,
+            .usageUpdated, .capabilitiesUpdated, .projectContextUpdated,
+            .taskCompleted, .taskFailed, .interrupted,
+            .subagentStarted, .subagentEnded, .heartbeat
+        ],
+        authorityCeilings: Dictionary(uniqueKeysWithValues: AgentAuthorityDomain.allCases.map {
+            ($0, AgentEvidenceAuthority.lifecycle)
+        }),
+        allowedCapabilities: [
+            .sessionLifecycle, .explicitThinking, .planLifecycle,
+            .toolLifecycle, .commandLifecycle,
+            .approvalObservation, .approvalControl, .userInputObservation,
+            .subagentLifecycle, .taskLifecycle,
+            .tokenUsage, .contextUsage,
+            .modelMetadata, .projectContext
+        ],
+        allowedSchemaVersions: [AgentEvent.normalizedSchemaVersion],
+        permitsApprovalControl: true,
+        permitsLifecycleRecovery: true
+    )
+
     static let codexStructuredRecovery = AgentProducerPolicy(
         allowedProviders: [.codex],
         allowedSources: [.unknown],

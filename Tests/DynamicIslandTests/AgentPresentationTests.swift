@@ -7,6 +7,7 @@ final class AgentPresentationTests: XCTestCase {
     func testZeroSessionsAndDisabledActivityHaveNoCompactPresentation() {
         XCTAssertNil(AgentCompactPresentation.make(sessions: []))
         XCTAssertNil(AgentCompactPresentation.make(sessions: [session()], enabled: false))
+        XCTAssertNil(AgentCompactPresentation.make(sessions: [session(state: .idle)]))
         XCTAssertNil(AgentCompactPresentation.make(sessions: [session(state: .completed)]))
     }
 
@@ -31,7 +32,7 @@ final class AgentPresentationTests: XCTestCase {
         ]
         let presentation = try! XCTUnwrap(AgentCompactPresentation.make(sessions: sessions))
         XCTAssertEqual(presentation.sessions.map(\.state), [.waitingForApproval, .runningCommand, .thinking])
-        XCTAssertEqual(presentation.overflowCount, 1)
+        XCTAssertEqual(presentation.overflowCount, 0)
         XCTAssertEqual(presentation.summary, "1 waiting · 1 working")
     }
 
@@ -416,10 +417,28 @@ final class AgentPresentationTests: XCTestCase {
         )
         XCTAssertEqual(
             AgentSessionPresentation.displayedPrimaryTitle(for: value, at: now),
-            "Awaiting provider update"
+            "DynamicIsland"
         )
         XCTAssertEqual(value.state, .working)
         XCTAssertTrue(value.isActive)
+    }
+
+    func testManagedSessionDoesNotUseObservationSilenceFallback() {
+        var value = session(nativeID: "managed", state: .working)
+        value.lastUpdatedAt = now.addingTimeInterval(-600)
+        value.capabilities = AgentCapabilities(evidence: [
+            .sessionLifecycle: AgentCapabilityEvidence(
+                authority: .lifecycle,
+                source: "codex-app-server-v2",
+                observedAt: now.addingTimeInterval(-600)
+            )
+        ])
+
+        XCTAssertFalse(AgentSessionPresentation.hasStaleActiveSignal(value, at: now))
+        XCTAssertEqual(
+            AgentSessionPresentation.displayedStateLabel(for: value, at: now),
+            "Working"
+        )
     }
 
     func testFreshActiveSessionKeepsAuthoritativeWorkingPresentation() {
@@ -583,6 +602,68 @@ final class AgentPresentationTests: XCTestCase {
         XCTAssertEqual(large.sessionWorkspaceMinimumHeight, 142)
         XCTAssertEqual(large.selectedDetailHeight, 94)
         XCTAssertEqual(large.selectedDetailActivityLimit, 4)
+    }
+
+    func testAccountUsageRendersCanonicalMetricsWithoutAnySession() {
+        let accountUsage = AgentUsage(scopedSamples: [
+            AgentUsageKey(metric: .quotaUsed, scope: "weekly"): AgentUsageSample(
+                value: 16,
+                limit: 100,
+                unit: .fraction,
+                scope: "weekly",
+                source: "account-test",
+                observedAt: now
+            ),
+            AgentUsageKey(metric: .contextUsed, scope: "context"): AgentUsageSample(
+                value: 25_800,
+                limit: 258_000,
+                unit: .tokens,
+                scope: "context",
+                source: "account-test",
+                observedAt: now
+            ),
+            AgentUsageKey(metric: .quotaUsed, scope: "5h"): AgentUsageSample(
+                value: 100,
+                limit: 100,
+                unit: .fraction,
+                scope: "5h",
+                source: "account-test",
+                observedAt: now
+            )
+        ])
+
+        let metrics = AgentGlobalUsagePresentation.make(
+            sessions: [],
+            providerUsage: [.codex: accountUsage],
+            limit: 5
+        )
+
+        XCTAssertEqual(metrics.map { $0.metric.label }, ["Quota · 5h", "Quota · Week", "Context"])
+        XCTAssertEqual(metrics[0].metric.progress, 1)
+        XCTAssertEqual(metrics[1].metric.progress, 0.16)
+        XCTAssertEqual(metrics[2].metric.progress, 0.1)
+    }
+
+    func testCompletedTurnCanRemainAnActiveIdlePresentedSessionUntilSessionEnd() {
+        var value = session(nativeID: "open-thread", state: .completed)
+        value.endedAt = nil
+
+        XCTAssertFalse(value.isActive)
+        XCTAssertTrue(value.isOpen)
+        XCTAssertEqual(AgentSessionPresentation.priority(for: value), .idle)
+        XCTAssertEqual(AgentSessionPresentation.displayedStateLabel(for: value, at: now), "Idle")
+        XCTAssertNil(AgentCompactPresentation.make(sessions: [value]))
+    }
+
+    func testResumableSessionIsLabeledTruthfullyWithoutCompactActivity() {
+        var value = session(nativeID: "resumable", state: .idle)
+        value.availability = .resumable
+
+        XCTAssertEqual(
+            AgentSessionPresentation.displayedStateLabel(for: value, at: now),
+            "Resumable"
+        )
+        XCTAssertNil(AgentCompactPresentation.make(sessions: [value]))
     }
 
     func testScreenshotFixtureUsesSyntheticScopedUsageWithoutControlAuthority() throws {

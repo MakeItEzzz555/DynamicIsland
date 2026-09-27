@@ -76,6 +76,15 @@ enum AgentEventType: Hashable, Codable, Sendable {
 
 struct AgentSessionMetadata: Equatable, Codable, Sendable {
     let project: AgentProjectContext?
+    let availability: AgentSessionAvailability?
+
+    init(
+        project: AgentProjectContext?,
+        availability: AgentSessionAvailability? = nil
+    ) {
+        self.project = project
+        self.availability = availability
+    }
 }
 
 struct AgentActivityDescriptor: Equatable, Codable, Sendable {

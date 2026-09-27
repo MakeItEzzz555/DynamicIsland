@@ -476,6 +476,11 @@ struct AgentEventFingerprint: Equatable, Sendable {
     let semanticValue: String
 }
 
+enum AgentSessionAvailability: String, Equatable, Codable, Sendable {
+    case loaded
+    case resumable
+}
+
 enum AgentPendingOperation: Equatable, Sendable {
     case tool(AgentToolEvent, completedAt: Date)
     case command(AgentCommandEvent, completedAt: Date)
@@ -508,6 +513,7 @@ struct AgentSession: Identifiable, Equatable, Sendable {
     let startedAt: Date
     var endedAt: Date?
     var lastUpdatedAt: Date
+    var availability: AgentSessionAvailability? = nil
 
     var isThinking = false
     var isPlanning = false
@@ -524,6 +530,10 @@ struct AgentSession: Identifiable, Equatable, Sendable {
 
     var isActive: Bool {
         endedAt == nil && !state.isTerminal
+    }
+
+    var isOpen: Bool {
+        endedAt == nil
     }
 }
 

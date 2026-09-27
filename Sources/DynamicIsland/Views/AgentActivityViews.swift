@@ -50,14 +50,18 @@ struct AgentActivityDashboardView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var agentEvents: AgentEventStore
     @ObservedObject var approvalControl: AgentApprovalController
+    @ObservedObject var managedControl: AgentManagedSessionController
     @ObservedObject var layoutStore: IslandLayoutStore
     let availableHeight: CGFloat
 
     var body: some View {
+        let visibleSessions = agentEvents.sessions.filter(managedControl.shouldPresent)
         AgentDashboardContentView(
-            sessions: agentEvents.sessions,
+            sessions: visibleSessions,
+            accountUsage: managedControl.accountUsage,
             showsUsage: settings.agentUsageMetricsEnabled,
             approvalControl: approvalControl,
+            managedControl: managedControl,
             layoutStore: layoutStore,
             availableHeight: availableHeight
         )
@@ -66,8 +70,10 @@ struct AgentActivityDashboardView: View {
 
 struct AgentDashboardContentView: View {
     let sessions: [AgentSession]
+    let accountUsage: AgentUsage
     let showsUsage: Bool
     @ObservedObject var approvalControl: AgentApprovalController
+    @ObservedObject var managedControl: AgentManagedSessionController
     var layoutStore: IslandLayoutStore? = nil
     let availableHeight: CGFloat
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -75,15 +81,19 @@ struct AgentDashboardContentView: View {
 
     init(
         sessions: [AgentSession],
+        accountUsage: AgentUsage = AgentUsage(),
         showsUsage: Bool,
         approvalControl: AgentApprovalController,
+        managedControl: AgentManagedSessionController,
         layoutStore: IslandLayoutStore? = nil,
         availableHeight: CGFloat,
         initialSelectedSessionID: AgentSessionInstanceID? = nil
     ) {
         self.sessions = sessions
+        self.accountUsage = accountUsage
         self.showsUsage = showsUsage
         _approvalControl = ObservedObject(wrappedValue: approvalControl)
+        _managedControl = ObservedObject(wrappedValue: managedControl)
         self.layoutStore = layoutStore
         self.availableHeight = availableHeight
         _selectedSessionID = State(initialValue: initialSelectedSessionID)
@@ -98,17 +108,28 @@ struct AgentDashboardContentView: View {
             let metrics = showsUsage
                 ? AgentGlobalUsagePresentation.make(
                     sessions: sessions,
+                    providerUsage: accountUsage.isEmpty ? [:] : [.codex: accountUsage],
                     limit: layout.maximumGaugeCount
                 )
                 : []
+            let selectedSession = AgentWorkspaceSelection.session(
+                current: selectedSessionID,
+                sessions: sessions
+            )
             VStack(alignment: .leading, spacing: 10) {
                 if sessions.isEmpty {
                     AgentStandbyDashboard(
                         layout: layout,
-                        showsUsage: showsUsage
+                        showsUsage: showsUsage,
+                        metrics: metrics
                     )
                 } else {
-                    if !sessions.contains(where: \.isActive) {
+                    if !sessions.contains(where: {
+                        switch AgentSessionPresentation.priority(for: $0) {
+                        case .actionRequired, .failure, .working, .thinking: true
+                        case .idle, .recent: false
+                        }
+                    }) {
                         AgentDashboardIdleBanner()
                     }
 
@@ -127,6 +148,15 @@ struct AgentDashboardContentView: View {
                         minimumHeight: verticalLayout.sessionWorkspaceMinimumHeight
                     )
                     .layoutPriority(2)
+
+                    if let selectedSession {
+                        AgentSelectedSessionControlView(
+                            session: selectedSession,
+                            managedControl: managedControl,
+                            detailHeight: verticalLayout.selectedDetailHeight,
+                            activityLimit: verticalLayout.selectedDetailActivityLimit
+                        )
+                    }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: proxy.size.height, alignment: .topLeading)
@@ -146,8 +176,65 @@ struct AgentDashboardContentView: View {
             )
         }
         .onDisappear {
-            layoutStore?.setAgentWorkspaceScrollCaptureActive(false)
             layoutStore?.setExpandedContentScrollRegion(.zero)
+        }
+    }
+}
+
+private struct AgentSelectedSessionControlView: View {
+    let session: AgentSession
+    @ObservedObject var managedControl: AgentManagedSessionController
+    let detailHeight: CGFloat
+    let activityLimit: Int
+
+    var body: some View {
+        if managedControl.isManaged(session), managedControl.mode(for: session).showsComposer {
+            AgentEmbeddedConsoleView(
+                session: session,
+                mode: managedControl.mode(for: session),
+                maximumActivityEntries: activityLimit,
+                onSubmit: { managedControl.submit($0, for: session) },
+                onInterrupt: { managedControl.interrupt(session) }
+            )
+            .frame(height: detailHeight)
+        } else if session.id.sessionID.provider == .codex {
+            HStack(spacing: 8) {
+                Image(systemName: "link.badge.plus")
+                    .foregroundStyle(.white.opacity(0.50))
+                Text(session.availability == .resumable
+                    ? "Resumable Codex session"
+                    : "Observed Codex session")
+                    .font(.system(size: 8.5, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.62))
+                if let status = managedControl.statusMessage(for: session) {
+                    Text(status)
+                        .font(.system(size: 8, weight: .medium))
+                        .foregroundStyle(.orange.opacity(0.78))
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                if managedControl.canConnect(session) ||
+                    managedControl.connecting.contains(session.id.sessionID.nativeID) {
+                    Button {
+                        managedControl.connect(session)
+                    } label: {
+                        Label(
+                            managedControl.connecting.contains(session.id.sessionID.nativeID)
+                                ? "Connecting…"
+                                : "Control",
+                            systemImage: "terminal"
+                        )
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.system(size: 8.5, weight: .semibold))
+                    .disabled(!managedControl.canConnect(session))
+                    .help("Resume this Codex thread through the official app-server control plane")
+                }
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 26)
+            .background(.white.opacity(0.022))
+            .accessibilityElement(children: .contain)
         }
     }
 }
@@ -157,7 +244,7 @@ private struct AgentDashboardIdleBanner: View {
         HStack(spacing: 8) {
             Image(systemName: "moon.zzz")
                 .foregroundStyle(.white.opacity(0.44))
-            Text("No active agents")
+            Text("No agents working")
                 .font(.system(size: 9.5, weight: .semibold))
             Text("Recent sessions remain available below.")
                 .font(.system(size: 8.5, weight: .medium))
@@ -177,11 +264,12 @@ private struct AgentDashboardIdleBanner: View {
 private struct AgentStandbyDashboard: View {
     let layout: AgentDashboardLayoutProjection
     let showsUsage: Bool
+    let metrics: [AgentGlobalUsagePresentation]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if showsUsage {
-                AgentStandbyUsageStrip(layout: layout)
+                AgentGlobalSummaryStrip(metrics: metrics, layout: layout)
             }
 
             HStack(alignment: .center, spacing: 12) {
@@ -195,10 +283,10 @@ private struct AgentStandbyDashboard: View {
                 .frame(width: 32, height: 32)
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("No active agents")
+                    Text("No agents working")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(.white.opacity(0.92))
-                    Text("The dashboard stays available between sessions. Live activity and trusted usage replace these standby values automatically.")
+                    Text("Codex account usage stays live between turns. Sessions remain available until the provider reports that they ended.")
                         .font(.system(size: 9, weight: .medium))
                         .foregroundStyle(.white.opacity(0.48))
                         .lineLimit(2)
@@ -214,7 +302,9 @@ private struct AgentStandbyDashboard: View {
 
             HStack(spacing: 6) {
                 Image(systemName: "checkmark.shield")
-                Text("Live percentages appear only when a provider supplies trustworthy limits.")
+                Text(metrics.isEmpty
+                    ? "Waiting for trustworthy provider usage data."
+                    : "Usage is refreshed independently of active turns.")
             }
             .font(.system(size: 8.5, weight: .medium))
             .foregroundStyle(.white.opacity(0.42))
@@ -376,11 +466,7 @@ private struct AgentSessionWorkspaceView: View {
                     )
                     layoutStore.setExpandedContentScrollRegion(localFrame)
                 }
-                .onHover { inside in
-                    layoutStore.setAgentWorkspaceScrollCaptureActive(inside)
-                }
                 .onDisappear {
-                    layoutStore.setAgentWorkspaceScrollCaptureActive(false)
                     layoutStore.setExpandedContentScrollRegion(.zero)
                 }
         } else {
@@ -668,7 +754,7 @@ private struct AgentSessionRow: View {
         .onTapGesture(perform: select)
         .onHover { isHovering = $0 }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(sessionTitle), \(AgentSessionPresentation.stateLabel(session.state)), \(session.id.sessionID.provider.stableName)")
+        .accessibilityLabel("\(sessionTitle), \(AgentSessionPresentation.displayedStateLabel(for: session, at: Date())), \(session.id.sessionID.provider.stableName)")
         .accessibilityValue(selected ? "Selected" : "Not selected")
         .accessibilityAddTraits(.isButton)
         .accessibilityAddTraits(selected ? .isSelected : [])
@@ -756,12 +842,12 @@ private struct AgentStateMarker: View {
         ZStack {
             Circle()
                 .fill(AgentVisualStyle.providerAccent(session.id.sessionID.provider).opacity(emphasized ? 0.18 : 0.10))
-            Image(systemName: AgentSessionPresentation.stateSymbol(session.state))
+            Image(systemName: AgentSessionPresentation.displayedStateSymbol(for: session, at: Date()))
                 .font(.system(size: emphasized ? 12 : 10, weight: .bold))
                 .foregroundStyle(AgentVisualStyle.accent(for: session.state))
         }
         .frame(width: 26, height: 26)
-        .accessibilityLabel("\(session.id.sessionID.provider.stableName), \(AgentSessionPresentation.stateLabel(session.state))")
+        .accessibilityLabel("\(session.id.sessionID.provider.stableName), \(AgentSessionPresentation.displayedStateLabel(for: session, at: Date()))")
     }
 }
 
@@ -988,7 +1074,7 @@ struct AgentCompactSessionIndicator: View {
     let session: AgentSession
 
     var body: some View {
-        Image(systemName: AgentSessionPresentation.stateSymbol(session.state))
+        Image(systemName: AgentSessionPresentation.displayedStateSymbol(for: session, at: Date()))
             .font(.system(size: 7.5, weight: .bold))
             .foregroundStyle(AgentVisualStyle.accent(for: session.state))
             .frame(width: 15, height: 15)
@@ -996,7 +1082,7 @@ struct AgentCompactSessionIndicator: View {
             .overlay {
                 Circle().stroke(AgentVisualStyle.providerAccent(session.id.sessionID.provider).opacity(0.45), lineWidth: 1)
             }
-            .accessibilityLabel("\(session.id.sessionID.provider.stableName.capitalized), \(AgentSessionPresentation.stateLabel(session.state))")
+            .accessibilityLabel("\(session.id.sessionID.provider.stableName.capitalized), \(AgentSessionPresentation.displayedStateLabel(for: session, at: Date()))")
     }
 }
 

@@ -27,4 +27,5 @@ struct IslandModules {
     let agentEvents: AgentEventStore
     let agentAttention: AgentAttentionCoordinator
     let agentApprovalControl: AgentApprovalController
+    let agentManagedControl: AgentManagedSessionController
 }

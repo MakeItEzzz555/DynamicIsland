@@ -24,7 +24,9 @@ struct AgentCompactPresentation: Equatable, Sendable {
     static func make(sessions: [AgentSession], enabled: Bool = true) -> AgentCompactPresentation? {
         guard enabled, !sessions.isEmpty else { return nil }
         let ordered = sessions
-            .filter(\.isActive)
+            .filter {
+                $0.isActive && AgentSessionPresentation.priority(for: $0) != .idle
+            }
             .sorted(by: AgentSessionPresentation.isOrderedBefore)
         guard !ordered.isEmpty else { return nil }
         let visible = Array(ordered.prefix(maximumVisibleSessions))
@@ -37,7 +39,10 @@ struct AgentCompactPresentation: Equatable, Sendable {
 
     private static func summary(for sessions: [AgentSession]) -> String {
         if sessions.count == 1, let session = sessions.first {
-            return "\(session.id.sessionID.provider.stableName.capitalized) \(AgentSessionPresentation.shortStateLabel(session.state).lowercased())"
+            let state = session.isOpen && session.state == .completed
+                ? "idle"
+                : AgentSessionPresentation.shortStateLabel(session.state).lowercased()
+            return "\(session.id.sessionID.provider.stableName.capitalized) \(state)"
         }
 
         let waiting = sessions.filter { AgentSessionPresentation.priority(for: $0) == .actionRequired }.count
@@ -104,19 +109,22 @@ enum AgentSessionPresentation {
     }
 
     static func priority(for session: AgentSession) -> AgentPresentationPriority {
+        if session.isOpen && session.state == .completed {
+            return .idle
+        }
         switch session.state {
         case .waitingForApproval, .waitingForUser:
-            .actionRequired
+            return .actionRequired
         case .failed, .interrupted:
-            .failure
+            return .failure
         case .working, .runningTool, .runningCommand:
-            .working
+            return .working
         case .thinking, .planning, .planReady:
-            .thinking
+            return .thinking
         case .completed:
-            .recent
+            return .recent
         case .idle:
-            .idle
+            return .idle
         }
     }
 
@@ -124,6 +132,7 @@ enum AgentSessionPresentation {
         let lhsPriority = priority(for: lhs)
         let rhsPriority = priority(for: rhs)
         if lhsPriority != rhsPriority { return lhsPriority < rhsPriority }
+        if lhs.isOpen != rhs.isOpen { return lhs.isOpen && !rhs.isOpen }
         if lhs.isActive != rhs.isActive { return lhs.isActive && !rhs.isActive }
         if lhs.lastUpdatedAt != rhs.lastUpdatedAt { return lhs.lastUpdatedAt > rhs.lastUpdatedAt }
         let lhsProvider = lhs.id.sessionID.provider.deterministicSortKey
@@ -182,17 +191,42 @@ enum AgentSessionPresentation {
 
     static func hasStaleActiveSignal(_ session: AgentSession, at date: Date) -> Bool {
         guard session.isActive else { return false }
-        return date.timeIntervalSince(session.lastUpdatedAt) > activeSignalFreshnessInterval
+        if session.capabilities.evidence(for: .sessionLifecycle)?.source == "codex-app-server-v2" {
+            // Managed sessions receive authoritative turn completion/error
+            // events; elapsed silence must not override that lifecycle.
+            return false
+        }
+        switch session.state {
+        case .thinking, .planning, .working, .runningTool, .runningCommand:
+            return date.timeIntervalSince(session.lastUpdatedAt) > activeSignalFreshnessInterval
+        case .waitingForApproval, .waitingForUser, .planReady,
+             .idle, .completed, .failed, .interrupted:
+            return false
+        }
     }
 
     static func displayedStateLabel(for session: AgentSession, at date: Date) -> String {
-        hasStaleActiveSignal(session, at: date)
+        if session.availability == .resumable,
+           (session.state == .idle || (session.isOpen && session.state == .completed)) {
+            return "Resumable"
+        }
+        if session.isOpen && session.state == .completed {
+            return "Idle"
+        }
+        return hasStaleActiveSignal(session, at: date)
             ? "Awaiting update"
             : stateLabel(session.state)
     }
 
     static func displayedStateSymbol(for session: AgentSession, at date: Date) -> String {
-        hasStaleActiveSignal(session, at: date)
+        if session.availability == .resumable,
+           (session.state == .idle || (session.isOpen && session.state == .completed)) {
+            return "arrow.clockwise.circle"
+        }
+        if session.isOpen && session.state == .completed {
+            return stateSymbol(.idle)
+        }
+        return hasStaleActiveSignal(session, at: date)
             ? "clock.badge.questionmark"
             : stateSymbol(session.state)
     }
@@ -241,12 +275,17 @@ enum AgentSessionPresentation {
         }
 
         if let activity = session.recentActivity.last,
+           activity.kind != .session,
            !activity.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return activity.title
         }
         if let project = session.project.displayName?.trimmingCharacters(in: .whitespacesAndNewlines),
            !project.isEmpty {
             return project
+        }
+        if let activity = session.recentActivity.last,
+           !activity.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return activity.title
         }
         return stateLabel(session.state)
     }
@@ -300,11 +339,11 @@ struct AgentProjectGroupPresentation: Identifiable, Equatable, Sendable {
     }
 
     var primarySessions: [AgentSession] {
-        sessions.filter { $0.isActive || AgentSessionPresentation.requiresAttention($0) }
+        sessions.filter { $0.isOpen || AgentSessionPresentation.requiresAttention($0) }
     }
 
     var recentSessions: [AgentSession] {
-        sessions.filter { !$0.isActive && !AgentSessionPresentation.requiresAttention($0) }
+        sessions.filter { !$0.isOpen && !AgentSessionPresentation.requiresAttention($0) }
     }
 
     var showsRecentSection: Bool {
@@ -948,6 +987,38 @@ struct AgentUsagePresentation: Identifiable, Equatable, Sendable {
         return values
     }
 
+    static func make(providerUsage usage: AgentUsage) -> [AgentUsagePresentation] {
+        var values: [AgentUsagePresentation] = []
+
+        if let used = usage[.contextUsed] {
+            let limit = used.limit ?? usage[.contextLimit]?.value
+            values.append(.init(id: "context", label: "Context", sample: used, effectiveLimit: limit))
+        }
+
+        for used in usage.samples(for: .quotaUsed) {
+            let limit = used.limit ?? usage.samples(for: .quotaLimit)
+                .first(where: { $0.scope == used.scope })?.value
+            let scope = quotaScopeLabel(used.scope)
+            values.append(.init(
+                id: "quota:\(used.scope.lowercased())",
+                label: scope.map { "Quota · \($0)" } ?? "Quota",
+                sample: used,
+                effectiveLimit: limit
+            ))
+        }
+
+        if let remaining = usage[.rateLimitRemaining] {
+            values.append(.init(
+                id: "remaining",
+                label: "Rate remaining",
+                sample: remaining,
+                effectiveLimit: remaining.limit
+            ))
+        }
+
+        return values
+    }
+
     private static func quotaScopeLabel(_ raw: String) -> String? {
         let value = raw.lowercased().replacingOccurrences(of: "_", with: "-")
         if value.contains("5h") || value.contains("five-hour") || value.contains("5-hour") { return "5h" }
@@ -961,24 +1032,53 @@ struct AgentGlobalUsagePresentation: Identifiable, Equatable, Sendable {
     let provider: AgentProvider
     let metric: AgentUsagePresentation
 
-    static func make(sessions: [AgentSession], limit: Int) -> [Self] {
-        var order: [String] = []
+    static func make(
+        sessions: [AgentSession],
+        providerUsage: [AgentProvider: AgentUsage] = [:],
+        limit: Int
+    ) -> [Self] {
         var selected: [String: Self] = [:]
-        for session in sessions.sorted(by: AgentSessionPresentation.isOrderedBefore) {
-            for metric in AgentUsagePresentation.make(for: session) {
-                let key = "\(session.id.sessionID.provider.deterministicSortKey):\(metric.id)"
-                let candidate = Self(id: key, provider: session.id.sessionID.provider, metric: metric)
-                if let existing = selected[key] {
-                    if metric.sample.observedAt > existing.metric.sample.observedAt {
-                        selected[key] = candidate
-                    }
-                } else {
-                    order.append(key)
-                    selected[key] = candidate
-                }
+
+        func consider(provider: AgentProvider, metric: AgentUsagePresentation) {
+            let key = "\(provider.deterministicSortKey):\(metric.id)"
+            let candidate = Self(id: key, provider: provider, metric: metric)
+            if let existing = selected[key],
+               existing.metric.sample.observedAt > metric.sample.observedAt {
+                return
+            }
+            selected[key] = candidate
+        }
+
+        for (provider, usage) in providerUsage {
+            for metric in AgentUsagePresentation.make(providerUsage: usage) {
+                consider(provider: provider, metric: metric)
             }
         }
-        return Array(order.compactMap { selected[$0] }.prefix(max(limit, 0)))
+
+        for session in sessions.sorted(by: AgentSessionPresentation.isOrderedBefore) {
+            for metric in AgentUsagePresentation.make(for: session) {
+                consider(provider: session.id.sessionID.provider, metric: metric)
+            }
+        }
+
+        let ordered = selected.values.sorted { lhs, rhs in
+            let lhsRank = canonicalRank(lhs.metric)
+            let rhsRank = canonicalRank(rhs.metric)
+            if lhsRank != rhsRank { return lhsRank < rhsRank }
+            if lhs.provider.deterministicSortKey != rhs.provider.deterministicSortKey {
+                return lhs.provider.deterministicSortKey < rhs.provider.deterministicSortKey
+            }
+            return lhs.id < rhs.id
+        }
+        return Array(ordered.prefix(max(limit, 0)))
+    }
+
+    private static func canonicalRank(_ metric: AgentUsagePresentation) -> Int {
+        let label = metric.label.lowercased()
+        if label.contains("5h") { return 0 }
+        if label.contains("week") { return 1 }
+        if label == "context" { return 2 }
+        return 10
     }
 }
 

@@ -35,7 +35,6 @@ final class IslandLayoutStore: ObservableObject {
     @Published var collapsedPreviewSurfaceFrame: CGRect = .zero
     @Published var panelFrame: CGRect = .zero
     @Published private(set) var isExpandedScrollGestureSuppressed = false
-    @Published private(set) var isAgentWorkspaceScrollCaptureActive = false
     @Published private(set) var expandedContentScrollRegion: CGRect = .zero
 
     func setExpandedScrollGestureSuppressed(_ suppressed: Bool) {
@@ -59,16 +58,6 @@ final class IslandLayoutStore: ObservableObject {
         #if DEBUG
         if ProcessInfo.processInfo.environment["DYNAMIC_ISLAND_VERBOSE_UI_LOGS"] == "1" {
             debugPrint("[GestureDebug] expanded content scroll region", next)
-        }
-        #endif
-    }
-
-    func setAgentWorkspaceScrollCaptureActive(_ active: Bool) {
-        guard isAgentWorkspaceScrollCaptureActive != active else { return }
-        isAgentWorkspaceScrollCaptureActive = active
-        #if DEBUG
-        if ProcessInfo.processInfo.environment["DYNAMIC_ISLAND_VERBOSE_UI_LOGS"] == "1" {
-            print("[GestureDebug] agent workspace scroll capture active=\(active)")
         }
         #endif
     }

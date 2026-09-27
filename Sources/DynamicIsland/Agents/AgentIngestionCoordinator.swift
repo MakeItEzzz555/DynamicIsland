@@ -445,7 +445,7 @@ actor AgentIngestionCoordinator {
         for event: AgentIngestionEvent,
         registration: AgentSourceRegistry.Registration
     ) -> Bool {
-        guard registration.descriptor.sourceKind == .officialHook,
+        guard [.officialHook, .officialLifecycleProtocol].contains(registration.descriptor.sourceKind),
               registration.policy.permitsLifecycleRecovery,
               registration.policy.permits(provider: event.provider),
               event.provider == .codex,

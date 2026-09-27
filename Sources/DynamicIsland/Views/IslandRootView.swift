@@ -2362,7 +2362,6 @@ struct ExpandedIslandView: View {
     private func synchronizeExpandedScrollSuppression() {
         layoutStore.setExpandedScrollGestureSuppressed(clipboardPresentation.isMounted)
         if displayedPage != .agents {
-            layoutStore.setAgentWorkspaceScrollCaptureActive(false)
             layoutStore.setExpandedContentScrollRegion(.zero)
         }
     }
@@ -2553,6 +2552,7 @@ struct ExpandedIslandView: View {
             settings: settings,
             agentEvents: agentEvents,
             approvalControl: modules.agentApprovalControl,
+            managedControl: modules.agentManagedControl,
             layoutStore: layoutStore,
             availableHeight: metrics.pageHeight
         )

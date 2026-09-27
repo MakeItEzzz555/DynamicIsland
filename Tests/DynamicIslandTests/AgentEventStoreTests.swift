@@ -197,7 +197,7 @@ final class AgentEventStoreTests: XCTestCase {
         XCTAssertEqual(store.attentionEvents.count, 2)
     }
 
-    func testCompletedSessionPrunesAfterRetentionButActiveSessionDoesNot() {
+    func testCompletedTurnStaysUntilExplicitSessionEndThenPrunesAfterRetention() {
         var limits = makeLimits()
         limits.completedSessionRetention = 10
         let store = AgentEventStore(limits: limits)
@@ -208,6 +208,18 @@ final class AgentEventStoreTests: XCTestCase {
         store.ingest(start(activeID, name: "active-start"))
 
         store.prune(at: AgentTestFixture.baseDate.addingTimeInterval(100))
+
+        XCTAssertNotNil(store.session(for: instance(completedID, generation: 1)))
+        XCTAssertNotNil(store.session(for: instance(activeID, generation: 1)))
+
+        store.ingest(AgentTestFixture.event(
+            "completed-session-end",
+            sessionID: completedID,
+            type: .sessionEnded,
+            offset: 101,
+            payload: .none
+        ))
+        store.prune(at: AgentTestFixture.baseDate.addingTimeInterval(200))
 
         XCTAssertNil(store.session(for: instance(completedID, generation: 1)))
         XCTAssertNotNil(store.session(for: instance(activeID, generation: 1)))

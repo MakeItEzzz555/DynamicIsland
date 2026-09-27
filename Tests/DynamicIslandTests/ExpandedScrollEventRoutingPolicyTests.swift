@@ -113,18 +113,6 @@ final class ExpandedScrollEventRoutingPolicyTests: XCTestCase {
         XCTAssertFalse(store.isExpandedScrollGestureSuppressed)
     }
 
-    func testLayoutStoreAgentWorkspaceCaptureDefaultsFalseAndToggles() {
-        let store = IslandLayoutStore()
-
-        XCTAssertFalse(store.isAgentWorkspaceScrollCaptureActive)
-
-        store.setAgentWorkspaceScrollCaptureActive(true)
-        XCTAssertTrue(store.isAgentWorkspaceScrollCaptureActive)
-
-        store.setAgentWorkspaceScrollCaptureActive(false)
-        XCTAssertFalse(store.isAgentWorkspaceScrollCaptureActive)
-    }
-
     func testLayoutStoreRegistersAndClearsExpandedContentScrollRegion() {
         let store = IslandLayoutStore()
         XCTAssertEqual(store.expandedContentScrollRegion, .zero)

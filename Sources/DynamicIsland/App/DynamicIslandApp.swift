@@ -93,6 +93,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         coordinator: agentIngestion,
         approvals: agentApprovalControl
     )
+    private lazy var agentManagedControl: AgentManagedSessionController = {
+        let provider = try? CodexAppServerProvider.makeDefault()
+        return AgentManagedSessionController(
+            provider: provider,
+            coordinator: agentIngestion,
+            eventStore: agentEvents,
+            approvals: agentApprovalControl
+        )
+    }()
 
     private var overlayController: OverlayWindowController?
     private var menuController: MenuBarController?
@@ -125,7 +134,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             navigation: navigation,
             agentEvents: agentEvents,
             agentAttention: agentAttention,
-            agentApprovalControl: agentApprovalControl
+            agentApprovalControl: agentApprovalControl,
+            agentManagedControl: agentManagedControl
         )
         #if DEBUG
         debugPrint(
@@ -195,6 +205,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         #endif
         agentBridge.stop()
+        agentManagedControl.stop()
         if let eventMonitor {
             NSEvent.removeMonitor(eventMonitor)
         }
@@ -261,9 +272,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 synchronizeAgentActivitySettings()
                 if enabled {
                     Task { await self.agentBridge.start() }
+                    self.agentManagedControl.startObserving()
                 } else {
                     self.agentBridge.stop()
+                    self.agentManagedControl.stop()
                 }
+            }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
+            .sink { [weak self] _ in
+                guard let self, settings.agentActivityEnabled else { return }
+                Task { await self.agentManagedControl.refreshPersistentSnapshot() }
+            }
+            .store(in: &cancellables)
+
+        navigation.$selectedPage
+            .removeDuplicates()
+            .sink { [weak self] page in
+                guard let self,
+                      page == .agents,
+                      settings.agentActivityEnabled else { return }
+                Task { await self.agentManagedControl.refreshPersistentSnapshot() }
             }
             .store(in: &cancellables)
 
