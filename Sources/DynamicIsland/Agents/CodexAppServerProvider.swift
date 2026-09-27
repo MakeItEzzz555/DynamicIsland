@@ -15,6 +15,7 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
         .contextUsage,
         .streamToolActivity
     ]
+    nonisolated let modelSelectionScope: AgentModelSelectionScope? = .nextTurn
     private let client: CodexAppServerClient
 
     init(client: CodexAppServerClient) {
@@ -84,11 +85,11 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
         }
     }
 
-    func listModels() async throws -> [AgentInteractiveModelOption] {
+    func listModels() async throws -> [AgentManagedModelDescriptor] {
         try await client.listModels(limit: 100)
             .filter { !$0.hidden }
             .map {
-                AgentInteractiveModelOption(
+                AgentManagedModelDescriptor(
                     id: $0.id,
                     model: $0.model,
                     displayName: $0.displayName,

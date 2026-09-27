@@ -307,7 +307,10 @@ actor CodexAppServerClient {
         let boundedLimit = min(max(limit, 1), 200)
         let result = try await request(
             method: "model/list",
-            params: .object(["limit": .integer(Int64(boundedLimit))])
+            params: .object([
+                "limit": .integer(Int64(boundedLimit)),
+                "includeHidden": .bool(false)
+            ])
         )
         guard let values = result["data"]?.arrayValue else {
             throw CodexAppServerError.invalidResponse("model/list")

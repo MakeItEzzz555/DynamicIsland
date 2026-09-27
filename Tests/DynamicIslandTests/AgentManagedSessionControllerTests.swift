@@ -233,7 +233,10 @@ final class AgentManagedSessionControllerTests: XCTestCase {
     @MainActor
     func testSelectedModelOverrideIsAppliedToManagedSubmission() async throws {
         let provider = PersistentSnapshotFakeProvider(
-            sessions: [Self.descriptor(id: "model-thread", state: .idle)],
+            sessions: [
+                Self.descriptor(id: "model-thread", state: .idle),
+                Self.descriptor(id: "other-thread", state: .idle)
+            ],
             usage: AgentUsage()
         )
         let store = AgentEventStore()
@@ -266,8 +269,14 @@ final class AgentManagedSessionControllerTests: XCTestCase {
         XCTAssertTrue(controller.interactiveCapabilities.contains(.selectModel))
         XCTAssertTrue(controller.availableModels.contains { $0.model == "model-b" })
 
-        controller.selectModel("model-b", for: managedSession)
+        XCTAssertTrue(controller.selectModel("model-b", for: managedSession))
         XCTAssertEqual(controller.selectedModel(for: managedSession), "model-b")
+        XCTAssertFalse(controller.selectModel("unsupported-model", for: managedSession))
+        XCTAssertEqual(controller.selectedModel(for: managedSession), "model-b")
+        let otherSession = try XCTUnwrap(store.sessions.first {
+            $0.id.sessionID.nativeID == "other-thread"
+        })
+        XCTAssertEqual(controller.selectedModel(for: otherSession), "gpt-test")
 
         let accepted = await controller.submit("hello", for: managedSession)
         XCTAssertTrue(accepted)
@@ -468,6 +477,7 @@ private actor PersistentSnapshotFakeProvider: AgentInteractiveProvider {
         .startSession, .resumeSession, .submitPrompt, .interrupt, .selectModel,
         .resolveApprovals, .accountUsage, .contextUsage, .streamToolActivity
     ]
+    nonisolated let modelSelectionScope: AgentModelSelectionScope? = .nextTurn
 
     private var discovered: [AgentDiscoveredSessionDescriptor]
     private let usage: AgentUsage
@@ -499,16 +509,16 @@ private actor PersistentSnapshotFakeProvider: AgentInteractiveProvider {
         return usage
     }
 
-    func listModels() async throws -> [AgentInteractiveModelOption] {
+    func listModels() async throws -> [AgentManagedModelDescriptor] {
         [
-            AgentInteractiveModelOption(
+            AgentManagedModelDescriptor(
                 id: "model-a",
                 model: "model-a",
                 displayName: "Model A",
                 description: nil,
                 isDefault: true
             ),
-            AgentInteractiveModelOption(
+            AgentManagedModelDescriptor(
                 id: "model-b",
                 model: "model-b",
                 displayName: "Model B",

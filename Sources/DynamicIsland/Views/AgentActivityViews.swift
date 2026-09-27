@@ -326,12 +326,19 @@ private struct AgentCLIControlBar: View {
                 .foregroundStyle(.white.opacity(0.48))
             }
             .menuStyle(.borderlessButton)
-            .help("Model for the next managed turn")
+            .help(modelSelectionHelp)
         } else if !compact {
             Text(modelLabel(for: session))
                 .font(.system(size: 8, weight: .medium, design: .monospaced))
                 .foregroundStyle(.white.opacity(0.40))
                 .lineLimit(1)
+        }
+    }
+
+    private var modelSelectionHelp: String {
+        switch managedControl.modelSelectionScope {
+        case .nextTurn: "Applies to the next managed turn"
+        case nil: "Thread model"
         }
     }
 

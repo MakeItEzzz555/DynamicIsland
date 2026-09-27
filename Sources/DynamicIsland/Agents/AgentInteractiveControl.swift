@@ -30,12 +30,18 @@ enum AgentInteractiveCapability: String, CaseIterable, Hashable, Sendable {
     case streamToolActivity
 }
 
-struct AgentInteractiveModelOption: Identifiable, Equatable, Sendable {
+struct AgentManagedModelDescriptor: Identifiable, Equatable, Sendable {
     let id: String
     let model: String
     let displayName: String
     let description: String?
     let isDefault: Bool
+}
+
+enum AgentModelSelectionScope: String, Equatable, Sendable {
+    /// The selected model is sent as an authoritative override on the next
+    /// provider turn request; it does not rewrite the persisted thread.
+    case nextTurn
 }
 
 enum AgentManagedTranscriptRole: String, Equatable, Sendable {
@@ -124,12 +130,13 @@ struct AgentManagedApprovalRequest: Equatable, Sendable {
 protocol AgentInteractiveProvider: Sendable {
     var provider: AgentProvider { get }
     var interactiveCapabilities: Set<AgentInteractiveCapability> { get }
+    var modelSelectionScope: AgentModelSelectionScope? { get }
 
     func events() async -> AsyncStream<AgentInteractiveProviderEvent>
     func discoverSessions() async throws -> [AgentDiscoveredSessionDescriptor]
     func readAccountUsage() async throws -> AgentUsage
     func readTranscript(nativeSessionID: String, limit: Int) async throws -> [AgentManagedTranscriptEntry]
-    func listModels() async throws -> [AgentInteractiveModelOption]
+    func listModels() async throws -> [AgentManagedModelDescriptor]
     func startSession(cwd: String?) async throws -> AgentManagedSessionDescriptor
     func resumeSession(nativeSessionID: String) async throws -> AgentManagedSessionDescriptor
     func submit(

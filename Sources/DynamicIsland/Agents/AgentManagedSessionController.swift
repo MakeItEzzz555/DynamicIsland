@@ -9,8 +9,8 @@ final class AgentManagedSessionController: ObservableObject {
     @Published private(set) var lastTransportError: String?
     @Published private(set) var accountUsage = AgentUsage()
     @Published private(set) var transcripts: [String: [AgentManagedTranscriptEntry]] = [:]
-    @Published private(set) var availableModels: [AgentInteractiveModelOption] = []
-    @Published private(set) var selectedModelOverrides: [String: String] = [:]
+    @Published private(set) var availableModels: [AgentManagedModelDescriptor] = []
+    @Published private(set) var selectedModelOverrides: [AgentSessionID: String] = [:]
 
     private let provider: (any AgentInteractiveProvider)?
     private let coordinator: AgentIngestionCoordinator
@@ -58,6 +58,10 @@ final class AgentManagedSessionController: ObservableObject {
     var managedProviders: [AgentProvider] {
         guard let provider, !provider.interactiveCapabilities.isEmpty else { return [] }
         return [provider.provider]
+    }
+
+    var modelSelectionScope: AgentModelSelectionScope? {
+        provider?.modelSelectionScope
     }
 
     var interactiveCapabilities: Set<AgentInteractiveCapability> {
@@ -392,17 +396,23 @@ final class AgentManagedSessionController: ObservableObject {
     }
 
     func selectedModel(for session: AgentSession) -> String? {
-        selectedModelOverrides[session.id.sessionID.nativeID] ?? session.project.model
+        selectedModelOverrides[session.id.sessionID] ?? session.project.model
     }
 
-    func selectModel(_ model: String?, for session: AgentSession) {
-        guard interactiveCapabilities.contains(.selectModel) else { return }
-        let nativeID = session.id.sessionID.nativeID
-        guard let model, availableModels.contains(where: { $0.model == model }) else {
-            selectedModelOverrides.removeValue(forKey: nativeID)
-            return
+    @discardableResult
+    func selectModel(_ model: String?, for session: AgentSession) -> Bool {
+        guard let provider,
+              provider.provider == session.id.sessionID.provider,
+              provider.interactiveCapabilities.contains(.selectModel),
+              provider.modelSelectionScope != nil else { return false }
+        let sessionID = session.id.sessionID
+        guard let model else {
+            selectedModelOverrides.removeValue(forKey: sessionID)
+            return true
         }
-        selectedModelOverrides[nativeID] = model
+        guard availableModels.contains(where: { $0.model == model }) else { return false }
+        selectedModelOverrides[sessionID] = model
+        return true
     }
 
     /// Returns true only after the provider accepts the authoritative turn/start.
@@ -425,7 +435,7 @@ final class AgentManagedSessionController: ObservableObject {
             let turn = try await provider.submit(
                 prompt: bounded,
                 nativeSessionID: nativeID,
-                model: selectedModelOverrides[nativeID]
+                model: selectedModelOverrides[session.id.sessionID]
             )
             updateControl(nativeID) {
                 $0.isSubmitting = false
