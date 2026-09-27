@@ -178,6 +178,41 @@ enum AgentSessionPresentation {
         }
     }
 
+    static let activeSignalFreshnessInterval: TimeInterval = 60
+
+    static func hasStaleActiveSignal(_ session: AgentSession, at date: Date) -> Bool {
+        guard session.isActive else { return false }
+        return date.timeIntervalSince(session.lastUpdatedAt) > activeSignalFreshnessInterval
+    }
+
+    static func displayedStateLabel(for session: AgentSession, at date: Date) -> String {
+        hasStaleActiveSignal(session, at: date)
+            ? "Awaiting update"
+            : stateLabel(session.state)
+    }
+
+    static func displayedStateSymbol(for session: AgentSession, at date: Date) -> String {
+        hasStaleActiveSignal(session, at: date)
+            ? "clock.badge.questionmark"
+            : stateSymbol(session.state)
+    }
+
+    static func displayedPrimaryTitle(for session: AgentSession, at date: Date) -> String {
+        let title = primaryTitle(for: session)
+        guard hasStaleActiveSignal(session, at: date) else { return title }
+        let normalized = normalizedForComparison(title)
+        let generic = Set([
+            "working",
+            "running tool",
+            "running command",
+            "thinking",
+            "planning",
+            "starting session",
+            "session resumed"
+        ])
+        return generic.contains(normalized) ? "Awaiting provider update" : title
+    }
+
     static func primaryTitle(for session: AgentSession) -> String {
         if session.state == .waitingForApproval,
            let activity = session.recentActivity.last {
