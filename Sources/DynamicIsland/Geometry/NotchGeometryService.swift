@@ -216,6 +216,26 @@ public struct IslandCanvasGeometry: Equatable {
     public let expandedSurfaceFrame: CGRect
 }
 
+enum ExpandedPresentationKind: String, Equatable, Sendable {
+    case standard
+    case agentsWorkspace
+}
+
+struct ExpandedPresentationProfile: Equatable, Sendable {
+    let kind: ExpandedPresentationKind
+    let scale: CGFloat
+
+    static let standard = ExpandedPresentationProfile(kind: .standard, scale: 1)
+    static let agentsWorkspace = ExpandedPresentationProfile(kind: .agentsWorkspace, scale: 1.10)
+
+    func resolvedSize(from base: CGSize) -> CGSize {
+        CGSize(
+            width: max(base.width * scale, 1),
+            height: max(base.height * scale, 1)
+        )
+    }
+}
+
 public final class NotchGeometryService {
     public init() {}
 
