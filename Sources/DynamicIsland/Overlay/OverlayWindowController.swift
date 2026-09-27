@@ -26,12 +26,14 @@ struct ExpandedScrollEventRoutingPolicy {
         isSuppressed: Bool,
         isExpanded: Bool,
         gesturesEnabled: Bool,
-        usesTrackpad: Bool
+        usesTrackpad: Bool,
+        contentScrollHit: Bool = false,
+        contentScrollSequenceActive: Bool = false
     ) -> ExpandedScrollEventRoute {
         guard gesturesEnabled, usesTrackpad else {
             return .passThroughToContent
         }
-        guard !isExpanded || !isSuppressed else {
+        guard !isExpanded || (!isSuppressed && !contentScrollHit && !contentScrollSequenceActive) else {
             return .passThroughToContent
         }
         return .islandGesture
@@ -121,6 +123,8 @@ final class OverlayWindowController {
     private var expandedScrollGestureHandled = false
     private var expandedScrollLastActionAt: CFTimeInterval?
     private var expandedScrollGestureResetWorkItem: DispatchWorkItem?
+    private var expandedContentScrollReleaseWorkItem: DispatchWorkItem?
+    private var expandedContentScrollSequenceActive = false
     private var collapsedScrollGestureResetWorkItem: DispatchWorkItem?
     private var mediaSwipeSessionActive = false
     private var mediaSwipeAccumulatedX: CGFloat = 0
@@ -210,6 +214,9 @@ final class OverlayWindowController {
                     self.debugLog("state changed to \(state)")
                     if state == .expanded {
                         self.layoutStore.isExpandedContentExiting = false
+                    } else {
+                        self.resetExpandedContentScrollTracking()
+                        self.layoutStore.setExpandedContentScrollRegion(.zero)
                     }
                     self.beginVisualMorph(for: state)
                     if state == .expanded {
@@ -1163,7 +1170,7 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
 
     private func handleExpandedScrollWheelFromMonitor(_ event: NSEvent, source: String) -> Bool {
         guard acceptsOverlayScroll(event) else { return false }
-        guard !shouldPassExpandedScrollThroughToContent() else {
+        guard !shouldPassExpandedScrollThroughToContent(event) else {
             return false
         }
 
@@ -1190,7 +1197,7 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
 
     private func handleExpandedScrollWheel(_ event: NSEvent, source: String) -> Bool {
         guard acceptsOverlayScroll(event) else { return false }
-        guard !shouldPassExpandedScrollThroughToContent() else {
+        guard !shouldPassExpandedScrollThroughToContent(event) else {
             return false
         }
 
@@ -1313,27 +1320,85 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
         }
     }
 
-    private func shouldPassExpandedScrollThroughToContent() -> Bool {
+    private func shouldPassExpandedScrollThroughToContent(_ event: NSEvent) -> Bool {
+        if event.phase.contains(.began) {
+            // A fresh physical gesture always gets a fresh ownership decision.
+            resetExpandedContentScrollTracking()
+        }
+
+        let isExpanded = islandState.state == .expanded
+        let region = screenRect(for: layoutStore.expandedContentScrollRegion)
+        let contentHit = isExpanded &&
+            !region.isEmpty &&
+            region.contains(NSEvent.mouseLocation) &&
+            event.hasPreciseScrollingDeltas
+
         let route = ExpandedScrollEventRoutingPolicy.route(
             isSuppressed: layoutStore.isExpandedScrollGestureSuppressed,
-            isExpanded: islandState.state == .expanded,
+            isExpanded: isExpanded,
             gesturesEnabled: settings.gesturesEnabled,
-            usesTrackpad: settings.gestureInputSource == .trackpad
+            usesTrackpad: settings.gestureInputSource == .trackpad,
+            contentScrollHit: contentHit,
+            contentScrollSequenceActive: expandedContentScrollSequenceActive
         )
-        guard route == .passThroughToContent,
-              layoutStore.isExpandedScrollGestureSuppressed,
-              islandState.state == .expanded else {
+        guard route == .passThroughToContent, isExpanded else {
             return false
         }
 
-        resetExpandedScrollTracking()
+        if layoutStore.isExpandedScrollGestureSuppressed {
+            resetExpandedScrollTracking()
+            logExpandedScrollPassThroughIfNeeded(reason: "global-suppression")
+            return true
+        }
+
+        if expandedContentScrollSequenceActive || contentHit {
+            expandedContentScrollSequenceActive = true
+            updateExpandedContentScrollSequenceLifetime(for: event)
+            resetExpandedScrollTracking()
+            logExpandedScrollPassThroughIfNeeded(reason: "registered-content-region")
+            return true
+        }
+
+        return false
+    }
+
+    private func updateExpandedContentScrollSequenceLifetime(for event: NSEvent) {
+        expandedContentScrollReleaseWorkItem?.cancel()
+        expandedContentScrollReleaseWorkItem = nil
+
+        if event.momentumPhase.contains(.ended) || event.momentumPhase.contains(.cancelled) {
+            DispatchQueue.main.async { [weak self] in
+                self?.resetExpandedContentScrollTracking()
+            }
+            return
+        }
+
+        let endedPhysicalGesture = event.phase.contains(.ended) || event.phase.contains(.cancelled)
+        let quietDelay: TimeInterval = endedPhysicalGesture ? 0.18 : 0.42
+        let generation = presentationSession.generation
+        let workItem = DispatchWorkItem { [weak self] in
+            Task { @MainActor in
+                guard let self, self.allowsOverlayWork(generation: generation) else { return }
+                self.resetExpandedContentScrollTracking()
+            }
+        }
+        expandedContentScrollReleaseWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + quietDelay, execute: workItem)
+    }
+
+    private func resetExpandedContentScrollTracking() {
+        expandedContentScrollReleaseWorkItem?.cancel()
+        expandedContentScrollReleaseWorkItem = nil
+        expandedContentScrollSequenceActive = false
+    }
+
+    private func logExpandedScrollPassThroughIfNeeded(reason: String) {
         #if DEBUG
         if !didLogExpandedScrollPassThrough {
-            print("[GestureDebug] expanded scroll passed through to content")
+            print("[GestureDebug] expanded scroll passed through to content reason=\(reason)")
             didLogExpandedScrollPassThrough = true
         }
         #endif
-        return true
     }
 
     private func expandedAction(for gesture: IslandPointerGesture) -> IslandGestureAction {
