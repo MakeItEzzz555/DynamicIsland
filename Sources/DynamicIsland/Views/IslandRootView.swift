@@ -1506,7 +1506,7 @@ struct CompactIslandView: View {
         case .subtle:
             return .easeInOut(duration: 0.12)
         case .normal:
-            return .easeInOut(duration: 0.16)
+            return .easeInOut(duration: 0.22).delay(0.035)
         case .slow:
             return .easeInOut(duration: 0.24)
         }
