@@ -134,10 +134,9 @@ struct AgentDashboardContentView: View {
                     if let selectedSession {
                         AgentEmbeddedConsoleView(
                             session: selectedSession,
-                            canSubmit: false,
-                            canInterrupt: false,
+                            mode: .observed,
                             maximumActivityEntries: verticalLayout.selectedDetailActivityLimit,
-                            onSubmit: { _ in },
+                            onSubmit: { _ in false },
                             onInterrupt: {}
                         )
                         .frame(height: verticalLayout.selectedDetailHeight)

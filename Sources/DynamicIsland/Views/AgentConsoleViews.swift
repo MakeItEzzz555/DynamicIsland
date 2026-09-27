@@ -1,12 +1,44 @@
 import AppKit
 import SwiftUI
 
+enum AgentConsoleMode: Equatable, Sendable {
+    case observed
+    case interactive(canInterrupt: Bool)
+
+    var showsComposer: Bool {
+        if case .interactive = self { return true }
+        return false
+    }
+
+    var canInterrupt: Bool {
+        if case let .interactive(canInterrupt) = self { return canInterrupt }
+        return false
+    }
+}
+
+enum AgentPromptDraftPolicy {
+    static let maximumLength = 8_000
+
+    static func bounded(_ value: String) -> String {
+        String(value.prefix(maximumLength))
+    }
+
+    static func submission(from value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return bounded(trimmed)
+    }
+
+    static func submitsReturn(with modifiers: NSEvent.ModifierFlags) -> Bool {
+        modifiers.intersection(.deviceIndependentFlagsMask).contains(.command)
+    }
+}
+
 struct AgentEmbeddedConsoleView: View {
     let session: AgentSession
-    var canSubmit = false
-    var canInterrupt = false
+    var mode: AgentConsoleMode = .observed
     var maximumActivityEntries = 3
-    let onSubmit: (String) -> Void
+    let onSubmit: (String) -> Bool
     let onInterrupt: () -> Void
 
     @State private var draft = ""
@@ -15,7 +47,7 @@ struct AgentEmbeddedConsoleView: View {
         VStack(alignment: .leading, spacing: 6) {
             header
             activity
-            if canSubmit {
+            if mode.showsComposer {
                 composer
             } else {
                 observedFooter
@@ -30,6 +62,10 @@ struct AgentEmbeddedConsoleView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Selected session details for \(AgentSessionPresentation.primaryTitle(for: session))")
+        .onChange(of: session.id) { _, _ in draft = "" }
+        .onChange(of: mode.showsComposer) { _, isInteractive in
+            if !isInteractive { draft = "" }
+        }
     }
 
     private var header: some View {
@@ -51,7 +87,7 @@ struct AgentEmbeddedConsoleView: View {
             )
             .font(.system(size: 7.5, weight: .semibold))
             .foregroundStyle(AgentVisualStyle.accent(for: session.state).opacity(0.86))
-            if canInterrupt {
+            if mode.canInterrupt {
                 Button(action: onInterrupt) {
                     Label("Stop", systemImage: "stop.fill")
                         .labelStyle(.iconOnly)
@@ -107,21 +143,22 @@ struct AgentEmbeddedConsoleView: View {
         HStack(alignment: .bottom, spacing: 7) {
             AgentPromptEditor(
                 text: $draft,
-                enabled: canSubmit,
-                placeholder: canSubmit ? "Message Codex…" : "Observed session — interactive control unavailable",
+                placeholder: "Message Codex…",
                 onSubmit: submitDraft
             )
+            .id(session.id)
             .frame(minHeight: 30, maxHeight: 48)
 
-            Button(action: submitDraft) {
+            Button(action: { _ = submitDraft() }) {
                 Image(systemName: "arrow.up.circle.fill")
                     .font(.system(size: 18, weight: .semibold))
             }
             .buttonStyle(.borderless)
-            .foregroundStyle(canSubmit && !trimmedDraft.isEmpty ? .white : .white.opacity(0.24))
-            .disabled(!canSubmit || trimmedDraft.isEmpty)
+            .foregroundStyle(submissionValue != nil ? .white : .white.opacity(0.24))
+            .disabled(submissionValue == nil)
             .keyboardShortcut(.return, modifiers: [.command])
             .help("Send prompt (Command-Return)")
+            .accessibilityLabel("Send prompt")
         }
     }
 
@@ -138,15 +175,15 @@ struct AgentEmbeddedConsoleView: View {
         .accessibilityLabel("Observed session. Interactive control unavailable.")
     }
 
-    private var trimmedDraft: String {
-        draft.trimmingCharacters(in: .whitespacesAndNewlines)
+    private var submissionValue: String? {
+        AgentPromptDraftPolicy.submission(from: draft)
     }
 
-    private func submitDraft() {
-        let value = String(trimmedDraft.prefix(8_000))
-        guard !value.isEmpty else { return }
-        onSubmit(value)
+    @discardableResult
+    private func submitDraft() -> Bool {
+        guard let value = submissionValue, onSubmit(value) else { return false }
         draft = ""
+        return true
     }
 
     private func operationColor(_ status: AgentOperationStatus) -> Color {
@@ -162,9 +199,8 @@ struct AgentEmbeddedConsoleView: View {
 
 private struct AgentPromptEditor: NSViewRepresentable {
     @Binding var text: String
-    let enabled: Bool
     let placeholder: String
-    let onSubmit: () -> Void
+    let onSubmit: () -> Bool
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text)
@@ -197,8 +233,10 @@ private struct AgentPromptEditor: NSViewRepresentable {
         ]
         editor.submitHandler = onSubmit
         editor.placeholder = placeholder
-        editor.isEditable = enabled
+        editor.isEditable = true
         editor.isSelectable = true
+        editor.setAccessibilityLabel("Agent prompt")
+        editor.setAccessibilityHelp("Command-Return sends. Shift-Return inserts a new line. Escape releases focus.")
 
         scroll.documentView = editor
         context.coordinator.editor = editor
@@ -209,11 +247,17 @@ private struct AgentPromptEditor: NSViewRepresentable {
         guard let editor = scroll.documentView as? AgentPromptTextView else { return }
         editor.submitHandler = onSubmit
         editor.placeholder = placeholder
-        editor.isEditable = enabled
-        if editor.string != text {
-            editor.string = text
+        let boundedText = AgentPromptDraftPolicy.bounded(text)
+        if editor.string != boundedText {
+            editor.string = boundedText
         }
         editor.needsDisplay = true
+    }
+
+    static func dismantleNSView(_ scroll: NSScrollView, coordinator: Coordinator) {
+        guard let editor = scroll.documentView as? AgentPromptTextView,
+              editor.window?.firstResponder === editor else { return }
+        editor.window?.makeFirstResponder(nil)
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
@@ -226,18 +270,27 @@ private struct AgentPromptEditor: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard let editor else { return }
-            text = editor.string
+            let boundedText = AgentPromptDraftPolicy.bounded(editor.string)
+            if boundedText != editor.string {
+                editor.string = boundedText
+                editor.setSelectedRange(NSRange(location: (boundedText as NSString).length, length: 0))
+            }
+            text = boundedText
         }
     }
 }
 
 private final class AgentPromptTextView: NSTextView {
-    var submitHandler: (() -> Void)?
+    var submitHandler: (() -> Bool)?
     var placeholder = ""
 
     override func keyDown(with event: NSEvent) {
-        if event.keyCode == 36, event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.command) {
-            submitHandler?()
+        if event.keyCode == 53 {
+            window?.makeFirstResponder(nil)
+            return
+        }
+        if event.keyCode == 36, AgentPromptDraftPolicy.submitsReturn(with: event.modifierFlags) {
+            _ = submitHandler?()
             return
         }
         super.keyDown(with: event)
