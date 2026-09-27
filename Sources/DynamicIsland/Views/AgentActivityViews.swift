@@ -50,6 +50,7 @@ struct AgentActivityDashboardView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var agentEvents: AgentEventStore
     @ObservedObject var approvalControl: AgentApprovalController
+    @ObservedObject var layoutStore: IslandLayoutStore
     let availableHeight: CGFloat
 
     var body: some View {
@@ -57,6 +58,7 @@ struct AgentActivityDashboardView: View {
             sessions: agentEvents.sessions,
             showsUsage: settings.agentUsageMetricsEnabled,
             approvalControl: approvalControl,
+            layoutStore: layoutStore,
             availableHeight: availableHeight
         )
     }
@@ -66,6 +68,7 @@ struct AgentDashboardContentView: View {
     let sessions: [AgentSession]
     let showsUsage: Bool
     @ObservedObject var approvalControl: AgentApprovalController
+    var layoutStore: IslandLayoutStore? = nil
     let availableHeight: CGFloat
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var previewMode = false
@@ -73,38 +76,51 @@ struct AgentDashboardContentView: View {
     var body: some View {
         GeometryReader { proxy in
             let layout = AgentDashboardLayoutProjection.make(width: proxy.size.width)
-            ScrollView(.vertical, showsIndicators: true) {
-                VStack(alignment: .leading, spacing: 10) {
-                    if previewMode {
-                        AgentDashboardPreviewBanner {
-                            previewMode = false
+            let displayedSessions = previewMode ? AgentDashboardPreviewFactory.sessions() : sessions
+            let metrics = showsUsage
+                ? AgentGlobalUsagePresentation.make(
+                    sessions: displayedSessions,
+                    limit: layout.maximumGaugeCount
+                )
+                : []
+
+            VStack(alignment: .leading, spacing: 10) {
+                if previewMode {
+                    AgentDashboardPreviewBanner {
+                        previewMode = false
+                    }
+                }
+
+                if sessions.isEmpty && !previewMode {
+                    AgentStandbyDashboard(
+                        layout: layout,
+                        showsUsage: showsUsage
+                    ) {
+                        previewMode = true
+                    }
+                } else {
+                    if !previewMode && !sessions.contains(where: \.isActive) {
+                        AgentDashboardIdleBanner {
+                            previewMode = true
                         }
                     }
 
-                    if sessions.isEmpty && !previewMode {
-                        AgentStandbyDashboard(
-                            layout: layout,
-                            showsUsage: showsUsage
-                        ) {
-                            previewMode = true
-                        }
-                    } else {
-                        if !previewMode && !sessions.contains(where: \.isActive) {
-                            AgentDashboardIdleBanner {
-                                previewMode = true
-                            }
-                        }
-                        AgentDashboardStack(
-                            sessions: previewMode ? AgentDashboardPreviewFactory.sessions() : sessions,
-                            showsUsage: showsUsage,
-                            approvalControl: approvalControl,
-                            layout: layout,
-                            reduceMotion: reduceMotion,
-                            previewMode: previewMode
-                        )
+                    if showsUsage {
+                        AgentGlobalSummaryStrip(metrics: metrics, layout: layout)
                     }
+
+                    AgentSessionWorkspaceView(
+                        sessions: displayedSessions,
+                        showsUsage: showsUsage,
+                        approvalControl: approvalControl,
+                        layout: layout,
+                        reduceMotion: reduceMotion,
+                        previewMode: previewMode,
+                        layoutStore: layoutStore
+                    )
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: proxy.size.height, alignment: .topLeading)
         }
         .frame(maxWidth: .infinity, maxHeight: availableHeight, alignment: .topLeading)
         .foregroundStyle(.white)
@@ -112,6 +128,9 @@ struct AgentDashboardContentView: View {
             if count > 0 {
                 previewMode = false
             }
+        }
+        .onDisappear {
+            layoutStore?.setExpandedContentScrollRegion(.zero)
         }
     }
 }
@@ -298,7 +317,6 @@ struct AgentDashboardStack: View {
     var previewMode = false
 
     var body: some View {
-        let dashboard = AgentDashboardPresentation.make(sessions: sessions)
         let metrics = showsUsage
             ? AgentGlobalUsagePresentation.make(sessions: sessions, limit: layout.maximumGaugeCount)
             : []
@@ -308,7 +326,104 @@ struct AgentDashboardStack: View {
                 AgentGlobalSummaryStrip(metrics: metrics, layout: layout)
                     .padding(.bottom, 11)
             }
+            AgentDashboardGroups(
+                sessions: sessions,
+                showsUsage: showsUsage,
+                approvalControl: approvalControl,
+                layout: layout,
+                reduceMotion: reduceMotion,
+                previewMode: previewMode
+            )
+        }
+        .padding(.vertical, 2)
+    }
+}
 
+private struct AgentSessionWorkspaceView: View {
+    let sessions: [AgentSession]
+    let showsUsage: Bool
+    @ObservedObject var approvalControl: AgentApprovalController
+    let layout: AgentDashboardLayoutProjection
+    let reduceMotion: Bool
+    let previewMode: Bool
+    let layoutStore: IslandLayoutStore?
+
+    var body: some View {
+        registeredWorkspace(
+            ScrollView(.vertical, showsIndicators: true) {
+                AgentDashboardGroups(
+                    sessions: sessions,
+                    showsUsage: showsUsage,
+                    approvalControl: approvalControl,
+                    layout: layout,
+                    reduceMotion: reduceMotion,
+                    previewMode: previewMode
+                )
+                .padding(.vertical, 3)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            .padding(.horizontal, 1)
+            .background(Color.white.opacity(0.018))
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(.white.opacity(0.055), lineWidth: 1)
+            }
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .accessibilityLabel("Agent sessions")
+    }
+
+    @ViewBuilder
+    private func registeredWorkspace<Content: View>(_ content: Content) -> some View {
+        if let layoutStore {
+            content
+                .background {
+                    GeometryReader { proxy in
+                        Color.clear.preference(
+                            key: AgentSessionScrollRegionPreferenceKey.self,
+                            value: proxy.frame(in: .named(IslandCanvasCoordinateSpace.name))
+                        )
+                    }
+                }
+                .onPreferenceChange(AgentSessionScrollRegionPreferenceKey.self) { frame in
+                    let canvasHeight = layoutStore.canvasSize.height
+                    let localFrame = CGRect(
+                        x: frame.minX,
+                        y: canvasHeight - frame.maxY,
+                        width: frame.width,
+                        height: frame.height
+                    )
+                    layoutStore.setExpandedContentScrollRegion(localFrame)
+                }
+                .onDisappear {
+                    layoutStore.setExpandedContentScrollRegion(.zero)
+                }
+        } else {
+            content
+        }
+    }
+}
+
+private struct AgentSessionScrollRegionPreferenceKey: PreferenceKey {
+    static var defaultValue: CGRect = .zero
+
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        value = nextValue()
+    }
+}
+
+private struct AgentDashboardGroups: View {
+    let sessions: [AgentSession]
+    let showsUsage: Bool
+    @ObservedObject var approvalControl: AgentApprovalController
+    let layout: AgentDashboardLayoutProjection
+    let reduceMotion: Bool
+    let previewMode: Bool
+
+    var body: some View {
+        let dashboard = AgentDashboardPresentation.make(sessions: sessions)
+        VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(dashboard.groups.enumerated()), id: \.element.id) { index, group in
                 if index > 0 {
                     Divider()
@@ -325,7 +440,6 @@ struct AgentDashboardStack: View {
                 )
             }
         }
-        .padding(.vertical, 2)
     }
 }
 
