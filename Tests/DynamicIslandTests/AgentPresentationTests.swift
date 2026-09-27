@@ -403,6 +403,24 @@ final class AgentPresentationTests: XCTestCase {
         XCTAssertEqual(metrics.first { $0.label == "Quota · Week" }?.sample.value, 50)
     }
 
+    func testWorkspaceSelectionKeepsExistingSessionAndFallsBackByPriority() throws {
+        let working = session(nativeID: "working", state: .working)
+        let approval = session(nativeID: "approval", state: .waitingForApproval)
+        let completed = session(nativeID: "completed", state: .completed)
+
+        XCTAssertEqual(
+            AgentWorkspaceSelection.resolve(current: working.id, sessions: [approval, working, completed]),
+            working.id
+        )
+
+        XCTAssertEqual(
+            AgentWorkspaceSelection.resolve(current: nil, sessions: [completed, working, approval]),
+            approval.id
+        )
+
+        XCTAssertNil(AgentWorkspaceSelection.resolve(current: approval.id, sessions: []))
+    }
+
     func testDashboardPreviewUsesSyntheticScopedUsageWithoutControlAuthority() throws {
         let sessions = AgentDashboardPreviewFactory.sessions(now: now)
         XCTAssertEqual(sessions.count, 3)
