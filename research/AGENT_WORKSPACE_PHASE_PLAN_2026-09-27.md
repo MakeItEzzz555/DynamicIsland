@@ -65,6 +65,26 @@ Gate:
 - Multiple projects/sessions are usable in one viewport.
 - Selection survives updates when possible and falls back deterministically otherwise.
 
+## Phase 3.5 — Real-device workspace stabilization
+
+Added after live testing on 2026-09-27.
+
+Findings:
+- The selected-session observed-only detail panel consumed too much of the Agents vertical budget before interactive control existed.
+- The registered scroll-region routing was structurally correct, but real-device UX requires the island's global trackpad gesture handling to be explicitly muted while the pointer is inside the session workspace.
+- Hook-only observation can miss a terminal signal when a Codex turn stops because of an upstream error or exhausted usage. The presentation must not keep implying live work forever, but it also must not invent completion from a timer.
+
+Plan:
+- Reserve the embedded console for future interactive/managed sessions and prioritize session-list height until then.
+- While the pointer is inside the session workspace, explicitly route trackpad scrolling to content and suppress island-level scroll gestures; clear that capture on hover exit, page change, collapse, and teardown.
+- Keep authoritative lifecycle state untouched. If an active session receives no new provider event for a bounded freshness interval, present it as "Awaiting update" with explicit last-event recency rather than "Working". Phase 5 must replace this presentation fallback with authoritative turn failed/cancelled/completed events from the supported interactive control plane where available.
+
+Gate:
+- The workspace is large enough to browse multiple sessions.
+- Two-finger vertical scrolling inside the workspace cannot collapse/expand/navigate the island.
+- Island gestures remain unchanged outside the workspace.
+- Stale observation never masquerades as authoritative completion or continued live work.
+
 ## Phase 4 — Embedded agent console UI
 
 Goal: provide an in-island conversational/control surface without exposing hidden reasoning or unsafe raw output.
