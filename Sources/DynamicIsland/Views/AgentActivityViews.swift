@@ -277,7 +277,7 @@ private struct AgentSelectedSessionControlView: View {
                 maximumActivityEntries: activityLimit,
                 transcriptEntries: managedControl.transcript(for: session),
                 layoutStore: layoutStore,
-                onSubmit: { managedControl.submit($0, for: session) },
+                onSubmit: { await managedControl.submit($0, for: session) },
                 onInterrupt: { managedControl.interrupt(session) }
             )
             .frame(minHeight: detailHeight, maxHeight: .infinity)

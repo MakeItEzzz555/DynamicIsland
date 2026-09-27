@@ -40,10 +40,12 @@ struct AgentEmbeddedConsoleView: View {
     var maximumActivityEntries = 3
     var transcriptEntries: [AgentManagedTranscriptEntry] = []
     var layoutStore: IslandLayoutStore? = nil
-    let onSubmit: (String) -> Bool
+    let onSubmit: (String) async -> Bool
     let onInterrupt: () -> Void
 
     @State private var draft = ""
+    @State private var submissionInFlight = false
+    @State private var transcriptIsNearBottom = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -103,13 +105,53 @@ struct AgentEmbeddedConsoleView: View {
     @ViewBuilder
     private var transcript: some View {
         registeredTranscript(
-            ScrollView(.vertical, showsIndicators: true) {
-                transcriptContent
-                    .padding(.vertical, 2)
+            GeometryReader { viewport in
+                ScrollViewReader { proxy in
+                    ScrollView(.vertical, showsIndicators: true) {
+                        transcriptContent
+                            .padding(.vertical, 2)
+
+                        Color.clear
+                            .frame(height: 1)
+                            .id(AgentConsoleScrollAnchor.bottom)
+                            .background {
+                                GeometryReader { bottomProxy in
+                                    Color.clear.preference(
+                                        key: AgentConsoleBottomPositionPreferenceKey.self,
+                                        value: bottomProxy.frame(
+                                            in: .named(AgentConsoleCoordinateSpace.transcript)
+                                        ).maxY
+                                    )
+                                }
+                            }
+                    }
+                    .coordinateSpace(name: AgentConsoleCoordinateSpace.transcript)
+                    .scrollBounceBehavior(.basedOnSize)
+                    .onPreferenceChange(AgentConsoleBottomPositionPreferenceKey.self) { bottomY in
+                        transcriptIsNearBottom = bottomY <= viewport.size.height + 28
+                    }
+                    .onChange(of: transcriptFollowToken) { _, _ in
+                        guard transcriptIsNearBottom else { return }
+                        DispatchQueue.main.async {
+                            proxy.scrollTo(AgentConsoleScrollAnchor.bottom, anchor: .bottom)
+                        }
+                    }
+                    .onAppear {
+                        DispatchQueue.main.async {
+                            proxy.scrollTo(AgentConsoleScrollAnchor.bottom, anchor: .bottom)
+                        }
+                    }
+                }
             }
-            .scrollBounceBehavior(.basedOnSize)
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var transcriptFollowToken: String {
+        let transcriptToken = transcriptEntries.last.map {
+            "\($0.id):\($0.text.count)"
+        } ?? "none"
+        return "\(transcriptToken):\(session.lastUpdatedAt.timeIntervalSince1970)"
     }
 
     private var transcriptContent: some View {
@@ -206,8 +248,12 @@ struct AgentEmbeddedConsoleView: View {
                     .font(.system(size: 18, weight: .semibold))
             }
             .buttonStyle(.borderless)
-            .foregroundStyle(submissionValue != nil ? .white : .white.opacity(0.24))
-            .disabled(submissionValue == nil)
+            .foregroundStyle(
+                submissionValue != nil && !submissionInFlight
+                    ? .white
+                    : .white.opacity(0.24)
+            )
+            .disabled(submissionValue == nil || submissionInFlight)
             .keyboardShortcut(.return, modifiers: [.command])
             .help("Send prompt (Command-Return)")
             .accessibilityLabel("Send prompt")
@@ -233,8 +279,16 @@ struct AgentEmbeddedConsoleView: View {
 
     @discardableResult
     private func submitDraft() -> Bool {
-        guard let value = submissionValue, onSubmit(value) else { return false }
-        draft = ""
+        guard !submissionInFlight, let value = submissionValue else { return false }
+        submissionInFlight = true
+        let submittedDraft = value
+        Task { @MainActor in
+            let accepted = await onSubmit(submittedDraft)
+            if accepted, draft == submittedDraft {
+                draft = ""
+            }
+            submissionInFlight = false
+        }
         return true
     }
 
@@ -246,6 +300,22 @@ struct AgentEmbeddedConsoleView: View {
         case .completed, .resolved: .green.opacity(0.58)
         case .cancelled, .unknown: .white.opacity(0.34)
         }
+    }
+}
+
+private enum AgentConsoleCoordinateSpace {
+    static let transcript = "dynamicIsland.agentConsole.transcript"
+}
+
+private enum AgentConsoleScrollAnchor: Hashable {
+    case bottom
+}
+
+private struct AgentConsoleBottomPositionPreferenceKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }
 

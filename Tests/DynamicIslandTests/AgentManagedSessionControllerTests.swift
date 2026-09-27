@@ -231,6 +231,35 @@ final class AgentManagedSessionControllerTests: XCTestCase {
     }
 
     @MainActor
+    func testSubmitReportsProviderAcceptanceAndFailureSynchronouslyToComposer() async throws {
+        let provider = PersistentSnapshotFakeProvider(
+            sessions: [Self.descriptor(id: "submit-thread", state: .idle)],
+            usage: AgentUsage()
+        )
+        let store = AgentEventStore()
+        let controller = AgentManagedSessionController(
+            provider: provider,
+            coordinator: AgentIngestionCoordinator(eventStore: store),
+            eventStore: store,
+            approvals: AgentApprovalController()
+        )
+        await controller.refreshPersistentSnapshot()
+        let session = try XCTUnwrap(store.sessions.first)
+        controller.connect(session)
+        try await Task.sleep(for: .milliseconds(20))
+
+        let accepted = await controller.submit("hello", for: session)
+        XCTAssertTrue(accepted)
+        let submitted = await provider.submittedPrompts()
+        XCTAssertEqual(submitted, ["hello"])
+
+        await provider.setSubmitFailure(true)
+        let rejected = await controller.submit("keep this draft", for: session)
+        XCTAssertFalse(rejected)
+        XCTAssertNotNil(controller.statusMessage(for: session))
+    }
+
+    @MainActor
     func testTranscriptHistoryAndStreamingDeltaStayBoundedAndReplaceByIdentity() async throws {
         let provider = PersistentSnapshotFakeProvider(
             sessions: [Self.descriptor(id: "managed", state: .idle)],
@@ -380,6 +409,8 @@ private actor PersistentSnapshotFakeProvider: AgentInteractiveProvider {
     private let usage: AgentUsage
     private var usageFailure = false
     private var transcript: [AgentManagedTranscriptEntry] = []
+    private var submitted: [String] = []
+    private var submitFailure = false
     private let eventStream: AsyncStream<AgentInteractiveProviderEvent>
     private let eventContinuation: AsyncStream<AgentInteractiveProviderEvent>.Continuation
 
@@ -447,7 +478,17 @@ private actor PersistentSnapshotFakeProvider: AgentInteractiveProvider {
     }
 
     func submit(prompt: String, nativeSessionID: String) async throws -> AgentManagedTurnDescriptor {
-        throw CodexAppServerError.invalidResponse("unused")
+        if submitFailure { throw CodexAppServerError.rpcError(code: -1, message: "failed") }
+        submitted.append(prompt)
+        return AgentManagedTurnDescriptor(nativeSessionID: nativeSessionID, turnID: "turn-submit")
+    }
+
+    func setSubmitFailure(_ value: Bool) {
+        submitFailure = value
+    }
+
+    func submittedPrompts() -> [String] {
+        submitted
     }
 
     func interrupt(nativeSessionID: String, turnID: String) async throws {}

@@ -373,9 +373,9 @@ final class AgentManagedSessionController: ObservableObject {
         }
     }
 
-    /// Returns true once the controller has accepted ownership of the submission.
-    /// Transport failure is reported asynchronously and keeps the session managed.
-    func submit(_ prompt: String, for session: AgentSession) -> Bool {
+    /// Returns true only after the provider accepts the authoritative turn/start.
+    /// The caller can therefore keep its draft intact across transport/RPC failure.
+    func submit(_ prompt: String, for session: AgentSession) async -> Bool {
         guard let provider,
               let bounded = AgentPromptDraftPolicy.submission(from: prompt),
               var state = managed[session.id.sessionID.nativeID],
@@ -389,23 +389,21 @@ final class AgentManagedSessionController: ObservableObject {
         managed[session.id.sessionID.nativeID] = state
         let nativeID = session.id.sessionID.nativeID
 
-        Task { [weak self] in
-            guard let self else { return }
-            do {
-                let turn = try await provider.submit(prompt: bounded, nativeSessionID: nativeID)
-                self.updateControl(nativeID) {
-                    $0.isSubmitting = false
-                    $0.activeTurnID = turn.turnID
-                    $0.lastError = nil
-                }
-            } catch {
-                self.updateControl(nativeID) {
-                    $0.isSubmitting = false
-                    $0.lastError = Self.safeError(error)
-                }
+        do {
+            let turn = try await provider.submit(prompt: bounded, nativeSessionID: nativeID)
+            updateControl(nativeID) {
+                $0.isSubmitting = false
+                $0.activeTurnID = turn.turnID
+                $0.lastError = nil
             }
+            return true
+        } catch {
+            updateControl(nativeID) {
+                $0.isSubmitting = false
+                $0.lastError = Self.safeError(error)
+            }
+            return false
         }
-        return true
     }
 
     func interrupt(_ session: AgentSession) {
