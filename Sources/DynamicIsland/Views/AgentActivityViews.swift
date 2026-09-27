@@ -335,7 +335,6 @@ struct AgentDashboardStack: View {
     let layout: AgentDashboardLayoutProjection
     let reduceMotion: Bool
     var previewMode = false
-    @Binding var selectedSessionID: AgentSessionInstanceID?
 
     var body: some View {
         let metrics = showsUsage
@@ -353,7 +352,10 @@ struct AgentDashboardStack: View {
                 approvalControl: approvalControl,
                 layout: layout,
                 reduceMotion: reduceMotion,
-                previewMode: previewMode
+                previewMode: previewMode,
+                selectedSessionID: .constant(
+                    AgentWorkspaceSelection.resolve(current: nil, sessions: sessions)
+                )
             )
         }
         .padding(.vertical, 2)
@@ -573,6 +575,7 @@ private struct AgentProjectSection: View {
     @ObservedObject var approvalControl: AgentApprovalController
     let reduceMotion: Bool
     var previewMode = false
+    @Binding var selectedSessionID: AgentSessionInstanceID?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -598,7 +601,9 @@ private struct AgentProjectSection: View {
                             layout: layout,
                             showsUsage: showsUsage,
                             approvalControl: approvalControl,
-                            previewMode: previewMode
+                            previewMode: previewMode,
+                            selected: selectedSessionID == session.id,
+                            select: { selectedSessionID = session.id }
                         )
                     }
                 }
