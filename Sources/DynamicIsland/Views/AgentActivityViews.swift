@@ -132,45 +132,31 @@ struct AgentDashboardContentView: View {
                 sessions: sessions
             )
             VStack(alignment: .leading, spacing: 10) {
+                if showsUsage {
+                    AgentGlobalSummaryStrip(metrics: metrics, layout: layout)
+                }
+
                 if sessions.isEmpty {
                     AgentStandbyDashboard(
                         layout: layout,
-                        showsUsage: showsUsage,
+                        showsUsage: false,
                         metrics: metrics
                     )
                 } else {
-                    if !sessions.contains(where: {
-                        switch AgentSessionPresentation.priority(for: $0) {
-                        case .actionRequired, .failure, .working, .thinking: true
-                        case .idle, .recent: false
-                        }
-                    }) {
-                        AgentDashboardIdleBanner()
-                    }
-
-                    if showsUsage {
-                        AgentGlobalSummaryStrip(metrics: metrics, layout: layout)
-                    }
-
-                    AgentSessionWorkspaceView(
+                    AgentCompactSessionSelector(
                         sessions: sessions,
-                        showsUsage: showsUsage,
-                        approvalControl: approvalControl,
-                        layout: layout,
-                        reduceMotion: reduceMotion,
-                        layoutStore: layoutStore,
-                        selectedSessionID: $selectedSessionID,
-                        minimumHeight: verticalLayout.sessionWorkspaceMinimumHeight
+                        selectedSessionID: $selectedSessionID
                     )
-                    .layoutPriority(2)
 
                     if let selectedSession {
                         AgentSelectedSessionControlView(
                             session: selectedSession,
                             managedControl: managedControl,
-                            detailHeight: verticalLayout.selectedDetailHeight,
-                            activityLimit: verticalLayout.selectedDetailActivityLimit
+                            detailHeight: max(verticalLayout.selectedDetailHeight, 138),
+                            activityLimit: max(verticalLayout.selectedDetailActivityLimit, 6),
+                            layoutStore: layoutStore
                         )
+                        .layoutPriority(2)
                     }
                 }
             }
@@ -196,11 +182,92 @@ struct AgentDashboardContentView: View {
     }
 }
 
+private struct AgentCompactSessionSelector: View {
+    let sessions: [AgentSession]
+    @Binding var selectedSessionID: AgentSessionInstanceID?
+
+    private var selectedSession: AgentSession? {
+        AgentWorkspaceSelection.session(current: selectedSessionID, sessions: sessions)
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Label("Codex", systemImage: AgentVisualStyle.providerSymbol(.codex))
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.72))
+
+            Menu {
+                ForEach(sessions.sorted(by: AgentSessionPresentation.isOrderedBefore), id: \.id) { session in
+                    Button {
+                        selectedSessionID = session.id
+                    } label: {
+                        VStack(alignment: .leading) {
+                            Text(sessionLabel(session))
+                            Text(sessionDetail(session))
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 5) {
+                    Text(selectedSession.map(sessionLabel) ?? "Choose session")
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .lineLimit(1)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: 7, weight: .semibold))
+                }
+                .foregroundStyle(.white.opacity(0.86))
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize(horizontal: false, vertical: true)
+
+            Spacer(minLength: 8)
+
+            if let session = selectedSession {
+                Text(session.project.model ?? "Model unavailable")
+                    .font(.system(size: 8, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.40))
+                    .lineLimit(1)
+                Label(
+                    AgentSessionPresentation.displayedStateLabel(for: session, at: Date()),
+                    systemImage: AgentSessionPresentation.displayedStateSymbol(for: session, at: Date())
+                )
+                .font(.system(size: 8, weight: .semibold))
+                .foregroundStyle(AgentVisualStyle.accent(for: session.state).opacity(0.82))
+            }
+        }
+        .padding(.horizontal, 9)
+        .frame(height: 28)
+        .background(.white.opacity(0.022))
+        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .stroke(.white.opacity(0.05), lineWidth: 1)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Agent session selector")
+    }
+
+    private func sessionLabel(_ session: AgentSession) -> String {
+        let project = AgentPrivacyProjection.displayProject(session.project)
+        if let displayName = project.displayName, !displayName.isEmpty {
+            return displayName
+        }
+        return AgentSessionPresentation.primaryTitle(for: session)
+    }
+
+    private func sessionDetail(_ session: AgentSession) -> String {
+        let state = AgentSessionPresentation.displayedStateLabel(for: session, at: Date())
+        let model = session.project.model ?? "unknown model"
+        return "\(state) · \(model)"
+    }
+}
+
 private struct AgentSelectedSessionControlView: View {
     let session: AgentSession
     @ObservedObject var managedControl: AgentManagedSessionController
     let detailHeight: CGFloat
     let activityLimit: Int
+    let layoutStore: IslandLayoutStore?
 
     var body: some View {
         if managedControl.isManaged(session), managedControl.mode(for: session).showsComposer {
@@ -208,10 +275,11 @@ private struct AgentSelectedSessionControlView: View {
                 session: session,
                 mode: managedControl.mode(for: session),
                 maximumActivityEntries: activityLimit,
+                layoutStore: layoutStore,
                 onSubmit: { managedControl.submit($0, for: session) },
                 onInterrupt: { managedControl.interrupt(session) }
             )
-            .frame(height: detailHeight)
+            .frame(minHeight: detailHeight, maxHeight: .infinity)
         } else if session.id.sessionID.provider == .codex {
             HStack(spacing: 8) {
                 Image(systemName: "link.badge.plus")

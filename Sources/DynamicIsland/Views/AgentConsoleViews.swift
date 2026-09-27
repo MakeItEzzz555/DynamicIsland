@@ -38,6 +38,7 @@ struct AgentEmbeddedConsoleView: View {
     let session: AgentSession
     var mode: AgentConsoleMode = .observed
     var maximumActivityEntries = 3
+    var layoutStore: IslandLayoutStore? = nil
     let onSubmit: (String) -> Bool
     let onInterrupt: () -> Void
 
@@ -46,7 +47,7 @@ struct AgentEmbeddedConsoleView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             header
-            activity
+            transcript
             if mode.showsComposer {
                 composer
             } else {
@@ -99,15 +100,26 @@ struct AgentEmbeddedConsoleView: View {
     }
 
     @ViewBuilder
-    private var activity: some View {
+    private var transcript: some View {
+        registeredTranscript(
+            ScrollView(.vertical, showsIndicators: true) {
+                transcriptContent
+                    .padding(.vertical, 2)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var transcriptContent: some View {
         let operations = Array(
             AgentOperationAggregation.make(
                 for: session,
                 limit: maximumActivityEntries,
-                includePendingApprovals: false
+                includePendingApprovals: true
             ).suffix(maximumActivityEntries)
         )
-        VStack(alignment: .leading, spacing: 3) {
+        return LazyVStack(alignment: .leading, spacing: 5) {
             if operations.isEmpty {
                 HStack(spacing: 6) {
                     Image(systemName: AgentSessionPresentation.stateSymbol(session.state))
@@ -124,12 +136,12 @@ struct AgentEmbeddedConsoleView: View {
                         Text(operation.displayTitle)
                             .fontDesign(operation.isCommand ? .monospaced : .default)
                             .foregroundStyle(.white.opacity(operation.status == .active ? 0.88 : 0.52))
-                            .lineLimit(1)
+                            .lineLimit(2)
                         if let detail = operation.detail, !detail.isEmpty {
                             Text(detail)
                                 .fontDesign(operation.isCommand ? .monospaced : .default)
                                 .foregroundStyle(.white.opacity(0.34))
-                                .lineLimit(1)
+                                .lineLimit(2)
                         }
                     }
                 }
@@ -137,6 +149,33 @@ struct AgentEmbeddedConsoleView: View {
         }
         .font(.system(size: 8.5, weight: .medium))
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func registeredTranscript<Content: View>(_ content: Content) -> some View {
+        if let layoutStore {
+            content
+                .background {
+                    GeometryReader { proxy in
+                        Color.clear.preference(
+                            key: AgentConsoleScrollRegionPreferenceKey.self,
+                            value: proxy.frame(in: .named(IslandCanvasCoordinateSpace.name))
+                        )
+                    }
+                }
+                .onPreferenceChange(AgentConsoleScrollRegionPreferenceKey.self) { frame in
+                    let localFrame = IslandCanvasCoordinateSpace.appKitLocalRect(
+                        fromSwiftUI: frame,
+                        canvasHeight: layoutStore.canvasSize.height
+                    )
+                    layoutStore.setExpandedContentScrollRegion(localFrame)
+                }
+                .onDisappear {
+                    layoutStore.setExpandedContentScrollRegion(.zero)
+                }
+        } else {
+            content
+        }
     }
 
     private var composer: some View {
@@ -194,6 +233,14 @@ struct AgentEmbeddedConsoleView: View {
         case .completed, .resolved: .green.opacity(0.58)
         case .cancelled, .unknown: .white.opacity(0.34)
         }
+    }
+}
+
+private struct AgentConsoleScrollRegionPreferenceKey: PreferenceKey {
+    static let defaultValue: CGRect = .zero
+
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        value = nextValue()
     }
 }
 
