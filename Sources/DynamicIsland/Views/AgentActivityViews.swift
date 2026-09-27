@@ -72,6 +72,7 @@ struct AgentDashboardContentView: View {
     let availableHeight: CGFloat
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var previewMode = false
+    @State private var selectedSessionID: AgentSessionInstanceID?
 
     var body: some View {
         GeometryReader { proxy in
@@ -116,7 +117,8 @@ struct AgentDashboardContentView: View {
                         layout: layout,
                         reduceMotion: reduceMotion,
                         previewMode: previewMode,
-                        layoutStore: layoutStore
+                        layoutStore: layoutStore,
+                        selectedSessionID: $selectedSessionID
                     )
                 }
             }
@@ -128,6 +130,24 @@ struct AgentDashboardContentView: View {
             if count > 0 {
                 previewMode = false
             }
+        }
+        .onChange(of: sessions.map(\.id)) { _ in
+            selectedSessionID = AgentWorkspaceSelection.resolve(
+                current: selectedSessionID,
+                sessions: previewMode ? AgentDashboardPreviewFactory.sessions() : sessions
+            )
+        }
+        .onChange(of: previewMode) { _ in
+            selectedSessionID = AgentWorkspaceSelection.resolve(
+                current: nil,
+                sessions: previewMode ? AgentDashboardPreviewFactory.sessions() : sessions
+            )
+        }
+        .onAppear {
+            selectedSessionID = AgentWorkspaceSelection.resolve(
+                current: selectedSessionID,
+                sessions: previewMode ? AgentDashboardPreviewFactory.sessions() : sessions
+            )
         }
         .onDisappear {
             layoutStore?.setExpandedContentScrollRegion(.zero)
@@ -315,6 +335,7 @@ struct AgentDashboardStack: View {
     let layout: AgentDashboardLayoutProjection
     let reduceMotion: Bool
     var previewMode = false
+    @Binding var selectedSessionID: AgentSessionInstanceID?
 
     var body: some View {
         let metrics = showsUsage
@@ -347,6 +368,7 @@ private struct AgentSessionWorkspaceView: View {
     let reduceMotion: Bool
     let previewMode: Bool
     let layoutStore: IslandLayoutStore?
+    @Binding var selectedSessionID: AgentSessionInstanceID?
 
     var body: some View {
         registeredWorkspace(
@@ -357,7 +379,8 @@ private struct AgentSessionWorkspaceView: View {
                     approvalControl: approvalControl,
                     layout: layout,
                     reduceMotion: reduceMotion,
-                    previewMode: previewMode
+                    previewMode: previewMode,
+                    selectedSessionID: $selectedSessionID
                 )
                 .padding(.vertical, 3)
             }
@@ -420,6 +443,7 @@ private struct AgentDashboardGroups: View {
     let layout: AgentDashboardLayoutProjection
     let reduceMotion: Bool
     let previewMode: Bool
+    @Binding var selectedSessionID: AgentSessionInstanceID?
 
     var body: some View {
         let dashboard = AgentDashboardPresentation.make(sessions: sessions)
@@ -436,7 +460,8 @@ private struct AgentDashboardGroups: View {
                     showsUsage: showsUsage,
                     approvalControl: approvalControl,
                     reduceMotion: reduceMotion,
-                    previewMode: previewMode
+                    previewMode: previewMode,
+                    selectedSessionID: $selectedSessionID
                 )
             }
         }
@@ -563,7 +588,9 @@ private struct AgentProjectSection: View {
                             layout: layout,
                             showsUsage: showsUsage,
                             approvalControl: approvalControl,
-                            previewMode: previewMode
+                            previewMode: previewMode,
+                            selected: selectedSessionID == session.id,
+                            select: { selectedSessionID = session.id }
                         )
                     } else {
                         AgentSessionRow(
@@ -616,6 +643,8 @@ private struct AgentSessionRow: View {
     let showsUsage: Bool
     @ObservedObject var approvalControl: AgentApprovalController
     var previewMode = false
+    let selected: Bool
+    let select: () -> Void
     @State private var isHovering = false
 
     var body: some View {
@@ -633,8 +662,20 @@ private struct AgentSessionRow: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 9)
-        .background(isHovering ? Color.white.opacity(0.045) : Color.clear)
+        .background(
+            selected
+                ? Color.white.opacity(0.075)
+                : (isHovering ? Color.white.opacity(0.045) : Color.clear)
+        )
+        .overlay(alignment: .leading) {
+            if selected {
+                Rectangle()
+                    .fill(.white.opacity(0.62))
+                    .frame(width: 2)
+            }
+        }
         .contentShape(Rectangle())
+        .onTapGesture(perform: select)
         .onHover { isHovering = $0 }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(sessionTitle), \(AgentSessionPresentation.stateLabel(session.state)), \(session.id.sessionID.provider.stableName)")
@@ -651,6 +692,8 @@ private struct AgentAttentionSessionRow: View {
     let showsUsage: Bool
     @ObservedObject var approvalControl: AgentApprovalController
     var previewMode = false
+    let selected: Bool
+    let select: () -> Void
 
     var body: some View {
         HStack(spacing: 0) {
@@ -674,7 +717,12 @@ private struct AgentAttentionSessionRow: View {
             .padding(.horizontal, 9)
             .padding(.vertical, 11)
         }
-        .background(AgentVisualStyle.attentionSurfaceTint(for: session.state).opacity(0.18))
+        .background(
+            AgentVisualStyle.attentionSurfaceTint(for: session.state)
+                .opacity(selected ? 0.25 : 0.18)
+        )
+        .contentShape(Rectangle())
+        .onTapGesture(perform: select)
         .overlay(alignment: .bottom) {
             Rectangle()
                 .fill(AgentVisualStyle.attentionSurfaceTint(for: session.state).opacity(0.24))
