@@ -6,13 +6,14 @@ import SwiftUI
 struct OverlayGeometrySignature: Equatable, CustomStringConvertible {
     let collapsedSize: CGSize
     let expandedSize: CGSize
+    let expandedPresentationKind: ExpandedPresentationKind
     let collapsedActivityProfile: CollapsedActivityLayoutProfile?
     let collapsedPresentationProfile: CollapsedPresentationProfile
     let useAdaptiveNotchSizing: Bool
     let respectHardwareNotch: Bool
 
     var description: String {
-        "collapsedSize=\(collapsedSize) expandedSize=\(expandedSize) collapsedActivityProfile=\(String(describing: collapsedActivityProfile)) collapsedPresentationProfile=\(collapsedPresentationProfile.kind.rawValue) useAdaptiveNotchSizing=\(useAdaptiveNotchSizing) respectHardwareNotch=\(respectHardwareNotch)"
+        "collapsedSize=\(collapsedSize) expandedSize=\(expandedSize) expandedPresentation=\(expandedPresentationKind.rawValue) collapsedActivityProfile=\(String(describing: collapsedActivityProfile)) collapsedPresentationProfile=\(collapsedPresentationProfile.kind.rawValue) useAdaptiveNotchSizing=\(useAdaptiveNotchSizing) respectHardwareNotch=\(respectHardwareNotch)"
     }
 }
 
@@ -263,6 +264,20 @@ final class OverlayWindowController {
             }
             .store(in: &cancellables)
 
+        modules.navigation.$selectedPage
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] page in
+                guard let self else { return }
+                self.resetExpandedContentScrollTracking()
+                if page != .agents {
+                    self.layoutStore.setExpandedContentScrollRegion(.zero)
+                }
+                guard self.islandState.state == .expanded else { return }
+                self.reposition(animated: true, reason: "expandedPageChanged", force: true)
+            }
+            .store(in: &cancellables)
+
         settings.$overlayEnabled
             .removeDuplicates()
             .dropFirst()
@@ -415,7 +430,7 @@ final class OverlayWindowController {
 
         let geometry = geometryService.geometry(
             collapsedSize: settings.collapsedSize,
-            expandedSize: settings.expandedSize,
+            expandedSize: resolvedExpandedSize,
             collapsedActivityProfile: collapsedActivityLayoutProfile,
             collapsedPresentationProfile: collapsedPresentationProfile,
             useAdaptiveNotchSizing: settings.useAdaptiveNotchSizing,
@@ -453,7 +468,7 @@ final class OverlayWindowController {
             }
             let correctedGeometry = self.geometryService.geometry(
                 collapsedSize: self.settings.collapsedSize,
-                expandedSize: self.settings.expandedSize,
+                expandedSize: self.resolvedExpandedSize,
                 collapsedActivityProfile: self.collapsedActivityLayoutProfile,
                 collapsedPresentationProfile: self.collapsedPresentationProfile,
                 useAdaptiveNotchSizing: self.settings.useAdaptiveNotchSizing,
@@ -545,10 +560,19 @@ final class OverlayWindowController {
         )
     }
 
+    private var expandedPresentationProfile: ExpandedPresentationProfile {
+        modules.navigation.selectedPage == .agents ? .agentsWorkspace : .standard
+    }
+
+    private var resolvedExpandedSize: CGSize {
+        expandedPresentationProfile.resolvedSize(from: settings.expandedSize)
+    }
+
     private var currentGeometrySignature: OverlayGeometrySignature {
         OverlayGeometrySignature(
             collapsedSize: settings.collapsedSize,
-            expandedSize: settings.expandedSize,
+            expandedSize: resolvedExpandedSize,
+            expandedPresentationKind: expandedPresentationProfile.kind,
             collapsedActivityProfile: collapsedActivityLayoutProfile,
             collapsedPresentationProfile: collapsedPresentationProfile,
             useAdaptiveNotchSizing: settings.useAdaptiveNotchSizing,
@@ -977,7 +1001,7 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
         debugPrint(
             "DynamicIsland geometry refresh",
             "collapsedSize=\(settings.collapsedSize)",
-            "expandedSize=\(settings.expandedSize)",
+            "expandedSize=\(resolvedExpandedSize)",
             "collapsedFrame=\(geometry.collapsedFrame)",
             "expandedFrame=\(geometry.expandedFrame)",
             "panelFrame=\(geometry.expandedFrame)",
@@ -1040,7 +1064,7 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
 
         let geometry = geometryService.geometry(
             collapsedSize: settings.collapsedSize,
-            expandedSize: settings.expandedSize,
+            expandedSize: resolvedExpandedSize,
             collapsedActivityProfile: collapsedActivityLayoutProfile,
             collapsedPresentationProfile: collapsedPresentationProfile,
             useAdaptiveNotchSizing: settings.useAdaptiveNotchSizing,
