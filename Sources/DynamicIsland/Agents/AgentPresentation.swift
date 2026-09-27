@@ -952,6 +952,23 @@ struct AgentUsagePresentation: Identifiable, Equatable, Sendable {
         return value + " / " + limit + " " + sample.unit.rawValue
     }
 
+    var isQuotaUsage: Bool {
+        id.hasPrefix("quota:")
+    }
+
+    var gaugeProgress: Double? {
+        guard let progress else { return nil }
+        return isQuotaUsage ? min(max(1 - progress, 0), 1) : progress
+    }
+
+    var gaugeValueText: String {
+        guard let gaugeProgress else {
+            return sample.value.formatted(.number.precision(.fractionLength(0...1)))
+        }
+        let percent = Int((gaugeProgress * 100).rounded())
+        return isQuotaUsage ? "\(percent)% left" : "\(percent)%"
+    }
+
     static func make(for session: AgentSession) -> [AgentUsagePresentation] {
         var values: [AgentUsagePresentation] = []
         if session.capabilities.contains(.contextUsage), let used = session.usage[.contextUsed] {

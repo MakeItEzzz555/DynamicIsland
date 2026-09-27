@@ -23,12 +23,27 @@ enum AgentVisualStyle {
     }
 
     static func providerSymbol(_ provider: AgentProvider) -> String {
+        AgentProviderVisualIdentity.resolve(provider).systemSymbolName
+    }
+}
+
+struct AgentProviderVisualIdentity: Equatable, Sendable {
+    let systemSymbolName: String
+    let accessibilityName: String
+
+    static func resolve(_ provider: AgentProvider) -> Self {
         switch provider {
-        case .codex: "terminal"
-        case .claude: "brain.head.profile"
-        case .other: "cube"
+        case .codex:
+            return Self(systemSymbolName: "sparkles", accessibilityName: "Codex")
+        case .claude:
+            return Self(systemSymbolName: "brain.head.profile", accessibilityName: "Claude")
+        case .other:
+            return Self(systemSymbolName: "cube", accessibilityName: "Agent provider")
         }
     }
+}
+
+private extension AgentVisualStyle {
 
     static func attentionSurfaceTint(for state: AgentState) -> Color {
         switch state {
@@ -325,15 +340,13 @@ private struct AgentStandbyUsageStrip: View {
     ]
 
     var body: some View {
-        HStack(spacing: layout.isNarrow ? 14 : 22) {
+        HStack(spacing: layout.isNarrow ? 10 : 16) {
             ForEach(Array(slots.prefix(layout.maximumGaugeCount).enumerated()), id: \.offset) { _, slot in
                 AgentStandbyUsageGauge(symbol: slot.0, label: slot.1)
-                    .frame(maxWidth: layout.isNarrow ? .infinity : nil, alignment: .leading)
-            }
-            if !layout.isNarrow {
-                Spacer(minLength: 0)
+                    .frame(maxWidth: .infinity, alignment: .center)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .center)
         .padding(.horizontal, 8)
         .padding(.vertical, 7)
         .background(.white.opacity(0.025))
@@ -534,19 +547,17 @@ private struct AgentGlobalSummaryStrip: View {
     }
 
     var body: some View {
-        HStack(spacing: layout.isNarrow ? 14 : 22) {
+        HStack(spacing: layout.isNarrow ? 10 : 16) {
             ForEach(metrics) { metric in
                 AgentUsageGauge(metric: metric)
-                    .frame(maxWidth: layout.isNarrow ? .infinity : nil, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .center)
             }
             ForEach(Array(missingSlots.enumerated()), id: \.offset) { _, slot in
                 AgentStandbyUsageGauge(symbol: slot.0, label: slot.1)
-                    .frame(maxWidth: layout.isNarrow ? .infinity : nil, alignment: .leading)
-            }
-            if !layout.isNarrow {
-                Spacer(minLength: 0)
+                    .frame(maxWidth: .infinity, alignment: .center)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .center)
         .padding(.horizontal, 8)
         .padding(.vertical, 7)
         .background(.white.opacity(0.025))
@@ -563,7 +574,7 @@ private struct AgentUsageGauge: View {
             ZStack {
                 Circle()
                     .stroke(.white.opacity(0.10), lineWidth: 4)
-                if let progress = metric.metric.progress {
+                if let progress = metric.metric.gaugeProgress {
                     Circle()
                         .trim(from: 0, to: progress)
                         .stroke(
@@ -604,10 +615,7 @@ private struct AgentUsageGauge: View {
     }
 
     private var gaugeValue: String {
-        if let progress = metric.metric.progress {
-            return "\(Int((progress * 100).rounded()))%"
-        }
-        return metric.metric.sample.value.formatted(.number.precision(.fractionLength(0...1)))
+        metric.metric.gaugeValueText
     }
 }
 

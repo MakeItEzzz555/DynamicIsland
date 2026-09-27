@@ -386,6 +386,57 @@ final class AgentPresentationTests: XCTestCase {
         XCTAssertEqual(metric.sample.observedAt, now.addingTimeInterval(30))
     }
 
+    func testQuotaGaugeShowsRemainingWhileContextGaugeShowsUsed() {
+        let fiveHour = AgentUsagePresentation(
+            id: "quota:5h",
+            label: "Quota · 5h",
+            sample: usageSample(value: 18, limit: 100, observedAt: now, scope: "5h"),
+            effectiveLimit: 100
+        )
+        let weekly = AgentUsagePresentation(
+            id: "quota:weekly",
+            label: "Quota · Week",
+            sample: usageSample(value: 29, limit: 100, observedAt: now, scope: "weekly"),
+            effectiveLimit: 100
+        )
+        let context = AgentUsagePresentation(
+            id: "context",
+            label: "Context",
+            sample: usageSample(value: 19, limit: 100, observedAt: now, scope: "context"),
+            effectiveLimit: 100
+        )
+
+        XCTAssertEqual(fiveHour.progress ?? -1, 0.18, accuracy: 0.0001)
+        XCTAssertEqual(fiveHour.gaugeProgress ?? -1, 0.82, accuracy: 0.0001)
+        XCTAssertEqual(fiveHour.gaugeValueText, "82% left")
+        XCTAssertEqual(weekly.gaugeProgress ?? -1, 0.71, accuracy: 0.0001)
+        XCTAssertEqual(weekly.gaugeValueText, "71% left")
+        XCTAssertEqual(context.gaugeProgress ?? -1, 0.19, accuracy: 0.0001)
+        XCTAssertEqual(context.gaugeValueText, "19%")
+    }
+
+    func testQuotaGaugeRemainingClampsAtBounds() {
+        let over = AgentUsagePresentation(
+            id: "quota:5h",
+            label: "Quota · 5h",
+            sample: usageSample(value: 140, limit: 100, observedAt: now, scope: "5h"),
+            effectiveLimit: 100
+        )
+        let under = AgentUsagePresentation(
+            id: "quota:weekly",
+            label: "Quota · Week",
+            sample: usageSample(value: -25, limit: 100, observedAt: now, scope: "weekly"),
+            effectiveLimit: 100
+        )
+        XCTAssertEqual(over.gaugeProgress ?? -1, 0, accuracy: 0.0001)
+        XCTAssertEqual(under.gaugeProgress ?? -1, 1, accuracy: 0.0001)
+    }
+
+    func testProviderVisualIdentityDoesNotMislabelCodexAsTerminal() {
+        XCTAssertEqual(AgentProviderVisualIdentity.resolve(.codex).accessibilityName, "Codex")
+        XCTAssertNotEqual(AgentProviderVisualIdentity.resolve(.codex).systemSymbolName, "terminal")
+    }
+
     func testFiveHourAndWeeklyQuotaScopesCoexistAndKeepFreshestPerScope() {
         var usage = AgentUsage(samples: [
             .quotaUsed: usageSample(value: 20, limit: 100, observedAt: now, scope: "5h")
