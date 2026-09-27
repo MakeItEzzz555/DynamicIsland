@@ -6,6 +6,7 @@ on:
       - main
       - feature/agent-activity-chatgpt-continuation
       - feature/agent-activity-finalize
+      - feature/agents-ui-overhaul-continuation
   pull_request:
     branches:
       - main
