@@ -77,32 +77,28 @@ final class IslandNavigationStore: ObservableObject {
     }
 
     func showIsland() {
-        guard selectedPage != .island else { return }
-        selectedPage = .island
-        logPageChange()
+        select(.island)
     }
 
     func showAgents() {
-        guard selectedPage != .agents else { return }
-        selectedPage = .agents
-        logPageChange()
+        select(.agents)
     }
 
     func showTray() {
-        guard selectedPage != .tray else { return }
-        selectedPage = .tray
-        logPageChange()
+        select(.tray)
     }
 
     func showTimer() {
-        guard selectedPage != .timer else { return }
-        selectedPage = .timer
-        logPageChange()
+        select(.timer)
     }
 
     func showStats() {
-        guard selectedPage != .stats else { return }
-        selectedPage = .stats
+        select(.stats)
+    }
+
+    func select(_ page: ExpandedIslandPage) {
+        guard selectedPage != page else { return }
+        selectedPage = page
         logPageChange()
     }
 

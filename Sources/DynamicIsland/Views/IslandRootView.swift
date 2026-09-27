@@ -25,9 +25,6 @@ enum IslandContentTransitionTiming {
     static let expansionContentDelayRatio: TimeInterval = 0.40
     static let expansionContentDurationRatio: TimeInterval = 0.40
     static let collapseContentDurationRatio: TimeInterval = 0.40
-    static let tabFadeOutDuration: TimeInterval = 0.12
-    static let tabHandoffDelay: TimeInterval = 0.01
-    static let tabFadeInDuration: TimeInterval = 0.14
 
     @MainActor
     static func shellDuration(settings: AppSettings, reduceMotion: Bool) -> TimeInterval {
@@ -64,12 +61,6 @@ private enum IslandContentPhase {
 private enum RenderedContentMode {
     case compact
     case expanded
-}
-
-private enum ExpandedTabTransitionPhase {
-    case idle
-    case fadingOut
-    case fadingIn
 }
 
 struct ClipboardHistoryPresentationState: Equatable {
@@ -1060,48 +1051,6 @@ private struct InnerBlurScaleCleanModifier: ViewModifier {
     }
 }
 
-private struct ExpandedTabContentTransitionModifier: ViewModifier {
-    let isVisible: Bool
-    let phase: ExpandedTabTransitionPhase
-    let reduceMotion: Bool
-    let animationsEnabled: Bool
-    let useBlurTransitions: Bool
-    let useScaleTransitions: Bool
-
-    private var blur: CGFloat {
-        guard !reduceMotion, animationsEnabled, useBlurTransitions else { return 0 }
-        guard !isVisible else { return 0 }
-        switch phase {
-        case .fadingOut:
-            return 6
-        case .fadingIn:
-            return 8
-        case .idle:
-            return 0
-        }
-    }
-
-    private var scale: CGFloat {
-        guard !reduceMotion, animationsEnabled, useScaleTransitions else { return 1 }
-        guard !isVisible else { return 1 }
-        switch phase {
-        case .fadingOut:
-            return 0.97
-        case .fadingIn:
-            return 0.96
-        case .idle:
-            return 1
-        }
-    }
-
-    func body(content: Content) -> some View {
-        content
-            .blur(radius: blur)
-            .scaleEffect(scale, anchor: .center)
-            .opacity(isVisible ? 1 : 0)
-    }
-}
-
 private extension AnyTransition {
 static var blurBounce: AnyTransition {
     .asymmetric(
@@ -1933,11 +1882,6 @@ struct ExpandedIslandView: View {
 
     @State private var isAirDropTargeted = false
     @State private var isFilesTargeted = false
-    @State private var displayedPage: ExpandedIslandPage
-    @State private var pendingPage: ExpandedIslandPage?
-    @State private var tabTransitionPhase: ExpandedTabTransitionPhase = .idle
-    @State private var tabContentVisible = true
-    @State private var tabTransitionGeneration = 0
     @State private var clipboardPresentation = ClipboardHistoryPresentationState()
 
     init(
@@ -1975,7 +1919,6 @@ struct ExpandedIslandView: View {
         navigation = modules.navigation
         liveActivities = modules.liveActivities
         agentEvents = modules.agentEvents
-        _displayedPage = State(initialValue: modules.navigation.selectedPage)
     }
 
     var body: some View {
@@ -2016,38 +1959,28 @@ struct ExpandedIslandView: View {
         .onAppear {
             synchronizeExpandedScrollSuppression()
             synchronizeClipboardEscapeRegistration()
-            resetTabPresentation(to: navigation.selectedPage)
             synchronizeStatsPolling()
         }
-        .onChange(of: navigation.selectedPage) { _, newPage in
+        .onChange(of: navigation.selectedPage) { _, _ in
             closeClipboardHistoryImmediately()
-            handleRequestedTabChange(newPage)
-        }
-        .onChange(of: displayedPage) { _, _ in
             synchronizeExpandedScrollSuppression()
-            synchronizeStatsPolling()
-        }
-        .onChange(of: tabContentVisible) { _, _ in
             synchronizeStatsPolling()
         }
         .onChange(of: contentVisible) { _, isVisible in
             if !isVisible {
                 closeClipboardHistoryImmediately()
-                cancelTabTransitionForContentExit()
             }
             synchronizeStatsPolling()
         }
         .onChange(of: shouldRenderContent) { _, shouldRender in
             if !shouldRender {
                 closeClipboardHistoryImmediately()
-                cancelTabTransitionForContentExit()
             }
             synchronizeStatsPolling()
         }
         .onChange(of: isCollapseShellOnly) { _, collapseOnly in
             if collapseOnly {
                 closeClipboardHistoryImmediately()
-                cancelTabTransitionForContentExit()
             }
             synchronizeStatsPolling()
         }
@@ -2125,17 +2058,10 @@ struct ExpandedIslandView: View {
                     Color.clear
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    pageView(displayedPage, metrics: metrics)
-                        .modifier(
-                            ExpandedTabContentTransitionModifier(
-                                isVisible: tabContentVisible,
-                                phase: tabTransitionPhase,
-                                reduceMotion: reduceMotion,
-                                animationsEnabled: settings.contentAnimationEnabled,
-                                useBlurTransitions: settings.useBlurTransitions,
-                                useScaleTransitions: settings.useScaleTransitions
-                            )
-                        )
+                    pageView(navigation.selectedPage, metrics: metrics)
+                        .id(navigation.selectedPage)
+                        .transition(.opacity)
+                        .animation(pageSwitchAnimation, value: navigation.selectedPage)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: metrics.pageHeight, alignment: .topLeading)
@@ -2163,22 +2089,13 @@ struct ExpandedIslandView: View {
         }
     }
 
-    private var tabAnimationsEnabled: Bool {
-        !reduceMotion &&
-            settings.contentAnimationEnabled &&
-            settings.animationPreset != .instant
-    }
-
-    private var tabFadeOutAnimation: Animation {
-        tabAnimationsEnabled
-            ? .easeIn(duration: IslandContentTransitionTiming.tabFadeOutDuration)
-            : .linear(duration: 0.01)
-    }
-
-    private var tabFadeInAnimation: Animation {
-        tabAnimationsEnabled
-            ? .easeOut(duration: IslandContentTransitionTiming.tabFadeInDuration)
-            : .linear(duration: 0.01)
+    private var pageSwitchAnimation: Animation {
+        guard !reduceMotion,
+              settings.contentAnimationEnabled,
+              settings.animationPreset != .instant else {
+            return .linear(duration: 0.01)
+        }
+        return .easeInOut(duration: 0.16)
     }
 
     private var contentVisibilityAnimation: Animation {
@@ -2197,91 +2114,6 @@ struct ExpandedIslandView: View {
 
         let duration = IslandContentTransitionTiming.collapseContentDuration(shellDuration: shellDuration)
         return .easeIn(duration: reduceMotion ? 0.10 : duration)
-    }
-
-    private func handleRequestedTabChange(_ newPage: ExpandedIslandPage) {
-        guard shouldRenderContent,
-              contentVisible,
-              !isCollapseShellOnly else {
-            resetTabPresentation(to: newPage)
-            return
-        }
-
-        guard newPage != displayedPage || pendingPage != nil else {
-            return
-        }
-
-        guard tabAnimationsEnabled else {
-            resetTabPresentation(to: newPage)
-            return
-        }
-
-        pendingPage = newPage
-        switch tabTransitionPhase {
-        case .idle, .fadingIn:
-            beginTabFadeOut()
-        case .fadingOut:
-            break
-        }
-    }
-
-    private func beginTabFadeOut() {
-        let sessionGeneration = layoutStore.overlayPresentationGeneration
-        tabTransitionGeneration += 1
-        let generation = tabTransitionGeneration
-        tabTransitionPhase = .fadingOut
-
-        withAnimation(tabFadeOutAnimation) {
-            tabContentVisible = false
-        }
-
-        DispatchQueue.main.asyncAfter(
-            deadline: .now() + IslandContentTransitionTiming.tabFadeOutDuration + IslandContentTransitionTiming.tabHandoffDelay
-        ) {
-            guard settings.overlayEnabled, sessionGeneration == layoutStore.overlayPresentationGeneration,
-                  generation == tabTransitionGeneration else { return }
-            guard shouldRenderContent,
-                  contentVisible,
-                  !isCollapseShellOnly else {
-                resetTabPresentation(to: navigation.selectedPage)
-                return
-            }
-
-            let destination = pendingPage ?? navigation.selectedPage
-            displayedPage = destination
-            pendingPage = nil
-            tabTransitionPhase = .fadingIn
-            tabContentVisible = false
-
-            DispatchQueue.main.async {
-                guard settings.overlayEnabled, sessionGeneration == layoutStore.overlayPresentationGeneration,
-                      generation == tabTransitionGeneration else { return }
-                withAnimation(tabFadeInAnimation) {
-                    tabContentVisible = true
-                }
-            }
-
-            DispatchQueue.main.asyncAfter(deadline: .now() + IslandContentTransitionTiming.tabFadeInDuration) {
-                guard settings.overlayEnabled, sessionGeneration == layoutStore.overlayPresentationGeneration,
-                      generation == tabTransitionGeneration else { return }
-                tabTransitionPhase = .idle
-                if let pendingPage, pendingPage != displayedPage {
-                    beginTabFadeOut()
-                }
-            }
-        }
-    }
-
-    private func resetTabPresentation(to page: ExpandedIslandPage) {
-        tabTransitionGeneration += 1
-        displayedPage = page
-        pendingPage = nil
-        tabTransitionPhase = .idle
-        tabContentVisible = true
-    }
-
-    private func cancelTabTransitionForContentExit() {
-        resetTabPresentation(to: navigation.selectedPage)
     }
 
     private func openClipboardHistory() {
@@ -2356,7 +2188,7 @@ struct ExpandedIslandView: View {
 
     private func synchronizeExpandedScrollSuppression() {
         layoutStore.setExpandedScrollGestureSuppressed(clipboardPresentation.isMounted)
-        if displayedPage != .agents {
+        if navigation.selectedPage != .agents {
             layoutStore.setExpandedContentScrollRegion(.zero)
         }
     }
@@ -2444,9 +2276,8 @@ struct ExpandedIslandView: View {
         let shouldPoll = settings.overlayEnabled && rendersExpandedVisualContent &&
             shouldRenderContent &&
             contentVisible &&
-            tabContentVisible &&
             !isCollapseShellOnly &&
-            displayedPage == .stats
+            navigation.selectedPage == .stats
         if shouldPoll {
             modules.stats.startPolling()
         } else {
@@ -2855,34 +2686,12 @@ private struct ExpandedIslandPageSwitcher: View {
     var body: some View {
         HStack(spacing: 4) {
             ForEach(navigation.availablePages(using: settings), id: \.self) { page in
-                Button {
-                    switch page {
-                    case .island:
-                        navigation.showIsland()
-                    case .tray:
-                        navigation.showTray()
-                    case .timer:
-                        navigation.showTimer()
-                    case .stats:
-                        navigation.showStats()
-                    case .agents:
-                        navigation.showAgents()
-                    }
-                } label: {
-                    Image(systemName: page.symbolName)
-                        .font(.system(size: 13, weight: .bold))
-                        .frame(width: 30, height: 26)
-                        .foregroundStyle(.white.opacity(navigation.selectedPage == page ? 1 : 0.48))
-                        .background {
-                            if navigation.selectedPage == page {
-                                Capsule(style: .continuous)
-                                    .fill(.white.opacity(0.14))
-                            }
-                        }
+                ExpandedIslandPageButton(
+                    page: page,
+                    selected: navigation.selectedPage == page
+                ) {
+                    navigation.select(page)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(page.accessibilityLabel)
-                .help(page.title)
             }
         }
         .padding(4)
@@ -2892,6 +2701,52 @@ private struct ExpandedIslandPageSwitcher: View {
                 .stroke(.white.opacity(0.07), lineWidth: 1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct ExpandedIslandPageButton: View {
+    let page: ExpandedIslandPage
+    let selected: Bool
+    let action: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: page.symbolName)
+                .font(.system(size: 13, weight: .bold))
+                .frame(width: 30, height: 26)
+                .foregroundStyle(.white.opacity(foregroundOpacity))
+                .background {
+                    Capsule(style: .continuous)
+                        .fill(.white.opacity(backgroundOpacity))
+                }
+                .scaleEffect(hoverScale)
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+        .animation(hoverAnimation, value: isHovering)
+        .accessibilityLabel(page.accessibilityLabel)
+        .accessibilityValue(selected ? "Selected" : "Not selected")
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .help(page.title)
+    }
+
+    private var foregroundOpacity: Double {
+        selected ? 1 : (isHovering ? 0.78 : 0.48)
+    }
+
+    private var backgroundOpacity: Double {
+        selected ? 0.14 : (isHovering ? 0.075 : 0)
+    }
+
+    private var hoverScale: CGFloat {
+        guard isHovering, !selected, !reduceMotion else { return 1 }
+        return 1.06
+    }
+
+    private var hoverAnimation: Animation {
+        reduceMotion ? .linear(duration: 0.01) : .easeOut(duration: 0.14)
     }
 }
 

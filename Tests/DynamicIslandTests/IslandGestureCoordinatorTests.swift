@@ -257,6 +257,21 @@ final class IslandGestureCoordinatorTests: XCTestCase {
         XCTAssertEqual(navigation.selectedPage, .timer)
     }
 
+    func testRapidDirectNavigationConvergesOnNewestSelection() {
+        let navigation = IslandNavigationStore()
+
+        navigation.select(.agents)
+        navigation.select(.stats)
+        navigation.select(.agents)
+        navigation.select(.island)
+
+        XCTAssertEqual(navigation.selectedPage, .island)
+        XCTAssertEqual(
+            ExpandedPresentationProfile.resolve(for: navigation.selectedPage),
+            .standard
+        )
+    }
+
     private func makeSettings() -> AppSettings {
         let defaults = UserDefaults(suiteName: "IslandGestureCoordinatorTests-\(UUID().uuidString)")!
         return AppSettings(defaults: defaults)

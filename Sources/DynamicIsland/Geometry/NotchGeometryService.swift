@@ -223,10 +223,21 @@ enum ExpandedPresentationKind: String, Equatable, Sendable {
 
 struct ExpandedPresentationProfile: Equatable, Sendable {
     let kind: ExpandedPresentationKind
-    let scale: CGFloat
+    let widthScale: CGFloat
+    let additionalHeight: CGFloat
 
-    static let standard = ExpandedPresentationProfile(kind: .standard, scale: 1)
-    static let agentsWorkspace = ExpandedPresentationProfile(kind: .agentsWorkspace, scale: 1.10)
+    static let standard = ExpandedPresentationProfile(
+        kind: .standard,
+        widthScale: 1,
+        additionalHeight: 0
+    )
+    // The managed console needs a fixed control/composer budget. Width keeps the
+    // established breathing room while added height flows to the transcript.
+    static let agentsWorkspace = ExpandedPresentationProfile(
+        kind: .agentsWorkspace,
+        widthScale: 1.10,
+        additionalHeight: 112
+    )
 
     static func resolve(for page: ExpandedIslandPage) -> Self {
         page == .agents ? .agentsWorkspace : .standard
@@ -234,13 +245,17 @@ struct ExpandedPresentationProfile: Equatable, Sendable {
 
     func resolvedSize(from base: CGSize) -> CGSize {
         CGSize(
-            width: max(Self.stableScaled(base.width, by: scale), 1),
-            height: max(Self.stableScaled(base.height, by: scale), 1)
+            width: max(Self.stableScaled(base.width, by: widthScale), 1),
+            height: max(Self.stableValue(base.height + additionalHeight), 1)
         )
     }
 
     private static func stableScaled(_ value: CGFloat, by scale: CGFloat) -> CGFloat {
-        (value * scale * 1_000).rounded() / 1_000
+        stableValue(value * scale)
+    }
+
+    private static func stableValue(_ value: CGFloat) -> CGFloat {
+        (value * 1_000).rounded() / 1_000
     }
 }
 
