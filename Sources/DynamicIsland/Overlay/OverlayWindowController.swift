@@ -1410,9 +1410,16 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
 
     private func shouldPassExpandedScrollThroughToContent(_ event: NSEvent) -> Bool {
         let isExpanded = islandState.state == .expanded
-        if layoutStore.isExpandedScrollGestureSuppressed, isExpanded {
+        if (layoutStore.isExpandedScrollGestureSuppressed ||
+            layoutStore.isAgentWorkspaceScrollCaptureActive),
+           isExpanded {
             resetExpandedScrollTracking()
-            logExpandedScrollPassThroughIfNeeded(reason: "global-suppression")
+            resetExpandedContentScrollTracking()
+            logExpandedScrollPassThroughIfNeeded(
+                reason: layoutStore.isAgentWorkspaceScrollCaptureActive
+                    ? "agent-workspace-capture"
+                    : "global-suppression"
+            )
             return true
         }
 
