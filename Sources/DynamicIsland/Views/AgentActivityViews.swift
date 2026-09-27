@@ -480,12 +480,12 @@ private struct AgentSelectedSessionControlView: View {
                         }
                         Spacer(minLength: 8)
                         if managedControl.canConnect(session) ||
-                            managedControl.connecting.contains(session.id.sessionID.nativeID) {
+                            managedControl.connecting.contains(session.id.sessionID) {
                             Button {
                                 managedControl.connect(session)
                             } label: {
                                 Label(
-                                    managedControl.connecting.contains(session.id.sessionID.nativeID)
+                                    managedControl.connecting.contains(session.id.sessionID)
                                         ? "Connecting…"
                                         : (session.availability == .resumable ? "Resume" : "Control"),
                                     systemImage: "terminal"

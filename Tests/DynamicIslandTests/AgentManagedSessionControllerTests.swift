@@ -4,6 +4,57 @@ import XCTest
 
 final class AgentManagedSessionControllerTests: XCTestCase {
     @MainActor
+    func testCrossProviderIdentitySelectionAndUsageRemainIsolated() async throws {
+        let codexUsage = AgentUsage(scopedSamples: [
+            AgentUsageKey(metric: .quotaUsed, scope: "5h"): AgentUsageSample(
+                value: 20, limit: 100, unit: .fraction, scope: "5h",
+                source: "codex", observedAt: Date()
+            )
+        ])
+        let claudeUsage = AgentUsage(scopedSamples: [
+            AgentUsageKey(metric: .quotaUsed, scope: "5h"): AgentUsageSample(
+                value: 70, limit: 100, unit: .fraction, scope: "5h",
+                source: "claude", observedAt: Date()
+            )
+        ])
+        let codex = PersistentSnapshotFakeProvider(
+            provider: .codex,
+            sessions: [Self.descriptor(id: "shared", state: .idle, provider: .codex)],
+            usage: codexUsage
+        )
+        let claude = PersistentSnapshotFakeProvider(
+            provider: .claude,
+            sessions: [Self.descriptor(id: "shared", state: .idle, provider: .claude)],
+            usage: claudeUsage
+        )
+        let store = AgentEventStore()
+        let controller = AgentManagedSessionController(
+            providers: [codex, claude],
+            coordinator: AgentIngestionCoordinator(eventStore: store),
+            eventStore: store,
+            approvals: AgentApprovalController()
+        )
+
+        await controller.refreshPersistentSnapshot()
+
+        XCTAssertEqual(store.sessions.count, 2)
+        XCTAssertEqual(Set(store.sessions.map(\.id.sessionID)), [
+            AgentSessionID(provider: .codex, nativeID: "shared"),
+            AgentSessionID(provider: .claude, nativeID: "shared")
+        ])
+        let codexSession = try XCTUnwrap(store.sessions.first { $0.id.sessionID.provider == .codex })
+        let claudeSession = try XCTUnwrap(store.sessions.first { $0.id.sessionID.provider == .claude })
+        controller.selectSession(codexSession.id)
+        XCTAssertEqual(controller.accountUsage.samples(for: .quotaUsed).first?.value, 20)
+        controller.selectSession(claudeSession.id)
+        XCTAssertEqual(controller.accountUsage.samples(for: .quotaUsed).first?.value, 70)
+        controller.selectProvider(.codex)
+        XCTAssertEqual(controller.selectedSessionID, codexSession.id)
+        controller.selectProvider(.claude)
+        XCTAssertEqual(controller.selectedSessionID, claudeSession.id)
+    }
+
+    @MainActor
     func testPersistentSnapshotPublishesUsageAndIdleSessionWithoutActiveTurn() async throws {
         let observedAt = Date(timeIntervalSince1970: 2_100_000_000)
         let usage = AgentUsage(scopedSamples: [
@@ -558,17 +609,20 @@ final class AgentManagedSessionControllerTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(30))
 
         XCTAssertEqual(store.sessions.first?.state, .failed)
-        XCTAssertFalse(controller.managed["quota-error"]?.canInterrupt ?? true)
+        XCTAssertFalse(controller.managed[
+            AgentSessionID(provider: .codex, nativeID: "quota-error")
+        ]?.canInterrupt ?? true)
         controller.stop()
     }
 
     private static func descriptor(
         id: String,
-        state: AgentDiscoveredSessionRuntimeState
+        state: AgentDiscoveredSessionRuntimeState,
+        provider: AgentProvider = .codex
     ) -> AgentDiscoveredSessionDescriptor {
         AgentDiscoveredSessionDescriptor(
             session: AgentManagedSessionDescriptor(
-                provider: .codex,
+                provider: provider,
                 nativeSessionID: id,
                 cwd: "/tmp/DynamicIsland",
                 model: "gpt-test",
@@ -591,7 +645,7 @@ final class AgentManagedSessionControllerTests: XCTestCase {
 }
 
 private actor PersistentSnapshotFakeProvider: AgentInteractiveProvider {
-    nonisolated let provider: AgentProvider = .codex
+    nonisolated let provider: AgentProvider
     nonisolated let interactiveCapabilities: Set<AgentInteractiveCapability> = [
         .startSession, .resumeSession, .submitPrompt, .interrupt, .selectModel,
         .resolveApprovals, .accountUsage, .contextUsage, .streamToolActivity, .loadHistory
@@ -617,7 +671,12 @@ private actor PersistentSnapshotFakeProvider: AgentInteractiveProvider {
     private let eventStream: AsyncStream<AgentInteractiveProviderEvent>
     private let eventContinuation: AsyncStream<AgentInteractiveProviderEvent>.Continuation
 
-    init(sessions: [AgentDiscoveredSessionDescriptor], usage: AgentUsage) {
+    init(
+        provider: AgentProvider = .codex,
+        sessions: [AgentDiscoveredSessionDescriptor],
+        usage: AgentUsage
+    ) {
+        self.provider = provider
         discovered = sessions
         self.usage = usage
         var continuation: AsyncStream<AgentInteractiveProviderEvent>.Continuation!

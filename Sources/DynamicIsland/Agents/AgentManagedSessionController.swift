@@ -3,29 +3,29 @@ import Foundation
 
 @MainActor
 final class AgentManagedSessionController: ObservableObject {
-    @Published private(set) var managed: [String: AgentManagedControlState] = [:]
-    @Published private(set) var connecting: Set<String> = []
-    @Published private(set) var discoveredSessionIDs: Set<String> = []
+    @Published private(set) var managed: [AgentSessionID: AgentManagedControlState] = [:]
+    @Published private(set) var connecting: Set<AgentSessionID> = []
+    @Published private(set) var discoveredSessionIDs: Set<AgentSessionID> = []
     @Published private(set) var lastTransportError: String?
-    @Published private(set) var accountUsage = AgentUsage()
-    @Published private(set) var transcripts: [String: [AgentManagedTranscriptEntry]] = [:]
-    @Published private(set) var availableModels: [AgentManagedModelDescriptor] = []
+    @Published private(set) var accountUsageByProvider: [AgentProvider: AgentUsage] = [:]
+    @Published private(set) var transcripts: [AgentSessionID: [AgentManagedTranscriptEntry]] = [:]
+    @Published private(set) var modelsByProvider: [AgentProvider: [AgentManagedModelDescriptor]] = [:]
     @Published private(set) var selectedModelOverrides: [AgentSessionID: String] = [:]
     @Published private(set) var selectedProvider: AgentProvider?
-    @Published private(set) var selectedSessionID: AgentSessionInstanceID?
+    @Published private(set) var selectedSessionIDs: [AgentProvider: AgentSessionInstanceID] = [:]
 
-    private let provider: (any AgentInteractiveProvider)?
+    private let providers: [AgentProvider: any AgentInteractiveProvider]
     private let coordinator: AgentIngestionCoordinator
     private let eventStore: AgentEventStore
     private let approvals: AgentApprovalController
 
-    private var producerHandle: AgentProducerHandle?
-    private var eventTask: Task<Void, Never>?
+    private var producerHandles: [AgentProvider: AgentProducerHandle] = [:]
+    private var eventTasks: [AgentProvider: Task<Void, Never>] = [:]
     private var snapshotTask: Task<Void, Never>?
     private var inFlightSnapshotRefresh: Task<Void, Never>?
     private var approvalTasks: [String: Task<Void, Never>] = [:]
     private var managedApprovalKeys: Set<AgentApprovalControlKey> = []
-    private var knownDiscoveredSessionIDs: Set<String> = []
+    private var knownDiscoveredSessionIDs: Set<AgentSessionID> = []
 
     init(
         provider: (any AgentInteractiveProvider)?,
@@ -33,11 +33,24 @@ final class AgentManagedSessionController: ObservableObject {
         eventStore: AgentEventStore,
         approvals: AgentApprovalController
     ) {
-        self.provider = provider
+        self.providers = provider.map { [$0.provider: $0] } ?? [:]
         self.coordinator = coordinator
         self.eventStore = eventStore
         self.approvals = approvals
         selectedProvider = provider?.provider
+    }
+
+    init(
+        providers: [any AgentInteractiveProvider],
+        coordinator: AgentIngestionCoordinator,
+        eventStore: AgentEventStore,
+        approvals: AgentApprovalController
+    ) {
+        self.providers = Dictionary(uniqueKeysWithValues: providers.map { ($0.provider, $0) })
+        self.coordinator = coordinator
+        self.eventStore = eventStore
+        self.approvals = approvals
+        selectedProvider = Self.sortedProviders(self.providers.keys).first
     }
 
     convenience init?(
@@ -54,25 +67,40 @@ final class AgentManagedSessionController: ObservableObject {
         )
     }
 
-    var isAvailable: Bool { provider != nil }
+    var isAvailable: Bool { !providers.isEmpty }
 
-    var managedProvider: AgentProvider? { provider?.provider }
+    var managedProvider: AgentProvider? { selectedProvider ?? managedProviders.first }
+
+    var selectedSessionID: AgentSessionInstanceID? {
+        guard let selectedProvider else { return nil }
+        return selectedSessionIDs[selectedProvider]
+    }
+
+    var accountUsage: AgentUsage {
+        guard let provider = managedProvider else { return AgentUsage() }
+        return accountUsageByProvider[provider] ?? AgentUsage()
+    }
+
+    var availableModels: [AgentManagedModelDescriptor] {
+        guard let provider = managedProvider else { return [] }
+        return modelsByProvider[provider] ?? []
+    }
 
     var managedProviders: [AgentProvider] {
-        guard let provider,
-              !provider.interactiveCapabilities.intersection([
+        Self.sortedProviders(providers.compactMap { provider, adapter in
+            adapter.interactiveCapabilities.intersection([
                 .startSession, .resumeSession, .submitPrompt
-              ]).isEmpty else { return [] }
-        return [provider.provider]
+            ]).isEmpty ? nil : provider
+        })
     }
 
     var modelSelectionScope: AgentModelSelectionScope? {
-        provider?.modelSelectionScope
+        guard let provider = managedProvider else { return nil }
+        return providers[provider]?.modelSelectionScope
     }
 
     func capabilities(for agentProvider: AgentProvider) -> Set<AgentInteractiveCapability> {
-        guard let provider, provider.provider == agentProvider else { return [] }
-        return provider.interactiveCapabilities
+        providers[agentProvider]?.interactiveCapabilities ?? []
     }
 
     func supportsManagedControl(for session: AgentSession) -> Bool {
@@ -82,30 +110,27 @@ final class AgentManagedSessionController: ObservableObject {
     }
 
     var interactiveCapabilities: Set<AgentInteractiveCapability> {
-        provider?.interactiveCapabilities ?? []
+        guard let provider = managedProvider else { return [] }
+        return capabilities(for: provider)
     }
 
     var activeManagedSessionIDs: Set<AgentSessionID> {
-        guard let provider else { return [] }
-        return Set(managed.compactMap { nativeID, state in
-            state.activeTurnID == nil
-                ? nil
-                : AgentSessionID(provider: provider.provider, nativeID: nativeID)
+        Set(managed.compactMap { sessionID, state in
+            state.activeTurnID == nil ? nil : sessionID
         })
     }
 
     func selectProvider(_ provider: AgentProvider) {
         guard managedProviders.contains(provider) else { return }
         selectedProvider = provider
-        if selectedSessionID?.sessionID.provider != provider {
-            selectedSessionID = nil
-        }
     }
 
     func selectSession(_ sessionID: AgentSessionInstanceID?) {
-        selectedSessionID = sessionID
         if let provider = sessionID?.sessionID.provider {
             selectedProvider = provider
+            selectedSessionIDs[provider] = sessionID
+        } else if let selectedProvider {
+            selectedSessionIDs.removeValue(forKey: selectedProvider)
         }
     }
 
@@ -118,8 +143,8 @@ final class AgentManagedSessionController: ObservableObject {
             sessions: candidates,
             activeManagedSessionIDs: activeManagedSessionIDs
         )
-        if selectedSessionID != resolved {
-            selectedSessionID = resolved
+        if let provider = selectedProvider, selectedSessionIDs[provider] != resolved {
+            selectedSessionIDs[provider] = resolved
         }
         if selectedProvider == nil, let provider = resolved?.sessionID.provider {
             selectedProvider = provider
@@ -127,14 +152,14 @@ final class AgentManagedSessionController: ObservableObject {
     }
 
     func startObserving() {
-        guard let provider else { return }
+        guard !providers.isEmpty else { return }
 
-        if eventTask == nil {
-            eventTask = Task { [weak self] in
-                let stream = await provider.events()
+        for (agentProvider, adapter) in providers where eventTasks[agentProvider] == nil {
+            eventTasks[agentProvider] = Task { [weak self] in
+                let stream = await adapter.events()
                 for await event in stream {
                     guard !Task.isCancelled else { break }
-                    await self?.handle(event)
+                    await self?.handle(event, from: agentProvider)
                 }
             }
         }
@@ -154,8 +179,8 @@ final class AgentManagedSessionController: ObservableObject {
     }
 
     func stop() {
-        eventTask?.cancel()
-        eventTask = nil
+        for task in eventTasks.values { task.cancel() }
+        eventTasks.removeAll()
         snapshotTask?.cancel()
         snapshotTask = nil
         inFlightSnapshotRefresh?.cancel()
@@ -167,19 +192,19 @@ final class AgentManagedSessionController: ObservableObject {
         connecting.removeAll()
         discoveredSessionIDs.removeAll()
         knownDiscoveredSessionIDs.removeAll()
-        accountUsage = AgentUsage()
+        accountUsageByProvider.removeAll()
         transcripts.removeAll()
-        availableModels.removeAll()
+        modelsByProvider.removeAll()
 
-        let provider = self.provider
+        let providers = self.providers
         let coordinator = self.coordinator
-        let handle = producerHandle
-        producerHandle = nil
+        let handles = producerHandles.values
+        producerHandles.removeAll()
         Task {
-            if let handle {
+            for handle in handles {
                 _ = await coordinator.unregisterProducer(handle)
             }
-            await provider?.stop()
+            for provider in providers.values { await provider.stop() }
         }
     }
 
@@ -198,24 +223,33 @@ final class AgentManagedSessionController: ObservableObject {
     }
 
     private func performPersistentSnapshotRefresh() async {
-        guard let provider, !Task.isCancelled else { return }
+        guard !Task.isCancelled else { return }
+        for (agentProvider, provider) in providers {
+            await refreshPersistentSnapshot(for: agentProvider, using: provider)
+        }
+        reconcileSelection(with: eventStore.sessions.filter(shouldPresent))
+    }
 
-        if interactiveCapabilities.contains(.selectModel),
+    private func refreshPersistentSnapshot(
+        for agentProvider: AgentProvider,
+        using provider: any AgentInteractiveProvider
+    ) async {
+        if provider.interactiveCapabilities.contains(.selectModel),
            let models = try? await provider.listModels() {
             let filtered = models.filter { !$0.model.isEmpty }
-            availableModels = filtered
+            modelsByProvider[agentProvider] = filtered
             let validModels = Set(filtered.map(\.model))
             selectedModelOverrides = selectedModelOverrides.filter { sessionID, model in
-                sessionID.provider != provider.provider || validModels.contains(model)
+                sessionID.provider != agentProvider || validModels.contains(model)
             }
         }
 
         do {
             let refreshed = try await provider.readAccountUsage()
             guard !Task.isCancelled else { return }
-            var retained = accountUsage
+            var retained = accountUsageByProvider[agentProvider] ?? AgentUsage()
             retained.merge(refreshed)
-            accountUsage = retained
+            accountUsageByProvider[agentProvider] = retained
             lastTransportError = nil
         } catch {
             // Preserve the last trustworthy snapshot across transient transport/backend failures.
@@ -225,15 +259,21 @@ final class AgentManagedSessionController: ObservableObject {
         do {
             let discovered = try await provider.discoverSessions()
             guard !Task.isCancelled else { return }
-            discoveredSessionIDs = Set(discovered.map(\.session.nativeSessionID))
-            knownDiscoveredSessionIDs.formUnion(discoveredSessionIDs)
+            let refreshedIDs = Set(discovered.map(\.session.sessionID))
+            discoveredSessionIDs.subtract(discoveredSessionIDs.filter { $0.provider == agentProvider })
+            discoveredSessionIDs.formUnion(refreshedIDs)
+            knownDiscoveredSessionIDs.formUnion(refreshedIDs)
             for descriptor in discovered {
                 await registerDiscoveredSession(descriptor)
             }
-            reconcileSelection(with: eventStore.sessions.filter(shouldPresent))
         } catch {
             lastTransportError = Self.safeError(error)
         }
+    }
+
+    private static func sortedProviders<S: Sequence>(_ providers: S) -> [AgentProvider]
+    where S.Element == AgentProvider {
+        Array(providers).sorted { $0.deterministicSortKey < $1.deterministicSortKey }
     }
 
     private func registerDiscoveredSession(
@@ -249,6 +289,7 @@ final class AgentManagedSessionController: ObservableObject {
             _ = await emitDiscoveredSessionStart(discovered)
         } else {
             _ = await emit(
+                provider: descriptor.provider,
                 nativeSessionID: descriptor.nativeSessionID,
                 type: .sessionMetadataUpdated,
                 payload: .sessionMetadata(AgentSessionMetadata(
@@ -261,9 +302,12 @@ final class AgentManagedSessionController: ObservableObject {
 
         if discovered.runtimeState == .systemError {
             _ = await emit(
+                provider: descriptor.provider,
                 nativeSessionID: descriptor.nativeSessionID,
                 type: .taskFailed,
-                payload: .terminal(AgentTerminalEvent(summary: "Codex runtime unavailable"))
+                payload: .terminal(AgentTerminalEvent(
+                    summary: "\(providerName(descriptor.provider)) runtime unavailable"
+                ))
             )
             return
         }
@@ -283,11 +327,13 @@ final class AgentManagedSessionController: ObservableObject {
         }
 
         _ = await emit(
+            provider: descriptor.provider,
             nativeSessionID: descriptor.nativeSessionID,
             type: .sessionResumed,
             payload: .sessionMetadata(AgentSessionMetadata(project: projectContext(for: descriptor)))
         )
         _ = await emit(
+            provider: descriptor.provider,
             nativeSessionID: descriptor.nativeSessionID,
             type: .agentWorking,
             payload: .activity(AgentActivityDescriptor(title: "Working", summary: nil))
@@ -303,6 +349,7 @@ final class AgentManagedSessionController: ObservableObject {
         // clock ahead of the host must not make subsequent live events stale.
         let discoveryTimestamp = min(discovered.updatedAt, Date())
         let instance = await emit(
+            provider: descriptor.provider,
             nativeSessionID: descriptor.nativeSessionID,
             type: .sessionStarted,
             payload: .sessionMetadata(AgentSessionMetadata(
@@ -321,11 +368,12 @@ final class AgentManagedSessionController: ObservableObject {
         ].map {
             ($0, AgentCapabilityEvidence(
                 authority: .lifecycle,
-                source: "codex-app-server-discovery",
+                source: managedSourceID(for: descriptor.provider),
                 observedAt: now
             ))
         }))
         _ = await emit(
+            provider: descriptor.provider,
             nativeSessionID: descriptor.nativeSessionID,
             type: .capabilitiesUpdated,
             payload: .capabilities(capabilities),
@@ -341,7 +389,10 @@ final class AgentManagedSessionController: ObservableObject {
             displayName: descriptor.cwd.map { URL(fileURLWithPath: $0).lastPathComponent },
             workingDirectory: descriptor.cwd,
             model: descriptor.model,
-            sourceApplication: AgentSourceApplication(displayName: "Codex", bundleIdentifier: nil)
+            sourceApplication: AgentSourceApplication(
+                displayName: providerName(descriptor.provider),
+                bundleIdentifier: nil
+            )
         )
     }
 
@@ -352,12 +403,11 @@ final class AgentManagedSessionController: ObservableObject {
     }
 
     func isManaged(_ session: AgentSession) -> Bool {
-        session.id.sessionID.provider == provider?.provider &&
-            managed[session.id.sessionID.nativeID] != nil
+        managed[session.id.sessionID] != nil
     }
 
     func mode(for session: AgentSession) -> AgentConsoleMode {
-        guard let state = managed[session.id.sessionID.nativeID],
+        guard let state = managed[session.id.sessionID],
               capabilities(for: session.id.sessionID.provider).contains(.submitPrompt),
               state.acceptsDirectInput else {
             return .observed
@@ -366,28 +416,27 @@ final class AgentManagedSessionController: ObservableObject {
     }
 
     func statusMessage(for session: AgentSession) -> String? {
-        if connecting.contains(session.id.sessionID.nativeID) {
+        if connecting.contains(session.id.sessionID) {
             return "Connecting…"
         }
-        return managed[session.id.sessionID.nativeID]?.lastError
+        return managed[session.id.sessionID]?.lastError
     }
 
     func transcript(for session: AgentSession) -> [AgentManagedTranscriptEntry] {
-        transcripts[session.id.sessionID.nativeID] ?? []
+        transcripts[session.id.sessionID] ?? []
     }
 
     func refreshTranscript(for session: AgentSession, limit: Int = 80) async {
-        guard let provider,
-              session.id.sessionID.provider == provider.provider,
+        guard let provider = providers[session.id.sessionID.provider],
               provider.interactiveCapabilities.contains(.loadHistory) else { return }
         do {
             let entries = try await provider.readTranscript(
                 nativeSessionID: session.id.sessionID.nativeID,
                 limit: min(max(limit, 1), 100)
             )
-            let nativeID = session.id.sessionID.nativeID
-            transcripts[nativeID] = Self.mergedTranscript(
-                current: transcripts[nativeID] ?? [],
+            let sessionID = session.id.sessionID
+            transcripts[sessionID] = Self.mergedTranscript(
+                current: transcripts[sessionID] ?? [],
                 incoming: entries
             )
         } catch CodexAppServerError.rpcError(let code, _) where code == -32601 {
@@ -396,24 +445,23 @@ final class AgentManagedSessionController: ObservableObject {
             // control usable instead of surfacing an unrelated transport error.
             return
         } catch {
-            recordError(error, for: session.id.sessionID.nativeID)
+            recordError(error, for: session.id.sessionID)
         }
     }
 
     func canConnect(_ session: AgentSession) -> Bool {
-        guard let provider else { return false }
-        return session.id.sessionID.provider == provider.provider &&
+        guard let provider = providers[session.id.sessionID.provider] else { return false }
+        return
             provider.interactiveCapabilities.contains(.resumeSession) &&
-            discoveredSessionIDs.contains(session.id.sessionID.nativeID) &&
-            managed[session.id.sessionID.nativeID] == nil &&
-            !connecting.contains(session.id.sessionID.nativeID)
+            managed[session.id.sessionID] == nil &&
+            !connecting.contains(session.id.sessionID)
     }
 
     func shouldPresent(_ session: AgentSession) -> Bool {
-        guard session.id.sessionID.provider == provider?.provider else { return true }
-        let nativeID = session.id.sessionID.nativeID
-        guard knownDiscoveredSessionIDs.contains(nativeID) else { return true }
-        if discoveredSessionIDs.contains(nativeID) || managed[nativeID] != nil { return true }
+        let sessionID = session.id.sessionID
+        guard providers[sessionID.provider] != nil else { return true }
+        guard knownDiscoveredSessionIDs.contains(sessionID) else { return true }
+        if discoveredSessionIDs.contains(sessionID) || managed[sessionID] != nil { return true }
         switch AgentSessionPresentation.priority(for: session) {
         case .actionRequired, .failure, .working, .thinking:
             return true
@@ -423,10 +471,11 @@ final class AgentManagedSessionController: ObservableObject {
     }
 
     func connect(_ session: AgentSession) {
-        guard canConnect(session), let provider else { return }
+        guard canConnect(session), let provider = providers[session.id.sessionID.provider] else { return }
         startObserving()
+        let sessionID = session.id.sessionID
         let nativeID = session.id.sessionID.nativeID
-        connecting.insert(nativeID)
+        connecting.insert(sessionID)
         Task { [weak self] in
             guard let self else { return }
             do {
@@ -437,15 +486,16 @@ final class AgentManagedSessionController: ObservableObject {
                 self.markManaged(descriptor)
                 _ = await self.emitSessionAvailability(descriptor, type: .sessionResumed)
             } catch {
-                self.recordError(error, for: nativeID)
+                self.recordError(error, for: sessionID)
             }
-            self.connecting.remove(nativeID)
+            self.connecting.remove(sessionID)
         }
     }
 
     @discardableResult
     func startNewSession(cwd: String?) async -> AgentManagedSessionDescriptor? {
-        guard let provider,
+        guard let selectedProvider,
+              let provider = providers[selectedProvider],
               provider.interactiveCapabilities.contains(.startSession) else { return nil }
         startObserving()
         do {
@@ -465,8 +515,7 @@ final class AgentManagedSessionController: ObservableObject {
 
     @discardableResult
     func selectModel(_ model: String?, for session: AgentSession) -> Bool {
-        guard let provider,
-              provider.provider == session.id.sessionID.provider,
+        guard let provider = providers[session.id.sessionID.provider],
               provider.interactiveCapabilities.contains(.selectModel),
               provider.modelSelectionScope != nil else { return false }
         let sessionID = session.id.sessionID
@@ -474,7 +523,9 @@ final class AgentManagedSessionController: ObservableObject {
             selectedModelOverrides.removeValue(forKey: sessionID)
             return true
         }
-        guard availableModels.contains(where: { $0.model == model }) else { return false }
+        guard (modelsByProvider[sessionID.provider] ?? []).contains(where: { $0.model == model }) else {
+            return false
+        }
         selectedModelOverrides[sessionID] = model
         return true
     }
@@ -482,11 +533,10 @@ final class AgentManagedSessionController: ObservableObject {
     /// Returns true only after the provider accepts the authoritative turn/start.
     /// The caller can therefore keep its draft intact across transport/RPC failure.
     func submit(_ prompt: String, for session: AgentSession) async -> Bool {
-        guard let provider,
+        guard let provider = providers[session.id.sessionID.provider],
               provider.interactiveCapabilities.contains(.submitPrompt),
-              provider.provider == session.id.sessionID.provider,
               let bounded = AgentPromptDraftPolicy.submission(from: prompt),
-              var state = managed[session.id.sessionID.nativeID],
+              var state = managed[session.id.sessionID],
               state.acceptsDirectInput,
               !state.isSubmitting else {
             return false
@@ -494,7 +544,8 @@ final class AgentManagedSessionController: ObservableObject {
 
         state.isSubmitting = true
         state.lastError = nil
-        managed[session.id.sessionID.nativeID] = state
+        managed[session.id.sessionID] = state
+        let sessionID = session.id.sessionID
         let nativeID = session.id.sessionID.nativeID
 
         do {
@@ -503,19 +554,19 @@ final class AgentManagedSessionController: ObservableObject {
                 nativeSessionID: nativeID,
                 model: selectedModelOverrides[session.id.sessionID]
             )
-            updateControl(nativeID) {
+            updateControl(sessionID) {
                 $0.isSubmitting = false
                 $0.activeTurnID = turn.turnID
                 $0.lastError = nil
             }
             projectAcceptedUserPrompt(
                 bounded,
-                nativeSessionID: nativeID,
+                sessionID: sessionID,
                 turnID: turn.turnID
             )
             return true
         } catch {
-            updateControl(nativeID) {
+            updateControl(sessionID) {
                 $0.isSubmitting = false
                 $0.lastError = Self.safeError(error)
             }
@@ -524,10 +575,9 @@ final class AgentManagedSessionController: ObservableObject {
     }
 
     func interrupt(_ session: AgentSession) {
-        guard let provider,
-              provider.provider == session.id.sessionID.provider,
+        guard let provider = providers[session.id.sessionID.provider],
               provider.interactiveCapabilities.contains(.interrupt),
-              let state = managed[session.id.sessionID.nativeID],
+              let state = managed[session.id.sessionID],
               let turnID = state.activeTurnID else {
             return
         }
@@ -536,32 +586,39 @@ final class AgentManagedSessionController: ObservableObject {
             do {
                 try await provider.interrupt(nativeSessionID: nativeID, turnID: turnID)
             } catch {
-                self?.recordError(error, for: nativeID)
+                self?.recordError(error, for: session.id.sessionID)
             }
         }
     }
 
-    private func handle(_ event: AgentInteractiveProviderEvent) async {
+    private func handle(
+        _ event: AgentInteractiveProviderEvent,
+        from agentProvider: AgentProvider
+    ) async {
         switch event {
         case .threadAvailable(let descriptor):
-            discoveredSessionIDs.insert(descriptor.nativeSessionID)
-            knownDiscoveredSessionIDs.insert(descriptor.nativeSessionID)
+            guard descriptor.provider == agentProvider else { return }
+            discoveredSessionIDs.insert(descriptor.sessionID)
+            knownDiscoveredSessionIDs.insert(descriptor.sessionID)
             markManaged(descriptor)
             await refreshPersistentSnapshot()
 
         case .turnStarted(let turn):
-            updateControl(turn.nativeSessionID) {
+            let sessionID = AgentSessionID(provider: agentProvider, nativeID: turn.nativeSessionID)
+            updateControl(sessionID) {
                 $0.activeTurnID = turn.turnID
                 $0.isSubmitting = false
                 $0.lastError = nil
             }
             _ = await emit(
+                provider: agentProvider,
                 nativeSessionID: turn.nativeSessionID,
                 type: .sessionResumed,
                 correlationID: AgentCorrelationID(rawValue: turn.turnID),
                 payload: .none
             )
             _ = await emit(
+                provider: agentProvider,
                 nativeSessionID: turn.nativeSessionID,
                 type: .agentWorking,
                 correlationID: AgentCorrelationID(rawValue: turn.turnID),
@@ -574,7 +631,8 @@ final class AgentManagedSessionController: ObservableObject {
             await refreshPersistentSnapshot()
 
         case .turnCompleted(let turn, let state, let summary):
-            updateControl(turn.nativeSessionID) {
+            let sessionID = AgentSessionID(provider: agentProvider, nativeID: turn.nativeSessionID)
+            updateControl(sessionID) {
                 if $0.activeTurnID == turn.turnID {
                     $0.activeTurnID = nil
                 }
@@ -590,48 +648,53 @@ final class AgentManagedSessionController: ObservableObject {
             default: .taskFailed
             }
             _ = await emit(
+                provider: agentProvider,
                 nativeSessionID: turn.nativeSessionID,
                 type: type,
                 correlationID: AgentCorrelationID(rawValue: turn.turnID),
                 payload: .terminal(AgentTerminalEvent(
                     summary: AgentPrivacyProjection.summary(summary) ??
-                        (state == .completed ? "Codex turn completed" :
-                            state == .interrupted ? "Codex turn interrupted" : "Codex turn failed")
+                        (state == .completed ? "\(providerName(agentProvider)) turn completed" :
+                            state == .interrupted ? "\(providerName(agentProvider)) turn interrupted" :
+                            "\(providerName(agentProvider)) turn failed")
                 ))
             )
             await refreshPersistentSnapshot()
 
         case .providerFailure(let nativeSessionID, let summary):
-            let targets: [String]
+            let targets: [AgentSessionID]
             if let nativeSessionID {
-                targets = [nativeSessionID]
+                targets = [AgentSessionID(provider: agentProvider, nativeID: nativeSessionID)]
             } else {
                 targets = managed.compactMap { key, value in
-                    value.activeTurnID == nil ? nil : key
+                    key.provider == agentProvider && value.activeTurnID != nil ? key : nil
                 }
             }
             for target in targets {
                 updateControl(target) {
                     $0.activeTurnID = nil
                     $0.isSubmitting = false
-                    $0.lastError = AgentPrivacyProjection.summary(summary) ?? "Codex turn failed"
+                    $0.lastError = AgentPrivacyProjection.summary(summary) ??
+                        "\(providerName(agentProvider)) turn failed"
                 }
                 _ = await emit(
-                    nativeSessionID: target,
+                    provider: agentProvider,
+                    nativeSessionID: target.nativeID,
                     type: .taskFailed,
                     payload: .terminal(AgentTerminalEvent(
-                        summary: AgentPrivacyProjection.summary(summary) ?? "Codex turn failed"
+                        summary: AgentPrivacyProjection.summary(summary) ??
+                            "\(providerName(agentProvider)) turn failed"
                     ))
                 )
             }
             await refreshPersistentSnapshot()
 
         case .transcript(let entry):
-            upsertTranscript(entry)
+            upsertTranscript(entry, provider: agentProvider)
 
         case .transcriptDelta(let nativeSessionID, let turnID, let itemID, let delta):
             appendTranscriptDelta(
-                nativeSessionID: nativeSessionID,
+                sessionID: AgentSessionID(provider: agentProvider, nativeID: nativeSessionID),
                 turnID: turnID,
                 itemID: itemID,
                 delta: delta
@@ -642,6 +705,7 @@ final class AgentManagedSessionController: ObservableObject {
 
         case .normalized(let event):
             _ = await emit(
+                provider: agentProvider,
                 nativeSessionID: event.nativeSessionID,
                 type: event.type,
                 correlationID: event.correlationID,
@@ -649,37 +713,40 @@ final class AgentManagedSessionController: ObservableObject {
             )
 
         case .approvalRequested(let request):
-            let key = "\(request.threadID):\(request.itemID)"
+            let key = "\(agentProvider.stableName):\(request.threadID):\(request.itemID)"
             approvalTasks[key]?.cancel()
             approvalTasks[key] = Task { [weak self] in
-                await self?.handleApproval(request)
+                await self?.handleApproval(request, provider: agentProvider)
             }
 
         case .transportClosed:
-            lastTransportError = "Codex app-server disconnected"
-            for key in managedApprovalKeys {
+            let transportMessage = agentProvider == .codex
+                ? "Codex app-server disconnected"
+                : "\(providerName(agentProvider)) control transport disconnected"
+            lastTransportError = transportMessage
+            for key in managedApprovalKeys where key.session.sessionID.provider == agentProvider {
                 _ = approvals.resolve(
                     session: key.session,
                     requestID: key.requestID,
                     decision: .deny
                 )
             }
-            let managedIDs = Array(managed.keys)
+            let managedIDs = managed.keys.filter { $0.provider == agentProvider }
             for key in managedIDs {
                 updateControl(key) {
                     $0.activeTurnID = nil
                     $0.isSubmitting = false
-                    $0.lastError = lastTransportError
+                    $0.lastError = transportMessage
                 }
                 if eventStore.sessions.contains(where: {
-                    $0.id.sessionID.provider == .codex &&
-                        $0.id.sessionID.nativeID == key && $0.isActive
+                    $0.id.sessionID == key && $0.isActive
                 }) {
                     _ = await emit(
-                        nativeSessionID: key,
+                        provider: agentProvider,
+                        nativeSessionID: key.nativeID,
                         type: .taskFailed,
                         payload: .terminal(AgentTerminalEvent(
-                            summary: "Codex app-server disconnected"
+                            summary: transportMessage
                         ))
                     )
                 }
@@ -687,14 +754,19 @@ final class AgentManagedSessionController: ObservableObject {
         }
     }
 
-    private func handleApproval(_ request: AgentManagedApprovalRequest) async {
-        guard provider?.interactiveCapabilities.contains(.resolveApprovals) == true else {
+    private func handleApproval(
+        _ request: AgentManagedApprovalRequest,
+        provider agentProvider: AgentProvider
+    ) async {
+        guard let provider = providers[agentProvider],
+              provider.interactiveCapabilities.contains(.resolveApprovals) else {
             return
         }
-        let approvalKey = "\(request.threadID):\(request.itemID)"
+        let approvalKey = "\(agentProvider.stableName):\(request.threadID):\(request.itemID)"
         defer { approvalTasks.removeValue(forKey: approvalKey) }
         let correlation = AgentCorrelationID(rawValue: request.itemID)
         guard let instance = await emit(
+            provider: agentProvider,
             nativeSessionID: request.threadID,
             type: .approvalRequested,
             correlationID: correlation,
@@ -706,26 +778,27 @@ final class AgentManagedSessionController: ObservableObject {
         ) else {
             // If the request cannot be represented safely in the normalized
             // store, fail closed instead of leaving the app-server blocked.
-            try? await provider?.resolveApproval(request, allow: false)
+            try? await provider.resolveApproval(request, allow: false)
             return
         }
 
         let controlRequest = AgentApprovalControlRequest(
             key: AgentApprovalControlKey(session: instance, requestID: correlation),
-            summary: AgentPrivacyProjection.summary(request.summary) ?? "Codex approval required",
+            summary: AgentPrivacyProjection.summary(request.summary) ??
+                "\(providerName(agentProvider)) approval required",
             expiresAt: Date().addingTimeInterval(75)
         )
         managedApprovalKeys.insert(controlRequest.key)
         defer { managedApprovalKeys.remove(controlRequest.key) }
         let decision = await approvals.request(controlRequest)
 
-        guard let provider else { return }
         // This isolated app-server has no secondary approval UI. Timeout or
         // dismissal must fail closed so its turn cannot remain blocked forever.
         let allow = decision == .allow
         do {
             try await provider.resolveApproval(request, allow: allow)
             _ = await emit(
+                provider: agentProvider,
                 nativeSessionID: request.threadID,
                 type: .approvalResolved,
                 correlationID: correlation,
@@ -735,17 +808,21 @@ final class AgentManagedSessionController: ObservableObject {
             )
         } catch {
             _ = await emit(
+                provider: agentProvider,
                 nativeSessionID: request.threadID,
                 type: .approvalResolved,
                 correlationID: correlation,
                 payload: .approvalResolution(AgentApprovalResolution(state: .cancelled))
             )
-            recordError(error, for: request.threadID)
+            recordError(error, for: AgentSessionID(
+                provider: agentProvider,
+                nativeID: request.threadID
+            ))
         }
     }
 
     private func markManaged(_ descriptor: AgentManagedSessionDescriptor) {
-        var value = managed[descriptor.nativeSessionID] ?? AgentManagedControlState(
+        var value = managed[descriptor.sessionID] ?? AgentManagedControlState(
             nativeSessionID: descriptor.nativeSessionID,
             activeTurnID: nil,
             isSubmitting: false,
@@ -754,41 +831,59 @@ final class AgentManagedSessionController: ObservableObject {
         )
         value.acceptsDirectInput = descriptor.acceptsDirectInput
         value.lastError = nil
-        managed[descriptor.nativeSessionID] = value
+        managed[descriptor.sessionID] = value
     }
 
     private func updateControl(
-        _ nativeSessionID: String,
+        _ sessionID: AgentSessionID,
         _ update: (inout AgentManagedControlState) -> Void
     ) {
-        guard var state = managed[nativeSessionID] else { return }
+        guard var state = managed[sessionID] else { return }
         update(&state)
-        managed[nativeSessionID] = state
+        managed[sessionID] = state
     }
 
-    private func recordError(_ error: Error, for nativeSessionID: String) {
+    private func recordError(_ error: Error, for sessionID: AgentSessionID) {
         let message = Self.safeError(error)
         lastTransportError = message
-        updateControl(nativeSessionID) { $0.lastError = message }
+        updateControl(sessionID) { $0.lastError = message }
     }
 
-    private func ensureProducer() async -> AgentProducerHandle? {
-        if let producerHandle { return producerHandle }
+    private func ensureProducer(for provider: AgentProvider) async -> AgentProducerHandle? {
+        if let handle = producerHandles[provider] { return handle }
+        let sourceID = managedSourceID(for: provider)
+        let policy: AgentProducerPolicy = provider == .codex ? .codexAppServer : .claudeManagedCLI
         let result = await coordinator.registerProducer(
             descriptor: AgentProducerDescriptor(
-                sourceInstanceID: AgentSourceInstanceID(rawValue: "codex-app-server-v2"),
+                sourceInstanceID: AgentSourceInstanceID(rawValue: sourceID),
                 sourceKind: .officialLifecycleProtocol,
                 runtimeVersion: nil
             ),
-            policy: .codexAppServer,
-            authenticatedProducerID: "codex-app-server-local"
+            policy: policy,
+            authenticatedProducerID: "\(sourceID)-local"
         )
         guard case .success(let handle) = result else {
-            lastTransportError = "Codex app-server producer registration failed"
+            lastTransportError = "\(providerName(provider)) producer registration failed"
             return nil
         }
-        producerHandle = handle
+        producerHandles[provider] = handle
         return handle
+    }
+
+    private func managedSourceID(for provider: AgentProvider) -> String {
+        switch provider {
+        case .codex: "codex-app-server-v2"
+        case .claude: "claude-managed-cli-v1"
+        case .other(let name): "managed-\(name)"
+        }
+    }
+
+    private func providerName(_ provider: AgentProvider) -> String {
+        switch provider {
+        case .codex: "Codex"
+        case .claude: "Claude"
+        case .other(let name): AgentPrivacyProjection.title(name, fallback: "Agent")
+        }
     }
 
     private func emitSessionAvailability(
@@ -797,6 +892,7 @@ final class AgentManagedSessionController: ObservableObject {
     ) async -> AgentSessionInstanceID? {
         let project = projectContext(for: descriptor)
         let instance = await emit(
+            provider: descriptor.provider,
             nativeSessionID: descriptor.nativeSessionID,
             type: type,
             payload: .sessionMetadata(AgentSessionMetadata(
@@ -806,26 +902,16 @@ final class AgentManagedSessionController: ObservableObject {
         )
 
         let now = Date()
-        let capabilities = AgentCapabilities(evidence: Dictionary(uniqueKeysWithValues: [
-            AgentCapability.sessionLifecycle,
-            .planLifecycle,
-            .toolLifecycle,
-            .commandLifecycle,
-            .approvalObservation,
-            .approvalControl,
-            .taskLifecycle,
-            .tokenUsage,
-            .contextUsage,
-            .modelMetadata,
-            .projectContext
-        ].map {
+        let capabilities = AgentCapabilities(evidence: Dictionary(uniqueKeysWithValues:
+            normalizedCapabilities(for: descriptor.provider).map {
             ($0, AgentCapabilityEvidence(
                 authority: .lifecycle,
-                source: "codex-app-server-v2",
+                source: managedSourceID(for: descriptor.provider),
                 observedAt: now
             ))
         }))
         _ = await emit(
+            provider: descriptor.provider,
             nativeSessionID: descriptor.nativeSessionID,
             type: .capabilitiesUpdated,
             payload: .capabilities(capabilities)
@@ -835,17 +921,19 @@ final class AgentManagedSessionController: ObservableObject {
 
     @discardableResult
     private func emit(
+        provider: AgentProvider,
         nativeSessionID: String,
         type: AgentEventType,
         correlationID: AgentCorrelationID? = nil,
         payload: AgentEventPayload,
         providerTimestamp: Date? = nil
     ) async -> AgentSessionInstanceID? {
-        guard let handle = await ensureProducer() else { return nil }
+        guard let handle = await ensureProducer(for: provider) else { return nil }
         let event = AgentIngestionEvent(
             schemaVersion: AgentEvent.normalizedSchemaVersion,
-            eventID: AgentEventID(rawValue: "codex-appserver-\(UUID().uuidString.lowercased())"),
-            provider: .codex,
+            eventID: AgentEventID(rawValue:
+                "\(provider.stableName)-managed-\(UUID().uuidString.lowercased())"),
+            provider: provider,
             source: .desktopApp,
             nativeSessionID: nativeSessionID,
             assertedGeneration: nil,
@@ -861,6 +949,22 @@ final class AgentManagedSessionController: ObservableObject {
         let result = await coordinator.ingest(event, from: handle)
         guard case .success(let accepted) = result else { return nil }
         return accepted.sessionInstances.last
+    }
+
+    private func normalizedCapabilities(for provider: AgentProvider) -> Set<AgentCapability> {
+        let interactive = capabilities(for: provider)
+        var result: Set<AgentCapability> = [.sessionLifecycle, .taskLifecycle, .projectContext]
+        if interactive.contains(.streamToolActivity) {
+            result.formUnion([.toolLifecycle, .commandLifecycle])
+        }
+        if interactive.contains(.resolveApprovals) {
+            result.formUnion([.approvalObservation, .approvalControl])
+        }
+        if interactive.contains(.accountUsage) { result.insert(.tokenUsage) }
+        if interactive.contains(.contextUsage) { result.insert(.contextUsage) }
+        if interactive.contains(.selectModel) { result.insert(.modelMetadata) }
+        if provider == .codex { result.insert(.planLifecycle) }
+        return result
     }
 
     private static let maximumTranscriptEntries = 80
@@ -899,25 +1003,29 @@ final class AgentManagedSessionController: ObservableObject {
 
     private func projectAcceptedUserPrompt(
         _ prompt: String,
-        nativeSessionID: String,
+        sessionID: AgentSessionID,
         turnID: String
     ) {
-        let entries = transcripts[nativeSessionID] ?? []
+        let entries = transcripts[sessionID] ?? []
         guard !entries.contains(where: {
             $0.turnID == turnID && $0.role == .user && $0.text == prompt
         }) else { return }
         upsertTranscript(AgentManagedTranscriptEntry(
-            id: "submitted-user:\(nativeSessionID):\(turnID)",
-            nativeSessionID: nativeSessionID,
+            id: "submitted-user:\(sessionID.nativeID):\(turnID)",
+            nativeSessionID: sessionID.nativeID,
             turnID: turnID,
             role: .user,
             text: prompt,
             timestamp: Date()
-        ))
+        ), provider: sessionID.provider)
     }
 
-    private func upsertTranscript(_ entry: AgentManagedTranscriptEntry) {
-        var entries = transcripts[entry.nativeSessionID] ?? []
+    private func upsertTranscript(
+        _ entry: AgentManagedTranscriptEntry,
+        provider: AgentProvider
+    ) {
+        let sessionID = AgentSessionID(provider: provider, nativeID: entry.nativeSessionID)
+        var entries = transcripts[sessionID] ?? []
         if entry.role == .user, let turnID = entry.turnID,
            !entry.id.hasPrefix("submitted-user:") {
             entries.removeAll {
@@ -930,23 +1038,23 @@ final class AgentManagedSessionController: ObservableObject {
         } else {
             entries.append(entry)
         }
-        transcripts[entry.nativeSessionID] = Self.boundedTranscript(entries)
+        transcripts[sessionID] = Self.boundedTranscript(entries)
     }
 
     private func appendTranscriptDelta(
-        nativeSessionID: String,
+        sessionID: AgentSessionID,
         turnID: String,
         itemID: String,
         delta: String
     ) {
         guard !delta.isEmpty else { return }
-        var entries = transcripts[nativeSessionID] ?? []
+        var entries = transcripts[sessionID] ?? []
         if let index = entries.firstIndex(where: { $0.id == itemID }) {
             let combined = entries[index].text + delta
             let bounded = AgentManagedTranscriptEntry.boundedText(combined) ?? entries[index].text
             entries[index] = AgentManagedTranscriptEntry(
                 id: itemID,
-                nativeSessionID: nativeSessionID,
+                nativeSessionID: sessionID.nativeID,
                 turnID: turnID,
                 role: .agent,
                 text: bounded,
@@ -955,14 +1063,14 @@ final class AgentManagedSessionController: ObservableObject {
         } else if let bounded = AgentManagedTranscriptEntry.boundedText(delta) {
             entries.append(AgentManagedTranscriptEntry(
                 id: itemID,
-                nativeSessionID: nativeSessionID,
+                nativeSessionID: sessionID.nativeID,
                 turnID: turnID,
                 role: .agent,
                 text: bounded,
                 timestamp: Date()
             ))
         }
-        transcripts[nativeSessionID] = Self.boundedTranscript(entries)
+        transcripts[sessionID] = Self.boundedTranscript(entries)
     }
 
     private nonisolated static func safeError(_ error: Error) -> String {

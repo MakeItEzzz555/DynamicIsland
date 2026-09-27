@@ -248,6 +248,31 @@ struct AgentProducerPolicy: Equatable, Sendable {
         allowedSchemaVersions: [AgentEvent.normalizedSchemaVersion]
     )
 
+    /// Authority for the locally owned official Claude Code structured-stream
+    /// control process. The current CLI surface supports resume, prompt input,
+    /// visible output, and tool observation, but not typed approval decisions.
+    static let claudeManagedCLI = AgentProducerPolicy(
+        allowedProviders: [.claude],
+        allowedSources: [.desktopApp],
+        allowedSourceKinds: [.officialLifecycleProtocol],
+        allowedEventTypes: [
+            .sessionStarted, .sessionResumed, .sessionMetadataUpdated,
+            .agentWorking, .toolStarted, .toolCompleted,
+            .commandStarted, .commandCompleted,
+            .capabilitiesUpdated, .projectContextUpdated,
+            .taskCompleted, .taskFailed, .interrupted, .heartbeat
+        ],
+        authorityCeilings: Dictionary(uniqueKeysWithValues: AgentAuthorityDomain.allCases.map {
+            ($0, AgentEvidenceAuthority.lifecycle)
+        }),
+        allowedCapabilities: [
+            .sessionLifecycle, .toolLifecycle, .commandLifecycle,
+            .taskLifecycle, .modelMetadata, .projectContext
+        ],
+        allowedSchemaVersions: [AgentEvent.normalizedSchemaVersion],
+        permitsLifecycleRecovery: true
+    )
+
     static let claudeStructuredRecovery = AgentProducerPolicy(
         allowedProviders: [.claude],
         allowedSources: [.unknown],
