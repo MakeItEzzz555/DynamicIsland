@@ -470,6 +470,7 @@ struct IslandRootView: View {
         .shellMorphing(layoutStore.isShellMorphing)
         .collapseShellOnly(layoutStore.isCollapseShellOnly)
         .frame(width: layoutStore.canvasSize.width, height: layoutStore.canvasSize.height, alignment: .topLeading)
+        .coordinateSpace(name: IslandCanvasCoordinateSpace.name)
         .onAppear {
             modules.navigation.ensureValidSelection(using: settings)
             synchronizePresentationForCurrentState()
@@ -2028,6 +2029,7 @@ struct ExpandedIslandView: View {
             handleRequestedTabChange(newPage)
         }
         .onChange(of: displayedPage) { _, _ in
+            synchronizeExpandedScrollSuppression()
             synchronizeStatsPolling()
         }
         .onChange(of: tabContentVisible) { _, _ in
@@ -2359,6 +2361,9 @@ struct ExpandedIslandView: View {
 
     private func synchronizeExpandedScrollSuppression() {
         layoutStore.setExpandedScrollGestureSuppressed(clipboardPresentation.isMounted)
+        if displayedPage != .agents {
+            layoutStore.setExpandedContentScrollRegion(.zero)
+        }
     }
 
     private func synchronizeClipboardEscapeRegistration() {
@@ -2547,6 +2552,7 @@ struct ExpandedIslandView: View {
             settings: settings,
             agentEvents: agentEvents,
             approvalControl: modules.agentApprovalControl,
+            layoutStore: layoutStore,
             availableHeight: metrics.pageHeight
         )
         .innerBlurScaleClean(
