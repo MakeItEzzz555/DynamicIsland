@@ -24,11 +24,7 @@ enum IslandContentTransitionTiming {
     // `.normal` shell timing of 0.40s, expansion content runs from about 0.16s to 0.32s.
     static let expansionContentDelayRatio: TimeInterval = 0.40
     static let expansionContentDurationRatio: TimeInterval = 0.40
-    static let collapseShellDelayRatio: TimeInterval = 0.15
     static let collapseContentDurationRatio: TimeInterval = 0.40
-    static let tabFadeOutDuration: TimeInterval = 0.12
-    static let tabHandoffDelay: TimeInterval = 0.01
-    static let tabFadeInDuration: TimeInterval = 0.14
 
     @MainActor
     static func shellDuration(settings: AppSettings, reduceMotion: Bool) -> TimeInterval {
@@ -49,10 +45,6 @@ enum IslandContentTransitionTiming {
         shellDuration * expansionContentDurationRatio
     }
 
-    static func collapseShellDelay(shellDuration: TimeInterval) -> TimeInterval {
-        shellDuration * collapseShellDelayRatio
-    }
-
     static func collapseContentDuration(shellDuration: TimeInterval) -> TimeInterval {
         shellDuration * collapseContentDurationRatio
     }
@@ -69,12 +61,6 @@ private enum IslandContentPhase {
 private enum RenderedContentMode {
     case compact
     case expanded
-}
-
-private enum ExpandedTabTransitionPhase {
-    case idle
-    case fadingOut
-    case fadingIn
 }
 
 struct ClipboardHistoryPresentationState: Equatable {
@@ -325,6 +311,7 @@ struct IslandRootView: View {
     @ObservedObject private var media: MediaController
     @ObservedObject private var navigation: IslandNavigationStore
     @ObservedObject private var liveActivities: LiveActivityStore
+    @ObservedObject private var agentAttention: AgentAttentionCoordinator
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var contentPhase: IslandContentPhase = .compact
     @State private var renderedContentMode: RenderedContentMode = .compact
@@ -360,6 +347,7 @@ struct IslandRootView: View {
         media = modules.media
         navigation = modules.navigation
         liveActivities = modules.liveActivities
+        agentAttention = modules.agentAttention
     }
 
     private var isExpanded: Bool {
@@ -397,7 +385,9 @@ struct IslandRootView: View {
                 IslandSurface(
                     settings: settings,
                     isExpanded: isExpanded,
-                    visualProgress: shellVisualProgress
+                    visualProgress: shellVisualProgress,
+                    collapsedPresentationProfile: layoutStore.collapsedPresentationProfile,
+                    collapsedGlowColor: collapsedAgentGlowColor
                 ) {
                     if showsExpandedContent {
                         ExpandedIslandView(
@@ -466,6 +456,7 @@ struct IslandRootView: View {
         .shellMorphing(layoutStore.isShellMorphing)
         .collapseShellOnly(layoutStore.isCollapseShellOnly)
         .frame(width: layoutStore.canvasSize.width, height: layoutStore.canvasSize.height, alignment: .topLeading)
+        .coordinateSpace(name: IslandCanvasCoordinateSpace.name)
         .onAppear {
             modules.navigation.ensureValidSelection(using: settings)
             synchronizePresentationForCurrentState()
@@ -524,7 +515,18 @@ struct IslandRootView: View {
         .accessibilityLabel("DynamicIsland")
         .animation(shellAnimation, value: islandState.state)
         .animation(shellAnimation, value: layoutStore.isShellMorphing)
+        .animation(shellAnimation, value: layoutStore.collapsedSurfaceFrame)
+        .animation(shellAnimation, value: layoutStore.collapsedPresentationProfile)
         .animation(collapsedPreviewAnimation, value: isCollapsedPreviewActive)
+    }
+
+    private var collapsedAgentGlowColor: Color {
+        switch agentAttention.presentation?.style {
+        case .success: .green
+        case .actionRequired: .orange
+        case .failure: .red
+        case .informational, .none: .cyan
+        }
     }
 
     private var surfaceSize: CGSize {
@@ -1049,48 +1051,6 @@ private struct InnerBlurScaleCleanModifier: ViewModifier {
     }
 }
 
-private struct ExpandedTabContentTransitionModifier: ViewModifier {
-    let isVisible: Bool
-    let phase: ExpandedTabTransitionPhase
-    let reduceMotion: Bool
-    let animationsEnabled: Bool
-    let useBlurTransitions: Bool
-    let useScaleTransitions: Bool
-
-    private var blur: CGFloat {
-        guard !reduceMotion, animationsEnabled, useBlurTransitions else { return 0 }
-        guard !isVisible else { return 0 }
-        switch phase {
-        case .fadingOut:
-            return 6
-        case .fadingIn:
-            return 8
-        case .idle:
-            return 0
-        }
-    }
-
-    private var scale: CGFloat {
-        guard !reduceMotion, animationsEnabled, useScaleTransitions else { return 1 }
-        guard !isVisible else { return 1 }
-        switch phase {
-        case .fadingOut:
-            return 0.97
-        case .fadingIn:
-            return 0.96
-        case .idle:
-            return 1
-        }
-    }
-
-    func body(content: Content) -> some View {
-        content
-            .blur(radius: blur)
-            .scaleEffect(scale, anchor: .center)
-            .opacity(isVisible ? 1 : 0)
-    }
-}
-
 private extension AnyTransition {
 static var blurBounce: AnyTransition {
     .asymmetric(
@@ -1199,6 +1159,8 @@ struct IslandSurface<Content: View>: View {
     @ObservedObject var settings: AppSettings
     let isExpanded: Bool
     let visualProgress: CGFloat
+    var collapsedPresentationProfile: CollapsedPresentationProfile = .normal
+    var collapsedGlowColor: Color = .cyan
     @ViewBuilder var content: Content
     @Environment(\.isNotchIntegratedShell) private var isNotchIntegratedShell
     @Environment(\.isShellMorphing) private var isShellMorphing
@@ -1207,16 +1169,17 @@ struct IslandSurface<Content: View>: View {
     var body: some View {
         let radii = IslandShellRadii.interpolated(
             progress: visualProgress,
-            isNotchIntegrated: isNotchIntegratedShell
+            isNotchIntegrated: isNotchIntegratedShell,
+            collapsedBottom: collapsedPresentationProfile.bottomCornerRadius
         )
         let shellShape = IslandShellShape(
             topCornerRadius: radii.top,
             bottomCornerRadius: radii.bottom
         )
         let usesExpandedContentPadding = isExpanded || isCollapseShellOnly
-        let collapsedHorizontalPadding = IslandShellLayout.collapsedHorizontalPadding(
-            isNotchIntegrated: isNotchIntegratedShell
-        )
+        let collapsedHorizontalPadding = collapsedPresentationProfile.kind == .normal
+            ? IslandShellLayout.collapsedHorizontalPadding(isNotchIntegrated: isNotchIntegratedShell)
+            : collapsedPresentationProfile.horizontalContentInset
         let strokeOpacity = 0.035 + ((0.07 - 0.035) * Double(visualProgress))
 
         ZStack {
@@ -1231,6 +1194,25 @@ struct IslandSurface<Content: View>: View {
                     if settings.shellStrokeEnabled {
                         shellShape
                             .stroke(Color.white.opacity(strokeOpacity), lineWidth: 1)
+                    }
+                }
+                .overlay {
+                    if !isExpanded, collapsedPresentationProfile.glowStrength > 0 {
+                        shellShape
+                            .stroke(
+                                collapsedGlowColor.opacity(collapsedPresentationProfile.glowStrength),
+                                style: StrokeStyle(lineWidth: 2.2, lineCap: .round)
+                            )
+                            .blur(radius: collapsedPresentationProfile.kind == .agentAttention ? 5.5 : 3)
+                            .mask(alignment: .bottom) {
+                                LinearGradient(
+                                    colors: [.clear, .black.opacity(0.2), .black],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
+                                .frame(height: 22)
+                            }
+                            .allowsHitTesting(false)
                     }
                 }
 
@@ -1253,10 +1235,15 @@ struct IslandShellRadii: Equatable {
     let top: CGFloat
     let bottom: CGFloat
 
-    static func interpolated(progress: CGFloat, isNotchIntegrated: Bool) -> IslandShellRadii {
+    static func interpolated(
+        progress: CGFloat,
+        isNotchIntegrated: Bool,
+        collapsedBottom: CGFloat = IslandShellRadii.collapsedBottom
+    ) -> IslandShellRadii {
         let clampedProgress = progress.isFinite ? min(max(progress, 0), 1) : 0
         let top = collapsedTop + ((expandedTop - collapsedTop) * clampedProgress)
-        let bottom = collapsedBottom + ((expandedBottom - collapsedBottom) * clampedProgress)
+        let resolvedCollapsedBottom = collapsedBottom.isFinite ? max(collapsedBottom, 0) : Self.collapsedBottom
+        let bottom = resolvedCollapsedBottom + ((expandedBottom - resolvedCollapsedBottom) * clampedProgress)
         return IslandShellRadii(
             top: isNotchIntegrated ? top : 0,
             bottom: bottom
@@ -1387,50 +1374,35 @@ struct CompactIslandView: View {
         )
 
         ZStack(alignment: .bottom) {
-            compactContentRow(activeBranch: activeBranch, visualizerColor: visualizerColor)
-                .frame(height: 16)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: previewActive ? .top : .center)
-                .padding(.top, previewActive ? 2 : 0)
-
-            if previewActive, let previewContent {
-                CollapsedPreviewRow(content: previewContent)
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
-                    .animation(previewRowAnimation, value: previewActive)
-            }
-
             if let attentionPresentation, let primary = attentionPresentation.primary {
-                HStack(spacing: 8) {
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text(primary.session.sessionID.provider.stableName.capitalized)
-                            .font(.system(size: 10, weight: .bold, design: .rounded))
-                        if let project = attentionSession?.project.displayName, !project.isEmpty {
-                            Text(project)
-                                .font(.system(size: 8, weight: .medium, design: .rounded))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-                    }
-                    Spacer(minLength: 6)
-                    Text(attentionPresentation.totalCount > 1
-                        ? "\(attentionPresentation.totalCount) agents"
-                        : String(primary.displaySummary.prefix(72)))
-                        .font(.system(size: 9, weight: .semibold, design: .rounded))
-                        .lineLimit(1)
+                sideSlotLayout {
+                    AgentCompactAttentionLeadingView(
+                        provider: primary.session.sessionID.provider,
+                        project: attentionSession?.project.displayName
+                    )
+                } right: {
+                    AgentCompactAttentionTrailingView(
+                        text: attentionPresentation.totalCount > 1
+                            ? "\(attentionPresentation.totalCount) agents"
+                            : String(primary.displaySummary.prefix(72)),
+                        accent: attentionAccent
+                    )
                 }
-                .padding(.horizontal, 11)
-                .foregroundStyle(.white)
+                .transition(.opacity)
+            } else {
+                compactContentRow(activeBranch: activeBranch, visualizerColor: visualizerColor)
+                    .frame(height: 16)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: previewActive ? .top : .center)
+                    .padding(.top, previewActive ? 2 : 0)
+
+                if previewActive, let previewContent {
+                    CollapsedPreviewRow(content: previewContent)
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
+                        .animation(previewRowAnimation, value: previewActive)
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .overlay(alignment: .bottom) {
-            if attentionPresentation != nil {
-                Capsule(style: .continuous)
-                    .fill(attentionAccent.opacity(0.55))
-                    .frame(height: 2)
-                    .padding(.horizontal, 12)
-                    .allowsHitTesting(false)
-            }
-        }
         .animation(compactContentAnimation, value: media.hasActiveMediaSource)
         .animation(compactContentAnimation, value: liveActivities.activities)
         .animation(compactContentAnimation, value: contentMode)
@@ -1477,7 +1449,23 @@ struct CompactIslandView: View {
                     layout: sideSlotGeometry
                 )
                     .transition(.compactMediaContent)
-            case .media, .inactive:
+            case .inactive:
+                if agentAttention.presentation == nil,
+                   let presentation = AgentCompactPresentation.make(
+                       sessions: agentEvents.sessions,
+                       enabled: settings.agentActivityEnabled
+                   ) {
+                    sideSlotLayout {
+                        AgentCompactMarkerCluster(presentation: presentation)
+                    } right: {
+                        AgentCompactSummaryLabel(presentation: presentation)
+                    }
+                        .transition(.opacity)
+                } else {
+                    Color.clear
+                        .transition(.opacity)
+                }
+            case .media:
                 Color.clear
                     .transition(.opacity)
             }
@@ -1568,7 +1556,7 @@ struct CompactIslandView: View {
     }
 }
 
-private struct CompactCollapsedSideSlotGeometry {
+struct CompactCollapsedSideSlotGeometry {
     let isNotchIntegrated: Bool
     let leftRegionWidth: CGFloat
     let notchCoreWidth: CGFloat
@@ -1579,7 +1567,7 @@ private struct CompactCollapsedSideSlotGeometry {
     }
 }
 
-private struct CompactCollapsedSideSlotLayout<Left: View, Right: View>: View {
+struct CompactCollapsedSideSlotLayout<Left: View, Right: View>: View {
     let geometry: CompactCollapsedSideSlotGeometry
     @ViewBuilder let left: () -> Left
     @ViewBuilder let right: () -> Right
@@ -1894,11 +1882,6 @@ struct ExpandedIslandView: View {
 
     @State private var isAirDropTargeted = false
     @State private var isFilesTargeted = false
-    @State private var displayedPage: ExpandedIslandPage
-    @State private var pendingPage: ExpandedIslandPage?
-    @State private var tabTransitionPhase: ExpandedTabTransitionPhase = .idle
-    @State private var tabContentVisible = true
-    @State private var tabTransitionGeneration = 0
     @State private var clipboardPresentation = ClipboardHistoryPresentationState()
 
     init(
@@ -1936,7 +1919,6 @@ struct ExpandedIslandView: View {
         navigation = modules.navigation
         liveActivities = modules.liveActivities
         agentEvents = modules.agentEvents
-        _displayedPage = State(initialValue: modules.navigation.selectedPage)
     }
 
     var body: some View {
@@ -1977,37 +1959,28 @@ struct ExpandedIslandView: View {
         .onAppear {
             synchronizeExpandedScrollSuppression()
             synchronizeClipboardEscapeRegistration()
-            resetTabPresentation(to: navigation.selectedPage)
             synchronizeStatsPolling()
         }
-        .onChange(of: navigation.selectedPage) { _, newPage in
+        .onChange(of: navigation.selectedPage) { _, _ in
             closeClipboardHistoryImmediately()
-            handleRequestedTabChange(newPage)
-        }
-        .onChange(of: displayedPage) { _, _ in
-            synchronizeStatsPolling()
-        }
-        .onChange(of: tabContentVisible) { _, _ in
+            synchronizeExpandedScrollSuppression()
             synchronizeStatsPolling()
         }
         .onChange(of: contentVisible) { _, isVisible in
             if !isVisible {
                 closeClipboardHistoryImmediately()
-                cancelTabTransitionForContentExit()
             }
             synchronizeStatsPolling()
         }
         .onChange(of: shouldRenderContent) { _, shouldRender in
             if !shouldRender {
                 closeClipboardHistoryImmediately()
-                cancelTabTransitionForContentExit()
             }
             synchronizeStatsPolling()
         }
         .onChange(of: isCollapseShellOnly) { _, collapseOnly in
             if collapseOnly {
                 closeClipboardHistoryImmediately()
-                cancelTabTransitionForContentExit()
             }
             synchronizeStatsPolling()
         }
@@ -2085,17 +2058,10 @@ struct ExpandedIslandView: View {
                     Color.clear
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    pageView(displayedPage, metrics: metrics)
-                        .modifier(
-                            ExpandedTabContentTransitionModifier(
-                                isVisible: tabContentVisible,
-                                phase: tabTransitionPhase,
-                                reduceMotion: reduceMotion,
-                                animationsEnabled: settings.contentAnimationEnabled,
-                                useBlurTransitions: settings.useBlurTransitions,
-                                useScaleTransitions: settings.useScaleTransitions
-                            )
-                        )
+                    pageView(navigation.selectedPage, metrics: metrics)
+                        .id(navigation.selectedPage)
+                        .transition(.opacity)
+                        .animation(pageSwitchAnimation, value: navigation.selectedPage)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: metrics.pageHeight, alignment: .topLeading)
@@ -2123,22 +2089,13 @@ struct ExpandedIslandView: View {
         }
     }
 
-    private var tabAnimationsEnabled: Bool {
-        !reduceMotion &&
-            settings.contentAnimationEnabled &&
-            settings.animationPreset != .instant
-    }
-
-    private var tabFadeOutAnimation: Animation {
-        tabAnimationsEnabled
-            ? .easeIn(duration: IslandContentTransitionTiming.tabFadeOutDuration)
-            : .linear(duration: 0.01)
-    }
-
-    private var tabFadeInAnimation: Animation {
-        tabAnimationsEnabled
-            ? .easeOut(duration: IslandContentTransitionTiming.tabFadeInDuration)
-            : .linear(duration: 0.01)
+    private var pageSwitchAnimation: Animation {
+        guard !reduceMotion,
+              settings.contentAnimationEnabled,
+              settings.animationPreset != .instant else {
+            return .linear(duration: 0.01)
+        }
+        return .easeInOut(duration: 0.16)
     }
 
     private var contentVisibilityAnimation: Animation {
@@ -2157,91 +2114,6 @@ struct ExpandedIslandView: View {
 
         let duration = IslandContentTransitionTiming.collapseContentDuration(shellDuration: shellDuration)
         return .easeIn(duration: reduceMotion ? 0.10 : duration)
-    }
-
-    private func handleRequestedTabChange(_ newPage: ExpandedIslandPage) {
-        guard shouldRenderContent,
-              contentVisible,
-              !isCollapseShellOnly else {
-            resetTabPresentation(to: newPage)
-            return
-        }
-
-        guard newPage != displayedPage || pendingPage != nil else {
-            return
-        }
-
-        guard tabAnimationsEnabled else {
-            resetTabPresentation(to: newPage)
-            return
-        }
-
-        pendingPage = newPage
-        switch tabTransitionPhase {
-        case .idle, .fadingIn:
-            beginTabFadeOut()
-        case .fadingOut:
-            break
-        }
-    }
-
-    private func beginTabFadeOut() {
-        let sessionGeneration = layoutStore.overlayPresentationGeneration
-        tabTransitionGeneration += 1
-        let generation = tabTransitionGeneration
-        tabTransitionPhase = .fadingOut
-
-        withAnimation(tabFadeOutAnimation) {
-            tabContentVisible = false
-        }
-
-        DispatchQueue.main.asyncAfter(
-            deadline: .now() + IslandContentTransitionTiming.tabFadeOutDuration + IslandContentTransitionTiming.tabHandoffDelay
-        ) {
-            guard settings.overlayEnabled, sessionGeneration == layoutStore.overlayPresentationGeneration,
-                  generation == tabTransitionGeneration else { return }
-            guard shouldRenderContent,
-                  contentVisible,
-                  !isCollapseShellOnly else {
-                resetTabPresentation(to: navigation.selectedPage)
-                return
-            }
-
-            let destination = pendingPage ?? navigation.selectedPage
-            displayedPage = destination
-            pendingPage = nil
-            tabTransitionPhase = .fadingIn
-            tabContentVisible = false
-
-            DispatchQueue.main.async {
-                guard settings.overlayEnabled, sessionGeneration == layoutStore.overlayPresentationGeneration,
-                      generation == tabTransitionGeneration else { return }
-                withAnimation(tabFadeInAnimation) {
-                    tabContentVisible = true
-                }
-            }
-
-            DispatchQueue.main.asyncAfter(deadline: .now() + IslandContentTransitionTiming.tabFadeInDuration) {
-                guard settings.overlayEnabled, sessionGeneration == layoutStore.overlayPresentationGeneration,
-                      generation == tabTransitionGeneration else { return }
-                tabTransitionPhase = .idle
-                if let pendingPage, pendingPage != displayedPage {
-                    beginTabFadeOut()
-                }
-            }
-        }
-    }
-
-    private func resetTabPresentation(to page: ExpandedIslandPage) {
-        tabTransitionGeneration += 1
-        displayedPage = page
-        pendingPage = nil
-        tabTransitionPhase = .idle
-        tabContentVisible = true
-    }
-
-    private func cancelTabTransitionForContentExit() {
-        resetTabPresentation(to: navigation.selectedPage)
     }
 
     private func openClipboardHistory() {
@@ -2316,6 +2188,9 @@ struct ExpandedIslandView: View {
 
     private func synchronizeExpandedScrollSuppression() {
         layoutStore.setExpandedScrollGestureSuppressed(clipboardPresentation.isMounted)
+        if navigation.selectedPage != .agents {
+            layoutStore.setExpandedContentScrollRegion(.zero)
+        }
     }
 
     private func synchronizeClipboardEscapeRegistration() {
@@ -2401,9 +2276,8 @@ struct ExpandedIslandView: View {
         let shouldPoll = settings.overlayEnabled && rendersExpandedVisualContent &&
             shouldRenderContent &&
             contentVisible &&
-            tabContentVisible &&
             !isCollapseShellOnly &&
-            displayedPage == .stats
+            navigation.selectedPage == .stats
         if shouldPoll {
             modules.stats.startPolling()
         } else {
@@ -2500,32 +2374,14 @@ struct ExpandedIslandView: View {
     }
 
     private func agentActivityPage(metrics: ExpandedIslandLayoutMetrics) -> some View {
-        Group {
-            if agentEvents.sessions.isEmpty {
-                VStack(spacing: 10) {
-                    Image(systemName: "cpu")
-                        .font(.system(size: 24, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.45))
-                    Text("No agent sessions")
-                        .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    Text("Codex and Claude activity will appear here when a verified integration is active.")
-                        .font(.system(size: 10, weight: .medium, design: .rounded))
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: 340)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ScrollView(.vertical, showsIndicators: true) {
-                    LazyVStack(spacing: 10) {
-                        ForEach(agentEvents.sessions, id: \.id) { session in
-                            agentSessionCard(session)
-                        }
-                    }
-                    .padding(.vertical, 2)
-                }
-            }
-        }
+        AgentActivityDashboardView(
+            settings: settings,
+            agentEvents: agentEvents,
+            approvalControl: modules.agentApprovalControl,
+            managedControl: modules.agentManagedControl,
+            layoutStore: layoutStore,
+            availableHeight: metrics.pageHeight
+        )
         .innerBlurScaleClean(
             settings: settings,
             isVisible: contentVisible,
@@ -2534,244 +2390,6 @@ struct ExpandedIslandView: View {
             reduceMotion: reduceMotion
         )
         .frame(maxWidth: .infinity, maxHeight: metrics.pageHeight, alignment: .topLeading)
-    }
-
-    private func agentSessionCard(_ session: AgentSession) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            agentSessionHeader(session)
-
-            if let current = session.recentActivity.last {
-                agentCurrentActivity(current)
-            }
-
-            if session.state == .waitingForApproval || session.state == .waitingForUser {
-                agentAttentionRequirement(session)
-            }
-
-            if let openTarget = AgentSourceAssociationResolver.openTarget(for: session) {
-                Button {
-                    _ = AppLaunchService.openApp(bundleIdentifier: openTarget.bundleIdentifier)
-                } label: {
-                    Label("Open \(openTarget.displayName)", systemImage: "arrow.up.forward.app")
-                        .font(.system(size: 9, weight: .semibold, design: .rounded))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.white.opacity(0.78))
-                .accessibilityLabel("Open \(openTarget.displayName)")
-            }
-
-            if hasVisibleAgentUsage(session) {
-                Divider()
-                    .overlay(.white.opacity(0.06))
-                agentUsageSection(session)
-            }
-
-            if session.recentActivity.count > 1 {
-                agentRecentActivity(session)
-            }
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(.white.opacity(0.06), lineWidth: 1)
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(agentSessionAccessibilityLabel(session))
-    }
-
-    private func agentSessionHeader(_ session: AgentSession) -> some View {
-        HStack(spacing: 8) {
-            Text(session.id.sessionID.provider.stableName.capitalized)
-                .font(.system(size: 10, weight: .bold, design: .rounded))
-                .padding(.horizontal, 7)
-                .padding(.vertical, 3)
-                .background(.white.opacity(0.08), in: Capsule())
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text(session.project.displayName ?? "Agent session")
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    .lineLimit(1)
-                HStack(spacing: 5) {
-                    if let model = session.project.model {
-                        Text(model)
-                    }
-                    if session.source != .unknown {
-                        Text(session.source.rawValue)
-                    }
-                }
-                .font(.system(size: 8, weight: .medium, design: .rounded))
-                .foregroundStyle(.secondary)
-            }
-
-            Spacer(minLength: 8)
-
-            Text(agentStateLabel(session.state))
-                .font(.system(size: 9, weight: .bold, design: .rounded))
-                .foregroundStyle(agentStateAccent(session.state))
-                .padding(.horizontal, 7)
-                .padding(.vertical, 3)
-                .background(agentStateAccent(session.state).opacity(0.12), in: Capsule())
-        }
-    }
-
-    private func agentCurrentActivity(_ current: AgentActivity) -> some View {
-        HStack(alignment: .top, spacing: 7) {
-            Image(systemName: "waveform.path.ecg")
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(.secondary)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(current.title)
-                    .font(.system(size: 10, weight: .semibold, design: .rounded))
-                    .lineLimit(1)
-                if let summary = current.summary {
-                    Text(summary)
-                        .font(.system(size: 9, weight: .regular, design: .rounded))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
-            }
-        }
-    }
-
-    private func agentAttentionRequirement(_ session: AgentSession) -> some View {
-        Label(
-            session.state == .waitingForApproval ? "Approval required" : "User input required",
-            systemImage: "exclamationmark.bubble.fill"
-        )
-        .font(.system(size: 9, weight: .semibold, design: .rounded))
-        .foregroundStyle(.orange)
-    }
-
-    private func agentRecentActivity(_ session: AgentSession) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            ForEach(Array(session.recentActivity.suffix(3).reversed()), id: \.id) { activity in
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(.white.opacity(0.22))
-                        .frame(width: 4, height: 4)
-                    Text(activity.title)
-                        .font(.system(size: 8, weight: .medium, design: .rounded))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
-        }
-    }
-
-    private func agentSessionAccessibilityLabel(_ session: AgentSession) -> String {
-        [
-            session.id.sessionID.provider.stableName.capitalized,
-            session.project.displayName ?? "agent session",
-            agentStateLabel(session.state)
-        ].joined(separator: ", ")
-    }
-
-    @ViewBuilder
-    private func agentUsageSection(_ session: AgentSession) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            if session.capabilities.contains(.tokenUsage) {
-                if let sample = session.usage[.inputTokens] {
-                    agentUsageRow("Input", sample: sample)
-                }
-                if let sample = session.usage[.outputTokens] {
-                    agentUsageRow("Output", sample: sample)
-                }
-                if let sample = session.usage[.cachedInputTokens] {
-                    agentUsageRow("Cached", sample: sample)
-                }
-                if let sample = session.usage[.reasoningTokens] {
-                    agentUsageRow("Reasoning", sample: sample)
-                }
-            }
-            if session.capabilities.contains(.contextUsage) {
-                if let sample = session.usage[.contextUsed] {
-                    agentUsageRow("Context", sample: sample)
-                }
-                if let sample = session.usage[.contextLimit] {
-                    agentUsageRow("Context limit", sample: sample)
-                }
-            }
-            if session.capabilities.contains(.quotaUsage) {
-                if let sample = session.usage[.quotaUsed] {
-                    agentUsageRow("Quota", sample: sample)
-                }
-                if let sample = session.usage[.quotaLimit] {
-                    agentUsageRow("Quota limit", sample: sample)
-                }
-                if let sample = session.usage[.rateLimitRemaining] {
-                    agentUsageRow("Rate remaining", sample: sample)
-                }
-            }
-            if session.capabilities.contains(.costUsage),
-               let sample = session.usage[.cost] {
-                agentUsageRow("Cost", sample: sample)
-            }
-        }
-    }
-
-    private func agentUsageRow(_ label: String, sample: AgentUsageSample) -> some View {
-        HStack(spacing: 6) {
-            Text(label)
-                .foregroundStyle(.secondary)
-            Spacer(minLength: 6)
-            Text(agentUsageValue(sample))
-                .monospacedDigit()
-            if Date().timeIntervalSince(sample.observedAt) > 300 {
-                Text("stale")
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .font(.system(size: 8, weight: .medium, design: .rounded))
-        .help("Source: " + String(sample.source.prefix(120)))
-    }
-
-    private func agentUsageValue(_ sample: AgentUsageSample) -> String {
-        let value = sample.value.formatted(.number.precision(.fractionLength(0...2)))
-        if let limit = sample.limit {
-            let limitText = limit.formatted(.number.precision(.fractionLength(0...2)))
-            return value + " / " + limitText + " " + sample.unit.rawValue
-        }
-        return value + " " + sample.unit.rawValue
-    }
-
-    private func hasVisibleAgentUsage(_ session: AgentSession) -> Bool {
-        guard settings.agentUsageMetricsEnabled else { return false }
-        let supported =
-            session.capabilities.contains(.tokenUsage) ||
-            session.capabilities.contains(.contextUsage) ||
-            session.capabilities.contains(.quotaUsage) ||
-            session.capabilities.contains(.costUsage)
-        return supported && !session.usage.samples.isEmpty
-    }
-
-    private func agentStateLabel(_ state: AgentState) -> String {
-        switch state {
-        case .idle: "Idle"
-        case .thinking: "Thinking"
-        case .planning: "Planning"
-        case .working: "Working"
-        case .runningTool: "Tool"
-        case .runningCommand: "Command"
-        case .waitingForApproval: "Approval"
-        case .waitingForUser: "Input"
-        case .planReady: "Plan ready"
-        case .completed: "Completed"
-        case .failed: "Failed"
-        case .interrupted: "Interrupted"
-        }
-    }
-
-    private func agentStateAccent(_ state: AgentState) -> Color {
-        switch state {
-        case .completed: .green
-        case .failed: .red
-        case .waitingForApproval, .waitingForUser: .orange
-        case .planReady, .planning: .cyan
-        case .interrupted: .yellow
-        default: .white.opacity(0.72)
-        }
     }
 
     private func trayPage(metrics: ExpandedIslandLayoutMetrics) -> some View {
@@ -3068,34 +2686,12 @@ private struct ExpandedIslandPageSwitcher: View {
     var body: some View {
         HStack(spacing: 4) {
             ForEach(navigation.availablePages(using: settings), id: \.self) { page in
-                Button {
-                    switch page {
-                    case .island:
-                        navigation.showIsland()
-                    case .tray:
-                        navigation.showTray()
-                    case .timer:
-                        navigation.showTimer()
-                    case .stats:
-                        navigation.showStats()
-                    case .agents:
-                        navigation.showAgents()
-                    }
-                } label: {
-                    Image(systemName: page.symbolName)
-                        .font(.system(size: 13, weight: .bold))
-                        .frame(width: 30, height: 26)
-                        .foregroundStyle(.white.opacity(navigation.selectedPage == page ? 1 : 0.48))
-                        .background {
-                            if navigation.selectedPage == page {
-                                Capsule(style: .continuous)
-                                    .fill(.white.opacity(0.14))
-                            }
-                        }
+                ExpandedIslandPageButton(
+                    page: page,
+                    selected: navigation.selectedPage == page
+                ) {
+                    navigation.select(page)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(page.accessibilityLabel)
-                .help(page.title)
             }
         }
         .padding(4)
@@ -3105,6 +2701,52 @@ private struct ExpandedIslandPageSwitcher: View {
                 .stroke(.white.opacity(0.07), lineWidth: 1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct ExpandedIslandPageButton: View {
+    let page: ExpandedIslandPage
+    let selected: Bool
+    let action: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: page.symbolName)
+                .font(.system(size: 13, weight: .bold))
+                .frame(width: 30, height: 26)
+                .foregroundStyle(.white.opacity(foregroundOpacity))
+                .background {
+                    Capsule(style: .continuous)
+                        .fill(.white.opacity(backgroundOpacity))
+                }
+                .scaleEffect(hoverScale)
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+        .animation(hoverAnimation, value: isHovering)
+        .accessibilityLabel(page.accessibilityLabel)
+        .accessibilityValue(selected ? "Selected" : "Not selected")
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .help(page.title)
+    }
+
+    private var foregroundOpacity: Double {
+        selected ? 1 : (isHovering ? 0.78 : 0.48)
+    }
+
+    private var backgroundOpacity: Double {
+        selected ? 0.14 : (isHovering ? 0.075 : 0)
+    }
+
+    private var hoverScale: CGFloat {
+        guard isHovering, !selected, !reduceMotion else { return 1 }
+        return 1.06
+    }
+
+    private var hoverAnimation: Animation {
+        reduceMotion ? .linear(duration: 0.01) : .easeOut(duration: 0.14)
     }
 }
 

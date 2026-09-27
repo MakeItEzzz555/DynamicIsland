@@ -1,3 +1,4 @@
+import AgentBridgeShared
 import CryptoKit
 import Foundation
 
@@ -126,14 +127,25 @@ package enum CodexHookNormalizer {
                   ) else {
                 throw CodexHookNormalizationError.invalidHook
             }
+            let capabilities = ["approvalObservation", "approvalControl"].map {
+                ["name": $0, "authority": "lifecycle", "source": "codex-permission-hook-v1", "observedAt": timestamp]
+            }
+            events.append(baseEvent(
+                "capabilitiesUpdated",
+                uniqueness: observationNonce,
+                payload: ["capabilities": capabilities]
+            ))
+            var request: [String: Any] = [
+                "summary": approvalSummary(tool: tool, toolInput: root["tool_input"]),
+                "operationCorrelationID": operationHint(tool),
+                "expiresAt": now.addingTimeInterval(75).timeIntervalSinceReferenceDate
+            ]
+            if request["summary"] == nil { request.removeValue(forKey: "summary") }
             events.append(baseEvent(
                 "approvalRequested",
                 correlationID: approvalID,
                 uniqueness: observationNonce,
-                payload: ["approvalRequest": [
-                    "summary": "\(String(tool.prefix(96))) approval required",
-                    "operationCorrelationID": operationHint(tool)
-                ]]
+                payload: ["approvalRequest": request]
             ))
 
         case "Stop":
@@ -172,6 +184,66 @@ package enum CodexHookNormalizer {
         catch { throw CodexHookNormalizationError.malformedJSON }
         guard output.count <= 64 * 1_024 else { throw CodexHookNormalizationError.outputTooLarge }
         return output
+    }
+
+    package static func hookEventName(_ data: Data) -> String? {
+        guard data.count <= maximumInputBytes,
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return boundedString(root["hook_event_name"], maximumBytes: maximumTokenBytes)
+    }
+
+    private static func approvalSummary(tool: String, toolInput: Any?) -> String {
+        guard let input = toolInput as? [String: Any] else {
+            return "\(String(tool.prefix(96))) approval required"
+        }
+        if let description = boundedString(input["description"], maximumBytes: 320),
+           let projected = safeApprovalText(description) {
+            return projected
+        }
+        if isCommandTool(tool),
+           let command = boundedString(input["command"], maximumBytes: 1_024),
+           let projected = safeCommandPreview(command) {
+            return "$ " + projected
+        }
+        return "\(String(tool.prefix(96))) approval required"
+    }
+
+    private static func safeApprovalText(_ value: String) -> String? {
+        guard !containsSensitiveMarker(value), !value.contains("\n"), !value.contains("\r") else { return nil }
+        return String(value.prefix(240))
+    }
+
+    private static func safeCommandPreview(_ value: String) -> String? {
+        guard !containsSensitiveMarker(value), !value.contains("\n"), !value.contains("\r"),
+              value.unicodeScalars.allSatisfy({ $0.isASCII && !CharacterSet.controlCharacters.contains($0) }) else {
+            return nil
+        }
+        let tokens = value.split(whereSeparator: { $0.isWhitespace })
+        guard !tokens.isEmpty, tokens.count <= 12 else { return nil }
+        var projected: [String] = []
+        for rawToken in tokens {
+            let token = String(rawToken)
+            guard !token.contains("="), token.unicodeScalars.allSatisfy({
+                CharacterSet.alphanumerics.contains($0) || "._/-:@+".unicodeScalars.contains($0)
+            }) else { return nil }
+            if token.hasPrefix("/") {
+                let name = URL(fileURLWithPath: token).lastPathComponent
+                guard !name.isEmpty else { return nil }
+                projected.append(name)
+            } else {
+                projected.append(token)
+            }
+        }
+        let result = projected.joined(separator: " ")
+        return result.utf8.count <= 240 ? result : nil
+    }
+
+    private static func containsSensitiveMarker(_ value: String) -> Bool {
+        let normalized = value.lowercased().replacingOccurrences(of: "-", with: "_")
+        return [
+            "password", "passwd", "secret", "token", "authorization", "bearer",
+            "api_key", "apikey", "cookie", "credential", "private_key", "sshpass"
+        ].contains { normalized.contains($0) }
     }
 
     private static func approvalCorrelation(
@@ -249,6 +321,20 @@ package enum CodexHookNormalizer {
             guard array.count <= 256 else { throw CodexHookNormalizationError.malformedJSON }
             for child in array { try validateJSON(child, depth: depth + 1) }
         }
+    }
+}
+
+package enum CodexPermissionHookOutput {
+    package static func encode(_ decision: AgentBridgePermissionDecision) -> Data? {
+        let value: [String: Any] = [
+            "hookSpecificOutput": [
+                "hookEventName": "PermissionRequest",
+                "decision": decision == .allow
+                    ? ["behavior": "allow"]
+                    : ["behavior": "deny", "message": "Denied in DynamicIsland"]
+            ]
+        ]
+        return try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
     }
 }
 

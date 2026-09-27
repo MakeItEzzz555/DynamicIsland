@@ -40,7 +40,24 @@ struct SettingsView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var shortcuts: ShortcutsStore
     @StateObject private var agentSetup = AgentIntegrationSetupController()
+    @StateObject private var agentDiagnostics: AgentIntegrationDiagnosticsController
     @State private var selectedSection: SettingsSection = .island
+
+    init(
+        settings: AppSettings,
+        shortcuts: ShortcutsStore,
+        agentIngestion: AgentIngestionCoordinator,
+        agentEvents: AgentEventStore
+    ) {
+        self.settings = settings
+        self.shortcuts = shortcuts
+        _agentDiagnostics = StateObject(
+            wrappedValue: AgentIntegrationDiagnosticsController(
+                coordinator: agentIngestion,
+                eventStore: agentEvents
+            )
+        )
+    }
 
     var body: some View {
         NavigationSplitView {
@@ -371,10 +388,11 @@ struct SettingsView: View {
                 HStack(spacing: 8) {
                     Button("Refresh status") {
                         agentSetup.refresh()
+                        agentDiagnostics.refresh()
                     }
-                    .disabled(agentSetup.isWorking)
+                    .disabled(agentSetup.isWorking || agentDiagnostics.isRefreshing)
 
-                    if agentSetup.isWorking {
+                    if agentSetup.isWorking || agentDiagnostics.isRefreshing {
                         ProgressView()
                             .controlSize(.small)
                     }
@@ -427,48 +445,82 @@ struct SettingsView: View {
         }
         .onAppear {
             agentSetup.refresh()
+            agentDiagnostics.refresh()
         }
     }
 
     @ViewBuilder
     private func agentProviderSetupRow(_ provider: AgentIntegrationProvider) -> some View {
         let snapshot = agentSetup.snapshots[provider]
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 8) {
-                Text(provider.displayName)
+        let diagnostics = snapshot.map {
+            AgentIntegrationDiagnostics.make(
+                provider: provider,
+                setup: $0.state,
+                active: agentDiagnostics.activeHealth,
+                stopped: agentDiagnostics.stoppedHealth
+            )
+        }
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: provider == .codex ? "terminal" : "brain.head.profile")
                     .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(provider == .codex ? .cyan : .orange)
+                    .frame(width: 28, height: 28)
+                    .background(.primary.opacity(0.055), in: Circle())
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(provider.displayName)
+                        .font(.system(size: 12, weight: .semibold))
+                    if let snapshot {
+                        Text(snapshot.detail)
+                            .font(.system(size: 9.5, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                }
                 Spacer()
-                Text(snapshot?.state.label ?? "Checking…")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(agentSetupStatusColor(snapshot?.state))
+                if let diagnostics {
+                    Label(diagnostics.state.label, systemImage: agentOperationalStatusSymbol(diagnostics.state))
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(agentOperationalStatusColor(diagnostics.state))
+                        .accessibilityLabel("\(provider.displayName) status: \(diagnostics.state.label)")
+                } else {
+                    Text("Checking…")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
             }
 
             if let snapshot {
-                Text(snapshot.detail)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-                Text(snapshot.configPath)
-                    .font(.system(size: 9, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .textSelection(.enabled)
+                if let diagnostics {
+                    AgentSourceHealthRow(provider: provider, diagnostics: diagnostics)
+                }
 
-                HStack(spacing: 8) {
-                    switch snapshot.state {
-                    case .configured:
-                        Button("Reconfigure…") { agentSetup.prepare(provider) }
-                        Button("Remove") { agentSetup.remove(provider) }
-                    case .needsSetup, .repairRequired:
-                        Button(snapshot.state == .repairRequired ? "Repair…" : "Configure…") {
-                            agentSetup.prepare(provider)
+                HStack(alignment: .center, spacing: 10) {
+                    Text(snapshot.configPath)
+                        .font(.system(size: 8.5, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                    Spacer(minLength: 8)
+                    HStack(spacing: 8) {
+                        switch snapshot.state {
+                        case .configured:
+                            Button("Reconfigure…") { agentSetup.prepare(provider) }
+                            Button("Remove") { agentSetup.remove(provider) }
+                        case .needsSetup, .repairRequired:
+                            Button(snapshot.state == .repairRequired ? "Repair…" : "Configure…") {
+                                agentSetup.prepare(provider)
+                            }
+                        case .helperUnavailable, .blocked:
+                            Button("Configure…") { agentSetup.prepare(provider) }
+                                .disabled(true)
                         }
-                    case .helperUnavailable, .blocked:
-                        Button("Configure…") { agentSetup.prepare(provider) }
-                            .disabled(true)
-                    }
 
-                    if snapshot.backupAvailable {
-                        Button("Rollback") { agentSetup.rollback(provider) }
+                        if snapshot.backupAvailable {
+                            Button("Rollback") { agentSetup.rollback(provider) }
+                        }
                     }
                 }
                 .disabled(agentSetup.isWorking)
@@ -476,13 +528,26 @@ struct SettingsView: View {
         }
     }
 
-    private func agentSetupStatusColor(_ state: AgentIntegrationSetupState?) -> Color {
-        guard let state else { return .secondary }
+    private func agentOperationalStatusColor(_ state: AgentIntegrationOperationalState) -> Color {
         switch state {
-        case .configured: return .green
-        case .needsSetup: return .secondary
-        case .repairRequired: return .orange
-        case .helperUnavailable, .blocked: return .red
+        case .active: .green
+        case .awaitingFirstEvent, .stale, .repairRequired: .orange
+        case .degraded, .failed, .unavailable, .blocked: .red
+        case .notConfigured, .stopped: .secondary
+        }
+    }
+
+    private func agentOperationalStatusSymbol(_ state: AgentIntegrationOperationalState) -> String {
+        switch state {
+        case .active: "checkmark.circle.fill"
+        case .awaitingFirstEvent: "clock.badge.exclamationmark"
+        case .stale: "clock.fill"
+        case .degraded: "exclamationmark.triangle.fill"
+        case .failed: "xmark.octagon.fill"
+        case .stopped: "stop.circle.fill"
+        case .repairRequired: "wrench.and.screwdriver.fill"
+        case .unavailable, .blocked: "exclamationmark.circle.fill"
+        case .notConfigured: "circle.dashed"
         }
     }
 
@@ -755,6 +820,96 @@ struct SettingsView: View {
                 .font(.system(size: 24, weight: .bold, design: .rounded))
                 .foregroundStyle(.primary)
             content()
+        }
+    }
+}
+
+struct AgentSourceHealthRow: View {
+    let provider: AgentIntegrationProvider
+    let diagnostics: AgentIntegrationDiagnostics
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if diagnostics.state == .awaitingFirstEvent {
+                Label(awaitingGuidance, systemImage: "info.circle")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if diagnostics.acceptedCount > 0 || diagnostics.rejectedCount > 0 || diagnostics.droppedCount > 0 {
+                HStack(spacing: 16) {
+                    healthMetric("Accepted", value: diagnostics.acceptedCount)
+                    healthMetric("Rejected", value: diagnostics.rejectedCount)
+                    healthMetric("Dropped", value: diagnostics.droppedCount)
+                    Spacer(minLength: 0)
+                    if let lastAccepted = diagnostics.lastAcceptedEventAt {
+                        VStack(alignment: .trailing, spacing: 1) {
+                            Text("LAST EVENT")
+                                .font(.system(size: 8, weight: .bold))
+                                .foregroundStyle(.secondary)
+                            Text(lastAccepted, style: .relative)
+                                .font(.system(size: 10, weight: .semibold))
+                        }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel("Last accepted event \(lastAccepted.formatted())")
+                    }
+                }
+                .padding(.vertical, 5)
+                .overlay(alignment: .top) {
+                    Divider().opacity(0.35)
+                }
+            }
+
+            if diagnostics.schemaMismatchCount > 0 {
+                Label(
+                    "Schema mismatch detected (\(diagnostics.schemaMismatchCount.formatted()))",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.orange)
+            }
+
+            if let error = diagnostics.lastError {
+                Label("Last safe error: \(safeErrorLabel(error))", systemImage: "exclamationmark.circle")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private var awaitingGuidance: String {
+        switch provider {
+        case .codex:
+            "Configuration is installed, but no Codex event has been accepted yet. Start a new session and review the installed hooks with /hooks."
+        case .claude:
+            "Configuration is installed, but no Claude event has been accepted yet. Restart Claude or start a new session."
+        }
+    }
+
+    private func healthMetric(_ label: String, value: UInt64) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(label.uppercased())
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(.secondary)
+            Text(value.formatted())
+                .font(.system(size: 11, weight: .bold, design: .rounded))
+                .monospacedDigit()
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private func safeErrorLabel(_ error: AgentSourceHealthError) -> String {
+        switch error {
+        case .policyRejected: "Policy rejected"
+        case .schemaMismatch: "Schema mismatch"
+        case .invalidEvent: "Invalid event"
+        case .staleProducer: "Stale producer"
+        case .identityConflict: "Identity conflict"
+        case .storeRejected: "Event store rejected"
+        case .producerFailure: "Producer failure"
         }
     }
 }

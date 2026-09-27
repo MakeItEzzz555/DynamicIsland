@@ -142,15 +142,27 @@ actor AgentIngestionCoordinator {
 
             for evidence in events {
                 try validate(evidence, registration: registration)
+                let requiresRecoveryBootstrap = stagedLeases[evidence.sessionID] == nil &&
+                    permitsRecoveryBootstrap(for: evidence, registration: registration)
                 let previousInstance = stagedLeases[evidence.sessionID]?.instanceID
                 let lease = try resolveLease(
                     for: evidence,
                     handle: handle,
+                    permitsRecoveryBootstrap: requiresRecoveryBootstrap,
                     leases: &stagedLeases,
                     nextGeneration: &stagedNextGeneration
                 )
                 if let previousInstance, previousInstance != lease.instanceID {
                     stagedLedger.removeValue(forKey: previousInstance)
+                }
+                if requiresRecoveryBootstrap {
+                    let bootstrap = recoveryBootstrapEvent(
+                        for: evidence,
+                        lease: lease,
+                        registration: registration
+                    )
+                    normalized.append(bootstrap)
+                    applyLifecycleAuthority(of: bootstrap, to: &stagedLeases)
                 }
                 var event = normalize(evidence, lease: lease, registration: registration)
                 if case .capabilities(let capabilities) = evidence.payload {
@@ -185,7 +197,11 @@ actor AgentIngestionCoordinator {
             nextGeneration = stagedNextGeneration
             capabilityLedger = stagedLedger
             try registry.recordAccepted(events.count, at: events.last?.receivedTimestamp ?? Date(), for: handle)
-            return .success(AgentIngestionResult(acceptedEvents: events.count, applications: applications))
+            return .success(AgentIngestionResult(
+                acceptedEvents: events.count,
+                applications: applications,
+                sessionInstances: normalized.map(\.instanceID)
+            ))
         } catch let error as AgentIngestionError {
             let healthError: AgentSourceHealthError = switch error {
             case .unsupportedSchema: .schemaMismatch
@@ -281,7 +297,7 @@ actor AgentIngestionCoordinator {
         }
         if case .capabilities(let capabilities) = event.payload {
             guard capabilities.all.isSubset(of: policy.allowedCapabilities),
-                  !capabilities.contains(.approvalControl),
+                  (!capabilities.contains(.approvalControl) || policy.permitsApprovalControl),
                   capabilities.evidence.values.allSatisfy({ $0.authority <= ceiling && $0.authority <= event.authority }) else {
                 throw AgentIngestionError.policyViolation
             }
@@ -291,6 +307,7 @@ actor AgentIngestionCoordinator {
     private func resolveLease(
         for event: AgentIngestionEvent,
         handle: AgentProducerHandle,
+        permitsRecoveryBootstrap: Bool = false,
         leases: inout [AgentSessionID: AgentSessionLease],
         nextGeneration: inout [AgentSessionID: AgentSessionGeneration]
     ) throws -> AgentSessionLease {
@@ -321,6 +338,12 @@ actor AgentIngestionCoordinator {
                 )
             }
             if current.owners.contains(handle) {
+                if let currentContinuity = current.continuity,
+                   let incomingContinuity = event.continuity,
+                   currentContinuity != incomingContinuity {
+                    recordConflict(event, current: current, handle: handle)
+                    throw AgentIngestionError.identityConflict
+                }
                 try assertGeneration(event.assertedGeneration, equals: current.instanceID.generation)
                 return current
             }
@@ -345,7 +368,9 @@ actor AgentIngestionCoordinator {
                 nextGeneration: &nextGeneration
             )
         }
-        guard event.type == .sessionStarted else { throw AgentIngestionError.generationConflict }
+        guard event.type == .sessionStarted || permitsRecoveryBootstrap else {
+            throw AgentIngestionError.generationConflict
+        }
         guard leases.count < AgentIngestionLimits.maximumSessionLeases else { throw AgentIngestionError.leaseCapacity }
         return try allocateLease(
             id: id,
@@ -411,6 +436,52 @@ actor AgentIngestionCoordinator {
                 producerEpoch: registration.handle.epoch,
                 sourceKind: registration.descriptor.sourceKind,
                 claimedAuthority: evidence.authority,
+                schemaVersion: evidence.schemaVersion
+            )
+        )
+    }
+
+    private func permitsRecoveryBootstrap(
+        for event: AgentIngestionEvent,
+        registration: AgentSourceRegistry.Registration
+    ) -> Bool {
+        guard [.officialHook, .officialLifecycleProtocol].contains(registration.descriptor.sourceKind),
+              registration.policy.permitsLifecycleRecovery,
+              registration.policy.permits(provider: event.provider),
+              event.provider == .codex,
+              event.continuity != nil else {
+            return false
+        }
+        switch event.type {
+        case .sessionResumed, .agentWorking, .toolStarted, .commandStarted,
+             .approvalRequested, .capabilitiesUpdated:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func recoveryBootstrapEvent(
+        for evidence: AgentIngestionEvent,
+        lease: AgentSessionLease,
+        registration: AgentSourceRegistry.Registration
+    ) -> AgentEvent {
+        syntheticEventSequence = syntheticEventSequence == UInt64.max ? 1 : syntheticEventSequence + 1
+        return AgentEvent(
+            eventID: AgentEventID(rawValue: "coordinator-recovery-\(syntheticEventSequence)"),
+            sessionID: evidence.sessionID,
+            generation: lease.instanceID.generation,
+            source: evidence.source,
+            type: .sessionStarted,
+            receivedTimestamp: evidence.receivedTimestamp,
+            authority: .localStructuredRecord,
+            origin: .localRecovery,
+            payload: .sessionMetadata(AgentSessionMetadata(project: nil)),
+            provenance: AgentEventProvenance(
+                sourceInstanceID: registration.descriptor.sourceInstanceID,
+                producerEpoch: registration.handle.epoch,
+                sourceKind: registration.descriptor.sourceKind,
+                claimedAuthority: .localStructuredRecord,
                 schemaVersion: evidence.schemaVersion
             )
         )

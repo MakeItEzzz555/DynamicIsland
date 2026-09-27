@@ -24,4 +24,17 @@ final class CodexHookPolicyTests: XCTestCase {
         XCTAssertFalse(policy.allowedCapabilities.contains(.tokenUsage))
         XCTAssertFalse(policy.allowedCapabilities.contains(.quotaUsage))
     }
+
+    func testApprovalControlIsExclusiveToDedicatedCodexPermissionPolicy() {
+        XCTAssertTrue(AgentProducerPolicy.codexPermissionControl.permitsApprovalControl)
+        XCTAssertEqual(
+            AgentProducerPolicy.codexPermissionControl.allowedCapabilities,
+            [.approvalObservation, .approvalControl]
+        )
+        XCTAssertFalse(AgentProducerPolicy.codexOfficialHook.permitsApprovalControl)
+        XCTAssertFalse(AgentProducerPolicy.genericAuthenticatedBridge.permitsApprovalControl)
+        XCTAssertFalse(AgentProducerPolicy.claudeOfficialHook.permitsApprovalControl)
+        XCTAssertFalse(AgentProducerPolicy.codexStructuredRecovery.permitsApprovalControl)
+        XCTAssertFalse(AgentProducerPolicy.codexStructuredTelemetry.permitsApprovalControl)
+    }
 }

@@ -60,6 +60,25 @@ final class AgentIntegrationSetupTests: XCTestCase {
         )
     }
 
+    func testCodexPermissionRequestIsTheOnlyInteractiveSynchronousHook() throws {
+        let helper = URL(fileURLWithPath: "/Applications/DynamicIsland.app/Contents/Helpers/DynamicIslandCodexHookRelay")
+        let installed = try AgentHookConfigurationPlanner.install(
+            existing: nil,
+            provider: .codex,
+            helperURL: helper
+        )
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: installed) as? [String: Any])
+        let hooks = try XCTUnwrap(root["hooks"] as? [String: Any])
+        let permissionGroups = try XCTUnwrap(hooks["PermissionRequest"] as? [[String: Any]])
+        let permissionHandlers = try XCTUnwrap(permissionGroups.first?["hooks"] as? [[String: Any]])
+        XCTAssertEqual(permissionHandlers.first?["timeout"] as? Int, 90)
+        XCTAssertNil(permissionHandlers.first?["async"])
+
+        let preToolGroups = try XCTUnwrap(hooks["PreToolUse"] as? [[String: Any]])
+        let preToolHandlers = try XCTUnwrap(preToolGroups.first?["hooks"] as? [[String: Any]])
+        XCTAssertEqual(preToolHandlers.first?["async"] as? Bool, true)
+    }
+
     func testRemoveDeletesOnlyDynamicIslandHandlers() throws {
         let helper = URL(fileURLWithPath: "/Apps/DynamicIsland.app/Contents/Helpers/DynamicIslandCodexHookRelay")
         let installed = try AgentHookConfigurationPlanner.install(existing: nil, provider: .codex, helperURL: helper)

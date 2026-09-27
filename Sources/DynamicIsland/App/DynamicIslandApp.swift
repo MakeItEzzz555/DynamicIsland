@@ -87,8 +87,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let geometryService = NotchGeometryService()
     private let agentEvents = AgentEventStore()
     private let agentAttention = AgentAttentionCoordinator()
+    private let agentApprovalControl = AgentApprovalController()
     private lazy var agentIngestion = AgentIngestionCoordinator(eventStore: agentEvents)
-    private lazy var agentBridge = AgentBridge(coordinator: agentIngestion)
+    private lazy var agentBridge = AgentBridge(
+        coordinator: agentIngestion,
+        approvals: agentApprovalControl
+    )
+    private lazy var agentManagedControl: AgentManagedSessionController = {
+        let provider = try? CodexAppServerProvider.makeDefault()
+        return AgentManagedSessionController(
+            provider: provider,
+            coordinator: agentIngestion,
+            eventStore: agentEvents,
+            approvals: agentApprovalControl
+        )
+    }()
 
     private var overlayController: OverlayWindowController?
     private var menuController: MenuBarController?
@@ -120,7 +133,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             clipboardHistory: clipboardHistory,
             navigation: navigation,
             agentEvents: agentEvents,
-            agentAttention: agentAttention
+            agentAttention: agentAttention,
+            agentApprovalControl: agentApprovalControl,
+            agentManagedControl: agentManagedControl
         )
         #if DEBUG
         debugPrint(
@@ -180,9 +195,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil
         )
 
-        if settings.agentActivityEnabled {
-            Task { await agentBridge.start() }
-        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -193,6 +205,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         #endif
         agentBridge.stop()
+        agentManagedControl.stop()
         if let eventMonitor {
             NSEvent.removeMonitor(eventMonitor)
         }
@@ -206,7 +219,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if settingsController == nil {
             settingsController = SettingsWindowController(
                 settings: settings,
-                shortcuts: shortcuts
+                shortcuts: shortcuts,
+                agentIngestion: agentIngestion,
+                agentEvents: agentEvents
             )
         }
         settingsController?.show()
@@ -257,9 +272,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 synchronizeAgentActivitySettings()
                 if enabled {
                     Task { await self.agentBridge.start() }
+                    self.agentManagedControl.startObserving()
                 } else {
                     self.agentBridge.stop()
+                    self.agentManagedControl.stop()
                 }
+            }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
+            .sink { [weak self] _ in
+                guard let self, settings.agentActivityEnabled else { return }
+                Task { await self.agentManagedControl.refreshPersistentSnapshot() }
+            }
+            .store(in: &cancellables)
+
+        navigation.$selectedPage
+            .removeDuplicates()
+            .sink { [weak self] page in
+                guard let self,
+                      page == .agents,
+                      settings.agentActivityEnabled else { return }
+                Task { await self.agentManagedControl.refreshPersistentSnapshot() }
             }
             .store(in: &cancellables)
 

@@ -1,5 +1,19 @@
 import Foundation
 
+enum IslandCanvasCoordinateSpace {
+    static let name = "DynamicIslandCanvas"
+
+    static func appKitLocalRect(fromSwiftUI frame: CGRect, canvasHeight: CGFloat) -> CGRect {
+        guard canvasHeight.isFinite, canvasHeight > 0 else { return .zero }
+        return CGRect(
+            x: frame.minX,
+            y: canvasHeight - frame.maxY,
+            width: frame.width,
+            height: frame.height
+        )
+    }
+}
+
 @MainActor
 final class IslandLayoutStore: ObservableObject {
     @Published var overlayPresentationGeneration = 0
@@ -13,6 +27,7 @@ final class IslandLayoutStore: ObservableObject {
     @Published private(set) var collapsedLeftRegionWidth: CGFloat = 0
     @Published private(set) var collapsedNotchCoreWidth: CGFloat = 0
     @Published private(set) var collapsedRightRegionWidth: CGFloat = 0
+    @Published private(set) var collapsedPresentationProfile: CollapsedPresentationProfile = .normal
     @Published var isShellMorphing = false
     @Published var isCollapseShellOnly = false
     @Published var isExpandedContentExiting = false
@@ -20,32 +35,7 @@ final class IslandLayoutStore: ObservableObject {
     @Published var collapsedPreviewSurfaceFrame: CGRect = .zero
     @Published var panelFrame: CGRect = .zero
     @Published private(set) var isExpandedScrollGestureSuppressed = false
-    @Published private(set) var agentAttentionWidthExpansion: CGFloat = 0
-
-    private var baseCollapsedSurfaceFrame: CGRect = CGRect(x: 272, y: 226, width: 216, height: 34)
-
-    func setAgentAttentionWidthExpansion(_ expansion: CGFloat) {
-        let normalized = min(max(expansion, 0), 240)
-        guard agentAttentionWidthExpansion != normalized else { return }
-        agentAttentionWidthExpansion = normalized
-        applyAgentAttentionWidth()
-    }
-
-    private func applyAgentAttentionWidth() {
-        let maximumExtra = max(0, expandedSurfaceFrame.width - baseCollapsedSurfaceFrame.width)
-        let extra = min(agentAttentionWidthExpansion, maximumExtra)
-        let width = baseCollapsedSurfaceFrame.width + extra
-        let proposedX = baseCollapsedSurfaceFrame.midX - (width / 2)
-        let maximumX = max(0, canvasSize.width - width)
-        let clampedX = min(max(0, proposedX), maximumX)
-        collapsedSurfaceFrame = CGRect(
-            x: clampedX,
-            y: baseCollapsedSurfaceFrame.minY,
-            width: width,
-            height: baseCollapsedSurfaceFrame.height
-        ).integral
-        collapsedSize = collapsedSurfaceFrame.size
-    }
+    @Published private(set) var expandedContentScrollRegion: CGRect = .zero
 
     func setExpandedScrollGestureSuppressed(_ suppressed: Bool) {
         guard isExpandedScrollGestureSuppressed != suppressed else { return }
@@ -59,19 +49,32 @@ final class IslandLayoutStore: ObservableObject {
         #endif
     }
 
+    func setExpandedContentScrollRegion(_ region: CGRect) {
+        let next = region.isNull || region.isInfinite || region.width <= 0 || region.height <= 0
+            ? CGRect.zero
+            : region.integral
+        guard expandedContentScrollRegion != next else { return }
+        expandedContentScrollRegion = next
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["DYNAMIC_ISLAND_VERBOSE_UI_LOGS"] == "1" {
+            debugPrint("[GestureDebug] expanded content scroll region", next)
+        }
+        #endif
+    }
+
     func update(
         canvas: IslandCanvasGeometry,
         hasHardwareNotch: Bool,
         hardwareNotchWidth: CGFloat,
         collapsedLeftRegionWidth: CGFloat,
         collapsedNotchCoreWidth: CGFloat,
-        collapsedRightRegionWidth: CGFloat
+        collapsedRightRegionWidth: CGFloat,
+        collapsedPresentationProfile: CollapsedPresentationProfile = .normal
     ) {
         panelFrame = canvas.frame
         canvasSize = canvas.frame.size
-        baseCollapsedSurfaceFrame = canvas.collapsedSurfaceFrame
+        collapsedSurfaceFrame = canvas.collapsedSurfaceFrame
         expandedSurfaceFrame = canvas.expandedSurfaceFrame
-        applyAgentAttentionWidth()
         collapsedPreviewActive = false
         collapsedPreviewSurfaceFrame = .zero
         collapsedSize = collapsedSurfaceFrame.size
@@ -81,6 +84,7 @@ final class IslandLayoutStore: ObservableObject {
         self.collapsedLeftRegionWidth = max(collapsedLeftRegionWidth, 0)
         self.collapsedNotchCoreWidth = max(collapsedNotchCoreWidth, 0)
         self.collapsedRightRegionWidth = max(collapsedRightRegionWidth, 0)
+        self.collapsedPresentationProfile = collapsedPresentationProfile
     }
 
     func updateLocal(
@@ -91,7 +95,8 @@ final class IslandLayoutStore: ObservableObject {
         hardwareNotchWidth: CGFloat,
         collapsedLeftRegionWidth: CGFloat,
         collapsedNotchCoreWidth: CGFloat,
-        collapsedRightRegionWidth: CGFloat
+        collapsedRightRegionWidth: CGFloat,
+        collapsedPresentationProfile: CollapsedPresentationProfile = .normal
     ) {
         let integralPanelFrame = panelFrame.integral
         let localCollapsedFrame = CGRect(
@@ -109,9 +114,8 @@ final class IslandLayoutStore: ObservableObject {
 
         self.panelFrame = integralPanelFrame
         canvasSize = integralPanelFrame.size
-        baseCollapsedSurfaceFrame = localCollapsedFrame
+        collapsedSurfaceFrame = localCollapsedFrame
         expandedSurfaceFrame = localExpandedFrame
-        applyAgentAttentionWidth()
         if !collapsedPreviewActive {
             collapsedPreviewSurfaceFrame = .zero
         }
@@ -122,6 +126,7 @@ final class IslandLayoutStore: ObservableObject {
         self.collapsedLeftRegionWidth = max(collapsedLeftRegionWidth, 0)
         self.collapsedNotchCoreWidth = max(collapsedNotchCoreWidth, 0)
         self.collapsedRightRegionWidth = max(collapsedRightRegionWidth, 0)
+        self.collapsedPresentationProfile = collapsedPresentationProfile
         debugLocalLayout(
             panelFrame: integralPanelFrame,
             collapsedScreenFrame: collapsedScreenFrame,

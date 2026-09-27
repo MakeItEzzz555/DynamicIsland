@@ -125,6 +125,32 @@ final class AgentBridgeSharedClientTests: XCTestCase {
         XCTAssertEqual(requestCount, 1)
     }
 
+    func testCodexPermissionUsesDedicatedRouteAndReturnsOnlyTypedDecision() async throws {
+        let profiles = SequenceProfileProvider(profiles: [profile()])
+        let transport = SequenceClientTransport(outcomes: [
+            .response(.init(statusCode: 200, code: "decision", permissionDecision: .allow))
+        ])
+        let decision = try await makeClient(profiles: profiles, transport: transport)
+            .requestCodexPermission(input: try eventInput())
+        XCTAssertEqual(decision, .allow)
+        let requests = await transport.recordedRequests()
+        let request = try XCTUnwrap(requests.first)
+        XCTAssertEqual(request.route, AgentBridgeProtocol.codexPermissionRoute)
+        XCTAssertEqual(request.method, "POST")
+    }
+
+    func testCodexPermissionTransportTimeoutCannotBecomeApproval() async throws {
+        let profiles = SequenceProfileProvider(profiles: [profile()])
+        let transport = SequenceClientTransport(outcomes: [.failure(.requestTimedOut)])
+        do {
+            _ = try await makeClient(profiles: profiles, transport: transport)
+                .requestCodexPermission(input: try eventInput())
+            XCTFail("Expected timeout")
+        } catch {
+            XCTAssertEqual(error as? AgentBridgeClientError, .timedOut)
+        }
+    }
+
     private func makeClient(
         profiles: SequenceProfileProvider,
         transport: SequenceClientTransport

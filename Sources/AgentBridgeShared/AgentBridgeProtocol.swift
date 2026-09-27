@@ -4,6 +4,7 @@ package enum AgentBridgeProtocol {
     package static let version = 1
     package static let eventsRoute = "/v1/events"
     package static let codexHookEventsRoute = "/v1/events/codex-hook"
+    package static let codexPermissionRoute = "/v1/control/codex-permission"
     package static let claudeHookEventsRoute = "/v1/events/claude-hook"
     package static let healthRoute = "/v1/health"
 
@@ -102,11 +103,22 @@ package struct AgentBridgeClientRequest: Equatable, Sendable {
 package struct AgentBridgeClientResponse: Equatable, Sendable {
     package let statusCode: Int
     package let code: String
+    package let permissionDecision: AgentBridgePermissionDecision?
 
-    package init(statusCode: Int, code: String) {
+    package init(
+        statusCode: Int,
+        code: String,
+        permissionDecision: AgentBridgePermissionDecision? = nil
+    ) {
         self.statusCode = statusCode
         self.code = String(code.unicodeScalars.filter {
             $0.isASCII && !CharacterSet.controlCharacters.contains($0)
         }.prefix(96))
+        self.permissionDecision = permissionDecision
     }
+}
+
+package enum AgentBridgePermissionDecision: String, Codable, Equatable, Sendable {
+    case allow
+    case deny
 }

@@ -1,0 +1,390 @@
+import Foundation
+import XCTest
+@testable import DynamicIsland
+
+final class AgentManagedSessionControllerTests: XCTestCase {
+    @MainActor
+    func testPersistentSnapshotPublishesUsageAndIdleSessionWithoutActiveTurn() async throws {
+        let observedAt = Date(timeIntervalSince1970: 2_100_000_000)
+        let usage = AgentUsage(scopedSamples: [
+            AgentUsageKey(metric: .quotaUsed, scope: "5h"): AgentUsageSample(
+                value: 72,
+                limit: 100,
+                unit: .fraction,
+                scope: "5h",
+                source: "fake-account",
+                observedAt: observedAt
+            ),
+            AgentUsageKey(metric: .quotaUsed, scope: "weekly"): AgentUsageSample(
+                value: 19,
+                limit: 100,
+                unit: .fraction,
+                scope: "weekly",
+                source: "fake-account",
+                observedAt: observedAt
+            )
+        ])
+        let provider = PersistentSnapshotFakeProvider(
+            sessions: [
+                AgentDiscoveredSessionDescriptor(
+                    session: AgentManagedSessionDescriptor(
+                        provider: .codex,
+                        nativeSessionID: "idle-thread",
+                        cwd: "/tmp/DynamicIsland",
+                        model: "gpt-test",
+                        acceptsDirectInput: false
+                    ),
+                    runtimeState: .idle,
+                    updatedAt: observedAt
+                )
+            ],
+            usage: usage
+        )
+        let store = AgentEventStore()
+        let controller = AgentManagedSessionController(
+            provider: provider,
+            coordinator: AgentIngestionCoordinator(eventStore: store),
+            eventStore: store,
+            approvals: AgentApprovalController()
+        )
+
+        await controller.refreshPersistentSnapshot()
+
+        XCTAssertEqual(
+            controller.accountUsage.samples(for: .quotaUsed).first { $0.scope == "5h" }?.value,
+            72
+        )
+        XCTAssertEqual(store.sessions.count, 1)
+        let session = try XCTUnwrap(store.sessions.first)
+        XCTAssertEqual(session.id.sessionID.provider, .codex)
+        XCTAssertEqual(session.id.sessionID.nativeID, "idle-thread")
+        XCTAssertEqual(session.state, .idle)
+        XCTAssertTrue(session.isActive)
+        XCTAssertNil(session.endedAt)
+    }
+
+    @MainActor
+    func testNotLoadedSessionIsAvailableButNotWorking() async throws {
+        let provider = PersistentSnapshotFakeProvider(
+            sessions: [Self.descriptor(id: "resumable", state: .notLoaded)],
+            usage: AgentUsage()
+        )
+        let store = AgentEventStore()
+        let controller = AgentManagedSessionController(
+            provider: provider,
+            coordinator: AgentIngestionCoordinator(eventStore: store),
+            eventStore: store,
+            approvals: AgentApprovalController()
+        )
+
+        await controller.refreshPersistentSnapshot()
+
+        let session = try XCTUnwrap(store.sessions.first)
+        XCTAssertEqual(session.id.sessionID.nativeID, "resumable")
+        XCTAssertEqual(session.state, .idle)
+        XCTAssertEqual(session.availability, .resumable)
+        XCTAssertEqual(
+            AgentSessionPresentation.displayedStateLabel(for: session, at: Date()),
+            "Resumable"
+        )
+        XCTAssertTrue(controller.canConnect(session))
+    }
+
+    @MainActor
+    func testActiveDiscoveredSessionBecomesWorking() async throws {
+        let provider = PersistentSnapshotFakeProvider(
+            sessions: [Self.descriptor(id: "active", state: .active)],
+            usage: AgentUsage()
+        )
+        let store = AgentEventStore()
+        let controller = AgentManagedSessionController(
+            provider: provider,
+            coordinator: AgentIngestionCoordinator(eventStore: store),
+            eventStore: store,
+            approvals: AgentApprovalController()
+        )
+
+        await controller.refreshPersistentSnapshot()
+
+        XCTAssertEqual(store.sessions.first?.state, .working)
+    }
+
+    @MainActor
+    func testLastTrustworthyUsageSurvivesTransientFailure() async throws {
+        let sample = AgentUsageSample(
+            value: 16, limit: 100, unit: .fraction, scope: "weekly",
+            source: "fake-account", observedAt: Date()
+        )
+        let provider = PersistentSnapshotFakeProvider(
+            sessions: [],
+            usage: AgentUsage(scopedSamples: [
+                AgentUsageKey(metric: .quotaUsed, scope: "weekly"): sample
+            ])
+        )
+        let store = AgentEventStore()
+        let controller = AgentManagedSessionController(
+            provider: provider,
+            coordinator: AgentIngestionCoordinator(eventStore: store),
+            eventStore: store,
+            approvals: AgentApprovalController()
+        )
+        await controller.refreshPersistentSnapshot()
+        await provider.setUsageFailure(true)
+
+        await controller.refreshPersistentSnapshot()
+
+        XCTAssertEqual(
+            controller.accountUsage.samples(for: .quotaUsed).first { $0.scope == "weekly" }?.value,
+            16
+        )
+        XCTAssertNotNil(controller.lastTransportError)
+    }
+
+    @MainActor
+    func testDiscoveryConvergesWithExistingSessionIdentity() async throws {
+        let provider = PersistentSnapshotFakeProvider(
+            sessions: [Self.descriptor(id: "shared-thread", state: .notLoaded)],
+            usage: AgentUsage()
+        )
+        let store = AgentEventStore()
+        let coordinator = AgentIngestionCoordinator(eventStore: store)
+        let controller = AgentManagedSessionController(
+            provider: provider,
+            coordinator: coordinator,
+            eventStore: store,
+            approvals: AgentApprovalController()
+        )
+
+        await controller.refreshPersistentSnapshot()
+        await controller.refreshPersistentSnapshot()
+
+        XCTAssertEqual(store.sessions.filter {
+            $0.id.sessionID.nativeID == "shared-thread"
+        }.count, 1)
+    }
+
+    @MainActor
+    func testSessionsFallingOutsideBoundedDiscoveryStopPresenting() async throws {
+        let first = Self.descriptor(id: "first", state: .notLoaded)
+        let second = Self.descriptor(id: "second", state: .notLoaded)
+        let provider = PersistentSnapshotFakeProvider(
+            sessions: [first, second],
+            usage: AgentUsage()
+        )
+        let store = AgentEventStore()
+        let controller = AgentManagedSessionController(
+            provider: provider,
+            coordinator: AgentIngestionCoordinator(eventStore: store),
+            eventStore: store,
+            approvals: AgentApprovalController()
+        )
+        await controller.refreshPersistentSnapshot()
+        await provider.setDiscovered([second])
+
+        await controller.refreshPersistentSnapshot()
+
+        let firstSession = try XCTUnwrap(store.sessions.first {
+            $0.id.sessionID.nativeID == "first"
+        })
+        let secondSession = try XCTUnwrap(store.sessions.first {
+            $0.id.sessionID.nativeID == "second"
+        })
+        XCTAssertFalse(controller.shouldPresent(firstSession))
+        XCTAssertTrue(controller.shouldPresent(secondSession))
+    }
+
+    @MainActor
+    func testManagedTurnCompletionReturnsThreadToIdleResumableState() async throws {
+        let provider = PersistentSnapshotFakeProvider(
+            sessions: [Self.descriptor(id: "managed", state: .notLoaded)],
+            usage: AgentUsage()
+        )
+        let store = AgentEventStore()
+        let controller = AgentManagedSessionController(
+            provider: provider,
+            coordinator: AgentIngestionCoordinator(eventStore: store),
+            eventStore: store,
+            approvals: AgentApprovalController()
+        )
+        controller.startObserving()
+        await controller.refreshPersistentSnapshot()
+        let session = try XCTUnwrap(store.sessions.first)
+        controller.connect(session)
+        try await Task.sleep(for: .milliseconds(30))
+        await provider.yield(.turnStarted(.init(nativeSessionID: "managed", turnID: "turn-1")))
+        try await Task.sleep(for: .milliseconds(30))
+        await provider.yield(.turnCompleted(
+            .init(nativeSessionID: "managed", turnID: "turn-1"),
+            state: .completed,
+            summary: nil
+        ))
+        try await Task.sleep(for: .milliseconds(30))
+
+        let completed = try XCTUnwrap(store.sessions.first)
+        XCTAssertEqual(completed.state, .completed)
+        XCTAssertNil(completed.endedAt)
+        XCTAssertEqual(
+            AgentSessionPresentation.displayedStateLabel(for: completed, at: Date()),
+            "Resumable"
+        )
+        controller.stop()
+    }
+
+    @MainActor
+    func testManagedTransportFailureExitsWorkingState() async throws {
+        let provider = PersistentSnapshotFakeProvider(
+            sessions: [Self.descriptor(id: "managed-error", state: .notLoaded)],
+            usage: AgentUsage()
+        )
+        let store = AgentEventStore()
+        let controller = AgentManagedSessionController(
+            provider: provider,
+            coordinator: AgentIngestionCoordinator(eventStore: store),
+            eventStore: store,
+            approvals: AgentApprovalController()
+        )
+        controller.startObserving()
+        await controller.refreshPersistentSnapshot()
+        controller.connect(try XCTUnwrap(store.sessions.first))
+        try await Task.sleep(for: .milliseconds(30))
+        await provider.yield(.turnStarted(.init(
+            nativeSessionID: "managed-error",
+            turnID: "turn-1"
+        )))
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertEqual(store.sessions.first?.state, .working)
+
+        await provider.yield(.transportClosed("credential=must-not-surface"))
+        try await Task.sleep(for: .milliseconds(30))
+
+        XCTAssertEqual(store.sessions.first?.state, .failed)
+        XCTAssertEqual(controller.lastTransportError, "Codex app-server disconnected")
+        XCTAssertFalse(controller.lastTransportError?.contains("credential") ?? true)
+        controller.stop()
+    }
+
+    @MainActor
+    func testManagedProviderQuotaFailureExitsWorkingState() async throws {
+        let provider = PersistentSnapshotFakeProvider(
+            sessions: [Self.descriptor(id: "quota-error", state: .notLoaded)],
+            usage: AgentUsage()
+        )
+        let store = AgentEventStore()
+        let controller = AgentManagedSessionController(
+            provider: provider,
+            coordinator: AgentIngestionCoordinator(eventStore: store),
+            eventStore: store,
+            approvals: AgentApprovalController()
+        )
+        controller.startObserving()
+        await controller.refreshPersistentSnapshot()
+        controller.connect(try XCTUnwrap(store.sessions.first))
+        try await Task.sleep(for: .milliseconds(30))
+        await provider.yield(.turnStarted(.init(
+            nativeSessionID: "quota-error",
+            turnID: "turn-1"
+        )))
+        try await Task.sleep(for: .milliseconds(30))
+
+        await provider.yield(.providerFailure(
+            nativeSessionID: "quota-error",
+            summary: "Usage limit reached"
+        ))
+        try await Task.sleep(for: .milliseconds(30))
+
+        XCTAssertEqual(store.sessions.first?.state, .failed)
+        XCTAssertFalse(controller.managed["quota-error"]?.canInterrupt ?? true)
+        controller.stop()
+    }
+
+    private static func descriptor(
+        id: String,
+        state: AgentDiscoveredSessionRuntimeState
+    ) -> AgentDiscoveredSessionDescriptor {
+        AgentDiscoveredSessionDescriptor(
+            session: AgentManagedSessionDescriptor(
+                provider: .codex,
+                nativeSessionID: id,
+                cwd: "/tmp/DynamicIsland",
+                model: "gpt-test",
+                acceptsDirectInput: state != .notLoaded
+            ),
+            runtimeState: state,
+            updatedAt: Date(timeIntervalSince1970: 2_100_000_000)
+        )
+    }
+}
+
+private actor PersistentSnapshotFakeProvider: AgentInteractiveProvider {
+    nonisolated let provider: AgentProvider = .codex
+
+    private var discovered: [AgentDiscoveredSessionDescriptor]
+    private let usage: AgentUsage
+    private var usageFailure = false
+    private let eventStream: AsyncStream<AgentInteractiveProviderEvent>
+    private let eventContinuation: AsyncStream<AgentInteractiveProviderEvent>.Continuation
+
+    init(sessions: [AgentDiscoveredSessionDescriptor], usage: AgentUsage) {
+        discovered = sessions
+        self.usage = usage
+        var continuation: AsyncStream<AgentInteractiveProviderEvent>.Continuation!
+        eventStream = AsyncStream { continuation = $0 }
+        eventContinuation = continuation
+    }
+
+    func events() async -> AsyncStream<AgentInteractiveProviderEvent> {
+        eventStream
+    }
+
+    func discoverSessions() async throws -> [AgentDiscoveredSessionDescriptor] {
+        discovered
+    }
+
+    func readAccountUsage() async throws -> AgentUsage {
+        if usageFailure { throw CodexAppServerError.transportClosed(nil) }
+        return usage
+    }
+
+    func setUsageFailure(_ value: Bool) {
+        usageFailure = value
+    }
+
+    func setDiscovered(_ value: [AgentDiscoveredSessionDescriptor]) {
+        discovered = value
+    }
+
+    func yield(_ event: AgentInteractiveProviderEvent) {
+        eventContinuation.yield(event)
+    }
+
+    func startSession(cwd: String?) async throws -> AgentManagedSessionDescriptor {
+        throw CodexAppServerError.invalidResponse("unused")
+    }
+
+    func resumeSession(nativeSessionID: String) async throws -> AgentManagedSessionDescriptor {
+        guard let descriptor = discovered.first(where: {
+            $0.session.nativeSessionID == nativeSessionID
+        })?.session else {
+            throw CodexAppServerError.invalidResponse("thread/resume")
+        }
+        return AgentManagedSessionDescriptor(
+            provider: descriptor.provider,
+            nativeSessionID: descriptor.nativeSessionID,
+            cwd: descriptor.cwd,
+            model: descriptor.model,
+            acceptsDirectInput: true
+        )
+    }
+
+    func submit(prompt: String, nativeSessionID: String) async throws -> AgentManagedTurnDescriptor {
+        throw CodexAppServerError.invalidResponse("unused")
+    }
+
+    func interrupt(nativeSessionID: String, turnID: String) async throws {}
+
+    func resolveApproval(_ request: AgentManagedApprovalRequest, allow: Bool) async throws {}
+
+    func stop() async {
+        eventContinuation.finish()
+    }
+}

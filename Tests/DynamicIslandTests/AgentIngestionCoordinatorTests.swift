@@ -3,6 +3,248 @@ import XCTest
 
 @MainActor
 final class AgentIngestionCoordinatorTests: XCTestCase {
+    func testOfficialCodexActiveEventsRecoverMissingLocalSession() async throws {
+        for (index, type) in [AgentEventType.sessionResumed, .toolStarted, .commandStarted].enumerated() {
+            let (store, coordinator) = makeRuntime()
+            let hook = try await registered(
+                coordinator,
+                id: "codex-recovery-\(index)",
+                kind: .officialHook,
+                policy: .codexOfficialHook
+            )
+
+            XCTAssertSuccess(await coordinator.ingest(
+                event("active-\(index)", source: .unknown, type: type, continuity: "native-session"),
+                from: hook
+            ))
+
+            XCTAssertEqual(store.sessions.single?.id.generation.rawValue, 1)
+            XCTAssertTrue(store.sessions.single?.recentActivity.contains { $0.title == "Session recovered" } == true)
+            switch type {
+            case .sessionResumed:
+                XCTAssertEqual(store.sessions.single?.state, .working)
+            case .toolStarted:
+                XCTAssertEqual(store.sessions.single?.state, .runningTool)
+            case .commandStarted:
+                XCTAssertEqual(store.sessions.single?.state, .runningCommand)
+            default:
+                XCTFail("Unexpected recovery event")
+            }
+        }
+    }
+
+    func testOfficialCodexPermissionRequestRecoversAndRetainsControlEvidence() async throws {
+        let (store, coordinator) = makeRuntime()
+        let hook = try await registered(
+            coordinator,
+            id: "codex-permission-recovery",
+            kind: .officialHook,
+            policy: .codexPermissionControl
+        )
+        let capabilities = event(
+            "permission-capabilities",
+            source: .unknown,
+            type: .capabilitiesUpdated,
+            payload: .capabilities(capabilities([.approvalObservation, .approvalControl])),
+            continuity: "permission-session"
+        )
+        let approval = event(
+            "permission-request",
+            source: .unknown,
+            type: .approvalRequested,
+            payload: .approvalRequest(.init(summary: "Run tests", operationCorrelationID: nil, expiresAt: nil)),
+            continuity: "permission-session"
+        )
+
+        XCTAssertSuccess(await coordinator.ingestAtomically([capabilities, approval], from: hook))
+
+        XCTAssertEqual(store.sessions.single?.state, .waitingForApproval)
+        XCTAssertTrue(store.sessions.single?.capabilities.contains(.approvalControl) == true)
+        let leases = await coordinator.sessionLeases()
+        XCTAssertEqual(leases.single?.instanceID.generation.rawValue, 1)
+    }
+
+    func testRecoveredGenerationIsReusedAndLaterGenuineStartDoesNotDuplicate() async throws {
+        let (store, coordinator) = makeRuntime()
+        let hook = try await registered(
+            coordinator,
+            id: "codex-generation-recovery",
+            kind: .officialHook,
+            policy: .codexOfficialHook
+        )
+
+        XCTAssertSuccess(await coordinator.ingest(
+            event("resume", source: .unknown, type: .sessionResumed, continuity: "stable-native"),
+            from: hook
+        ))
+        XCTAssertSuccess(await coordinator.ingest(
+            event("work", source: .unknown, type: .agentWorking, continuity: "stable-native"),
+            from: hook
+        ))
+        XCTAssertSuccess(await coordinator.ingest(
+            event("late-start", source: .unknown, continuity: "stable-native"),
+            from: hook
+        ))
+
+        XCTAssertEqual(store.sessions.count, 1)
+        XCTAssertEqual(Set(store.sessions.map(\.id.generation.rawValue)), [1])
+        let leases = await coordinator.sessionLeases()
+        XCTAssertEqual(leases.single?.instanceID.generation.rawValue, 1)
+    }
+
+    func testRecoveryRejectsConflictingContinuityAndStaleAssertedGeneration() async throws {
+        let (store, coordinator) = makeRuntime()
+        let hook = try await registered(
+            coordinator,
+            id: "codex-recovery-conflict",
+            kind: .officialHook,
+            policy: .codexOfficialHook
+        )
+        XCTAssertSuccess(await coordinator.ingest(
+            event("resume", source: .unknown, type: .sessionResumed, continuity: "identity-a"),
+            from: hook
+        ))
+        XCTAssertFailure(
+            await coordinator.ingest(
+                event("conflict", source: .unknown, type: .agentWorking, continuity: "identity-b"),
+                from: hook
+            ),
+            .identityConflict
+        )
+
+        let (freshStore, freshCoordinator) = makeRuntime()
+        let freshHook = try await registered(
+            freshCoordinator,
+            id: "codex-recovery-stale-generation",
+            kind: .officialHook,
+            policy: .codexOfficialHook
+        )
+        XCTAssertFailure(
+            await freshCoordinator.ingest(
+                event(
+                    "stale",
+                    source: .unknown,
+                    generation: 2,
+                    type: .sessionResumed,
+                    continuity: "identity-c"
+                ),
+                from: freshHook
+            ),
+            .generationConflict
+        )
+        XCTAssertEqual(store.sessions.count, 1)
+        XCTAssertTrue(freshStore.sessions.isEmpty)
+    }
+
+    func testGenericBridgeAndTelemetryCannotRecoverMissingSession() async throws {
+        let (store, coordinator) = makeRuntime()
+        let generic = try await registered(
+            coordinator,
+            id: "generic-no-recovery",
+            kind: .authenticatedBridge,
+            policy: .genericAuthenticatedBridge
+        )
+        let telemetryPolicy = AgentIngestionTestSupport.policy(
+            kinds: [.structuredTelemetry],
+            allowedTypes: [.agentWorking],
+            ceiling: .structuredTelemetry
+        )
+        let telemetry = try await registered(
+            coordinator,
+            id: "telemetry-no-recovery",
+            kind: .structuredTelemetry,
+            policy: telemetryPolicy
+        )
+
+        XCTAssertFailure(
+            await coordinator.ingest(
+                event(
+                    "generic",
+                    provider: .other("unverified"),
+                    source: .unknown,
+                    type: .agentWorking,
+                    authority: .localStructuredRecord,
+                    continuity: "generic-session"
+                ),
+                from: generic
+            ),
+            .generationConflict
+        )
+        XCTAssertFailure(
+            await coordinator.ingest(
+                event(
+                    "telemetry",
+                    type: .agentWorking,
+                    authority: .structuredTelemetry,
+                    continuity: "telemetry-session"
+                ),
+                from: telemetry
+            ),
+            .generationConflict
+        )
+        XCTAssertTrue(store.sessions.isEmpty)
+    }
+
+    func testTerminalFirstOfficialEventDoesNotBootstrapLiveSession() async throws {
+        let (store, coordinator) = makeRuntime()
+        let hook = try await registered(
+            coordinator,
+            id: "codex-terminal-first",
+            kind: .officialHook,
+            policy: .codexOfficialHook
+        )
+
+        XCTAssertFailure(
+            await coordinator.ingest(
+                event(
+                    "terminal",
+                    source: .unknown,
+                    type: .taskCompleted,
+                    payload: .terminal(.init(summary: "Already complete")),
+                    continuity: "ended-session"
+                ),
+                from: hook
+            ),
+            .generationConflict
+        )
+        XCTAssertTrue(store.sessions.isEmpty)
+    }
+
+    func testRestartedRuntimeAcceptsExistingOfficialCodexSessionAndReportsHealthy() async throws {
+        let oldStore = AgentEventStore()
+        let oldCoordinator = AgentIngestionCoordinator(eventStore: oldStore)
+        let oldHook = try await registered(
+            oldCoordinator,
+            id: "codex-before-runtime-restart",
+            kind: .officialHook,
+            policy: .codexOfficialHook
+        )
+        XCTAssertSuccess(await oldCoordinator.ingest(
+            event("original-start", source: .unknown, continuity: "existing-session"),
+            from: oldHook
+        ))
+
+        let (restartedStore, restartedCoordinator) = makeRuntime()
+        let restartedHook = try await registered(
+            restartedCoordinator,
+            id: "codex-after-runtime-restart",
+            kind: .officialHook,
+            policy: .codexOfficialHook
+        )
+        XCTAssertSuccess(await restartedCoordinator.ingest(
+            event("next-hook", source: .unknown, type: .toolStarted, continuity: "existing-session"),
+            from: restartedHook
+        ))
+
+        XCTAssertEqual(restartedStore.sessions.single?.state, .runningTool)
+        let health = (await restartedCoordinator.sourceHealth()).single
+        XCTAssertEqual(health?.state, .healthy)
+        XCTAssertEqual(health?.acceptedCount, 1)
+        XCTAssertEqual(health?.rejectedCount, 0)
+        XCTAssertEqual(health?.dropCount, 0)
+        XCTAssertNil(health?.lastError)
+    }
+
     func testSingleProducerAllocatesGenerationAndPublishesProvenance() async throws {
         let (store, coordinator) = makeRuntime()
         let handle = try await registered(coordinator, id: "lifecycle")

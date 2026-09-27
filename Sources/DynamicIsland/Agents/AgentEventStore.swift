@@ -130,7 +130,8 @@ final class AgentEventStore: ObservableObject {
         let cutoff = date.addingTimeInterval(-limits.completedSessionRetention)
         let expired = sessionsByID.values.filter { session in
             let isCurrent = currentGeneration[session.id.sessionID] == session.id.generation
-            return (!session.isActive || !isCurrent) && session.lastUpdatedAt < cutoff
+            let isClosed = session.endedAt != nil
+            return (isClosed || !isCurrent) && session.lastUpdatedAt < cutoff
         }
         for session in expired {
             removeSession(session.id)

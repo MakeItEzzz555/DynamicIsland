@@ -6,12 +6,14 @@ import SwiftUI
 struct OverlayGeometrySignature: Equatable, CustomStringConvertible {
     let collapsedSize: CGSize
     let expandedSize: CGSize
+    let expandedPresentationKind: ExpandedPresentationKind
     let collapsedActivityProfile: CollapsedActivityLayoutProfile?
+    let collapsedPresentationProfile: CollapsedPresentationProfile
     let useAdaptiveNotchSizing: Bool
     let respectHardwareNotch: Bool
 
     var description: String {
-        "collapsedSize=\(collapsedSize) expandedSize=\(expandedSize) collapsedActivityProfile=\(String(describing: collapsedActivityProfile)) useAdaptiveNotchSizing=\(useAdaptiveNotchSizing) respectHardwareNotch=\(respectHardwareNotch)"
+        "collapsedSize=\(collapsedSize) expandedSize=\(expandedSize) expandedPresentation=\(expandedPresentationKind.rawValue) collapsedActivityProfile=\(String(describing: collapsedActivityProfile)) collapsedPresentationProfile=\(collapsedPresentationProfile.kind.rawValue) useAdaptiveNotchSizing=\(useAdaptiveNotchSizing) respectHardwareNotch=\(respectHardwareNotch)"
     }
 }
 
@@ -25,15 +27,78 @@ struct ExpandedScrollEventRoutingPolicy {
         isSuppressed: Bool,
         isExpanded: Bool,
         gesturesEnabled: Bool,
-        usesTrackpad: Bool
+        usesTrackpad: Bool,
+        contentScrollHit: Bool = false,
+        contentScrollSequenceActive: Bool = false
     ) -> ExpandedScrollEventRoute {
         guard gesturesEnabled, usesTrackpad else {
             return .passThroughToContent
         }
-        guard !isExpanded || !isSuppressed else {
+        guard !isExpanded || (!isSuppressed && !contentScrollHit && !contentScrollSequenceActive) else {
             return .passThroughToContent
         }
         return .islandGesture
+    }
+}
+
+enum ExpandedContentScrollSequencePhase: Equatable {
+    case physicalBegan
+    case physicalChanged
+    case physicalEnded
+    case physicalCancelled
+    case momentumBegan
+    case momentumChanged
+    case momentumEnded
+    case momentumCancelled
+    case phaseLess
+}
+
+struct ExpandedContentScrollSequenceOwnership: Equatable {
+    enum Owner: Equatable {
+        case content
+        case island
+    }
+
+    private(set) var owner: Owner?
+    private var startedInsideContent = false
+    private var hasPhysicalStart = false
+
+    mutating func route(
+        phase: ExpandedContentScrollSequencePhase,
+        startsInsideContent: Bool,
+        verticalIntent: Bool?
+    ) -> ExpandedScrollEventRoute {
+        if phase == .physicalBegan {
+            owner = nil
+            startedInsideContent = startsInsideContent
+            hasPhysicalStart = true
+        } else if owner == nil,
+                  !hasPhysicalStart,
+                  phase == .physicalChanged || phase == .phaseLess {
+            startedInsideContent = startsInsideContent
+        }
+
+        if owner == nil, let verticalIntent {
+            owner = startedInsideContent && verticalIntent ? .content : .island
+        }
+        if owner == nil, phase == .momentumBegan || phase == .momentumChanged {
+            owner = .island
+        }
+
+        let route: ExpandedScrollEventRoute = owner == .content
+            ? .passThroughToContent
+            : .islandGesture
+
+        if phase == .physicalCancelled || phase == .momentumEnded || phase == .momentumCancelled {
+            reset()
+        }
+        return route
+    }
+
+    mutating func reset() {
+        owner = nil
+        startedInsideContent = false
+        hasPhysicalStart = false
     }
 }
 
@@ -111,7 +176,6 @@ final class OverlayWindowController {
     private var presentationSession = OverlayPresentationSession()
     private var visibilityGeneration: Int = 0
     private var morphGeneration: Int = 0
-    private var collapseSequenceGeneration: Int = 0
     private var expandedAt: CFTimeInterval = 0
     private var collapsedScrollDelta: CGSize = .zero
     private var collapsedScrollGestureHandled = false
@@ -120,6 +184,7 @@ final class OverlayWindowController {
     private var expandedScrollGestureHandled = false
     private var expandedScrollLastActionAt: CFTimeInterval?
     private var expandedScrollGestureResetWorkItem: DispatchWorkItem?
+    private var expandedContentScrollOwnership = ExpandedContentScrollSequenceOwnership()
     private var collapsedScrollGestureResetWorkItem: DispatchWorkItem?
     private var mediaSwipeSessionActive = false
     private var mediaSwipeAccumulatedX: CGFloat = 0
@@ -209,6 +274,9 @@ final class OverlayWindowController {
                     self.debugLog("state changed to \(state)")
                     if state == .expanded {
                         self.layoutStore.isExpandedContentExiting = false
+                    } else {
+                        self.resetExpandedContentScrollTracking()
+                        self.layoutStore.setExpandedContentScrollRegion(.zero)
                     }
                     self.beginVisualMorph(for: state)
                     if state == .expanded {
@@ -224,11 +292,24 @@ final class OverlayWindowController {
             .store(in: &cancellables)
 
         modules.agentAttention.$presentation
+            .combineLatest(modules.agentEvents.$sessions, settings.$agentActivityEnabled)
+            .map { presentation, sessions, enabled in
+                if let presentation {
+                    let session = presentation.primary.flatMap { primary in
+                        sessions.first { $0.id == primary.session }
+                    }
+                    return AgentCollapsedShellPresentation.attention(presentation, session: session)
+                }
+                return AgentCollapsedShellPresentation.routine(sessions: sessions, enabled: enabled) ?? .normal
+            }
             .removeDuplicates()
-            .sink { [weak self] presentation in
-                guard let self else { return }
-                let shouldWiden = presentation != nil && self.islandState.state == .collapsed
-                self.layoutStore.setAgentAttentionWidthExpansion(shouldWiden ? 204 : 0)
+            .sink { [weak self] _ in
+                let generation = self?.presentationSession.generation
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.allowsOverlayWork(generation: generation) else { return }
+                    self.beginCollapsedPresentationMorph()
+                    self.reposition(animated: true, reason: "agentCollapsedPresentationChanged", force: true)
+                }
             }
             .store(in: &cancellables)
 
@@ -239,6 +320,20 @@ final class OverlayWindowController {
                 #if DEBUG
                 self?.didLogExpandedScrollPassThrough = false
                 #endif
+            }
+            .store(in: &cancellables)
+
+        modules.navigation.$selectedPage
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] page in
+                guard let self else { return }
+                self.resetExpandedContentScrollTracking()
+                if page != .agents {
+                    self.layoutStore.setExpandedContentScrollRegion(.zero)
+                }
+                guard self.islandState.state == .expanded else { return }
+                self.reposition(animated: true, reason: "expandedPageChanged", force: true)
             }
             .store(in: &cancellables)
 
@@ -350,7 +445,6 @@ final class OverlayWindowController {
             }
         } else {
             morphGeneration += 1
-            collapseSequenceGeneration += 1
             visibilityGeneration += 1
             stopMouseContainmentTimer()
             modules.stats.stopPolling()
@@ -394,15 +488,16 @@ final class OverlayWindowController {
 
         let geometry = geometryService.geometry(
             collapsedSize: settings.collapsedSize,
-            expandedSize: settings.expandedSize,
+            expandedSize: resolvedExpandedSize,
             collapsedActivityProfile: collapsedActivityLayoutProfile,
+            collapsedPresentationProfile: collapsedPresentationProfile,
             useAdaptiveNotchSizing: settings.useAdaptiveNotchSizing,
             respectHardwareNotch: settings.respectHardwareNotch
         )
         debugGeometryRefresh(geometry)
         targetCollapsedFrame = geometry.collapsedFrame
         targetExpandedFrame = geometry.expandedFrame
-        updateLayoutWithoutAnimation(
+        updateLayout(
             panelFrame: geometry.expandedFrame,
             collapsedFrame: geometry.collapsedFrame,
             expandedFrame: geometry.expandedFrame,
@@ -410,7 +505,9 @@ final class OverlayWindowController {
             hardwareNotchWidth: geometry.hardwareNotchWidth,
             collapsedLeftRegionWidth: geometry.collapsedLeftRegionWidth,
             collapsedNotchCoreWidth: geometry.collapsedNotchCoreWidth,
-            collapsedRightRegionWidth: geometry.collapsedRightRegionWidth
+            collapsedRightRegionWidth: geometry.collapsedRightRegionWidth,
+            collapsedPresentationProfile: geometry.collapsedPresentationProfile,
+            animated: animated
         )
         applyCanonicalPanelFrame(geometry.expandedFrame, reason: "\(reason) initial animated=\(animated)")
         lastAppliedGeometrySignature = signature
@@ -429,8 +526,9 @@ final class OverlayWindowController {
             }
             let correctedGeometry = self.geometryService.geometry(
                 collapsedSize: self.settings.collapsedSize,
-                expandedSize: self.settings.expandedSize,
+                expandedSize: self.resolvedExpandedSize,
                 collapsedActivityProfile: self.collapsedActivityLayoutProfile,
+                collapsedPresentationProfile: self.collapsedPresentationProfile,
                 useAdaptiveNotchSizing: self.settings.useAdaptiveNotchSizing,
                 respectHardwareNotch: self.settings.respectHardwareNotch
             )
@@ -438,7 +536,7 @@ final class OverlayWindowController {
                 self.debugGeometryRefresh(correctedGeometry)
                 self.targetCollapsedFrame = correctedGeometry.collapsedFrame
                 self.targetExpandedFrame = correctedGeometry.expandedFrame
-                self.updateLayoutWithoutAnimation(
+                self.updateLayout(
                     panelFrame: correctedGeometry.expandedFrame,
                     collapsedFrame: correctedGeometry.collapsedFrame,
                     expandedFrame: correctedGeometry.expandedFrame,
@@ -446,7 +544,9 @@ final class OverlayWindowController {
                     hardwareNotchWidth: correctedGeometry.hardwareNotchWidth,
                     collapsedLeftRegionWidth: correctedGeometry.collapsedLeftRegionWidth,
                     collapsedNotchCoreWidth: correctedGeometry.collapsedNotchCoreWidth,
-                    collapsedRightRegionWidth: correctedGeometry.collapsedRightRegionWidth
+                    collapsedRightRegionWidth: correctedGeometry.collapsedRightRegionWidth,
+                    collapsedPresentationProfile: correctedGeometry.collapsedPresentationProfile,
+                    animated: false
                 )
                 self.applyCanonicalPanelFrame(
                     correctedGeometry.expandedFrame,
@@ -466,6 +566,18 @@ final class OverlayWindowController {
 
     private var collapsedActivityLayoutProfile: CollapsedActivityLayoutProfile? {
         collapsedActivityLayoutProfile(activities: modules.liveActivities.activities)
+    }
+
+    private var collapsedPresentationProfile: CollapsedPresentationProfile {
+        if let attention = modules.agentAttention.presentation {
+            let session = attention.primary.flatMap { modules.agentEvents.session(for: $0.session) }
+            return AgentCollapsedShellPresentation.attention(attention, session: session)
+        }
+        guard case .inactive = collapsedContentMode else { return .normal }
+        return AgentCollapsedShellPresentation.routine(
+            sessions: modules.agentEvents.sessions,
+            enabled: settings.agentActivityEnabled
+        ) ?? .normal
     }
 
     private func collapsedActivityLayoutProfile(
@@ -506,11 +618,21 @@ final class OverlayWindowController {
         )
     }
 
+    private var expandedPresentationProfile: ExpandedPresentationProfile {
+        ExpandedPresentationProfile.resolve(for: modules.navigation.selectedPage)
+    }
+
+    private var resolvedExpandedSize: CGSize {
+        expandedPresentationProfile.resolvedSize(from: settings.expandedSize)
+    }
+
     private var currentGeometrySignature: OverlayGeometrySignature {
         OverlayGeometrySignature(
             collapsedSize: settings.collapsedSize,
-            expandedSize: settings.expandedSize,
+            expandedSize: resolvedExpandedSize,
+            expandedPresentationKind: expandedPresentationProfile.kind,
             collapsedActivityProfile: collapsedActivityLayoutProfile,
+            collapsedPresentationProfile: collapsedPresentationProfile,
             useAdaptiveNotchSizing: settings.useAdaptiveNotchSizing,
             respectHardwareNotch: settings.respectHardwareNotch
         )
@@ -599,7 +721,7 @@ final class OverlayWindowController {
             abs(lhs.size.height - rhs.size.height) <= tolerance
     }
 
-    private func updateLayoutWithoutAnimation(
+    private func updateLayout(
         panelFrame: NSRect,
         collapsedFrame: NSRect,
         expandedFrame: NSRect,
@@ -607,13 +729,12 @@ final class OverlayWindowController {
         hardwareNotchWidth: CGFloat,
         collapsedLeftRegionWidth: CGFloat,
         collapsedNotchCoreWidth: CGFloat,
-        collapsedRightRegionWidth: CGFloat
+        collapsedRightRegionWidth: CGFloat,
+        collapsedPresentationProfile: CollapsedPresentationProfile,
+        animated: Bool
     ) {
-        var transaction = Transaction(animation: nil)
-        transaction.disablesAnimations = true
-
-        withTransaction(transaction) {
-            layoutStore.updateLocal(
+        let updates = { [self] in
+            self.layoutStore.updateLocal(
                 panelFrame: panelFrame,
                 collapsedScreenFrame: collapsedFrame,
                 expandedScreenFrame: expandedFrame,
@@ -621,8 +742,24 @@ final class OverlayWindowController {
                 hardwareNotchWidth: hardwareNotchWidth,
                 collapsedLeftRegionWidth: collapsedLeftRegionWidth,
                 collapsedNotchCoreWidth: collapsedNotchCoreWidth,
-                collapsedRightRegionWidth: collapsedRightRegionWidth
+                collapsedRightRegionWidth: collapsedRightRegionWidth,
+                collapsedPresentationProfile: collapsedPresentationProfile
             )
+        }
+        if animated {
+            let reduceMotion = settings.reduceExtraMotion || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            let duration = reduceMotion || settings.animationPreset == .instant
+                ? 0.01
+                : min(max(0.22 / max(settings.shellAnimationSpeed, 0.25), 0.16), 0.34)
+            withAnimation(.smooth(duration: duration)) {
+                updates()
+            }
+        } else {
+            var transaction = Transaction(animation: nil)
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                updates()
+            }
         }
     }
 
@@ -703,37 +840,41 @@ final class OverlayWindowController {
         }
 
         localScrollWheelMonitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel]) { [weak self] event in
-    guard let self else { return event }
+            guard let self else { return event }
 
-    self.debugScrollWheelReceived(event, source: "localScrollMonitor")
-    if self.handleExpandedScrollWheelFromMonitor(event, source: "localScrollMonitor") {
-        return nil
-    }
+            self.debugScrollWheelReceived(event, source: "localScrollMonitor")
 
-    if event.window === self.islandPanel {
-        return event
-    }
+            // Panel events are routed exactly once by IslandHostingView. Running
+            // expanded routing here as well advances sequence ownership twice and
+            // can consume the momentum tail before SwiftUI's ScrollView sees it.
+            if event.window === self.islandPanel {
+                return event
+            }
 
-    if self.handleCollapsedScrollWheelFromMonitor(event, source: "localScrollMonitor") {
-        return nil
-    }
+            if self.handleExpandedScrollWheelFromMonitor(event, source: "localScrollMonitor") {
+                return nil
+            }
 
-    return event
-}
+            if self.handleCollapsedScrollWheelFromMonitor(event, source: "localScrollMonitor") {
+                return nil
+            }
 
-globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollWheel]) { [weak self] event in
-    let generation = self?.presentationSession.generation
-    Task { @MainActor in
-        guard let self, self.allowsOverlayWork(generation: generation) else { return }
-
-        self.debugScrollWheelReceived(event, source: "globalScrollMonitor")
-        if self.handleExpandedScrollWheelFromMonitor(event, source: "globalScrollMonitor") {
-            return
+            return event
         }
 
-        _ = self.handleCollapsedScrollWheelFromMonitor(event, source: "globalScrollMonitor")
-    }
-}
+        globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollWheel]) { [weak self] event in
+            let generation = self?.presentationSession.generation
+            Task { @MainActor in
+                guard let self, self.allowsOverlayWork(generation: generation) else { return }
+
+                self.debugScrollWheelReceived(event, source: "globalScrollMonitor")
+                if self.handleExpandedScrollWheelFromMonitor(event, source: "globalScrollMonitor") {
+                    return
+                }
+
+                _ = self.handleCollapsedScrollWheelFromMonitor(event, source: "globalScrollMonitor")
+            }
+        }
 
         localKeyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
             guard let self, self.canPresentOverlay else { return event }
@@ -922,7 +1063,7 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
         debugPrint(
             "DynamicIsland geometry refresh",
             "collapsedSize=\(settings.collapsedSize)",
-            "expandedSize=\(settings.expandedSize)",
+            "expandedSize=\(resolvedExpandedSize)",
             "collapsedFrame=\(geometry.collapsedFrame)",
             "expandedFrame=\(geometry.expandedFrame)",
             "panelFrame=\(geometry.expandedFrame)",
@@ -941,9 +1082,10 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
         layoutStore.isShellMorphing = true
         layoutStore.isCollapseShellOnly = (state == .collapsed)
 
+        let reduceMotion = settings.reduceExtraMotion || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         let shellDuration = IslandContentTransitionTiming.shellDuration(
             settings: settings,
-            reduceMotion: false
+            reduceMotion: reduceMotion
         )
         let clearDelay = shellDuration + (state == .collapsed ? 0.025 : 0)
         DispatchQueue.main.asyncAfter(deadline: .now() + clearDelay) { [weak self] in
@@ -958,14 +1100,36 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
         }
     }
 
+    private func beginCollapsedPresentationMorph() {
+        guard canPresentOverlay, islandState.state == .collapsed else { return }
+        let sessionGeneration = presentationSession.generation
+        morphGeneration += 1
+        let generation = morphGeneration
+        layoutStore.isShellMorphing = true
+        layoutStore.isCollapseShellOnly = false
+
+        let reduceMotion = settings.reduceExtraMotion || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let clearDelay = IslandContentTransitionTiming.shellDuration(
+            settings: settings,
+            reduceMotion: reduceMotion
+        )
+        DispatchQueue.main.asyncAfter(deadline: .now() + clearDelay) { [weak self] in
+            guard let self else { return }
+            guard self.allowsOverlayWork(generation: sessionGeneration), generation == self.morphGeneration else { return }
+            self.layoutStore.isShellMorphing = false
+            self.updateWindowVisibility()
+        }
+    }
+
     private func expandFromCollapsedPreparingGeometry() {
         guard canPresentOverlay else { return }
         guard islandState.state == .collapsed else { return }
 
         let geometry = geometryService.geometry(
             collapsedSize: settings.collapsedSize,
-            expandedSize: settings.expandedSize,
+            expandedSize: resolvedExpandedSize,
             collapsedActivityProfile: collapsedActivityLayoutProfile,
+            collapsedPresentationProfile: collapsedPresentationProfile,
             useAdaptiveNotchSizing: settings.useAdaptiveNotchSizing,
             respectHardwareNotch: settings.respectHardwareNotch
         )
@@ -974,7 +1138,7 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
         targetCollapsedFrame = geometry.collapsedFrame
         targetExpandedFrame = geometry.expandedFrame
 
-        updateLayoutWithoutAnimation(
+        updateLayout(
             panelFrame: geometry.expandedFrame,
             collapsedFrame: geometry.collapsedFrame,
             expandedFrame: geometry.expandedFrame,
@@ -982,7 +1146,9 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
             hardwareNotchWidth: geometry.hardwareNotchWidth,
             collapsedLeftRegionWidth: geometry.collapsedLeftRegionWidth,
             collapsedNotchCoreWidth: geometry.collapsedNotchCoreWidth,
-            collapsedRightRegionWidth: geometry.collapsedRightRegionWidth
+            collapsedRightRegionWidth: geometry.collapsedRightRegionWidth,
+            collapsedPresentationProfile: geometry.collapsedPresentationProfile,
+            animated: false
         )
 
         applyCanonicalPanelFrame(geometry.expandedFrame, reason: "expandFromCollapsedPreparingGeometry")
@@ -996,31 +1162,16 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
 
     private func requestCollapseWithSequencing() {
         guard canPresentOverlay else { return }
-        let sessionGeneration = presentationSession.generation
         guard islandState.state == .expanded else { return }
         guard !layoutStore.isExpandedContentExiting else { return }
 
-        collapseSequenceGeneration += 1
-        let generation = collapseSequenceGeneration
-        let shellDuration = IslandContentTransitionTiming.shellDuration(
-            settings: settings,
-            reduceMotion: false
-        )
-        let collapseShellDelay = IslandContentTransitionTiming.collapseShellDelay(
-            shellDuration: shellDuration
-        )
-        debugLog("requestCollapseWithSequencing started generation=\(generation)")
+        debugLog("requestCollapseWithSequencing started")
         stopMouseContainmentTimer()
         layoutStore.isExpandedContentExiting = true
+        resetExpandedContentScrollTracking()
+        layoutStore.setExpandedContentScrollRegion(.zero)
         updateMousePassthrough()
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + collapseShellDelay) { [weak self] in
-            guard let self else { return }
-            guard self.allowsOverlayWork(generation: sessionGeneration), generation == self.collapseSequenceGeneration else { return }
-            guard self.islandState.state == .expanded else { return }
-            self.debugLog("requestCollapseWithSequencing committing collapse generation=\(generation)")
-            self.islandState.collapse()
-        }
+        islandState.collapse()
     }
 
     private func currentInteractiveRegion() -> NSRect {
@@ -1091,7 +1242,7 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
 
     private func handleExpandedScrollWheelFromMonitor(_ event: NSEvent, source: String) -> Bool {
         guard acceptsOverlayScroll(event) else { return false }
-        guard !shouldPassExpandedScrollThroughToContent() else {
+        guard !shouldPassExpandedScrollThroughToContent(event) else {
             return false
         }
 
@@ -1118,7 +1269,7 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
 
     private func handleExpandedScrollWheel(_ event: NSEvent, source: String) -> Bool {
         guard acceptsOverlayScroll(event) else { return false }
-        guard !shouldPassExpandedScrollThroughToContent() else {
+        guard !shouldPassExpandedScrollThroughToContent(event) else {
             return false
         }
 
@@ -1241,27 +1392,75 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
         }
     }
 
-    private func shouldPassExpandedScrollThroughToContent() -> Bool {
+    private func shouldPassExpandedScrollThroughToContent(_ event: NSEvent) -> Bool {
+        let isExpanded = islandState.state == .expanded
+        if layoutStore.isExpandedScrollGestureSuppressed, isExpanded {
+            resetExpandedScrollTracking()
+            resetExpandedContentScrollTracking()
+            logExpandedScrollPassThroughIfNeeded(reason: "global-suppression")
+            return true
+        }
+
+        var contentSequenceActive = false
+        if isExpanded,
+           settings.gesturesEnabled,
+           settings.gestureInputSource == .trackpad,
+           event.hasPreciseScrollingDeltas {
+            let region = screenRect(for: layoutStore.expandedContentScrollRegion)
+            let startsInsideContent = !region.isEmpty && region.contains(NSEvent.mouseLocation)
+            let deltaX = abs(event.scrollingDeltaX)
+            let deltaY = abs(event.scrollingDeltaY)
+            let verticalIntent: Bool? = deltaX == 0 && deltaY == 0 ? nil : deltaY >= deltaX
+            contentSequenceActive = expandedContentScrollOwnership.route(
+                phase: expandedContentSequencePhase(for: event),
+                startsInsideContent: startsInsideContent,
+                verticalIntent: verticalIntent
+            ) == .passThroughToContent
+        }
+
         let route = ExpandedScrollEventRoutingPolicy.route(
-            isSuppressed: layoutStore.isExpandedScrollGestureSuppressed,
-            isExpanded: islandState.state == .expanded,
+            isSuppressed: false,
+            isExpanded: isExpanded,
             gesturesEnabled: settings.gesturesEnabled,
-            usesTrackpad: settings.gestureInputSource == .trackpad
+            usesTrackpad: settings.gestureInputSource == .trackpad,
+            contentScrollSequenceActive: contentSequenceActive
         )
-        guard route == .passThroughToContent,
-              layoutStore.isExpandedScrollGestureSuppressed,
-              islandState.state == .expanded else {
+        guard route == .passThroughToContent, isExpanded else {
             return false
         }
 
-        resetExpandedScrollTracking()
+        if contentSequenceActive {
+            resetExpandedScrollTracking()
+            logExpandedScrollPassThroughIfNeeded(reason: "registered-content-region")
+            return true
+        }
+
+        return false
+    }
+
+    private func expandedContentSequencePhase(for event: NSEvent) -> ExpandedContentScrollSequencePhase {
+        if event.momentumPhase.contains(.began) { return .momentumBegan }
+        if event.momentumPhase.contains(.changed) { return .momentumChanged }
+        if event.momentumPhase.contains(.ended) { return .momentumEnded }
+        if event.momentumPhase.contains(.cancelled) { return .momentumCancelled }
+        if event.phase.contains(.began) || event.phase.contains(.mayBegin) { return .physicalBegan }
+        if event.phase.contains(.changed) { return .physicalChanged }
+        if event.phase.contains(.ended) { return .physicalEnded }
+        if event.phase.contains(.cancelled) { return .physicalCancelled }
+        return .phaseLess
+    }
+
+    private func resetExpandedContentScrollTracking() {
+        expandedContentScrollOwnership.reset()
+    }
+
+    private func logExpandedScrollPassThroughIfNeeded(reason: String) {
         #if DEBUG
         if !didLogExpandedScrollPassThrough {
-            print("[GestureDebug] expanded scroll passed through to content")
+            print("[GestureDebug] expanded scroll passed through to content reason=\(reason)")
             didLogExpandedScrollPassThrough = true
         }
         #endif
-        return true
     }
 
     private func expandedAction(for gesture: IslandPointerGesture) -> IslandGestureAction {

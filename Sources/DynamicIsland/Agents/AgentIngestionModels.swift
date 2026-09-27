@@ -107,6 +107,30 @@ struct AgentProducerPolicy: Equatable, Sendable {
     let authorityCeilings: [AgentAuthorityDomain: AgentEvidenceAuthority]
     let allowedCapabilities: Set<AgentCapability>
     let allowedSchemaVersions: Set<Int>
+    let permitsApprovalControl: Bool
+    let permitsLifecycleRecovery: Bool
+
+    init(
+        allowedProviders: Set<AgentProvider>?,
+        allowedSources: Set<AgentSource>?,
+        allowedSourceKinds: Set<AgentSourceKind>,
+        allowedEventTypes: Set<AgentEventType>,
+        authorityCeilings: [AgentAuthorityDomain: AgentEvidenceAuthority],
+        allowedCapabilities: Set<AgentCapability>,
+        allowedSchemaVersions: Set<Int>,
+        permitsApprovalControl: Bool = false,
+        permitsLifecycleRecovery: Bool = false
+    ) {
+        self.allowedProviders = allowedProviders
+        self.allowedSources = allowedSources
+        self.allowedSourceKinds = allowedSourceKinds
+        self.allowedEventTypes = allowedEventTypes
+        self.authorityCeilings = authorityCeilings
+        self.allowedCapabilities = allowedCapabilities
+        self.allowedSchemaVersions = allowedSchemaVersions
+        self.permitsApprovalControl = permitsApprovalControl
+        self.permitsLifecycleRecovery = permitsLifecycleRecovery
+    }
 
     func permits(provider: AgentProvider) -> Bool {
         allowedProviders?.contains(provider) ?? true
@@ -133,7 +157,52 @@ struct AgentProducerPolicy: Equatable, Sendable {
             .sessionLifecycle, .toolLifecycle, .commandLifecycle, .approvalObservation,
             .subagentLifecycle, .taskLifecycle, .modelMetadata, .projectContext
         ],
-        allowedSchemaVersions: [AgentEvent.normalizedSchemaVersion]
+        allowedSchemaVersions: [AgentEvent.normalizedSchemaVersion],
+        permitsLifecycleRecovery: true
+    )
+
+    static let codexPermissionControl = AgentProducerPolicy(
+        allowedProviders: [.codex],
+        allowedSources: [.unknown],
+        allowedSourceKinds: [.officialHook],
+        allowedEventTypes: [.approvalRequested, .approvalResolved, .capabilitiesUpdated],
+        authorityCeilings: Dictionary(uniqueKeysWithValues: AgentAuthorityDomain.allCases.map {
+            ($0, AgentEvidenceAuthority.lifecycle)
+        }),
+        allowedCapabilities: [.approvalObservation, .approvalControl],
+        allowedSchemaVersions: [AgentEvent.normalizedSchemaVersion],
+        permitsApprovalControl: true,
+        permitsLifecycleRecovery: true
+    )
+
+    static let codexAppServer = AgentProducerPolicy(
+        allowedProviders: [.codex],
+        allowedSources: [.desktopApp],
+        allowedSourceKinds: [.officialLifecycleProtocol],
+        allowedEventTypes: [
+            .sessionStarted, .sessionResumed, .sessionMetadataUpdated, .sessionEnded,
+            .agentWorking, .thinkingStarted, .thinkingEnded,
+            .planningStarted, .planUpdated, .planReady,
+            .toolStarted, .toolCompleted, .commandStarted, .commandCompleted,
+            .approvalRequested, .approvalResolved, .waitingForUser, .userInputResolved,
+            .usageUpdated, .capabilitiesUpdated, .projectContextUpdated,
+            .taskCompleted, .taskFailed, .interrupted,
+            .subagentStarted, .subagentEnded, .heartbeat
+        ],
+        authorityCeilings: Dictionary(uniqueKeysWithValues: AgentAuthorityDomain.allCases.map {
+            ($0, AgentEvidenceAuthority.lifecycle)
+        }),
+        allowedCapabilities: [
+            .sessionLifecycle, .explicitThinking, .planLifecycle,
+            .toolLifecycle, .commandLifecycle,
+            .approvalObservation, .approvalControl, .userInputObservation,
+            .subagentLifecycle, .taskLifecycle,
+            .tokenUsage, .contextUsage,
+            .modelMetadata, .projectContext
+        ],
+        allowedSchemaVersions: [AgentEvent.normalizedSchemaVersion],
+        permitsApprovalControl: true,
+        permitsLifecycleRecovery: true
     )
 
     static let codexStructuredRecovery = AgentProducerPolicy(
@@ -348,6 +417,7 @@ enum AgentIngestionError: Error, Equatable, Sendable {
 struct AgentIngestionResult: Equatable, Sendable {
     let acceptedEvents: Int
     let applications: [AgentEventApplication]
+    let sessionInstances: [AgentSessionInstanceID]
 }
 
 
@@ -379,7 +449,7 @@ struct AgentTelemetryObservation: Equatable, Sendable {
     let model: String?
 
     var isEmpty: Bool {
-        usage.samples.isEmpty && model == nil
+        usage.isEmpty && model == nil
     }
 }
 
@@ -720,7 +790,7 @@ actor AgentTelemetryFusion {
             String(format: "%.6f", observation.observedAt.timeIntervalSince1970)
         )
 
-        if !observation.usage.samples.isEmpty {
+        if !observation.usage.isEmpty {
             events.append(AgentIngestionEvent(
                 schemaVersion: AgentEvent.normalizedSchemaVersion,
                 eventID: AgentEventID(rawValue: "otel-usage-" + stableBase),

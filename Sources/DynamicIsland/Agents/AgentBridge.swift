@@ -14,7 +14,8 @@ final class AgentBridgeIngress: Sendable {
     func ingest(
         request: AgentBridgeWireRequest,
         producer: AgentProducerHandle,
-        receivedAt: Date
+        receivedAt: Date,
+        permitsApprovalControl: Bool = false
     ) async -> Result<AgentBridgeIngestionResult, AgentBridgeEnvelopeError> {
         guard request.protocolVersion == AgentBridgeLimits.protocolVersion else {
             return .failure(.unsupportedProtocol)
@@ -31,7 +32,11 @@ final class AgentBridgeIngress: Sendable {
         normalized.reserveCapacity(batch.count)
         do {
             for wire in batch {
-                normalized.append(try normalize(wire, receivedAt: receivedAt))
+                normalized.append(try normalize(
+                    wire,
+                    receivedAt: receivedAt,
+                    permitsApprovalControl: permitsApprovalControl
+                ))
             }
         } catch let error as AgentBridgeEnvelopeError {
             return .failure(error)
@@ -43,16 +48,45 @@ final class AgentBridgeIngress: Sendable {
         case .success(let result):
             return .success(AgentBridgeIngestionResult(
                 acceptedEvents: result.acceptedEvents,
-                applications: result.applications
+                applications: result.applications,
+                sessionInstances: result.sessionInstances
             ))
         case .failure(let error):
             return .failure(Self.bridgeError(error))
         }
     }
 
+    func resolveCodexApproval(
+        session: AgentSessionInstanceID,
+        requestID: AgentCorrelationID,
+        state: AgentApprovalState,
+        producer: AgentProducerHandle,
+        receivedAt: Date
+    ) async -> Bool {
+        let event = AgentIngestionEvent(
+            schemaVersion: AgentEvent.normalizedSchemaVersion,
+            eventID: AgentEventID(rawValue: "codex-control-\(requestID.rawValue)-\(state.rawValue)"),
+            provider: .codex,
+            source: .unknown,
+            nativeSessionID: session.sessionID.nativeID,
+            assertedGeneration: session.generation,
+            type: .approvalResolved,
+            providerTimestamp: nil,
+            receivedTimestamp: receivedAt,
+            correlationID: requestID,
+            sequence: nil,
+            authority: .lifecycle,
+            payload: .approvalResolution(AgentApprovalResolution(state: state)),
+            continuity: AgentSessionContinuity(immutableIdentity: session.sessionID.nativeID)
+        )
+        guard case .success = await coordinator.ingest(event, from: producer) else { return false }
+        return true
+    }
+
     private func normalize(
         _ wire: AgentBridgeWireEvent,
-        receivedAt: Date
+        receivedAt: Date,
+        permitsApprovalControl: Bool
     ) throws -> AgentIngestionEvent {
         let provider = try Self.provider(wire.provider)
         guard let source = AgentSource(rawValue: wire.source) else { throw AgentBridgeEnvelopeError.invalidSource }
@@ -65,7 +99,12 @@ final class AgentBridgeIngress: Sendable {
         } else {
             providerTimestamp = nil
         }
-        let payload = try Self.payload(wire.payload, for: type, eventAuthority: authority)
+        let payload = try Self.payload(
+            wire.payload,
+            for: type,
+            eventAuthority: authority,
+            permitsApprovalControl: permitsApprovalControl
+        )
         return AgentIngestionEvent(
             schemaVersion: wire.schemaVersion,
             eventID: AgentEventID(rawValue: wire.eventID),
@@ -156,7 +195,8 @@ final class AgentBridgeIngress: Sendable {
     private static func payload(
         _ wire: AgentBridgeWirePayload?,
         for type: AgentEventType,
-        eventAuthority: AgentEvidenceAuthority
+        eventAuthority: AgentEvidenceAuthority,
+        permitsApprovalControl: Bool
     ) throws -> AgentEventPayload {
         let count = wire?.populatedFieldCount ?? 0
         switch type {
@@ -197,7 +237,11 @@ final class AgentBridgeIngress: Sendable {
             return .usage(try usage(samples))
         case .capabilitiesUpdated:
             guard count == 1, let values = wire?.capabilities else { throw AgentBridgeEnvelopeError.invalidPayload }
-            return .capabilities(try capabilities(values, eventAuthority: eventAuthority))
+            return .capabilities(try capabilities(
+                values,
+                eventAuthority: eventAuthority,
+                permitsApprovalControl: permitsApprovalControl
+            ))
         case .projectContextUpdated:
             guard count == 1, let value = wire?.projectContext else { throw AgentBridgeEnvelopeError.invalidPayload }
             return .projectContext(value)
@@ -213,15 +257,16 @@ final class AgentBridgeIngress: Sendable {
     }
 
     private static func usage(_ values: [AgentBridgeWireUsageSample]) throws -> AgentUsage {
-        var samples: [AgentUsageMetric: AgentUsageSample] = [:]
+        var samples: [AgentUsageKey: AgentUsageSample] = [:]
         for value in values {
             guard let metric = AgentUsageMetric(rawValue: value.metric),
                   let unit = AgentUsageUnit(rawValue: value.unit),
-                  let observedAt = date(value.observedAt),
-                  samples[metric] == nil else {
+                  let observedAt = date(value.observedAt) else {
                 throw AgentBridgeEnvelopeError.invalidUsage
             }
-            samples[metric] = AgentUsageSample(
+            let key = AgentUsageKey(metric: metric, scope: value.scope)
+            guard samples[key] == nil else { throw AgentBridgeEnvelopeError.invalidUsage }
+            samples[key] = AgentUsageSample(
                 value: value.value,
                 limit: value.limit,
                 unit: unit,
@@ -230,17 +275,18 @@ final class AgentBridgeIngress: Sendable {
                 observedAt: observedAt
             )
         }
-        return AgentUsage(samples: samples)
+        return AgentUsage(scopedSamples: samples)
     }
 
     private static func capabilities(
         _ values: [AgentBridgeWireCapability],
-        eventAuthority: AgentEvidenceAuthority
+        eventAuthority: AgentEvidenceAuthority,
+        permitsApprovalControl: Bool
     ) throws -> AgentCapabilities {
         var evidence: [AgentCapability: AgentCapabilityEvidence] = [:]
         for value in values {
             guard let capability = AgentCapability(rawValue: value.name),
-                  capability != .approvalControl,
+                  (capability != .approvalControl || permitsApprovalControl),
                   let capabilityAuthority = try? authority(value.authority),
                   capabilityAuthority <= eventAuthority,
                   let observedAt = date(value.observedAt),
@@ -360,6 +406,103 @@ actor AgentBridgeRequestProcessor {
     }
 }
 
+actor AgentBridgePermissionRequestProcessor {
+    private let authenticator: AgentBridgeAuthenticator
+    private let ingress: AgentBridgeIngress
+    private let producer: AgentProducerHandle
+    private let approvals: AgentApprovalController
+    private let now: @Sendable () -> Date
+
+    init(
+        authenticator: AgentBridgeAuthenticator,
+        ingress: AgentBridgeIngress,
+        producer: AgentProducerHandle,
+        approvals: AgentApprovalController,
+        now: @escaping @Sendable () -> Date = Date.init
+    ) {
+        self.authenticator = authenticator
+        self.ingress = ingress
+        self.producer = producer
+        self.approvals = approvals
+        self.now = now
+    }
+
+    func handle(_ request: AgentBridgeHTTPRequest) async -> AgentBridgeHTTPResponse {
+        guard request.route == AgentBridgeProtocol.codexPermissionRoute else {
+            return AgentBridgeHTTPResponse(status: .notFound, code: "unknown-route")
+        }
+        guard request.method == "POST" else {
+            return AgentBridgeHTTPResponse(status: .methodNotAllowed, code: "method-not-allowed")
+        }
+        guard request.headers["content-type"]?.lowercased().split(separator: ";", maxSplits: 1).first == "application/json" else {
+            return AgentBridgeHTTPResponse(status: .unsupportedMediaType, code: "content-type")
+        }
+        if let authenticationError = await authenticator.authenticate(request) {
+            let status: AgentBridgeHTTPStatus = authenticationError == .replay ? .conflict : .unauthorized
+            return AgentBridgeHTTPResponse(status: status, code: "authentication")
+        }
+
+        let wire: AgentBridgeWireRequest
+        do {
+            wire = try AgentBridgeEnvelopeDecoder.decode(request.body)
+        } catch let error as AgentBridgeEnvelopeError {
+            return AgentBridgeHTTPResponse(status: .badRequest, code: error.rawValue)
+        } catch {
+            return AgentBridgeHTTPResponse(status: .badRequest, code: "malformed-envelope")
+        }
+        guard let events = wire.eventBatch, events.count == 2,
+              events[0].provider == "codex", events[0].source == "unknown",
+              events[0].eventType == "capabilitiesUpdated",
+              events[1].provider == "codex", events[1].source == "unknown",
+              events[1].eventType == "approvalRequested",
+              events[1].nativeSessionID == events[0].nativeSessionID,
+              events[1].continuityIdentity == events[1].nativeSessionID,
+              let requestIDValue = events[1].correlationID,
+              let approval = events[1].payload?.approvalRequest,
+              let expiresAt = approval.expiresAt,
+              expiresAt > now() else {
+            return AgentBridgeHTTPResponse(status: .unprocessableContent, code: "permission-shape")
+        }
+
+        let ingestion = await ingress.ingest(
+            request: wire,
+            producer: producer,
+            receivedAt: now(),
+            permitsApprovalControl: true
+        )
+        guard case .success(let result) = ingestion,
+              let session = result.sessionInstances.last,
+              session.sessionID.provider == .codex,
+              session.sessionID.nativeID == events[1].nativeSessionID else {
+            return AgentBridgeHTTPResponse(status: .unprocessableContent, code: "permission-ingestion")
+        }
+
+        let requestID = AgentCorrelationID(rawValue: requestIDValue)
+        let controlRequest = AgentApprovalControlRequest(
+            key: AgentApprovalControlKey(session: session, requestID: requestID),
+            summary: AgentPrivacyProjection.title(approval.summary, fallback: "Approval required"),
+            expiresAt: expiresAt
+        )
+        let decision = await approvals.request(controlRequest)
+        let state: AgentApprovalState = switch decision {
+        case .allow: .approved
+        case .deny: .denied
+        case nil: .expired
+        }
+        _ = await ingress.resolveCodexApproval(
+            session: session,
+            requestID: requestID,
+            state: state,
+            producer: producer,
+            receivedAt: now()
+        )
+        guard let decision else {
+            return AgentBridgeHTTPResponse(status: .ok, code: "no-decision")
+        }
+        return AgentBridgeHTTPResponse(status: .ok, code: "decision", permissionDecision: decision)
+    }
+}
+
 typealias AgentBridgeServerFactory = @Sendable (
     @escaping AgentBridgeNetworkServer.RequestHandler
 ) -> any AgentBridgeServing
@@ -430,7 +573,9 @@ final class AgentBridge: ObservableObject {
     private let credentialStore: any AgentBridgeCredentialStore
     private let discoveryPublisher: (any AgentBridgeDiscoveryPublishing)?
     private let codexDiscoveryPublisher: (any AgentBridgeDiscoveryPublishing)?
+    private let codexPermissionDiscoveryPublisher: (any AgentBridgeDiscoveryPublishing)?
     private let claudeDiscoveryPublisher: (any AgentBridgeDiscoveryPublishing)?
+    private let approvals: AgentApprovalController
     private let coordinator: AgentIngestionCoordinator
     private let ingress: AgentBridgeIngress
     private let serverFactory: AgentBridgeServerFactory
@@ -446,6 +591,7 @@ final class AgentBridge: ObservableObject {
     private struct Runtime {
         let generic: ProducerRuntime
         let codex: ProducerRuntime
+        let codexPermission: ProducerRuntime
         let claude: ProducerRuntime
         let server: any AgentBridgeServing
     }
@@ -455,6 +601,8 @@ final class AgentBridge: ObservableObject {
         let genericKey: Data
         let codexLaunchID: String
         let codexKey: Data
+        let codexPermissionLaunchID: String
+        let codexPermissionKey: Data
         let claudeLaunchID: String
         let claudeKey: Data
     }
@@ -464,12 +612,15 @@ final class AgentBridge: ObservableObject {
         credentialStore: any AgentBridgeCredentialStore = SystemAgentBridgeCredentialStore(),
         discoveryPublisher: (any AgentBridgeDiscoveryPublishing)? = nil,
         codexDiscoveryPublisher: (any AgentBridgeDiscoveryPublishing)? = nil,
+        codexPermissionDiscoveryPublisher: (any AgentBridgeDiscoveryPublishing)? = nil,
         claudeDiscoveryPublisher: (any AgentBridgeDiscoveryPublishing)? = nil,
+        approvals: AgentApprovalController = AgentApprovalController(),
         serverFactory: @escaping AgentBridgeServerFactory = {
             AgentBridgeNetworkServer(requestHandler: $0)
         }
     ) {
         self.credentialStore = credentialStore
+        self.approvals = approvals
         let resolvedDiscovery: (any AgentBridgeDiscoveryPublishing)?
         if let discoveryPublisher {
             resolvedDiscovery = discoveryPublisher
@@ -487,6 +638,17 @@ final class AgentBridge: ObservableObject {
             )
         } else {
             self.codexDiscoveryPublisher = nil
+        }
+
+        if let codexPermissionDiscoveryPublisher {
+            self.codexPermissionDiscoveryPublisher = codexPermissionDiscoveryPublisher
+        } else if discoveryPublisher == nil,
+                  let baseURL = resolvedDiscovery?.recordURL.deletingLastPathComponent() {
+            self.codexPermissionDiscoveryPublisher = try? AgentBridgeDiscoveryPublisher(
+                recordURL: baseURL.appendingPathComponent("codex-permission-v1.json")
+            )
+        } else {
+            self.codexPermissionDiscoveryPublisher = nil
         }
 
         if let claudeDiscoveryPublisher {
@@ -510,7 +672,9 @@ final class AgentBridge: ObservableObject {
         credentialStore: any AgentBridgeCredentialStore = SystemAgentBridgeCredentialStore(),
         discoveryPublisher: (any AgentBridgeDiscoveryPublishing)? = nil,
         codexDiscoveryPublisher: (any AgentBridgeDiscoveryPublishing)? = nil,
+        codexPermissionDiscoveryPublisher: (any AgentBridgeDiscoveryPublishing)? = nil,
         claudeDiscoveryPublisher: (any AgentBridgeDiscoveryPublishing)? = nil,
+        approvals: AgentApprovalController = AgentApprovalController(),
         serverFactory: @escaping AgentBridgeServerFactory = {
             AgentBridgeNetworkServer(requestHandler: $0)
         }
@@ -520,7 +684,9 @@ final class AgentBridge: ObservableObject {
             credentialStore: credentialStore,
             discoveryPublisher: discoveryPublisher,
             codexDiscoveryPublisher: codexDiscoveryPublisher,
+            codexPermissionDiscoveryPublisher: codexPermissionDiscoveryPublisher,
             claudeDiscoveryPublisher: claudeDiscoveryPublisher,
+            approvals: approvals,
             serverFactory: serverFactory
         )
     }
@@ -534,7 +700,8 @@ final class AgentBridge: ObservableObject {
         health.lastSafeError = nil
 
         do {
-            guard let discoveryPublisher, let codexDiscoveryPublisher, let claudeDiscoveryPublisher else {
+            guard let discoveryPublisher, let codexDiscoveryPublisher,
+                  let codexPermissionDiscoveryPublisher, let claudeDiscoveryPublisher else {
                 throw AgentBridgeDiscoveryError.unavailableDirectory
             }
             let credentialStore = credentialStore
@@ -545,9 +712,11 @@ final class AgentBridge: ObservableObject {
                 }
                 let genericLaunchID = UUID().uuidString.lowercased()
                 let codexLaunchID = "codex-" + UUID().uuidString.lowercased()
+                let codexPermissionLaunchID = "codex-permission-" + UUID().uuidString.lowercased()
                 let claudeLaunchID = "claude-" + UUID().uuidString.lowercased()
                 let genericNonce = try AgentBridgeCrypto.randomBytes(count: AgentBridgeLimits.launchKeyBytes)
                 let codexNonce = try AgentBridgeCrypto.randomBytes(count: AgentBridgeLimits.launchKeyBytes)
+                let codexPermissionNonce = try AgentBridgeCrypto.randomBytes(count: AgentBridgeLimits.launchKeyBytes)
                 let claudeNonce = try AgentBridgeCrypto.randomBytes(count: AgentBridgeLimits.launchKeyBytes)
                 return LaunchMaterial(
                     genericLaunchID: genericLaunchID,
@@ -561,6 +730,12 @@ final class AgentBridge: ObservableObject {
                         installationSecret: installationSecret,
                         launchID: codexLaunchID,
                         launchNonce: codexNonce
+                    ),
+                    codexPermissionLaunchID: codexPermissionLaunchID,
+                    codexPermissionKey: AgentBridgeCrypto.launchKey(
+                        installationSecret: installationSecret,
+                        launchID: codexPermissionLaunchID,
+                        launchNonce: codexPermissionNonce
                     ),
                     claudeLaunchID: claudeLaunchID,
                     claudeKey: AgentBridgeCrypto.launchKey(
@@ -599,6 +774,21 @@ final class AgentBridge: ObservableObject {
                 throw AgentIngestionError.invalidProducer
             }
 
+            let codexPermissionRegistration = await coordinator.registerProducer(
+                descriptor: AgentProducerDescriptor(
+                    sourceInstanceID: AgentSourceInstanceID(rawValue: "dynamic-island.codex-permission-hook"),
+                    sourceKind: .officialHook,
+                    runtimeVersion: "codex-permission-hook-v1"
+                ),
+                policy: .codexPermissionControl,
+                authenticatedProducerID: material.codexPermissionLaunchID
+            )
+            guard case .success(let codexPermissionProducer) = codexPermissionRegistration else {
+                _ = await coordinator.unregisterProducer(genericProducer)
+                _ = await coordinator.unregisterProducer(codexProducer)
+                throw AgentIngestionError.invalidProducer
+            }
+
             let claudeRegistration = await coordinator.registerProducer(
                 descriptor: AgentProducerDescriptor(
                     sourceInstanceID: AgentSourceInstanceID(rawValue: "dynamic-island.claude-hook"),
@@ -611,11 +801,13 @@ final class AgentBridge: ObservableObject {
             guard case .success(let claudeProducer) = claudeRegistration else {
                 _ = await coordinator.unregisterProducer(genericProducer)
                 _ = await coordinator.unregisterProducer(codexProducer)
+                _ = await coordinator.unregisterProducer(codexPermissionProducer)
                 throw AgentIngestionError.invalidProducer
             }
 
             let genericAuthenticator = AgentBridgeAuthenticator(keyData: material.genericKey)
             let codexAuthenticator = AgentBridgeAuthenticator(keyData: material.codexKey)
+            let codexPermissionAuthenticator = AgentBridgeAuthenticator(keyData: material.codexPermissionKey)
             let claudeAuthenticator = AgentBridgeAuthenticator(keyData: material.claudeKey)
             let genericProcessor = AgentBridgeRequestProcessor(
                 authenticator: genericAuthenticator,
@@ -628,6 +820,12 @@ final class AgentBridge: ObservableObject {
                 producer: codexProducer,
                 eventsRoute: AgentBridgeProtocol.codexHookEventsRoute,
                 allowsHealth: false
+            )
+            let codexPermissionProcessor = AgentBridgePermissionRequestProcessor(
+                authenticator: codexPermissionAuthenticator,
+                ingress: ingress,
+                producer: codexPermissionProducer,
+                approvals: approvals
             )
             let claudeProcessor = AgentBridgeRequestProcessor(
                 authenticator: claudeAuthenticator,
@@ -643,6 +841,8 @@ final class AgentBridge: ObservableObject {
                     response = await genericProcessor.handle(request)
                 case AgentBridgeProtocol.codexHookEventsRoute:
                     response = await codexProcessor.handle(request)
+                case AgentBridgeProtocol.codexPermissionRoute:
+                    response = await codexPermissionProcessor.handle(request)
                 case AgentBridgeProtocol.claudeHookEventsRoute:
                     response = await claudeProcessor.handle(request)
                 default:
@@ -662,6 +862,11 @@ final class AgentBridge: ObservableObject {
                     launchID: material.codexLaunchID,
                     producer: codexProducer,
                     authenticator: codexAuthenticator
+                ),
+                codexPermission: ProducerRuntime(
+                    launchID: material.codexPermissionLaunchID,
+                    producer: codexPermissionProducer,
+                    authenticator: codexPermissionAuthenticator
                 ),
                 claude: ProducerRuntime(
                     launchID: material.claudeLaunchID,
@@ -699,6 +904,17 @@ final class AgentBridge: ObservableObject {
                 processID: getpid(),
                 createdAt: Date()
             ))
+            try codexPermissionDiscoveryPublisher.publish(AgentBridgeDiscoveryRecord(
+                protocolVersion: AgentBridgeLimits.protocolVersion,
+                host: "127.0.0.1",
+                port: port,
+                launchID: material.codexPermissionLaunchID,
+                producerID: material.codexPermissionLaunchID,
+                authenticationToken: material.codexPermissionKey.base64EncodedString(),
+                eventsRoute: AgentBridgeProtocol.codexPermissionRoute,
+                processID: getpid(),
+                createdAt: Date()
+            ))
             try claudeDiscoveryPublisher.publish(AgentBridgeDiscoveryRecord(
                 protocolVersion: AgentBridgeLimits.protocolVersion,
                 host: "127.0.0.1",
@@ -714,6 +930,7 @@ final class AgentBridge: ObservableObject {
             guard startAttemptID == attemptID, runtime?.generic.launchID == material.genericLaunchID else {
                 try? discoveryPublisher.removeIfOwned(launchID: material.genericLaunchID)
                 try? codexDiscoveryPublisher.removeIfOwned(launchID: material.codexLaunchID)
+                try? codexPermissionDiscoveryPublisher.removeIfOwned(launchID: material.codexPermissionLaunchID)
                 try? claudeDiscoveryPublisher.removeIfOwned(launchID: material.claudeLaunchID)
                 return
             }
@@ -731,6 +948,7 @@ final class AgentBridge: ObservableObject {
 
     func stop() {
         startAttemptID = nil
+        approvals.cancelAll()
         stopRuntime()
         health.state = .stopped
         health.port = nil
@@ -743,15 +961,18 @@ final class AgentBridge: ObservableObject {
         Task {
             _ = await coordinator.unregisterProducer(runtime.generic.producer)
             _ = await coordinator.unregisterProducer(runtime.codex.producer)
+            _ = await coordinator.unregisterProducer(runtime.codexPermission.producer)
             _ = await coordinator.unregisterProducer(runtime.claude.producer)
         }
         Task {
             await runtime.generic.authenticator.invalidate()
             await runtime.codex.authenticator.invalidate()
+            await runtime.codexPermission.authenticator.invalidate()
             await runtime.claude.authenticator.invalidate()
         }
         try? discoveryPublisher?.removeIfOwned(launchID: runtime.generic.launchID)
         try? codexDiscoveryPublisher?.removeIfOwned(launchID: runtime.codex.launchID)
+        try? codexPermissionDiscoveryPublisher?.removeIfOwned(launchID: runtime.codexPermission.launchID)
         try? claudeDiscoveryPublisher?.removeIfOwned(launchID: runtime.claude.launchID)
     }
 

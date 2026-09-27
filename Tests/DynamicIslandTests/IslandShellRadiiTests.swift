@@ -46,4 +46,46 @@ final class IslandShellRadiiTests: XCTestCase {
             IslandShellRadii(top: 6, bottom: 14)
         )
     }
+
+    func testCollapsedPresentationProfileControlsOnlyCollapsedBottomRadius() {
+        XCTAssertEqual(
+            IslandShellRadii.interpolated(
+                progress: 0,
+                isNotchIntegrated: true,
+                collapsedBottom: CollapsedPresentationProfile.agentRoutine(
+                    leftContentWidth: 60,
+                    rightContentWidth: 80
+                ).bottomCornerRadius
+            ),
+            IslandShellRadii(top: 6, bottom: 16)
+        )
+        XCTAssertEqual(
+            IslandShellRadii.interpolated(
+                progress: 0,
+                isNotchIntegrated: true,
+                collapsedBottom: CollapsedPresentationProfile.agentAttention(
+                    leftContentWidth: 90,
+                    rightContentWidth: 110
+                ).bottomCornerRadius
+            ),
+            IslandShellRadii(top: 6, bottom: 19)
+        )
+        XCTAssertEqual(
+            IslandShellRadii.interpolated(progress: 1, isNotchIntegrated: true, collapsedBottom: 19),
+            IslandShellRadii(top: 19, bottom: 24)
+        )
+    }
+
+    @MainActor
+    func testReduceMotionUsesBoundedShellTimingWithoutChangingGeometryProfile() {
+        let settings = AppSettings()
+        let profile = CollapsedPresentationProfile.agentAttention(
+            leftContentWidth: 90,
+            rightContentWidth: 110
+        )
+
+        XCTAssertEqual(IslandContentTransitionTiming.shellDuration(settings: settings, reduceMotion: true), 0.24)
+        XCTAssertEqual(profile.kind, .agentAttention)
+        XCTAssertEqual(profile.heightDelta, 4)
+    }
 }

@@ -170,10 +170,13 @@ enum AgentEventReducer {
 
     private static func makeSession(for event: AgentEvent) -> AgentSession {
         let project: AgentProjectContext
+        let availability: AgentSessionAvailability?
         if case .sessionMetadata(let metadata) = event.payload {
             project = AgentPrivacyProjection.project(metadata.project ?? AgentProjectContext())
+            availability = metadata.availability
         } else {
             project = AgentProjectContext()
+            availability = nil
         }
         var session = AgentSession(
             id: event.instanceID,
@@ -189,7 +192,8 @@ enum AgentEventReducer {
             recentActivity: [],
             startedAt: event.effectiveTimestamp,
             endedAt: nil,
-            lastUpdatedAt: event.receivedTimestamp
+            lastUpdatedAt: event.receivedTimestamp,
+            availability: availability
         )
         session.terminalAuthority = event.authority
         return session
@@ -208,7 +212,7 @@ enum AgentEventReducer {
             appendActivity(
                 event: event,
                 kind: .session,
-                title: "Session started",
+                title: event.origin == .localRecovery ? "Session recovered" : "Session started",
                 summary: session.project.displayName,
                 status: .completed,
                 to: &session,
@@ -595,7 +599,9 @@ enum AgentEventReducer {
             finishOperations(in: &session, terminalState: .completed, at: event.effectiveTimestamp)
             session.state = .completed
             session.terminalAuthority = event.authority
-            session.endedAt = event.effectiveTimestamp
+            // Task completion ends the turn, not the provider session/thread.
+            // Only sessionEnded closes the session itself.
+            session.endedAt = nil
             appendActivity(
                 event: event,
                 kind: .completion,
@@ -612,7 +618,7 @@ enum AgentEventReducer {
             finishOperations(in: &session, terminalState: .failed, at: event.effectiveTimestamp)
             session.state = .failed
             session.terminalAuthority = event.authority
-            session.endedAt = event.effectiveTimestamp
+            session.endedAt = nil
             appendActivity(
                 event: event,
                 kind: .failure,
@@ -629,7 +635,7 @@ enum AgentEventReducer {
             finishOperations(in: &session, terminalState: .interrupted, at: event.effectiveTimestamp)
             session.state = .interrupted
             session.terminalAuthority = event.authority
-            session.endedAt = event.effectiveTimestamp
+            session.endedAt = nil
             appendActivity(
                 event: event,
                 kind: .interruption,
@@ -750,8 +756,13 @@ enum AgentEventReducer {
         into session: inout AgentSession
     ) {
         if source != .unknown { session.source = source }
-        guard case .sessionMetadata(let metadata) = payload, let project = metadata.project else { return }
-        mergeProject(AgentPrivacyProjection.project(project), into: &session.project)
+        guard case .sessionMetadata(let metadata) = payload else { return }
+        if let project = metadata.project {
+            mergeProject(AgentPrivacyProjection.project(project), into: &session.project)
+        }
+        if let availability = metadata.availability {
+            session.availability = availability
+        }
     }
 
     private static func mergeProject(
