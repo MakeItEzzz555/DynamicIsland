@@ -328,12 +328,33 @@ final class OverlayWindowController {
             .dropFirst()
             .sink { [weak self] page in
                 guard let self else { return }
-                self.resetExpandedContentScrollTracking()
-                if page != .agents {
-                    self.layoutStore.setExpandedContentScrollRegion(.zero)
+                let sessionGeneration = self.presentationSession.generation
+
+                // @Published emits its new value before the backing property is
+                // committed. Repositioning synchronously from this sink can
+                // therefore force AppKit/SwiftUI layout while selectedPage still
+                // contains the previous page, producing the exact "one page
+                // behind" navigation highlight and geometry profile seen on-device.
+                // Defer one main-run-loop turn, then reject stale queued page
+                // changes so the newest selection owns both content and geometry.
+                DispatchQueue.main.async { [weak self] in
+                    guard let self,
+                          self.allowsOverlayWork(generation: sessionGeneration),
+                          self.modules.navigation.selectedPage == page else {
+                        return
+                    }
+
+                    self.resetExpandedContentScrollTracking()
+                    if page != .agents {
+                        self.layoutStore.setExpandedContentScrollRegion(.zero)
+                    }
+                    guard self.islandState.state == .expanded else { return }
+                    self.reposition(
+                        animated: true,
+                        reason: "expandedPageChanged",
+                        force: true
+                    )
                 }
-                guard self.islandState.state == .expanded else { return }
-                self.reposition(animated: true, reason: "expandedPageChanged", force: true)
             }
             .store(in: &cancellables)
 
