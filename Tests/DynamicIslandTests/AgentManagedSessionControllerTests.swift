@@ -395,9 +395,11 @@ final class AgentManagedSessionControllerTests: XCTestCase {
         XCTAssertTrue(controller.availableModels.contains { $0.model == "model-b" })
 
         XCTAssertTrue(controller.selectModel("model-b", for: managedSession))
-        XCTAssertEqual(controller.selectedModel(for: managedSession), "model-b")
+        XCTAssertEqual(controller.selectedModel(for: managedSession), "gpt-test")
+        XCTAssertEqual(controller.pendingModel(for: managedSession), "model-b")
         XCTAssertFalse(controller.selectModel("unsupported-model", for: managedSession))
-        XCTAssertEqual(controller.selectedModel(for: managedSession), "model-b")
+        XCTAssertEqual(controller.selectedModel(for: managedSession), "gpt-test")
+        XCTAssertEqual(controller.pendingModel(for: managedSession), "model-b")
         let otherSession = try XCTUnwrap(store.sessions.first {
             $0.id.sessionID.nativeID == "other-thread"
         })
@@ -439,18 +441,92 @@ final class AgentManagedSessionControllerTests: XCTestCase {
         XCTAssertTrue(controller.selectModel("model-b", for: second))
         controller.selectSession(first.id)
         controller.reconcileSelection(with: store.sessions)
-        XCTAssertEqual(controller.selectedModel(for: first), "model-a")
+        XCTAssertEqual(controller.selectedModel(for: first), first.project.model)
+        XCTAssertEqual(controller.pendingModel(for: first), "model-a")
         controller.selectSession(second.id)
-        XCTAssertEqual(controller.selectedModel(for: second), "model-b")
+        XCTAssertEqual(controller.selectedModel(for: second), second.project.model)
+        XCTAssertEqual(controller.pendingModel(for: second), "model-b")
         controller.selectSession(first.id)
-        XCTAssertEqual(controller.selectedModel(for: first), "model-a")
+        XCTAssertEqual(controller.pendingModel(for: first), "model-a")
 
         await provider.setModels([Self.model("model-b")])
         await controller.refreshPersistentSnapshot()
 
         XCTAssertEqual(controller.selectedModel(for: first), first.project.model)
-        XCTAssertEqual(controller.selectedModel(for: second), "model-b")
+        XCTAssertNil(controller.pendingModel(for: first))
+        XCTAssertEqual(controller.selectedModel(for: second), second.project.model)
+        XCTAssertEqual(controller.pendingModel(for: second), "model-b")
         XCTAssertEqual(controller.selectedSessionID, first.id)
+    }
+
+    @MainActor
+    func testNewSessionUsesSelectedProviderModelAndFailureCreatesNoFakeSession() async throws {
+        let provider = PersistentSnapshotFakeProvider(
+            sessions: [],
+            usage: AgentUsage()
+        )
+        let store = AgentEventStore()
+        let controller = AgentManagedSessionController(
+            provider: provider,
+            coordinator: AgentIngestionCoordinator(eventStore: store),
+            eventStore: store,
+            approvals: AgentApprovalController()
+        )
+        await controller.refreshPersistentSnapshot()
+
+        XCTAssertTrue(controller.selectNewSessionModel("model-b", for: .codex))
+        let started = await controller.startNewSession(cwd: "/tmp/DynamicIsland")
+        XCTAssertEqual(started?.model, "model-b")
+        let startedModels = await provider.startedSessionModels()
+        XCTAssertEqual(startedModels, ["model-b"])
+        XCTAssertEqual(store.sessions.count, 1)
+
+        await provider.setStartFailure(true)
+        let before = store.sessions.count
+        let failed = await controller.startNewSession(cwd: "/tmp/DynamicIsland")
+        XCTAssertNil(failed)
+        XCTAssertEqual(store.sessions.count, before)
+        controller.stop()
+    }
+
+    @MainActor
+    func testActiveTurnBlocksModelSelectionUntilCompletion() async throws {
+        let provider = PersistentSnapshotFakeProvider(
+            sessions: [Self.descriptor(id: "model-active", state: .idle)],
+            usage: AgentUsage()
+        )
+        let store = AgentEventStore()
+        let controller = AgentManagedSessionController(
+            provider: provider,
+            coordinator: AgentIngestionCoordinator(eventStore: store),
+            eventStore: store,
+            approvals: AgentApprovalController()
+        )
+        controller.startObserving()
+        await controller.refreshPersistentSnapshot()
+        let session = try XCTUnwrap(store.sessions.first)
+        controller.connect(session)
+        try await Task.sleep(for: .milliseconds(30))
+        let managedSession = try XCTUnwrap(store.sessions.first)
+
+        await provider.yield(.turnStarted(.init(
+            nativeSessionID: "model-active",
+            turnID: "turn-active"
+        )))
+        try await Task.sleep(for: .milliseconds(30))
+
+        XCTAssertFalse(controller.canSelectModel(for: managedSession))
+        XCTAssertFalse(controller.selectModel("model-b", for: managedSession))
+        XCTAssertNil(controller.pendingModel(for: managedSession))
+
+        await provider.yield(.turnCompleted(
+            .init(nativeSessionID: "model-active", turnID: "turn-active"),
+            state: .completed,
+            summary: nil
+        ))
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertTrue(controller.canSelectModel(for: managedSession))
+        controller.stop()
     }
 
     @MainActor
@@ -653,17 +729,18 @@ final class AgentManagedSessionControllerTests: XCTestCase {
     }
 
     @MainActor
-    func testSessionApprovalPolicyAutoAllowsExactManagedRequestAndProjectsSafeStatus() async throws {
+    func testConfiguredApprovalPolicyStillRequiresManualDecisionInProduction() async throws {
         let provider = PersistentSnapshotFakeProvider(
             sessions: [Self.descriptor(id: "approval-session", state: .notLoaded)],
             usage: AgentUsage()
         )
         let store = AgentEventStore()
+        let approvals = AgentApprovalController()
         let controller = AgentManagedSessionController(
             provider: provider,
             coordinator: AgentIngestionCoordinator(eventStore: store),
             eventStore: store,
-            approvals: AgentApprovalController()
+            approvals: approvals
         )
 
         controller.startObserving()
@@ -671,10 +748,7 @@ final class AgentManagedSessionControllerTests: XCTestCase {
         controller.connect(try XCTUnwrap(store.sessions.first))
         try await Task.sleep(for: .milliseconds(30))
         let session = try XCTUnwrap(store.sessions.first)
-        XCTAssertTrue(session.capabilities.contains(.approvalControl))
-
         controller.setApprovalPolicyChoice(.allowSession, for: session)
-        XCTAssertEqual(controller.approvalPolicy(for: session), .allowSession)
 
         await provider.yield(.approvalRequested(.init(
             requestToken: .string("request-1"),
@@ -684,14 +758,24 @@ final class AgentManagedSessionControllerTests: XCTestCase {
             itemID: "item-1",
             summary: "Run tests"
         )))
-        try await Task.sleep(for: .milliseconds(50))
+        try await Task.sleep(for: .milliseconds(30))
 
-        let decisions = await provider.approvalDecisions()
-        XCTAssertEqual(decisions, ["item-1:allow"])
-        XCTAssertTrue(controller.transcript(for: session).contains {
-            $0.role == .status &&
-            $0.text.contains("Approved automatically") &&
-            $0.text.contains("Run tests")
+        let beforeManualDecision = await provider.approvalDecisions()
+        XCTAssertTrue(beforeManualDecision.isEmpty)
+        let pending = try XCTUnwrap(approvals.pendingRequest(for: session.id))
+        XCTAssertEqual(
+            approvals.resolve(
+                session: session.id,
+                requestID: pending.key.requestID,
+                decision: .allow
+            ),
+            .accepted
+        )
+        try await Task.sleep(for: .milliseconds(30))
+        let afterManualDecision = await provider.approvalDecisions()
+        XCTAssertEqual(afterManualDecision, ["item-1:allow"])
+        XCTAssertFalse(controller.transcript(for: session).contains {
+            $0.text.contains("Approved automatically")
         })
         controller.stop()
     }
@@ -768,7 +852,7 @@ final class AgentManagedSessionControllerTests: XCTestCase {
 
         controller.selectProvider(.claude)
         XCTAssertTrue(controller.accountUsage.scopedEntries.isEmpty)
-        XCTAssertNil(controller.selectedModelOverrides[claudeSession.id.sessionID])
+        XCTAssertNil(controller.pendingModelOverrides[claudeSession.id.sessionID])
         XCTAssertEqual(controller.transcript(for: claudeSession), [])
         controller.selectProvider(.codex)
         XCTAssertEqual(controller.approvalPolicy(for: managedCodex), .allowSession)
@@ -786,7 +870,7 @@ final class AgentManagedSessionControllerTests: XCTestCase {
                     source: "should-not-surface", observedAt: Date()
                 )
             ]),
-            capabilities: [.resumeSession, .submitPrompt, .streamToolActivity]
+            capabilities: [.resumeSession, .submitPrompt, .streamMessages, .streamToolActivity]
         )
         let store = AgentEventStore()
         let controller = AgentManagedSessionController(
@@ -831,7 +915,7 @@ final class AgentManagedSessionControllerTests: XCTestCase {
             provider: .claude,
             sessions: [Self.descriptor(id: "claude-ok", state: .notLoaded, provider: .claude)],
             usage: AgentUsage(),
-            capabilities: [.resumeSession, .submitPrompt, .streamToolActivity]
+            capabilities: [.resumeSession, .submitPrompt, .streamMessages, .streamToolActivity]
         )
         let store = AgentEventStore()
         let controller = AgentManagedSessionController(
@@ -866,19 +950,18 @@ final class AgentManagedSessionControllerTests: XCTestCase {
             usage: AgentUsage()
         )
         let store = AgentEventStore()
+        let approvals = AgentApprovalController()
         let controller = AgentManagedSessionController(
             provider: provider,
             coordinator: AgentIngestionCoordinator(eventStore: store),
             eventStore: store,
-            approvals: AgentApprovalController()
+            approvals: approvals
         )
         controller.startObserving()
         await controller.refreshPersistentSnapshot()
         controller.connect(try XCTUnwrap(store.sessions.first))
         try await Task.sleep(for: .milliseconds(30))
         let session = try XCTUnwrap(store.sessions.first)
-        controller.setApprovalPolicyChoice(.allowSession, for: session)
-
         let request = AgentManagedApprovalRequest(
             requestToken: .string("duplicate"),
             kind: .command,
@@ -889,7 +972,13 @@ final class AgentManagedSessionControllerTests: XCTestCase {
         )
         await provider.yield(.approvalRequested(request))
         await provider.yield(.approvalRequested(request))
-        try await Task.sleep(for: .milliseconds(50))
+        try await Task.sleep(for: .milliseconds(30))
+        let pending = try XCTUnwrap(approvals.pendingRequest(for: session.id))
+        XCTAssertEqual(
+            approvals.resolve(session: session.id, requestID: pending.key.requestID, decision: .allow),
+            .accepted
+        )
+        try await Task.sleep(for: .milliseconds(30))
 
         let decisions = await provider.approvalDecisions()
         XCTAssertEqual(decisions, ["item-duplicate:allow"])
@@ -903,11 +992,12 @@ final class AgentManagedSessionControllerTests: XCTestCase {
             usage: AgentUsage()
         )
         let store = AgentEventStore()
+        let approvals = AgentApprovalController()
         let controller = AgentManagedSessionController(
             provider: provider,
             coordinator: AgentIngestionCoordinator(eventStore: store),
             eventStore: store,
-            approvals: AgentApprovalController()
+            approvals: approvals
         )
         controller.startObserving()
         await controller.refreshPersistentSnapshot()
@@ -915,7 +1005,6 @@ final class AgentManagedSessionControllerTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(30))
         let session = try XCTUnwrap(store.sessions.first)
         controller.setApprovalPolicyChoice(.allowSession, for: session)
-        await provider.setApprovalResolutionFailure(true)
 
         await provider.yield(.approvalRequested(.init(
             requestToken: .string("failure"),
@@ -925,12 +1014,15 @@ final class AgentManagedSessionControllerTests: XCTestCase {
             itemID: "item-failure",
             summary: "Run tests"
         )))
-        try await Task.sleep(for: .milliseconds(50))
+        try await Task.sleep(for: .milliseconds(30))
 
+        let beforeManualDecision = await provider.approvalDecisions()
+        XCTAssertTrue(beforeManualDecision.isEmpty)
+        XCTAssertNotNil(approvals.pendingRequest(for: session.id))
         XCTAssertFalse(controller.transcript(for: session).contains {
             $0.text.contains("Approved automatically")
         })
-        XCTAssertNotNil(controller.statusMessage(for: session))
+        approvals.cancelAll()
         controller.stop()
     }
 
@@ -974,6 +1066,8 @@ private actor PersistentSnapshotFakeProvider: AgentInteractiveProvider {
     private var transcript: [AgentManagedTranscriptEntry] = []
     private var submitted: [String] = []
     private var submitFailure = false
+    private var startFailure = false
+    private var startedModels: [String?] = []
     private var approvalResolutionFailure = false
     private var approvalDecisionLog: [String] = []
     private var models: [AgentManagedModelDescriptor] = [
@@ -995,7 +1089,7 @@ private actor PersistentSnapshotFakeProvider: AgentInteractiveProvider {
         usage: AgentUsage,
         capabilities: Set<AgentInteractiveCapability> = [
             .startSession, .resumeSession, .submitPrompt, .interrupt, .selectModel,
-            .resolveApprovals, .accountUsage, .contextUsage, .streamToolActivity, .loadHistory
+            .resolveApprovals, .accountUsage, .contextUsage, .streamMessages, .streamToolActivity, .loadHistory
         ]
     ) {
         self.provider = provider
@@ -1052,8 +1146,25 @@ private actor PersistentSnapshotFakeProvider: AgentInteractiveProvider {
         eventContinuation.yield(event)
     }
 
-    func startSession(cwd: String?) async throws -> AgentManagedSessionDescriptor {
-        throw CodexAppServerError.invalidResponse("unused")
+    func startSession(cwd: String?, model: String?) async throws -> AgentManagedSessionDescriptor {
+        if startFailure { throw CodexAppServerError.rpcError(code: -1, message: "start failed") }
+        startedModels.append(model)
+        let nativeID = "started-\(startedModels.count)"
+        return AgentManagedSessionDescriptor(
+            provider: provider,
+            nativeSessionID: nativeID,
+            cwd: cwd,
+            model: model,
+            acceptsDirectInput: true
+        )
+    }
+
+    func setStartFailure(_ value: Bool) {
+        startFailure = value
+    }
+
+    func startedSessionModels() -> [String?] {
+        startedModels
     }
 
     func resumeSession(nativeSessionID: String) async throws -> AgentManagedSessionDescriptor {

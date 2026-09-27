@@ -6,6 +6,7 @@ actor ClaudeInteractiveProvider: AgentInteractiveProvider {
     nonisolated let interactiveCapabilities: Set<AgentInteractiveCapability> = [
         .resumeSession,
         .submitPrompt,
+        .streamMessages,
         .streamToolActivity
     ]
     nonisolated let modelSelectionScope: AgentModelSelectionScope? = nil
@@ -56,7 +57,7 @@ actor ClaudeInteractiveProvider: AgentInteractiveProvider {
 
     func listModels() async throws -> [AgentManagedModelDescriptor] { [] }
 
-    func startSession(cwd: String?) async throws -> AgentManagedSessionDescriptor {
+    func startSession(cwd: String?, model: String?) async throws -> AgentManagedSessionDescriptor {
         throw ClaudeCodeStreamingError.unsupported
     }
 

@@ -13,6 +13,7 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
         .resolveApprovals,
         .accountUsage,
         .contextUsage,
+        .streamMessages,
         .streamToolActivity,
         .loadHistory
     ]
@@ -130,8 +131,8 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
         }
     }
 
-    func startSession(cwd: String?) async throws -> AgentManagedSessionDescriptor {
-        let thread = try await client.startThread(cwd: cwd)
+    func startSession(cwd: String?, model: String?) async throws -> AgentManagedSessionDescriptor {
+        let thread = try await client.startThread(cwd: cwd, model: model)
         return descriptor(thread)
     }
 

@@ -27,6 +27,7 @@ enum AgentInteractiveCapability: String, CaseIterable, Hashable, Sendable {
     case resolveApprovals
     case accountUsage
     case contextUsage
+    case streamMessages
     case streamToolActivity
     case loadHistory
 }
@@ -139,7 +140,7 @@ protocol AgentInteractiveProvider: Sendable {
     func readAccountUsage() async throws -> AgentUsage
     func readTranscript(nativeSessionID: String, limit: Int) async throws -> [AgentManagedTranscriptEntry]
     func listModels() async throws -> [AgentManagedModelDescriptor]
-    func startSession(cwd: String?) async throws -> AgentManagedSessionDescriptor
+    func startSession(cwd: String?, model: String?) async throws -> AgentManagedSessionDescriptor
     func resumeSession(nativeSessionID: String) async throws -> AgentManagedSessionDescriptor
     func submit(
         prompt: String,

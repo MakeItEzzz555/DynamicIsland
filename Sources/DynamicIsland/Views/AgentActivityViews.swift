@@ -231,7 +231,6 @@ private struct AgentCLIControlBar: View {
                 Spacer(minLength: compact ? 2 : 6)
                 modelControl(for: session, compact: compact)
                 statusControl(for: session, compact: compact)
-                approvalPolicyControl(for: session, compact: compact)
 
                 if managedControl.mode(for: session).canInterrupt {
                     Button {
@@ -323,7 +322,10 @@ private struct AgentCLIControlBar: View {
                     } label: {
                         HStack {
                             Text(option.displayName)
-                            if option.model == managedControl.selectedModel(for: session) {
+                            if option.model == (
+                                managedControl.pendingModel(for: session) ??
+                                managedControl.selectedModel(for: session)
+                            ) {
                                 Image(systemName: "checkmark")
                             }
                         }
@@ -341,7 +343,12 @@ private struct AgentCLIControlBar: View {
                 .foregroundStyle(.white.opacity(0.48))
             }
             .menuStyle(.borderlessButton)
-            .help(modelSelectionHelp(for: session))
+            .disabled(!managedControl.canSelectModel(for: session))
+            .help(
+                managedControl.canSelectModel(for: session)
+                    ? modelSelectionHelp(for: session)
+                    : "Model changes are unavailable while a turn is active or submitting"
+            )
         } else if !compact {
             Text(modelLabel(for: session))
                 .font(.system(size: 8, weight: .medium, design: .monospaced))
@@ -466,9 +473,17 @@ private struct AgentCLIControlBar: View {
     }
 
     private func modelLabel(for session: AgentSession) -> String {
-        if let selected = managedControl.selectedModel(for: session),
-           let option = managedControl.availableModels(for: session).first(where: { $0.model == selected }) {
+        if let authoritative = managedControl.selectedModel(for: session),
+           let option = managedControl.availableModels(for: session).first(where: { $0.model == authoritative }) {
+            if let pending = managedControl.pendingModel(for: session), pending != authoritative,
+               let pendingOption = managedControl.availableModels(for: session).first(where: { $0.model == pending }) {
+                return "\(option.displayName) → \(pendingOption.displayName)"
+            }
             return option.displayName
+        }
+        if let pending = managedControl.pendingModel(for: session),
+           let pendingOption = managedControl.availableModels(for: session).first(where: { $0.model == pending }) {
+            return "Next: \(pendingOption.displayName)"
         }
         return managedControl.selectedModel(for: session) ?? "Model unavailable"
     }
@@ -623,6 +638,37 @@ private struct AgentEmptyConsoleState: View {
             }
 
             if managedControl.interactiveCapabilities.contains(.startSession) {
+                if managedControl.interactiveCapabilities.contains(.selectModel),
+                   !managedControl.availableModels.isEmpty {
+                    Menu {
+                        Button("Provider default") {
+                            _ = managedControl.selectNewSessionModel(nil, for: provider)
+                        }
+                        Divider()
+                        ForEach(managedControl.availableModels) { option in
+                            Button {
+                                _ = managedControl.selectNewSessionModel(option.model, for: provider)
+                            } label: {
+                                HStack {
+                                    Text(option.displayName)
+                                    if managedControl.newSessionModel(for: provider) == option.model {
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
+                            }
+                        }
+                    } label: {
+                        Label(
+                            managedControl.newSessionModel(for: provider).flatMap { selected in
+                                managedControl.availableModels.first(where: { $0.model == selected })?.displayName
+                            } ?? "Provider default model",
+                            systemImage: "cpu"
+                        )
+                    }
+                    .menuStyle(.borderlessButton)
+                    .font(.system(size: 8.5, weight: .medium))
+                }
+
                 Button {
                     guard !starting else { return }
                     starting = true

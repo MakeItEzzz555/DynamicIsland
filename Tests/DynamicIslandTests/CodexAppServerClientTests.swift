@@ -86,6 +86,15 @@ final class CodexAppServerClientTests: XCTestCase {
                     ],
                     "nextCursor": None
                 }}), flush=True)
+            elif method == "thread/start":
+                model = message.get("params", {}).get("model")
+                if model != "model-a":
+                    print(json.dumps({"id": request_id, "error": {"code": -1, "message": "missing thread model"}}), flush=True)
+                else:
+                    print(json.dumps({"id": request_id, "result": {
+                        "thread": {"id":"thread-new","cwd":"/tmp","model":"model-a","canAcceptDirectInput":True},
+                        "cwd":"/tmp","model":"model-a"
+                    }}), flush=True)
             elif method == "turn/start":
                 model = message.get("params", {}).get("model")
                 if model != "model-a":
@@ -105,7 +114,7 @@ final class CodexAppServerClientTests: XCTestCase {
         XCTAssertEqual(provider.modelSelectionScope, .turnAndSubsequent)
         XCTAssertEqual(provider.interactiveCapabilities, [
             .startSession, .resumeSession, .submitPrompt, .interrupt, .selectModel,
-            .resolveApprovals, .accountUsage, .contextUsage, .streamToolActivity,
+            .resolveApprovals, .accountUsage, .contextUsage, .streamMessages, .streamToolActivity,
             .loadHistory
         ])
 
@@ -113,6 +122,10 @@ final class CodexAppServerClientTests: XCTestCase {
         XCTAssertEqual(models.map(\.model), ["model-a"])
         XCTAssertEqual(models.first?.displayName, "Model A")
         XCTAssertEqual(models.first?.isDefault, true)
+
+        let newSession = try await provider.startSession(cwd: "/tmp", model: "model-a")
+        XCTAssertEqual(newSession.nativeSessionID, "thread-new")
+        XCTAssertEqual(newSession.model, "model-a")
 
         let turn = try await provider.submit(
             prompt: "hello",

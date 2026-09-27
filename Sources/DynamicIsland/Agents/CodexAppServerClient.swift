@@ -275,10 +275,11 @@ actor CodexAppServerClient {
         stopProcessOnly()
     }
 
-    func startThread(cwd: String?) async throws -> CodexManagedThread {
+    func startThread(cwd: String?, model: String? = nil) async throws -> CodexManagedThread {
         try await start()
         var params: [String: CodexJSONValue] = [:]
         if let cwd, !cwd.isEmpty { params["cwd"] = .string(cwd) }
+        if let model, !model.isEmpty { params["model"] = .string(model) }
         let result = try await request(method: "thread/start", params: .object(params))
         return try decodeThreadResponse(result, method: "thread/start")
     }

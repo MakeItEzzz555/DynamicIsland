@@ -11,7 +11,8 @@ final class AgentManagedSessionController: ObservableObject {
     @Published private(set) var accountUsageByProvider: [AgentProvider: AgentUsage] = [:]
     @Published private(set) var transcripts: [AgentSessionID: [AgentManagedTranscriptEntry]] = [:]
     @Published private(set) var modelsByProvider: [AgentProvider: [AgentManagedModelDescriptor]] = [:]
-    @Published private(set) var selectedModelOverrides: [AgentSessionID: String] = [:]
+    @Published private(set) var pendingModelOverrides: [AgentSessionID: String] = [:]
+    @Published private(set) var newSessionModelByProvider: [AgentProvider: String] = [:]
     @Published private(set) var selectedProvider: AgentProvider?
     @Published private(set) var selectedSessionIDs: [AgentProvider: AgentSessionInstanceID] = [:]
     @Published private(set) var approvalPolicies: [AgentApprovalPolicyKey: AgentApprovalPolicyState] = [:]
@@ -286,7 +287,7 @@ final class AgentManagedSessionController: ObservableObject {
             let filtered = models.filter { !$0.model.isEmpty }
             modelsByProvider[agentProvider] = filtered
             let validModels = Set(filtered.map(\.model))
-            selectedModelOverrides = selectedModelOverrides.filter { sessionID, model in
+            pendingModelOverrides = pendingModelOverrides.filter { sessionID, model in
                 sessionID.provider != agentProvider || validModels.contains(model)
             }
         }
@@ -350,6 +351,11 @@ final class AgentManagedSessionController: ObservableObject {
                 )),
                 providerTimestamp: min(discovered.updatedAt, Date())
             )
+        }
+
+        if let pending = pendingModelOverrides[sessionID],
+           descriptor.model == pending {
+            pendingModelOverrides.removeValue(forKey: sessionID)
         }
 
         if discovered.runtimeState == .systemError {
@@ -553,7 +559,10 @@ final class AgentManagedSessionController: ObservableObject {
               provider.interactiveCapabilities.contains(.startSession) else { return nil }
         startObserving()
         do {
-            let descriptor = try await provider.startSession(cwd: cwd)
+            let descriptor = try await provider.startSession(
+                cwd: cwd,
+                model: newSessionModelByProvider[selectedProvider]
+            )
             markManaged(descriptor)
             _ = await emitSessionAvailability(descriptor, type: .sessionStarted)
             return descriptor
@@ -564,23 +573,53 @@ final class AgentManagedSessionController: ObservableObject {
     }
 
     func selectedModel(for session: AgentSession) -> String? {
-        selectedModelOverrides[session.id.sessionID] ?? session.project.model
+        session.project.model
+    }
+
+    func pendingModel(for session: AgentSession) -> String? {
+        pendingModelOverrides[session.id.sessionID]
+    }
+
+    func newSessionModel(for provider: AgentProvider) -> String? {
+        newSessionModelByProvider[provider]
+    }
+
+    @discardableResult
+    func selectNewSessionModel(_ model: String?, for provider: AgentProvider) -> Bool {
+        guard capabilities(for: provider).contains(.selectModel) else { return false }
+        guard let model else {
+            newSessionModelByProvider.removeValue(forKey: provider)
+            return true
+        }
+        guard (modelsByProvider[provider] ?? []).contains(where: { $0.model == model }) else {
+            return false
+        }
+        newSessionModelByProvider[provider] = model
+        return true
+    }
+
+    func canSelectModel(for session: AgentSession) -> Bool {
+        guard let provider = providers[session.id.sessionID.provider],
+              provider.interactiveCapabilities.contains(.selectModel),
+              provider.modelSelectionScope != nil else { return false }
+        if let control = managed[session.id.sessionID] {
+            return control.activeTurnID == nil && !control.isSubmitting
+        }
+        return true
     }
 
     @discardableResult
     func selectModel(_ model: String?, for session: AgentSession) -> Bool {
-        guard let provider = providers[session.id.sessionID.provider],
-              provider.interactiveCapabilities.contains(.selectModel),
-              provider.modelSelectionScope != nil else { return false }
+        guard canSelectModel(for: session) else { return false }
         let sessionID = session.id.sessionID
         guard let model else {
-            selectedModelOverrides.removeValue(forKey: sessionID)
+            pendingModelOverrides.removeValue(forKey: sessionID)
             return true
         }
         guard (modelsByProvider[sessionID.provider] ?? []).contains(where: { $0.model == model }) else {
             return false
         }
-        selectedModelOverrides[sessionID] = model
+        pendingModelOverrides[sessionID] = model
         return true
     }
 
@@ -606,7 +645,7 @@ final class AgentManagedSessionController: ObservableObject {
             let turn = try await provider.submit(
                 prompt: bounded,
                 nativeSessionID: nativeID,
-                model: selectedModelOverrides[session.id.sessionID]
+                model: pendingModelOverrides[session.id.sessionID]
             )
             updateControl(sessionID) {
                 $0.isSubmitting = false
@@ -618,6 +657,9 @@ final class AgentManagedSessionController: ObservableObject {
                 sessionID: sessionID,
                 turnID: turn.turnID
             )
+            Task { @MainActor [weak self] in
+                await self?.refreshPersistentSnapshot()
+            }
             return true
         } catch {
             let message = Self.safeError(error, provider: sessionID.provider)
@@ -856,33 +898,11 @@ final class AgentManagedSessionController: ObservableObject {
         managedApprovalKeys.insert(controlRequest.key)
         defer { managedApprovalKeys.remove(controlRequest.key) }
 
-        let policy = approvalPolicies[AgentApprovalPolicyKey(session: instance)]
-        let supportsApprovalControl =
-            provider.interactiveCapabilities.contains(.resolveApprovals) &&
-            eventStore.sessions.first(where: { $0.id == instance })?
-                .capabilities.contains(.approvalControl) == true
-        let policyDecision = AgentApprovalPolicyEvaluator.decision(
-            policy: policy,
-            provider: agentProvider,
-            session: instance,
-            turnID: request.turnID,
-            supportsApprovalControl: supportsApprovalControl,
-            requestIsCurrent: controlRequest.expiresAt > Date()
-        )
-
-        let allow: Bool
-        let wasAutomatic: Bool
-        switch policyDecision {
-        case .allowAutomatically:
-            allow = true
-            wasAutomatic = true
-        case .manual:
-            let decision = await approvals.request(controlRequest)
-            // This isolated app-server has no secondary approval UI. Timeout or
-            // dismissal must fail closed so its turn cannot remain blocked forever.
-            allow = decision == .allow
-            wasAutomatic = false
-        }
+        // Approval policy types are intentionally design-only in this phase.
+        // Production remains manual one-shot until the dedicated approval phase.
+        let decision = await approvals.request(controlRequest)
+        let allow = decision == .allow
+        let wasAutomatic = false
 
         do {
             try await provider.resolveApproval(request, allow: allow)
