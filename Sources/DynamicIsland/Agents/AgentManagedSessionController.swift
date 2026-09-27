@@ -145,9 +145,6 @@ final class AgentManagedSessionController: ObservableObject {
             guard !Task.isCancelled else { return }
             var retained = accountUsage
             retained.merge(refreshed)
-            if let context = freshestStoredContextUsage() {
-                retained.merge(context)
-            }
             accountUsage = retained
             lastTransportError = nil
         } catch {
@@ -166,17 +163,6 @@ final class AgentManagedSessionController: ObservableObject {
         } catch {
             lastTransportError = Self.safeError(error)
         }
-    }
-
-    private func freshestStoredContextUsage() -> AgentUsage? {
-        let samples = eventStore.sessions
-            .filter { $0.id.sessionID.provider == .codex }
-            .flatMap { $0.usage.samples(for: .contextUsed) }
-            .sorted { $0.observedAt > $1.observedAt }
-        guard let sample = samples.first else { return nil }
-        return AgentUsage(scopedSamples: [
-            AgentUsageKey(metric: .contextUsed, scope: sample.scope): sample
-        ])
     }
 
     private func registerDiscoveredSession(
@@ -326,7 +312,16 @@ final class AgentManagedSessionController: ObservableObject {
                 nativeSessionID: session.id.sessionID.nativeID,
                 limit: min(max(limit, 1), 100)
             )
-            transcripts[session.id.sessionID.nativeID] = Self.boundedTranscript(entries)
+            let nativeID = session.id.sessionID.nativeID
+            transcripts[nativeID] = Self.mergedTranscript(
+                current: transcripts[nativeID] ?? [],
+                incoming: entries
+            )
+        } catch CodexAppServerError.rpcError(let code, _) where code == -32601 {
+            // Some persisted/legacy threads cannot serve the paginated v2
+            // history method. Keep any live trustworthy entries and leave
+            // control usable instead of surfacing an unrelated transport error.
+            return
         } catch {
             recordError(error, for: session.id.sessionID.nativeID)
         }
@@ -430,6 +425,11 @@ final class AgentManagedSessionController: ObservableObject {
                 $0.activeTurnID = turn.turnID
                 $0.lastError = nil
             }
+            projectAcceptedUserPrompt(
+                bounded,
+                nativeSessionID: nativeID,
+                turnID: turn.turnID
+            )
             return true
         } catch {
             updateControl(nativeID) {
@@ -789,8 +789,53 @@ final class AgentManagedSessionController: ObservableObject {
         )
     }
 
+    private static func mergedTranscript(
+        current: [AgentManagedTranscriptEntry],
+        incoming: [AgentManagedTranscriptEntry]
+    ) -> [AgentManagedTranscriptEntry] {
+        var entries = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
+        for entry in incoming {
+            if entry.role == .user, let turnID = entry.turnID,
+               !entry.id.hasPrefix("submitted-user:") {
+                let provisionalKeys = entries.compactMap { key, existing in
+                    existing.id.hasPrefix("submitted-user:") &&
+                        existing.turnID == turnID && existing.role == .user ? key : nil
+                }
+                for key in provisionalKeys { entries.removeValue(forKey: key) }
+            }
+            entries[entry.id] = entry
+        }
+        return boundedTranscript(Array(entries.values))
+    }
+
+    private func projectAcceptedUserPrompt(
+        _ prompt: String,
+        nativeSessionID: String,
+        turnID: String
+    ) {
+        let entries = transcripts[nativeSessionID] ?? []
+        guard !entries.contains(where: {
+            $0.turnID == turnID && $0.role == .user && $0.text == prompt
+        }) else { return }
+        upsertTranscript(AgentManagedTranscriptEntry(
+            id: "submitted-user:\(nativeSessionID):\(turnID)",
+            nativeSessionID: nativeSessionID,
+            turnID: turnID,
+            role: .user,
+            text: prompt,
+            timestamp: Date()
+        ))
+    }
+
     private func upsertTranscript(_ entry: AgentManagedTranscriptEntry) {
         var entries = transcripts[entry.nativeSessionID] ?? []
+        if entry.role == .user, let turnID = entry.turnID,
+           !entry.id.hasPrefix("submitted-user:") {
+            entries.removeAll {
+                $0.id.hasPrefix("submitted-user:") &&
+                    $0.turnID == turnID && $0.role == .user
+            }
+        }
         if let index = entries.firstIndex(where: { $0.id == entry.id }) {
             entries[index] = entry
         } else {

@@ -192,7 +192,12 @@ private struct AgentCompactSessionSelector: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Label("Codex", systemImage: AgentVisualStyle.providerSymbol(.codex))
+            Label(
+                selectedSession?.id.sessionID.provider.stableName.capitalized ?? "Agent",
+                systemImage: AgentVisualStyle.providerSymbol(
+                    selectedSession?.id.sessionID.provider ?? .other("agent")
+                )
+            )
                 .font(.system(size: 9, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.72))
 
@@ -299,7 +304,12 @@ private struct AgentCompactSessionSelector: View {
     private func sessionDetail(_ session: AgentSession) -> String {
         let state = AgentSessionPresentation.displayedStateLabel(for: session, at: Date())
         let model = session.project.model ?? "unknown model"
-        return "\(state) · \(model)"
+        let provider = session.id.sessionID.provider.stableName.capitalized
+        let recency = RelativeDateTimeFormatter().localizedString(
+            for: session.lastUpdatedAt,
+            relativeTo: Date()
+        )
+        return "\(provider) · \(model) · \(state) · \(recency)"
     }
 }
 
@@ -327,44 +337,63 @@ private struct AgentSelectedSessionControlView: View {
             .task(id: session.id) {
                 await managedControl.refreshTranscript(for: session)
             }
-        } else if session.id.sessionID.provider == .codex {
-            HStack(spacing: 8) {
-                Image(systemName: "link.badge.plus")
-                    .foregroundStyle(.white.opacity(0.50))
-                Text(session.availability == .resumable
-                    ? "Resumable Codex session"
-                    : "Observed Codex session")
-                    .font(.system(size: 8.5, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.62))
-                if let status = managedControl.statusMessage(for: session) {
-                    Text(status)
-                        .font(.system(size: 8, weight: .medium))
-                        .foregroundStyle(.orange.opacity(0.78))
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 8)
-                if managedControl.canConnect(session) ||
-                    managedControl.connecting.contains(session.id.sessionID.nativeID) {
-                    Button {
-                        managedControl.connect(session)
-                    } label: {
-                        Label(
-                            managedControl.connecting.contains(session.id.sessionID.nativeID)
-                                ? "Connecting…"
-                                : (session.availability == .resumable ? "Resume" : "Control"),
-                            systemImage: "terminal"
-                        )
+        } else {
+            VStack(spacing: 5) {
+                if session.id.sessionID.provider == .codex {
+                    HStack(spacing: 8) {
+                        Image(systemName: "link.badge.plus")
+                            .foregroundStyle(.white.opacity(0.50))
+                        Text(session.availability == .resumable
+                            ? "Resumable Codex session"
+                            : "Observed Codex session")
+                            .font(.system(size: 8.5, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.62))
+                        if let status = managedControl.statusMessage(for: session) {
+                            Text(status)
+                                .font(.system(size: 8, weight: .medium))
+                                .foregroundStyle(.orange.opacity(0.78))
+                                .lineLimit(1)
+                        }
+                        Spacer(minLength: 8)
+                        if managedControl.canConnect(session) ||
+                            managedControl.connecting.contains(session.id.sessionID.nativeID) {
+                            Button {
+                                managedControl.connect(session)
+                            } label: {
+                                Label(
+                                    managedControl.connecting.contains(session.id.sessionID.nativeID)
+                                        ? "Connecting…"
+                                        : (session.availability == .resumable ? "Resume" : "Control"),
+                                    systemImage: "terminal"
+                                )
+                            }
+                            .buttonStyle(.borderless)
+                            .font(.system(size: 8.5, weight: .semibold))
+                            .disabled(!managedControl.canConnect(session))
+                            .help("Resume this Codex thread through the official app-server control plane")
+                        }
                     }
-                    .buttonStyle(.borderless)
-                    .font(.system(size: 8.5, weight: .semibold))
-                    .disabled(!managedControl.canConnect(session))
-                    .help("Resume this Codex thread through the official app-server control plane")
+                    .padding(.horizontal, 8)
+                    .frame(height: 26)
+                    .background(.white.opacity(0.022))
+                    .accessibilityElement(children: .contain)
                 }
+
+                AgentEmbeddedConsoleView(
+                    session: session,
+                    mode: .observed,
+                    maximumActivityEntries: activityLimit,
+                    transcriptEntries: managedControl.transcript(for: session),
+                    layoutStore: layoutStore,
+                    approvalControl: approvalControl,
+                    onSubmit: { _ in false },
+                    onInterrupt: {}
+                )
+                .frame(minHeight: max(detailHeight - 31, 104), maxHeight: .infinity)
             }
-            .padding(.horizontal, 8)
-            .frame(height: 26)
-            .background(.white.opacity(0.022))
-            .accessibilityElement(children: .contain)
+            .task(id: session.id) {
+                await managedControl.refreshTranscript(for: session)
+            }
         }
     }
 }

@@ -41,6 +41,11 @@ struct AgentInteractiveModelOption: Identifiable, Equatable, Sendable {
 enum AgentManagedTranscriptRole: String, Equatable, Sendable {
     case user
     case agent
+    case tool
+    case command
+    case plan
+    case status
+    case error
 }
 
 struct AgentManagedTranscriptEntry: Identifiable, Equatable, Sendable {

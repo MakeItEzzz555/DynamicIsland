@@ -78,7 +78,8 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
                 $0.item,
                 nativeSessionID: nativeSessionID,
                 turnID: $0.turnID,
-                timestamp: $0.timestamp
+                timestamp: $0.timestamp,
+                includesSafeActivities: true
             )
         }
     }
@@ -99,12 +100,7 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
 
     func readAccountUsage() async throws -> AgentUsage {
         let rateResult = try await client.readAccountRateLimits()
-        var usage = Self.mapAccountRateLimits(rateResult)
-        if let listedThreads = try? await client.listThreads(limit: 50),
-           let context = Self.latestContextUsage(from: listedThreads) {
-            usage.merge(context)
-        }
-        return usage
+        return Self.mapAccountRateLimits(rateResult)
     }
 
     nonisolated static func boundedDiscovery(
@@ -404,7 +400,8 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
                     item,
                     nativeSessionID: threadID,
                     turnID: turnID,
-                    timestamp: Date()
+                    timestamp: Date(),
+                    includesSafeActivities: false
                 ) {
                     return .transcript(transcript)
                 }
@@ -508,7 +505,8 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
         _ item: CodexJSONValue,
         nativeSessionID: String,
         turnID: String,
-        timestamp: Date
+        timestamp: Date,
+        includesSafeActivities: Bool
     ) -> AgentManagedTranscriptEntry? {
         guard let itemType = item["type"]?.stringValue,
               let itemID = item["id"]?.stringValue else { return nil }
@@ -527,6 +525,27 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
                 return input["text"]?.stringValue
             } ?? []
             rawText = textParts.isEmpty ? nil : textParts.joined(separator: "\n")
+        case "commandExecution" where includesSafeActivities:
+            role = .command
+            rawText = AgentPrivacyProjection.commandSummary(
+                executable: item["command"]?.stringValue
+            )
+        case "fileChange" where includesSafeActivities:
+            role = .tool
+            let count = item["changes"]?.arrayValue?.count ?? 0
+            rawText = count > 0 ? "Updated \(count) file\(count == 1 ? "" : "s")" : "Updated files"
+        case "mcpToolCall" where includesSafeActivities:
+            role = .tool
+            rawText = "Used \(AgentPrivacyProjection.toolName(item["tool"]?.stringValue))"
+        case "dynamicToolCall" where includesSafeActivities:
+            role = .tool
+            rawText = "Used \(AgentPrivacyProjection.toolName(item["tool"]?.stringValue))"
+        case "webSearch" where includesSafeActivities:
+            role = .tool
+            rawText = "Searched the web"
+        case "plan" where includesSafeActivities:
+            role = .plan
+            rawText = "Plan updated"
         default:
             // Explicitly exclude reasoning, raw command output, environment-bearing
             // items, and all other internal provider payloads from the transcript.

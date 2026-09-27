@@ -402,7 +402,7 @@ enum AgentWorkspaceSelection {
         if let current, sessions.contains(where: { $0.id == current }) {
             return current
         }
-        return sessions.sorted(by: AgentSessionPresentation.isOrderedBefore).first?.id
+        return sessions.sorted(by: isOrderedBefore).first?.id
     }
 
     static func session(
@@ -411,6 +411,28 @@ enum AgentWorkspaceSelection {
     ) -> AgentSession? {
         guard let selected = resolve(current: current, sessions: sessions) else { return nil }
         return sessions.first { $0.id == selected }
+    }
+
+    private static func isOrderedBefore(_ lhs: AgentSession, _ rhs: AgentSession) -> Bool {
+        let lhsRank = fallbackRank(lhs)
+        let rhsRank = fallbackRank(rhs)
+        if lhsRank != rhsRank { return lhsRank < rhsRank }
+        return AgentSessionPresentation.isOrderedBefore(lhs, rhs)
+    }
+
+    private static func fallbackRank(_ session: AgentSession) -> Int {
+        switch AgentSessionPresentation.priority(for: session) {
+        case .actionRequired, .failure:
+            return 0
+        case .working, .thinking:
+            return 1
+        case .idle where session.availability != .resumable:
+            return 2
+        case .idle:
+            return 3
+        case .recent:
+            return 4
+        }
     }
 }
 
@@ -753,6 +775,93 @@ struct AgentOperationSummary: Identifiable, Equatable, Sendable {
 
     var displayTitle: String {
         count > 1 ? "\(title) ×\(count)" : title
+    }
+}
+
+enum AgentConsoleEntryKind: String, Hashable, Sendable {
+    case user
+    case agent
+    case tool
+    case command
+    case plan
+    case approval
+    case status
+    case error
+}
+
+/// A bounded, display-only projection of provider-authorized transcript and
+/// normalized operation evidence. It deliberately carries no raw provider
+/// payload, stderr, environment, or private reasoning.
+struct AgentConsoleEntry: Identifiable, Equatable, Sendable {
+    static let maximumEntries = 80
+
+    let id: String
+    let timestamp: Date
+    let kind: AgentConsoleEntryKind
+    let title: String
+    let text: String?
+    let status: AgentOperationStatus?
+    let correlationID: String?
+
+    static func make(
+        transcript: [AgentManagedTranscriptEntry],
+        operations: [AgentOperationSummary],
+        limit: Int = maximumEntries
+    ) -> [Self] {
+        let messages = transcript.map { message in
+            let presentation = transcriptPresentation(for: message.role)
+            return Self(
+                id: "message:\(message.id)",
+                timestamp: message.timestamp,
+                kind: presentation.kind,
+                title: presentation.title,
+                text: message.text,
+                status: nil,
+                correlationID: message.turnID
+            )
+        }
+        let activities = operations.map { operation in
+            Self(
+                id: "operation:\(operation.id)",
+                timestamp: operation.date,
+                kind: kind(for: operation),
+                title: operation.displayTitle,
+                text: operation.detail,
+                status: operation.status,
+                correlationID: operation.id
+            )
+        }
+        let boundedLimit = min(max(limit, 0), maximumEntries)
+        return Array((messages + activities).sorted {
+            if $0.timestamp != $1.timestamp { return $0.timestamp < $1.timestamp }
+            return $0.id < $1.id
+        }.suffix(boundedLimit))
+    }
+
+    private static func kind(for operation: AgentOperationSummary) -> AgentConsoleEntryKind {
+        if operation.isCommand { return .command }
+        let title = operation.title.lowercased()
+        if title.contains("approval") { return .approval }
+        if title.contains("plan") { return .plan }
+        if operation.status == .failed || title.contains("failed") { return .error }
+        if title == "completed" || title == "interrupted" || title.contains("waiting") {
+            return .status
+        }
+        return .tool
+    }
+
+    private static func transcriptPresentation(
+        for role: AgentManagedTranscriptRole
+    ) -> (kind: AgentConsoleEntryKind, title: String) {
+        switch role {
+        case .user: (.user, "You")
+        case .agent: (.agent, "Codex")
+        case .tool: (.tool, "Tool")
+        case .command: (.command, "Command")
+        case .plan: (.plan, "Plan")
+        case .status: (.status, "Status")
+        case .error: (.error, "Error")
+        }
     }
 }
 

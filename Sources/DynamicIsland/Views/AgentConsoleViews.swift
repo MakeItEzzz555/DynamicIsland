@@ -187,9 +187,9 @@ struct AgentEmbeddedConsoleView: View {
         let operations = AgentOperationAggregation.make(
             for: session,
             limit: maximumActivityEntries,
-            includePendingApprovals: true
+            includePendingApprovals: actionableApproval == nil
         )
-        let timeline = AgentConsoleTimelineEntry.make(
+        let timeline = AgentConsoleEntry.make(
             transcript: transcriptEntries,
             operations: operations
         )
@@ -204,12 +204,7 @@ struct AgentEmbeddedConsoleView: View {
                 .foregroundStyle(.white.opacity(0.48))
             } else {
                 ForEach(timeline) { entry in
-                    switch entry.content {
-                    case .message(let message):
-                        AgentConsoleMessageRow(message: message)
-                    case .operation(let operation):
-                        operationRow(operation)
-                    }
+                    consoleEntryRow(entry)
                 }
             }
 
@@ -230,21 +225,54 @@ struct AgentEmbeddedConsoleView: View {
         return AgentApprovalPresentation.isActionable(session: session, pending: pending) ? pending : nil
     }
 
-    private func operationRow(_ operation: AgentOperationSummary) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Image(systemName: operation.symbol)
-                .frame(width: 11)
-                .foregroundStyle(operationColor(operation.status))
-            Text(operation.displayTitle)
-                .fontDesign(operation.isCommand ? .monospaced : .default)
-                .foregroundStyle(.white.opacity(operation.status == .active ? 0.88 : 0.52))
-                .lineLimit(2)
-            if let detail = operation.detail, !detail.isEmpty {
-                Text(detail)
-                    .fontDesign(operation.isCommand ? .monospaced : .default)
-                    .foregroundStyle(.white.opacity(0.34))
-                    .lineLimit(2)
+    @ViewBuilder
+    private func consoleEntryRow(_ entry: AgentConsoleEntry) -> some View {
+        if entry.kind == .user || entry.kind == .agent {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entry.title)
+                    .font(.system(size: 7.5, weight: .bold))
+                    .foregroundStyle(
+                        entry.kind == .user
+                            ? Color.white.opacity(0.48)
+                            : Color.cyan.opacity(0.72)
+                    )
+                if let text = entry.text {
+                    Text(text)
+                        .font(.system(size: 9, weight: .regular, design: .monospaced))
+                        .foregroundStyle(.white.opacity(entry.kind == .user ? 0.72 : 0.88))
+                        .textSelection(.enabled)
+                }
             }
+            .padding(.vertical, 2)
+        } else {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Image(systemName: symbol(for: entry.kind))
+                    .frame(width: 11)
+                    .foregroundStyle(operationColor(entry.status ?? .unknown))
+                Text(entry.title)
+                    .fontDesign(entry.kind == .command ? .monospaced : .default)
+                    .foregroundStyle(.white.opacity(entry.status == .active ? 0.88 : 0.52))
+                    .lineLimit(2)
+                if let text = entry.text, !text.isEmpty {
+                    Text(text)
+                        .fontDesign(entry.kind == .command ? .monospaced : .default)
+                        .foregroundStyle(.white.opacity(0.34))
+                        .lineLimit(2)
+                }
+            }
+        }
+    }
+
+    private func symbol(for kind: AgentConsoleEntryKind) -> String {
+        switch kind {
+        case .user: "person.fill"
+        case .agent: "sparkles"
+        case .tool: "wrench.and.screwdriver"
+        case .command: "terminal"
+        case .plan: "list.bullet.clipboard"
+        case .approval: "checkmark.shield"
+        case .status: "circle.dotted"
+        case .error: "exclamationmark.triangle.fill"
         }
     }
 
@@ -361,33 +389,6 @@ private struct AgentConsoleBottomPositionPreferenceKey: PreferenceKey {
     }
 }
 
-private struct AgentConsoleTimelineEntry: Identifiable {
-    enum Content {
-        case message(AgentManagedTranscriptEntry)
-        case operation(AgentOperationSummary)
-    }
-
-    let id: String
-    let date: Date
-    let content: Content
-
-    static func make(
-        transcript: [AgentManagedTranscriptEntry],
-        operations: [AgentOperationSummary]
-    ) -> [Self] {
-        let messages = transcript.map {
-            Self(id: "message:\($0.id)", date: $0.timestamp, content: .message($0))
-        }
-        let operationEntries = operations.map {
-            Self(id: "operation:\($0.id)", date: $0.date, content: .operation($0))
-        }
-        return (messages + operationEntries).sorted {
-            if $0.date != $1.date { return $0.date < $1.date }
-            return $0.id < $1.id
-        }
-    }
-}
-
 private struct AgentConsoleApprovalRow: View {
     let request: AgentApprovalControlRequest
     let session: AgentSession
@@ -436,27 +437,6 @@ private struct AgentConsoleApprovalRow: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Codex approval required")
-    }
-}
-
-private struct AgentConsoleMessageRow: View {
-    let message: AgentManagedTranscriptEntry
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(message.role == .user ? "You" : "Codex")
-                .font(.system(size: 7.5, weight: .bold))
-                .foregroundStyle(
-                    message.role == .user
-                        ? Color.white.opacity(0.48)
-                        : Color.cyan.opacity(0.72)
-                )
-            Text(message.text)
-                .font(.system(size: 9, weight: .regular, design: .monospaced))
-                .foregroundStyle(.white.opacity(message.role == .user ? 0.72 : 0.88))
-                .textSelection(.enabled)
-        }
-        .padding(.vertical, 2)
     }
 }
 

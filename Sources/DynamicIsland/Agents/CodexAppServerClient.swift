@@ -354,7 +354,12 @@ actor CodexAppServerClient {
         guard let values = result["data"]?.arrayValue else {
             throw CodexAppServerError.invalidResponse("thread/items/list")
         }
-        return values.compactMap(Self.decodeThreadItemEntry).reversed()
+        return values.compactMap(Self.decodeThreadItemEntry).sorted {
+            if $0.timestamp != $1.timestamp { return $0.timestamp < $1.timestamp }
+            let lhsID = $0.item["id"]?.stringValue ?? ""
+            let rhsID = $1.item["id"]?.stringValue ?? ""
+            return lhsID < rhsID
+        }
     }
 
     func resumeThread(threadID: String) async throws -> CodexManagedThread {

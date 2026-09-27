@@ -542,6 +542,24 @@ final class AgentPresentationTests: XCTestCase {
         )
     }
 
+    func testWorkspaceSelectionPrefersLoadedIdleBeforeResumableAndRetained() {
+        let loaded = session(nativeID: "loaded", state: .idle, availability: .loaded)
+        let resumable = session(nativeID: "resumable", state: .idle, availability: .resumable)
+        let retained = session(nativeID: "retained", state: .completed)
+
+        XCTAssertEqual(
+            AgentWorkspaceSelection.resolve(
+                current: nil,
+                sessions: [retained, resumable, loaded]
+            ),
+            loaded.id
+        )
+        XCTAssertEqual(
+            AgentWorkspaceSelection.resolve(current: nil, sessions: [retained, resumable]),
+            resumable.id
+        )
+    }
+
     func testWorkspaceSelectionSurvivesUnrelatedArrivalAndSelectedStateUpdate() {
         let selected = session(nativeID: "selected", state: .idle)
         let unrelated = session(nativeID: "urgent", state: .waitingForApproval)
@@ -801,7 +819,8 @@ final class AgentPresentationTests: XCTestCase {
         projectName: String = "DynamicIsland",
         model: String? = "model",
         capabilities: Set<AgentCapability> = [],
-        usage: AgentUsage = AgentUsage()
+        usage: AgentUsage = AgentUsage(),
+        availability: AgentSessionAvailability? = nil
     ) -> AgentSession {
         AgentSession(
             id: AgentSessionInstanceID(
@@ -822,7 +841,8 @@ final class AgentPresentationTests: XCTestCase {
             recentActivity: [],
             startedAt: now,
             endedAt: state.isTerminal ? now : nil,
-            lastUpdatedAt: now
+            lastUpdatedAt: now,
+            availability: availability
         )
     }
 

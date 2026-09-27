@@ -116,7 +116,7 @@ final class CodexAppServerClientTests: XCTestCase {
         await provider.stop()
     }
 
-    func testProviderTranscriptReturnsOnlyUserAndAgentVisibleMessages() async throws {
+    func testProviderTranscriptReturnsOnlySafeDisplayableHistory() async throws {
         let executable = try makeFakeServer(script: #"""
         #!/usr/bin/env python3
         import json, sys
@@ -149,8 +149,8 @@ final class CodexAppServerClientTests: XCTestCase {
             limit: 20
         )
 
-        XCTAssertEqual(transcript.map(\.role), [.user, .agent])
-        XCTAssertEqual(transcript.map(\.text), ["User prompt", "Visible answer"])
+        XCTAssertEqual(transcript.map(\.role), [.user, .command, .agent])
+        XCTAssertEqual(transcript.map(\.text), ["User prompt", "echo", "Visible answer"])
         XCTAssertFalse(transcript.contains { $0.text.contains("SECRET") || $0.text.contains("private") })
         await provider.stop()
     }

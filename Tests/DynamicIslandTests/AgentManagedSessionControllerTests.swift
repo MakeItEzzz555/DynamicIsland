@@ -299,6 +299,19 @@ final class AgentManagedSessionControllerTests: XCTestCase {
         XCTAssertTrue(accepted)
         let submitted = await provider.submittedPrompts()
         XCTAssertEqual(submitted, ["hello"])
+        XCTAssertEqual(controller.transcript(for: session).map(\.text), ["hello"])
+
+        controller.startObserving()
+        await provider.yield(.transcript(AgentManagedTranscriptEntry(
+            id: "authoritative-user",
+            nativeSessionID: "submit-thread",
+            turnID: "turn-submit",
+            role: .user,
+            text: "hello",
+            timestamp: Date()
+        )))
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertEqual(controller.transcript(for: session).map(\.text), ["hello"])
 
         await provider.setSubmitFailure(true)
         let rejected = await controller.submit("keep this draft", for: session)
