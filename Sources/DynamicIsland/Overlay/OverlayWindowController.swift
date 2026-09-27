@@ -176,7 +176,6 @@ final class OverlayWindowController {
     private var presentationSession = OverlayPresentationSession()
     private var visibilityGeneration: Int = 0
     private var morphGeneration: Int = 0
-    private var collapseSequenceGeneration: Int = 0
     private var expandedAt: CFTimeInterval = 0
     private var collapsedScrollDelta: CGSize = .zero
     private var collapsedScrollGestureHandled = false
@@ -446,7 +445,6 @@ final class OverlayWindowController {
             }
         } else {
             morphGeneration += 1
-            collapseSequenceGeneration += 1
             visibilityGeneration += 1
             stopMouseContainmentTimer()
             modules.stats.stopPolling()
@@ -842,37 +840,41 @@ final class OverlayWindowController {
         }
 
         localScrollWheelMonitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel]) { [weak self] event in
-    guard let self else { return event }
+            guard let self else { return event }
 
-    self.debugScrollWheelReceived(event, source: "localScrollMonitor")
-    if self.handleExpandedScrollWheelFromMonitor(event, source: "localScrollMonitor") {
-        return nil
-    }
+            self.debugScrollWheelReceived(event, source: "localScrollMonitor")
 
-    if event.window === self.islandPanel {
-        return event
-    }
+            // Panel events are routed exactly once by IslandHostingView. Running
+            // expanded routing here as well advances sequence ownership twice and
+            // can consume the momentum tail before SwiftUI's ScrollView sees it.
+            if event.window === self.islandPanel {
+                return event
+            }
 
-    if self.handleCollapsedScrollWheelFromMonitor(event, source: "localScrollMonitor") {
-        return nil
-    }
+            if self.handleExpandedScrollWheelFromMonitor(event, source: "localScrollMonitor") {
+                return nil
+            }
 
-    return event
-}
+            if self.handleCollapsedScrollWheelFromMonitor(event, source: "localScrollMonitor") {
+                return nil
+            }
 
-globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollWheel]) { [weak self] event in
-    let generation = self?.presentationSession.generation
-    Task { @MainActor in
-        guard let self, self.allowsOverlayWork(generation: generation) else { return }
-
-        self.debugScrollWheelReceived(event, source: "globalScrollMonitor")
-        if self.handleExpandedScrollWheelFromMonitor(event, source: "globalScrollMonitor") {
-            return
+            return event
         }
 
-        _ = self.handleCollapsedScrollWheelFromMonitor(event, source: "globalScrollMonitor")
-    }
-}
+        globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollWheel]) { [weak self] event in
+            let generation = self?.presentationSession.generation
+            Task { @MainActor in
+                guard let self, self.allowsOverlayWork(generation: generation) else { return }
+
+                self.debugScrollWheelReceived(event, source: "globalScrollMonitor")
+                if self.handleExpandedScrollWheelFromMonitor(event, source: "globalScrollMonitor") {
+                    return
+                }
+
+                _ = self.handleCollapsedScrollWheelFromMonitor(event, source: "globalScrollMonitor")
+            }
+        }
 
         localKeyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
             guard let self, self.canPresentOverlay else { return event }
@@ -1160,34 +1162,16 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
 
     private func requestCollapseWithSequencing() {
         guard canPresentOverlay else { return }
-        let sessionGeneration = presentationSession.generation
         guard islandState.state == .expanded else { return }
         guard !layoutStore.isExpandedContentExiting else { return }
 
-        collapseSequenceGeneration += 1
-        let generation = collapseSequenceGeneration
-        let reduceMotion = settings.reduceExtraMotion || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        let shellDuration = IslandContentTransitionTiming.shellDuration(
-            settings: settings,
-            reduceMotion: reduceMotion
-        )
-        let collapseShellDelay = IslandContentTransitionTiming.collapseShellDelay(
-            shellDuration: shellDuration
-        )
-        debugLog("requestCollapseWithSequencing started generation=\(generation)")
+        debugLog("requestCollapseWithSequencing started")
         stopMouseContainmentTimer()
         layoutStore.isExpandedContentExiting = true
         resetExpandedContentScrollTracking()
         layoutStore.setExpandedContentScrollRegion(.zero)
         updateMousePassthrough()
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + collapseShellDelay) { [weak self] in
-            guard let self else { return }
-            guard self.allowsOverlayWork(generation: sessionGeneration), generation == self.collapseSequenceGeneration else { return }
-            guard self.islandState.state == .expanded else { return }
-            self.debugLog("requestCollapseWithSequencing committing collapse generation=\(generation)")
-            self.islandState.collapse()
-        }
+        islandState.collapse()
     }
 
     private func currentInteractiveRegion() -> NSRect {

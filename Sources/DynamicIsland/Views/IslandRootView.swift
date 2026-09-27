@@ -24,7 +24,6 @@ enum IslandContentTransitionTiming {
     // `.normal` shell timing of 0.40s, expansion content runs from about 0.16s to 0.32s.
     static let expansionContentDelayRatio: TimeInterval = 0.40
     static let expansionContentDurationRatio: TimeInterval = 0.40
-    static let collapseShellDelayRatio: TimeInterval = 0.15
     static let collapseContentDurationRatio: TimeInterval = 0.40
     static let tabFadeOutDuration: TimeInterval = 0.12
     static let tabHandoffDelay: TimeInterval = 0.01
@@ -47,10 +46,6 @@ enum IslandContentTransitionTiming {
 
     static func expansionContentDuration(shellDuration: TimeInterval) -> TimeInterval {
         shellDuration * expansionContentDurationRatio
-    }
-
-    static func collapseShellDelay(shellDuration: TimeInterval) -> TimeInterval {
-        shellDuration * collapseShellDelayRatio
     }
 
     static func collapseContentDuration(shellDuration: TimeInterval) -> TimeInterval {
