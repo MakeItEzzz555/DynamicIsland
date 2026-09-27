@@ -8,6 +8,16 @@ This plan evolves as implementation findings land. Existing agent-ingestion/secu
 
 Turn the Agents tab into a persistent, high-density workspace that remains useful between sessions and can safely manage interactive Codex work without regressing DynamicIsland shell geometry, trackpad gestures, privacy, or provider authority.
 
+## Regression noted — 2026-09-27
+
+Observed on the current feature branch:
+- Provider diagnostics showed Codex configured but awaiting first accepted event.
+- Live Codex sessions were not appearing.
+- Health counters showed rejected/dropped events with `Invalid event`.
+- Root cause: after DynamicIsland restarts while an existing Codex session is already running, later official hook events can arrive without a fresh `SessionStart`; the coordinator requires a session lease to exist first and rejects those otherwise-valid events.
+- Required fix: trusted official-hook activity may recover a missing local lease by inserting a coordinator-owned recovery-origin session bootstrap before the first active event. Generic/unverified producers must not gain this behavior.
+- The temporary Preview dashboard is no longer part of the product direction and must be removed; standby usage placeholders may remain truthful.
+
 ## Phase 1 — Gesture-safe session scrolling
 
 Goal: make the agent session workspace vertically scrollable without breaking existing two-finger island gestures elsewhere.
