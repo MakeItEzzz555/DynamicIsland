@@ -137,6 +137,23 @@ final class ExpandedScrollEventRoutingPolicyTests: XCTestCase {
         )
     }
 
+    func testScrollRegionConversionTracksAgentsCanvasResize() {
+        let swiftUIFrame = CGRect(x: 24, y: 76, width: 620, height: 142)
+        let standard = IslandCanvasCoordinateSpace.appKitLocalRect(
+            fromSwiftUI: swiftUIFrame,
+            canvasHeight: 286
+        )
+        let agents = IslandCanvasCoordinateSpace.appKitLocalRect(
+            fromSwiftUI: swiftUIFrame,
+            canvasHeight: 314.6
+        )
+
+        XCTAssertEqual(standard, CGRect(x: 24, y: 68, width: 620, height: 142))
+        XCTAssertEqual(agents.minX, 24)
+        XCTAssertEqual(agents.minY, 96.6, accuracy: 0.001)
+        XCTAssertEqual(agents.size, CGSize(width: 620, height: 142))
+    }
+
     func testVerticalContentSequenceOwnsPhysicalAndMomentumTail() {
         var ownership = ExpandedContentScrollSequenceOwnership()
 

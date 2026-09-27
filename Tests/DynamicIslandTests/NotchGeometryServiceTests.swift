@@ -268,6 +268,101 @@ final class NotchGeometryServiceTests: XCTestCase {
         XCTAssertEqual(ExpandedPresentationProfile.agentsWorkspace.kind, .agentsWorkspace)
     }
 
+    func testExpandedPresentationProfileAffectsOnlyAgentsAndRestoresExactBaseSize() {
+        let base = CGSize(width: 860, height: 286)
+
+        XCTAssertEqual(ExpandedPresentationProfile.resolve(for: .agents), .agentsWorkspace)
+        XCTAssertEqual(
+            ExpandedPresentationProfile.resolve(for: .agents).resolvedSize(from: base),
+            CGSize(width: 946, height: 314.6)
+        )
+
+        for page in ExpandedIslandPage.allCases where page != .agents {
+            let profile = ExpandedPresentationProfile.resolve(for: page)
+            XCTAssertEqual(profile, .standard)
+            XCTAssertEqual(profile.resolvedSize(from: base), base)
+        }
+    }
+
+    func testAgentsGeometryMorphPreservesCanonicalCollapsedFrameAndRestoresStandardExactly() {
+        let service = NotchGeometryService()
+        let snapshot = ScreenSnapshot(
+            frame: CGRect(x: 0, y: 0, width: 1512, height: 982),
+            visibleFrame: CGRect(x: 0, y: 0, width: 1512, height: 944),
+            safeAreaInsets: NSEdgeInsets(top: 38, left: 0, bottom: 0, right: 0),
+            auxiliaryTopLeftArea: CGRect(x: 0, y: 944, width: 635, height: 38),
+            auxiliaryTopRightArea: CGRect(x: 877, y: 944, width: 635, height: 38)
+        )
+        let collapsed = CGSize(width: 190, height: 44)
+        let base = CGSize(width: 860, height: 286)
+        let standard = service.geometry(
+            for: snapshot,
+            collapsedSize: collapsed,
+            expandedSize: ExpandedPresentationProfile.standard.resolvedSize(from: base)
+        )
+        let agents = service.geometry(
+            for: snapshot,
+            collapsedSize: collapsed,
+            expandedSize: ExpandedPresentationProfile.agentsWorkspace.resolvedSize(from: base)
+        )
+        let restored = service.geometry(
+            for: snapshot,
+            collapsedSize: collapsed,
+            expandedSize: ExpandedPresentationProfile.standard.resolvedSize(from: base)
+        )
+
+        XCTAssertEqual(agents.expandedFrame.size, CGSize(width: 946, height: 315))
+        XCTAssertEqual(agents.collapsedFrame, standard.collapsedFrame)
+        XCTAssertEqual(restored.expandedFrame, standard.expandedFrame)
+        XCTAssertEqual(restored.collapsedFrame, standard.collapsedFrame)
+    }
+
+    func testAgentsGeometryUsesCanonicalNarrowScreenClamp() {
+        let service = NotchGeometryService()
+        let snapshot = ScreenSnapshot(
+            frame: CGRect(x: 0, y: 0, width: 900, height: 700),
+            visibleFrame: CGRect(x: 0, y: 0, width: 900, height: 662),
+            safeAreaInsets: NSEdgeInsetsZero,
+            auxiliaryTopLeftArea: nil,
+            auxiliaryTopRightArea: nil
+        )
+        let requested = ExpandedPresentationProfile.agentsWorkspace.resolvedSize(
+            from: CGSize(width: 920, height: 286)
+        )
+        let geometry = service.geometry(
+            for: snapshot,
+            collapsedSize: CGSize(width: 190, height: 44),
+            expandedSize: requested
+        )
+
+        XCTAssertEqual(geometry.expandedFrame.width, 620)
+        XCTAssertEqual(geometry.expandedFrame.midX, snapshot.frame.midX)
+        XCTAssertFalse(geometry.hasHardwareNotch)
+    }
+
+    func testGeometrySignatureDistinguishesAgentsProfileAtResolvedSize() {
+        let base = OverlayGeometrySignature(
+            collapsedSize: CGSize(width: 190, height: 44),
+            expandedSize: CGSize(width: 860, height: 286),
+            expandedPresentationKind: .standard,
+            collapsedActivityProfile: nil,
+            collapsedPresentationProfile: .normal,
+            useAdaptiveNotchSizing: true,
+            respectHardwareNotch: true
+        )
+        let agents = OverlayGeometrySignature(
+            collapsedSize: base.collapsedSize,
+            expandedSize: CGSize(width: 946, height: 314.6),
+            expandedPresentationKind: .agentsWorkspace,
+            collapsedActivityProfile: base.collapsedActivityProfile,
+            collapsedPresentationProfile: base.collapsedPresentationProfile,
+            useAdaptiveNotchSizing: base.useAdaptiveNotchSizing,
+            respectHardwareNotch: base.respectHardwareNotch
+        )
+
+        XCTAssertNotEqual(base, agents)
+    }
+
     func testAgentCollapsedProfilesResolveOneCanonicalFrameAndRetractExactly() {
         let service = NotchGeometryService()
         let snapshot = ScreenSnapshot(

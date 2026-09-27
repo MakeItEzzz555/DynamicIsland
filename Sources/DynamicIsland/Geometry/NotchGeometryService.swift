@@ -228,11 +228,19 @@ struct ExpandedPresentationProfile: Equatable, Sendable {
     static let standard = ExpandedPresentationProfile(kind: .standard, scale: 1)
     static let agentsWorkspace = ExpandedPresentationProfile(kind: .agentsWorkspace, scale: 1.10)
 
+    static func resolve(for page: ExpandedIslandPage) -> Self {
+        page == .agents ? .agentsWorkspace : .standard
+    }
+
     func resolvedSize(from base: CGSize) -> CGSize {
         CGSize(
-            width: max(base.width * scale, 1),
-            height: max(base.height * scale, 1)
+            width: max(Self.stableScaled(base.width, by: scale), 1),
+            height: max(Self.stableScaled(base.height, by: scale), 1)
         )
+    }
+
+    private static func stableScaled(_ value: CGFloat, by scale: CGFloat) -> CGFloat {
+        (value * scale * 1_000).rounded() / 1_000
     }
 }
 

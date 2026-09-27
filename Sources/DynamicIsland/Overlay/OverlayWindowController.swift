@@ -621,7 +621,7 @@ final class OverlayWindowController {
     }
 
     private var expandedPresentationProfile: ExpandedPresentationProfile {
-        modules.navigation.selectedPage == .agents ? .agentsWorkspace : .standard
+        ExpandedPresentationProfile.resolve(for: modules.navigation.selectedPage)
     }
 
     private var resolvedExpandedSize: CGSize {
@@ -1080,9 +1080,10 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
         layoutStore.isShellMorphing = true
         layoutStore.isCollapseShellOnly = (state == .collapsed)
 
+        let reduceMotion = settings.reduceExtraMotion || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         let shellDuration = IslandContentTransitionTiming.shellDuration(
             settings: settings,
-            reduceMotion: false
+            reduceMotion: reduceMotion
         )
         let clearDelay = shellDuration + (state == .collapsed ? 0.025 : 0)
         DispatchQueue.main.asyncAfter(deadline: .now() + clearDelay) { [weak self] in
@@ -1165,9 +1166,10 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
 
         collapseSequenceGeneration += 1
         let generation = collapseSequenceGeneration
+        let reduceMotion = settings.reduceExtraMotion || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         let shellDuration = IslandContentTransitionTiming.shellDuration(
             settings: settings,
-            reduceMotion: false
+            reduceMotion: reduceMotion
         )
         let collapseShellDelay = IslandContentTransitionTiming.collapseShellDelay(
             shellDuration: shellDuration
