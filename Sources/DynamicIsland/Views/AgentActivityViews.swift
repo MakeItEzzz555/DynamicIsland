@@ -941,7 +941,11 @@ private struct AgentSessionTrailingStatus: View {
                     systemImage: AgentSessionPresentation.displayedStateSymbol(for: session, at: timeline.date)
                 )
                 .font(.system(size: 8.5, weight: .semibold))
-                .foregroundStyle(stale ? .secondary : AgentVisualStyle.accent(for: session.state))
+                .foregroundStyle(
+                    stale
+                        ? Color.white.opacity(0.44)
+                        : AgentVisualStyle.accent(for: session.state)
+                )
                 .lineLimit(1)
 
                 HStack(spacing: 2) {
