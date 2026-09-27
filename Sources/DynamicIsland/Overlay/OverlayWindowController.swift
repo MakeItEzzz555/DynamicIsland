@@ -277,6 +277,7 @@ final class OverlayWindowController {
                         self.layoutStore.isExpandedContentExiting = false
                     } else {
                         self.resetExpandedContentScrollTracking()
+                        self.layoutStore.setAgentWorkspaceScrollCaptureActive(false)
                         self.layoutStore.setExpandedContentScrollRegion(.zero)
                     }
                     self.beginVisualMorph(for: state)
@@ -331,6 +332,7 @@ final class OverlayWindowController {
                 guard let self else { return }
                 self.resetExpandedContentScrollTracking()
                 if page != .agents {
+                    self.layoutStore.setAgentWorkspaceScrollCaptureActive(false)
                     self.layoutStore.setExpandedContentScrollRegion(.zero)
                 }
                 guard self.islandState.state == .expanded else { return }
@@ -1178,6 +1180,7 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
         stopMouseContainmentTimer()
         layoutStore.isExpandedContentExiting = true
         resetExpandedContentScrollTracking()
+        layoutStore.setAgentWorkspaceScrollCaptureActive(false)
         layoutStore.setExpandedContentScrollRegion(.zero)
         updateMousePassthrough()
 
