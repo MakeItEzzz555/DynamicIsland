@@ -84,6 +84,7 @@ struct AgentDashboardContentView: View {
                     limit: layout.maximumGaugeCount
                 )
                 : []
+            let selectedSession = displayedSessions.first { $0.id == selectedSessionID }
 
             VStack(alignment: .leading, spacing: 10) {
                 if previewMode {
@@ -120,6 +121,18 @@ struct AgentDashboardContentView: View {
                         layoutStore: layoutStore,
                         selectedSessionID: $selectedSessionID
                     )
+
+                    if let selectedSession {
+                        AgentEmbeddedConsoleView(
+                            session: selectedSession,
+                            previewMode: previewMode,
+                            canSubmit: false,
+                            canInterrupt: false,
+                            onSubmit: { _ in },
+                            onInterrupt: {}
+                        )
+                        .frame(minHeight: 86, idealHeight: 102, maxHeight: 116)
+                    }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: proxy.size.height, alignment: .topLeading)
