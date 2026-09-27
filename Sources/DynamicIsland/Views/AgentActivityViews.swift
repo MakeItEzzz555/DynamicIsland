@@ -91,8 +91,8 @@ struct AgentDashboardContentView: View {
     @ObservedObject var managedControl: AgentManagedSessionController
     var layoutStore: IslandLayoutStore? = nil
     let availableHeight: CGFloat
+    private let initialSelectedSessionID: AgentSessionInstanceID?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var selectedSessionID: AgentSessionInstanceID?
 
     init(
         sessions: [AgentSession],
@@ -111,12 +111,12 @@ struct AgentDashboardContentView: View {
         _managedControl = ObservedObject(wrappedValue: managedControl)
         self.layoutStore = layoutStore
         self.availableHeight = availableHeight
-        _selectedSessionID = State(initialValue: initialSelectedSessionID)
+        self.initialSelectedSessionID = initialSelectedSessionID
     }
 
     var body: some View {
         GeometryReader { proxy in
-            let controlSessions = managedControl.managedProvider.map { provider in
+            let controlSessions = (managedControl.selectedProvider ?? managedControl.managedProvider).map { provider in
                 sessions.filter { $0.id.sessionID.provider == provider }
             } ?? sessions
             let layout = AgentDashboardLayoutProjection.make(width: proxy.size.width)
@@ -124,8 +124,9 @@ struct AgentDashboardContentView: View {
                 availableHeight: proxy.size.height
             )
             let selectedSession = AgentWorkspaceSelection.session(
-                current: selectedSessionID,
-                sessions: controlSessions
+                current: managedControl.selectedSessionID,
+                sessions: controlSessions,
+                activeManagedSessionIDs: managedControl.activeManagedSessionIDs
             )
             let metrics = showsUsage
                 ? AgentGlobalUsagePresentation.makeForSelectedSession(
@@ -145,8 +146,7 @@ struct AgentDashboardContentView: View {
                 } else {
                     AgentCLIControlBar(
                         sessions: controlSessions,
-                        managedControl: managedControl,
-                        selectedSessionID: $selectedSessionID
+                        managedControl: managedControl
                     )
 
                     if let selectedSession {
@@ -167,22 +167,14 @@ struct AgentDashboardContentView: View {
         .frame(maxWidth: .infinity, maxHeight: availableHeight, alignment: .topLeading)
         .foregroundStyle(.white)
         .onChange(of: sessions.map(\.id)) { _, _ in
-            let controlSessions = managedControl.managedProvider.map { provider in
-                sessions.filter { $0.id.sessionID.provider == provider }
-            } ?? sessions
-            selectedSessionID = AgentWorkspaceSelection.resolve(
-                current: selectedSessionID,
-                sessions: controlSessions
-            )
+            managedControl.reconcileSelection(with: sessions)
         }
         .onAppear {
-            let controlSessions = managedControl.managedProvider.map { provider in
-                sessions.filter { $0.id.sessionID.provider == provider }
-            } ?? sessions
-            selectedSessionID = AgentWorkspaceSelection.resolve(
-                current: selectedSessionID,
-                sessions: controlSessions
-            )
+            if managedControl.selectedSessionID == nil,
+               let initialSelectedSessionID {
+                managedControl.selectSession(initialSelectedSessionID)
+            }
+            managedControl.reconcileSelection(with: sessions)
         }
         .onDisappear {
             layoutStore?.setExpandedContentScrollRegion(.zero)
@@ -193,10 +185,21 @@ struct AgentDashboardContentView: View {
 private struct AgentCLIControlBar: View {
     let sessions: [AgentSession]
     @ObservedObject var managedControl: AgentManagedSessionController
-    @Binding var selectedSessionID: AgentSessionInstanceID?
 
     private var selectedSession: AgentSession? {
-        AgentWorkspaceSelection.session(current: selectedSessionID, sessions: sessions)
+        AgentWorkspaceSelection.session(
+            current: managedControl.selectedSessionID,
+            sessions: sessions,
+            activeManagedSessionIDs: managedControl.activeManagedSessionIDs
+        )
+    }
+
+    private var groupedSessions: [AgentProjectGroupPresentation] {
+        let ordered = AgentWorkspaceSelection.ordered(
+            sessions: sessions,
+            activeManagedSessionIDs: managedControl.activeManagedSessionIDs
+        )
+        return AgentDashboardPresentation.make(orderedSessions: ordered).groups
     }
 
     var body: some View {
@@ -249,10 +252,15 @@ private struct AgentCLIControlBar: View {
         let provider = selectedSession?.id.sessionID.provider ?? managedControl.managedProvider ?? .other("agent")
         return Menu {
             ForEach(managedControl.managedProviders, id: \.self) { supported in
-                Label(
-                    supported.stableName.capitalized,
-                    systemImage: supported == provider ? "checkmark" : AgentVisualStyle.providerSymbol(supported)
-                )
+                Button {
+                    managedControl.selectProvider(supported)
+                    managedControl.reconcileSelection(with: sessions)
+                } label: {
+                    Label(
+                        supported.stableName.capitalized,
+                        systemImage: supported == provider ? "checkmark" : AgentVisualStyle.providerSymbol(supported)
+                    )
+                }
             }
         } label: {
             adaptiveLabel(
@@ -269,19 +277,23 @@ private struct AgentCLIControlBar: View {
 
     private func sessionMenu(compact: Bool) -> some View {
         Menu {
-            ForEach(sessions.sorted(by: AgentSessionPresentation.isOrderedBefore), id: \.id) { session in
-                Button {
-                    selectedSessionID = session.id
-                } label: {
-                    VStack(alignment: .leading) {
-                        Text(sessionLabel(session))
-                        Text(sessionDetail(session))
+            ForEach(groupedSessions) { group in
+                Section("\(group.title) (\(group.sessions.count))") {
+                    ForEach(group.sessions, id: \.id) { session in
+                        Button {
+                            managedControl.selectSession(session.id)
+                        } label: {
+                            Label(
+                                sessionMenuTitle(session),
+                                systemImage: selectorStateSymbol(session)
+                            )
+                        }
                     }
                 }
             }
         } label: {
             HStack(spacing: 4) {
-                Text(selectedSession.map(sessionLabel) ?? "Choose session")
+                Text(selectedSession.map(selectedSessionLabel) ?? "Choose session")
                     .font(.system(size: compact ? 8.5 : 9.5, weight: .semibold))
                     .lineLimit(1)
                 Image(systemName: "chevron.up.chevron.down")
@@ -344,13 +356,17 @@ private struct AgentCLIControlBar: View {
 
     private func statusControl(for session: AgentSession, compact: Bool) -> some View {
         adaptiveLabel(
-            AgentSessionPresentation.displayedStateLabel(for: session, at: Date()),
-            systemImage: AgentSessionPresentation.displayedStateSymbol(for: session, at: Date()),
+            selectorStateLabel(session),
+            systemImage: selectorStateSymbol(session),
             compact: compact
         )
         .font(.system(size: 8, weight: .semibold))
-        .foregroundStyle(AgentVisualStyle.accent(for: session.state).opacity(0.82))
-        .help(AgentSessionPresentation.displayedStateLabel(for: session, at: Date()))
+        .foregroundStyle(
+            (managedControl.activeManagedSessionIDs.contains(session.id.sessionID)
+                ? Color.green
+                : AgentVisualStyle.accent(for: session.state)).opacity(0.82)
+        )
+        .help(selectorStateLabel(session))
     }
 
     @ViewBuilder
@@ -374,6 +390,10 @@ private struct AgentCLIControlBar: View {
         return AgentSessionPresentation.primaryTitle(for: session)
     }
 
+    private func selectedSessionLabel(_ session: AgentSession) -> String {
+        "\(sessionLabel(session)) · \(threadSuffix(session))"
+    }
+
     private func modelLabel(for session: AgentSession) -> String {
         if let selected = managedControl.selectedModel(for: session),
            let option = managedControl.availableModels.first(where: { $0.model == selected }) {
@@ -382,15 +402,38 @@ private struct AgentCLIControlBar: View {
         return managedControl.selectedModel(for: session) ?? "Model unavailable"
     }
 
-    private func sessionDetail(_ session: AgentSession) -> String {
-        let state = AgentSessionPresentation.displayedStateLabel(for: session, at: Date())
-        let model = session.project.model ?? "unknown model"
-        let provider = session.id.sessionID.provider.stableName.capitalized
+    private func sessionMenuTitle(_ session: AgentSession) -> String {
+        let state = selectorStateLabel(session)
+        let model = modelLabel(for: session)
         let recency = RelativeDateTimeFormatter().localizedString(
             for: session.lastUpdatedAt,
             relativeTo: Date()
         )
-        return "\(provider) · \(model) · \(state) · \(recency)"
+        return "\(state) · \(model) · \(recency) · \(threadSuffix(session))"
+    }
+
+    private func threadSuffix(_ session: AgentSession) -> String {
+        "…" + session.id.sessionID.nativeID.suffix(4)
+    }
+
+    private func selectorStateLabel(_ session: AgentSession) -> String {
+        if managedControl.activeManagedSessionIDs.contains(session.id.sessionID) {
+            switch session.state {
+            case .waitingForApproval, .waitingForUser, .thinking, .planning,
+                 .working, .runningTool, .runningCommand, .planReady:
+                break
+            case .idle, .completed, .failed, .interrupted:
+                return "Working"
+            }
+        }
+        return AgentSessionPresentation.displayedStateLabel(for: session, at: Date())
+    }
+
+    private func selectorStateSymbol(_ session: AgentSession) -> String {
+        if managedControl.activeManagedSessionIDs.contains(session.id.sessionID) {
+            return "circle.fill"
+        }
+        return AgentSessionPresentation.displayedStateSymbol(for: session, at: Date())
     }
 }
 

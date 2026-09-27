@@ -355,12 +355,15 @@ struct AgentDashboardPresentation: Equatable, Sendable {
     let groups: [AgentProjectGroupPresentation]
 
     static func make(sessions: [AgentSession]) -> Self {
-        let ordered = sessions.sorted(by: AgentSessionPresentation.isOrderedBefore)
+        make(orderedSessions: sessions.sorted(by: AgentSessionPresentation.isOrderedBefore))
+    }
+
+    static func make(orderedSessions: [AgentSession]) -> Self {
         var keys: [String] = []
         var titles: [String: String] = [:]
         var grouped: [String: [AgentSession]] = [:]
 
-        for session in ordered {
+        for session in orderedSessions {
             let identity = projectIdentity(for: session)
             if grouped[identity.key] == nil {
                 keys.append(identity.key)
@@ -397,41 +400,92 @@ struct AgentDashboardPresentation: Equatable, Sendable {
 enum AgentWorkspaceSelection {
     static func resolve(
         current: AgentSessionInstanceID?,
-        sessions: [AgentSession]
+        sessions: [AgentSession],
+        activeManagedSessionIDs: Set<AgentSessionID> = []
     ) -> AgentSessionInstanceID? {
         if let current, sessions.contains(where: { $0.id == current }) {
             return current
         }
-        return sessions.sorted(by: isOrderedBefore).first?.id
+        return ordered(
+            sessions: sessions,
+            activeManagedSessionIDs: activeManagedSessionIDs
+        ).first?.id
     }
 
     static func session(
         current: AgentSessionInstanceID?,
-        sessions: [AgentSession]
+        sessions: [AgentSession],
+        activeManagedSessionIDs: Set<AgentSessionID> = []
     ) -> AgentSession? {
-        guard let selected = resolve(current: current, sessions: sessions) else { return nil }
+        guard let selected = resolve(
+            current: current,
+            sessions: sessions,
+            activeManagedSessionIDs: activeManagedSessionIDs
+        ) else { return nil }
         return sessions.first { $0.id == selected }
     }
 
-    private static func isOrderedBefore(_ lhs: AgentSession, _ rhs: AgentSession) -> Bool {
-        let lhsRank = fallbackRank(lhs)
-        let rhsRank = fallbackRank(rhs)
-        if lhsRank != rhsRank { return lhsRank < rhsRank }
-        return AgentSessionPresentation.isOrderedBefore(lhs, rhs)
+    static func ordered(
+        sessions: [AgentSession],
+        activeManagedSessionIDs: Set<AgentSessionID> = []
+    ) -> [AgentSession] {
+        sessions.sorted { lhs, rhs in
+            isOrderedBefore(
+                lhs,
+                rhs,
+                activeManagedSessionIDs: activeManagedSessionIDs
+            )
+        }
     }
 
-    private static func fallbackRank(_ session: AgentSession) -> Int {
+    static func isActive(
+        _ session: AgentSession,
+        activeManagedSessionIDs: Set<AgentSessionID> = []
+    ) -> Bool {
+        if activeManagedSessionIDs.contains(session.id.sessionID) { return true }
+        guard session.isOpen else { return false }
+        switch session.state {
+        case .thinking, .planning, .working, .runningTool, .runningCommand,
+             .waitingForApproval, .waitingForUser, .planReady:
+            return true
+        case .idle, .completed, .failed, .interrupted:
+            return false
+        }
+    }
+
+    private static func isOrderedBefore(
+        _ lhs: AgentSession,
+        _ rhs: AgentSession,
+        activeManagedSessionIDs: Set<AgentSessionID>
+    ) -> Bool {
+        let lhsRank = fallbackRank(lhs, activeManagedSessionIDs: activeManagedSessionIDs)
+        let rhsRank = fallbackRank(rhs, activeManagedSessionIDs: activeManagedSessionIDs)
+        if lhsRank != rhsRank { return lhsRank < rhsRank }
+        if lhs.lastUpdatedAt != rhs.lastUpdatedAt { return lhs.lastUpdatedAt > rhs.lastUpdatedAt }
+        let lhsProvider = lhs.id.sessionID.provider.deterministicSortKey
+        let rhsProvider = rhs.id.sessionID.provider.deterministicSortKey
+        if lhsProvider != rhsProvider { return lhsProvider < rhsProvider }
+        if lhs.id.sessionID.nativeID != rhs.id.sessionID.nativeID {
+            return lhs.id.sessionID.nativeID < rhs.id.sessionID.nativeID
+        }
+        return lhs.id.generation > rhs.id.generation
+    }
+
+    private static func fallbackRank(
+        _ session: AgentSession,
+        activeManagedSessionIDs: Set<AgentSessionID>
+    ) -> Int {
         switch AgentSessionPresentation.priority(for: session) {
         case .actionRequired, .failure:
             return 0
         case .working, .thinking:
-            return 1
+            return activeManagedSessionIDs.contains(session.id.sessionID) ? 1 : 2
         case .idle where session.availability != .resumable:
-            return 2
+            return activeManagedSessionIDs.contains(session.id.sessionID) ? 1 : 3
         case .idle:
-            return 3
+            return activeManagedSessionIDs.contains(session.id.sessionID) ? 1 : 4
         case .recent:
-            return 4
+            return activeManagedSessionIDs.contains(session.id.sessionID) ? 1 : 5
         }
     }
 }

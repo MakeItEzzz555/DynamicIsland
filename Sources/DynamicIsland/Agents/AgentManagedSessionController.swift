@@ -11,6 +11,8 @@ final class AgentManagedSessionController: ObservableObject {
     @Published private(set) var transcripts: [String: [AgentManagedTranscriptEntry]] = [:]
     @Published private(set) var availableModels: [AgentManagedModelDescriptor] = []
     @Published private(set) var selectedModelOverrides: [AgentSessionID: String] = [:]
+    @Published private(set) var selectedProvider: AgentProvider?
+    @Published private(set) var selectedSessionID: AgentSessionInstanceID?
 
     private let provider: (any AgentInteractiveProvider)?
     private let coordinator: AgentIngestionCoordinator
@@ -35,6 +37,7 @@ final class AgentManagedSessionController: ObservableObject {
         self.coordinator = coordinator
         self.eventStore = eventStore
         self.approvals = approvals
+        selectedProvider = provider?.provider
     }
 
     convenience init?(
@@ -82,6 +85,47 @@ final class AgentManagedSessionController: ObservableObject {
         provider?.interactiveCapabilities ?? []
     }
 
+    var activeManagedSessionIDs: Set<AgentSessionID> {
+        guard let provider else { return [] }
+        return Set(managed.compactMap { nativeID, state in
+            state.activeTurnID == nil
+                ? nil
+                : AgentSessionID(provider: provider.provider, nativeID: nativeID)
+        })
+    }
+
+    func selectProvider(_ provider: AgentProvider) {
+        guard managedProviders.contains(provider) else { return }
+        selectedProvider = provider
+        if selectedSessionID?.sessionID.provider != provider {
+            selectedSessionID = nil
+        }
+    }
+
+    func selectSession(_ sessionID: AgentSessionInstanceID?) {
+        selectedSessionID = sessionID
+        if let provider = sessionID?.sessionID.provider {
+            selectedProvider = provider
+        }
+    }
+
+    func reconcileSelection(with sessions: [AgentSession]) {
+        let candidates = selectedProvider.map { provider in
+            sessions.filter { $0.id.sessionID.provider == provider }
+        } ?? sessions
+        let resolved = AgentWorkspaceSelection.resolve(
+            current: selectedSessionID,
+            sessions: candidates,
+            activeManagedSessionIDs: activeManagedSessionIDs
+        )
+        if selectedSessionID != resolved {
+            selectedSessionID = resolved
+        }
+        if selectedProvider == nil, let provider = resolved?.sessionID.provider {
+            selectedProvider = provider
+        }
+    }
+
     func startObserving() {
         guard let provider else { return }
 
@@ -126,7 +170,6 @@ final class AgentManagedSessionController: ObservableObject {
         accountUsage = AgentUsage()
         transcripts.removeAll()
         availableModels.removeAll()
-        selectedModelOverrides.removeAll()
 
         let provider = self.provider
         let coordinator = self.coordinator
@@ -160,8 +203,10 @@ final class AgentManagedSessionController: ObservableObject {
         if interactiveCapabilities.contains(.selectModel),
            let models = try? await provider.listModels() {
             let filtered = models.filter { !$0.model.isEmpty }
-            if !filtered.isEmpty {
-                availableModels = filtered
+            availableModels = filtered
+            let validModels = Set(filtered.map(\.model))
+            selectedModelOverrides = selectedModelOverrides.filter { sessionID, model in
+                sessionID.provider != provider.provider || validModels.contains(model)
             }
         }
 
@@ -185,6 +230,7 @@ final class AgentManagedSessionController: ObservableObject {
             for descriptor in discovered {
                 await registerDiscoveredSession(descriptor)
             }
+            reconcileSelection(with: eventStore.sessions.filter(shouldPresent))
         } catch {
             lastTransportError = Self.safeError(error)
         }
@@ -524,6 +570,7 @@ final class AgentManagedSessionController: ObservableObject {
                     summary: nil
                 ))
             )
+            reconcileSelection(with: eventStore.sessions.filter(shouldPresent))
             await refreshPersistentSnapshot()
 
         case .turnCompleted(let turn, let state, let summary):
