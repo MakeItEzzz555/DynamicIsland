@@ -655,6 +655,49 @@ final class AgentPresentationTests: XCTestCase {
         XCTAssertEqual(large.selectedDetailActivityLimit, 4)
     }
 
+    func testSelectedSessionContextOverridesAccountContextWithoutChangingQuotas() {
+        var account = AgentUsage(samples: [
+            .quotaUsed: usageSample(value: 20, limit: 100, observedAt: now, scope: "5h"),
+            .contextUsed: usageSample(value: 90, limit: 100, observedAt: now, scope: "context")
+        ])
+        account.merge(AgentUsage(samples: [
+            .quotaUsed: usageSample(value: 40, limit: 100, observedAt: now, scope: "weekly")
+        ]))
+
+        var selectedUsage = AgentUsage(samples: [
+            .contextUsed: usageSample(value: 25, limit: 100, observedAt: now, scope: "context")
+        ])
+        selectedUsage.merge(AgentUsage(samples: [
+            .contextLimit: usageSample(value: 100, limit: nil, observedAt: now, scope: "context")
+        ]))
+        let selected = session(capabilities: [.contextUsage], usage: selectedUsage)
+
+        let metrics = AgentGlobalUsagePresentation.makeForSelectedSession(
+            provider: .codex,
+            accountUsage: account,
+            selectedSession: selected,
+            limit: 3
+        )
+
+        XCTAssertEqual(metrics.map(\.metric.label), ["Quota · 5h", "Quota · Week", "Context"])
+        XCTAssertEqual(metrics[0].metric.sample.value, 20)
+        XCTAssertEqual(metrics[1].metric.sample.value, 40)
+        XCTAssertEqual(metrics[2].metric.sample.value, 25)
+    }
+
+    func testNoSelectedSessionDoesNotBorrowAccountContext() {
+        let account = AgentUsage(samples: [
+            .contextUsed: usageSample(value: 55, limit: 100, observedAt: now, scope: "context")
+        ])
+        let metrics = AgentGlobalUsagePresentation.makeForSelectedSession(
+            provider: .codex,
+            accountUsage: account,
+            selectedSession: nil,
+            limit: 3
+        )
+        XCTAssertFalse(metrics.contains { $0.metric.id == "context" })
+    }
+
     func testAccountUsageRendersCanonicalMetricsWithoutAnySession() {
         let accountUsage = AgentUsage(scopedSamples: [
             AgentUsageKey(metric: .quotaUsed, scope: "weekly"): AgentUsageSample(

@@ -40,12 +40,14 @@ struct AgentEmbeddedConsoleView: View {
     var maximumActivityEntries = 3
     var transcriptEntries: [AgentManagedTranscriptEntry] = []
     var layoutStore: IslandLayoutStore? = nil
+    @ObservedObject var approvalControl: AgentApprovalController
     let onSubmit: (String) async -> Bool
     let onInterrupt: () -> Void
 
     @State private var draft = ""
     @State private var submissionInFlight = false
     @State private var transcriptIsNearBottom = true
+    @State private var scrollToLatestRequest = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -136,6 +138,12 @@ struct AgentEmbeddedConsoleView: View {
                             proxy.scrollTo(AgentConsoleScrollAnchor.bottom, anchor: .bottom)
                         }
                     }
+                    .onChange(of: scrollToLatestRequest) { _, _ in
+                        withAnimation(.easeOut(duration: 0.16)) {
+                            proxy.scrollTo(AgentConsoleScrollAnchor.bottom, anchor: .bottom)
+                        }
+                        transcriptIsNearBottom = true
+                    }
                     .onAppear {
                         DispatchQueue.main.async {
                             proxy.scrollTo(AgentConsoleScrollAnchor.bottom, anchor: .bottom)
@@ -145,6 +153,27 @@ struct AgentEmbeddedConsoleView: View {
             }
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .overlay(alignment: .bottomTrailing) {
+            if !transcriptIsNearBottom {
+                Button {
+                    scrollToLatestRequest &+= 1
+                } label: {
+                    Label("Latest", systemImage: "arrow.down")
+                        .font(.system(size: 8, weight: .semibold))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                }
+                .buttonStyle(.plain)
+                .background(.black.opacity(0.82), in: Capsule(style: .continuous))
+                .overlay {
+                    Capsule(style: .continuous)
+                        .stroke(.white.opacity(0.10), lineWidth: 1)
+                }
+                .foregroundStyle(.white.opacity(0.88))
+                .padding(5)
+                .help("Jump to latest agent output")
+            }
+        }
     }
 
     private var transcriptFollowToken: String {
@@ -183,9 +212,22 @@ struct AgentEmbeddedConsoleView: View {
                     }
                 }
             }
+
+            if let approval = actionableApproval {
+                AgentConsoleApprovalRow(
+                    request: approval,
+                    session: session,
+                    approvalControl: approvalControl
+                )
+            }
         }
         .font(.system(size: 8.5, weight: .medium))
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var actionableApproval: AgentApprovalControlRequest? {
+        let pending = approvalControl.pendingRequest(for: session.id)
+        return AgentApprovalPresentation.isActionable(session: session, pending: pending) ? pending : nil
     }
 
     private func operationRow(_ operation: AgentOperationSummary) -> some View {
@@ -343,6 +385,57 @@ private struct AgentConsoleTimelineEntry: Identifiable {
             if $0.date != $1.date { return $0.date < $1.date }
             return $0.id < $1.id
         }
+    }
+}
+
+private struct AgentConsoleApprovalRow: View {
+    let request: AgentApprovalControlRequest
+    let session: AgentSession
+    @ObservedObject var approvalControl: AgentApprovalController
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label("Approval required", systemImage: "exclamationmark.shield.fill")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(.orange.opacity(0.92))
+            Text(request.summary)
+                .font(.system(size: 8.5, weight: .medium))
+                .foregroundStyle(.white.opacity(0.78))
+                .lineLimit(3)
+
+            HStack(spacing: 8) {
+                Button(role: .destructive) {
+                    approvalControl.resolve(
+                        session: session.id,
+                        requestID: request.key.requestID,
+                        decision: .deny
+                    )
+                } label: {
+                    Label("Deny", systemImage: "xmark.circle.fill")
+                }
+
+                Button {
+                    approvalControl.resolve(
+                        session: session.id,
+                        requestID: request.key.requestID,
+                        decision: .allow
+                    )
+                } label: {
+                    Label("Approve", systemImage: "checkmark.circle.fill")
+                }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .padding(8)
+        .background(.orange.opacity(0.07))
+        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .stroke(.orange.opacity(0.18), lineWidth: 1)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Codex approval required")
     }
 }
 

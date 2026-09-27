@@ -1049,6 +1049,42 @@ struct AgentGlobalUsagePresentation: Identifiable, Equatable, Sendable {
     let provider: AgentProvider
     let metric: AgentUsagePresentation
 
+    static func makeForSelectedSession(
+        provider: AgentProvider,
+        accountUsage: AgentUsage,
+        selectedSession: AgentSession?,
+        limit: Int
+    ) -> [Self] {
+        var values: [Self] = []
+
+        for metric in AgentUsagePresentation.make(providerUsage: accountUsage)
+            where metric.id != "context" {
+            values.append(Self(
+                id: "\(provider.deterministicSortKey):\(metric.id)",
+                provider: provider,
+                metric: metric
+            ))
+        }
+
+        if let selectedSession,
+           selectedSession.id.sessionID.provider == provider,
+           let context = AgentUsagePresentation.make(for: selectedSession)
+                .first(where: { $0.id == "context" }) {
+            values.append(Self(
+                id: "\(provider.deterministicSortKey):context",
+                provider: provider,
+                metric: context
+            ))
+        }
+
+        return Array(values.sorted {
+            let lhsRank = canonicalRank($0.metric)
+            let rhsRank = canonicalRank($1.metric)
+            if lhsRank != rhsRank { return lhsRank < rhsRank }
+            return $0.id < $1.id
+        }.prefix(max(limit, 0)))
+    }
+
     static func make(
         sessions: [AgentSession],
         providerUsage: [AgentProvider: AgentUsage] = [:],

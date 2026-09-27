@@ -120,28 +120,25 @@ struct AgentDashboardContentView: View {
             let verticalLayout = AgentWorkspaceVerticalLayoutProjection.make(
                 availableHeight: proxy.size.height
             )
-            let metrics = showsUsage
-                ? AgentGlobalUsagePresentation.make(
-                    sessions: sessions,
-                    providerUsage: accountUsage.isEmpty ? [:] : [.codex: accountUsage],
-                    limit: layout.maximumGaugeCount
-                )
-                : []
             let selectedSession = AgentWorkspaceSelection.session(
                 current: selectedSessionID,
                 sessions: sessions
             )
+            let metrics = showsUsage
+                ? AgentGlobalUsagePresentation.makeForSelectedSession(
+                    provider: .codex,
+                    accountUsage: accountUsage,
+                    selectedSession: selectedSession,
+                    limit: layout.maximumGaugeCount
+                )
+                : []
             VStack(alignment: .leading, spacing: 10) {
                 if showsUsage {
                     AgentGlobalSummaryStrip(metrics: metrics, layout: layout)
                 }
 
                 if sessions.isEmpty {
-                    AgentStandbyDashboard(
-                        layout: layout,
-                        showsUsage: false,
-                        metrics: metrics
-                    )
+                    AgentEmptyConsoleState(managedControl: managedControl)
                 } else {
                     AgentCompactSessionSelector(
                         sessions: sessions,
@@ -153,6 +150,7 @@ struct AgentDashboardContentView: View {
                         AgentSelectedSessionControlView(
                             session: selectedSession,
                             managedControl: managedControl,
+                            approvalControl: approvalControl,
                             detailHeight: max(verticalLayout.selectedDetailHeight, 138),
                             activityLimit: max(verticalLayout.selectedDetailActivityLimit, 6),
                             layoutStore: layoutStore
@@ -308,6 +306,7 @@ private struct AgentCompactSessionSelector: View {
 private struct AgentSelectedSessionControlView: View {
     let session: AgentSession
     @ObservedObject var managedControl: AgentManagedSessionController
+    @ObservedObject var approvalControl: AgentApprovalController
     let detailHeight: CGFloat
     let activityLimit: Int
     let layoutStore: IslandLayoutStore?
@@ -320,6 +319,7 @@ private struct AgentSelectedSessionControlView: View {
                 maximumActivityEntries: activityLimit,
                 transcriptEntries: managedControl.transcript(for: session),
                 layoutStore: layoutStore,
+                approvalControl: approvalControl,
                 onSubmit: { await managedControl.submit($0, for: session) },
                 onInterrupt: { managedControl.interrupt(session) }
             )
@@ -351,7 +351,7 @@ private struct AgentSelectedSessionControlView: View {
                         Label(
                             managedControl.connecting.contains(session.id.sessionID.nativeID)
                                 ? "Connecting…"
-                                : "Control",
+                                : (session.availability == .resumable ? "Resume" : "Control"),
                             systemImage: "terminal"
                         )
                     }
@@ -366,6 +366,51 @@ private struct AgentSelectedSessionControlView: View {
             .background(.white.opacity(0.022))
             .accessibilityElement(children: .contain)
         }
+    }
+}
+
+private struct AgentEmptyConsoleState: View {
+    @ObservedObject var managedControl: AgentManagedSessionController
+    @State private var starting = false
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Image(systemName: AgentVisualStyle.providerSymbol(.codex))
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.52))
+            Text("No Codex session")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.88))
+            Text("Start a managed session to use the embedded agent console.")
+                .font(.system(size: 8.5, weight: .medium))
+                .foregroundStyle(.white.opacity(0.42))
+
+            if managedControl.interactiveCapabilities.contains(.startSession) {
+                Button {
+                    guard !starting else { return }
+                    starting = true
+                    Task { @MainActor in
+                        _ = await managedControl.startNewSession(cwd: nil)
+                        starting = false
+                    }
+                } label: {
+                    Label(starting ? "Starting…" : "New session", systemImage: "plus")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(starting)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.vertical, 18)
+        .background(.white.opacity(0.018))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(.white.opacity(0.05), lineWidth: 1)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("No Codex session")
     }
 }
 
