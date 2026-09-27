@@ -196,7 +196,7 @@ private struct AgentPromptEditor: NSViewRepresentable {
         editor.isHorizontallyResizable = false
         editor.autoresizingMask = [.width]
         editor.textContainer?.widthTracksTextView = true
-        editor.textContainer?.containerSize = NSSize(width: 0, height: .greatestFiniteMagnitude)
+        editor.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
         editor.textContainerInset = NSSize(width: 7, height: 6)
         editor.font = NSFont.monospacedSystemFont(ofSize: 10.5, weight: .regular)
         editor.textColor = NSColor.white.withAlphaComponent(0.88)
