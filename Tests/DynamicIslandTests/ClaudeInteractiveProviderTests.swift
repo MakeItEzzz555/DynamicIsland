@@ -10,7 +10,7 @@ final class ClaudeInteractiveProviderTests: XCTestCase {
 
         XCTAssertEqual(provider.provider, .claude)
         XCTAssertEqual(provider.interactiveCapabilities, [
-            .resumeSession, .submitPrompt, .streamToolActivity
+            .resumeSession, .submitPrompt, .streamMessages, .streamToolActivity
         ])
         XCTAssertFalse(provider.interactiveCapabilities.contains(.interrupt))
         XCTAssertFalse(provider.interactiveCapabilities.contains(.resolveApprovals))
