@@ -59,11 +59,11 @@ struct AgentEmbeddedConsoleView: View {
             }
         }
         .padding(8)
-        .background(Color.black.opacity(0.24))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(.white.opacity(0.018))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(.white.opacity(0.06), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(.white.opacity(0.05), lineWidth: 1)
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Selected session details for \(AgentSessionPresentation.primaryTitle(for: session))")

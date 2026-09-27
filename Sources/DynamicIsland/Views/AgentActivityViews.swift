@@ -611,6 +611,13 @@ private struct AgentEmptyConsoleState: View {
                 .font(.system(size: 8.5, weight: .medium))
                 .foregroundStyle(.white.opacity(0.42))
 
+            if let status = managedControl.lastTransportError {
+                Label(status, systemImage: "exclamationmark.circle")
+                    .font(.system(size: 8, weight: .medium))
+                    .foregroundStyle(.orange.opacity(0.78))
+                    .lineLimit(2)
+            }
+
             if managedControl.interactiveCapabilities.contains(.startSession) {
                 Button {
                     guard !starting else { return }
@@ -637,107 +644,6 @@ private struct AgentEmptyConsoleState: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("No \(providerName) session")
-    }
-}
-
-private struct AgentDashboardIdleBanner: View {
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "moon.zzz")
-                .foregroundStyle(.white.opacity(0.44))
-            Text("No agents working")
-                .font(.system(size: 9.5, weight: .semibold))
-            Text("Recent sessions remain available below.")
-                .font(.system(size: 8.5, weight: .medium))
-                .foregroundStyle(.white.opacity(0.44))
-            Spacer(minLength: 8)
-            Text("Waiting for live activity")
-                .font(.system(size: 8.5, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.36))
-        }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 7)
-        .background(.white.opacity(0.025))
-        .accessibilityElement(children: .contain)
-    }
-}
-
-private struct AgentStandbyDashboard: View {
-    let layout: AgentDashboardLayoutProjection
-    let showsUsage: Bool
-    let metrics: [AgentGlobalUsagePresentation]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if showsUsage {
-                AgentGlobalSummaryStrip(metrics: metrics, layout: layout)
-            }
-
-            HStack(alignment: .center, spacing: 12) {
-                ZStack {
-                    Circle()
-                        .fill(.white.opacity(0.06))
-                    Image(systemName: "cpu")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.62))
-                }
-                .frame(width: 32, height: 32)
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("No agents working")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.92))
-                    Text("Codex account usage stays live between turns. Sessions remain available until the provider reports that they ended.")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.48))
-                        .lineLimit(2)
-                }
-
-                Spacer(minLength: 10)
-            }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 11)
-
-            Divider()
-                .overlay(.white.opacity(0.045))
-
-            HStack(spacing: 6) {
-                Image(systemName: "checkmark.shield")
-                Text(metrics.isEmpty
-                    ? "Waiting for trustworthy provider usage data."
-                    : "Usage is refreshed independently of active turns.")
-            }
-            .font(.system(size: 8.5, weight: .medium))
-            .foregroundStyle(.white.opacity(0.42))
-            .padding(.horizontal, 9)
-        }
-        .padding(.vertical, 2)
-        .accessibilityElement(children: .contain)
-    }
-}
-
-private struct AgentStandbyUsageStrip: View {
-    let layout: AgentDashboardLayoutProjection
-
-    private let slots: [(String, String)] = [
-        ("clock", "5h"),
-        ("calendar", "Week"),
-        ("gauge.with.dots.needle.33percent", "Context")
-    ]
-
-    var body: some View {
-        HStack(spacing: layout.isNarrow ? 10 : 16) {
-            ForEach(Array(slots.prefix(layout.maximumGaugeCount).enumerated()), id: \.offset) { _, slot in
-                AgentStandbyUsageGauge(symbol: slot.0, label: slot.1)
-                    .frame(maxWidth: .infinity, alignment: .center)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .center)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 7)
-        .background(.white.opacity(0.025))
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Usage metrics waiting for provider data")
     }
 }
 
@@ -801,84 +707,6 @@ struct AgentDashboardStack: View {
             )
         }
         .padding(.vertical, 2)
-    }
-}
-
-private struct AgentSessionWorkspaceView: View {
-    let sessions: [AgentSession]
-    let showsUsage: Bool
-    @ObservedObject var approvalControl: AgentApprovalController
-    let layout: AgentDashboardLayoutProjection
-    let reduceMotion: Bool
-    let layoutStore: IslandLayoutStore?
-    @Binding var selectedSessionID: AgentSessionInstanceID?
-    let minimumHeight: CGFloat
-
-    var body: some View {
-        registeredWorkspace(
-            ScrollView(.vertical, showsIndicators: true) {
-                AgentDashboardGroups(
-                    sessions: sessions,
-                    showsUsage: showsUsage,
-                    approvalControl: approvalControl,
-                    layout: layout,
-                    reduceMotion: reduceMotion,
-                    selectedSessionID: $selectedSessionID
-                )
-                .padding(.vertical, 3)
-            }
-            .scrollBounceBehavior(.basedOnSize)
-            .padding(.horizontal, 1)
-            .background(Color.white.opacity(0.018))
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(.white.opacity(0.055), lineWidth: 1)
-            }
-        )
-        .frame(
-            maxWidth: .infinity,
-            minHeight: minimumHeight,
-            maxHeight: .infinity,
-            alignment: .topLeading
-        )
-        .accessibilityLabel("Agent sessions")
-    }
-
-    @ViewBuilder
-    private func registeredWorkspace<Content: View>(_ content: Content) -> some View {
-        if let layoutStore {
-            content
-                .background {
-                    GeometryReader { proxy in
-                        Color.clear.preference(
-                            key: AgentSessionScrollRegionPreferenceKey.self,
-                            value: proxy.frame(in: .named(IslandCanvasCoordinateSpace.name))
-                        )
-                    }
-                }
-                .onPreferenceChange(AgentSessionScrollRegionPreferenceKey.self) { frame in
-                    let canvasHeight = layoutStore.canvasSize.height
-                    let localFrame = IslandCanvasCoordinateSpace.appKitLocalRect(
-                        fromSwiftUI: frame,
-                        canvasHeight: canvasHeight
-                    )
-                    layoutStore.setExpandedContentScrollRegion(localFrame)
-                }
-                .onDisappear {
-                    layoutStore.setExpandedContentScrollRegion(.zero)
-                }
-        } else {
-            content
-        }
-    }
-}
-
-private struct AgentSessionScrollRegionPreferenceKey: PreferenceKey {
-    static let defaultValue: CGRect = .zero
-
-    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
-        value = nextValue()
     }
 }
 
