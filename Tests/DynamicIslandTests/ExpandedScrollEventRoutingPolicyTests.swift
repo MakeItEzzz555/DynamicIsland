@@ -42,6 +42,41 @@ final class ExpandedScrollEventRoutingPolicyTests: XCTestCase {
         )
     }
 
+    func testContentScrollHitPassesThroughWhileExpanded() {
+        XCTAssertEqual(
+            route(
+                isSuppressed: false,
+                isExpanded: true,
+                contentScrollHit: true
+            ),
+            .passThroughToContent
+        )
+    }
+
+    func testLatchedContentScrollSequenceStaysWithContentOutsideRegion() {
+        XCTAssertEqual(
+            route(
+                isSuppressed: false,
+                isExpanded: true,
+                contentScrollHit: false,
+                contentScrollSequenceActive: true
+            ),
+            .passThroughToContent
+        )
+    }
+
+    func testContentRegionDoesNotOverrideCollapsedIslandGestures() {
+        XCTAssertEqual(
+            route(
+                isSuppressed: false,
+                isExpanded: false,
+                contentScrollHit: true,
+                contentScrollSequenceActive: true
+            ),
+            .islandGesture
+        )
+    }
+
     func testDisabledOrNonTrackpadGesturesPassThrough() {
         XCTAssertEqual(
             route(
@@ -78,17 +113,32 @@ final class ExpandedScrollEventRoutingPolicyTests: XCTestCase {
         XCTAssertFalse(store.isExpandedScrollGestureSuppressed)
     }
 
+    func testLayoutStoreRegistersAndClearsExpandedContentScrollRegion() {
+        let store = IslandLayoutStore()
+        XCTAssertEqual(store.expandedContentScrollRegion, .zero)
+
+        store.setExpandedContentScrollRegion(CGRect(x: 11.2, y: 19.8, width: 310.4, height: 121.1))
+        XCTAssertEqual(store.expandedContentScrollRegion, CGRect(x: 11, y: 20, width: 311, height: 121))
+
+        store.setExpandedContentScrollRegion(.zero)
+        XCTAssertEqual(store.expandedContentScrollRegion, .zero)
+    }
+
     private func route(
         isSuppressed: Bool,
         isExpanded: Bool,
         gesturesEnabled: Bool = true,
-        usesTrackpad: Bool = true
+        usesTrackpad: Bool = true,
+        contentScrollHit: Bool = false,
+        contentScrollSequenceActive: Bool = false
     ) -> ExpandedScrollEventRoute {
         ExpandedScrollEventRoutingPolicy.route(
             isSuppressed: isSuppressed,
             isExpanded: isExpanded,
             gesturesEnabled: gesturesEnabled,
-            usesTrackpad: usesTrackpad
+            usesTrackpad: usesTrackpad,
+            contentScrollHit: contentScrollHit,
+            contentScrollSequenceActive: contentScrollSequenceActive
         )
     }
 }
