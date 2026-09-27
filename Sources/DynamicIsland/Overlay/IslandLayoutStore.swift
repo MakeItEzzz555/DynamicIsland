@@ -1,5 +1,9 @@
 import Foundation
 
+enum IslandCanvasCoordinateSpace {
+    static let name = "DynamicIslandCanvas"
+}
+
 @MainActor
 final class IslandLayoutStore: ObservableObject {
     @Published var overlayPresentationGeneration = 0
