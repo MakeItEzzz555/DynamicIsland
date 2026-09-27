@@ -118,10 +118,74 @@ final class ExpandedScrollEventRoutingPolicyTests: XCTestCase {
         XCTAssertEqual(store.expandedContentScrollRegion, .zero)
 
         store.setExpandedContentScrollRegion(CGRect(x: 11.2, y: 19.8, width: 310.4, height: 121.1))
-        XCTAssertEqual(store.expandedContentScrollRegion, CGRect(x: 11, y: 20, width: 311, height: 121))
+        XCTAssertEqual(store.expandedContentScrollRegion, CGRect(x: 11, y: 19, width: 311, height: 122))
 
         store.setExpandedContentScrollRegion(.zero)
         XCTAssertEqual(store.expandedContentScrollRegion, .zero)
+
+        store.setExpandedContentScrollRegion(.infinite)
+        XCTAssertEqual(store.expandedContentScrollRegion, .zero)
+    }
+
+    func testCanvasCoordinateConversionMatchesAppKitBottomLeftSpace() {
+        XCTAssertEqual(
+            IslandCanvasCoordinateSpace.appKitLocalRect(
+                fromSwiftUI: CGRect(x: 20, y: 40, width: 300, height: 120),
+                canvasHeight: 500
+            ),
+            CGRect(x: 20, y: 340, width: 300, height: 120)
+        )
+    }
+
+    func testVerticalContentSequenceOwnsPhysicalAndMomentumTail() {
+        var ownership = ExpandedContentScrollSequenceOwnership()
+
+        XCTAssertEqual(
+            ownership.route(phase: .physicalBegan, startsInsideContent: true, verticalIntent: true),
+            .passThroughToContent
+        )
+        XCTAssertEqual(
+            ownership.route(phase: .physicalChanged, startsInsideContent: false, verticalIntent: true),
+            .passThroughToContent
+        )
+        XCTAssertEqual(
+            ownership.route(phase: .physicalEnded, startsInsideContent: false, verticalIntent: nil),
+            .passThroughToContent
+        )
+        XCTAssertEqual(
+            ownership.route(phase: .momentumBegan, startsInsideContent: false, verticalIntent: nil),
+            .passThroughToContent
+        )
+        XCTAssertEqual(
+            ownership.route(phase: .momentumEnded, startsInsideContent: false, verticalIntent: nil),
+            .passThroughToContent
+        )
+        XCTAssertNil(ownership.owner)
+    }
+
+    func testNewPhysicalGestureGetsFreshOwnershipAfterNonMomentumEnd() {
+        var ownership = ExpandedContentScrollSequenceOwnership()
+        _ = ownership.route(phase: .physicalBegan, startsInsideContent: true, verticalIntent: true)
+        _ = ownership.route(phase: .physicalEnded, startsInsideContent: false, verticalIntent: nil)
+
+        XCTAssertEqual(
+            ownership.route(phase: .physicalBegan, startsInsideContent: false, verticalIntent: true),
+            .islandGesture
+        )
+        XCTAssertEqual(ownership.owner, .island)
+    }
+
+    func testHorizontalGestureInsideWorkspaceRemainsIslandOwned() {
+        var ownership = ExpandedContentScrollSequenceOwnership()
+
+        XCTAssertEqual(
+            ownership.route(phase: .physicalBegan, startsInsideContent: true, verticalIntent: false),
+            .islandGesture
+        )
+        XCTAssertEqual(
+            ownership.route(phase: .physicalChanged, startsInsideContent: true, verticalIntent: true),
+            .islandGesture
+        )
     }
 
     private func route(

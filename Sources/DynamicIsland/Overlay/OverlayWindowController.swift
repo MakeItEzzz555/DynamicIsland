@@ -41,6 +41,67 @@ struct ExpandedScrollEventRoutingPolicy {
     }
 }
 
+enum ExpandedContentScrollSequencePhase: Equatable {
+    case physicalBegan
+    case physicalChanged
+    case physicalEnded
+    case physicalCancelled
+    case momentumBegan
+    case momentumChanged
+    case momentumEnded
+    case momentumCancelled
+    case phaseLess
+}
+
+struct ExpandedContentScrollSequenceOwnership: Equatable {
+    enum Owner: Equatable {
+        case content
+        case island
+    }
+
+    private(set) var owner: Owner?
+    private var startedInsideContent = false
+    private var hasPhysicalStart = false
+
+    mutating func route(
+        phase: ExpandedContentScrollSequencePhase,
+        startsInsideContent: Bool,
+        verticalIntent: Bool?
+    ) -> ExpandedScrollEventRoute {
+        if phase == .physicalBegan {
+            owner = nil
+            startedInsideContent = startsInsideContent
+            hasPhysicalStart = true
+        } else if owner == nil,
+                  !hasPhysicalStart,
+                  phase == .physicalChanged || phase == .phaseLess {
+            startedInsideContent = startsInsideContent
+        }
+
+        if owner == nil, let verticalIntent {
+            owner = startedInsideContent && verticalIntent ? .content : .island
+        }
+        if owner == nil, phase == .momentumBegan || phase == .momentumChanged {
+            owner = .island
+        }
+
+        let route: ExpandedScrollEventRoute = owner == .content
+            ? .passThroughToContent
+            : .islandGesture
+
+        if phase == .physicalCancelled || phase == .momentumEnded || phase == .momentumCancelled {
+            reset()
+        }
+        return route
+    }
+
+    mutating func reset() {
+        owner = nil
+        startedInsideContent = false
+        hasPhysicalStart = false
+    }
+}
+
 // Enablement stays in AppSettings; only transient callback/input ownership lives here.
 struct OverlayPresentationSession {
     private(set) var generation = 0
@@ -124,8 +185,7 @@ final class OverlayWindowController {
     private var expandedScrollGestureHandled = false
     private var expandedScrollLastActionAt: CFTimeInterval?
     private var expandedScrollGestureResetWorkItem: DispatchWorkItem?
-    private var expandedContentScrollReleaseWorkItem: DispatchWorkItem?
-    private var expandedContentScrollSequenceActive = false
+    private var expandedContentScrollOwnership = ExpandedContentScrollSequenceOwnership()
     private var collapsedScrollGestureResetWorkItem: DispatchWorkItem?
     private var mediaSwipeSessionActive = false
     private var mediaSwipeAccumulatedX: CGFloat = 0
@@ -1115,6 +1175,8 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
         debugLog("requestCollapseWithSequencing started generation=\(generation)")
         stopMouseContainmentTimer()
         layoutStore.isExpandedContentExiting = true
+        resetExpandedContentScrollTracking()
+        layoutStore.setExpandedContentScrollRegion(.zero)
         updateMousePassthrough()
 
         DispatchQueue.main.asyncAfter(deadline: .now() + collapseShellDelay) { [weak self] in
@@ -1345,39 +1407,42 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
     }
 
     private func shouldPassExpandedScrollThroughToContent(_ event: NSEvent) -> Bool {
-        if event.phase.contains(.began) {
-            // A fresh physical gesture always gets a fresh ownership decision.
-            resetExpandedContentScrollTracking()
-        }
-
         let isExpanded = islandState.state == .expanded
-        let region = screenRect(for: layoutStore.expandedContentScrollRegion)
-        let contentHit = isExpanded &&
-            !region.isEmpty &&
-            region.contains(NSEvent.mouseLocation) &&
-            event.hasPreciseScrollingDeltas
-
-        let route = ExpandedScrollEventRoutingPolicy.route(
-            isSuppressed: layoutStore.isExpandedScrollGestureSuppressed,
-            isExpanded: isExpanded,
-            gesturesEnabled: settings.gesturesEnabled,
-            usesTrackpad: settings.gestureInputSource == .trackpad,
-            contentScrollHit: contentHit,
-            contentScrollSequenceActive: expandedContentScrollSequenceActive
-        )
-        guard route == .passThroughToContent, isExpanded else {
-            return false
-        }
-
-        if layoutStore.isExpandedScrollGestureSuppressed {
+        if layoutStore.isExpandedScrollGestureSuppressed, isExpanded {
             resetExpandedScrollTracking()
             logExpandedScrollPassThroughIfNeeded(reason: "global-suppression")
             return true
         }
 
-        if expandedContentScrollSequenceActive || contentHit {
-            expandedContentScrollSequenceActive = true
-            updateExpandedContentScrollSequenceLifetime(for: event)
+        var contentSequenceActive = false
+        if isExpanded,
+           settings.gesturesEnabled,
+           settings.gestureInputSource == .trackpad,
+           event.hasPreciseScrollingDeltas {
+            let region = screenRect(for: layoutStore.expandedContentScrollRegion)
+            let startsInsideContent = !region.isEmpty && region.contains(NSEvent.mouseLocation)
+            let deltaX = abs(event.scrollingDeltaX)
+            let deltaY = abs(event.scrollingDeltaY)
+            let verticalIntent: Bool? = deltaX == 0 && deltaY == 0 ? nil : deltaY >= deltaX
+            contentSequenceActive = expandedContentScrollOwnership.route(
+                phase: expandedContentSequencePhase(for: event),
+                startsInsideContent: startsInsideContent,
+                verticalIntent: verticalIntent
+            ) == .passThroughToContent
+        }
+
+        let route = ExpandedScrollEventRoutingPolicy.route(
+            isSuppressed: false,
+            isExpanded: isExpanded,
+            gesturesEnabled: settings.gesturesEnabled,
+            usesTrackpad: settings.gestureInputSource == .trackpad,
+            contentScrollSequenceActive: contentSequenceActive
+        )
+        guard route == .passThroughToContent, isExpanded else {
+            return false
+        }
+
+        if contentSequenceActive {
             resetExpandedScrollTracking()
             logExpandedScrollPassThroughIfNeeded(reason: "registered-content-region")
             return true
@@ -1386,34 +1451,20 @@ globalScrollWheelMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollW
         return false
     }
 
-    private func updateExpandedContentScrollSequenceLifetime(for event: NSEvent) {
-        expandedContentScrollReleaseWorkItem?.cancel()
-        expandedContentScrollReleaseWorkItem = nil
-
-        if event.momentumPhase.contains(.ended) || event.momentumPhase.contains(.cancelled) {
-            DispatchQueue.main.async { [weak self] in
-                self?.resetExpandedContentScrollTracking()
-            }
-            return
-        }
-
-        let endedPhysicalGesture = event.phase.contains(.ended) || event.phase.contains(.cancelled)
-        let quietDelay: TimeInterval = endedPhysicalGesture ? 0.18 : 0.42
-        let generation = presentationSession.generation
-        let workItem = DispatchWorkItem { [weak self] in
-            Task { @MainActor in
-                guard let self, self.allowsOverlayWork(generation: generation) else { return }
-                self.resetExpandedContentScrollTracking()
-            }
-        }
-        expandedContentScrollReleaseWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + quietDelay, execute: workItem)
+    private func expandedContentSequencePhase(for event: NSEvent) -> ExpandedContentScrollSequencePhase {
+        if event.momentumPhase.contains(.began) { return .momentumBegan }
+        if event.momentumPhase.contains(.changed) { return .momentumChanged }
+        if event.momentumPhase.contains(.ended) { return .momentumEnded }
+        if event.momentumPhase.contains(.cancelled) { return .momentumCancelled }
+        if event.phase.contains(.began) || event.phase.contains(.mayBegin) { return .physicalBegan }
+        if event.phase.contains(.changed) { return .physicalChanged }
+        if event.phase.contains(.ended) { return .physicalEnded }
+        if event.phase.contains(.cancelled) { return .physicalCancelled }
+        return .phaseLess
     }
 
     private func resetExpandedContentScrollTracking() {
-        expandedContentScrollReleaseWorkItem?.cancel()
-        expandedContentScrollReleaseWorkItem = nil
-        expandedContentScrollSequenceActive = false
+        expandedContentScrollOwnership.reset()
     }
 
     private func logExpandedScrollPassThroughIfNeeded(reason: String) {

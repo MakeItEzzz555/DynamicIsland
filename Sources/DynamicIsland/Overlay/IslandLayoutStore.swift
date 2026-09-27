@@ -2,6 +2,16 @@ import Foundation
 
 enum IslandCanvasCoordinateSpace {
     static let name = "DynamicIslandCanvas"
+
+    static func appKitLocalRect(fromSwiftUI frame: CGRect, canvasHeight: CGFloat) -> CGRect {
+        guard canvasHeight.isFinite, canvasHeight > 0 else { return .zero }
+        return CGRect(
+            x: frame.minX,
+            y: canvasHeight - frame.maxY,
+            width: frame.width,
+            height: frame.height
+        )
+    }
 }
 
 @MainActor

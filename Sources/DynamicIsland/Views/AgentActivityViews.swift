@@ -426,11 +426,9 @@ private struct AgentSessionWorkspaceView: View {
                 }
                 .onPreferenceChange(AgentSessionScrollRegionPreferenceKey.self) { frame in
                     let canvasHeight = layoutStore.canvasSize.height
-                    let localFrame = CGRect(
-                        x: frame.minX,
-                        y: canvasHeight - frame.maxY,
-                        width: frame.width,
-                        height: frame.height
+                    let localFrame = IslandCanvasCoordinateSpace.appKitLocalRect(
+                        fromSwiftUI: frame,
+                        canvasHeight: canvasHeight
                     )
                     layoutStore.setExpandedContentScrollRegion(localFrame)
                 }
