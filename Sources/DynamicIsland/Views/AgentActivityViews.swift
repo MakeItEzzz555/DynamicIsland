@@ -772,20 +772,21 @@ private struct AgentSessionRowContent: View {
     @ObservedObject var approvalControl: AgentApprovalController
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                Text(title)
-                    .font(.system(size: attention ? 12.5 : 11.5, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.94))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                if session.capabilities.contains(.verifiedSourceIdentity), session.source != .unknown {
-                    Image(systemName: "checkmark.seal.fill")
-                        .font(.system(size: 8, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .accessibilityLabel("Verified source")
+        TimelineView(.periodic(from: .now, by: 5)) { timeline in
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(AgentSessionPresentation.displayedPrimaryTitle(for: session, at: timeline.date))
+                        .font(.system(size: attention ? 12.5 : 11.5, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.94))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    if session.capabilities.contains(.verifiedSourceIdentity), session.source != .unknown {
+                        Image(systemName: "checkmark.seal.fill")
+                            .font(.system(size: 8, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel("Verified source")
+                    }
                 }
-            }
 
             HStack(spacing: 5) {
                 Image(systemName: AgentVisualStyle.providerSymbol(session.id.sessionID.provider))
@@ -885,8 +886,9 @@ private struct AgentSessionRowContent: View {
                 .help("Open the verified source application")
                 .accessibilityLabel("Open verified source application \(target.displayName)")
             }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var title: String {
@@ -920,33 +922,39 @@ private struct AgentSessionTrailingStatus: View {
     let showsUsage: Bool
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: 5) {
-            if let metric = progressMetric, let progress = metric.progress {
-                HStack(spacing: 6) {
-                    AgentProgressRail(progress: progress)
-                        .frame(width: layout.isNarrow ? 36 : 48, height: 4)
-                        .accessibilityLabel("\(metric.label) usage")
-                    Text("\(Int((progress * 100).rounded()))%")
-                        .font(.system(size: 9, weight: .bold, design: .monospaced))
-                        .monospacedDigit()
-                        .foregroundStyle(.white.opacity(0.72))
+        TimelineView(.periodic(from: .now, by: 5)) { timeline in
+            let stale = AgentSessionPresentation.hasStaleActiveSignal(session, at: timeline.date)
+            VStack(alignment: .trailing, spacing: 5) {
+                if let metric = progressMetric, let progress = metric.progress {
+                    HStack(spacing: 6) {
+                        AgentProgressRail(progress: progress)
+                            .frame(width: layout.isNarrow ? 36 : 48, height: 4)
+                            .accessibilityLabel("\(metric.label) usage")
+                        Text("\(Int((progress * 100).rounded()))%")
+                            .font(.system(size: 9, weight: .bold, design: .monospaced))
+                            .monospacedDigit()
+                            .foregroundStyle(.white.opacity(0.72))
+                    }
                 }
-            }
-            Label(
-                AgentSessionPresentation.shortStateLabel(session.state),
-                systemImage: AgentSessionPresentation.stateSymbol(session.state)
-            )
-            .font(.system(size: 8.5, weight: .semibold))
-            .foregroundStyle(AgentVisualStyle.accent(for: session.state))
-            .lineLimit(1)
+                Label(
+                    AgentSessionPresentation.displayedStateLabel(for: session, at: timeline.date),
+                    systemImage: AgentSessionPresentation.displayedStateSymbol(for: session, at: timeline.date)
+                )
+                .font(.system(size: 8.5, weight: .semibold))
+                .foregroundStyle(stale ? .secondary : AgentVisualStyle.accent(for: session.state))
+                .lineLimit(1)
 
-            Text(session.lastUpdatedAt, style: .relative)
+                HStack(spacing: 2) {
+                    Text("Last event")
+                    Text(session.lastUpdatedAt, style: .relative)
+                }
                 .font(.system(size: 8, weight: .medium, design: .monospaced))
                 .monospacedDigit()
                 .foregroundStyle(.white.opacity(0.30))
                 .lineLimit(1)
+            }
+            .frame(width: layout.trailingColumnWidth, alignment: .trailing)
         }
-        .frame(width: layout.trailingColumnWidth, alignment: .trailing)
     }
 
     private var progressMetric: AgentUsagePresentation? {
