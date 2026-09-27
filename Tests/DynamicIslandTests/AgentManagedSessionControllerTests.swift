@@ -615,6 +615,129 @@ final class AgentManagedSessionControllerTests: XCTestCase {
         controller.stop()
     }
 
+    @MainActor
+    func testSessionApprovalPolicyAutoAllowsExactManagedRequestAndProjectsSafeStatus() async throws {
+        let provider = PersistentSnapshotFakeProvider(
+            sessions: [Self.descriptor(id: "approval-session", state: .notLoaded)],
+            usage: AgentUsage()
+        )
+        let store = AgentEventStore()
+        let controller = AgentManagedSessionController(
+            provider: provider,
+            coordinator: AgentIngestionCoordinator(eventStore: store),
+            eventStore: store,
+            approvals: AgentApprovalController()
+        )
+
+        controller.startObserving()
+        await controller.refreshPersistentSnapshot()
+        controller.connect(try XCTUnwrap(store.sessions.first))
+        try await Task.sleep(for: .milliseconds(30))
+        let session = try XCTUnwrap(store.sessions.first)
+        XCTAssertTrue(session.capabilities.contains(.approvalControl))
+
+        controller.setApprovalPolicyChoice(.allowSession, for: session)
+        XCTAssertEqual(controller.approvalPolicy(for: session), .allowSession)
+
+        await provider.yield(.approvalRequested(.init(
+            requestToken: .string("request-1"),
+            kind: .command,
+            threadID: "approval-session",
+            turnID: "turn-1",
+            itemID: "item-1",
+            summary: "Run tests"
+        )))
+        try await Task.sleep(for: .milliseconds(50))
+
+        let decisions = await provider.approvalDecisions()
+        XCTAssertEqual(decisions, ["item-1:allow"])
+        XCTAssertTrue(controller.transcript(for: session).contains {
+            $0.role == .status &&
+            $0.text.contains("Approved automatically") &&
+            $0.text.contains("Run tests")
+        })
+        controller.stop()
+    }
+
+    @MainActor
+    func testTurnApprovalPolicyExpiresOnExactTurnCompletion() async throws {
+        let provider = PersistentSnapshotFakeProvider(
+            sessions: [Self.descriptor(id: "approval-turn", state: .notLoaded)],
+            usage: AgentUsage()
+        )
+        let store = AgentEventStore()
+        let controller = AgentManagedSessionController(
+            provider: provider,
+            coordinator: AgentIngestionCoordinator(eventStore: store),
+            eventStore: store,
+            approvals: AgentApprovalController()
+        )
+
+        controller.startObserving()
+        await controller.refreshPersistentSnapshot()
+        controller.connect(try XCTUnwrap(store.sessions.first))
+        try await Task.sleep(for: .milliseconds(30))
+        await provider.yield(.turnStarted(.init(
+            nativeSessionID: "approval-turn",
+            turnID: "turn-a"
+        )))
+        try await Task.sleep(for: .milliseconds(30))
+        let session = try XCTUnwrap(store.sessions.first)
+
+        controller.setApprovalPolicyChoice(.allowTurn, for: session)
+        XCTAssertEqual(controller.approvalPolicy(for: session), .allowTurn(turnID: "turn-a"))
+
+        await provider.yield(.turnCompleted(
+            .init(nativeSessionID: "approval-turn", turnID: "turn-a"),
+            state: .completed,
+            summary: nil
+        ))
+        try await Task.sleep(for: .milliseconds(30))
+
+        XCTAssertEqual(controller.approvalPolicy(for: session), .askEveryTime)
+        controller.stop()
+    }
+
+    @MainActor
+    func testApprovalPolicyAndProviderControlStateDoNotLeakAcrossProviders() async throws {
+        let codex = PersistentSnapshotFakeProvider(
+            provider: .codex,
+            sessions: [Self.descriptor(id: "shared-policy", state: .notLoaded, provider: .codex)],
+            usage: AgentUsage()
+        )
+        let claude = PersistentSnapshotFakeProvider(
+            provider: .claude,
+            sessions: [Self.descriptor(id: "shared-policy", state: .notLoaded, provider: .claude)],
+            usage: AgentUsage()
+        )
+        let store = AgentEventStore()
+        let controller = AgentManagedSessionController(
+            providers: [codex, claude],
+            coordinator: AgentIngestionCoordinator(eventStore: store),
+            eventStore: store,
+            approvals: AgentApprovalController()
+        )
+
+        await controller.refreshPersistentSnapshot()
+        let codexSession = try XCTUnwrap(store.sessions.first { $0.id.sessionID.provider == .codex })
+        let claudeSession = try XCTUnwrap(store.sessions.first { $0.id.sessionID.provider == .claude })
+        controller.connect(codexSession)
+        try await Task.sleep(for: .milliseconds(30))
+        let managedCodex = try XCTUnwrap(store.sessions.first { $0.id.sessionID.provider == .codex })
+
+        controller.setApprovalPolicyChoice(.allowSession, for: managedCodex)
+        XCTAssertEqual(controller.approvalPolicy(for: managedCodex), .allowSession)
+        XCTAssertEqual(controller.approvalPolicy(for: claudeSession), .askEveryTime)
+
+        controller.selectProvider(.claude)
+        XCTAssertTrue(controller.accountUsage.scopedEntries.isEmpty)
+        XCTAssertNil(controller.selectedModelOverrides[claudeSession.id.sessionID])
+        XCTAssertEqual(controller.transcript(for: claudeSession), [])
+        controller.selectProvider(.codex)
+        XCTAssertEqual(controller.approvalPolicy(for: managedCodex), .allowSession)
+        controller.stop()
+    }
+
     private static func descriptor(
         id: String,
         state: AgentDiscoveredSessionRuntimeState,
@@ -658,6 +781,7 @@ private actor PersistentSnapshotFakeProvider: AgentInteractiveProvider {
     private var transcript: [AgentManagedTranscriptEntry] = []
     private var submitted: [String] = []
     private var submitFailure = false
+    private var approvalDecisionLog: [String] = []
     private var models: [AgentManagedModelDescriptor] = [
         AgentManagedModelDescriptor(
             id: "model-a", model: "model-a", displayName: "Model A",
@@ -767,7 +891,13 @@ private actor PersistentSnapshotFakeProvider: AgentInteractiveProvider {
 
     func interrupt(nativeSessionID: String, turnID: String) async throws {}
 
-    func resolveApproval(_ request: AgentManagedApprovalRequest, allow: Bool) async throws {}
+    func resolveApproval(_ request: AgentManagedApprovalRequest, allow: Bool) async throws {
+        approvalDecisionLog.append("\(request.itemID):\(allow ? "allow" : "deny")")
+    }
+
+    func approvalDecisions() -> [String] {
+        approvalDecisionLog
+    }
 
     func stop() async {
         eventContinuation.finish()
