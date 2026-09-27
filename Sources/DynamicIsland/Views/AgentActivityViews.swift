@@ -101,11 +101,6 @@ struct AgentDashboardContentView: View {
                     limit: layout.maximumGaugeCount
                 )
                 : []
-            let selectedSession = AgentWorkspaceSelection.session(
-                current: selectedSessionID,
-                sessions: sessions
-            )
-
             VStack(alignment: .leading, spacing: 10) {
                 if sessions.isEmpty {
                     AgentStandbyDashboard(
@@ -128,19 +123,10 @@ struct AgentDashboardContentView: View {
                         layout: layout,
                         reduceMotion: reduceMotion,
                         layoutStore: layoutStore,
-                        selectedSessionID: $selectedSessionID
+                        selectedSessionID: $selectedSessionID,
+                        minimumHeight: verticalLayout.sessionWorkspaceMinimumHeight
                     )
-
-                    if let selectedSession {
-                        AgentEmbeddedConsoleView(
-                            session: selectedSession,
-                            mode: .observed,
-                            maximumActivityEntries: verticalLayout.selectedDetailActivityLimit,
-                            onSubmit: { _ in false },
-                            onInterrupt: {}
-                        )
-                        .frame(height: verticalLayout.selectedDetailHeight)
-                    }
+                    .layoutPriority(2)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: proxy.size.height, alignment: .topLeading)
@@ -160,6 +146,7 @@ struct AgentDashboardContentView: View {
             )
         }
         .onDisappear {
+            layoutStore?.setAgentWorkspaceScrollCaptureActive(false)
             layoutStore?.setExpandedContentScrollRegion(.zero)
         }
     }
@@ -336,6 +323,7 @@ private struct AgentSessionWorkspaceView: View {
     let reduceMotion: Bool
     let layoutStore: IslandLayoutStore?
     @Binding var selectedSessionID: AgentSessionInstanceID?
+    let minimumHeight: CGFloat
 
     var body: some View {
         registeredWorkspace(
@@ -359,7 +347,12 @@ private struct AgentSessionWorkspaceView: View {
                     .stroke(.white.opacity(0.055), lineWidth: 1)
             }
         )
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .frame(
+            maxWidth: .infinity,
+            minHeight: minimumHeight,
+            maxHeight: .infinity,
+            alignment: .topLeading
+        )
         .accessibilityLabel("Agent sessions")
     }
 
@@ -383,7 +376,11 @@ private struct AgentSessionWorkspaceView: View {
                     )
                     layoutStore.setExpandedContentScrollRegion(localFrame)
                 }
+                .onHover { inside in
+                    layoutStore.setAgentWorkspaceScrollCaptureActive(inside)
+                }
                 .onDisappear {
+                    layoutStore.setAgentWorkspaceScrollCaptureActive(false)
                     layoutStore.setExpandedContentScrollRegion(.zero)
                 }
         } else {
