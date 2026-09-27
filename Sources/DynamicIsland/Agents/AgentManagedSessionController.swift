@@ -53,6 +53,13 @@ final class AgentManagedSessionController: ObservableObject {
 
     var isAvailable: Bool { provider != nil }
 
+    var managedProvider: AgentProvider? { provider?.provider }
+
+    var managedProviders: [AgentProvider] {
+        guard let provider, !provider.interactiveCapabilities.isEmpty else { return [] }
+        return [provider.provider]
+    }
+
     var interactiveCapabilities: Set<AgentInteractiveCapability> {
         provider?.interactiveCapabilities ?? []
     }

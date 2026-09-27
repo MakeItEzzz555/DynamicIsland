@@ -116,17 +116,20 @@ struct AgentDashboardContentView: View {
 
     var body: some View {
         GeometryReader { proxy in
+            let controlSessions = managedControl.managedProvider.map { provider in
+                sessions.filter { $0.id.sessionID.provider == provider }
+            } ?? sessions
             let layout = AgentDashboardLayoutProjection.make(width: proxy.size.width)
             let verticalLayout = AgentWorkspaceVerticalLayoutProjection.make(
                 availableHeight: proxy.size.height
             )
             let selectedSession = AgentWorkspaceSelection.session(
                 current: selectedSessionID,
-                sessions: sessions
+                sessions: controlSessions
             )
             let metrics = showsUsage
                 ? AgentGlobalUsagePresentation.makeForSelectedSession(
-                    provider: .codex,
+                    provider: managedControl.managedProvider ?? .codex,
                     accountUsage: accountUsage,
                     selectedSession: selectedSession,
                     limit: layout.maximumGaugeCount
@@ -137,11 +140,11 @@ struct AgentDashboardContentView: View {
                     AgentGlobalSummaryStrip(metrics: metrics, layout: layout)
                 }
 
-                if sessions.isEmpty {
+                if controlSessions.isEmpty {
                     AgentEmptyConsoleState(managedControl: managedControl)
                 } else {
-                    AgentCompactSessionSelector(
-                        sessions: sessions,
+                    AgentCLIControlBar(
+                        sessions: controlSessions,
                         managedControl: managedControl,
                         selectedSessionID: $selectedSessionID
                     )
@@ -164,15 +167,21 @@ struct AgentDashboardContentView: View {
         .frame(maxWidth: .infinity, maxHeight: availableHeight, alignment: .topLeading)
         .foregroundStyle(.white)
         .onChange(of: sessions.map(\.id)) { _, _ in
+            let controlSessions = managedControl.managedProvider.map { provider in
+                sessions.filter { $0.id.sessionID.provider == provider }
+            } ?? sessions
             selectedSessionID = AgentWorkspaceSelection.resolve(
                 current: selectedSessionID,
-                sessions: sessions
+                sessions: controlSessions
             )
         }
         .onAppear {
+            let controlSessions = managedControl.managedProvider.map { provider in
+                sessions.filter { $0.id.sessionID.provider == provider }
+            } ?? sessions
             selectedSessionID = AgentWorkspaceSelection.resolve(
                 current: selectedSessionID,
-                sessions: sessions
+                sessions: controlSessions
             )
         }
         .onDisappear {
@@ -181,7 +190,7 @@ struct AgentDashboardContentView: View {
     }
 }
 
-private struct AgentCompactSessionSelector: View {
+private struct AgentCLIControlBar: View {
     let sessions: [AgentSession]
     @ObservedObject var managedControl: AgentManagedSessionController
     @Binding var selectedSessionID: AgentSessionInstanceID?
@@ -191,87 +200,11 @@ private struct AgentCompactSessionSelector: View {
     }
 
     var body: some View {
-        HStack(spacing: 8) {
-            Label(
-                selectedSession?.id.sessionID.provider.stableName.capitalized ?? "Agent",
-                systemImage: AgentVisualStyle.providerSymbol(
-                    selectedSession?.id.sessionID.provider ?? .other("agent")
-                )
-            )
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.72))
-
-            Menu {
-                ForEach(sessions.sorted(by: AgentSessionPresentation.isOrderedBefore), id: \.id) { session in
-                    Button {
-                        selectedSessionID = session.id
-                    } label: {
-                        VStack(alignment: .leading) {
-                            Text(sessionLabel(session))
-                            Text(sessionDetail(session))
-                        }
-                    }
-                }
-            } label: {
-                HStack(spacing: 5) {
-                    Text(selectedSession.map(sessionLabel) ?? "Choose session")
-                        .font(.system(size: 9.5, weight: .semibold))
-                        .lineLimit(1)
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.system(size: 7, weight: .semibold))
-                }
-                .foregroundStyle(.white.opacity(0.86))
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize(horizontal: false, vertical: true)
-
-            Spacer(minLength: 8)
-
-            if let session = selectedSession {
-                if managedControl.interactiveCapabilities.contains(.selectModel),
-                   !managedControl.availableModels.isEmpty {
-                    Menu {
-                        Button("Use thread model") {
-                            managedControl.selectModel(nil, for: session)
-                        }
-                        Divider()
-                        ForEach(managedControl.availableModels) { option in
-                            Button {
-                                managedControl.selectModel(option.model, for: session)
-                            } label: {
-                                HStack {
-                                    Text(option.displayName)
-                                    if option.model == managedControl.selectedModel(for: session) {
-                                        Image(systemName: "checkmark")
-                                    }
-                                }
-                            }
-                        }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Text(modelLabel(for: session))
-                                .font(.system(size: 8, weight: .medium, design: .monospaced))
-                                .lineLimit(1)
-                            Image(systemName: "chevron.down")
-                                .font(.system(size: 6.5, weight: .semibold))
-                        }
-                        .foregroundStyle(.white.opacity(0.46))
-                    }
-                    .menuStyle(.borderlessButton)
-                } else {
-                    Text(modelLabel(for: session))
-                        .font(.system(size: 8, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.40))
-                        .lineLimit(1)
-                }
-
-                Label(
-                    AgentSessionPresentation.displayedStateLabel(for: session, at: Date()),
-                    systemImage: AgentSessionPresentation.displayedStateSymbol(for: session, at: Date())
-                )
-                .font(.system(size: 8, weight: .semibold))
-                .foregroundStyle(AgentVisualStyle.accent(for: session.state).opacity(0.82))
-            }
+        ViewThatFits(in: .horizontal) {
+            controls(compact: false)
+                .fixedSize(horizontal: true, vertical: false)
+            controls(compact: true)
+                .frame(maxWidth: .infinity)
         }
         .padding(.horizontal, 9)
         .frame(height: 28)
@@ -282,7 +215,148 @@ private struct AgentCompactSessionSelector: View {
                 .stroke(.white.opacity(0.05), lineWidth: 1)
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Agent session selector")
+        .accessibilityLabel("Agent console controls")
+    }
+
+    private func controls(compact: Bool) -> some View {
+        HStack(spacing: compact ? 5 : 8) {
+            providerMenu(compact: compact)
+            sessionMenu(compact: compact)
+                .layoutPriority(2)
+
+            if let session = selectedSession {
+                Spacer(minLength: compact ? 2 : 6)
+                modelControl(for: session, compact: compact)
+                statusControl(for: session, compact: compact)
+
+                if managedControl.mode(for: session).canInterrupt {
+                    Button {
+                        managedControl.interrupt(session)
+                    } label: {
+                        adaptiveLabel("Stop", systemImage: "stop.fill", compact: compact)
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(.red.opacity(0.86))
+                    .help("Interrupt the exact active managed turn")
+                    .accessibilityLabel("Stop active agent turn")
+                }
+            }
+        }
+    }
+
+    private func providerMenu(compact: Bool) -> some View {
+        let provider = selectedSession?.id.sessionID.provider ?? managedControl.managedProvider ?? .other("agent")
+        return Menu {
+            ForEach(managedControl.managedProviders, id: \.self) { supported in
+                Label(
+                    supported.stableName.capitalized,
+                    systemImage: supported == provider ? "checkmark" : AgentVisualStyle.providerSymbol(supported)
+                )
+            }
+        } label: {
+            adaptiveLabel(
+                provider.stableName.capitalized,
+                systemImage: AgentVisualStyle.providerSymbol(provider),
+                compact: compact
+            )
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.72))
+        }
+        .menuStyle(.borderlessButton)
+        .help("Managed agent provider")
+    }
+
+    private func sessionMenu(compact: Bool) -> some View {
+        Menu {
+            ForEach(sessions.sorted(by: AgentSessionPresentation.isOrderedBefore), id: \.id) { session in
+                Button {
+                    selectedSessionID = session.id
+                } label: {
+                    VStack(alignment: .leading) {
+                        Text(sessionLabel(session))
+                        Text(sessionDetail(session))
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text(selectedSession.map(sessionLabel) ?? "Choose session")
+                    .font(.system(size: compact ? 8.5 : 9.5, weight: .semibold))
+                    .lineLimit(1)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 7, weight: .semibold))
+            }
+            .foregroundStyle(.white.opacity(0.86))
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    @ViewBuilder
+    private func modelControl(for session: AgentSession, compact: Bool) -> some View {
+        if managedControl.interactiveCapabilities.contains(.selectModel),
+           !managedControl.availableModels.isEmpty {
+            Menu {
+                Button("Use thread model") {
+                    managedControl.selectModel(nil, for: session)
+                }
+                Divider()
+                ForEach(managedControl.availableModels) { option in
+                    Button {
+                        managedControl.selectModel(option.model, for: session)
+                    } label: {
+                        HStack {
+                            Text(option.displayName)
+                            if option.model == managedControl.selectedModel(for: session) {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 3) {
+                    if compact { Image(systemName: "cpu") }
+                    Text(modelLabel(for: session))
+                        .lineLimit(1)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 6.5, weight: .semibold))
+                }
+                .font(.system(size: 8, weight: .medium, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.48))
+            }
+            .menuStyle(.borderlessButton)
+            .help("Model for the next managed turn")
+        } else if !compact {
+            Text(modelLabel(for: session))
+                .font(.system(size: 8, weight: .medium, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.40))
+                .lineLimit(1)
+        }
+    }
+
+    private func statusControl(for session: AgentSession, compact: Bool) -> some View {
+        adaptiveLabel(
+            AgentSessionPresentation.displayedStateLabel(for: session, at: Date()),
+            systemImage: AgentSessionPresentation.displayedStateSymbol(for: session, at: Date()),
+            compact: compact
+        )
+        .font(.system(size: 8, weight: .semibold))
+        .foregroundStyle(AgentVisualStyle.accent(for: session.state).opacity(0.82))
+        .help(AgentSessionPresentation.displayedStateLabel(for: session, at: Date()))
+    }
+
+    @ViewBuilder
+    private func adaptiveLabel(
+        _ title: String,
+        systemImage: String,
+        compact: Bool
+    ) -> some View {
+        if compact {
+            Label(title, systemImage: systemImage).labelStyle(.iconOnly)
+        } else {
+            Label(title, systemImage: systemImage).labelStyle(.titleAndIcon)
+        }
     }
 
     private func sessionLabel(_ session: AgentSession) -> String {

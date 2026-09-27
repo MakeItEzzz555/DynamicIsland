@@ -51,7 +51,6 @@ struct AgentEmbeddedConsoleView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            header
             transcript
             if mode.showsComposer {
                 composer
@@ -71,36 +70,6 @@ struct AgentEmbeddedConsoleView: View {
         .onChange(of: session.id) { _, _ in draft = "" }
         .onChange(of: mode.showsComposer) { _, isInteractive in
             if !isInteractive { draft = "" }
-        }
-    }
-
-    private var header: some View {
-        HStack(spacing: 7) {
-            Image(systemName: "terminal.fill")
-                .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(.white.opacity(0.72))
-            Text(AgentSessionPresentation.primaryTitle(for: session))
-                .font(.system(size: 9.5, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.90))
-                .lineLimit(1)
-            Text(session.id.sessionID.provider.stableName.capitalized)
-                .font(.system(size: 8, weight: .medium))
-                .foregroundStyle(.white.opacity(0.40))
-            Spacer(minLength: 8)
-            Label(
-                AgentSessionPresentation.shortStateLabel(session.state),
-                systemImage: AgentSessionPresentation.stateSymbol(session.state)
-            )
-            .font(.system(size: 7.5, weight: .semibold))
-            .foregroundStyle(AgentVisualStyle.accent(for: session.state).opacity(0.86))
-            if mode.canInterrupt {
-                Button(action: onInterrupt) {
-                    Label("Stop", systemImage: "stop.fill")
-                        .labelStyle(.iconOnly)
-                }
-                .buttonStyle(.borderless)
-                .help("Interrupt the current managed turn")
-            }
         }
     }
 
