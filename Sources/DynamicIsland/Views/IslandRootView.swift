@@ -2060,7 +2060,7 @@ struct ExpandedIslandView: View {
                 } else {
                     pageView(navigation.selectedPage, metrics: metrics)
                         .id(navigation.selectedPage)
-                        .transition(.opacity)
+                        .transition(pageSwitchTransition)
                         .animation(pageSwitchAnimation, value: navigation.selectedPage)
                 }
             }
@@ -2095,7 +2095,27 @@ struct ExpandedIslandView: View {
               settings.animationPreset != .instant else {
             return .linear(duration: 0.01)
         }
-        return .easeInOut(duration: 0.16)
+
+        let shellDuration = IslandContentTransitionTiming.shellDuration(
+            settings: settings,
+            reduceMotion: reduceMotion
+        )
+        let contentDuration = max(shellDuration * 0.58, 0.16)
+        let contentDelay = shellDuration * 0.06
+        return .smooth(duration: contentDuration).delay(contentDelay)
+    }
+
+    private var pageSwitchTransition: AnyTransition {
+        guard !reduceMotion,
+              settings.contentAnimationEnabled,
+              settings.animationPreset != .instant else {
+            return .opacity
+        }
+
+        return .asymmetric(
+            insertion: .opacity.combined(with: .scale(scale: 0.985, anchor: .top)),
+            removal: .opacity.combined(with: .scale(scale: 0.992, anchor: .top))
+        )
     }
 
     private var contentVisibilityAnimation: Animation {

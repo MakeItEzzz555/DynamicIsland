@@ -775,7 +775,12 @@ final class OverlayWindowController {
     }
 
     private var expandedPageMorphDuration: TimeInterval {
-        min(max(0.30 / max(settings.shellAnimationSpeed, 0.25), 0.24), 0.42)
+        let reduceMotion = settings.reduceExtraMotion ||
+            NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        return IslandContentTransitionTiming.shellDuration(
+            settings: settings,
+            reduceMotion: reduceMotion
+        )
     }
 
     private func updateLayout(
