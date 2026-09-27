@@ -5,6 +5,7 @@ struct AgentEmbeddedConsoleView: View {
     let session: AgentSession
     var canSubmit = false
     var canInterrupt = false
+    var maximumActivityEntries = 3
     let onSubmit: (String) -> Void
     let onInterrupt: () -> Void
 
@@ -14,7 +15,11 @@ struct AgentEmbeddedConsoleView: View {
         VStack(alignment: .leading, spacing: 6) {
             header
             activity
-            composer
+            if canSubmit {
+                composer
+            } else {
+                observedFooter
+            }
         }
         .padding(8)
         .background(Color.black.opacity(0.24))
@@ -24,7 +29,7 @@ struct AgentEmbeddedConsoleView: View {
                 .stroke(.white.opacity(0.06), lineWidth: 1)
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Agent console for \(AgentSessionPresentation.primaryTitle(for: session))")
+        .accessibilityLabel("Selected session details for \(AgentSessionPresentation.primaryTitle(for: session))")
     }
 
     private var header: some View {
@@ -40,15 +45,12 @@ struct AgentEmbeddedConsoleView: View {
                 .font(.system(size: 8, weight: .medium))
                 .foregroundStyle(.white.opacity(0.40))
             Spacer(minLength: 8)
-            if canSubmit {
-                Label("Interactive", systemImage: "bolt.fill")
-                    .font(.system(size: 7.5, weight: .semibold))
-                    .foregroundStyle(.green.opacity(0.82))
-            } else {
-                Text("Observed")
-                    .font(.system(size: 7.5, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.36))
-            }
+            Label(
+                AgentSessionPresentation.shortStateLabel(session.state),
+                systemImage: AgentSessionPresentation.stateSymbol(session.state)
+            )
+            .font(.system(size: 7.5, weight: .semibold))
+            .foregroundStyle(AgentVisualStyle.accent(for: session.state).opacity(0.86))
             if canInterrupt {
                 Button(action: onInterrupt) {
                     Label("Stop", systemImage: "stop.fill")
@@ -65,9 +67,9 @@ struct AgentEmbeddedConsoleView: View {
         let operations = Array(
             AgentOperationAggregation.make(
                 for: session,
-                limit: 4,
+                limit: maximumActivityEntries,
                 includePendingApprovals: false
-            ).suffix(4)
+            ).suffix(maximumActivityEntries)
         )
         VStack(alignment: .leading, spacing: 3) {
             if operations.isEmpty {
@@ -121,6 +123,19 @@ struct AgentEmbeddedConsoleView: View {
             .keyboardShortcut(.return, modifiers: [.command])
             .help("Send prompt (Command-Return)")
         }
+    }
+
+    private var observedFooter: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "eye")
+            Text("Observed session")
+            Text("·")
+            Text("Interactive control unavailable")
+        }
+        .font(.system(size: 7.5, weight: .medium))
+        .foregroundStyle(.white.opacity(0.34))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Observed session. Interactive control unavailable.")
     }
 
     private var trimmedDraft: String {

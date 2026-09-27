@@ -6,8 +6,8 @@ enum AgentPresentationPriority: Int, Comparable, Sendable {
     case failure
     case working
     case thinking
-    case recent
     case idle
+    case recent
 
     static func < (lhs: Self, rhs: Self) -> Bool {
         lhs.rawValue < rhs.rawValue
@@ -105,13 +105,13 @@ enum AgentSessionPresentation {
 
     static func priority(for session: AgentSession) -> AgentPresentationPriority {
         switch session.state {
-        case .waitingForApproval, .waitingForUser, .planReady:
+        case .waitingForApproval, .waitingForUser:
             .actionRequired
         case .failed, .interrupted:
             .failure
         case .working, .runningTool, .runningCommand:
             .working
-        case .thinking, .planning:
+        case .thinking, .planning, .planReady:
             .thinking
         case .completed:
             .recent
@@ -263,6 +263,18 @@ struct AgentProjectGroupPresentation: Identifiable, Equatable, Sendable {
     var subagentCount: Int {
         sessions.reduce(0) { $0 + $1.subagents.count }
     }
+
+    var primarySessions: [AgentSession] {
+        sessions.filter { $0.isActive || AgentSessionPresentation.requiresAttention($0) }
+    }
+
+    var recentSessions: [AgentSession] {
+        sessions.filter { !$0.isActive && !AgentSessionPresentation.requiresAttention($0) }
+    }
+
+    var showsRecentSection: Bool {
+        !recentSessions.isEmpty
+    }
 }
 
 struct AgentDashboardPresentation: Equatable, Sendable {
@@ -318,6 +330,30 @@ enum AgentWorkspaceSelection {
         }
         return sessions.sorted(by: AgentSessionPresentation.isOrderedBefore).first?.id
     }
+
+    static func session(
+        current: AgentSessionInstanceID?,
+        sessions: [AgentSession]
+    ) -> AgentSession? {
+        guard let selected = resolve(current: current, sessions: sessions) else { return nil }
+        return sessions.first { $0.id == selected }
+    }
+}
+
+enum AgentSessionRowEmphasis: Equatable, Sendable {
+    case standard
+    case hovered
+    case selected
+    case attention
+    case selectedAttention
+
+    static func resolve(session: AgentSession, selected: Bool, hovering: Bool) -> Self {
+        if AgentSessionPresentation.requiresAttention(session) {
+            return selected ? .selectedAttention : .attention
+        }
+        if selected { return .selected }
+        return hovering ? .hovered : .standard
+    }
 }
 
 struct AgentDashboardLayoutProjection: Equatable, Sendable {
@@ -331,6 +367,21 @@ struct AgentDashboardLayoutProjection: Equatable, Sendable {
             return Self(isNarrow: true, maximumGaugeCount: 2, showsModel: false, trailingColumnWidth: 76)
         }
         return Self(isNarrow: false, maximumGaugeCount: 5, showsModel: true, trailingColumnWidth: 126)
+    }
+}
+
+struct AgentWorkspaceVerticalLayoutProjection: Equatable, Sendable {
+    let selectedDetailHeight: CGFloat
+    let selectedDetailActivityLimit: Int
+
+    static func make(availableHeight: CGFloat) -> Self {
+        if availableHeight < 240 {
+            return Self(selectedDetailHeight: 68, selectedDetailActivityLimit: 2)
+        }
+        if availableHeight < 300 {
+            return Self(selectedDetailHeight: 80, selectedDetailActivityLimit: 3)
+        }
+        return Self(selectedDetailHeight: 94, selectedDetailActivityLimit: 4)
     }
 }
 

@@ -421,6 +421,137 @@ final class AgentPresentationTests: XCTestCase {
         XCTAssertNil(AgentWorkspaceSelection.resolve(current: approval.id, sessions: []))
     }
 
+    func testWorkspaceSelectionUsesRequiredFallbackPriority() {
+        let sessions = [
+            session(nativeID: "completed", state: .completed),
+            session(nativeID: "idle", state: .idle),
+            session(nativeID: "plan", state: .planReady),
+            session(nativeID: "thinking", state: .thinking),
+            session(nativeID: "working", state: .runningTool),
+            session(nativeID: "failed", state: .failed),
+            session(nativeID: "approval", state: .waitingForApproval)
+        ]
+
+        XCTAssertEqual(
+            sessions.sorted(by: AgentSessionPresentation.isOrderedBefore).map(\.id.sessionID.nativeID),
+            ["approval", "failed", "working", "plan", "thinking", "idle", "completed"]
+        )
+        XCTAssertEqual(
+            AgentWorkspaceSelection.resolve(current: nil, sessions: sessions)?.sessionID.nativeID,
+            "approval"
+        )
+    }
+
+    func testWorkspaceSelectionSurvivesUnrelatedArrivalAndSelectedStateUpdate() {
+        let selected = session(nativeID: "selected", state: .idle)
+        let unrelated = session(nativeID: "urgent", state: .waitingForApproval)
+        let updated = session(nativeID: "selected", state: .runningCommand)
+
+        XCTAssertEqual(
+            AgentWorkspaceSelection.resolve(current: selected.id, sessions: [selected, unrelated]),
+            selected.id
+        )
+        XCTAssertEqual(
+            AgentWorkspaceSelection.resolve(current: selected.id, sessions: [updated, unrelated]),
+            selected.id
+        )
+    }
+
+    func testWorkspaceSelectionRemovalAndGenerationReplacementChooseExactFallback() {
+        let selected = session(nativeID: "same", generation: 1, state: .working)
+        let replacement = session(nativeID: "same", generation: 2, state: .working)
+        let fallback = session(provider: .claude, nativeID: "fallback", state: .thinking)
+
+        XCTAssertEqual(
+            AgentWorkspaceSelection.resolve(current: selected.id, sessions: [replacement, fallback]),
+            replacement.id
+        )
+        XCTAssertNotEqual(replacement.id, selected.id)
+        XCTAssertEqual(
+            AgentWorkspaceSelection.session(current: selected.id, sessions: [replacement, fallback])?.id,
+            replacement.id
+        )
+    }
+
+    func testWorkspaceSelectionKeepsProviderNamespaceDistinctForSameNativeID() {
+        let codex = session(provider: .codex, nativeID: "shared", state: .working)
+        let claude = session(provider: .claude, nativeID: "shared", state: .working)
+
+        XCTAssertEqual(
+            AgentWorkspaceSelection.resolve(current: claude.id, sessions: [codex, claude]),
+            claude.id
+        )
+        XCTAssertNotEqual(codex.id, claude.id)
+    }
+
+    func testSelectedTerminalSessionRemainsInspectableUntilRetentionRemovesIt() {
+        let completed = session(nativeID: "completed", state: .completed)
+        let active = session(nativeID: "active", state: .working)
+
+        XCTAssertEqual(
+            AgentWorkspaceSelection.session(current: completed.id, sessions: [active, completed])?.id,
+            completed.id
+        )
+        XCTAssertEqual(
+            AgentWorkspaceSelection.session(current: completed.id, sessions: [active])?.id,
+            active.id
+        )
+    }
+
+    func testProjectPresentationSeparatesPrimaryAndRecentWithoutChangingCounts() throws {
+        let approval = session(nativeID: "approval", state: .waitingForApproval, projectName: "App")
+        let active = session(nativeID: "active", state: .working, projectName: "App")
+        let interrupted = session(nativeID: "interrupted", state: .interrupted, projectName: "App")
+        let completed = session(nativeID: "completed", state: .completed, projectName: "App")
+        let group = try XCTUnwrap(
+            AgentDashboardPresentation.make(sessions: [completed, active, interrupted, approval]).groups.first
+        )
+
+        XCTAssertEqual(group.sessions.count, 4)
+        XCTAssertEqual(
+            group.primarySessions.map(\.id.sessionID.nativeID),
+            ["approval", "interrupted", "active"]
+        )
+        XCTAssertEqual(group.recentSessions.map(\.id.sessionID.nativeID), ["completed"])
+        XCTAssertTrue(group.showsRecentSection)
+
+        let activeOnly = try XCTUnwrap(
+            AgentDashboardPresentation.make(sessions: [active]).groups.first
+        )
+        XCTAssertFalse(activeOnly.showsRecentSection)
+    }
+
+    func testSelectedAttentionEmphasisOutranksSelectionAndHover() {
+        let attention = session(state: .waitingForApproval)
+        let ordinary = session(state: .working)
+
+        XCTAssertEqual(
+            AgentSessionRowEmphasis.resolve(session: attention, selected: true, hovering: true),
+            .selectedAttention
+        )
+        XCTAssertEqual(
+            AgentSessionRowEmphasis.resolve(session: attention, selected: false, hovering: true),
+            .attention
+        )
+        XCTAssertEqual(
+            AgentSessionRowEmphasis.resolve(session: ordinary, selected: true, hovering: true),
+            .selected
+        )
+    }
+
+    func testWorkspaceVerticalLayoutKeepsObservedDetailBounded() {
+        let compact = AgentWorkspaceVerticalLayoutProjection.make(availableHeight: 220)
+        let regular = AgentWorkspaceVerticalLayoutProjection.make(availableHeight: 270)
+        let large = AgentWorkspaceVerticalLayoutProjection.make(availableHeight: 320)
+
+        XCTAssertEqual(compact.selectedDetailHeight, 68)
+        XCTAssertEqual(compact.selectedDetailActivityLimit, 2)
+        XCTAssertEqual(regular.selectedDetailHeight, 80)
+        XCTAssertEqual(regular.selectedDetailActivityLimit, 3)
+        XCTAssertEqual(large.selectedDetailHeight, 94)
+        XCTAssertEqual(large.selectedDetailActivityLimit, 4)
+    }
+
     func testScreenshotFixtureUsesSyntheticScopedUsageWithoutControlAuthority() throws {
         let sessions = AgentDashboardPreviewFactory.sessions(now: now)
         XCTAssertEqual(sessions.count, 3)
@@ -457,6 +588,7 @@ final class AgentPresentationTests: XCTestCase {
     private func session(
         provider: AgentProvider = .codex,
         nativeID: String = "session",
+        generation: UInt64 = 1,
         state: AgentState = .working,
         projectName: String = "DynamicIsland",
         model: String? = "model",
@@ -466,7 +598,7 @@ final class AgentPresentationTests: XCTestCase {
         AgentSession(
             id: AgentSessionInstanceID(
                 sessionID: AgentSessionID(provider: provider, nativeID: nativeID),
-                generation: AgentSessionGeneration(rawValue: 1)
+                generation: AgentSessionGeneration(rawValue: generation)
             ),
             source: .terminal,
             state: state,

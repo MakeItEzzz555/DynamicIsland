@@ -73,16 +73,38 @@ struct AgentDashboardContentView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var selectedSessionID: AgentSessionInstanceID?
 
+    init(
+        sessions: [AgentSession],
+        showsUsage: Bool,
+        approvalControl: AgentApprovalController,
+        layoutStore: IslandLayoutStore? = nil,
+        availableHeight: CGFloat,
+        initialSelectedSessionID: AgentSessionInstanceID? = nil
+    ) {
+        self.sessions = sessions
+        self.showsUsage = showsUsage
+        _approvalControl = ObservedObject(wrappedValue: approvalControl)
+        self.layoutStore = layoutStore
+        self.availableHeight = availableHeight
+        _selectedSessionID = State(initialValue: initialSelectedSessionID)
+    }
+
     var body: some View {
         GeometryReader { proxy in
             let layout = AgentDashboardLayoutProjection.make(width: proxy.size.width)
+            let verticalLayout = AgentWorkspaceVerticalLayoutProjection.make(
+                availableHeight: proxy.size.height
+            )
             let metrics = showsUsage
                 ? AgentGlobalUsagePresentation.make(
                     sessions: sessions,
                     limit: layout.maximumGaugeCount
                 )
                 : []
-            let selectedSession = sessions.first { $0.id == selectedSessionID }
+            let selectedSession = AgentWorkspaceSelection.session(
+                current: selectedSessionID,
+                sessions: sessions
+            )
 
             VStack(alignment: .leading, spacing: 10) {
                 if sessions.isEmpty {
@@ -114,10 +136,11 @@ struct AgentDashboardContentView: View {
                             session: selectedSession,
                             canSubmit: false,
                             canInterrupt: false,
+                            maximumActivityEntries: verticalLayout.selectedDetailActivityLimit,
                             onSubmit: { _ in },
                             onInterrupt: {}
                         )
-                        .frame(minHeight: 86, idealHeight: 102, maxHeight: 116)
+                        .frame(height: verticalLayout.selectedDetailHeight)
                     }
                 }
             }
@@ -125,7 +148,7 @@ struct AgentDashboardContentView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: availableHeight, alignment: .topLeading)
         .foregroundStyle(.white)
-        .onChange(of: sessions.map(\.id)) { _ in
+        .onChange(of: sessions.map(\.id)) { _, _ in
             selectedSessionID = AgentWorkspaceSelection.resolve(
                 current: selectedSessionID,
                 sessions: sessions
@@ -520,37 +543,65 @@ private struct AgentProjectSection: View {
                 .padding(.horizontal, 8)
                 .padding(.vertical, 7)
 
-            ForEach(Array(group.sessions.enumerated()), id: \.element.id) { index, session in
-                Group {
-                    if AgentSessionPresentation.requiresAttention(session) {
-                        AgentAttentionSessionRow(
-                            session: session,
-                            layout: layout,
-                            showsUsage: showsUsage,
-                            approvalControl: approvalControl,
-                            selected: selectedSessionID == session.id,
-                            select: { selectedSessionID = session.id }
-                        )
-                    } else {
-                        AgentSessionRow(
-                            session: session,
-                            layout: layout,
-                            showsUsage: showsUsage,
-                            approvalControl: approvalControl,
-                            selected: selectedSessionID == session.id,
-                            select: { selectedSessionID = session.id }
-                        )
-                    }
-                }
-                .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top)))
+            sessionRows(group.primarySessions)
 
-                if index < group.sessions.count - 1 {
-                    Divider()
-                        .overlay(.white.opacity(0.035))
-                        .padding(.leading, 42)
-                }
+            if group.showsRecentSection {
+                AgentRecentSessionsSeparator()
+                sessionRows(group.recentSessions)
             }
         }
+    }
+
+    @ViewBuilder
+    private func sessionRows(_ sessions: [AgentSession]) -> some View {
+        ForEach(Array(sessions.enumerated()), id: \.element.id) { index, session in
+            Group {
+                if AgentSessionPresentation.requiresAttention(session) {
+                    AgentAttentionSessionRow(
+                        session: session,
+                        layout: layout,
+                        showsUsage: showsUsage,
+                        approvalControl: approvalControl,
+                        selected: selectedSessionID == session.id,
+                        select: { selectedSessionID = session.id }
+                    )
+                } else {
+                    AgentSessionRow(
+                        session: session,
+                        layout: layout,
+                        showsUsage: showsUsage,
+                        approvalControl: approvalControl,
+                        selected: selectedSessionID == session.id,
+                        select: { selectedSessionID = session.id }
+                    )
+                }
+            }
+            .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top)))
+
+            if index < sessions.count - 1 {
+                Divider()
+                    .overlay(.white.opacity(0.035))
+                    .padding(.leading, 42)
+            }
+        }
+    }
+}
+
+private struct AgentRecentSessionsSeparator: View {
+    var body: some View {
+        HStack(spacing: 7) {
+            Text("Recent")
+                .font(.system(size: 8, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.34))
+            Rectangle()
+                .fill(.white.opacity(0.045))
+                .frame(height: 1)
+        }
+        .padding(.leading, 42)
+        .padding(.trailing, 9)
+        .padding(.vertical, 4)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Recent sessions")
     }
 }
 
@@ -587,6 +638,11 @@ private struct AgentSessionRow: View {
     @State private var isHovering = false
 
     var body: some View {
+        let emphasis = AgentSessionRowEmphasis.resolve(
+            session: session,
+            selected: selected,
+            hovering: isHovering
+        )
         HStack(alignment: .center, spacing: 10) {
             AgentStateMarker(session: session)
             AgentSessionRowContent(
@@ -601,9 +657,9 @@ private struct AgentSessionRow: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 9)
         .background(
-            selected
+            emphasis == .selected
                 ? Color.white.opacity(0.075)
-                : (isHovering ? Color.white.opacity(0.045) : Color.clear)
+                : (emphasis == .hovered ? Color.white.opacity(0.045) : Color.clear)
         )
         .overlay(alignment: .leading) {
             if selected {
@@ -617,6 +673,15 @@ private struct AgentSessionRow: View {
         .onHover { isHovering = $0 }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(sessionTitle), \(AgentSessionPresentation.stateLabel(session.state)), \(session.id.sessionID.provider.stableName)")
+        .accessibilityValue(selected ? "Selected" : "Not selected")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityAction(named: "Select session", select)
+        .focusable()
+        .onKeyPress(.return) {
+            select()
+            return .handled
+        }
     }
 
     private var sessionTitle: String {
@@ -633,6 +698,11 @@ private struct AgentAttentionSessionRow: View {
     let select: () -> Void
 
     var body: some View {
+        let emphasis = AgentSessionRowEmphasis.resolve(
+            session: session,
+            selected: selected,
+            hovering: false
+        )
         HStack(spacing: 0) {
             Rectangle()
                 .fill(AgentVisualStyle.accent(for: session.state))
@@ -655,7 +725,7 @@ private struct AgentAttentionSessionRow: View {
         }
         .background(
             AgentVisualStyle.attentionSurfaceTint(for: session.state)
-                .opacity(selected ? 0.25 : 0.18)
+                .opacity(emphasis == .selectedAttention ? 0.25 : 0.18)
         )
         .contentShape(Rectangle())
         .onTapGesture(perform: select)
@@ -666,6 +736,15 @@ private struct AgentAttentionSessionRow: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Attention required, \(AgentSessionPresentation.stateLabel(session.state)), \(sessionTitle)")
+        .accessibilityValue(selected ? "Selected" : "Not selected")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityAction(named: "Select session", select)
+        .focusable()
+        .onKeyPress(.return) {
+            select()
+            return .handled
+        }
     }
 
     private var sessionTitle: String {
