@@ -308,6 +308,18 @@ struct AgentDashboardPresentation: Equatable, Sendable {
     }
 }
 
+enum AgentWorkspaceSelection {
+    static func resolve(
+        current: AgentSessionInstanceID?,
+        sessions: [AgentSession]
+    ) -> AgentSessionInstanceID? {
+        if let current, sessions.contains(where: { $0.id == current }) {
+            return current
+        }
+        return sessions.sorted(by: AgentSessionPresentation.isOrderedBefore).first?.id
+    }
+}
+
 struct AgentDashboardLayoutProjection: Equatable, Sendable {
     let isNarrow: Bool
     let maximumGaugeCount: Int
