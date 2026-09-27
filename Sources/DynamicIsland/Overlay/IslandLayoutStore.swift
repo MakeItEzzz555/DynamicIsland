@@ -21,6 +21,7 @@ final class IslandLayoutStore: ObservableObject {
     @Published var collapsedPreviewSurfaceFrame: CGRect = .zero
     @Published var panelFrame: CGRect = .zero
     @Published private(set) var isExpandedScrollGestureSuppressed = false
+    @Published private(set) var expandedContentScrollRegion: CGRect = .zero
 
     func setExpandedScrollGestureSuppressed(_ suppressed: Bool) {
         guard isExpandedScrollGestureSuppressed != suppressed else { return }
@@ -31,6 +32,19 @@ final class IslandLayoutStore: ObservableObject {
                 ? "[GestureDebug] expanded scroll suppression enabled"
                 : "[GestureDebug] expanded scroll suppression disabled"
         )
+        #endif
+    }
+
+    func setExpandedContentScrollRegion(_ region: CGRect) {
+        let next = region.isNull || region.isInfinite || region.width <= 0 || region.height <= 0
+            ? CGRect.zero
+            : region.integral
+        guard expandedContentScrollRegion != next else { return }
+        expandedContentScrollRegion = next
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["DYNAMIC_ISLAND_VERBOSE_UI_LOGS"] == "1" {
+            debugPrint("[GestureDebug] expanded content scroll region", next)
+        }
         #endif
     }
 
