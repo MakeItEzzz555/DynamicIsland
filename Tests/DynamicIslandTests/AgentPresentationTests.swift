@@ -403,6 +403,36 @@ final class AgentPresentationTests: XCTestCase {
         XCTAssertEqual(metrics.first { $0.label == "Quota · Week" }?.sample.value, 50)
     }
 
+    func testActiveSessionPresentationBecomesStaleWithoutChangingLifecycleTruth() {
+        var value = session(nativeID: "stale", state: .working)
+        value.lastUpdatedAt = now.addingTimeInterval(
+            -(AgentSessionPresentation.activeSignalFreshnessInterval + 1)
+        )
+
+        XCTAssertTrue(AgentSessionPresentation.hasStaleActiveSignal(value, at: now))
+        XCTAssertEqual(
+            AgentSessionPresentation.displayedStateLabel(for: value, at: now),
+            "Awaiting update"
+        )
+        XCTAssertEqual(
+            AgentSessionPresentation.displayedPrimaryTitle(for: value, at: now),
+            "Awaiting provider update"
+        )
+        XCTAssertEqual(value.state, .working)
+        XCTAssertTrue(value.isActive)
+    }
+
+    func testFreshActiveSessionKeepsAuthoritativeWorkingPresentation() {
+        var value = session(nativeID: "fresh", state: .working)
+        value.lastUpdatedAt = now
+
+        XCTAssertFalse(AgentSessionPresentation.hasStaleActiveSignal(value, at: now))
+        XCTAssertEqual(
+            AgentSessionPresentation.displayedStateLabel(for: value, at: now),
+            "Working"
+        )
+    }
+
     func testWorkspaceSelectionKeepsExistingSessionAndFallsBackByPriority() throws {
         let working = session(nativeID: "working", state: .working)
         let approval = session(nativeID: "approval", state: .waitingForApproval)
@@ -544,10 +574,13 @@ final class AgentPresentationTests: XCTestCase {
         let regular = AgentWorkspaceVerticalLayoutProjection.make(availableHeight: 270)
         let large = AgentWorkspaceVerticalLayoutProjection.make(availableHeight: 320)
 
+        XCTAssertEqual(compact.sessionWorkspaceMinimumHeight, 96)
         XCTAssertEqual(compact.selectedDetailHeight, 68)
         XCTAssertEqual(compact.selectedDetailActivityLimit, 2)
+        XCTAssertEqual(regular.sessionWorkspaceMinimumHeight, 118)
         XCTAssertEqual(regular.selectedDetailHeight, 80)
         XCTAssertEqual(regular.selectedDetailActivityLimit, 3)
+        XCTAssertEqual(large.sessionWorkspaceMinimumHeight, 142)
         XCTAssertEqual(large.selectedDetailHeight, 94)
         XCTAssertEqual(large.selectedDetailActivityLimit, 4)
     }
