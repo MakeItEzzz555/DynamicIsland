@@ -115,6 +115,12 @@ struct CodexListedThread: Equatable, Sendable {
     let canAcceptDirectInput: Bool
 }
 
+struct CodexThreadItemEntry: Equatable, Sendable {
+    let turnID: String
+    let item: CodexJSONValue
+    let timestamp: Date
+}
+
 enum CodexAppServerEvent: Equatable, Sendable {
     case notification(method: String, params: CodexJSONValue)
     case serverRequest(id: CodexJSONValue, method: String, params: CodexJSONValue)
@@ -297,6 +303,23 @@ actor CodexAppServerClient {
         )
     }
 
+    func listThreadItems(threadID: String, limit: Int = 80) async throws -> [CodexThreadItemEntry] {
+        try await start()
+        let boundedLimit = min(max(limit, 1), 100)
+        let result = try await request(
+            method: "thread/items/list",
+            params: .object([
+                "threadId": .string(threadID),
+                "limit": .integer(Int64(boundedLimit)),
+                "sortDirection": .string("desc")
+            ])
+        )
+        guard let values = result["data"]?.arrayValue else {
+            throw CodexAppServerError.invalidResponse("thread/items/list")
+        }
+        return values.compactMap(Self.decodeThreadItemEntry).reversed()
+    }
+
     func resumeThread(threadID: String) async throws -> CodexManagedThread {
         try await start()
         let result = try await request(
@@ -375,6 +398,19 @@ actor CodexAppServerClient {
                 "message": .string("Unsupported app-server request: \(method.prefix(80))")
             ])
         ]))
+    }
+
+    private nonisolated static func decodeThreadItemEntry(_ value: CodexJSONValue) -> CodexThreadItemEntry? {
+        guard let turnID = value["turnId"]?.stringValue,
+              let item = value["item"] else { return nil }
+        let milliseconds = value["completedAtMs"]?.doubleValue
+            ?? value["startedAtMs"]?.doubleValue
+            ?? 0
+        return CodexThreadItemEntry(
+            turnID: turnID,
+            item: item,
+            timestamp: Date(timeIntervalSince1970: max(milliseconds, 0) / 1_000)
+        )
     }
 
     private nonisolated static func decodeListedThread(_ value: CodexJSONValue) -> CodexListedThread? {

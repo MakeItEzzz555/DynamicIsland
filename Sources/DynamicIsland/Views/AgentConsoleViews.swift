@@ -38,6 +38,7 @@ struct AgentEmbeddedConsoleView: View {
     let session: AgentSession
     var mode: AgentConsoleMode = .observed
     var maximumActivityEntries = 3
+    var transcriptEntries: [AgentManagedTranscriptEntry] = []
     var layoutStore: IslandLayoutStore? = nil
     let onSubmit: (String) -> Bool
     let onInterrupt: () -> Void
@@ -112,15 +113,18 @@ struct AgentEmbeddedConsoleView: View {
     }
 
     private var transcriptContent: some View {
-        let operations = Array(
-            AgentOperationAggregation.make(
-                for: session,
-                limit: maximumActivityEntries,
-                includePendingApprovals: true
-            ).suffix(maximumActivityEntries)
+        let operations = AgentOperationAggregation.make(
+            for: session,
+            limit: maximumActivityEntries,
+            includePendingApprovals: true
         )
-        return LazyVStack(alignment: .leading, spacing: 5) {
-            if operations.isEmpty {
+        let timeline = AgentConsoleTimelineEntry.make(
+            transcript: transcriptEntries,
+            operations: operations
+        )
+
+        return LazyVStack(alignment: .leading, spacing: 7) {
+            if timeline.isEmpty {
                 HStack(spacing: 6) {
                     Image(systemName: AgentSessionPresentation.stateSymbol(session.state))
                         .frame(width: 11)
@@ -128,27 +132,36 @@ struct AgentEmbeddedConsoleView: View {
                 }
                 .foregroundStyle(.white.opacity(0.48))
             } else {
-                ForEach(operations) { operation in
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Image(systemName: operation.symbol)
-                            .frame(width: 11)
-                            .foregroundStyle(operationColor(operation.status))
-                        Text(operation.displayTitle)
-                            .fontDesign(operation.isCommand ? .monospaced : .default)
-                            .foregroundStyle(.white.opacity(operation.status == .active ? 0.88 : 0.52))
-                            .lineLimit(2)
-                        if let detail = operation.detail, !detail.isEmpty {
-                            Text(detail)
-                                .fontDesign(operation.isCommand ? .monospaced : .default)
-                                .foregroundStyle(.white.opacity(0.34))
-                                .lineLimit(2)
-                        }
+                ForEach(timeline) { entry in
+                    switch entry.content {
+                    case .message(let message):
+                        AgentConsoleMessageRow(message: message)
+                    case .operation(let operation):
+                        operationRow(operation)
                     }
                 }
             }
         }
         .font(.system(size: 8.5, weight: .medium))
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func operationRow(_ operation: AgentOperationSummary) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: operation.symbol)
+                .frame(width: 11)
+                .foregroundStyle(operationColor(operation.status))
+            Text(operation.displayTitle)
+                .fontDesign(operation.isCommand ? .monospaced : .default)
+                .foregroundStyle(.white.opacity(operation.status == .active ? 0.88 : 0.52))
+                .lineLimit(2)
+            if let detail = operation.detail, !detail.isEmpty {
+                Text(detail)
+                    .fontDesign(operation.isCommand ? .monospaced : .default)
+                    .foregroundStyle(.white.opacity(0.34))
+                    .lineLimit(2)
+            }
+        }
     }
 
     @ViewBuilder
@@ -233,6 +246,54 @@ struct AgentEmbeddedConsoleView: View {
         case .completed, .resolved: .green.opacity(0.58)
         case .cancelled, .unknown: .white.opacity(0.34)
         }
+    }
+}
+
+private struct AgentConsoleTimelineEntry: Identifiable {
+    enum Content {
+        case message(AgentManagedTranscriptEntry)
+        case operation(AgentOperationSummary)
+    }
+
+    let id: String
+    let date: Date
+    let content: Content
+
+    static func make(
+        transcript: [AgentManagedTranscriptEntry],
+        operations: [AgentOperationSummary]
+    ) -> [Self] {
+        let messages = transcript.map {
+            Self(id: "message:\($0.id)", date: $0.timestamp, content: .message($0))
+        }
+        let operationEntries = operations.map {
+            Self(id: "operation:\($0.id)", date: $0.date, content: .operation($0))
+        }
+        return (messages + operationEntries).sorted {
+            if $0.date != $1.date { return $0.date < $1.date }
+            return $0.id < $1.id
+        }
+    }
+}
+
+private struct AgentConsoleMessageRow: View {
+    let message: AgentManagedTranscriptEntry
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(message.role == .user ? "You" : "Codex")
+                .font(.system(size: 7.5, weight: .bold))
+                .foregroundStyle(
+                    message.role == .user
+                        ? Color.white.opacity(0.48)
+                        : Color.cyan.opacity(0.72)
+                )
+            Text(message.text)
+                .font(.system(size: 9, weight: .regular, design: .monospaced))
+                .foregroundStyle(.white.opacity(message.role == .user ? 0.72 : 0.88))
+                .textSelection(.enabled)
+        }
+        .padding(.vertical, 2)
     }
 }
 

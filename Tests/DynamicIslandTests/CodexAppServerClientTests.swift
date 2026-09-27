@@ -68,6 +68,45 @@ final class CodexAppServerClientTests: XCTestCase {
         await client.stop()
     }
 
+    func testProviderTranscriptReturnsOnlyUserAndAgentVisibleMessages() async throws {
+        let executable = try makeFakeServer(script: #"""
+        #!/usr/bin/env python3
+        import json, sys
+        for line in sys.stdin:
+            message = json.loads(line)
+            method = message.get("method")
+            request_id = message.get("id")
+            if method == "initialize":
+                print(json.dumps({"id": request_id, "result": {}}), flush=True)
+            elif method == "thread/items/list":
+                print(json.dumps({"id": request_id, "result": {
+                    "data": [
+                        {"turnId":"t1","item":{"type":"agentMessage","id":"a1","text":"Visible answer"},"startedAtMs":2000,"completedAtMs":2100},
+                        {"turnId":"t1","item":{"type":"reasoning","id":"r1","summary":["hidden"],"content":["private"]},"startedAtMs":1500,"completedAtMs":1600},
+                        {"turnId":"t1","item":{"type":"userMessage","id":"u1","clientId":None,"content":[{"type":"text","text":"User prompt","text_elements":[]}]},"startedAtMs":1000,"completedAtMs":1100},
+                        {"turnId":"t1","item":{"type":"commandExecution","id":"c1","command":"echo SECRET","aggregatedOutput":"SECRET"},"startedAtMs":1700,"completedAtMs":1800}
+                    ],
+                    "nextCursor": None,
+                    "backwardsCursor": None
+                }}), flush=True)
+        """#)
+        let client = try CodexAppServerClient(
+            executableURL: executable,
+            requestTimeout: .seconds(2)
+        )
+        let provider = CodexAppServerProvider(client: client)
+
+        let transcript = try await provider.readTranscript(
+            nativeSessionID: "thread-1",
+            limit: 20
+        )
+
+        XCTAssertEqual(transcript.map(\.role), [.user, .agent])
+        XCTAssertEqual(transcript.map(\.text), ["User prompt", "Visible answer"])
+        XCTAssertFalse(transcript.contains { $0.text.contains("SECRET") || $0.text.contains("private") })
+        await provider.stop()
+    }
+
     func testServerExitFailsPendingRequest() async throws {
         let executable = try makeFakeServer(script: #"""
         #!/usr/bin/env python3

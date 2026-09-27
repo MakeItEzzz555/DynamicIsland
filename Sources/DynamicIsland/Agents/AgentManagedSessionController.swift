@@ -8,6 +8,7 @@ final class AgentManagedSessionController: ObservableObject {
     @Published private(set) var discoveredSessionIDs: Set<String> = []
     @Published private(set) var lastTransportError: String?
     @Published private(set) var accountUsage = AgentUsage()
+    @Published private(set) var transcripts: [String: [AgentManagedTranscriptEntry]] = [:]
 
     private let provider: (any AgentInteractiveProvider)?
     private let coordinator: AgentIngestionCoordinator
@@ -92,6 +93,7 @@ final class AgentManagedSessionController: ObservableObject {
         discoveredSessionIDs.removeAll()
         knownDiscoveredSessionIDs.removeAll()
         accountUsage = AgentUsage()
+        transcripts.removeAll()
 
         let provider = self.provider
         let coordinator = self.coordinator
@@ -296,6 +298,24 @@ final class AgentManagedSessionController: ObservableObject {
         return managed[session.id.sessionID.nativeID]?.lastError
     }
 
+    func transcript(for session: AgentSession) -> [AgentManagedTranscriptEntry] {
+        transcripts[session.id.sessionID.nativeID] ?? []
+    }
+
+    func refreshTranscript(for session: AgentSession, limit: Int = 80) async {
+        guard let provider,
+              session.id.sessionID.provider == provider.provider else { return }
+        do {
+            let entries = try await provider.readTranscript(
+                nativeSessionID: session.id.sessionID.nativeID,
+                limit: min(max(limit, 1), 100)
+            )
+            transcripts[session.id.sessionID.nativeID] = Self.boundedTranscript(entries)
+        } catch {
+            recordError(error, for: session.id.sessionID.nativeID)
+        }
+    }
+
     func canConnect(_ session: AgentSession) -> Bool {
         provider != nil &&
             session.id.sessionID.provider == .codex &&
@@ -487,6 +507,17 @@ final class AgentManagedSessionController: ObservableObject {
                 )
             }
             await refreshPersistentSnapshot()
+
+        case .transcript(let entry):
+            upsertTranscript(entry)
+
+        case .transcriptDelta(let nativeSessionID, let turnID, let itemID, let delta):
+            appendTranscriptDelta(
+                nativeSessionID: nativeSessionID,
+                turnID: turnID,
+                itemID: itemID,
+                delta: delta
+            )
 
         case .accountUsageChanged:
             await refreshPersistentSnapshot()
@@ -709,6 +740,63 @@ final class AgentManagedSessionController: ObservableObject {
         let result = await coordinator.ingest(event, from: handle)
         guard case .success(let accepted) = result else { return nil }
         return accepted.sessionInstances.last
+    }
+
+    private static let maximumTranscriptEntries = 80
+
+    private static func boundedTranscript(
+        _ entries: [AgentManagedTranscriptEntry]
+    ) -> [AgentManagedTranscriptEntry] {
+        Array(
+            entries
+                .sorted {
+                    if $0.timestamp != $1.timestamp { return $0.timestamp < $1.timestamp }
+                    return $0.id < $1.id
+                }
+                .suffix(maximumTranscriptEntries)
+        )
+    }
+
+    private func upsertTranscript(_ entry: AgentManagedTranscriptEntry) {
+        var entries = transcripts[entry.nativeSessionID] ?? []
+        if let index = entries.firstIndex(where: { $0.id == entry.id }) {
+            entries[index] = entry
+        } else {
+            entries.append(entry)
+        }
+        transcripts[entry.nativeSessionID] = Self.boundedTranscript(entries)
+    }
+
+    private func appendTranscriptDelta(
+        nativeSessionID: String,
+        turnID: String,
+        itemID: String,
+        delta: String
+    ) {
+        guard !delta.isEmpty else { return }
+        var entries = transcripts[nativeSessionID] ?? []
+        if let index = entries.firstIndex(where: { $0.id == itemID }) {
+            let combined = entries[index].text + delta
+            let bounded = AgentManagedTranscriptEntry.boundedText(combined) ?? entries[index].text
+            entries[index] = AgentManagedTranscriptEntry(
+                id: itemID,
+                nativeSessionID: nativeSessionID,
+                turnID: turnID,
+                role: .agent,
+                text: bounded,
+                timestamp: entries[index].timestamp
+            )
+        } else if let bounded = AgentManagedTranscriptEntry.boundedText(delta) {
+            entries.append(AgentManagedTranscriptEntry(
+                id: itemID,
+                nativeSessionID: nativeSessionID,
+                turnID: turnID,
+                role: .agent,
+                text: bounded,
+                timestamp: Date()
+            ))
+        }
+        transcripts[nativeSessionID] = Self.boundedTranscript(entries)
     }
 
     private nonisolated static func safeError(_ error: Error) -> String {

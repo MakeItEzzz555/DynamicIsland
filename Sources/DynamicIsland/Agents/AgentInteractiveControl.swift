@@ -17,6 +17,30 @@ struct AgentManagedTurnDescriptor: Equatable, Sendable {
     let turnID: String
 }
 
+enum AgentManagedTranscriptRole: String, Equatable, Sendable {
+    case user
+    case agent
+}
+
+struct AgentManagedTranscriptEntry: Identifiable, Equatable, Sendable {
+    static let maximumTextLength = 8_000
+
+    let id: String
+    let nativeSessionID: String
+    let turnID: String?
+    let role: AgentManagedTranscriptRole
+    let text: String
+    let timestamp: Date
+
+    static func boundedText(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        if trimmed.count <= maximumTextLength { return trimmed }
+        return String(trimmed.prefix(maximumTextLength - 1)) + "…"
+    }
+}
+
 enum AgentDiscoveredSessionRuntimeState: String, Equatable, Sendable {
     case active
     case idle
@@ -36,6 +60,8 @@ enum AgentInteractiveProviderEvent: Equatable, Sendable {
     case turnStarted(AgentManagedTurnDescriptor)
     case turnCompleted(AgentManagedTurnDescriptor, state: AgentState, summary: String?)
     case providerFailure(nativeSessionID: String?, summary: String?)
+    case transcript(AgentManagedTranscriptEntry)
+    case transcriptDelta(nativeSessionID: String, turnID: String, itemID: String, delta: String)
     case accountUsageChanged
     case normalized(AgentManagedNormalizedEvent)
     case approvalRequested(AgentManagedApprovalRequest)
@@ -75,6 +101,7 @@ protocol AgentInteractiveProvider: Sendable {
     func events() async -> AsyncStream<AgentInteractiveProviderEvent>
     func discoverSessions() async throws -> [AgentDiscoveredSessionDescriptor]
     func readAccountUsage() async throws -> AgentUsage
+    func readTranscript(nativeSessionID: String, limit: Int) async throws -> [AgentManagedTranscriptEntry]
     func startSession(cwd: String?) async throws -> AgentManagedSessionDescriptor
     func resumeSession(nativeSessionID: String) async throws -> AgentManagedSessionDescriptor
     func submit(prompt: String, nativeSessionID: String) async throws -> AgentManagedTurnDescriptor

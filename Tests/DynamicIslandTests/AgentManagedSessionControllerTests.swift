@@ -231,6 +231,64 @@ final class AgentManagedSessionControllerTests: XCTestCase {
     }
 
     @MainActor
+    func testTranscriptHistoryAndStreamingDeltaStayBoundedAndReplaceByIdentity() async throws {
+        let provider = PersistentSnapshotFakeProvider(
+            sessions: [Self.descriptor(id: "managed", state: .idle)],
+            usage: AgentUsage()
+        )
+        await provider.setTranscript([
+            AgentManagedTranscriptEntry(
+                id: "user-1",
+                nativeSessionID: "managed",
+                turnID: "turn-1",
+                role: .user,
+                text: "hello",
+                timestamp: Date(timeIntervalSince1970: 10)
+            )
+        ])
+        let store = AgentEventStore()
+        let controller = AgentManagedSessionController(
+            provider: provider,
+            coordinator: AgentIngestionCoordinator(eventStore: store),
+            eventStore: store,
+            approvals: AgentApprovalController()
+        )
+        await controller.refreshPersistentSnapshot()
+        let session = try XCTUnwrap(store.sessions.first)
+        await controller.refreshTranscript(for: session)
+
+        XCTAssertEqual(controller.transcript(for: session).map(\.text), ["hello"])
+
+        controller.startObserving()
+        await provider.yield(.transcriptDelta(
+            nativeSessionID: "managed",
+            turnID: "turn-1",
+            itemID: "agent-1",
+            delta: "hel"
+        ))
+        await provider.yield(.transcriptDelta(
+            nativeSessionID: "managed",
+            turnID: "turn-1",
+            itemID: "agent-1",
+            delta: "lo"
+        ))
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertEqual(controller.transcript(for: session).last?.text, "hello")
+
+        await provider.yield(.transcript(AgentManagedTranscriptEntry(
+            id: "agent-1",
+            nativeSessionID: "managed",
+            turnID: "turn-1",
+            role: .agent,
+            text: "hello final",
+            timestamp: Date(timeIntervalSince1970: 20)
+        )))
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertEqual(controller.transcript(for: session).last?.text, "hello final")
+        controller.stop()
+    }
+
+    @MainActor
     func testManagedTransportFailureExitsWorkingState() async throws {
         let provider = PersistentSnapshotFakeProvider(
             sessions: [Self.descriptor(id: "managed-error", state: .notLoaded)],
@@ -321,6 +379,7 @@ private actor PersistentSnapshotFakeProvider: AgentInteractiveProvider {
     private var discovered: [AgentDiscoveredSessionDescriptor]
     private let usage: AgentUsage
     private var usageFailure = false
+    private var transcript: [AgentManagedTranscriptEntry] = []
     private let eventStream: AsyncStream<AgentInteractiveProviderEvent>
     private let eventContinuation: AsyncStream<AgentInteractiveProviderEvent>.Continuation
 
@@ -343,6 +402,17 @@ private actor PersistentSnapshotFakeProvider: AgentInteractiveProvider {
     func readAccountUsage() async throws -> AgentUsage {
         if usageFailure { throw CodexAppServerError.transportClosed(nil) }
         return usage
+    }
+
+    func readTranscript(
+        nativeSessionID: String,
+        limit: Int
+    ) async throws -> [AgentManagedTranscriptEntry] {
+        Array(transcript.filter { $0.nativeSessionID == nativeSessionID }.suffix(max(limit, 0)))
+    }
+
+    func setTranscript(_ value: [AgentManagedTranscriptEntry]) {
+        transcript = value
     }
 
     func setUsageFailure(_ value: Bool) {

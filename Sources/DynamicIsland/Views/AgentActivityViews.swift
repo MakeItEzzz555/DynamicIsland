@@ -275,11 +275,15 @@ private struct AgentSelectedSessionControlView: View {
                 session: session,
                 mode: managedControl.mode(for: session),
                 maximumActivityEntries: activityLimit,
+                transcriptEntries: managedControl.transcript(for: session),
                 layoutStore: layoutStore,
                 onSubmit: { managedControl.submit($0, for: session) },
                 onInterrupt: { managedControl.interrupt(session) }
             )
             .frame(minHeight: detailHeight, maxHeight: .infinity)
+            .task(id: session.id) {
+                await managedControl.refreshTranscript(for: session)
+            }
         } else if session.id.sessionID.provider == .codex {
             HStack(spacing: 8) {
                 Image(systemName: "link.badge.plus")

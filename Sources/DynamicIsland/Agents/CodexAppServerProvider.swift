@@ -54,6 +54,24 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
         }
     }
 
+    func readTranscript(
+        nativeSessionID: String,
+        limit: Int
+    ) async throws -> [AgentManagedTranscriptEntry] {
+        let entries = try await client.listThreadItems(
+            threadID: nativeSessionID,
+            limit: min(max(limit, 1), 100)
+        )
+        return entries.compactMap {
+            Self.mapTranscriptItem(
+                $0.item,
+                nativeSessionID: nativeSessionID,
+                turnID: $0.turnID,
+                timestamp: $0.timestamp
+            )
+        }
+    }
+
     func readAccountUsage() async throws -> AgentUsage {
         let rateResult = try await client.readAccountRateLimits()
         var usage = Self.mapAccountRateLimits(rateResult)
@@ -349,12 +367,33 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
                 guard let threadID = params["threadId"]?.stringValue,
                       let turnID = params["turnId"]?.stringValue,
                       let item = params["item"] else { return nil }
+                if let transcript = mapTranscriptItem(
+                    item,
+                    nativeSessionID: threadID,
+                    turnID: turnID,
+                    timestamp: Date()
+                ) {
+                    return .transcript(transcript)
+                }
                 return mapItem(
                     item,
                     nativeSessionID: threadID,
                     turnID: turnID,
                     completed: true
                 ).map(AgentInteractiveProviderEvent.normalized)
+
+            case "item/agentMessage/delta":
+                guard let threadID = params["threadId"]?.stringValue,
+                      let turnID = params["turnId"]?.stringValue,
+                      let itemID = params["itemId"]?.stringValue,
+                      let delta = params["delta"]?.stringValue,
+                      !delta.isEmpty else { return nil }
+                return .transcriptDelta(
+                    nativeSessionID: threadID,
+                    turnID: turnID,
+                    itemID: itemID,
+                    delta: String(delta.prefix(AgentManagedTranscriptEntry.maximumTextLength))
+                )
 
             case "thread/tokenUsage/updated":
                 guard let threadID = params["threadId"]?.stringValue,
@@ -430,6 +469,46 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
         case .integer(let value): .integer(value)
         default: nil
         }
+    }
+
+    private nonisolated static func mapTranscriptItem(
+        _ item: CodexJSONValue,
+        nativeSessionID: String,
+        turnID: String,
+        timestamp: Date
+    ) -> AgentManagedTranscriptEntry? {
+        guard let itemType = item["type"]?.stringValue,
+              let itemID = item["id"]?.stringValue else { return nil }
+
+        let role: AgentManagedTranscriptRole
+        let rawText: String?
+
+        switch itemType {
+        case "agentMessage":
+            role = .agent
+            rawText = item["text"]?.stringValue
+        case "userMessage":
+            role = .user
+            let textParts = item["content"]?.arrayValue?.compactMap { input -> String? in
+                guard input["type"]?.stringValue == "text" else { return nil }
+                return input["text"]?.stringValue
+            } ?? []
+            rawText = textParts.isEmpty ? nil : textParts.joined(separator: "\n")
+        default:
+            // Explicitly exclude reasoning, raw command output, environment-bearing
+            // items, and all other internal provider payloads from the transcript.
+            return nil
+        }
+
+        guard let text = AgentManagedTranscriptEntry.boundedText(rawText) else { return nil }
+        return AgentManagedTranscriptEntry(
+            id: itemID,
+            nativeSessionID: nativeSessionID,
+            turnID: turnID,
+            role: role,
+            text: text,
+            timestamp: timestamp
+        )
     }
 
     private nonisolated static func mapItem(
