@@ -560,6 +560,26 @@ final class AgentPresentationTests: XCTestCase {
         )
     }
 
+    func testWorkspaceSelectionPrioritizesExactManagedTurnBeforeObservedActive() {
+        let managed = session(nativeID: "managed", state: .idle, availability: .loaded)
+        let observed = session(nativeID: "observed", state: .working)
+        let managedIDs: Set<AgentSessionID> = [managed.id.sessionID]
+
+        XCTAssertEqual(
+            AgentWorkspaceSelection.resolve(
+                current: nil,
+                sessions: [observed, managed],
+                activeManagedSessionIDs: managedIDs
+            ),
+            managed.id
+        )
+        XCTAssertTrue(AgentWorkspaceSelection.isActive(
+            managed,
+            activeManagedSessionIDs: managedIDs
+        ))
+        XCTAssertTrue(AgentWorkspaceSelection.isActive(observed))
+    }
+
     func testWorkspaceSelectionSurvivesUnrelatedArrivalAndSelectedStateUpdate() {
         let selected = session(nativeID: "selected", state: .idle)
         let unrelated = session(nativeID: "urgent", state: .waitingForApproval)
@@ -637,6 +657,27 @@ final class AgentPresentationTests: XCTestCase {
             AgentDashboardPresentation.make(sessions: [active]).groups.first
         )
         XCTAssertFalse(activeOnly.showsRecentSection)
+    }
+
+    func testProjectPresentationGroupsSameProjectWithoutCollapsingDistinctThreads() throws {
+        let first = session(nativeID: "thread-a8f2", state: .working)
+        let second = session(nativeID: "thread-b7e1", state: .idle, availability: .loaded)
+        let third = session(nativeID: "thread-c6d0", state: .idle, availability: .resumable)
+
+        let presentation = AgentDashboardPresentation.make(
+            orderedSessions: AgentWorkspaceSelection.ordered(
+                sessions: [third, second, first]
+            )
+        )
+        let group = try XCTUnwrap(presentation.groups.first)
+
+        XCTAssertEqual(presentation.groups.count, 1)
+        XCTAssertEqual(group.title, "DynamicIsland")
+        XCTAssertEqual(group.sessions.count, 3)
+        XCTAssertEqual(
+            Set(group.sessions.map(\.id.sessionID.nativeID)),
+            ["thread-a8f2", "thread-b7e1", "thread-c6d0"]
+        )
     }
 
     func testSelectedAttentionEmphasisOutranksSelectionAndHover() {

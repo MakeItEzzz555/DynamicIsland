@@ -169,6 +169,38 @@ final class AgentManagedSessionControllerTests: XCTestCase {
     }
 
     @MainActor
+    func testDistinctThreadsWithSameProjectRemainDistinctAndSelectionPersists() async throws {
+        let provider = PersistentSnapshotFakeProvider(
+            sessions: [
+                Self.descriptor(id: "thread-a", state: .idle),
+                Self.descriptor(id: "thread-b", state: .notLoaded)
+            ],
+            usage: AgentUsage()
+        )
+        let store = AgentEventStore()
+        let controller = AgentManagedSessionController(
+            provider: provider,
+            coordinator: AgentIngestionCoordinator(eventStore: store),
+            eventStore: store,
+            approvals: AgentApprovalController()
+        )
+
+        await controller.refreshPersistentSnapshot()
+        XCTAssertEqual(store.sessions.count, 2)
+        let selected = try XCTUnwrap(store.sessions.first {
+            $0.id.sessionID.nativeID == "thread-b"
+        })
+        controller.selectSession(selected.id)
+
+        // Reconciliation is what a reconstructed Agents view performs.
+        controller.reconcileSelection(with: store.sessions)
+        await controller.refreshPersistentSnapshot()
+        controller.reconcileSelection(with: store.sessions)
+
+        XCTAssertEqual(controller.selectedSessionID, selected.id)
+    }
+
+    @MainActor
     func testSessionsFallingOutsideBoundedDiscoveryStopPresenting() async throws {
         let first = Self.descriptor(id: "first", state: .notLoaded)
         let second = Self.descriptor(id: "second", state: .notLoaded)
@@ -288,6 +320,78 @@ final class AgentManagedSessionControllerTests: XCTestCase {
         let submitted = await provider.submittedPrompts()
         XCTAssertEqual(submitted.last, "hello|model-b")
 
+        controller.stop()
+    }
+
+    @MainActor
+    func testPerSessionModelOverridesPersistAndRevalidateIndependently() async throws {
+        let provider = PersistentSnapshotFakeProvider(
+            sessions: [
+                Self.descriptor(id: "thread-a", state: .idle),
+                Self.descriptor(id: "thread-b", state: .idle)
+            ],
+            usage: AgentUsage()
+        )
+        let store = AgentEventStore()
+        let controller = AgentManagedSessionController(
+            provider: provider,
+            coordinator: AgentIngestionCoordinator(eventStore: store),
+            eventStore: store,
+            approvals: AgentApprovalController()
+        )
+        await controller.refreshPersistentSnapshot()
+        let first = try XCTUnwrap(store.sessions.first {
+            $0.id.sessionID.nativeID == "thread-a"
+        })
+        let second = try XCTUnwrap(store.sessions.first {
+            $0.id.sessionID.nativeID == "thread-b"
+        })
+
+        XCTAssertTrue(controller.selectModel("model-a", for: first))
+        XCTAssertTrue(controller.selectModel("model-b", for: second))
+        controller.selectSession(first.id)
+        controller.reconcileSelection(with: store.sessions)
+        XCTAssertEqual(controller.selectedModel(for: first), "model-a")
+        controller.selectSession(second.id)
+        XCTAssertEqual(controller.selectedModel(for: second), "model-b")
+        controller.selectSession(first.id)
+        XCTAssertEqual(controller.selectedModel(for: first), "model-a")
+
+        await provider.setModels([Self.model("model-b")])
+        await controller.refreshPersistentSnapshot()
+
+        XCTAssertEqual(controller.selectedModel(for: first), first.project.model)
+        XCTAssertEqual(controller.selectedModel(for: second), "model-b")
+        XCTAssertEqual(controller.selectedSessionID, first.id)
+    }
+
+    @MainActor
+    func testManagedTurnBecomesActiveImmediatelyWithoutDiscoveryRefresh() async throws {
+        let provider = PersistentSnapshotFakeProvider(
+            sessions: [Self.descriptor(id: "managed-active", state: .idle)],
+            usage: AgentUsage()
+        )
+        let store = AgentEventStore()
+        let controller = AgentManagedSessionController(
+            provider: provider,
+            coordinator: AgentIngestionCoordinator(eventStore: store),
+            eventStore: store,
+            approvals: AgentApprovalController()
+        )
+        controller.startObserving()
+        await controller.refreshPersistentSnapshot()
+        controller.connect(try XCTUnwrap(store.sessions.first))
+        try await Task.sleep(for: .milliseconds(20))
+
+        await provider.yield(.turnStarted(.init(
+            nativeSessionID: "managed-active",
+            turnID: "turn-live"
+        )))
+        try await Task.sleep(for: .milliseconds(20))
+
+        XCTAssertTrue(controller.activeManagedSessionIDs.contains(
+            AgentSessionID(provider: .codex, nativeID: "managed-active")
+        ))
         controller.stop()
     }
 
@@ -474,6 +578,16 @@ final class AgentManagedSessionControllerTests: XCTestCase {
             updatedAt: Date(timeIntervalSince1970: 2_100_000_000)
         )
     }
+
+    private static func model(_ id: String) -> AgentManagedModelDescriptor {
+        AgentManagedModelDescriptor(
+            id: id,
+            model: id,
+            displayName: id,
+            description: nil,
+            isDefault: false
+        )
+    }
 }
 
 private actor PersistentSnapshotFakeProvider: AgentInteractiveProvider {
@@ -490,6 +604,16 @@ private actor PersistentSnapshotFakeProvider: AgentInteractiveProvider {
     private var transcript: [AgentManagedTranscriptEntry] = []
     private var submitted: [String] = []
     private var submitFailure = false
+    private var models: [AgentManagedModelDescriptor] = [
+        AgentManagedModelDescriptor(
+            id: "model-a", model: "model-a", displayName: "Model A",
+            description: nil, isDefault: true
+        ),
+        AgentManagedModelDescriptor(
+            id: "model-b", model: "model-b", displayName: "Model B",
+            description: nil, isDefault: false
+        )
+    ]
     private let eventStream: AsyncStream<AgentInteractiveProviderEvent>
     private let eventContinuation: AsyncStream<AgentInteractiveProviderEvent>.Continuation
 
@@ -515,22 +639,11 @@ private actor PersistentSnapshotFakeProvider: AgentInteractiveProvider {
     }
 
     func listModels() async throws -> [AgentManagedModelDescriptor] {
-        [
-            AgentManagedModelDescriptor(
-                id: "model-a",
-                model: "model-a",
-                displayName: "Model A",
-                description: nil,
-                isDefault: true
-            ),
-            AgentManagedModelDescriptor(
-                id: "model-b",
-                model: "model-b",
-                displayName: "Model B",
-                description: nil,
-                isDefault: false
-            )
-        ]
+        models
+    }
+
+    func setModels(_ value: [AgentManagedModelDescriptor]) {
+        models = value
     }
 
     func readTranscript(
