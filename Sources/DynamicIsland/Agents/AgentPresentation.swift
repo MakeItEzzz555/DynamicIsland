@@ -371,17 +371,30 @@ struct AgentDashboardLayoutProjection: Equatable, Sendable {
 }
 
 struct AgentWorkspaceVerticalLayoutProjection: Equatable, Sendable {
+    let sessionWorkspaceMinimumHeight: CGFloat
     let selectedDetailHeight: CGFloat
     let selectedDetailActivityLimit: Int
 
     static func make(availableHeight: CGFloat) -> Self {
         if availableHeight < 240 {
-            return Self(selectedDetailHeight: 68, selectedDetailActivityLimit: 2)
+            return Self(
+                sessionWorkspaceMinimumHeight: 96,
+                selectedDetailHeight: 68,
+                selectedDetailActivityLimit: 2
+            )
         }
         if availableHeight < 300 {
-            return Self(selectedDetailHeight: 80, selectedDetailActivityLimit: 3)
+            return Self(
+                sessionWorkspaceMinimumHeight: 118,
+                selectedDetailHeight: 80,
+                selectedDetailActivityLimit: 3
+            )
         }
-        return Self(selectedDetailHeight: 94, selectedDetailActivityLimit: 4)
+        return Self(
+            sessionWorkspaceMinimumHeight: 142,
+            selectedDetailHeight: 94,
+            selectedDetailActivityLimit: 4
+        )
     }
 }
 
