@@ -16,7 +16,7 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
         .streamToolActivity,
         .loadHistory
     ]
-    nonisolated let modelSelectionScope: AgentModelSelectionScope? = .nextTurn
+    nonisolated let modelSelectionScope: AgentModelSelectionScope? = .turnAndSubsequent
     private let client: CodexAppServerClient
 
     init(client: CodexAppServerClient) {

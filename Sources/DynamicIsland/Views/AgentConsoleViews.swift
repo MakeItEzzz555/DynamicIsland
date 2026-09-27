@@ -405,7 +405,7 @@ private struct AgentConsoleApprovalRow: View {
                 .stroke(.orange.opacity(0.18), lineWidth: 1)
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Codex approval required")
+        .accessibilityLabel("\(session.id.sessionID.provider.stableName.capitalized) approval required")
     }
 }
 

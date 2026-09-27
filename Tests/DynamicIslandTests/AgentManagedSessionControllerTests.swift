@@ -55,6 +55,43 @@ final class AgentManagedSessionControllerTests: XCTestCase {
     }
 
     @MainActor
+    func testModelCatalogAndScopeAreResolvedForExactSessionProvider() async throws {
+        let codex = PersistentSnapshotFakeProvider(
+            provider: .codex,
+            sessions: [Self.descriptor(id: "codex-models", state: .idle, provider: .codex)],
+            usage: AgentUsage()
+        )
+        let claude = PersistentSnapshotFakeProvider(
+            provider: .claude,
+            sessions: [Self.descriptor(id: "claude-models", state: .idle, provider: .claude)],
+            usage: AgentUsage(),
+            capabilities: [.resumeSession, .submitPrompt, .selectModel]
+        )
+        await codex.setModels([Self.model("codex-only")])
+        await claude.setModels([Self.model("claude-only")])
+
+        let store = AgentEventStore()
+        let controller = AgentManagedSessionController(
+            providers: [codex, claude],
+            coordinator: AgentIngestionCoordinator(eventStore: store),
+            eventStore: store,
+            approvals: AgentApprovalController()
+        )
+
+        await controller.refreshPersistentSnapshot()
+        let codexSession = try XCTUnwrap(store.sessions.first { $0.id.sessionID.provider == .codex })
+        let claudeSession = try XCTUnwrap(store.sessions.first { $0.id.sessionID.provider == .claude })
+
+        XCTAssertEqual(controller.availableModels(for: codexSession).map(\.model), ["codex-only"])
+        XCTAssertEqual(controller.availableModels(for: claudeSession).map(\.model), ["claude-only"])
+        XCTAssertEqual(controller.modelSelectionScope(for: codexSession), .turnAndSubsequent)
+        XCTAssertEqual(controller.modelSelectionScope(for: claudeSession), .turnAndSubsequent)
+        XCTAssertTrue(controller.selectModel("codex-only", for: codexSession))
+        XCTAssertFalse(controller.selectModel("claude-only", for: codexSession))
+        XCTAssertTrue(controller.selectModel("claude-only", for: claudeSession))
+    }
+
+    @MainActor
     func testPersistentSnapshotPublishesUsageAndIdleSessionWithoutActiveTurn() async throws {
         let observedAt = Date(timeIntervalSince1970: 2_100_000_000)
         let usage = AgentUsage(scopedSamples: [
@@ -963,7 +1000,7 @@ private actor PersistentSnapshotFakeProvider: AgentInteractiveProvider {
     ) {
         self.provider = provider
         interactiveCapabilities = capabilities
-        modelSelectionScope = capabilities.contains(.selectModel) ? .nextTurn : nil
+        modelSelectionScope = capabilities.contains(.selectModel) ? .turnAndSubsequent : nil
         discovered = sessions
         self.usage = usage
         var continuation: AsyncStream<AgentInteractiveProviderEvent>.Continuation!

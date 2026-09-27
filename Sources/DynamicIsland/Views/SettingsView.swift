@@ -462,9 +462,10 @@ struct SettingsView: View {
         }
         VStack(alignment: .leading, spacing: 9) {
             HStack(alignment: .top, spacing: 10) {
-                Image(systemName: provider == .codex ? "terminal" : "brain.head.profile")
+                let agentProvider: AgentProvider = provider == .codex ? .codex : .claude
+                Image(systemName: AgentVisualStyle.providerSymbol(agentProvider))
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(provider == .codex ? .cyan : .orange)
+                    .foregroundStyle(AgentVisualStyle.providerAccent(agentProvider))
                     .frame(width: 28, height: 28)
                     .background(.primary.opacity(0.055), in: Circle())
                     .accessibilityHidden(true)

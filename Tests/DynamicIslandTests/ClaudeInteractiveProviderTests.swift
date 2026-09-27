@@ -30,6 +30,20 @@ final class ClaudeInteractiveProviderTests: XCTestCase {
         XCTAssertTrue(resumed.acceptsDirectInput)
     }
 
+    func testKnownClaudeSessionsAreActuallyBoundedInProviderState() async throws {
+        let provider = try ClaudeInteractiveProvider(
+            client: ClaudeCodeStreamingClient(executableURL: URL(fileURLWithPath: "/usr/bin/true"))
+        )
+
+        for index in 0..<(ClaudeInteractiveProvider.maximumKnownSessions + 7) {
+            _ = try await provider.resumeSession(nativeSessionID: "claude-\(index)")
+        }
+
+        let sessions = try await provider.discoverSessions()
+        XCTAssertEqual(sessions.count, ClaudeInteractiveProvider.maximumKnownSessions)
+        XCTAssertEqual(Set(sessions.map { $0.session.nativeSessionID }).count, sessions.count)
+    }
+
     func testVisibleAgentTextAndSafeToolAreProjectedButReasoningIsIgnored() async throws {
         let provider = try ClaudeInteractiveProvider(
             client: ClaudeCodeStreamingClient(executableURL: URL(fileURLWithPath: "/usr/bin/true"))

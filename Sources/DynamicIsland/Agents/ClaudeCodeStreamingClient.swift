@@ -127,7 +127,7 @@ actor ClaudeCodeStreamingClient {
         nativeSessionID: String,
         run: inout Run
     ) {
-        let stdoutStream = AsyncStream<Data>(bufferingPolicy: .bufferingNewest(32)) { continuation in
+        let stdoutStream = AsyncStream<Data>(bufferingPolicy: .unbounded) { continuation in
             stdout.fileHandleForReading.readabilityHandler = { handle in
                 let data = handle.availableData
                 if data.isEmpty {
@@ -164,6 +164,16 @@ actor ClaudeCodeStreamingClient {
     private func consumeStdout(_ data: Data, nativeSessionID: String) {
         guard var run = runs[nativeSessionID] else { return }
         run.stdoutBuffer.append(data)
+        // Stream-json is line-delimited. A missing newline must not allow an
+        // unbounded provider-controlled buffer to grow forever.
+        guard run.stdoutBuffer.count <= 2 * 1_024 * 1_024 else {
+            continuation.yield(.transportFailed(
+                nativeSessionID: nativeSessionID,
+                turnID: run.turnID
+            ))
+            stopRun(nativeSessionID)
+            return
+        }
         while let newline = run.stdoutBuffer.firstIndex(of: 0x0A) {
             let line = Data(run.stdoutBuffer[..<newline])
             run.stdoutBuffer.removeSubrange(...newline)

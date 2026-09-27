@@ -1084,8 +1084,7 @@ enum AgentOperationAggregation {
 
 enum AgentApprovalPresentation {
     static func isActionable(session: AgentSession, pending: AgentApprovalControlRequest?) -> Bool {
-        session.id.sessionID.provider == .codex &&
-            session.state == .waitingForApproval &&
+        session.state == .waitingForApproval &&
             session.capabilities.contains(.approvalControl) &&
             pending?.key.session == session.id
     }

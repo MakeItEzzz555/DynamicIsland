@@ -197,7 +197,7 @@ struct AgentProducerPolicy: Equatable, Sendable {
             .toolLifecycle, .commandLifecycle,
             .approvalObservation, .approvalControl, .userInputObservation,
             .subagentLifecycle, .taskLifecycle,
-            .tokenUsage, .contextUsage,
+            .tokenUsage, .contextUsage, .quotaUsage,
             .modelMetadata, .projectContext
         ],
         allowedSchemaVersions: [AgentEvent.normalizedSchemaVersion],

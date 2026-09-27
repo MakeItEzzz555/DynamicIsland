@@ -308,14 +308,16 @@ private struct AgentCLIControlBar: View {
 
     @ViewBuilder
     private func modelControl(for session: AgentSession, compact: Bool) -> some View {
-        if managedControl.interactiveCapabilities.contains(.selectModel),
-           !managedControl.availableModels.isEmpty {
+        let provider = session.id.sessionID.provider
+        let models = managedControl.availableModels(for: session)
+        if managedControl.capabilities(for: provider).contains(.selectModel),
+           !models.isEmpty {
             Menu {
                 Button("Use thread model") {
                     managedControl.selectModel(nil, for: session)
                 }
                 Divider()
-                ForEach(managedControl.availableModels) { option in
+                ForEach(models) { option in
                     Button {
                         managedControl.selectModel(option.model, for: session)
                     } label: {
@@ -339,7 +341,7 @@ private struct AgentCLIControlBar: View {
                 .foregroundStyle(.white.opacity(0.48))
             }
             .menuStyle(.borderlessButton)
-            .help(modelSelectionHelp)
+            .help(modelSelectionHelp(for: session))
         } else if !compact {
             Text(modelLabel(for: session))
                 .font(.system(size: 8, weight: .medium, design: .monospaced))
@@ -348,10 +350,12 @@ private struct AgentCLIControlBar: View {
         }
     }
 
-    private var modelSelectionHelp: String {
-        switch managedControl.modelSelectionScope {
-        case .nextTurn: "Applies to the next managed turn"
-        case nil: "Thread model"
+    private func modelSelectionHelp(for session: AgentSession) -> String {
+        switch managedControl.modelSelectionScope(for: session) {
+        case .turnAndSubsequent:
+            "Applies to the next turn and subsequent turns in this thread"
+        case nil:
+            "Thread model"
         }
     }
 
@@ -463,7 +467,7 @@ private struct AgentCLIControlBar: View {
 
     private func modelLabel(for session: AgentSession) -> String {
         if let selected = managedControl.selectedModel(for: session),
-           let option = managedControl.availableModels.first(where: { $0.model == selected }) {
+           let option = managedControl.availableModels(for: session).first(where: { $0.model == selected }) {
             return option.displayName
         }
         return managedControl.selectedModel(for: session) ?? "Model unavailable"
@@ -1130,7 +1134,7 @@ private struct AgentSessionRowContent: View {
                         Label("Deny", systemImage: "xmark.circle.fill")
                     }
                     .keyboardShortcut(.cancelAction)
-                    .accessibilityHint("Deny this Codex permission request once")
+                    .accessibilityHint("Deny this agent permission request once")
 
                     Button {
                         approvalControl.resolve(
@@ -1142,13 +1146,13 @@ private struct AgentSessionRowContent: View {
                         Label("Approve", systemImage: "checkmark.circle.fill")
                     }
                     .keyboardShortcut(.defaultAction)
-                    .accessibilityHint("Approve this Codex permission request once")
+                    .accessibilityHint("Approve this agent permission request once")
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
                 .tint(.white.opacity(0.84))
                 .accessibilityElement(children: .contain)
-                .accessibilityLabel("Codex approval controls")
+                .accessibilityLabel("Agent approval controls")
             }
 
             let operations = AgentOperationAggregation.make(

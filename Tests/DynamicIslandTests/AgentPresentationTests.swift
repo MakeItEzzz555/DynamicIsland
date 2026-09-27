@@ -848,8 +848,18 @@ final class AgentPresentationTests: XCTestCase {
         ])
         XCTAssertTrue(AgentApprovalPresentation.isActionable(session: value, pending: request))
 
-        let claude = session(provider: .claude, state: .waitingForApproval, capabilities: [.approvalControl])
-        XCTAssertFalse(AgentApprovalPresentation.isActionable(session: claude, pending: request))
+        var claude = session(provider: .claude, state: .waitingForApproval, capabilities: [.approvalControl])
+        let claudeRequest = AgentApprovalControlRequest(
+            key: AgentApprovalControlKey(
+                session: claude.id,
+                requestID: AgentCorrelationID(rawValue: "claude-request")
+            ),
+            summary: "Claude approval",
+            expiresAt: now.addingTimeInterval(30)
+        )
+        XCTAssertTrue(AgentApprovalPresentation.isActionable(session: claude, pending: claudeRequest))
+        claude.capabilities = AgentCapabilities()
+        XCTAssertFalse(AgentApprovalPresentation.isActionable(session: claude, pending: claudeRequest))
     }
 
     private func session(

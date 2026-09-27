@@ -85,7 +85,15 @@ final class AgentManagedSessionController: ObservableObject {
 
     var availableModels: [AgentManagedModelDescriptor] {
         guard let provider = managedProvider else { return [] }
-        return modelsByProvider[provider] ?? []
+        return availableModels(for: provider)
+    }
+
+    func availableModels(for provider: AgentProvider) -> [AgentManagedModelDescriptor] {
+        modelsByProvider[provider] ?? []
+    }
+
+    func availableModels(for session: AgentSession) -> [AgentManagedModelDescriptor] {
+        availableModels(for: session.id.sessionID.provider)
     }
 
     var managedProviders: [AgentProvider] {
@@ -98,7 +106,15 @@ final class AgentManagedSessionController: ObservableObject {
 
     var modelSelectionScope: AgentModelSelectionScope? {
         guard let provider = managedProvider else { return nil }
-        return providers[provider]?.modelSelectionScope
+        return modelSelectionScope(for: provider)
+    }
+
+    func modelSelectionScope(for provider: AgentProvider) -> AgentModelSelectionScope? {
+        providers[provider]?.modelSelectionScope
+    }
+
+    func modelSelectionScope(for session: AgentSession) -> AgentModelSelectionScope? {
+        modelSelectionScope(for: session.id.sessionID.provider)
     }
 
     func capabilities(for agentProvider: AgentProvider) -> Set<AgentInteractiveCapability> {
@@ -1092,8 +1108,10 @@ final class AgentManagedSessionController: ObservableObject {
         if interactive.contains(.resolveApprovals) {
             result.formUnion([.approvalObservation, .approvalControl])
         }
-        if interactive.contains(.accountUsage) { result.insert(.tokenUsage) }
-        if interactive.contains(.contextUsage) { result.insert(.contextUsage) }
+        if interactive.contains(.accountUsage) { result.insert(.quotaUsage) }
+        if interactive.contains(.contextUsage) {
+            result.formUnion([.tokenUsage, .contextUsage])
+        }
         if interactive.contains(.selectModel) { result.insert(.modelMetadata) }
         if provider == .codex { result.insert(.planLifecycle) }
         return result

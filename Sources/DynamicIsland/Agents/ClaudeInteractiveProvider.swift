@@ -73,6 +73,7 @@ actor ClaudeInteractiveProvider: AgentInteractiveProvider {
             runtimeState: .idle,
             updatedAt: Date()
         )
+        pruneKnownSessions()
         return descriptor
     }
 
@@ -108,6 +109,7 @@ actor ClaudeInteractiveProvider: AgentInteractiveProvider {
     private func map(_ event: ClaudeCodeStreamEvent) -> [AgentInteractiveProviderEvent] {
         switch event {
         case .transportFailed(let nativeSessionID, _):
+            streamMessageIDs.removeValue(forKey: nativeSessionID)
             return [.providerFailure(
                 nativeSessionID: nativeSessionID,
                 summary: "Claude control transport failed"
@@ -134,6 +136,7 @@ actor ClaudeInteractiveProvider: AgentInteractiveProvider {
                 runtimeState: .active,
                 updatedAt: Date()
             )
+            pruneKnownSessions()
             return [.threadAvailable(descriptor)]
 
         case "stream_event":
@@ -152,6 +155,8 @@ actor ClaudeInteractiveProvider: AgentInteractiveProvider {
                     updatedAt: Date()
                 )
             }
+            streamMessageIDs.removeValue(forKey: envelope.nativeSessionID)
+            pruneKnownSessions()
             return [.turnCompleted(
                 AgentManagedTurnDescriptor(
                     nativeSessionID: envelope.nativeSessionID,
@@ -232,6 +237,21 @@ actor ClaudeInteractiveProvider: AgentInteractiveProvider {
             }
         }
         return mapped
+    }
+
+    private func pruneKnownSessions() {
+        guard knownSessions.count > Self.maximumKnownSessions else { return }
+        let keep = Set(
+            knownSessions.values
+                .sorted {
+                    if $0.updatedAt != $1.updatedAt { return $0.updatedAt > $1.updatedAt }
+                    return $0.session.nativeSessionID < $1.session.nativeSessionID
+                }
+                .prefix(Self.maximumKnownSessions)
+                .map { $0.session.nativeSessionID }
+        )
+        knownSessions = knownSessions.filter { keep.contains($0.key) }
+        streamMessageIDs = streamMessageIDs.filter { keep.contains($0.key) }
     }
 
     private nonisolated static func safeToolTitle(_ name: String) -> String {

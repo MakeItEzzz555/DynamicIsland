@@ -102,7 +102,7 @@ final class CodexAppServerClientTests: XCTestCase {
         )
         let provider = CodexAppServerProvider(client: client)
 
-        XCTAssertEqual(provider.modelSelectionScope, .nextTurn)
+        XCTAssertEqual(provider.modelSelectionScope, .turnAndSubsequent)
         XCTAssertEqual(provider.interactiveCapabilities, [
             .startSession, .resumeSession, .submitPrompt, .interrupt, .selectModel,
             .resolveApprovals, .accountUsage, .contextUsage, .streamToolActivity,

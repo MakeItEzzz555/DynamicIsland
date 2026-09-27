@@ -40,9 +40,10 @@ struct AgentManagedModelDescriptor: Identifiable, Equatable, Sendable {
 }
 
 enum AgentModelSelectionScope: String, Equatable, Sendable {
-    /// The selected model is sent as an authoritative override on the next
-    /// provider turn request; it does not rewrite the persisted thread.
-    case nextTurn
+    /// The selected model is sent as an authoritative provider override on the
+    /// next turn request. Codex applies that override to this turn and
+    /// subsequent turns in the same thread.
+    case turnAndSubsequent
 }
 
 enum AgentManagedTranscriptRole: String, Equatable, Sendable {
