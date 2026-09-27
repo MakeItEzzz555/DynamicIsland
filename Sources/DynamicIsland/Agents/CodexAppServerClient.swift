@@ -121,6 +121,16 @@ struct CodexThreadItemEntry: Equatable, Sendable {
     let timestamp: Date
 }
 
+
+struct CodexAvailableModel: Equatable, Sendable {
+    let id: String
+    let model: String
+    let displayName: String
+    let description: String?
+    let hidden: Bool
+    let isDefault: Bool
+}
+
 enum CodexAppServerEvent: Equatable, Sendable {
     case notification(method: String, params: CodexJSONValue)
     case serverRequest(id: CodexJSONValue, method: String, params: CodexJSONValue)
@@ -292,6 +302,33 @@ actor CodexAppServerClient {
         return values.compactMap(Self.decodeListedThread)
     }
 
+    func listModels(limit: Int = 100) async throws -> [CodexAvailableModel] {
+        try await start()
+        let boundedLimit = min(max(limit, 1), 200)
+        let result = try await request(
+            method: "model/list",
+            params: .object(["limit": .integer(Int64(boundedLimit))])
+        )
+        guard let values = result["data"]?.arrayValue else {
+            throw CodexAppServerError.invalidResponse("model/list")
+        }
+        return values.compactMap { value in
+            guard let id = value["id"]?.stringValue,
+                  let model = value["model"]?.stringValue,
+                  let displayName = value["displayName"]?.stringValue else {
+                return nil
+            }
+            return CodexAvailableModel(
+                id: id,
+                model: model,
+                displayName: displayName,
+                description: value["description"]?.stringValue,
+                hidden: value["hidden"]?.boolValue ?? false,
+                isDefault: value["isDefault"]?.boolValue ?? false
+            )
+        }
+    }
+
     func readAccountRateLimits() async throws -> CodexJSONValue {
         try await start()
         return try await request(
@@ -332,7 +369,11 @@ actor CodexAppServerClient {
         return try decodeThreadResponse(result, method: "thread/resume")
     }
 
-    func startTurn(threadID: String, prompt: String) async throws -> CodexManagedTurn {
+    func startTurn(
+        threadID: String,
+        prompt: String,
+        model: String? = nil
+    ) async throws -> CodexManagedTurn {
         try await start()
         let input: CodexJSONValue = .array([
             .object([
@@ -341,13 +382,17 @@ actor CodexAppServerClient {
                 "text_elements": .array([])
             ])
         ])
+        var params: [String: CodexJSONValue] = [
+            "threadId": .string(threadID),
+            "input": input,
+            "turnTrigger": .string("dynamic-island")
+        ]
+        if let model, !model.isEmpty {
+            params["model"] = .string(model)
+        }
         let result = try await request(
             method: "turn/start",
-            params: .object([
-                "threadId": .string(threadID),
-                "input": input,
-                "turnTrigger": .string("dynamic-island")
-            ])
+            params: .object(params)
         )
         guard let turn = result["turn"],
               let id = turn["id"]?.stringValue else {

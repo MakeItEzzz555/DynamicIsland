@@ -4,6 +4,17 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
     static let maximumDiscoveredSessions = 20
     static let contextBaselineTokens: Double = 12_000
     nonisolated let provider: AgentProvider = .codex
+    nonisolated let interactiveCapabilities: Set<AgentInteractiveCapability> = [
+        .startSession,
+        .resumeSession,
+        .submitPrompt,
+        .interrupt,
+        .selectModel,
+        .resolveApprovals,
+        .accountUsage,
+        .contextUsage,
+        .streamToolActivity
+    ]
     private let client: CodexAppServerClient
 
     init(client: CodexAppServerClient) {
@@ -72,6 +83,20 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
         }
     }
 
+    func listModels() async throws -> [AgentInteractiveModelOption] {
+        try await client.listModels(limit: 100)
+            .filter { !$0.hidden }
+            .map {
+                AgentInteractiveModelOption(
+                    id: $0.id,
+                    model: $0.model,
+                    displayName: $0.displayName,
+                    description: $0.description,
+                    isDefault: $0.isDefault
+                )
+            }
+    }
+
     func readAccountUsage() async throws -> AgentUsage {
         let rateResult = try await client.readAccountRateLimits()
         var usage = Self.mapAccountRateLimits(rateResult)
@@ -117,8 +142,16 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
         return descriptor(thread)
     }
 
-    func submit(prompt: String, nativeSessionID: String) async throws -> AgentManagedTurnDescriptor {
-        let turn = try await client.startTurn(threadID: nativeSessionID, prompt: prompt)
+    func submit(
+        prompt: String,
+        nativeSessionID: String,
+        model: String?
+    ) async throws -> AgentManagedTurnDescriptor {
+        let turn = try await client.startTurn(
+            threadID: nativeSessionID,
+            prompt: prompt,
+            model: model
+        )
         return AgentManagedTurnDescriptor(nativeSessionID: nativeSessionID, turnID: turn.id)
     }
 

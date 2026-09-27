@@ -68,6 +68,54 @@ final class CodexAppServerClientTests: XCTestCase {
         await client.stop()
     }
 
+    func testModelListAndTurnModelOverrideUseProviderAuthoritativeSchema() async throws {
+        let executable = try makeFakeServer(script: #"""
+        #!/usr/bin/env python3
+        import json, sys
+        for line in sys.stdin:
+            message = json.loads(line)
+            method = message.get("method")
+            request_id = message.get("id")
+            if method == "initialize":
+                print(json.dumps({"id": request_id, "result": {}}), flush=True)
+            elif method == "model/list":
+                print(json.dumps({"id": request_id, "result": {
+                    "data": [
+                        {"id":"model-a","model":"model-a","displayName":"Model A","description":"A","hidden":False,"isDefault":True},
+                        {"id":"hidden","model":"hidden","displayName":"Hidden","description":"H","hidden":True,"isDefault":False}
+                    ],
+                    "nextCursor": None
+                }}), flush=True)
+            elif method == "turn/start":
+                model = message.get("params", {}).get("model")
+                if model != "model-a":
+                    print(json.dumps({"id": request_id, "error": {"code": -1, "message": "missing model override"}}), flush=True)
+                else:
+                    print(json.dumps({"id": request_id, "result": {
+                        "turn": {"id":"turn-model","status":"inProgress"}
+                    }}), flush=True)
+        """#)
+
+        let client = try CodexAppServerClient(
+            executableURL: executable,
+            requestTimeout: .seconds(2)
+        )
+        let provider = CodexAppServerProvider(client: client)
+
+        let models = try await provider.listModels()
+        XCTAssertEqual(models.map(\.model), ["model-a"])
+        XCTAssertEqual(models.first?.displayName, "Model A")
+        XCTAssertEqual(models.first?.isDefault, true)
+
+        let turn = try await provider.submit(
+            prompt: "hello",
+            nativeSessionID: "thread-1",
+            model: "model-a"
+        )
+        XCTAssertEqual(turn.turnID, "turn-model")
+        await provider.stop()
+    }
+
     func testProviderTranscriptReturnsOnlyUserAndAgentVisibleMessages() async throws {
         let executable = try makeFakeServer(script: #"""
         #!/usr/bin/env python3

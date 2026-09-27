@@ -231,6 +231,53 @@ final class AgentManagedSessionControllerTests: XCTestCase {
     }
 
     @MainActor
+    func testSelectedModelOverrideIsAppliedToManagedSubmission() async throws {
+        let provider = PersistentSnapshotFakeProvider(
+            sessions: [Self.descriptor(id: "model-thread", state: .idle)],
+            usage: AgentUsage()
+        )
+        let store = AgentEventStore()
+        let controller = AgentManagedSessionController(
+            provider: provider,
+            coordinator: AgentIngestionCoordinator(eventStore: store),
+            eventStore: store,
+            approvals: AgentApprovalController()
+        )
+
+        controller.startObserving()
+        await controller.refreshPersistentSnapshot()
+
+        guard let session = store.sessions.first(where: {
+            $0.id.sessionID.nativeID == "model-thread"
+        }) else {
+            return XCTFail("Expected discovered session")
+        }
+
+        controller.connect(session)
+        try await Task.sleep(for: .milliseconds(30))
+        await controller.refreshPersistentSnapshot()
+
+        guard let managedSession = store.sessions.first(where: {
+            $0.id.sessionID.nativeID == "model-thread"
+        }) else {
+            return XCTFail("Expected managed session")
+        }
+
+        XCTAssertTrue(controller.interactiveCapabilities.contains(.selectModel))
+        XCTAssertTrue(controller.availableModels.contains { $0.model == "model-b" })
+
+        controller.selectModel("model-b", for: managedSession)
+        XCTAssertEqual(controller.selectedModel(for: managedSession), "model-b")
+
+        let accepted = await controller.submit("hello", for: managedSession)
+        XCTAssertTrue(accepted)
+        let submitted = await provider.submittedPrompts()
+        XCTAssertEqual(submitted.last, "hello|model-b")
+
+        controller.stop()
+    }
+
+    @MainActor
     func testSubmitReportsProviderAcceptanceAndFailureSynchronouslyToComposer() async throws {
         let provider = PersistentSnapshotFakeProvider(
             sessions: [Self.descriptor(id: "submit-thread", state: .idle)],
@@ -404,6 +451,10 @@ final class AgentManagedSessionControllerTests: XCTestCase {
 
 private actor PersistentSnapshotFakeProvider: AgentInteractiveProvider {
     nonisolated let provider: AgentProvider = .codex
+    nonisolated let interactiveCapabilities: Set<AgentInteractiveCapability> = [
+        .startSession, .resumeSession, .submitPrompt, .interrupt, .selectModel,
+        .resolveApprovals, .accountUsage, .contextUsage, .streamToolActivity
+    ]
 
     private var discovered: [AgentDiscoveredSessionDescriptor]
     private let usage: AgentUsage
@@ -433,6 +484,25 @@ private actor PersistentSnapshotFakeProvider: AgentInteractiveProvider {
     func readAccountUsage() async throws -> AgentUsage {
         if usageFailure { throw CodexAppServerError.transportClosed(nil) }
         return usage
+    }
+
+    func listModels() async throws -> [AgentInteractiveModelOption] {
+        [
+            AgentInteractiveModelOption(
+                id: "model-a",
+                model: "model-a",
+                displayName: "Model A",
+                description: nil,
+                isDefault: true
+            ),
+            AgentInteractiveModelOption(
+                id: "model-b",
+                model: "model-b",
+                displayName: "Model B",
+                description: nil,
+                isDefault: false
+            )
+        ]
     }
 
     func readTranscript(
@@ -477,9 +547,13 @@ private actor PersistentSnapshotFakeProvider: AgentInteractiveProvider {
         )
     }
 
-    func submit(prompt: String, nativeSessionID: String) async throws -> AgentManagedTurnDescriptor {
+    func submit(
+        prompt: String,
+        nativeSessionID: String,
+        model: String?
+    ) async throws -> AgentManagedTurnDescriptor {
         if submitFailure { throw CodexAppServerError.rpcError(code: -1, message: "failed") }
-        submitted.append(prompt)
+        submitted.append(model.map { "\(prompt)|\($0)" } ?? prompt)
         return AgentManagedTurnDescriptor(nativeSessionID: nativeSessionID, turnID: "turn-submit")
     }
 

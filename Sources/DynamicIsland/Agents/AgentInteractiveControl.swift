@@ -17,6 +17,27 @@ struct AgentManagedTurnDescriptor: Equatable, Sendable {
     let turnID: String
 }
 
+
+enum AgentInteractiveCapability: String, CaseIterable, Hashable, Sendable {
+    case startSession
+    case resumeSession
+    case submitPrompt
+    case interrupt
+    case selectModel
+    case resolveApprovals
+    case accountUsage
+    case contextUsage
+    case streamToolActivity
+}
+
+struct AgentInteractiveModelOption: Identifiable, Equatable, Sendable {
+    let id: String
+    let model: String
+    let displayName: String
+    let description: String?
+    let isDefault: Bool
+}
+
 enum AgentManagedTranscriptRole: String, Equatable, Sendable {
     case user
     case agent
@@ -97,14 +118,20 @@ struct AgentManagedApprovalRequest: Equatable, Sendable {
 
 protocol AgentInteractiveProvider: Sendable {
     var provider: AgentProvider { get }
+    var interactiveCapabilities: Set<AgentInteractiveCapability> { get }
 
     func events() async -> AsyncStream<AgentInteractiveProviderEvent>
     func discoverSessions() async throws -> [AgentDiscoveredSessionDescriptor]
     func readAccountUsage() async throws -> AgentUsage
     func readTranscript(nativeSessionID: String, limit: Int) async throws -> [AgentManagedTranscriptEntry]
+    func listModels() async throws -> [AgentInteractiveModelOption]
     func startSession(cwd: String?) async throws -> AgentManagedSessionDescriptor
     func resumeSession(nativeSessionID: String) async throws -> AgentManagedSessionDescriptor
-    func submit(prompt: String, nativeSessionID: String) async throws -> AgentManagedTurnDescriptor
+    func submit(
+        prompt: String,
+        nativeSessionID: String,
+        model: String?
+    ) async throws -> AgentManagedTurnDescriptor
     func interrupt(nativeSessionID: String, turnID: String) async throws
     func resolveApproval(_ request: AgentManagedApprovalRequest, allow: Bool) async throws
     func stop() async

@@ -9,6 +9,8 @@ final class AgentManagedSessionController: ObservableObject {
     @Published private(set) var lastTransportError: String?
     @Published private(set) var accountUsage = AgentUsage()
     @Published private(set) var transcripts: [String: [AgentManagedTranscriptEntry]] = [:]
+    @Published private(set) var availableModels: [AgentInteractiveModelOption] = []
+    @Published private(set) var selectedModelOverrides: [String: String] = [:]
 
     private let provider: (any AgentInteractiveProvider)?
     private let coordinator: AgentIngestionCoordinator
@@ -50,6 +52,10 @@ final class AgentManagedSessionController: ObservableObject {
     }
 
     var isAvailable: Bool { provider != nil }
+
+    var interactiveCapabilities: Set<AgentInteractiveCapability> {
+        provider?.interactiveCapabilities ?? []
+    }
 
     func startObserving() {
         guard let provider else { return }
@@ -94,6 +100,8 @@ final class AgentManagedSessionController: ObservableObject {
         knownDiscoveredSessionIDs.removeAll()
         accountUsage = AgentUsage()
         transcripts.removeAll()
+        availableModels.removeAll()
+        selectedModelOverrides.removeAll()
 
         let provider = self.provider
         let coordinator = self.coordinator
@@ -123,6 +131,14 @@ final class AgentManagedSessionController: ObservableObject {
 
     private func performPersistentSnapshotRefresh() async {
         guard let provider, !Task.isCancelled else { return }
+
+        if interactiveCapabilities.contains(.selectModel),
+           let models = try? await provider.listModels() {
+            let filtered = models.filter { !$0.model.isEmpty }
+            if !filtered.isEmpty {
+                availableModels = filtered
+            }
+        }
 
         do {
             let refreshed = try await provider.readAccountUsage()
@@ -373,6 +389,20 @@ final class AgentManagedSessionController: ObservableObject {
         }
     }
 
+    func selectedModel(for session: AgentSession) -> String? {
+        selectedModelOverrides[session.id.sessionID.nativeID] ?? session.project.model
+    }
+
+    func selectModel(_ model: String?, for session: AgentSession) {
+        guard interactiveCapabilities.contains(.selectModel) else { return }
+        let nativeID = session.id.sessionID.nativeID
+        guard let model, availableModels.contains(where: { $0.model == model }) else {
+            selectedModelOverrides.removeValue(forKey: nativeID)
+            return
+        }
+        selectedModelOverrides[nativeID] = model
+    }
+
     /// Returns true only after the provider accepts the authoritative turn/start.
     /// The caller can therefore keep its draft intact across transport/RPC failure.
     func submit(_ prompt: String, for session: AgentSession) async -> Bool {
@@ -390,7 +420,11 @@ final class AgentManagedSessionController: ObservableObject {
         let nativeID = session.id.sessionID.nativeID
 
         do {
-            let turn = try await provider.submit(prompt: bounded, nativeSessionID: nativeID)
+            let turn = try await provider.submit(
+                prompt: bounded,
+                nativeSessionID: nativeID,
+                model: selectedModelOverrides[nativeID]
+            )
             updateControl(nativeID) {
                 $0.isSubmitting = false
                 $0.activeTurnID = turn.turnID

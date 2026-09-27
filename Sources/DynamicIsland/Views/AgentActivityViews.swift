@@ -145,6 +145,7 @@ struct AgentDashboardContentView: View {
                 } else {
                     AgentCompactSessionSelector(
                         sessions: sessions,
+                        managedControl: managedControl,
                         selectedSessionID: $selectedSessionID
                     )
 
@@ -184,6 +185,7 @@ struct AgentDashboardContentView: View {
 
 private struct AgentCompactSessionSelector: View {
     let sessions: [AgentSession]
+    @ObservedObject var managedControl: AgentManagedSessionController
     @Binding var selectedSessionID: AgentSessionInstanceID?
 
     private var selectedSession: AgentSession? {
@@ -223,10 +225,43 @@ private struct AgentCompactSessionSelector: View {
             Spacer(minLength: 8)
 
             if let session = selectedSession {
-                Text(session.project.model ?? "Model unavailable")
-                    .font(.system(size: 8, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.40))
-                    .lineLimit(1)
+                if managedControl.interactiveCapabilities.contains(.selectModel),
+                   !managedControl.availableModels.isEmpty {
+                    Menu {
+                        Button("Use thread model") {
+                            managedControl.selectModel(nil, for: session)
+                        }
+                        Divider()
+                        ForEach(managedControl.availableModels) { option in
+                            Button {
+                                managedControl.selectModel(option.model, for: session)
+                            } label: {
+                                HStack {
+                                    Text(option.displayName)
+                                    if option.model == managedControl.selectedModel(for: session) {
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(modelLabel(for: session))
+                                .font(.system(size: 8, weight: .medium, design: .monospaced))
+                                .lineLimit(1)
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 6.5, weight: .semibold))
+                        }
+                        .foregroundStyle(.white.opacity(0.46))
+                    }
+                    .menuStyle(.borderlessButton)
+                } else {
+                    Text(modelLabel(for: session))
+                        .font(.system(size: 8, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.40))
+                        .lineLimit(1)
+                }
+
                 Label(
                     AgentSessionPresentation.displayedStateLabel(for: session, at: Date()),
                     systemImage: AgentSessionPresentation.displayedStateSymbol(for: session, at: Date())
@@ -253,6 +288,14 @@ private struct AgentCompactSessionSelector: View {
             return displayName
         }
         return AgentSessionPresentation.primaryTitle(for: session)
+    }
+
+    private func modelLabel(for session: AgentSession) -> String {
+        if let selected = managedControl.selectedModel(for: session),
+           let option = managedControl.availableModels.first(where: { $0.model == selected }) {
+            return option.displayName
+        }
+        return managedControl.selectedModel(for: session) ?? "Model unavailable"
     }
 
     private func sessionDetail(_ session: AgentSession) -> String {
