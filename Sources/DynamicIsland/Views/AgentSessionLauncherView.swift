@@ -365,6 +365,8 @@ enum AgentSessionLauncherProjection {
             let project = AgentPrivacyProjection.displayProject(session.project)
             return [
                 project.displayName,
+                session.project.workingDirectory,
+                session.project.workingDirectory.map { URL(fileURLWithPath: $0).lastPathComponent },
                 project.gitBranch,
                 project.model,
                 project.sourceApplicationName,

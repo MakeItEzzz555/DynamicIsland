@@ -509,6 +509,7 @@ actor AgentBridgePermissionRequestProcessor {
             producer: producer,
             receivedAt: now()
         )
+        await approvals.confirmDelivery(controlRequest.key)
         guard let decision else {
             return AgentBridgeHTTPResponse(status: .ok, code: "no-decision")
         }

@@ -48,13 +48,17 @@ actor CodexRolloutSessionMonitor {
 
     init(
         coordinator: AgentIngestionCoordinator,
+        integrationRouter: AgentIntegrationRouter? = nil,
         sessionsDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".codex/sessions", isDirectory: true),
         scanInterval: Duration = .seconds(10),
         recentWindow: TimeInterval = 300,
         maximumSessions: Int = 32
     ) {
-        self.adapter = CodexRolloutRecoveryAdapter(coordinator: coordinator)
+        self.adapter = CodexRolloutRecoveryAdapter(
+            coordinator: coordinator,
+            integrationRouter: integrationRouter
+        )
         self.sessionsDirectory = sessionsDirectory
         self.scanInterval = scanInterval
         self.recentWindow = recentWindow

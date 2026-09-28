@@ -56,7 +56,7 @@ final class CodexRolloutRecoveryTests: XCTestCase {
             XCTAssertEqual(usage[.cachedInputTokens]?.value, 20)
             XCTAssertEqual(usage[.outputTokens]?.value, 40)
             XCTAssertEqual(usage[.reasoningTokens]?.value, 5)
-            XCTAssertEqual(usage[.contextUsed]?.value, 145)
+            XCTAssertNil(usage[.contextUsed])
         } else {
             XCTFail("expected usage")
         }
@@ -68,12 +68,13 @@ final class CodexRolloutRecoveryTests: XCTestCase {
         {"timestamp":"2026-09-25T09:00:00Z","ordinal":1,"type":"session_meta","payload":{"session_id":"s-1","id":"s-1","cwd":"/tmp/project"}}
         """.utf8))
         let events = try parser.parse(Data("""
-        {"timestamp":"2026-09-25T09:03:00Z","ordinal":4,"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":120,"cached_input_tokens":30,"output_tokens":50,"reasoning_output_tokens":8,"total_tokens":178},"last_token_usage":{},"model_context_window":258000},"rate_limits":{"secret":"ignored"}}}
+        {"timestamp":"2026-09-25T09:03:00Z","ordinal":4,"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":59842683,"cached_input_tokens":30,"output_tokens":50,"reasoning_output_tokens":8,"total_tokens":59842683},"last_token_usage":{"input_tokens":100000,"cached_input_tokens":90000,"output_tokens":11574,"reasoning_output_tokens":2000,"total_tokens":111574},"model_context_window":258400},"rate_limits":{"secret":"ignored"}}}
         """.utf8))
         if case .usage(let usage) = events[0].payload {
-            XCTAssertEqual(usage[.contextUsed]?.value, 178)
-            XCTAssertEqual(usage[.contextUsed]?.limit, 258000)
-            XCTAssertEqual(usage[.contextLimit]?.value, 258000)
+            XCTAssertEqual(usage[.contextUsed]?.value, 111574)
+            XCTAssertEqual(usage[.contextUsed]?.limit, 258400)
+            XCTAssertEqual(usage[.contextLimit]?.value, 258400)
+            XCTAssertLessThan(usage[.contextUsed]?.value ?? .infinity, 258400)
         } else {
             XCTFail("expected usage")
         }

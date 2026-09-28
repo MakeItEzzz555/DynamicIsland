@@ -125,6 +125,10 @@ final class AgentSessionLauncherTests: XCTestCase {
             1
         )
         XCTAssertEqual(
+            AgentSessionLauncherProjection.liveSessions([session], query: "/tmp/DynamicIsland").count,
+            1
+        )
+        XCTAssertEqual(
             AgentSessionLauncherProjection.liveSessions([session], query: "nope").count,
             0
         )

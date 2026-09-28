@@ -92,6 +92,39 @@ final class AgentApprovalControllerTests: XCTestCase {
         XCTAssertNil(result)
     }
 
+    func testResolvedChoiceRemainsPresentedUntilProviderDeliveryIsConfirmed() async {
+        let current = now
+        let controller = AgentApprovalController(now: { current })
+        let request = makeRequest(id: "delivery")
+        let waiter = Task { await controller.request(request, maximumWait: .seconds(1)) }
+        await Task.yield()
+
+        XCTAssertEqual(
+            controller.resolve(
+                session: request.key.session,
+                requestID: request.key.requestID,
+                decision: .allow
+            ),
+            .accepted
+        )
+        let decision = await waiter.value
+        XCTAssertEqual(decision, .allow)
+        XCTAssertNil(controller.pendingRequest(for: request.key.session))
+        XCTAssertEqual(controller.presentedRequest(for: request.key.session), request)
+        XCTAssertEqual(controller.deliveryState(for: request.key), .submitting(.allow))
+        XCTAssertEqual(
+            controller.resolve(
+                session: request.key.session,
+                requestID: request.key.requestID,
+                decision: .allow
+            ),
+            .missing
+        )
+
+        controller.confirmDelivery(request.key)
+        XCTAssertNil(controller.presentedRequest(for: request.key.session))
+    }
+
     private func makeRequest(
         id: String,
         expiresAt: Date? = nil

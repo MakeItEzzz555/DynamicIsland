@@ -221,7 +221,7 @@ struct AgentEmbeddedConsoleView: View {
     }
 
     private var actionableApproval: AgentApprovalControlRequest? {
-        let pending = approvalControl.pendingRequest(for: session.id)
+        let pending = approvalControl.presentedRequest(for: session.id)
         return AgentApprovalPresentation.isActionable(session: session, pending: pending) ? pending : nil
     }
 
@@ -648,19 +648,21 @@ struct AgentConsoleApprovalRow: View {
     let request: AgentApprovalControlRequest
     let session: AgentSession
     @ObservedObject var approvalControl: AgentApprovalController
-    @State private var pulse = false
-
     private let accent = Color.orange
+
+    private var deliveryState: AgentApprovalDeliveryState {
+        approvalControl.deliveryState(for: request.key) ?? .awaitingDecision
+    }
+
+    private var isSubmitting: Bool {
+        if case .submitting = deliveryState { return true }
+        return false
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(alignment: .center, spacing: 8) {
                 ZStack {
-                    Circle()
-                        .stroke(accent.opacity(0.5), lineWidth: 2)
-                        .frame(width: 18, height: 18)
-                        .scaleEffect(pulse ? 1.28 : 1)
-                        .opacity(pulse ? 0 : 0.82)
                     Circle()
                         .fill(accent)
                         .frame(width: 11, height: 11)
@@ -671,7 +673,7 @@ struct AgentConsoleApprovalRow: View {
                 .frame(width: 22, height: 22)
 
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("Permission required")
+                    Text(isSubmitting ? deliveryLabel : "Permission required")
                         .font(.system(size: 12, weight: .bold))
                         .foregroundStyle(.white.opacity(0.95))
                     Text(session.id.sessionID.provider.stableName.capitalized)
@@ -715,6 +717,7 @@ struct AgentConsoleApprovalRow: View {
                 }
                 .buttonStyle(.plain)
                 .keyboardShortcut(.cancelAction)
+                .disabled(isSubmitting)
                 .accessibilityHint("Deny this exact permission request")
 
                 Button {
@@ -737,6 +740,7 @@ struct AgentConsoleApprovalRow: View {
                 }
                 .buttonStyle(.plain)
                 .keyboardShortcut(.defaultAction)
+                .disabled(isSubmitting)
                 .accessibilityHint("Approve this exact permission request once")
             }
         }
@@ -763,13 +767,13 @@ struct AgentConsoleApprovalRow: View {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .stroke(.white.opacity(0.07), lineWidth: 1)
         }
-        .onAppear {
-            withAnimation(.easeInOut(duration: 1.0).repeatForever(autoreverses: false)) {
-                pulse = true
-            }
-        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(session.id.sessionID.provider.stableName.capitalized) permission required")
+    }
+
+    private var deliveryLabel: String {
+        guard case .submitting(let decision) = deliveryState else { return "Permission required" }
+        return decision == .allow ? "Approving…" : "Denying…"
     }
 }
 

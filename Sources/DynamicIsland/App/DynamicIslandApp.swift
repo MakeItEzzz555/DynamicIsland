@@ -96,7 +96,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         approvals: agentApprovalControl
     )
     private lazy var codexRolloutMonitor = CodexRolloutSessionMonitor(
-        coordinator: agentIngestion
+        coordinator: agentIngestion,
+        integrationRouter: agentIntegrationRouter
     )
     private lazy var agentManagedControl: AgentManagedSessionController = {
         var providers: [any AgentInteractiveProvider] = []

@@ -218,6 +218,7 @@ struct CodexRolloutRecoveryParser: Sendable {
         let usage = try Self.usage(
             total: usageObject,
             contextLimit: nil,
+            includesCurrentContext: false,
             observedAt: providerTimestamp ?? receivedAt
         )
         let correlation = Self.boundedString(payload["turn_id"], maximumBytes: AgentDomainLimits.identifierLength)
@@ -247,13 +248,14 @@ struct CodexRolloutRecoveryParser: Sendable {
         switch eventType {
         case "token_count":
             guard let info = payload["info"] as? [String: Any],
-                  let total = info["total_token_usage"] as? [String: Any] else {
+                  let current = info["last_token_usage"] as? [String: Any] else {
                 throw CodexRolloutRecoveryError.invalidUsage
             }
             let contextLimit = Self.double(info["model_context_window"])
             let usage = try Self.usage(
-                total: total,
+                total: current,
                 contextLimit: contextLimit,
+                includesCurrentContext: true,
                 observedAt: providerTimestamp ?? receivedAt
             )
             return [event(
@@ -476,15 +478,18 @@ struct CodexRolloutRecoveryParser: Sendable {
     private static func usage(
         total: [String: Any],
         contextLimit: Double?,
+        includesCurrentContext: Bool,
         observedAt: Date
     ) throws -> AgentUsage {
-        let values: [(AgentUsageMetric, String, Double?)] = [
+        var values: [(AgentUsageMetric, String, Double?)] = [
             (.inputTokens, "input", double(total["input_tokens"])),
             (.cachedInputTokens, "cached-input", double(total["cached_input_tokens"])),
             (.outputTokens, "output", double(total["output_tokens"])),
-            (.reasoningTokens, "reasoning", double(total["reasoning_output_tokens"])),
-            (.contextUsed, "context-used", double(total["total_tokens"]))
+            (.reasoningTokens, "reasoning", double(total["reasoning_output_tokens"]))
         ]
+        if includesCurrentContext {
+            values.append((.contextUsed, "context-used", double(total["total_tokens"])))
+        }
         var samples: [AgentUsageMetric: AgentUsageSample] = [:]
         for (metric, scope, value) in values {
             guard let value, value.isFinite, value >= 0 else { continue }
@@ -620,12 +625,17 @@ struct CodexRolloutRecoveryParser: Sendable {
 
 actor CodexRolloutRecoveryAdapter {
     private let coordinator: AgentIngestionCoordinator
+    private let integrationRouter: AgentIntegrationRouter
     private var producer: AgentProducerHandle?
     private var tailers: [URL: AppendOnlyRecordTailer] = [:]
     private var parsers: [URL: CodexRolloutRecoveryParser] = [:]
 
-    init(coordinator: AgentIngestionCoordinator) {
+    init(
+        coordinator: AgentIngestionCoordinator,
+        integrationRouter: AgentIntegrationRouter? = nil
+    ) {
         self.coordinator = coordinator
+        self.integrationRouter = integrationRouter ?? AgentIntegrationRouter(coordinator: coordinator)
     }
 
     func start() async -> Bool {
@@ -663,7 +673,11 @@ actor CodexRolloutRecoveryAdapter {
         if let bootstrap = Self.bootstrapSessionMetaRecord(fileURL: fileURL) {
             do {
                 let events = try parser.parse(bootstrap)
-                let result = await coordinator.ingestAtomically(events, from: producer)
+                let result = await integrationRouter.routeAtomically(
+                    events,
+                    from: producer,
+                    precedence: .secondaryObservation
+                )
                 if case .failure = result { return false }
             } catch {
                 _ = await coordinator.updateHealth(.degraded, error: .schemaMismatch, for: producer)
@@ -743,7 +757,11 @@ actor CodexRolloutRecoveryAdapter {
             let events = try parser.parse(record)
             parsers[fileURL] = parser
             guard !events.isEmpty else { return }
-            let result = await coordinator.ingestAtomically(events, from: producer)
+            let result = await integrationRouter.routeAtomically(
+                events,
+                from: producer,
+                precedence: .secondaryObservation
+            )
             if case .failure = result {
                 _ = await coordinator.updateHealth(.degraded, error: .storeRejected, for: producer)
             }

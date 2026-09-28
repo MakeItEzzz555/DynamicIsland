@@ -32,6 +32,7 @@ final class AgentManagedSessionController: ObservableObject {
     private var approvalTasks: [String: Task<Void, Never>] = [:]
     private var managedApprovalKeys: Set<AgentApprovalControlKey> = []
     private var pendingApprovalConfirmations: [String: PendingApprovalConfirmation] = [:]
+    private var approvalConfirmationTasks: [String: Task<Void, Never>] = [:]
     private var knownDiscoveredSessionIDs: Set<AgentSessionID> = []
 
     init(
@@ -240,6 +241,9 @@ final class AgentManagedSessionController: ObservableObject {
         approvalTasks.removeAll()
         managedApprovalKeys.removeAll()
         pendingApprovalConfirmations.removeAll()
+        for task in approvalConfirmationTasks.values { task.cancel() }
+        approvalConfirmationTasks.removeAll()
+        approvals.cancelAll()
         approvals.clearPolicies()
         managed.removeAll()
         connecting.removeAll()
@@ -343,7 +347,6 @@ final class AgentManagedSessionController: ObservableObject {
     ) async {
         let descriptor = discovered.session
         let sessionID = descriptor.sessionID
-        verifiedAttachmentSessionIDs.insert(sessionID)
         let existing = eventStore.sessions.first {
             $0.id.sessionID == sessionID && $0.endedAt == nil
         }
@@ -570,7 +573,8 @@ final class AgentManagedSessionController: ObservableObject {
         return
             provider.interactiveCapabilities.contains(.resumeSession) &&
             managed[session.id.sessionID] == nil &&
-            verifiedAttachmentSessionIDs.contains(session.id.sessionID) &&
+            (knownDiscoveredSessionIDs.contains(session.id.sessionID) ||
+                verifiedAttachmentSessionIDs.contains(session.id.sessionID)) &&
             attachmentErrors[session.id.sessionID] == nil &&
             !Self.hasExternallyActiveTurn(session) &&
             !connecting.contains(session.id.sessionID)
@@ -616,12 +620,15 @@ final class AgentManagedSessionController: ObservableObject {
                 guard descriptor.nativeSessionID == nativeID else {
                     throw CodexAppServerError.invalidResponse("thread/resume identity mismatch")
                 }
+                guard let instance = await self.emitSessionAvailability(descriptor, type: .sessionResumed),
+                      instance.sessionID == sessionID,
+                      self.eventStore.session(for: instance)?.id.sessionID == sessionID else {
+                    throw CodexAppServerError.invalidResponse("resumed thread was not ingested")
+                }
                 self.markManaged(descriptor)
                 self.verifiedAttachmentSessionIDs.insert(sessionID)
                 self.attachmentErrors.removeValue(forKey: sessionID)
-                if let instance = await self.emitSessionAvailability(descriptor, type: .sessionResumed) {
-                    self.selectSession(instance)
-                }
+                self.selectSession(instance)
             } catch {
                 self.verifiedAttachmentSessionIDs.remove(sessionID)
                 self.attachmentErrors[sessionID] = "Official thread could not be attached"
@@ -984,6 +991,22 @@ final class AgentManagedSessionController: ObservableObject {
                 ? "Codex app-server disconnected"
                 : "\(providerName(agentProvider)) unavailable"
             setTransportError(transportMessage, for: agentProvider)
+            let stranded = pendingApprovalConfirmations.filter { $0.value.provider == agentProvider }
+            for (key, confirmation) in stranded {
+                pendingApprovalConfirmations.removeValue(forKey: key)
+                approvalConfirmationTasks.removeValue(forKey: key)?.cancel()
+                if let instance = eventStore.sessions.first(where: {
+                    $0.id.sessionID == AgentSessionID(
+                        provider: confirmation.provider,
+                        nativeID: confirmation.nativeSessionID
+                    ) && $0.endedAt == nil
+                })?.id {
+                    approvals.failDelivery(AgentApprovalControlKey(
+                        session: instance,
+                        requestID: confirmation.correlationID
+                    ))
+                }
+            }
             for key in managedApprovalKeys where key.session.sessionID.provider == agentProvider {
                 _ = approvals.resolve(
                     session: key.session,
@@ -1085,10 +1108,20 @@ final class AgentManagedSessionController: ObservableObject {
             state: allow ? .approved : .denied,
             automatic: allow && wasAutomatic
         )
+        approvalConfirmationTasks[confirmationKey] = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(75))
+            guard !Task.isCancelled else { return }
+            await self?.expireApprovalConfirmation(
+                key: confirmationKey,
+                controlKey: controlRequest.key
+            )
+        }
         do {
             try await provider.resolveApproval(request, allow: allow)
         } catch {
             pendingApprovalConfirmations.removeValue(forKey: confirmationKey)
+            approvalConfirmationTasks.removeValue(forKey: confirmationKey)?.cancel()
+            approvals.failDelivery(controlRequest.key)
             _ = await emit(
                 provider: agentProvider,
                 nativeSessionID: request.threadID,
@@ -1117,6 +1150,18 @@ final class AgentManagedSessionController: ObservableObject {
         guard !matches.isEmpty else { return }
         for (key, confirmation) in matches {
             pendingApprovalConfirmations.removeValue(forKey: key)
+            approvalConfirmationTasks.removeValue(forKey: key)?.cancel()
+            if let instance = eventStore.sessions.first(where: {
+                $0.id.sessionID == AgentSessionID(
+                    provider: confirmation.provider,
+                    nativeID: confirmation.nativeSessionID
+                ) && $0.endedAt == nil
+            })?.id {
+                approvals.confirmDelivery(AgentApprovalControlKey(
+                    session: instance,
+                    requestID: confirmation.correlationID
+                ))
+            }
             if confirmation.automatic && confirmation.state == .approved {
                 upsertTranscript(AgentManagedTranscriptEntry(
                     id: "auto-approval:\(confirmation.nativeSessionID):\(confirmation.turnID):\(confirmation.correlationID.rawValue)",
@@ -1135,6 +1180,26 @@ final class AgentManagedSessionController: ObservableObject {
                 payload: .approvalResolution(AgentApprovalResolution(state: confirmation.state))
             )
         }
+    }
+
+    private func expireApprovalConfirmation(
+        key: String,
+        controlKey: AgentApprovalControlKey
+    ) async {
+        guard let confirmation = pendingApprovalConfirmations.removeValue(forKey: key) else { return }
+        approvalConfirmationTasks.removeValue(forKey: key)
+        approvals.failDelivery(controlKey)
+        _ = await emit(
+            provider: confirmation.provider,
+            nativeSessionID: confirmation.nativeSessionID,
+            type: .approvalResolved,
+            correlationID: confirmation.correlationID,
+            payload: .approvalResolution(AgentApprovalResolution(state: .cancelled))
+        )
+        recordError(
+            CodexAppServerError.requestTimedOut("approval continuation"),
+            for: controlKey.session.sessionID
+        )
     }
 
     private func projectManagedTurnStartIfNeeded(

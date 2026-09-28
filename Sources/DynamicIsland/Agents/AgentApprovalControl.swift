@@ -19,14 +19,21 @@ enum AgentApprovalControlResult: Equatable, Sendable {
     case missing
 }
 
+enum AgentApprovalDeliveryState: Equatable, Sendable {
+    case awaitingDecision
+    case submitting(AgentBridgePermissionDecision)
+}
+
 @MainActor
 final class AgentApprovalController: ObservableObject {
     @Published private(set) var pendingRequests: [AgentApprovalControlKey: AgentApprovalControlRequest] = [:]
+    @Published private(set) var deliveringRequests: [AgentApprovalControlKey: AgentApprovalControlRequest] = [:]
     @Published private(set) var approvalPolicies: [AgentApprovalPolicyKey: AgentApprovalPolicyState] = [:]
 
     private var continuations: [AgentApprovalControlKey: CheckedContinuation<AgentBridgePermissionDecision?, Never>] = [:]
     private var expirationTasks: [AgentApprovalControlKey: Task<Void, Never>] = [:]
     private var completedRequests: [AgentApprovalControlKey: Date] = [:]
+    private var deliveryDecisions: [AgentApprovalControlKey: AgentBridgePermissionDecision] = [:]
     private let now: @Sendable () -> Date
 
     init(now: @escaping @Sendable () -> Date = Date.init) {
@@ -43,6 +50,8 @@ final class AgentApprovalController: ObservableObject {
               completedRequests[request.key] == nil else { return nil }
         if automaticallyApproves(request) {
             completedRequests[request.key] = request.expiresAt
+            deliveringRequests[request.key] = request
+            deliveryDecisions[request.key] = .allow
             return .allow
         }
         return await withTaskCancellationHandler {
@@ -75,7 +84,12 @@ final class AgentApprovalController: ObservableObject {
             finish(key, decision: nil)
             return .missing
         }
-        finish(key, decision: decision)
+        expirationTasks.removeValue(forKey: key)?.cancel()
+        pendingRequests.removeValue(forKey: key)
+        deliveringRequests[key] = request
+        deliveryDecisions[key] = decision
+        completedRequests[key] = request.expiresAt
+        continuations.removeValue(forKey: key)?.resume(returning: decision)
         return .accepted
     }
 
@@ -84,6 +98,27 @@ final class AgentApprovalController: ObservableObject {
             .filter { $0.key.session == session && $0.expiresAt > now() }
             .sorted { $0.expiresAt < $1.expiresAt }
             .first
+    }
+
+    func presentedRequest(for session: AgentSessionInstanceID) -> AgentApprovalControlRequest? {
+        (Array(pendingRequests.values) + Array(deliveringRequests.values))
+            .filter { $0.key.session == session && $0.expiresAt > now() }
+            .sorted { $0.expiresAt < $1.expiresAt }
+            .first
+    }
+
+    func deliveryState(for key: AgentApprovalControlKey) -> AgentApprovalDeliveryState? {
+        if let decision = deliveryDecisions[key] { return .submitting(decision) }
+        return pendingRequests[key] == nil ? nil : .awaitingDecision
+    }
+
+    func confirmDelivery(_ key: AgentApprovalControlKey) {
+        deliveringRequests.removeValue(forKey: key)
+        deliveryDecisions.removeValue(forKey: key)
+    }
+
+    func failDelivery(_ key: AgentApprovalControlKey) {
+        confirmDelivery(key)
     }
 
     func nextPendingRequest() -> AgentApprovalControlRequest? {
@@ -138,6 +173,8 @@ final class AgentApprovalController: ObservableObject {
         for key in Array(continuations.keys) {
             finish(key, decision: nil)
         }
+        deliveringRequests.removeAll()
+        deliveryDecisions.removeAll()
     }
 
     private func finish(
@@ -149,6 +186,8 @@ final class AgentApprovalController: ObservableObject {
         }
         expirationTasks.removeValue(forKey: key)?.cancel()
         pendingRequests.removeValue(forKey: key)
+        deliveringRequests.removeValue(forKey: key)
+        deliveryDecisions.removeValue(forKey: key)
         continuations.removeValue(forKey: key)?.resume(returning: decision)
     }
 

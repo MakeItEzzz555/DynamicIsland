@@ -1217,6 +1217,11 @@ final class AgentManagedSessionControllerTests: XCTestCase {
                 ]
             )
             XCTAssertEqual(beforeConfirmation.state, .pending)
+            XCTAssertEqual(approvals.presentedRequest(for: session.id), pending)
+            XCTAssertEqual(
+                approvals.deliveryState(for: pending.key),
+                .submitting(decision)
+            )
 
             await provider.yield(.transcript(.init(
                 id: "confirmation-\(suffix)",
@@ -1237,6 +1242,7 @@ final class AgentManagedSessionControllerTests: XCTestCase {
                 afterConfirmation.state,
                 decision == .allow ? .approved : .denied
             )
+            XCTAssertNil(approvals.presentedRequest(for: session.id))
 
             await controller.refreshTranscript(for: session)
             let afterRefresh = try XCTUnwrap(
@@ -1340,6 +1346,7 @@ final class AgentManagedSessionControllerTests: XCTestCase {
         let failedDecisions = await provider.approvalDecisions()
         XCTAssertTrue(failedDecisions.isEmpty)
         XCTAssertNil(approvals.pendingRequest(for: session.id))
+        XCTAssertNil(approvals.presentedRequest(for: session.id))
         XCTAssertFalse(controller.transcript(for: session).contains {
             $0.text.contains("Approved automatically")
         })
