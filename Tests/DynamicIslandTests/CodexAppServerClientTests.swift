@@ -420,9 +420,32 @@ final class CodexAppServerClientTests: XCTestCase {
 
         let result = CodexAppServerProvider.boundedDiscovery(threads)
 
-        XCTAssertEqual(result.count, CodexAppServerProvider.maximumDiscoveredSessions)
+        XCTAssertEqual(result.count, 25)
         XCTAssertEqual(result.first?.id, "active")
         XCTAssertEqual(Set(result.map(\.id)).count, result.count)
+    }
+
+    func testDiscoveryNeverDropsLoadedSessionsWhenHistoryExceedsDisplayBound() {
+        let now = Date(timeIntervalSince1970: 2_100_000_000)
+        var threads = (0..<90).map { index in
+            CodexListedThread(
+                id: "loaded-\(index)", cwd: nil, model: nil, status: .idle,
+                updatedAt: now.addingTimeInterval(Double(index)),
+                rolloutPath: nil, canAcceptDirectInput: true
+            )
+        }
+        threads += (0..<90).map { index in
+            CodexListedThread(
+                id: "history-\(index)", cwd: nil, model: nil, status: .notLoaded,
+                updatedAt: now.addingTimeInterval(Double(index)),
+                rolloutPath: nil, canAcceptDirectInput: false
+            )
+        }
+
+        let result = CodexAppServerProvider.boundedDiscovery(threads)
+
+        XCTAssertEqual(result.filter { $0.status == .idle }.count, 90)
+        XCTAssertEqual(result.filter { $0.status == .notLoaded }.count, 0)
     }
 
     func testContextUsesLatestTurnTokensInsteadOfCumulativeThreadTotal() throws {

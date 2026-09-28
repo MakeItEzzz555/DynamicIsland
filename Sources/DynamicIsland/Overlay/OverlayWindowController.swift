@@ -177,6 +177,7 @@ final class OverlayWindowController {
     private var visibilityGeneration: Int = 0
     private var morphGeneration: Int = 0
     private var expandedAt: CFTimeInterval = 0
+    private var nativeMenuTrackingDepth = 0
     private var collapsedScrollDelta: CGSize = .zero
     private var collapsedScrollGestureHandled = false
     private var collapsedScrollLastActionAt: CFTimeInterval?
@@ -263,6 +264,18 @@ final class OverlayWindowController {
         islandPanel.contentView = hostingView
         self.hostingView = hostingView
         debugGesture("Island hosting view installed")
+
+        NotificationCenter.default.publisher(for: NSMenu.didBeginTrackingNotification)
+            .sink { [weak self] _ in
+                self?.nativeMenuTrackingDepth += 1
+            }
+            .store(in: &cancellables)
+        NotificationCenter.default.publisher(for: NSMenu.didEndTrackingNotification)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.nativeMenuTrackingDepth = max(self.nativeMenuTrackingDepth - 1, 0)
+            }
+            .store(in: &cancellables)
 
         islandState.$state
             .sink { [weak self] _ in
@@ -975,6 +988,10 @@ final class OverlayWindowController {
         debugLog("collapse check entered source=\(source) state=\(islandState.state)")
         guard islandState.state == .expanded else {
             debugLog("collapse check ignored; state is not expanded")
+            return
+        }
+        guard nativeMenuTrackingDepth == 0 else {
+            debugLog("collapse check ignored; native menu is tracking")
             return
         }
         guard settings.collapseOnMouseLeave, settings.autoCollapseEnabled else {

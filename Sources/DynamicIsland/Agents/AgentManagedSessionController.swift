@@ -214,7 +214,7 @@ final class AgentManagedSessionController: ObservableObject {
                 while !Task.isCancelled {
                     await self?.refreshPersistentSnapshot()
                     do {
-                        try await Task.sleep(for: .seconds(30))
+                        try await Task.sleep(for: .seconds(8))
                     } catch {
                         break
                     }

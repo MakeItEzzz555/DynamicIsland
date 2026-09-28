@@ -215,14 +215,21 @@ private struct AgentCLIControlBar: View {
     }
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            controls(compact: false)
-                .fixedSize(horizontal: true, vertical: false)
-            controls(compact: true)
-                .frame(maxWidth: .infinity)
+        VStack(alignment: .leading, spacing: 4) {
+            ViewThatFits(in: .horizontal) {
+                controls(compact: false)
+                    .fixedSize(horizontal: true, vertical: false)
+                controls(compact: true)
+                    .frame(maxWidth: .infinity)
+            }
+            .frame(height: 28)
+
+            if sessions.count > 1 {
+                sessionRail
+            }
         }
         .padding(.horizontal, 9)
-        .frame(height: 28)
+        .padding(.bottom, sessions.count > 1 ? 5 : 0)
         .overlay(alignment: .bottom) {
             Rectangle()
                 .fill(.white.opacity(0.055))
@@ -235,10 +242,18 @@ private struct AgentCLIControlBar: View {
     private func controls(compact: Bool) -> some View {
         HStack(spacing: compact ? 5 : 8) {
             providerMenu(compact: compact)
-            sessionMenu(compact: compact)
-                .layoutPriority(2)
 
             if let session = selectedSession {
+                HStack(spacing: 4) {
+                    Image(systemName: selectorStateSymbol(session))
+                        .font(.system(size: 7, weight: .semibold))
+                    Text(selectedSessionLabel(session))
+                        .font(.system(size: compact ? 8 : 9, weight: .semibold))
+                        .lineLimit(1)
+                }
+                .foregroundStyle(.white.opacity(0.82))
+                .layoutPriority(2)
+
                 Spacer(minLength: compact ? 2 : 6)
                 modelControl(for: session, compact: compact)
                 approvalPolicyControl(for: session, compact: compact)
@@ -287,34 +302,53 @@ private struct AgentCLIControlBar: View {
         .help("Managed agent provider")
     }
 
-    private func sessionMenu(compact: Bool) -> some View {
-        Menu {
-            ForEach(groupedSessions) { group in
-                Section("\(group.title) (\(group.sessions.count))") {
-                    ForEach(group.sessions, id: \.id) { session in
-                        Button {
-                            managedControl.selectSession(session.id)
-                        } label: {
-                            Label(
-                                sessionMenuTitle(session),
-                                systemImage: selectorStateSymbol(session)
-                            )
+    private var sessionRail: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 5) {
+                ForEach(
+                    AgentWorkspaceSelection.ordered(
+                        sessions: sessions,
+                        activeManagedSessionIDs: managedControl.activeManagedSessionIDs
+                    ),
+                    id: \.id
+                ) { session in
+                    let selected = selectedSession?.id == session.id
+                    Button {
+                        managedControl.selectSession(session.id)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: selectorStateSymbol(session))
+                                .font(.system(size: 7, weight: .semibold))
+                            Text("\(sessionLabel(session)) · \(threadSuffix(session))")
+                                .font(.system(size: 8, weight: selected ? .bold : .semibold))
+                                .lineLimit(1)
+                            Text(selectorStateLabel(session))
+                                .font(.system(size: 7.5, weight: .medium))
+                                .foregroundStyle(.white.opacity(selected ? 0.72 : 0.42))
+                        }
+                        .foregroundStyle(.white.opacity(selected ? 0.94 : 0.66))
+                        .padding(.horizontal, 7)
+                        .frame(height: 22)
+                        .background(
+                            selected ? Color.white.opacity(0.13) : Color.white.opacity(0.045),
+                            in: Capsule(style: .continuous)
+                        )
+                        .overlay {
+                            Capsule(style: .continuous)
+                                .stroke(
+                                    selected ? Color.white.opacity(0.20) : Color.white.opacity(0.07),
+                                    lineWidth: 1
+                                )
                         }
                     }
+                    .buttonStyle(.plain)
+                    .help(sessionMenuTitle(session))
                 }
             }
-        } label: {
-            HStack(spacing: 4) {
-                Text(selectedSession.map(selectedSessionLabel) ?? "Choose session")
-                    .font(.system(size: compact ? 8.5 : 9.5, weight: .semibold))
-                    .lineLimit(1)
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 7, weight: .semibold))
-            }
-            .foregroundStyle(.white.opacity(0.86))
+            .padding(.vertical, 1)
         }
-        .menuStyle(.borderlessButton)
-        .fixedSize(horizontal: false, vertical: true)
+        .scrollBounceBehavior(.basedOnSize)
+        .accessibilityLabel("Agent sessions")
     }
 
     @ViewBuilder

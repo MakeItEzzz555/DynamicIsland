@@ -1,7 +1,7 @@
 import Foundation
 
 actor CodexAppServerProvider: AgentInteractiveProvider {
-    static let maximumDiscoveredSessions = 20
+    static let maximumDiscoveredSessions = 64
     static let contextBaselineTokens: Double = 12_000
     nonisolated let provider: AgentProvider = .codex
     nonisolated let interactiveCapabilities: Set<AgentInteractiveCapability> = [
@@ -52,7 +52,7 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
     }
 
     func discoverSessions() async throws -> [AgentDiscoveredSessionDescriptor] {
-        let threads = try await client.listThreads(limit: 100)
+        let threads = try await client.listThreads(limit: 500)
         return Self.boundedDiscovery(threads).map { thread in
             return AgentDiscoveredSessionDescriptor(
                 session: AgentManagedSessionDescriptor(
@@ -127,7 +127,11 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
             return $0.id < $1.id
         }
         var seen = Set<String>()
-        return Array(ordered.filter { seen.insert($0.id).inserted }.prefix(boundedLimit))
+        let unique = ordered.filter { seen.insert($0.id).inserted }
+        let loaded = unique.filter { $0.status != .notLoaded }
+        let remaining = max(boundedLimit - loaded.count, 0)
+        let resumable = unique.filter { $0.status == .notLoaded }.prefix(remaining)
+        return loaded + resumable
     }
 
     private nonisolated static func runtimeRank(_ state: AgentDiscoveredSessionRuntimeState) -> Int {

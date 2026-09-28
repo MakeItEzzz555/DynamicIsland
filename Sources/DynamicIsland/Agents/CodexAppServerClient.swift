@@ -284,23 +284,45 @@ actor CodexAppServerClient {
         return try decodeThreadResponse(result, method: "thread/start")
     }
 
-    func listThreads(limit: Int = 100) async throws -> [CodexListedThread] {
+    func listThreads(limit: Int = 500) async throws -> [CodexListedThread] {
         try await start()
-        let boundedLimit = min(max(limit, 1), 200)
-        let result = try await request(
-            method: "thread/list",
-            params: .object([
+        let totalLimit = min(max(limit, 1), 500)
+        var cursor: String?
+        var result: [CodexListedThread] = []
+        var seen = Set<String>()
+
+        while result.count < totalLimit {
+            let pageLimit = min(100, totalLimit - result.count)
+            var params: [String: CodexJSONValue] = [
                 "archived": .bool(false),
-                "limit": .integer(Int64(boundedLimit)),
+                "limit": .integer(Int64(pageLimit)),
                 "sortKey": .string("recency_at"),
                 "sortDirection": .string("desc"),
                 "useStateDbOnly": .bool(false)
-            ])
-        )
-        guard let values = result["data"]?.arrayValue else {
-            throw CodexAppServerError.invalidResponse("thread/list")
+            ]
+            if let cursor { params["cursor"] = .string(cursor) }
+
+            let response = try await request(
+                method: "thread/list",
+                params: .object(params)
+            )
+            guard let values = response["data"]?.arrayValue else {
+                throw CodexAppServerError.invalidResponse("thread/list")
+            }
+            for value in values {
+                guard let thread = Self.decodeListedThread(value),
+                      seen.insert(thread.id).inserted else { continue }
+                result.append(thread)
+                if result.count == totalLimit { break }
+            }
+
+            guard let next = response["nextCursor"]?.stringValue,
+                  !next.isEmpty,
+                  next != cursor,
+                  !values.isEmpty else { break }
+            cursor = next
         }
-        return values.compactMap(Self.decodeListedThread)
+        return result
     }
 
     func readThread(threadID: String) async throws -> CodexManagedThread {
