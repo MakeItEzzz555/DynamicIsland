@@ -49,6 +49,19 @@ final class AgentUISnapshotTests: XCTestCase {
             output: output
         )
 
+        try renderCompactState(name: "16-collapsed-working", session: working, output: output)
+        try renderCompactState(
+            name: "17-collapsed-plan-ready",
+            session: session(provider: .codex, nativeID: "plan", project: "DynamicIsland", state: .planReady, progress: nil),
+            output: output
+        )
+        try renderCompactState(name: "18-collapsed-completed", session: completed, output: output)
+        try renderCompactState(
+            name: "19-collapsed-failed",
+            session: session(provider: .codex, nativeID: "failed", project: "DynamicIsland", state: .failed, progress: nil),
+            output: output
+        )
+
         XCTAssertNil(AgentCollapsedShellPresentation.routine(sessions: [completed], enabled: true))
         try renderCompact(
             name: "04-completed-retraction",
@@ -91,6 +104,74 @@ final class AgentUISnapshotTests: XCTestCase {
             sessions: longWorkspace,
             selectedSessionID: longWorkspace[2].id,
             output: output
+        )
+        try renderStandaloneConsole(
+            name: "20-expanded-plan-ready",
+            session: session(provider: .codex, nativeID: "plan-expanded", project: "DynamicIsland", state: .planReady, progress: nil),
+            mode: .observed,
+            output: output
+        )
+        try renderStandaloneConsole(
+            name: "21-managed-console",
+            session: working,
+            mode: .interactive(canInterrupt: true),
+            output: output
+        )
+    }
+
+    private func renderCompactState(
+        name: String,
+        session: AgentSession,
+        output: URL
+    ) throws {
+        let accent = AgentVisualStyle.accent(for: session.state)
+        try renderCompact(
+            name: name,
+            profile: .agentRoutine(leftContentWidth: 100, rightContentWidth: 108),
+            content: AnyView(
+                HStack(spacing: 12) {
+                    AgentCompactRoutineLeadingView(session: session)
+                    Spacer(minLength: 20)
+                    AgentCompactAttentionTrailingView(
+                        text: AgentSessionPresentation.stateLabel(session.state),
+                        accent: accent,
+                        symbol: AgentSessionPresentation.stateSymbol(session.state)
+                    )
+                }
+            ),
+            glowColor: accent,
+            output: output
+        )
+    }
+
+    private func renderStandaloneConsole(
+        name: String,
+        session: AgentSession,
+        mode: AgentConsoleMode,
+        output: URL
+    ) throws {
+        let approvals = AgentApprovalController()
+        let view = AgentEmbeddedConsoleView(
+            session: session,
+            mode: mode,
+            maximumActivityEntries: 6,
+            transcriptEntries: [],
+            workspaceSessions: [session],
+            approvalControl: approvals,
+            onSelectSession: { _ in },
+            onSubmit: { _ in true },
+            onInterrupt: {}
+        )
+        .padding(14)
+        .background(Color(red: 0.025, green: 0.027, blue: 0.055))
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .padding(12)
+        .background(Color(red: 0.055, green: 0.06, blue: 0.12))
+
+        try renderHosted(
+            view,
+            size: CGSize(width: 820, height: 440),
+            to: output.appendingPathComponent(name + ".png")
         )
     }
 

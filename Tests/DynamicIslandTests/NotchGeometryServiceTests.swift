@@ -264,7 +264,7 @@ final class NotchGeometryServiceTests: XCTestCase {
 
         let agents = ExpandedPresentationProfile.agentsWorkspace.resolvedSize(from: base)
         XCTAssertEqual(agents.width, 946, accuracy: 0.001)
-        XCTAssertEqual(agents.height, 398, accuracy: 0.001)
+        XCTAssertEqual(agents.height, 446, accuracy: 0.001)
         XCTAssertEqual(ExpandedPresentationProfile.agentsWorkspace.kind, .agentsWorkspace)
     }
 
@@ -274,7 +274,7 @@ final class NotchGeometryServiceTests: XCTestCase {
         XCTAssertEqual(ExpandedPresentationProfile.resolve(for: .agents), .agentsWorkspace)
         XCTAssertEqual(
             ExpandedPresentationProfile.resolve(for: .agents).resolvedSize(from: base),
-            CGSize(width: 946, height: 398)
+            CGSize(width: 946, height: 446)
         )
 
         for page in ExpandedIslandPage.allCases where page != .agents {
@@ -311,7 +311,7 @@ final class NotchGeometryServiceTests: XCTestCase {
             expandedSize: ExpandedPresentationProfile.standard.resolvedSize(from: base)
         )
 
-        XCTAssertEqual(agents.expandedFrame.size, CGSize(width: 946, height: 398))
+        XCTAssertEqual(agents.expandedFrame.size, CGSize(width: 946, height: 446))
         XCTAssertEqual(agents.collapsedFrame, standard.collapsedFrame)
         XCTAssertEqual(restored.expandedFrame, standard.expandedFrame)
         XCTAssertEqual(restored.collapsedFrame, standard.collapsedFrame)
@@ -352,7 +352,7 @@ final class NotchGeometryServiceTests: XCTestCase {
         )
         let agents = OverlayGeometrySignature(
             collapsedSize: base.collapsedSize,
-            expandedSize: CGSize(width: 946, height: 398),
+            expandedSize: CGSize(width: 946, height: 446),
             expandedPresentationKind: .agentsWorkspace,
             collapsedActivityProfile: base.collapsedActivityProfile,
             collapsedPresentationProfile: base.collapsedPresentationProfile,

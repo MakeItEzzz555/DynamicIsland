@@ -205,6 +205,32 @@ final class ExpandedScrollEventRoutingPolicyTests: XCTestCase {
         )
     }
 
+    func testOutsideSequenceNeverTransfersToContentAfterPointerEnters() {
+        var ownership = ExpandedContentScrollSequenceOwnership()
+
+        XCTAssertEqual(
+            ownership.route(phase: .physicalBegan, startsInsideContent: false, verticalIntent: true),
+            .islandGesture
+        )
+        XCTAssertEqual(
+            ownership.route(phase: .physicalChanged, startsInsideContent: true, verticalIntent: true),
+            .islandGesture
+        )
+        XCTAssertEqual(
+            ownership.route(phase: .physicalEnded, startsInsideContent: true, verticalIntent: nil),
+            .islandGesture
+        )
+        XCTAssertEqual(
+            ownership.route(phase: .momentumBegan, startsInsideContent: true, verticalIntent: nil),
+            .islandGesture
+        )
+        XCTAssertEqual(
+            ownership.route(phase: .momentumEnded, startsInsideContent: true, verticalIntent: nil),
+            .islandGesture
+        )
+        XCTAssertNil(ownership.owner)
+    }
+
     private func route(
         isSuppressed: Bool,
         isExpanded: Bool,
