@@ -539,7 +539,10 @@ final class AgentManagedSessionController: ObservableObject {
         Task { [weak self] in
             guard let self else { return }
             do {
-                let descriptor = try await provider.resumeSession(nativeSessionID: nativeID)
+                let descriptor = try await provider.resumeSession(
+                    nativeSessionID: nativeID,
+                    cwd: session.project.workingDirectory
+                )
                 guard descriptor.nativeSessionID == nativeID else {
                     throw CodexAppServerError.invalidResponse("thread/resume identity mismatch")
                 }
@@ -655,6 +658,11 @@ final class AgentManagedSessionController: ObservableObject {
             projectAcceptedUserPrompt(
                 bounded,
                 sessionID: sessionID,
+                turnID: turn.turnID
+            )
+            await projectManagedTurnStartIfNeeded(
+                provider: sessionID.provider,
+                nativeSessionID: nativeID,
                 turnID: turn.turnID
             )
             Task { @MainActor [weak self] in
@@ -889,20 +897,35 @@ final class AgentManagedSessionController: ObservableObject {
             return
         }
 
-        let controlRequest = AgentApprovalControlRequest(
-            key: AgentApprovalControlKey(session: instance, requestID: correlation),
-            summary: AgentPrivacyProjection.summary(request.summary) ??
-                "\(providerName(agentProvider)) approval required",
-            expiresAt: Date().addingTimeInterval(75)
+        let sessionID = AgentSessionID(provider: agentProvider, nativeID: request.threadID)
+        let session = eventStore.sessions.first { $0.id == instance }
+        let policyDecision = AgentApprovalPolicyEvaluator.decision(
+            policy: approvalPolicies[AgentApprovalPolicyKey(session: instance)],
+            provider: agentProvider,
+            session: instance,
+            turnID: request.turnID,
+            supportsApprovalControl: session?.capabilities.contains(.approvalControl) == true,
+            requestIsCurrent: managed[sessionID]?.activeTurnID == request.turnID
         )
-        managedApprovalKeys.insert(controlRequest.key)
-        defer { managedApprovalKeys.remove(controlRequest.key) }
 
-        // Approval policy types are intentionally design-only in this phase.
-        // Production remains manual one-shot until the dedicated approval phase.
-        let decision = await approvals.request(controlRequest)
-        let allow = decision == .allow
-        let wasAutomatic = false
+        let allow: Bool
+        let wasAutomatic: Bool
+        switch policyDecision {
+        case .allowAutomatically:
+            allow = true
+            wasAutomatic = true
+        case .manual:
+            let controlRequest = AgentApprovalControlRequest(
+                key: AgentApprovalControlKey(session: instance, requestID: correlation),
+                summary: AgentPrivacyProjection.summary(request.summary) ??
+                    "\(providerName(agentProvider)) approval required",
+                expiresAt: Date().addingTimeInterval(75)
+            )
+            managedApprovalKeys.insert(controlRequest.key)
+            defer { managedApprovalKeys.remove(controlRequest.key) }
+            allow = await approvals.request(controlRequest) == .allow
+            wasAutomatic = false
+        }
 
         do {
             try await provider.resolveApproval(request, allow: allow)
@@ -934,6 +957,39 @@ final class AgentManagedSessionController: ObservableObject {
                 nativeID: request.threadID
             ))
         }
+    }
+
+    private func projectManagedTurnStartIfNeeded(
+        provider: AgentProvider,
+        nativeSessionID: String,
+        turnID: String
+    ) async {
+        let sessionID = AgentSessionID(provider: provider, nativeID: nativeSessionID)
+        let alreadyWorking = eventStore.sessions.first { $0.id.sessionID == sessionID }.map {
+            switch $0.state {
+            case .working, .runningTool, .runningCommand, .thinking, .planning,
+                 .waitingForApproval, .waitingForUser:
+                true
+            default:
+                false
+            }
+        } ?? false
+        guard !alreadyWorking else { return }
+        _ = await emit(
+            provider: provider,
+            nativeSessionID: nativeSessionID,
+            type: .sessionResumed,
+            correlationID: AgentCorrelationID(rawValue: turnID),
+            payload: .none
+        )
+        _ = await emit(
+            provider: provider,
+            nativeSessionID: nativeSessionID,
+            type: .agentWorking,
+            correlationID: AgentCorrelationID(rawValue: turnID),
+            payload: .activity(AgentActivityDescriptor(title: "Working", summary: nil))
+        )
+        reconcileSelection(with: eventStore.sessions.filter(shouldPresent))
     }
 
     private func clearTurnApprovalPolicies(

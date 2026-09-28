@@ -23,10 +23,14 @@ final class ClaudeInteractiveProviderTests: XCTestCase {
             client: ClaudeCodeStreamingClient(executableURL: URL(fileURLWithPath: "/usr/bin/true"))
         )
 
-        let resumed = try await provider.resumeSession(nativeSessionID: "claude-session-123")
+        let resumed = try await provider.resumeSession(
+            nativeSessionID: "claude-session-123",
+            cwd: "/tmp/project"
+        )
 
         XCTAssertEqual(resumed.provider, .claude)
         XCTAssertEqual(resumed.nativeSessionID, "claude-session-123")
+        XCTAssertEqual(resumed.cwd, "/tmp/project")
         XCTAssertTrue(resumed.acceptsDirectInput)
     }
 
@@ -36,7 +40,7 @@ final class ClaudeInteractiveProviderTests: XCTestCase {
         )
 
         for index in 0..<(ClaudeInteractiveProvider.maximumKnownSessions + 7) {
-            _ = try await provider.resumeSession(nativeSessionID: "claude-\(index)")
+            _ = try await provider.resumeSession(nativeSessionID: "claude-\(index)", cwd: nil)
         }
 
         let sessions = try await provider.discoverSessions()

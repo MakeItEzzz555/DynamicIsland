@@ -136,7 +136,10 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
         return descriptor(thread)
     }
 
-    func resumeSession(nativeSessionID: String) async throws -> AgentManagedSessionDescriptor {
+    func resumeSession(
+        nativeSessionID: String,
+        cwd: String?
+    ) async throws -> AgentManagedSessionDescriptor {
         let thread = try await client.resumeThread(threadID: nativeSessionID)
         return descriptor(thread)
     }

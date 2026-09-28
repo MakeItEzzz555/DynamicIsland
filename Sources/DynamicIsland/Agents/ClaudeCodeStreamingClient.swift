@@ -55,13 +55,20 @@ actor ClaudeCodeStreamingClient {
         stream
     }
 
-    func submit(prompt: String, nativeSessionID: String) throws -> AgentManagedTurnDescriptor {
+    func submit(
+        prompt: String,
+        nativeSessionID: String,
+        cwd: String?
+    ) throws -> AgentManagedTurnDescriptor {
         guard runs[nativeSessionID] == nil else {
             throw ClaudeCodeStreamingError.turnAlreadyRunning
         }
 
         let process = Process()
         process.executableURL = executableURL
+        if let cwd, !cwd.isEmpty {
+            process.currentDirectoryURL = URL(fileURLWithPath: cwd, isDirectory: true)
+        }
         process.arguments = [
             "--print",
             "--resume", nativeSessionID,

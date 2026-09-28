@@ -61,11 +61,14 @@ actor ClaudeInteractiveProvider: AgentInteractiveProvider {
         throw ClaudeCodeStreamingError.unsupported
     }
 
-    func resumeSession(nativeSessionID: String) async throws -> AgentManagedSessionDescriptor {
+    func resumeSession(
+        nativeSessionID: String,
+        cwd: String?
+    ) async throws -> AgentManagedSessionDescriptor {
         let descriptor = AgentManagedSessionDescriptor(
             provider: .claude,
             nativeSessionID: nativeSessionID,
-            cwd: nil,
+            cwd: cwd,
             model: nil,
             acceptsDirectInput: true
         )
@@ -84,7 +87,11 @@ actor ClaudeInteractiveProvider: AgentInteractiveProvider {
         model: String?
     ) async throws -> AgentManagedTurnDescriptor {
         guard model == nil else { throw ClaudeCodeStreamingError.unsupported }
-        let turn = try await client.submit(prompt: prompt, nativeSessionID: nativeSessionID)
+        let turn = try await client.submit(
+            prompt: prompt,
+            nativeSessionID: nativeSessionID,
+            cwd: knownSessions[nativeSessionID]?.session.cwd
+        )
         if let current = knownSessions[nativeSessionID] {
             knownSessions[nativeSessionID] = AgentDiscoveredSessionDescriptor(
                 session: current.session,

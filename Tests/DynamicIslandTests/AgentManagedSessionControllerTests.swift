@@ -582,6 +582,10 @@ final class AgentManagedSessionControllerTests: XCTestCase {
         let submitted = await provider.submittedPrompts()
         XCTAssertEqual(submitted, ["hello"])
         XCTAssertEqual(controller.transcript(for: session).map(\.text), ["hello"])
+        XCTAssertEqual(
+            store.sessions.first { $0.id.sessionID.nativeID == "submit-thread" }?.state,
+            .working
+        )
 
         controller.startObserving()
         await provider.yield(.transcript(AgentManagedTranscriptEntry(
@@ -729,7 +733,7 @@ final class AgentManagedSessionControllerTests: XCTestCase {
     }
 
     @MainActor
-    func testConfiguredApprovalPolicyStillRequiresManualDecisionInProduction() async throws {
+    func testConfiguredSessionApprovalPolicyAutomaticallyAllowsExactCurrentRequest() async throws {
         let provider = PersistentSnapshotFakeProvider(
             sessions: [Self.descriptor(id: "approval-session", state: .notLoaded)],
             usage: AgentUsage()
@@ -747,6 +751,11 @@ final class AgentManagedSessionControllerTests: XCTestCase {
         await controller.refreshPersistentSnapshot()
         controller.connect(try XCTUnwrap(store.sessions.first))
         try await Task.sleep(for: .milliseconds(30))
+        await provider.yield(.turnStarted(.init(
+            nativeSessionID: "approval-session",
+            turnID: "turn-1"
+        )))
+        try await Task.sleep(for: .milliseconds(30))
         let session = try XCTUnwrap(store.sessions.first)
         controller.setApprovalPolicyChoice(.allowSession, for: session)
 
@@ -760,21 +769,10 @@ final class AgentManagedSessionControllerTests: XCTestCase {
         )))
         try await Task.sleep(for: .milliseconds(30))
 
-        let beforeManualDecision = await provider.approvalDecisions()
-        XCTAssertTrue(beforeManualDecision.isEmpty)
-        let pending = try XCTUnwrap(approvals.pendingRequest(for: session.id))
-        XCTAssertEqual(
-            approvals.resolve(
-                session: session.id,
-                requestID: pending.key.requestID,
-                decision: .allow
-            ),
-            .accepted
-        )
-        try await Task.sleep(for: .milliseconds(30))
-        let afterManualDecision = await provider.approvalDecisions()
-        XCTAssertEqual(afterManualDecision, ["item-1:allow"])
-        XCTAssertFalse(controller.transcript(for: session).contains {
+        let automaticDecisions = await provider.approvalDecisions()
+        XCTAssertEqual(automaticDecisions, ["item-1:allow"])
+        XCTAssertNil(approvals.pendingRequest(for: session.id))
+        XCTAssertTrue(controller.transcript(for: session).contains {
             $0.text.contains("Approved automatically")
         })
         controller.stop()
@@ -1003,8 +1001,14 @@ final class AgentManagedSessionControllerTests: XCTestCase {
         await controller.refreshPersistentSnapshot()
         controller.connect(try XCTUnwrap(store.sessions.first))
         try await Task.sleep(for: .milliseconds(30))
+        await provider.yield(.turnStarted(.init(
+            nativeSessionID: "approval-failure",
+            turnID: "turn-1"
+        )))
+        try await Task.sleep(for: .milliseconds(30))
         let session = try XCTUnwrap(store.sessions.first)
         controller.setApprovalPolicyChoice(.allowSession, for: session)
+        await provider.setApprovalResolutionFailure(true)
 
         await provider.yield(.approvalRequested(.init(
             requestToken: .string("failure"),
@@ -1016,13 +1020,13 @@ final class AgentManagedSessionControllerTests: XCTestCase {
         )))
         try await Task.sleep(for: .milliseconds(30))
 
-        let beforeManualDecision = await provider.approvalDecisions()
-        XCTAssertTrue(beforeManualDecision.isEmpty)
-        XCTAssertNotNil(approvals.pendingRequest(for: session.id))
+        let failedDecisions = await provider.approvalDecisions()
+        XCTAssertTrue(failedDecisions.isEmpty)
+        XCTAssertNil(approvals.pendingRequest(for: session.id))
         XCTAssertFalse(controller.transcript(for: session).contains {
             $0.text.contains("Approved automatically")
         })
-        approvals.cancelAll()
+        XCTAssertNotNil(controller.statusMessage(for: session))
         controller.stop()
     }
 
@@ -1167,7 +1171,10 @@ private actor PersistentSnapshotFakeProvider: AgentInteractiveProvider {
         startedModels
     }
 
-    func resumeSession(nativeSessionID: String) async throws -> AgentManagedSessionDescriptor {
+    func resumeSession(
+        nativeSessionID: String,
+        cwd: String?
+    ) async throws -> AgentManagedSessionDescriptor {
         guard let descriptor = discovered.first(where: {
             $0.session.nativeSessionID == nativeSessionID
         })?.session else {
