@@ -54,9 +54,9 @@
     "semantic_hash": "9deb2ada1cc834bbebf8bbad9c8978a1"
   },
   "Sources/DynamicIsland/Geometry/NotchGeometryService.swift": {
-    "mtime": 1790530876.8258448,
-    "seen": 1790587127.7879329,
-    "ast_hash": "15a7404686e11f1cb4c5331509d4fca3",
+    "mtime": 1790604048.4602935,
+    "seen": 1790605249.0995278,
+    "ast_hash": "87f7b548c2ca2b1331bf9363ae42a660",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Modules/AirDropService.swift": {
@@ -162,9 +162,9 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Overlay/OverlayWindowController.swift": {
-    "mtime": 1790543194.7371616,
-    "seen": 1790587127.787955,
-    "ast_hash": "a170f40ec933341978be7ac876e01eaf",
+    "mtime": 1790590982.8161666,
+    "seen": 1790605249.0995488,
+    "ast_hash": "8b5cbd23bf762c89434a5acd3c5a23db",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/State/AppSettings.swift": {
@@ -204,9 +204,9 @@
     "semantic_hash": "e45da4c5467fe497679f227ded264dae"
   },
   "Sources/DynamicIsland/Views/IslandRootView.swift": {
-    "mtime": 1790543181.797853,
-    "seen": 1790587127.787963,
-    "ast_hash": "ffcad7b5014c3834c66380a9697bb191",
+    "mtime": 1790604206.529586,
+    "seen": 1790605249.0995572,
+    "ast_hash": "98be5edc04c56618be960a3c8585a5d2",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/IslandThemeBackground.swift": {
@@ -288,9 +288,9 @@
     "semantic_hash": "def98334feae7349fbd36b67cb4eccf3"
   },
   "Tests/DynamicIslandTests/ExpandedScrollEventRoutingPolicyTests.swift": {
-    "mtime": 1790530876.831132,
-    "seen": 1790587127.788012,
-    "ast_hash": "971a2617814d6ba84b5c33ad91646d5f",
+    "mtime": 1790603936.009842,
+    "seen": 1790605249.099606,
+    "ast_hash": "de3f867ad236608b74c017d47598ce7f",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/FileShelfStoreTests.swift": {
@@ -342,9 +342,9 @@
     "semantic_hash": "98dbb4e4dbf7f441cb49c710a4b7e0a3"
   },
   "Tests/DynamicIslandTests/NotchGeometryServiceTests.swift": {
-    "mtime": 1790530876.8318393,
-    "seen": 1790587127.788028,
-    "ast_hash": "232c0a5ed27d2cb933ecea88a46972e0",
+    "mtime": 1790604048.4853647,
+    "seen": 1790605249.0996218,
+    "ast_hash": "64aff317b2f65403b807a9dee8d818bc",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/SystemStatsFormattingTests.swift": {
@@ -816,9 +816,9 @@
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/AgentBridgeSharedNetworkIntegrationTests.swift": {
-    "mtime": 1790530876.8295271,
-    "seen": 1790587127.78798,
-    "ast_hash": "604dbe857a77c86edccbcad6e9e678c1",
+    "mtime": 1790588544.4576473,
+    "seen": 1790605249.099574,
+    "ast_hash": "517aaa9a1563ac6ed8185955af4d3c9a",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/AgentRelayCommandTests.swift": {
@@ -852,9 +852,9 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Agents/AgentApprovalControl.swift": {
-    "mtime": 1790530876.8216658,
-    "seen": 1790587127.7879,
-    "ast_hash": "4b12ce2d9862e821f66d05dcf9b0d39d",
+    "mtime": 1790588064.4905195,
+    "seen": 1790605249.099496,
+    "ast_hash": "0f591b6b87b99a135cec53e68c4b2652",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Agents/AgentIntegrationSetup.swift": {
@@ -864,21 +864,21 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Agents/AgentInteractiveControl.swift": {
-    "mtime": 1790586360.1366072,
-    "seen": 1790587127.787914,
-    "ast_hash": "ffb088b4551f366705b6d1872ba17808",
+    "mtime": 1790602827.9232647,
+    "seen": 1790605249.099509,
+    "ast_hash": "ce6c4eb230f99d71bfb109ccb0674659",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Agents/AgentManagedSessionController.swift": {
-    "mtime": 1790586360.2163177,
-    "seen": 1790587127.787915,
-    "ast_hash": "734b40ef9b61443f0654568e45daa003",
+    "mtime": 1790602827.923658,
+    "seen": 1790605249.09951,
+    "ast_hash": "60b76fad866cf1d2813a2412777f685c",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Agents/AgentPresentation.swift": {
-    "mtime": 1790586408.9594834,
-    "seen": 1790587127.787916,
-    "ast_hash": "66404d6cb0b6853fdc9bcc6442e8c1fe",
+    "mtime": 1790604146.2967093,
+    "seen": 1790605249.099512,
+    "ast_hash": "27e131fbda2a1078f7e7d6762a0d7064",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Agents/AgentSourceAssociation.swift": {
@@ -894,15 +894,15 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Agents/CodexAppServerClient.swift": {
-    "mtime": 1790551462.988162,
-    "seen": 1790587127.787925,
-    "ast_hash": "3c5e4bb31506bbd8d3454fad7d122212",
+    "mtime": 1790590982.814561,
+    "seen": 1790605249.09952,
+    "ast_hash": "f037eecbaa143fc953012e74d4ddb819",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Agents/CodexAppServerProvider.swift": {
-    "mtime": 1790586360.1573532,
-    "seen": 1790587127.787926,
-    "ast_hash": "508d5cff346e0a72d6d9bd456d6e5161",
+    "mtime": 1790590982.8149762,
+    "seen": 1790605249.099521,
+    "ast_hash": "fe0659236bd6c9000bd8f0e6cdd6c067",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Agents/CodexRolloutRecovery.swift": {
@@ -912,15 +912,15 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/AgentActivityViews.swift": {
-    "mtime": 1790586409.0011723,
-    "seen": 1790587127.78796,
-    "ast_hash": "58904a6a1950083d809cbdd551e4a5a7",
+    "mtime": 1790604746.4348037,
+    "seen": 1790605249.099554,
+    "ast_hash": "4f78e57ac09a0f8e3a9f01a745cc2445",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/AgentConsoleViews.swift": {
-    "mtime": 1790586408.979456,
-    "seen": 1790587127.787961,
-    "ast_hash": "04a80f85b30638e5a52d32de7f0b2a9e",
+    "mtime": 1790604430.1384244,
+    "seen": 1790605249.099555,
+    "ast_hash": "e587a6d45eec48bbb5d6264bb0dd7435",
     "semantic_hash": ""
   },
   "Sources/DynamicIslandClaudeHookRelay/RelayMain.swift": {
@@ -942,9 +942,9 @@
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/AgentConsoleTests.swift": {
-    "mtime": 1790586409.042875,
-    "seen": 1790587127.78798,
-    "ast_hash": "579890e17ebded301c514597170231d4",
+    "mtime": 1790597189.1345148,
+    "seen": 1790605249.099574,
+    "ast_hash": "d4c6de02b6c3fad6b8aae3c871d91157",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/AgentIntegrationSetupTests.swift": {
@@ -954,15 +954,15 @@
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/AgentManagedSessionControllerTests.swift": {
-    "mtime": 1790586442.8779223,
-    "seen": 1790587127.7879848,
-    "ast_hash": "3d080c14f90f7a68176d0a692840d45e",
+    "mtime": 1790602827.9270718,
+    "seen": 1790605249.0995789,
+    "ast_hash": "2ea383958d6d2578bf9710c665d063cc",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/AgentPresentationTests.swift": {
-    "mtime": 1790548461.9763725,
-    "seen": 1790587127.7879848,
-    "ast_hash": "eb830c8a54deaba6386b63cf35bdc879",
+    "mtime": 1790602827.9276352,
+    "seen": 1790605249.0995798,
+    "ast_hash": "9431225bce01daec34498396e168370d",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/AgentSourceAssociationTests.swift": {
@@ -972,9 +972,9 @@
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/AgentUISnapshotTests.swift": {
-    "mtime": 1790530876.8304589,
-    "seen": 1790587127.787991,
-    "ast_hash": "5ec6d897273366030bc30ba28731e8f1",
+    "mtime": 1790604650.3896775,
+    "seen": 1790605249.099585,
+    "ast_hash": "15debca53e0715f5aa494362b2b6c637",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/ClaudeHookNormalizerTests.swift": {
@@ -996,9 +996,9 @@
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/CodexAppServerClientTests.swift": {
-    "mtime": 1790551582.1533456,
-    "seen": 1790587127.7880058,
-    "ast_hash": "8a4d18dcf5e4938af9a523519bd8da2a",
+    "mtime": 1790591033.7688425,
+    "seen": 1790605249.0995998,
+    "ast_hash": "ad03e5e13ace39663d0cb963db0eb17d",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/CodexHookNormalizerTests.swift": {
@@ -1056,99 +1056,99 @@
     "semantic_hash": ""
   },
   "research/visual-references/agents/output/01-normal-compact.png": {
-    "mtime": 1790587006.320121,
-    "seen": 1790587127.7880619,
+    "mtime": 1790604706.4419577,
+    "seen": 1790605249.099659,
     "ast_hash": "f80773a77b3e8f3817f2e9bdfa7cf1fa",
     "semantic_hash": ""
   },
   "research/visual-references/agents/output/02-routine-agent-compact.png": {
-    "mtime": 1790587006.3413627,
-    "seen": 1790587127.7880619,
-    "ast_hash": "a73088c8d8fb577e019f607743f7d7fe",
+    "mtime": 1790604706.4775877,
+    "seen": 1790605249.09966,
+    "ast_hash": "5b2e1618b38e97aba847ee785c6cdfaf",
     "semantic_hash": ""
   },
   "research/visual-references/agents/output/03-compact-attention.png": {
-    "mtime": 1790587006.3527195,
-    "seen": 1790587127.788063,
-    "ast_hash": "7676f72ffc4f7b9b37dd6d86995d6024",
+    "mtime": 1790604706.573493,
+    "seen": 1790605249.09966,
+    "ast_hash": "38027474553f37da2b3795519ce3fa78",
     "semantic_hash": ""
   },
   "research/visual-references/agents/output/04-completed-retraction.png": {
-    "mtime": 1790587006.3579464,
-    "seen": 1790587127.788064,
+    "mtime": 1790604706.6612422,
+    "seen": 1790605249.099661,
     "ast_hash": "247df9cda674146b3e2a1ba8b4cd96c2",
     "semantic_hash": ""
   },
   "research/visual-references/agents/output/05-expanded-single-session.png": {
-    "mtime": 1790587006.4069848,
-    "seen": 1790587127.788065,
-    "ast_hash": "06949a60a7b9d5c2d6421fe54b817666",
+    "mtime": 1790604706.8065274,
+    "seen": 1790605249.099662,
+    "ast_hash": "fd718556cc4f8d9e0e0619ea0920ef1b",
     "semantic_hash": ""
   },
   "research/visual-references/agents/output/06-expanded-multi-session.png": {
-    "mtime": 1790587006.4477055,
-    "seen": 1790587127.7880661,
-    "ast_hash": "488879cce8f603a5407c89027f578143",
+    "mtime": 1790604706.8641977,
+    "seen": 1790605249.099663,
+    "ast_hash": "f56cc6e48e66a5eb00e3e62872e17e6f",
     "semantic_hash": ""
   },
   "research/visual-references/agents/output/07-multiple-project-groups.png": {
-    "mtime": 1790587006.4852672,
-    "seen": 1790587127.7880661,
-    "ast_hash": "488879cce8f603a5407c89027f578143",
+    "mtime": 1790604706.9095473,
+    "seen": 1790605249.099663,
+    "ast_hash": "f56cc6e48e66a5eb00e3e62872e17e6f",
     "semantic_hash": ""
   },
   "research/visual-references/agents/output/08-attention-row.png": {
-    "mtime": 1790587006.5131328,
-    "seen": 1790587127.788067,
+    "mtime": 1790604706.948077,
+    "seen": 1790605249.099664,
     "ast_hash": "01e7f372be122ffbbe9f98e845ee199e",
     "semantic_hash": ""
   },
   "research/visual-references/agents/output/09-usage-gauges.png": {
-    "mtime": 1790587006.5456457,
-    "seen": 1790587127.788068,
-    "ast_hash": "0dee70f157537782b645056c2641f039",
+    "mtime": 1790604706.9870145,
+    "seen": 1790605249.099665,
+    "ast_hash": "d320f0fed2fad7c0a86b11b8d4992b4c",
     "semantic_hash": ""
   },
   "research/visual-references/agents/output/10-diagnostics-settings.png": {
-    "mtime": 1790587006.565941,
-    "seen": 1790587127.788069,
+    "mtime": 1790604707.012836,
+    "seen": 1790605249.0996659,
     "ast_hash": "276901ddd411653afe04cc62bcf268b3",
     "semantic_hash": ""
   },
   "research/visual-references/agents/output/11-standby-dashboard.png": {
-    "mtime": 1790587006.5931425,
-    "seen": 1790587127.788069,
-    "ast_hash": "30942aef99cd02505192b7f08902bf75",
+    "mtime": 1790604707.04108,
+    "seen": 1790605249.0996668,
+    "ast_hash": "6f31e80745338a0ee1f6eedc15055071",
     "semantic_hash": ""
   },
   "research/visual-references/agents/output/12-synthetic-dashboard-fixture.png": {
-    "mtime": 1790587006.6465333,
-    "seen": 1790587127.78807,
-    "ast_hash": "111254efa877e0ad76995cfccb156c3c",
+    "mtime": 1790604707.1136284,
+    "seen": 1790605249.0996668,
+    "ast_hash": "1c69c5631aab6d011ed179c1a37562d2",
     "semantic_hash": ""
   },
   "research/visual-references/agents/output/13-active-recent-workspace.png": {
-    "mtime": 1790587006.7327201,
-    "seen": 1790587127.788071,
-    "ast_hash": "3e8fb7ea910c020321835a32d5a0a3fb",
+    "mtime": 1790604707.2671893,
+    "seen": 1790605249.099668,
+    "ast_hash": "9a5d4ec12372c22f383aedc20851af7d",
     "semantic_hash": ""
   },
   "research/visual-references/agents/output/14-selected-attention-workspace.png": {
-    "mtime": 1790587006.7673352,
-    "seen": 1790587127.7880719,
-    "ast_hash": "53fd14ad11ca1ae96bf62cd0f968b577",
+    "mtime": 1790604707.3384666,
+    "seen": 1790605249.099669,
+    "ast_hash": "b9b4f239c82288e71cf6ed8039c4a66e",
     "semantic_hash": ""
   },
   "research/visual-references/agents/output/15-long-scroll-workspace.png": {
-    "mtime": 1790587006.8103423,
-    "seen": 1790587127.788073,
-    "ast_hash": "586945ab0c9201db6215b8ca5531bb31",
+    "mtime": 1790604707.447189,
+    "seen": 1790605249.099678,
+    "ast_hash": "54012045fe87aa778d812117d11c6f9f",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Agents/AgentApprovalPolicy.swift": {
-    "mtime": 1790542243.35259,
-    "seen": 1790587127.787901,
-    "ast_hash": "5ed7172f5da681c92bb808693ead4b82",
+    "mtime": 1790588057.3829498,
+    "seen": 1790605249.0994968,
+    "ast_hash": "232a785ef115b64f2153d222f83894b7",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Agents/ClaudeCodeStreamingClient.swift": {
@@ -1158,15 +1158,15 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Agents/ClaudeInteractiveProvider.swift": {
-    "mtime": 1790586360.19475,
-    "seen": 1790587127.7879229,
-    "ast_hash": "a885bef350b98fd35199390e241be024",
+    "mtime": 1790587778.464087,
+    "seen": 1790605249.099519,
+    "ast_hash": "68fefccea48bb36c92c671e4e0e8135d",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/AgentApprovalPolicyTests.swift": {
-    "mtime": 1790542516.6997368,
-    "seen": 1790587127.78797,
-    "ast_hash": "db6c7efb0690cf9ced4c609fb64fc039",
+    "mtime": 1790588453.0244052,
+    "seen": 1790605249.099564,
+    "ast_hash": "695cde0efb0ccc37ed0d4f15b31dc1f7",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/ClaudeInteractiveProviderTests.swift": {
@@ -1191,6 +1191,48 @@
     "mtime": 1790551782.8173835,
     "seen": 1790587127.788054,
     "ast_hash": "a75e8464031164d4907daf1b3f5f0f9e",
+    "semantic_hash": ""
+  },
+  "research/roadmap-visual-ref.png": {
+    "mtime": 1790592194.9700592,
+    "seen": 1790605249.099655,
+    "ast_hash": "65865c846ccd04e6fc136fda21813c74",
+    "semantic_hash": ""
+  },
+  "research/visual-references/agents/output/16-collapsed-working.png": {
+    "mtime": 1790604706.585747,
+    "seen": 1790605249.09968,
+    "ast_hash": "6bdd7f37d33e8c02a40c72c0551a29d5",
+    "semantic_hash": ""
+  },
+  "research/visual-references/agents/output/17-collapsed-plan-ready.png": {
+    "mtime": 1790604706.60248,
+    "seen": 1790605249.0996811,
+    "ast_hash": "4e0aff1e16baea93c30c52668c74ff35",
+    "semantic_hash": ""
+  },
+  "research/visual-references/agents/output/18-collapsed-completed.png": {
+    "mtime": 1790604706.6172602,
+    "seen": 1790605249.099682,
+    "ast_hash": "642a538f1b275b736530429aa553c10d",
+    "semantic_hash": ""
+  },
+  "research/visual-references/agents/output/19-collapsed-failed.png": {
+    "mtime": 1790604706.64771,
+    "seen": 1790605249.099683,
+    "ast_hash": "d821417c51c90c99b2de40a60a7b7c21",
+    "semantic_hash": ""
+  },
+  "research/visual-references/agents/output/20-expanded-plan-ready.png": {
+    "mtime": 1790604707.4835992,
+    "seen": 1790605249.099684,
+    "ast_hash": "a8631531b628f038e7c251d91d28035a",
+    "semantic_hash": ""
+  },
+  "research/visual-references/agents/output/21-managed-console.png": {
+    "mtime": 1790604707.5333698,
+    "seen": 1790605249.0996852,
+    "ast_hash": "7457760267e957f87e32d3e9a5df0e7c",
     "semantic_hash": ""
   }
 }
