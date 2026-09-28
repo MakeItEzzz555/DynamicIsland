@@ -211,11 +211,10 @@ private struct AgentCLIControlBar: View {
         }
         .padding(.horizontal, 9)
         .frame(height: 28)
-        .background(.white.opacity(0.022))
-        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .stroke(.white.opacity(0.05), lineWidth: 1)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(.white.opacity(0.055))
+                .frame(height: 1)
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Agent console controls")
@@ -686,12 +685,6 @@ private struct AgentEmptyConsoleState: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.vertical, 18)
-        .background(.white.opacity(0.018))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(.white.opacity(0.05), lineWidth: 1)
-        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("No \(providerName) session")
     }

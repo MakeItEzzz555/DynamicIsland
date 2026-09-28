@@ -85,4 +85,20 @@ final class AgentConsoleTests: XCTestCase {
             Set([.approval, .plan, .error])
         )
     }
+
+    func testAgentTranscriptUsesSelectedProviderIdentity() {
+        let transcript = [AgentManagedTranscriptEntry(
+            id: "a1", nativeSessionID: "same", turnID: "turn",
+            role: .agent, text: "Hello", timestamp: Date()
+        )]
+
+        XCTAssertEqual(
+            AgentConsoleEntry.make(
+                transcript: transcript,
+                operations: [],
+                provider: .claude
+            ).first?.title,
+            "Claude"
+        )
+    }
 }

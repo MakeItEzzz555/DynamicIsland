@@ -860,10 +860,11 @@ struct AgentConsoleEntry: Identifiable, Equatable, Sendable {
     static func make(
         transcript: [AgentManagedTranscriptEntry],
         operations: [AgentOperationSummary],
+        provider: AgentProvider = .codex,
         limit: Int = maximumEntries
     ) -> [Self] {
         let messages = transcript.map { message in
-            let presentation = transcriptPresentation(for: message.role)
+            let presentation = transcriptPresentation(for: message.role, provider: provider)
             return Self(
                 id: "message:\(message.id)",
                 timestamp: message.timestamp,
@@ -905,11 +906,12 @@ struct AgentConsoleEntry: Identifiable, Equatable, Sendable {
     }
 
     private static func transcriptPresentation(
-        for role: AgentManagedTranscriptRole
+        for role: AgentManagedTranscriptRole,
+        provider: AgentProvider
     ) -> (kind: AgentConsoleEntryKind, title: String) {
         switch role {
         case .user: (.user, "You")
-        case .agent: (.agent, "Codex")
+        case .agent: (.agent, provider.stableName.capitalized)
         case .tool: (.tool, "Tool")
         case .command: (.command, "Command")
         case .plan: (.plan, "Plan")

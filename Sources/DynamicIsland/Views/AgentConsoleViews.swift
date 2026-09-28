@@ -59,11 +59,10 @@ struct AgentEmbeddedConsoleView: View {
             }
         }
         .padding(8)
-        .background(.white.opacity(0.018))
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(.white.opacity(0.05), lineWidth: 1)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(.white.opacity(0.055))
+                .frame(height: 1)
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Selected session details for \(AgentSessionPresentation.primaryTitle(for: session))")
@@ -160,7 +159,8 @@ struct AgentEmbeddedConsoleView: View {
         )
         let timeline = AgentConsoleEntry.make(
             transcript: transcriptEntries,
-            operations: operations
+            operations: operations,
+            provider: session.id.sessionID.provider
         )
 
         return LazyVStack(alignment: .leading, spacing: 7) {
@@ -321,9 +321,10 @@ struct AgentEmbeddedConsoleView: View {
         guard !submissionInFlight, let value = submissionValue else { return false }
         submissionInFlight = true
         let submittedDraft = value
+        let originalDraft = draft
         Task { @MainActor in
             let accepted = await onSubmit(submittedDraft)
-            if accepted, draft == submittedDraft {
+            if accepted, draft == originalDraft {
                 draft = ""
             }
             submissionInFlight = false
