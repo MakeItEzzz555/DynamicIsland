@@ -24,9 +24,9 @@
     "semantic_hash": "0b4b7c29df007001c39c574a0dda9bd2"
   },
   "Sources/DynamicIsland/App/DynamicIslandApp.swift": {
-    "mtime": 1790611174.875308,
-    "seen": 1790612565.0112371,
-    "ast_hash": "ff6b1c1b053c4c9ad8c8011c0a0f7ca5",
+    "mtime": 1790628576.620811,
+    "seen": 1790629840.918907,
+    "ast_hash": "a6f96dc12f684daf7578df0f2be7152f",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/App/LaunchAtLoginController.swift": {
@@ -720,9 +720,9 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Agents/AgentIngestionModels.swift": {
-    "mtime": 1790607017.151112,
-    "seen": 1790607568.140171,
-    "ast_hash": "f4acc2f14e0257e9e5d231d95e4476f8",
+    "mtime": 1790629062.0799556,
+    "seen": 1790629840.918886,
+    "ast_hash": "b4c629f755466361b6b4b9d799fc0a96",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Agents/AgentSourceRegistry.swift": {
@@ -870,9 +870,9 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Agents/AgentManagedSessionController.swift": {
-    "mtime": 1790627196.2026205,
-    "seen": 1790627615.013815,
-    "ast_hash": "61c83ec5894d517b7eaef83427cc1193",
+    "mtime": 1790628564.6659374,
+    "seen": 1790629840.918891,
+    "ast_hash": "60530c566c6ec453e9143c22d1d4951f",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Agents/AgentPresentation.swift": {
@@ -906,21 +906,21 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Agents/CodexRolloutRecovery.swift": {
-    "mtime": 1790371122.299485,
-    "seen": 1790521306.2186549,
-    "ast_hash": "db63ac30fbf702ed290e6b91f3053ef3",
+    "mtime": 1790629012.6354523,
+    "seen": 1790629840.918904,
+    "ast_hash": "53fe56d2ca2492dd42a9bb40a23f1c12",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/AgentActivityViews.swift": {
-    "mtime": 1790627196.1294186,
-    "seen": 1790627615.0138612,
-    "ast_hash": "338bdddf8b77511cc580fac4ab6626b0",
+    "mtime": 1790628796.3131058,
+    "seen": 1790629840.9189389,
+    "ast_hash": "0445fef470d9d31d6e859f6089b223ef",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/AgentConsoleViews.swift": {
-    "mtime": 1790611771.947545,
-    "seen": 1790612565.0112681,
-    "ast_hash": "0c43b2f74c4191e4e7a6ded701f01bca",
+    "mtime": 1790628796.313763,
+    "seen": 1790629840.9189389,
+    "ast_hash": "2aba72a7766baaea1f269f22748d9960",
     "semantic_hash": ""
   },
   "Sources/DynamicIslandClaudeHookRelay/RelayMain.swift": {
@@ -1014,9 +1014,9 @@
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/CodexRolloutRecoveryTests.swift": {
-    "mtime": 1790371122.3173804,
-    "seen": 1790521306.218743,
-    "ast_hash": "ba4c6448e4acae3f5f894fe64ff0d9cf",
+    "mtime": 1790628897.1770477,
+    "seen": 1790629840.918994,
+    "ast_hash": "8c47c53d278a558a635f2f0f95ec1ebc",
     "semantic_hash": ""
   },
   ".github/workflows/agent-continuation-ci.yml": {
@@ -1260,21 +1260,21 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Agents/AgentNotificationFeedback.swift": {
-    "mtime": 1790611174.8751063,
-    "seen": 1790612565.011224,
-    "ast_hash": "64ab79b91f4441118e3237ae5ca382a6",
+    "mtime": 1790629644.1523287,
+    "seen": 1790629840.918893,
+    "ast_hash": "17c1440115cf591a50a21ed9ff4304d6",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/AgentSessionLauncherView.swift": {
-    "mtime": 1790627196.1034718,
-    "seen": 1790627615.0138628,
-    "ast_hash": "e29a57021fdf138bf8845ba5fb81f892",
+    "mtime": 1790629368.4884012,
+    "seen": 1790629840.9189398,
+    "ast_hash": "2fe62a096373dd511306334b98a8688f",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/AgentSessionLauncherTests.swift": {
-    "mtime": 1790627196.2279906,
-    "seen": 1790627615.0138948,
-    "ast_hash": "fff4f56ab603adf76c327ad31a007104",
+    "mtime": 1790629368.48887,
+    "seen": 1790629840.918972,
+    "ast_hash": "2a49c1541b26cec3fb2c92d3a7c6bb15",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Agents/AgentActivityGlowCoordinator.swift": {
@@ -1287,6 +1287,18 @@
     "mtime": 1790612617.9463258,
     "seen": 1790612761.48502,
     "ast_hash": "916a0136bc60d46af418db889235fc1a",
+    "semantic_hash": ""
+  },
+  "Sources/DynamicIsland/Agents/CodexRolloutSessionMonitor.swift": {
+    "mtime": 1790628564.663183,
+    "seen": 1790629840.918905,
+    "ast_hash": "0c97f03d2f0e02eecb6edd394a62fac9",
+    "semantic_hash": ""
+  },
+  "Tests/DynamicIslandTests/CodexRolloutSessionMonitorTests.swift": {
+    "mtime": 1790629086.7211578,
+    "seen": 1790629840.918995,
+    "ast_hash": "3bb9875b650b080dc9bf9f75908ecf36",
     "semantic_hash": ""
   }
 }
