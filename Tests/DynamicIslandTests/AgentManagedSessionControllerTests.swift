@@ -1204,6 +1204,47 @@ final class AgentManagedSessionControllerTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(20))
             let decisions = await provider.approvalDecisions()
             XCTAssertEqual(decisions, ["\(requestID):\(decision == .allow ? "allow" : "deny")"])
+
+            // Writing the provider response alone is not enough to project
+            // success; the normalized approval stays pending until the same
+            // authoritative turn produces follow-up evidence.
+            let beforeConfirmation = try XCTUnwrap(
+                store.sessions.first { $0.id == session.id }?.approvals[
+                    AgentCorrelationID(rawValue: requestID)
+                ]
+            )
+            XCTAssertEqual(beforeConfirmation.state, .pending)
+
+            await provider.yield(.transcript(.init(
+                id: "confirmation-\(suffix)",
+                nativeSessionID: nativeID,
+                turnID: "turn-1",
+                role: .status,
+                text: "Provider continued",
+                timestamp: Date()
+            )))
+            try await Task.sleep(for: .milliseconds(20))
+
+            let afterConfirmation = try XCTUnwrap(
+                store.sessions.first { $0.id == session.id }?.approvals[
+                    AgentCorrelationID(rawValue: requestID)
+                ]
+            )
+            XCTAssertEqual(
+                afterConfirmation.state,
+                decision == .allow ? .approved : .denied
+            )
+
+            await controller.refreshTranscript(for: session)
+            let afterRefresh = try XCTUnwrap(
+                store.sessions.first { $0.id == session.id }?.approvals[
+                    AgentCorrelationID(rawValue: requestID)
+                ]
+            )
+            XCTAssertEqual(
+                afterRefresh.state,
+                decision == .allow ? .approved : .denied
+            )
             controller.stop()
         }
     }
@@ -1303,6 +1344,88 @@ final class AgentManagedSessionControllerTests: XCTestCase {
         controller.stop()
     }
 
+
+    @MainActor
+    func testInterruptStaysStoppingUntilAuthoritativeTurnCompletionAndDeduplicates() async throws {
+        let provider = PersistentSnapshotFakeProvider(
+            sessions: [Self.descriptor(id: "interrupt-session", state: .notLoaded)],
+            usage: AgentUsage()
+        )
+        let store = AgentEventStore()
+        let controller = AgentManagedSessionController(
+            provider: provider,
+            coordinator: AgentIngestionCoordinator(eventStore: store),
+            eventStore: store,
+            approvals: AgentApprovalController()
+        )
+        controller.startObserving()
+        await controller.refreshPersistentSnapshot()
+        controller.connect(try XCTUnwrap(store.sessions.first))
+        try await Task.sleep(for: .milliseconds(30))
+        await provider.yield(.turnStarted(.init(
+            nativeSessionID: "interrupt-session",
+            turnID: "turn-1"
+        )))
+        try await Task.sleep(for: .milliseconds(20))
+        let session = try XCTUnwrap(store.sessions.first)
+
+        controller.interrupt(session)
+        controller.interrupt(session)
+        try await Task.sleep(for: .milliseconds(20))
+
+        XCTAssertTrue(controller.isInterrupting(session))
+        XCTAssertEqual(controller.statusMessage(for: session), "Stopping…")
+        XCTAssertFalse(controller.mode(for: session).canInterrupt)
+        let interruptCalls = await provider.interruptCalls()
+        XCTAssertEqual(interruptCalls, ["interrupt-session:turn-1"])
+
+        await provider.yield(.turnCompleted(
+            .init(nativeSessionID: "interrupt-session", turnID: "turn-1"),
+            state: .interrupted,
+            summary: "Interrupted"
+        ))
+        try await Task.sleep(for: .milliseconds(20))
+
+        XCTAssertFalse(controller.isInterrupting(session))
+        XCTAssertEqual(store.sessions.first?.state, .interrupted)
+        controller.stop()
+    }
+
+    @MainActor
+    func testInterruptFailureRestoresControlWithoutFakingIdle() async throws {
+        let provider = PersistentSnapshotFakeProvider(
+            sessions: [Self.descriptor(id: "interrupt-failure", state: .notLoaded)],
+            usage: AgentUsage()
+        )
+        let store = AgentEventStore()
+        let controller = AgentManagedSessionController(
+            provider: provider,
+            coordinator: AgentIngestionCoordinator(eventStore: store),
+            eventStore: store,
+            approvals: AgentApprovalController()
+        )
+        controller.startObserving()
+        await controller.refreshPersistentSnapshot()
+        controller.connect(try XCTUnwrap(store.sessions.first))
+        try await Task.sleep(for: .milliseconds(30))
+        await provider.yield(.turnStarted(.init(
+            nativeSessionID: "interrupt-failure",
+            turnID: "turn-1"
+        )))
+        try await Task.sleep(for: .milliseconds(20))
+        let session = try XCTUnwrap(store.sessions.first)
+        await provider.setInterruptFailure(true)
+
+        controller.interrupt(session)
+        try await Task.sleep(for: .milliseconds(30))
+
+        XCTAssertFalse(controller.isInterrupting(session))
+        XCTAssertEqual(store.sessions.first?.state, .working)
+        XCTAssertNotNil(controller.statusMessage(for: session))
+        XCTAssertTrue(controller.mode(for: session).canInterrupt)
+        controller.stop()
+    }
+
     private static func descriptor(
         id: String,
         state: AgentDiscoveredSessionRuntimeState,
@@ -1347,6 +1470,8 @@ private actor PersistentSnapshotFakeProvider: AgentInteractiveProvider {
     private var startedModels: [String?] = []
     private var approvalResolutionFailure = false
     private var approvalDecisionLog: [String] = []
+    private var interruptFailure = false
+    private var interruptLog: [String] = []
     private var callLog: [String] = []
     private var unavailableSessionIDs: Set<String> = []
     private var resumeReplacementID: String?
@@ -1503,7 +1628,18 @@ private actor PersistentSnapshotFakeProvider: AgentInteractiveProvider {
         submitted
     }
 
-    func interrupt(nativeSessionID: String, turnID: String) async throws {}
+    func interrupt(nativeSessionID: String, turnID: String) async throws {
+        if interruptFailure { throw CodexAppServerError.transportClosed(nil) }
+        interruptLog.append("\(nativeSessionID):\(turnID)")
+    }
+
+    func setInterruptFailure(_ value: Bool) {
+        interruptFailure = value
+    }
+
+    func interruptCalls() -> [String] {
+        interruptLog
+    }
 
     func resolveApproval(_ request: AgentManagedApprovalRequest, allow: Bool) async throws {
         if approvalResolutionFailure {

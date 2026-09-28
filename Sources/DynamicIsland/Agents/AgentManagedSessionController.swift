@@ -148,7 +148,8 @@ final class AgentManagedSessionController: ObservableObject {
     }
 
     func setApprovalPolicyChoice(_ choice: AgentApprovalPolicyChoice, for session: AgentSession) {
-        guard capabilities(for: session.id.sessionID.provider).contains(.resolveApprovals),
+        guard isManaged(session),
+              capabilities(for: session.id.sessionID.provider).contains(.resolveApprovals),
               session.capabilities.contains(.approvalControl) else {
             approvals.setAutoApprove(false, for: session.id)
             return
@@ -479,7 +480,14 @@ final class AgentManagedSessionController: ObservableObject {
         return .interactive(canInterrupt: canInterrupt)
     }
 
+    func isInterrupting(_ session: AgentSession) -> Bool {
+        managed[session.id.sessionID]?.isInterrupting == true
+    }
+
     func statusMessage(for session: AgentSession) -> String? {
+        if managed[session.id.sessionID]?.isInterrupting == true {
+            return "Stopping…"
+        }
         if connecting.contains(session.id.sessionID) {
             return "Connecting…"
         }
@@ -725,7 +733,8 @@ final class AgentManagedSessionController: ObservableObject {
               let bounded = AgentPromptDraftPolicy.submission(from: prompt),
               var state = managed[session.id.sessionID],
               state.acceptsDirectInput,
-              !state.isSubmitting else {
+              !state.isSubmitting,
+              !state.isInterrupting else {
             return false
         }
 
@@ -775,15 +784,24 @@ final class AgentManagedSessionController: ObservableObject {
         guard let provider = providers[session.id.sessionID.provider],
               provider.interactiveCapabilities.contains(.interrupt),
               let state = managed[session.id.sessionID],
-              let turnID = state.activeTurnID else {
+              let turnID = state.activeTurnID,
+              !state.isInterrupting else {
             return
         }
-        let nativeID = session.id.sessionID.nativeID
+        let sessionID = session.id.sessionID
+        let nativeID = sessionID.nativeID
+        updateControl(sessionID) {
+            $0.isInterrupting = true
+            $0.lastError = nil
+        }
         Task { [weak self] in
             do {
                 try await provider.interrupt(nativeSessionID: nativeID, turnID: turnID)
+                // Keep isInterrupting true until the provider sends authoritative
+                // turn completion/interruption. Sending the RPC is not success.
             } catch {
-                self?.recordError(error, for: session.id.sessionID)
+                self?.updateControl(sessionID) { $0.isInterrupting = false }
+                self?.recordError(error, for: sessionID)
             }
         }
     }
@@ -805,6 +823,7 @@ final class AgentManagedSessionController: ObservableObject {
             updateControl(sessionID) {
                 $0.activeTurnID = turn.turnID
                 $0.isSubmitting = false
+                $0.isInterrupting = false
                 $0.lastError = nil
             }
             _ = await emit(
@@ -839,6 +858,7 @@ final class AgentManagedSessionController: ObservableObject {
                     $0.activeTurnID = nil
                 }
                 $0.isSubmitting = false
+                $0.isInterrupting = false
                 if state == .failed {
                     $0.lastError = AgentPrivacyProjection.summary(summary)
                 }
@@ -876,6 +896,7 @@ final class AgentManagedSessionController: ObservableObject {
                 updateControl(target) {
                     $0.activeTurnID = nil
                     $0.isSubmitting = false
+                    $0.isInterrupting = false
                     $0.lastError = AgentPrivacyProjection.summary(summary) ??
                         "\(providerName(agentProvider)) turn failed"
                 }
@@ -963,6 +984,7 @@ final class AgentManagedSessionController: ObservableObject {
                 updateControl(key) {
                     $0.activeTurnID = nil
                     $0.isSubmitting = false
+                    $0.isInterrupting = false
                     $0.lastError = transportMessage
                 }
                 if eventStore.sessions.contains(where: {
@@ -1141,6 +1163,7 @@ final class AgentManagedSessionController: ObservableObject {
             nativeSessionID: descriptor.nativeSessionID,
             activeTurnID: nil,
             isSubmitting: false,
+            isInterrupting: false,
             lastError: nil,
             acceptsDirectInput: descriptor.acceptsDirectInput
         )

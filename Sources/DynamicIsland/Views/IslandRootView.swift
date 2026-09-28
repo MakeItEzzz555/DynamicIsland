@@ -432,6 +432,11 @@ struct IslandRootView: View {
                             .onTapGesture {
                                 guard settings.expandOnClick else { return }
                                 deactivateCollapsedPreview()
+                                if let attention = agentAttention.presentation,
+                                   let primary = attention.primary {
+                                    navigation.showAgents()
+                                    modules.agentManagedControl.selectSession(primary.session)
+                                }
                                 onRequestExpand()
                             }
                             .modifier(

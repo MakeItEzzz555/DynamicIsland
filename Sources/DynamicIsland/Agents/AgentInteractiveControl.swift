@@ -166,10 +166,11 @@ struct AgentManagedControlState: Equatable, Sendable {
     let nativeSessionID: String
     var activeTurnID: String?
     var isSubmitting: Bool
+    var isInterrupting: Bool
     var lastError: String?
     var acceptsDirectInput: Bool
 
     var canInterrupt: Bool {
-        activeTurnID != nil
+        activeTurnID != nil && !isInterrupting
     }
 }

@@ -896,7 +896,9 @@ struct AgentConsoleEntry: Identifiable, Equatable, Sendable {
     private static func kind(for operation: AgentOperationSummary) -> AgentConsoleEntryKind {
         if operation.isCommand { return .command }
         let title = operation.title.lowercased()
-        if title.contains("approval") { return .approval }
+        if title.contains("approval") || title == "approved" || title == "denied" {
+            return .approval
+        }
         if title.contains("plan") { return .plan }
         if operation.status == .failed || title.contains("failed") { return .error }
         if title == "completed" || title == "interrupted" || title.contains("waiting") {
@@ -1010,7 +1012,8 @@ enum AgentOperationAggregation {
         var aggregated: [String: AgentOperationSummary] = [:]
         for operation in operations.sorted(by: operationOrder) {
             let isCurrent = operation.status == .pending || operation.status == .active
-            let key = isCurrent
+            let isApproval = operation.id.hasPrefix("approval:")
+            let key = (isCurrent || isApproval)
                 ? operation.id
                 : "\(operation.title.lowercased())|\(operation.status.rawValue)"
             if let existing = aggregated[key] {

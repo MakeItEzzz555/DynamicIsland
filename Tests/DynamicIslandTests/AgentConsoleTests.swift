@@ -86,6 +86,25 @@ final class AgentConsoleTests: XCTestCase {
         )
     }
 
+
+    func testResolvedApprovalKeepsApprovalKindAndExactIdentity() {
+        let operations = [
+            AgentOperationSummary(
+                id: "approval:a", symbol: "checkmark.shield", title: "Approved",
+                detail: "Run migration", status: .resolved, count: 1,
+                date: Date(timeIntervalSince1970: 1), isCommand: false
+            ),
+            AgentOperationSummary(
+                id: "approval:b", symbol: "checkmark.shield", title: "Denied",
+                detail: "Delete files", status: .resolved, count: 1,
+                date: Date(timeIntervalSince1970: 2), isCommand: false
+            )
+        ]
+        let entries = AgentConsoleEntry.make(transcript: [], operations: operations)
+        XCTAssertEqual(entries.map(\.kind), [.approval, .approval])
+        XCTAssertEqual(entries.map(\.correlationID), ["approval:a", "approval:b"])
+    }
+
     func testAgentTranscriptUsesSelectedProviderIdentity() {
         let transcript = [AgentManagedTranscriptEntry(
             id: "a1", nativeSessionID: "same", turnID: "turn",

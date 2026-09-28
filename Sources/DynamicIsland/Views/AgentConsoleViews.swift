@@ -47,6 +47,7 @@ struct AgentEmbeddedConsoleView: View {
     @State private var draft = ""
     @State private var submissionInFlight = false
     @State private var transcriptIsNearBottom = true
+    @State private var hasNewActivityOffscreen = false
     @State private var scrollToLatestRequest = 0
 
     var body: some View {
@@ -66,7 +67,11 @@ struct AgentEmbeddedConsoleView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Selected session details for \(AgentSessionPresentation.primaryTitle(for: session))")
-        .onChange(of: session.id) { _, _ in draft = "" }
+        .onChange(of: session.id) { _, _ in
+            draft = ""
+            hasNewActivityOffscreen = false
+            transcriptIsNearBottom = true
+        }
         .onChange(of: mode.showsComposer) { _, isInteractive in
             if !isInteractive { draft = "" }
         }
@@ -99,9 +104,15 @@ struct AgentEmbeddedConsoleView: View {
                     .scrollBounceBehavior(.basedOnSize)
                     .onPreferenceChange(AgentConsoleBottomPositionPreferenceKey.self) { bottomY in
                         transcriptIsNearBottom = bottomY <= viewport.size.height + 28
+                        if transcriptIsNearBottom {
+                            hasNewActivityOffscreen = false
+                        }
                     }
                     .onChange(of: transcriptFollowToken) { _, _ in
-                        guard transcriptIsNearBottom else { return }
+                        guard transcriptIsNearBottom else {
+                            hasNewActivityOffscreen = true
+                            return
+                        }
                         DispatchQueue.main.async {
                             proxy.scrollTo(AgentConsoleScrollAnchor.bottom, anchor: .bottom)
                         }
@@ -111,6 +122,7 @@ struct AgentEmbeddedConsoleView: View {
                             proxy.scrollTo(AgentConsoleScrollAnchor.bottom, anchor: .bottom)
                         }
                         transcriptIsNearBottom = true
+                        hasNewActivityOffscreen = false
                     }
                     .onAppear {
                         DispatchQueue.main.async {
@@ -122,11 +134,11 @@ struct AgentEmbeddedConsoleView: View {
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .overlay(alignment: .bottomTrailing) {
-            if !transcriptIsNearBottom {
+            if !transcriptIsNearBottom && hasNewActivityOffscreen {
                 Button {
                     scrollToLatestRequest &+= 1
                 } label: {
-                    Label("Latest", systemImage: "arrow.down")
+                    Label("New activity", systemImage: "arrow.down")
                         .font(.system(size: 8, weight: .semibold))
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
@@ -212,7 +224,40 @@ struct AgentEmbeddedConsoleView: View {
 
     @ViewBuilder
     private func consoleEntryRow(_ entry: AgentConsoleEntry) -> some View {
-        if entry.kind == .user || entry.kind == .agent {
+        if entry.kind == .approval {
+            HStack(alignment: .top, spacing: 7) {
+                Image(systemName: entry.status == .failed ? "exclamationmark.triangle.fill" :
+                    entry.status == .resolved ? "checkmark.circle.fill" : "hand.raised.fill")
+                    .frame(width: 12)
+                    .foregroundStyle(operationColor(entry.status ?? .pending))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(entry.title)
+                        .font(.system(size: 8.5, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.90))
+                    if let text = entry.text, !text.isEmpty {
+                        Text(text)
+                            .font(.system(size: 8, weight: .medium, design: .monospaced))
+                            .foregroundStyle(.white.opacity(0.55))
+                            .lineLimit(2)
+                    }
+                }
+                Spacer(minLength: 4)
+            }
+            .padding(7)
+            .background(
+                (entry.status == .resolved ? Color.green :
+                    entry.status == .failed ? Color.red : Color.orange).opacity(0.07)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(
+                        (entry.status == .resolved ? Color.green :
+                            entry.status == .failed ? Color.red : Color.orange).opacity(0.16),
+                        lineWidth: 1
+                    )
+            }
+        } else if entry.kind == .user || entry.kind == .agent {
             VStack(alignment: .leading, spacing: 2) {
                 Text(entry.title)
                     .font(.system(size: 7.5, weight: .bold))
@@ -382,7 +427,7 @@ struct AgentConsoleApprovalRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Label("Waiting for approval", systemImage: "exclamationmark.shield.fill")
+            Label("Approval required", systemImage: "hand.raised.fill")
                 .font(.system(size: 8, weight: .bold))
                 .foregroundStyle(.orange.opacity(0.92))
             Text(request.summary)
@@ -401,15 +446,18 @@ struct AgentConsoleApprovalRow: View {
                     Label("Deny", systemImage: "xmark.circle.fill")
                 }
 
-                Button {
-                    approvalControl.resolve(
-                        session: session.id,
-                        requestID: request.key.requestID,
-                        decision: .allow
-                    )
+                Menu {
+                    Button("Approve once") {
+                        approvalControl.resolve(
+                            session: session.id,
+                            requestID: request.key.requestID,
+                            decision: .allow
+                        )
+                    }
                 } label: {
                     Label("Approve", systemImage: "checkmark.circle.fill")
                 }
+                .menuStyle(.borderlessButton)
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
@@ -432,7 +480,10 @@ private struct AgentConsoleExternalApprovalRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Label("Approval required", systemImage: "exclamationmark.shield.fill")
+            Label(
+                "Approval required in \(sourceTarget?.displayName ?? "source app")",
+                systemImage: "exclamationmark.shield.fill"
+            )
                 .font(.system(size: 8, weight: .bold))
                 .foregroundStyle(.orange.opacity(0.92))
             Text(approval.summary)

@@ -268,7 +268,8 @@ private struct AgentCLIControlBar: View {
                     .buttonStyle(.borderless)
                     .font(.system(size: 8, weight: .semibold))
                     .foregroundStyle(.red.opacity(0.86))
-                    .help("Interrupt the exact active managed turn")
+                    .keyboardShortcut(".", modifiers: [.command])
+                    .help("Interrupt the exact active managed turn (Command-.)")
                     .accessibilityLabel("Stop active agent turn")
                 }
             }
@@ -457,18 +458,19 @@ private struct AgentCLIControlBar: View {
     }
 
     private func statusControl(for session: AgentSession, compact: Bool) -> some View {
-        adaptiveLabel(
-            selectorStateLabel(session),
-            systemImage: selectorStateSymbol(session),
-            compact: compact
-        )
-        .font(.system(size: 8, weight: .semibold))
-        .foregroundStyle(
-            (managedControl.activeManagedSessionIDs.contains(session.id.sessionID)
-                ? Color.green
-                : AgentVisualStyle.accent(for: session.state)).opacity(0.82)
-        )
-        .help(selectorStateLabel(session))
+        let stopping = managedControl.isInterrupting(session)
+        let label = stopping ? "Stopping…" : selectorStateLabel(session)
+        let symbol = stopping ? "stop.circle" : selectorStateSymbol(session)
+        return adaptiveLabel(label, systemImage: symbol, compact: compact)
+            .font(.system(size: 8, weight: .semibold))
+            .foregroundStyle(
+                (stopping
+                    ? Color.orange
+                    : managedControl.activeManagedSessionIDs.contains(session.id.sessionID)
+                        ? Color.green
+                        : AgentVisualStyle.accent(for: session.state)).opacity(0.82)
+            )
+            .help(label)
     }
 
     @ViewBuilder
