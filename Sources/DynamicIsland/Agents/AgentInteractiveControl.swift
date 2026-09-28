@@ -165,6 +165,7 @@ protocol AgentInteractiveProvider: Sendable {
 struct AgentManagedControlState: Equatable, Sendable {
     let nativeSessionID: String
     var activeTurnID: String?
+    var activeTurnStartedAt: Date?
     var isSubmitting: Bool
     var isInterrupting: Bool
     var lastError: String?

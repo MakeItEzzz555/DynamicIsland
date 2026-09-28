@@ -488,6 +488,8 @@ final class AgentManagedSessionControllerTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(30))
         await provider.yield(.turnStarted(.init(nativeSessionID: "managed", turnID: "turn-1")))
         try await Task.sleep(for: .milliseconds(30))
+        let active = try XCTUnwrap(store.sessions.first)
+        XCTAssertNotNil(controller.activeTurnStartedAt(for: active))
         await provider.yield(.turnCompleted(
             .init(nativeSessionID: "managed", turnID: "turn-1"),
             state: .completed,
@@ -498,6 +500,7 @@ final class AgentManagedSessionControllerTests: XCTestCase {
         let completed = try XCTUnwrap(store.sessions.first)
         XCTAssertEqual(completed.state, .completed)
         XCTAssertNil(completed.endedAt)
+        XCTAssertNil(controller.activeTurnStartedAt(for: completed))
         XCTAssertEqual(
             AgentSessionPresentation.displayedStateLabel(for: completed, at: Date()),
             "Resumable"

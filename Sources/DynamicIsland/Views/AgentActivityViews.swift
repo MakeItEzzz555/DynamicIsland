@@ -136,14 +136,21 @@ struct AgentDashboardContentView: View {
                     limit: layout.maximumGaugeCount
                 )
                 : []
-            VStack(alignment: .leading, spacing: 10) {
-                if showsUsage {
-                    AgentGlobalSummaryStrip(metrics: metrics, layout: layout)
-                }
-
+            VStack(alignment: .leading, spacing: 7) {
                 if controlSessions.isEmpty {
                     AgentEmptyConsoleState(managedControl: managedControl)
                 } else {
+                    if let selectedSession {
+                        AgentWorkspaceHeader(
+                            session: selectedSession,
+                            managedControl: managedControl
+                        )
+                    }
+
+                    if showsUsage {
+                        AgentCompactUsageStrip(metrics: metrics)
+                    }
+
                     AgentCLIControlBar(
                         sessions: controlSessions,
                         managedControl: managedControl,
@@ -244,17 +251,7 @@ private struct AgentCLIControlBar: View {
             providerMenu(compact: compact)
 
             if let session = selectedSession {
-                HStack(spacing: 4) {
-                    Image(systemName: selectorStateSymbol(session))
-                        .font(.system(size: 7, weight: .semibold))
-                    Text(selectedSessionLabel(session))
-                        .font(.system(size: compact ? 8 : 9, weight: .semibold))
-                        .lineLimit(1)
-                }
-                .foregroundStyle(.white.opacity(0.82))
-                .layoutPriority(2)
-
-                Spacer(minLength: compact ? 2 : 6)
+                Spacer(minLength: compact ? 2 : 8)
                 modelControl(for: session, compact: compact)
                 approvalPolicyControl(for: session, compact: compact)
                 statusControl(for: session, compact: compact)
@@ -305,7 +302,7 @@ private struct AgentCLIControlBar: View {
 
     private var sessionRail: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 5) {
+            HStack(spacing: 6) {
                 ForEach(
                     AgentWorkspaceSelection.ordered(
                         sessions: sessions,
@@ -313,40 +310,16 @@ private struct AgentCLIControlBar: View {
                     ),
                     id: \.id
                 ) { session in
-                    let selected = selectedSession?.id == session.id
-                    Button {
-                        managedControl.selectSession(session.id)
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: selectorStateSymbol(session))
-                                .font(.system(size: 7, weight: .semibold))
-                            Text("\(sessionLabel(session)) · \(threadSuffix(session))")
-                                .font(.system(size: 8, weight: selected ? .bold : .semibold))
-                                .lineLimit(1)
-                            Text(selectorStateLabel(session))
-                                .font(.system(size: 7.5, weight: .medium))
-                                .foregroundStyle(.white.opacity(selected ? 0.72 : 0.42))
-                        }
-                        .foregroundStyle(.white.opacity(selected ? 0.94 : 0.66))
-                        .padding(.horizontal, 7)
-                        .frame(height: 22)
-                        .background(
-                            selected ? Color.white.opacity(0.13) : Color.white.opacity(0.045),
-                            in: Capsule(style: .continuous)
-                        )
-                        .overlay {
-                            Capsule(style: .continuous)
-                                .stroke(
-                                    selected ? Color.white.opacity(0.20) : Color.white.opacity(0.07),
-                                    lineWidth: 1
-                                )
-                        }
-                    }
-                    .buttonStyle(.plain)
+                    AgentSessionCardView(
+                        session: session,
+                        selected: selectedSession?.id == session.id,
+                        managedControl: managedControl,
+                        onSelect: { managedControl.selectSession(session.id) }
+                    )
                     .help(sessionMenuTitle(session))
                 }
             }
-            .padding(.vertical, 1)
+            .padding(.vertical, 2)
         }
         .scrollBounceBehavior(.basedOnSize)
         .accessibilityLabel("Agent sessions")
@@ -559,17 +532,30 @@ private struct AgentSelectedSessionControlView: View {
 
     var body: some View {
         if managedControl.isManaged(session), managedControl.mode(for: session).showsComposer {
-            AgentEmbeddedConsoleView(
-                session: session,
-                mode: managedControl.mode(for: session),
-                maximumActivityEntries: activityLimit,
-                transcriptEntries: managedControl.transcript(for: session),
-                layoutStore: layoutStore,
-                approvalControl: approvalControl,
-                onSubmit: { await managedControl.submit($0, for: session) },
-                onInterrupt: { managedControl.interrupt(session) }
-            )
-            .frame(minHeight: detailHeight, maxHeight: .infinity)
+            VStack(alignment: .leading, spacing: 6) {
+                AgentRecentActivityView(
+                    session: session,
+                    mode: .recentList,
+                    limit: min(max(activityLimit, 2), 4)
+                )
+
+                AgentEmbeddedConsoleView(
+                    session: session,
+                    mode: managedControl.mode(for: session),
+                    maximumActivityEntries: activityLimit,
+                    transcriptEntries: managedControl.transcript(for: session),
+                    layoutStore: layoutStore,
+                    approvalControl: approvalControl,
+                    onSubmit: { await managedControl.submit($0, for: session) },
+                    onInterrupt: { managedControl.interrupt(session) }
+                )
+                .frame(minHeight: max(detailHeight, 96), maxHeight: .infinity)
+
+                AgentContextFooter(
+                    session: session,
+                    managedControl: managedControl
+                )
+            }
             .task(id: session.id) {
                 await managedControl.refreshTranscript(for: session)
             }
@@ -615,6 +601,12 @@ private struct AgentSelectedSessionControlView: View {
                     .accessibilityElement(children: .contain)
                 }
 
+                AgentRecentActivityView(
+                    session: session,
+                    mode: .recentList,
+                    limit: min(max(activityLimit, 2), 4)
+                )
+
                 AgentEmbeddedConsoleView(
                     session: session,
                     mode: .observed,
@@ -625,7 +617,12 @@ private struct AgentSelectedSessionControlView: View {
                     onSubmit: { _ in false },
                     onInterrupt: {}
                 )
-                .frame(minHeight: max(detailHeight - 31, 104), maxHeight: .infinity)
+                .frame(minHeight: max(detailHeight - 31, 88), maxHeight: .infinity)
+
+                AgentContextFooter(
+                    session: session,
+                    managedControl: managedControl
+                )
             }
             .task(id: session.id) {
                 await managedControl.reconcileObservedSession(session)
@@ -649,12 +646,18 @@ private struct AgentEmptyConsoleState: View {
             Image(systemName: AgentVisualStyle.providerSymbol(provider))
                 .font(.system(size: 18, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.52))
-            Text("No \(providerName) session")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.88))
-            Text("Start a managed session to use the embedded agent console.")
+            Text("\(providerName)")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(.white.opacity(0.90))
+            Label("Idle", systemImage: "circle")
+                .font(.system(size: 8.5, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.46))
+            Text("No recent activity")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.54))
+            Text("Select a session or start a new task.")
                 .font(.system(size: 8.5, weight: .medium))
-                .foregroundStyle(.white.opacity(0.42))
+                .foregroundStyle(.white.opacity(0.36))
 
             if let status = managedControl.lastTransportError {
                 Label(status, systemImage: "exclamationmark.circle")
@@ -1444,10 +1447,11 @@ struct AgentCompactAttentionLeadingView: View {
 struct AgentCompactAttentionTrailingView: View {
     let text: String
     let accent: Color
+    var style: AgentAttentionStyle = .actionRequired
 
     var body: some View {
         HStack(spacing: 5) {
-            Image(systemName: "exclamationmark")
+            Image(systemName: symbol)
                 .font(.system(size: 9, weight: .bold))
                 .foregroundStyle(accent)
             Text(text)
@@ -1458,5 +1462,14 @@ struct AgentCompactAttentionTrailingView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(text)
+    }
+
+    private var symbol: String {
+        switch style {
+        case .success: "checkmark.circle.fill"
+        case .actionRequired: "hand.raised.fill"
+        case .failure: "exclamationmark.triangle.fill"
+        case .informational: "sparkles"
+        }
     }
 }
