@@ -64,13 +64,12 @@ enum AgentCollapsedShellPresentation {
         guard let compact = AgentCompactPresentation.make(sessions: sessions, enabled: enabled) else {
             return nil
         }
-        let markerWidth = min(
-            84,
-            CGFloat(compact.sessions.count * 18 + (compact.overflowCount > 0 ? 22 : 0))
-        )
+        guard let primary = compact.sessions.first else { return nil }
+        let project = primary.project.displayName ?? primary.id.sessionID.provider.stableName.capitalized
+        let state = AgentSessionPresentation.displayedStateLabel(for: primary, at: Date())
         return .agentRoutine(
-            leftContentWidth: max(markerWidth, 28),
-            rightContentWidth: estimatedWidth(compact.summary, minimum: 56, maximum: 112)
+            leftContentWidth: estimatedWidth(project, minimum: 62, maximum: 112),
+            rightContentWidth: estimatedWidth(state, minimum: 62, maximum: 112)
         )
     }
 

@@ -236,7 +236,7 @@ struct ExpandedPresentationProfile: Equatable, Sendable {
     static let agentsWorkspace = ExpandedPresentationProfile(
         kind: .agentsWorkspace,
         widthScale: 1.10,
-        additionalHeight: 112
+        additionalHeight: 160
     )
 
     static func resolve(for page: ExpandedIslandPage) -> Self {

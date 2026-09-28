@@ -39,8 +39,10 @@ struct AgentEmbeddedConsoleView: View {
     var mode: AgentConsoleMode = .observed
     var maximumActivityEntries = 3
     var transcriptEntries: [AgentManagedTranscriptEntry] = []
+    var workspaceSessions: [AgentSession] = []
     var layoutStore: IslandLayoutStore? = nil
     @ObservedObject var approvalControl: AgentApprovalController
+    let onSelectSession: (AgentSessionInstanceID) -> Void
     let onSubmit: (String) async -> Bool
     let onInterrupt: () -> Void
 
@@ -51,7 +53,7 @@ struct AgentEmbeddedConsoleView: View {
     @State private var scrollToLatestRequest = 0
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 7) {
             transcript
             if mode.showsComposer {
                 composer
@@ -59,7 +61,8 @@ struct AgentEmbeddedConsoleView: View {
                 observedFooter
             }
         }
-        .padding(8)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
         .overlay(alignment: .top) {
             Rectangle()
                 .fill(.white.opacity(0.055))
@@ -176,18 +179,7 @@ struct AgentEmbeddedConsoleView: View {
         )
 
         return LazyVStack(alignment: .leading, spacing: 7) {
-            if timeline.isEmpty {
-                HStack(spacing: 6) {
-                    Image(systemName: AgentSessionPresentation.stateSymbol(session.state))
-                        .frame(width: 11)
-                    Text(AgentSessionPresentation.stateLabel(session.state))
-                }
-                .foregroundStyle(.white.opacity(0.48))
-            } else {
-                ForEach(timeline) { entry in
-                    consoleEntryRow(entry)
-                }
-            }
+            AgentCurrentWorkSummary(session: session, mode: mode)
 
             if let approval = actionableApproval {
                 AgentConsoleApprovalRow(
@@ -201,8 +193,30 @@ struct AgentEmbeddedConsoleView: View {
                     sourceTarget: AgentSourceAssociationResolver.openTarget(for: session)
                 )
             }
+
+            if workspaceSessions.count > 1 {
+                AgentWorkspaceActivityGroups(
+                    sessions: workspaceSessions,
+                    selectedSessionID: session.id,
+                    onSelect: onSelectSession
+                )
+            }
+
+            if timeline.isEmpty {
+                HStack(spacing: 6) {
+                    Image(systemName: AgentSessionPresentation.stateSymbol(session.state))
+                        .frame(width: 11)
+                    Text(AgentSessionPresentation.stateLabel(session.state))
+                }
+                .foregroundStyle(.white.opacity(0.48))
+            } else {
+                ForEach(timeline) { entry in
+                    consoleEntryRow(entry)
+                }
+            }
+
         }
-        .font(.system(size: 8.5, weight: .medium))
+        .font(.system(size: 9.5, weight: .medium))
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -232,11 +246,11 @@ struct AgentEmbeddedConsoleView: View {
                     .foregroundStyle(operationColor(entry.status ?? .pending))
                 VStack(alignment: .leading, spacing: 2) {
                     Text(entry.title)
-                        .font(.system(size: 8.5, weight: .bold))
+                        .font(.system(size: 10, weight: .bold))
                         .foregroundStyle(.white.opacity(0.90))
                     if let text = entry.text, !text.isEmpty {
                         Text(text)
-                            .font(.system(size: 8, weight: .medium, design: .monospaced))
+                            .font(.system(size: 9, weight: .medium, design: .monospaced))
                             .foregroundStyle(.white.opacity(0.55))
                             .lineLimit(2)
                     }
@@ -260,7 +274,7 @@ struct AgentEmbeddedConsoleView: View {
         } else if entry.kind == .user || entry.kind == .agent {
             VStack(alignment: .leading, spacing: 2) {
                 Text(entry.title)
-                    .font(.system(size: 7.5, weight: .bold))
+                    .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(
                         entry.kind == .user
                             ? Color.white.opacity(0.48)
@@ -268,7 +282,7 @@ struct AgentEmbeddedConsoleView: View {
                     )
                 if let text = entry.text {
                     Text(text)
-                        .font(.system(size: 9, weight: .regular, design: .monospaced))
+                        .font(.system(size: 10.5, weight: .regular, design: .monospaced))
                         .foregroundStyle(.white.opacity(entry.kind == .user ? 0.72 : 0.88))
                         .textSelection(.enabled)
                 }
@@ -309,6 +323,9 @@ struct AgentEmbeddedConsoleView: View {
     @ViewBuilder
     private func registeredTranscript<Content: View>(_ content: Content) -> some View {
         if let layoutStore {
+            // The transcript viewport is intentionally the only Agents region handed to the
+            // panel-level scroll router. Toolbar, usage, session rail, approvals outside the
+            // transcript, and the composer must continue to use the island's global gestures.
             content
                 .background {
                     GeometryReader { proxy in
@@ -404,6 +421,198 @@ struct AgentEmbeddedConsoleView: View {
     }
 }
 
+private struct AgentCurrentWorkSummary: View {
+    let session: AgentSession
+    let mode: AgentConsoleMode
+
+    private var projectName: String {
+        AgentPrivacyProjection.displayProject(session.project).displayName
+            ?? session.id.sessionID.provider.stableName.capitalized
+    }
+
+    private var title: String {
+        AgentSessionPresentation.displayedPrimaryTitle(for: session, at: Date())
+    }
+
+    private var isAttention: Bool {
+        AgentSessionPresentation.requiresAttention(session)
+    }
+
+    private var accent: Color {
+        AgentVisualStyle.accent(for: session.state)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(projectName)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.56))
+                    .lineLimit(1)
+                if let branch = session.project.gitBranch, !branch.isEmpty {
+                    Text(branch)
+                        .font(.system(size: 8.5, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.32))
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: mode.showsComposer ? "link" : "eye")
+                    .font(.system(size: 8.5, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.30))
+                    .help(mode.showsComposer ? "Managed session" : "Observed session")
+            }
+
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Circle()
+                    .fill(accent)
+                    .frame(width: 6, height: 6)
+                    .shadow(color: accent.opacity(isAttention ? 0.65 : 0.25), radius: 4)
+                Text(title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.94))
+                    .lineLimit(2)
+                Spacer(minLength: 8)
+                Label(
+                    AgentSessionPresentation.displayedStateLabel(for: session, at: Date()),
+                    systemImage: AgentSessionPresentation.displayedStateSymbol(for: session, at: Date())
+                )
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(accent.opacity(0.92))
+                .lineLimit(1)
+            }
+        }
+        .padding(.horizontal, isAttention ? 10 : 2)
+        .padding(.vertical, isAttention ? 9 : 5)
+        .background {
+            if isAttention {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(accent.opacity(0.10))
+                    .overlay(alignment: .leading) {
+                        Capsule(style: .continuous)
+                            .fill(accent.opacity(0.88))
+                            .frame(width: 2.5)
+                            .padding(.vertical, 5)
+                    }
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(projectName), \(title), \(AgentSessionPresentation.displayedStateLabel(for: session, at: Date()))")
+    }
+}
+
+private struct AgentWorkspaceActivityGroups: View {
+    let sessions: [AgentSession]
+    let selectedSessionID: AgentSessionInstanceID
+    let onSelect: (AgentSessionInstanceID) -> Void
+
+    private var groups: [AgentProjectGroupPresentation] {
+        AgentDashboardPresentation.make(
+            orderedSessions: AgentWorkspaceSelection.ordered(sessions: sessions)
+        ).groups
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(groups) { group in
+                let visible = group.sessions.filter { $0.id != selectedSessionID }
+                if !visible.isEmpty {
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 5) {
+                            Text(group.title)
+                                .font(.system(size: 9.5, weight: .semibold))
+                                .foregroundStyle(.white.opacity(0.46))
+                                .lineLimit(1)
+                            Text("\(group.sessions.count)")
+                                .font(.system(size: 8, weight: .medium, design: .rounded))
+                                .foregroundStyle(.white.opacity(0.25))
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 2)
+
+                        ForEach(visible, id: \.id) { candidate in
+                            AgentWorkspaceActivityRow(session: candidate) {
+                                onSelect(candidate.id)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 2)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(.white.opacity(0.055))
+                .frame(height: 1)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Other agent work")
+    }
+}
+
+private struct AgentWorkspaceActivityRow: View {
+    let session: AgentSession
+    let select: () -> Void
+    @State private var hovering = false
+
+    private var accent: Color {
+        AgentVisualStyle.accent(for: session.state)
+    }
+
+    var body: some View {
+        Button(action: select) {
+            HStack(spacing: 8) {
+                Circle()
+                    .stroke(accent.opacity(0.85), lineWidth: 1.5)
+                    .frame(width: 9, height: 9)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(AgentSessionPresentation.displayedPrimaryTitle(for: session, at: Date()))
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.86))
+                        .lineLimit(1)
+                    HStack(spacing: 5) {
+                        if let branch = session.project.gitBranch, !branch.isEmpty {
+                            Label(branch, systemImage: "arrow.triangle.branch")
+                        } else {
+                            Text(session.id.sessionID.provider.stableName.capitalized)
+                        }
+                        Text("…\(session.id.sessionID.nativeID.suffix(4))")
+                    }
+                    .font(.system(size: 8.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.34))
+                    .lineLimit(1)
+                }
+
+                Spacer(minLength: 8)
+
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(AgentSessionPresentation.displayedStateLabel(for: session, at: Date()))
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(accent.opacity(0.88))
+                    Text(session.lastUpdatedAt, style: .relative)
+                        .font(.system(size: 8, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.28))
+                }
+            }
+            .padding(.horizontal, 7)
+            .frame(minHeight: 42)
+            .contentShape(Rectangle())
+            .background(
+                hovering ? Color.white.opacity(0.055) : Color.clear,
+                in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+            )
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.13), value: hovering)
+        .accessibilityLabel(
+            "\(AgentSessionPresentation.displayedPrimaryTitle(for: session, at: Date())), " +
+            AgentSessionPresentation.displayedStateLabel(for: session, at: Date())
+        )
+        .accessibilityHint("Select this agent session")
+    }
+}
+
 private enum AgentConsoleCoordinateSpace {
     static let transcript = "dynamicIsland.agentConsole.transcript"
 }
@@ -426,16 +635,17 @@ struct AgentConsoleApprovalRow: View {
     @ObservedObject var approvalControl: AgentApprovalController
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 7) {
             Label("Approval required", systemImage: "hand.raised.fill")
-                .font(.system(size: 8, weight: .bold))
-                .foregroundStyle(.orange.opacity(0.92))
+                .font(.system(size: 10.5, weight: .bold))
+                .foregroundStyle(Color(red: 1, green: 0.64, blue: 0.72))
             Text(request.summary)
-                .font(.system(size: 8.5, weight: .medium))
-                .foregroundStyle(.white.opacity(0.78))
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.white.opacity(0.84))
                 .lineLimit(3)
 
-            HStack(spacing: 8) {
+            HStack(spacing: 9) {
+                Spacer(minLength: 0)
                 Button(role: .destructive) {
                     approvalControl.resolve(
                         session: session.id,
@@ -443,7 +653,8 @@ struct AgentConsoleApprovalRow: View {
                         decision: .deny
                     )
                 } label: {
-                    Label("Deny", systemImage: "xmark.circle.fill")
+                    Text("Deny")
+                        .padding(.horizontal, 4)
                 }
 
                 Menu {
@@ -455,19 +666,28 @@ struct AgentConsoleApprovalRow: View {
                         )
                     }
                 } label: {
-                    Label("Approve", systemImage: "checkmark.circle.fill")
+                    HStack(spacing: 4) {
+                        Text("Approve")
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 7, weight: .bold))
+                    }
+                    .foregroundStyle(.black.opacity(0.88))
+                    .padding(.horizontal, 5)
                 }
                 .menuStyle(.borderlessButton)
+                .background(.white.opacity(0.92), in: Capsule(style: .continuous))
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
         }
-        .padding(8)
-        .background(.orange.opacity(0.07))
+        .padding(10)
+        .background(Color(red: 0.48, green: 0.16, blue: 0.26).opacity(0.34))
         .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .stroke(.orange.opacity(0.18), lineWidth: 1)
+        .overlay(alignment: .leading) {
+            Capsule(style: .continuous)
+                .fill(Color(red: 1, green: 0.34, blue: 0.56))
+                .frame(width: 3)
+                .padding(.vertical, 7)
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(session.id.sessionID.provider.stableName.capitalized) approval required")

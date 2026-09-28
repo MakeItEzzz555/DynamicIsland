@@ -1203,20 +1203,15 @@ struct IslandSurface<Content: View>: View {
                 }
                 .overlay {
                     if !isExpanded, collapsedPresentationProfile.glowStrength > 0 {
-                        shellShape
-                            .stroke(
-                                collapsedGlowColor.opacity(collapsedPresentationProfile.glowStrength),
-                                style: StrokeStyle(lineWidth: 2.2, lineCap: .round)
+                        Ellipse()
+                            .fill(collapsedGlowColor.opacity(collapsedPresentationProfile.glowStrength * 0.60))
+                            .frame(
+                                width: collapsedPresentationProfile.kind == .agentAttention ? 210 : 150,
+                                height: 22
                             )
-                            .blur(radius: collapsedPresentationProfile.kind == .agentAttention ? 5.5 : 3)
-                            .mask(alignment: .bottom) {
-                                LinearGradient(
-                                    colors: [.clear, .black.opacity(0.2), .black],
-                                    startPoint: .top,
-                                    endPoint: .bottom
-                                )
-                                .frame(height: 22)
-                            }
+                            .blur(radius: collapsedPresentationProfile.kind == .agentAttention ? 13 : 9)
+                            .offset(y: 13)
+                            .frame(maxHeight: .infinity, alignment: .bottom)
                             .allowsHitTesting(false)
                     }
                 }
@@ -1370,6 +1365,13 @@ struct CompactIslandView: View {
         case .failure: .red
         case .informational, .none: .cyan
         }
+        let attentionSymbol: String = switch attentionPresentation?.style {
+        case .success: "checkmark"
+        case .actionRequired: "hand.raised.fill"
+        case .failure: "exclamationmark"
+        case .informational: "sparkles"
+        case .none: "circle.fill"
+        }
         let _ = Self.debugRender(
             hasActiveMediaSource: media.hasActiveMediaSource,
             isPlaying: media.isPlaying,
@@ -1390,7 +1392,8 @@ struct CompactIslandView: View {
                         text: attentionPresentation.totalCount > 1
                             ? "\(attentionPresentation.totalCount) agents"
                             : String(primary.displaySummary.prefix(72)),
-                        accent: attentionAccent
+                        accent: attentionAccent,
+                        symbol: attentionSymbol
                     )
                 }
                 .transition(.opacity)
@@ -1459,11 +1462,11 @@ struct CompactIslandView: View {
                    let presentation = AgentCompactPresentation.make(
                        sessions: agentEvents.sessions,
                        enabled: settings.agentActivityEnabled
-                   ) {
+                   ), let primary = presentation.sessions.first {
                     sideSlotLayout {
-                        AgentCompactMarkerCluster(presentation: presentation)
+                        AgentCompactRoutineLeadingView(session: primary)
                     } right: {
-                        AgentCompactSummaryLabel(presentation: presentation)
+                        AgentCompactRoutineTrailingView(session: primary)
                     }
                         .transition(.opacity)
                 } else {
