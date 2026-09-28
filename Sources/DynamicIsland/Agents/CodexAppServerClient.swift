@@ -303,6 +303,18 @@ actor CodexAppServerClient {
         return values.compactMap(Self.decodeListedThread)
     }
 
+    func readThread(threadID: String) async throws -> CodexManagedThread {
+        try await start()
+        let result = try await request(
+            method: "thread/read",
+            params: .object([
+                "threadId": .string(threadID),
+                "includeTurns": .bool(false)
+            ])
+        )
+        return try decodeThreadResponse(result, method: "thread/read")
+    }
+
     func listModels(limit: Int = 100) async throws -> [CodexAvailableModel] {
         try await start()
         let boundedLimit = min(max(limit, 1), 200)

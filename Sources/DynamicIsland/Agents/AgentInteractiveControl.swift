@@ -123,6 +123,10 @@ struct AgentManagedApprovalRequest: Equatable, Sendable {
     }
 
     let requestToken: AgentInteractiveRequestToken
+    /// Provider-authoritative identity for this exact approval callback. This
+    /// is distinct from the tool item because one item can issue more than one
+    /// approval request.
+    let requestID: String
     let kind: Kind
     let threadID: String
     let turnID: String
@@ -137,6 +141,9 @@ protocol AgentInteractiveProvider: Sendable {
 
     func events() async -> AsyncStream<AgentInteractiveProviderEvent>
     func discoverSessions() async throws -> [AgentDiscoveredSessionDescriptor]
+    /// Resolves one exact provider-native session without relying on bounded
+    /// discovery. Implementations must not create a replacement session.
+    func inspectSession(nativeSessionID: String) async throws -> AgentManagedSessionDescriptor?
     func readAccountUsage() async throws -> AgentUsage
     func readTranscript(nativeSessionID: String, limit: Int) async throws -> [AgentManagedTranscriptEntry]
     func listModels() async throws -> [AgentManagedModelDescriptor]

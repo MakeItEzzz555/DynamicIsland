@@ -294,6 +294,27 @@ final class AgentPresentationTests: XCTestCase {
         )
     }
 
+    func testResolvedApprovalRemainsInOperationHistory() {
+        var value = session(state: .idle)
+        let request = AgentCorrelationID(rawValue: "resolved-approval")
+        value.approvals[request] = AgentApproval(
+            requestID: request,
+            summary: "Command approval",
+            operationCorrelationID: nil,
+            requestedAt: now,
+            resolvedAt: now.addingTimeInterval(1),
+            expiresAt: nil,
+            state: .approved
+        )
+
+        let operation = AgentOperationAggregation.make(
+            for: value,
+            includePendingApprovals: false
+        ).first
+        XCTAssertEqual(operation?.title, "Approved")
+        XCTAssertEqual(operation?.status, .resolved)
+    }
+
     func testAttentionPrimaryTitlePreservesDistinctStructuredTaskTitle() {
         var value = session(state: .waitingForApproval, projectName: "storefront")
         let request = AgentCorrelationID(rawValue: "approval-task")

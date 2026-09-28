@@ -155,7 +155,7 @@ struct AgentEmbeddedConsoleView: View {
         let operations = AgentOperationAggregation.make(
             for: session,
             limit: maximumActivityEntries,
-            includePendingApprovals: actionableApproval == nil
+            includePendingApprovals: actionableApproval == nil && externalPendingApproval == nil
         )
         let timeline = AgentConsoleEntry.make(
             transcript: transcriptEntries,
@@ -183,6 +183,11 @@ struct AgentEmbeddedConsoleView: View {
                     session: session,
                     approvalControl: approvalControl
                 )
+            } else if let approval = externalPendingApproval {
+                AgentConsoleExternalApprovalRow(
+                    approval: approval,
+                    sourceTarget: AgentSourceAssociationResolver.openTarget(for: session)
+                )
             }
         }
         .font(.system(size: 8.5, weight: .medium))
@@ -192,6 +197,17 @@ struct AgentEmbeddedConsoleView: View {
     private var actionableApproval: AgentApprovalControlRequest? {
         let pending = approvalControl.pendingRequest(for: session.id)
         return AgentApprovalPresentation.isActionable(session: session, pending: pending) ? pending : nil
+    }
+
+    private var externalPendingApproval: AgentApproval? {
+        guard case .observed = mode else { return nil }
+        return session.approvals.values
+            .filter { $0.state == .pending }
+            .sorted { lhs, rhs in
+                if lhs.requestedAt != rhs.requestedAt { return lhs.requestedAt < rhs.requestedAt }
+                return lhs.requestID.rawValue < rhs.requestID.rawValue
+            }
+            .first
     }
 
     @ViewBuilder
@@ -359,14 +375,14 @@ private struct AgentConsoleBottomPositionPreferenceKey: PreferenceKey {
     }
 }
 
-private struct AgentConsoleApprovalRow: View {
+struct AgentConsoleApprovalRow: View {
     let request: AgentApprovalControlRequest
     let session: AgentSession
     @ObservedObject var approvalControl: AgentApprovalController
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Label("Approval required", systemImage: "exclamationmark.shield.fill")
+            Label("Waiting for approval", systemImage: "exclamationmark.shield.fill")
                 .font(.system(size: 8, weight: .bold))
                 .foregroundStyle(.orange.opacity(0.92))
             Text(request.summary)
@@ -407,6 +423,44 @@ private struct AgentConsoleApprovalRow: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(session.id.sessionID.provider.stableName.capitalized) approval required")
+    }
+}
+
+private struct AgentConsoleExternalApprovalRow: View {
+    let approval: AgentApproval
+    let sourceTarget: AgentSourceOpenTarget?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label("Approval required", systemImage: "exclamationmark.shield.fill")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(.orange.opacity(0.92))
+            Text(approval.summary)
+                .font(.system(size: 8.5, weight: .medium))
+                .foregroundStyle(.white.opacity(0.78))
+                .lineLimit(3)
+            HStack(spacing: 6) {
+                Text("External session · approve in \(sourceTarget?.displayName ?? "source app")")
+                    .font(.system(size: 7.5, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.42))
+                if let sourceTarget {
+                    Button("Open \(sourceTarget.displayName)") {
+                        _ = AppLaunchService.openApp(bundleIdentifier: sourceTarget.bundleIdentifier)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+                }
+            }
+        }
+        .padding(8)
+        .background(.orange.opacity(0.07))
+        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .stroke(.orange.opacity(0.18), lineWidth: 1)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Approval required in external source application")
     }
 }
 

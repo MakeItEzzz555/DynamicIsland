@@ -18,7 +18,10 @@ final class CodexAppServerClientTests: XCTestCase {
                 }}), flush=True)
             elif method == "initialized":
                 pass
-            elif method in ("thread/start", "thread/resume"):
+            elif method in ("thread/start", "thread/resume", "thread/read"):
+                if method in ("thread/resume", "thread/read") and message.get("params", {}).get("threadId") != "thread-1":
+                    print(json.dumps({"id": request_id, "error": {"code": -1, "message": "wrong thread"}}), flush=True)
+                    continue
                 print(json.dumps({"id": request_id, "result": {
                     "thread": {
                         "id": "thread-1", "cwd": "/tmp/project",
@@ -59,6 +62,9 @@ final class CodexAppServerClientTests: XCTestCase {
         let resumed = try await client.resumeThread(threadID: "thread-1")
         XCTAssertEqual(resumed.id, started.id)
 
+        let inspected = try await client.readThread(threadID: "thread-1")
+        XCTAssertEqual(inspected.id, "thread-1")
+
         let turn = try await client.startTurn(threadID: "thread-1", prompt: "hello")
         XCTAssertEqual(turn.id, "turn-1")
         let startedEvent = await eventTask.value
@@ -66,6 +72,59 @@ final class CodexAppServerClientTests: XCTestCase {
 
         try await client.interrupt(threadID: "thread-1", turnID: "turn-1")
         await client.stop()
+    }
+
+    func testApprovalUsesProviderApprovalIDAndExactResponseToken() async throws {
+        let executable = try makeFakeServer(script: #"""
+        #!/usr/bin/env python3
+        import json, sys
+        for line in sys.stdin:
+            message = json.loads(line)
+            method = message.get("method")
+            request_id = message.get("id")
+            if method == "initialize":
+                print(json.dumps({"id": request_id, "result": {}}), flush=True)
+            elif method == "thread/list":
+                print(json.dumps({"id": request_id, "result": {"data": []}}), flush=True)
+                print(json.dumps({
+                    "id": "rpc-token-7",
+                    "method": "item/commandExecution/requestApproval",
+                    "params": {
+                        "threadId": "thread-exact",
+                        "turnId": "turn-exact",
+                        "itemId": "shared-item",
+                        "approvalId": "approval-exact",
+                        "command": "git status",
+                        "reason": "Inspect repository state"
+                    }
+                }), flush=True)
+            elif request_id == "rpc-token-7":
+                if message.get("result", {}).get("decision") == "accept":
+                    sys.exit(0)
+                sys.exit(8)
+        """#)
+        let client = try CodexAppServerClient(
+            executableURL: executable,
+            requestTimeout: .seconds(2)
+        )
+        let provider = CodexAppServerProvider(client: client)
+        let events = await provider.events()
+        let approvalTask = Task<AgentManagedApprovalRequest?, Never> {
+            for await event in events {
+                if case .approvalRequested(let request) = event { return request }
+            }
+            return nil
+        }
+
+        _ = try await client.listThreads()
+        let received = await approvalTask.value
+        let request = try XCTUnwrap(received)
+        XCTAssertEqual(request.requestID, "approval-exact")
+        XCTAssertEqual(request.threadID, "thread-exact")
+        XCTAssertEqual(request.turnID, "turn-exact")
+        XCTAssertEqual(request.itemID, "shared-item")
+        try await provider.resolveApproval(request, allow: true)
+        await provider.stop()
     }
 
     func testModelListAndTurnModelOverrideUseProviderAuthoritativeSchema() async throws {

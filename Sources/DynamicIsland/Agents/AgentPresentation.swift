@@ -928,22 +928,28 @@ enum AgentOperationAggregation {
         includePendingApprovals: Bool = true
     ) -> [AgentOperationSummary] {
         var operations: [AgentOperationSummary] = []
-        if includePendingApprovals {
-            operations += session.approvals.values
-                .filter { $0.state == .pending }
-                .map {
-                    AgentOperationSummary(
-                        id: "approval:\($0.requestID.rawValue)",
-                        symbol: "checkmark.shield",
-                        title: "Approval requested",
-                        detail: $0.summary,
-                        status: .pending,
-                        count: 1,
-                        date: $0.requestedAt,
-                        isCommand: $0.summary.trimmingCharacters(in: .whitespaces).hasPrefix("$")
-                    )
+        operations += session.approvals.values
+            .filter { includePendingApprovals || $0.state != .pending }
+            .map { approval in
+                let presentation: (title: String, status: AgentOperationStatus) = switch approval.state {
+                case .pending: ("Approval requested", .pending)
+                case .approved: ("Approved", .resolved)
+                case .denied: ("Denied", .resolved)
+                case .cancelled: ("Approval failed", .failed)
+                case .expired: ("Approval expired", .cancelled)
+                case .unknown: ("Approval status unknown", .unknown)
                 }
-        }
+                return AgentOperationSummary(
+                    id: "approval:\(approval.requestID.rawValue)",
+                    symbol: "checkmark.shield",
+                    title: presentation.title,
+                    detail: approval.summary,
+                    status: presentation.status,
+                    count: 1,
+                    date: approval.resolvedAt ?? approval.requestedAt,
+                    isCommand: approval.summary.trimmingCharacters(in: .whitespaces).hasPrefix("$")
+                )
+            }
         operations += session.tools.values.map {
             AgentOperationSummary(
                 id: "tool:\($0.correlationID.rawValue)",

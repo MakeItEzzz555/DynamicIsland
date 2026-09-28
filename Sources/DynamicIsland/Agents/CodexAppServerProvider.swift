@@ -68,6 +68,14 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
         }
     }
 
+    func inspectSession(nativeSessionID: String) async throws -> AgentManagedSessionDescriptor? {
+        let thread = try await client.readThread(threadID: nativeSessionID)
+        guard thread.id == nativeSessionID else {
+            throw CodexAppServerError.invalidResponse("thread/read identity mismatch")
+        }
+        return descriptor(thread)
+    }
+
     func readTranscript(
         nativeSessionID: String,
         limit: Int
@@ -456,7 +464,8 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
                 guard let threadID = params["threadId"]?.stringValue,
                       let turnID = params["turnId"]?.stringValue,
                       let itemID = params["itemId"]?.stringValue,
-                      let requestToken = interactiveRequestToken(id) else { return nil }
+                      let requestToken = interactiveRequestToken(id),
+                      let requestID = approvalRequestIdentity(params: params, token: requestToken) else { return nil }
                 let commandSummary = AgentPrivacyProjection.commandSummary(
                     executable: params["command"]?.stringValue
                 )
@@ -466,6 +475,7 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
                 )
                 return .approvalRequested(AgentManagedApprovalRequest(
                     requestToken: requestToken,
+                    requestID: requestID,
                     kind: .command,
                     threadID: threadID,
                     turnID: turnID,
@@ -477,13 +487,15 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
                 guard let threadID = params["threadId"]?.stringValue,
                       let turnID = params["turnId"]?.stringValue,
                       let itemID = params["itemId"]?.stringValue,
-                      let requestToken = interactiveRequestToken(id) else { return nil }
+                      let requestToken = interactiveRequestToken(id),
+                      let requestID = approvalRequestIdentity(params: params, token: requestToken) else { return nil }
                 let summary = safeProviderMessage(
                     params["reason"]?.stringValue,
                     fallback: "File change approval required"
                 )
                 return .approvalRequested(AgentManagedApprovalRequest(
                     requestToken: requestToken,
+                    requestID: requestID,
                     kind: .fileChange,
                     threadID: threadID,
                     turnID: turnID,
@@ -505,6 +517,25 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
         case .integer(let value): .integer(value)
         default: nil
         }
+    }
+
+    private nonisolated static func approvalRequestIdentity(
+        params: CodexJSONValue,
+        token: AgentInteractiveRequestToken
+    ) -> String? {
+        if let approvalID = params["approvalId"]?.stringValue,
+           !approvalID.isEmpty,
+           approvalID.utf8.count <= AgentDomainLimits.identifierLength {
+            return approvalID
+        }
+        let value: String = switch token {
+        case .string(let value): value
+        case .integer(let value): String(value)
+        }
+        guard !value.isEmpty, value.utf8.count <= AgentDomainLimits.identifierLength else {
+            return nil
+        }
+        return value
     }
 
     private nonisolated static func mapTranscriptItem(

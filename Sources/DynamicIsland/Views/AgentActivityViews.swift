@@ -146,8 +146,19 @@ struct AgentDashboardContentView: View {
                 } else {
                     AgentCLIControlBar(
                         sessions: controlSessions,
-                        managedControl: managedControl
+                        managedControl: managedControl,
+                        approvalControl: approvalControl
                     )
+
+                    if let pending = approvalControl.nextPendingRequest(),
+                       pending.key.session != selectedSession?.id,
+                       let approvalSession = sessions.first(where: { $0.id == pending.key.session }) {
+                        AgentConsoleApprovalRow(
+                            request: pending,
+                            session: approvalSession,
+                            approvalControl: approvalControl
+                        )
+                    }
 
                     if let selectedSession {
                         AgentSelectedSessionControlView(
@@ -185,6 +196,7 @@ struct AgentDashboardContentView: View {
 private struct AgentCLIControlBar: View {
     let sessions: [AgentSession]
     @ObservedObject var managedControl: AgentManagedSessionController
+    @ObservedObject var approvalControl: AgentApprovalController
 
     private var selectedSession: AgentSession? {
         AgentWorkspaceSelection.session(
@@ -229,6 +241,7 @@ private struct AgentCLIControlBar: View {
             if let session = selectedSession {
                 Spacer(minLength: compact ? 2 : 6)
                 modelControl(for: session, compact: compact)
+                approvalPolicyControl(for: session, compact: compact)
                 statusControl(for: session, compact: compact)
 
                 if managedControl.mode(for: session).canInterrupt {
@@ -368,7 +381,8 @@ private struct AgentCLIControlBar: View {
     @ViewBuilder
     private func approvalPolicyControl(for session: AgentSession, compact: Bool) -> some View {
         let provider = session.id.sessionID.provider
-        if managedControl.capabilities(for: provider).contains(.resolveApprovals),
+        if managedControl.isManaged(session),
+           managedControl.capabilities(for: provider).contains(.resolveApprovals),
            session.capabilities.contains(.approvalControl) {
             let policy = managedControl.approvalPolicy(for: session)
             Menu {
@@ -382,26 +396,16 @@ private struct AgentCLIControlBar: View {
                 }
 
                 Button {
-                    managedControl.setApprovalPolicyChoice(.allowTurn, for: session)
+                    managedControl.setApprovalPolicyChoice(.autoApprove, for: session)
                 } label: {
                     Label(
-                        "Allow this turn",
-                        systemImage: isTurnPolicy(policy) ? "checkmark" : "bolt"
-                    )
-                }
-                .disabled(!managedControl.activeManagedSessionIDs.contains(session.id.sessionID))
-
-                Button {
-                    managedControl.setApprovalPolicyChoice(.allowSession, for: session)
-                } label: {
-                    Label(
-                        "Allow this session",
-                        systemImage: policy == .allowSession ? "checkmark" : "bolt.shield"
+                        "Auto approve",
+                        systemImage: policy == .autoApprove ? "checkmark" : "bolt.shield"
                     )
                 }
             } label: {
                 adaptiveLabel(
-                    policy.isAutomatic ? approvalPolicyShortLabel(policy) : "Ask",
+                    policy.isAutomatic ? "Auto" : "Ask",
                     systemImage: policy.isAutomatic ? "bolt.fill" : "hand.raised",
                     compact: compact
                 )
@@ -415,19 +419,6 @@ private struct AgentCLIControlBar: View {
             .menuStyle(.borderlessButton)
             .help(policy.isAutomatic ? "Auto-approval enabled: \(policy.displayName)" : "Approval policy")
             .accessibilityLabel("Approval policy: \(policy.displayName)")
-        }
-    }
-
-    private func isTurnPolicy(_ policy: AgentApprovalPolicyMode) -> Bool {
-        if case .allowTurn = policy { return true }
-        return false
-    }
-
-    private func approvalPolicyShortLabel(_ policy: AgentApprovalPolicyMode) -> String {
-        switch policy {
-        case .askEveryTime: "Ask"
-        case .allowTurn: "Auto · Turn"
-        case .allowSession: "Auto · Session"
         }
     }
 
@@ -601,7 +592,7 @@ private struct AgentSelectedSessionControlView: View {
                 .frame(minHeight: max(detailHeight - 31, 104), maxHeight: .infinity)
             }
             .task(id: session.id) {
-                await managedControl.refreshTranscript(for: session)
+                await managedControl.reconcileObservedSession(session)
             }
         }
     }

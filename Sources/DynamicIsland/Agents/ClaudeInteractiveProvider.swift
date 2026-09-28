@@ -48,6 +48,10 @@ actor ClaudeInteractiveProvider: AgentInteractiveProvider {
             .map { $0 }
     }
 
+    func inspectSession(nativeSessionID: String) async throws -> AgentManagedSessionDescriptor? {
+        knownSessions[nativeSessionID]?.session
+    }
+
     func readAccountUsage() async throws -> AgentUsage { AgentUsage() }
 
     func readTranscript(
