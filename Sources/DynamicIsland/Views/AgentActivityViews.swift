@@ -1153,39 +1153,6 @@ private struct AgentSessionRowContent: View {
                     .lineLimit(2)
             }
 
-            if let actionableApproval {
-                HStack(spacing: 8) {
-                    Button(role: .destructive) {
-                        approvalControl.resolve(
-                            session: session.id,
-                            requestID: actionableApproval.key.requestID,
-                            decision: .deny
-                        )
-                    } label: {
-                        Label("Deny", systemImage: "xmark.circle.fill")
-                    }
-                    .keyboardShortcut(.cancelAction)
-                    .accessibilityHint("Deny this agent permission request once")
-
-                    Button {
-                        approvalControl.resolve(
-                            session: session.id,
-                            requestID: actionableApproval.key.requestID,
-                            decision: .allow
-                        )
-                    } label: {
-                        Label("Approve", systemImage: "checkmark.circle.fill")
-                    }
-                    .keyboardShortcut(.defaultAction)
-                    .accessibilityHint("Approve this agent permission request once")
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .tint(.white.opacity(0.84))
-                .accessibilityElement(children: .contain)
-                .accessibilityLabel("Agent approval controls")
-            }
-
             let operations = AgentOperationAggregation.make(
                 for: session,
                 includePendingApprovals: !(attention && session.state == .waitingForApproval)
@@ -1240,12 +1207,6 @@ private struct AgentSessionRowContent: View {
 
     private var attentionDetail: String {
         AgentSessionPresentation.attentionDetail(for: session)
-    }
-
-    private var actionableApproval: AgentApprovalControlRequest? {
-        guard attention else { return nil }
-        let pending = approvalControl.pendingRequest(for: session.id)
-        return AgentApprovalPresentation.isActionable(session: session, pending: pending) ? pending : nil
     }
 
     private func activityColor(_ status: AgentOperationStatus) -> Color {

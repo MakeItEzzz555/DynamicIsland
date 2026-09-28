@@ -648,64 +648,128 @@ struct AgentConsoleApprovalRow: View {
     let request: AgentApprovalControlRequest
     let session: AgentSession
     @ObservedObject var approvalControl: AgentApprovalController
+    @State private var pulse = false
+
+    private let accent = Color.orange
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Label("Approval required", systemImage: "hand.raised.fill")
-                .font(.system(size: 10.5, weight: .bold))
-                .foregroundStyle(Color(red: 1, green: 0.64, blue: 0.72))
-            Text(request.summary)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.white.opacity(0.84))
-                .lineLimit(3)
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(alignment: .center, spacing: 8) {
+                ZStack {
+                    Circle()
+                        .stroke(accent.opacity(0.5), lineWidth: 2)
+                        .frame(width: 18, height: 18)
+                        .scaleEffect(pulse ? 1.28 : 1)
+                        .opacity(pulse ? 0 : 0.82)
+                    Circle()
+                        .fill(accent)
+                        .frame(width: 11, height: 11)
+                    Image(systemName: "exclamationmark")
+                        .font(.system(size: 6.5, weight: .black))
+                        .foregroundStyle(.white)
+                }
+                .frame(width: 22, height: 22)
 
-            HStack(spacing: 9) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Permission required")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.95))
+                    Text(session.id.sessionID.provider.stableName.capitalized)
+                        .font(.system(size: 8.5, weight: .semibold))
+                        .foregroundStyle(AgentVisualStyle.providerAccent(session.id.sessionID.provider).opacity(0.82))
+                }
+
+                Spacer(minLength: 8)
+
+                if let project = AgentPrivacyProjection.displayProject(session.project).displayName {
+                    Text(project)
+                        .font(.system(size: 8.5, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.34))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+
+            Text(request.summary)
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(.white.opacity(0.78))
+                .lineLimit(3)
+                .textSelection(.enabled)
+
+            HStack(spacing: 8) {
                 Spacer(minLength: 0)
-                Button(role: .destructive) {
-                    approvalControl.resolve(
+
+                Button {
+                    _ = approvalControl.resolve(
                         session: session.id,
                         requestID: request.key.requestID,
                         decision: .deny
                     )
                 } label: {
                     Text("Deny")
-                        .padding(.horizontal, 4)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.82))
+                        .padding(.horizontal, 14)
+                        .frame(height: 28)
+                        .background(.white.opacity(0.07), in: Capsule())
                 }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.cancelAction)
+                .accessibilityHint("Deny this exact permission request")
 
-                Menu {
-                    Button("Approve once") {
-                        approvalControl.resolve(
-                            session: session.id,
-                            requestID: request.key.requestID,
-                            decision: .allow
-                        )
-                    }
+                Button {
+                    _ = approvalControl.resolve(
+                        session: session.id,
+                        requestID: request.key.requestID,
+                        decision: .allow
+                    )
                 } label: {
-                    HStack(spacing: 4) {
+                    HStack(spacing: 5) {
                         Text("Approve")
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 7, weight: .bold))
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 8, weight: .bold))
                     }
+                    .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(.black.opacity(0.88))
-                    .padding(.horizontal, 5)
+                    .padding(.horizontal, 14)
+                    .frame(height: 28)
+                    .background(.white.opacity(0.95), in: Capsule())
                 }
-                .menuStyle(.borderlessButton)
-                .background(.white.opacity(0.92), in: Capsule(style: .continuous))
+                .buttonStyle(.plain)
+                .keyboardShortcut(.defaultAction)
+                .accessibilityHint("Approve this exact permission request once")
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
         }
-        .padding(10)
-        .background(Color(red: 0.48, green: 0.16, blue: 0.26).opacity(0.34))
-        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 11)
+        .background(
+            LinearGradient(
+                colors: [
+                    Color(red: 0.36, green: 0.13, blue: 0.16).opacity(0.72),
+                    Color(red: 0.25, green: 0.10, blue: 0.13).opacity(0.48)
+                ],
+                startPoint: .leading,
+                endPoint: .trailing
+            ),
+            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+        )
         .overlay(alignment: .leading) {
-            Capsule(style: .continuous)
-                .fill(Color(red: 1, green: 0.34, blue: 0.56))
+            RoundedRectangle(cornerRadius: 1.5)
+                .fill(Color(red: 1.0, green: 0.34, blue: 0.42))
                 .frame(width: 3)
-                .padding(.vertical, 7)
+                .padding(.vertical, 5)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(.white.opacity(0.07), lineWidth: 1)
+        }
+        .onAppear {
+            withAnimation(.easeInOut(duration: 1.0).repeatForever(autoreverses: false)) {
+                pulse = true
+            }
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(session.id.sessionID.provider.stableName.capitalized) approval required")
+        .accessibilityLabel("\(session.id.sessionID.provider.stableName.capitalized) permission required")
     }
 }
 

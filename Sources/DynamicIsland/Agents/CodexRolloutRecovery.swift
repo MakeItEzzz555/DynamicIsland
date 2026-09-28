@@ -10,6 +10,8 @@ enum CodexRolloutRecoveryError: Error, Equatable, Sendable {
 
 struct CodexRolloutRecoveryParser: Sendable {
     private(set) var sessionID: String?
+    private(set) var source: AgentSource = .unknown
+    private var commandCallIDs: Set<String> = []
 
     mutating func parse(
         _ record: Data,
@@ -58,6 +60,14 @@ struct CodexRolloutRecoveryParser: Sendable {
                 sequence: sequence
             )
 
+        case "response_item":
+            return try parseResponseItem(
+                payload,
+                providerTimestamp: providerTimestamp,
+                receivedAt: receivedAt,
+                sequence: sequence
+            )
+
         default:
             throw CodexRolloutRecoveryError.unsupportedRecord
         }
@@ -81,6 +91,10 @@ struct CodexRolloutRecoveryParser: Sendable {
         let displayName = cwd.map { URL(fileURLWithPath: $0).lastPathComponent }.flatMap {
             Self.boundedString($0, maximumBytes: AgentDomainLimits.titleLength)
         }
+        let rawSource = Self.boundedString(payload["source"], maximumBytes: 96)
+        let originator = Self.boundedString(payload["originator"], maximumBytes: 96)
+        let sourceApplication = Self.sourceApplication(rawSource: rawSource, originator: originator)
+        source = Self.agentSource(rawSource: rawSource, originator: originator)
         let git = payload["git"] as? [String: Any]
         let branch = Self.boundedString(git?["branch"], maximumBytes: AgentDomainLimits.summaryLength)
         let commit = Self.boundedString(git?["commit_hash"], maximumBytes: AgentDomainLimits.identifierLength)
@@ -91,7 +105,7 @@ struct CodexRolloutRecoveryParser: Sendable {
             gitBranch: branch,
             gitCommit: commit,
             model: nil,
-            sourceApplication: nil
+            sourceApplication: sourceApplication
         )
         let start = event(
             nativeID: nativeID,
@@ -313,6 +327,117 @@ struct CodexRolloutRecoveryParser: Sendable {
         }
     }
 
+
+    private mutating func parseResponseItem(
+        _ payload: [String: Any],
+        providerTimestamp: Date?,
+        receivedAt: Date,
+        sequence: UInt64?
+    ) throws -> [AgentIngestionEvent] {
+        guard let nativeID = sessionID else { throw CodexRolloutRecoveryError.missingSession }
+        guard let itemType = Self.boundedString(payload["type"], maximumBytes: 96) else {
+            throw CodexRolloutRecoveryError.malformedRecord
+        }
+        let turnID = Self.boundedString(
+            (payload["internal_chat_message_metadata_passthrough"] as? [String: Any])?["turn_id"],
+            maximumBytes: AgentDomainLimits.identifierLength
+        )
+
+        switch itemType {
+        case "function_call", "custom_tool_call":
+            guard let callID = Self.boundedString(payload["call_id"], maximumBytes: AgentDomainLimits.identifierLength),
+                  let name = Self.boundedString(payload["name"], maximumBytes: AgentDomainLimits.summaryLength) else {
+                throw CodexRolloutRecoveryError.malformedRecord
+            }
+            let correlation = AgentCorrelationID(rawValue: callID)
+            if name == "exec_command" {
+                commandCallIDs.insert(callID)
+                let executable = Self.commandExecutable(from: payload["arguments"])
+                return [event(
+                    nativeID: nativeID,
+                    type: .commandStarted,
+                    providerTimestamp: providerTimestamp,
+                    receivedAt: receivedAt,
+                    sequence: sequence,
+                    correlationID: correlation,
+                    payload: .command(AgentCommandEvent(
+                        executable: executable ?? "command",
+                        success: nil,
+                        exitCode: nil
+                    )),
+                    discriminator: "response-command-start-\(turnID ?? "")"
+                )]
+            }
+            return [event(
+                nativeID: nativeID,
+                type: .toolStarted,
+                providerTimestamp: providerTimestamp,
+                receivedAt: receivedAt,
+                sequence: sequence,
+                correlationID: correlation,
+                payload: .tool(AgentToolEvent(
+                    name: name,
+                    category: itemType == "custom_tool_call" ? "custom" : "tool",
+                    summary: nil,
+                    success: nil
+                )),
+                discriminator: "response-tool-start-\(turnID ?? "")"
+            )]
+
+        case "function_call_output", "custom_tool_call_output":
+            guard let callID = Self.boundedString(payload["call_id"], maximumBytes: AgentDomainLimits.identifierLength) else {
+                throw CodexRolloutRecoveryError.malformedRecord
+            }
+            let correlation = AgentCorrelationID(rawValue: callID)
+            let rawOutput = payload["output"] as? String
+            let outputForClassification = rawOutput.flatMap {
+                $0.utf8.count <= 16_384 ? $0 : nil
+            }
+            let exitCode = Self.exitCode(from: outputForClassification)
+            // Pair output with the exact call kind remembered from its start.
+            // This avoids guessing command-vs-tool from provider output text.
+            if commandCallIDs.remove(callID) != nil {
+                return [event(
+                    nativeID: nativeID,
+                    type: .commandCompleted,
+                    providerTimestamp: providerTimestamp,
+                    receivedAt: receivedAt,
+                    sequence: sequence,
+                    correlationID: correlation,
+                    payload: .command(AgentCommandEvent(
+                        executable: nil,
+                        success: exitCode.map { $0 == 0 },
+                        exitCode: exitCode
+                    )),
+                    discriminator: "response-command-end-\(turnID ?? "")"
+                )]
+            }
+            return [event(
+                nativeID: nativeID,
+                type: .toolCompleted,
+                providerTimestamp: providerTimestamp,
+                receivedAt: receivedAt,
+                sequence: sequence,
+                correlationID: correlation,
+                payload: .tool(AgentToolEvent(
+                    name: nil,
+                    category: nil,
+                    summary: nil,
+                    success: true
+                )),
+                discriminator: "response-tool-end-\(turnID ?? "")"
+            )]
+
+        case "message", "reasoning":
+            // Deliberately do not ingest raw message/reasoning text from local
+            // recovery. Live/managed transcript content has a separate path.
+            throw CodexRolloutRecoveryError.unsupportedRecord
+
+        default:
+            throw CodexRolloutRecoveryError.unsupportedRecord
+        }
+    }
+
     private func event(
         nativeID: String,
         type: AgentEventType,
@@ -334,7 +459,7 @@ struct CodexRolloutRecoveryParser: Sendable {
             schemaVersion: AgentEvent.normalizedSchemaVersion,
             eventID: AgentEventID(rawValue: "codex-rollout-" + Self.digest(eventIdentity)),
             provider: .codex,
-            source: .unknown,
+            source: source,
             nativeSessionID: nativeID,
             assertedGeneration: nil,
             type: type,
@@ -420,6 +545,67 @@ struct CodexRolloutRecoveryParser: Sendable {
         }
     }
 
+
+    private static func agentSource(rawSource: String?, originator: String?) -> AgentSource {
+        let combined = [rawSource, originator].compactMap { $0?.lowercased() }.joined(separator: " ")
+        if combined.contains("vscode") { return .vscode }
+        if combined.contains("jetbrains") { return .jetbrains }
+        if combined.contains("desktop") { return .desktopApp }
+        if combined.contains("cloud") { return .cloud }
+        if combined.contains("cli") || combined.contains("tui") || combined.contains("terminal") {
+            return .terminal
+        }
+        return .unknown
+    }
+
+    private static func sourceApplication(rawSource: String?, originator: String?) -> AgentSourceApplication? {
+        switch agentSource(rawSource: rawSource, originator: originator) {
+        case .vscode:
+            return AgentSourceApplication(
+                displayName: "Visual Studio Code",
+                bundleIdentifier: "com.microsoft.VSCode"
+            )
+        case .jetbrains:
+            return AgentSourceApplication(displayName: "JetBrains", bundleIdentifier: nil)
+        case .desktopApp:
+            return AgentSourceApplication(displayName: "Codex Desktop", bundleIdentifier: nil)
+        case .terminal:
+            return AgentSourceApplication(displayName: "Terminal / Codex CLI", bundleIdentifier: nil)
+        case .cloud:
+            return AgentSourceApplication(displayName: "Codex Cloud", bundleIdentifier: nil)
+        case .mcp:
+            return AgentSourceApplication(displayName: "MCP", bundleIdentifier: nil)
+        case .unknown:
+            return nil
+        }
+    }
+
+    private static func commandExecutable(from value: Any?) -> String? {
+        guard let raw = value as? String,
+              raw.utf8.count <= 16_384,
+              let data = raw.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        let command = (object["cmd"] as? String) ?? (object["command"] as? String)
+        guard let command else { return nil }
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let token = trimmed.split(whereSeparator: { $0.isWhitespace }).first.map(String.init)
+        return token.flatMap { boundedString($0, maximumBytes: AgentDomainLimits.summaryLength) }
+    }
+
+    private static func exitCode(from output: String?) -> Int? {
+        guard let output else { return nil }
+        for marker in ["Process exited with code ", "Exit code: "] {
+            guard let range = output.range(of: marker) else { continue }
+            let suffix = output[range.upperBound...]
+            let number = suffix.prefix { $0 == "-" || $0.isNumber }
+            if let value = Int(number) { return value }
+        }
+        return nil
+    }
+
     private static func parseDate(_ value: String?) -> Date? {
         guard let value else { return nil }
         let fractional = ISO8601DateFormatter()
@@ -468,7 +654,26 @@ actor CodexRolloutRecoveryAdapter {
     ) async -> Bool {
         guard let producer else { return false }
         if tailers[fileURL] != nil { return true }
-        parsers[fileURL] = CodexRolloutRecoveryParser()
+
+        // AgentNotch discovers identity from the session_meta near the start of
+        // each rollout before it tails recent activity. Do the same here so a
+        // large rollout can still bind bounded catch-up records to the exact
+        // native thread even when session_meta is far outside the tail window.
+        var parser = CodexRolloutRecoveryParser()
+        if let bootstrap = Self.bootstrapSessionMetaRecord(fileURL: fileURL) {
+            do {
+                let events = try parser.parse(bootstrap)
+                let result = await coordinator.ingestAtomically(events, from: producer)
+                if case .failure = result { return false }
+            } catch {
+                _ = await coordinator.updateHealth(.degraded, error: .schemaMismatch, for: producer)
+                return false
+            }
+        } else {
+            _ = await coordinator.updateHealth(.degraded, error: .schemaMismatch, for: producer)
+            return false
+        }
+        parsers[fileURL] = parser
         let owner = self
         let tailer = AppendOnlyRecordTailer(
             fileURL: fileURL,
@@ -484,6 +689,26 @@ actor CodexRolloutRecoveryAdapter {
         tailers[fileURL] = tailer
         await tailer.start()
         return true
+    }
+
+
+    nonisolated static func bootstrapSessionMetaRecord(
+        fileURL: URL,
+        maximumBytes: Int = 16 * 1024
+    ) -> Data? {
+        guard maximumBytes > 0,
+              let handle = try? FileHandle(forReadingFrom: fileURL) else { return nil }
+        defer { try? handle.close() }
+        let data = handle.readData(ofLength: maximumBytes)
+        guard !data.isEmpty else { return nil }
+        for line in data.split(separator: 0x0A, omittingEmptySubsequences: true) {
+            let record = Data(line)
+            guard record.count <= AppendOnlyRecordLimits.maximumRecordBytes,
+                  let object = try? JSONSerialization.jsonObject(with: record) as? [String: Any],
+                  object["type"] as? String == "session_meta" else { continue }
+            return record
+        }
+        return nil
     }
 
     func detach(fileURL: URL) async {

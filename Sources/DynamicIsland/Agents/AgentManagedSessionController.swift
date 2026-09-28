@@ -457,10 +457,7 @@ final class AgentManagedSessionController: ObservableObject {
             displayName: descriptor.cwd.map { URL(fileURLWithPath: $0).lastPathComponent },
             workingDirectory: descriptor.cwd,
             model: descriptor.model,
-            sourceApplication: AgentSourceApplication(
-                displayName: providerName(descriptor.provider),
-                bundleIdentifier: nil
-            )
+            sourceApplication: nil
         )
     }
 
@@ -622,7 +619,9 @@ final class AgentManagedSessionController: ObservableObject {
                 self.markManaged(descriptor)
                 self.verifiedAttachmentSessionIDs.insert(sessionID)
                 self.attachmentErrors.removeValue(forKey: sessionID)
-                _ = await self.emitSessionAvailability(descriptor, type: .sessionResumed)
+                if let instance = await self.emitSessionAvailability(descriptor, type: .sessionResumed) {
+                    self.selectSession(instance)
+                }
             } catch {
                 self.verifiedAttachmentSessionIDs.remove(sessionID)
                 self.attachmentErrors[sessionID] = "Official thread could not be attached"

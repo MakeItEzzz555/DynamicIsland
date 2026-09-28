@@ -95,6 +95,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         integrationRouter: agentIntegrationRouter,
         approvals: agentApprovalControl
     )
+    private lazy var codexRolloutMonitor = CodexRolloutSessionMonitor(
+        coordinator: agentIngestion
+    )
     private lazy var agentManagedControl: AgentManagedSessionController = {
         var providers: [any AgentInteractiveProvider] = []
         if let codex = try? CodexAppServerProvider.makeDefault() { providers.append(codex) }
@@ -179,6 +182,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         installLiveActivityObservers()
         installAgentActivityObservers()
+        Task { [codexRolloutMonitor] in
+            await codexRolloutMonitor.start()
+        }
 
         menuController = MenuBarController(
             settings: settings,
@@ -212,6 +218,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #endif
         agentBridge.stop()
         agentManagedControl.stop()
+        Task { [codexRolloutMonitor] in
+            await codexRolloutMonitor.stop()
+        }
         if let eventMonitor {
             NSEvent.removeMonitor(eventMonitor)
         }

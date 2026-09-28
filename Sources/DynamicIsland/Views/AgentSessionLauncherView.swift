@@ -336,17 +336,31 @@ struct AgentLocalRepositoryChoice: Identifiable, Equatable {
 }
 
 enum AgentSessionLauncherProjection {
-    static func liveSessions(_ sessions: [AgentSession], query: String) -> [AgentSession] {
+    static func liveSessions(
+        _ sessions: [AgentSession],
+        query: String,
+        now: Date = Date(),
+        recentObservedWindow: TimeInterval = 300
+    ) -> [AgentSession] {
         sessions.filter { session in
+            let recentOpenObservation =
+                session.endedAt == nil &&
+                now.timeIntervalSince(session.lastUpdatedAt) <= recentObservedWindow
             let relevant: Bool
             switch session.state {
             case .working, .runningTool, .runningCommand, .thinking, .planning,
                  .planReady, .waitingForApproval, .waitingForUser:
                 relevant = true
             case .idle, .completed, .failed, .interrupted:
-                relevant = session.availability == .resumable
+                // A completed turn does not close the Codex thread. Keep a
+                // recently observed VS Code/CLI thread selectable just like
+                // AgentNotch's five-minute rollout window.
+                relevant = session.availability == .resumable || recentOpenObservation
             }
-            guard relevant else { return false }
+            // The unfiltered launcher stays intentionally small, but an
+            // explicit search must be able to recover an older exact thread
+            // (for example an idle session still open in VS Code).
+            guard relevant || !query.isEmpty else { return false }
             guard !query.isEmpty else { return true }
             let project = AgentPrivacyProjection.displayProject(session.project)
             return [

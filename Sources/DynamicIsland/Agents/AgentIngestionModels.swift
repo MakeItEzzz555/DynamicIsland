@@ -208,10 +208,14 @@ struct AgentProducerPolicy: Equatable, Sendable {
 
     static let codexStructuredRecovery = AgentProducerPolicy(
         allowedProviders: [.codex],
-        allowedSources: [.unknown],
+        // Rollout session_meta carries the real client surface. Preserve it so
+        // an active VS Code/CLI thread is searchable and attributable without
+        // granting that source any managed-control authority.
+        allowedSources: [.unknown, .terminal, .vscode, .jetbrains, .desktopApp, .cloud],
         allowedSourceKinds: [.structuredRecovery],
         allowedEventTypes: [
             .sessionStarted, .sessionResumed, .sessionMetadataUpdated, .agentWorking,
+            .toolStarted, .toolCompleted, .commandStarted, .commandCompleted,
             .usageUpdated, .capabilitiesUpdated, .projectContextUpdated,
             .taskCompleted, .interrupted, .heartbeat
         ],
@@ -219,8 +223,8 @@ struct AgentProducerPolicy: Equatable, Sendable {
             ($0, AgentEvidenceAuthority.localStructuredRecord)
         }),
         allowedCapabilities: [
-            .sessionLifecycle, .taskLifecycle, .tokenUsage, .contextUsage,
-            .modelMetadata, .projectContext, .gitMetadata
+            .sessionLifecycle, .toolLifecycle, .commandLifecycle, .taskLifecycle,
+            .tokenUsage, .contextUsage, .modelMetadata, .projectContext, .gitMetadata
         ],
         allowedSchemaVersions: [AgentEvent.normalizedSchemaVersion]
     )
