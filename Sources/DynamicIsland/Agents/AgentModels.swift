@@ -755,6 +755,8 @@ enum AgentAttentionPolicyEngine {
         }
 
         let presentationStyle = items.map { Self.style(for: $0.reason) }.max(by: styleRank) ?? Self.style(for: event.reason)
+        let duration = items.map { peekDuration(for: $0.reason, fallback: options.peekDuration) }.max()
+            ?? peekDuration(for: event.reason, fallback: options.peekDuration)
         return AgentAttentionPresentation(
             generation: generation,
             items: items,
@@ -762,8 +764,22 @@ enum AgentAttentionPolicyEngine {
             style: presentationStyle,
             createdAt: createdAt,
             updatedAt: now,
-            retractAt: now.addingTimeInterval(max(0.1, options.peekDuration))
+            retractAt: now.addingTimeInterval(duration)
         )
+    }
+
+    private static func peekDuration(
+        for reason: AgentAttentionReason,
+        fallback: TimeInterval
+    ) -> TimeInterval {
+        switch reason {
+        case .approvalRequired, .userInputRequired:
+            5.0
+        case .completed, .planReady, .interrupted:
+            3.0
+        case .failed:
+            5.0
+        }
     }
 
     private static func reconcileBadges(

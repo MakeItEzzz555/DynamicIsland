@@ -85,22 +85,24 @@ public struct CollapsedPresentationProfile: Equatable, Sendable {
             heightDelta: 2,
             bottomCornerRadius: 16,
             horizontalContentInset: 10,
-            glowStrength: 0.16
+            glowStrength: 1.0
         )
     }
 
     public static func agentAttention(leftContentWidth: CGFloat, rightContentWidth: CGFloat) -> Self {
+        // AgentNotch parity: a transient notification peek grows the closed
+        // notch by +200pt horizontally and +60pt vertically.
         Self(
             kind: .agentAttention,
             contentProfile: CollapsedActivityLayoutProfile(
                 leftContentWidth: leftContentWidth,
                 rightContentWidth: rightContentWidth
             ),
-            widthDelta: 34,
-            heightDelta: 4,
-            bottomCornerRadius: 19,
-            horizontalContentInset: 12,
-            glowStrength: 0.62
+            widthDelta: 200,
+            heightDelta: 60,
+            bottomCornerRadius: 24,
+            horizontalContentInset: 16,
+            glowStrength: 1.0
         )
     }
 

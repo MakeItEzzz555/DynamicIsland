@@ -68,7 +68,7 @@ final class IslandShellRadiiTests: XCTestCase {
                     rightContentWidth: 110
                 ).bottomCornerRadius
             ),
-            IslandShellRadii(top: 6, bottom: 19)
+            IslandShellRadii(top: 6, bottom: 24)
         )
         XCTAssertEqual(
             IslandShellRadii.interpolated(progress: 1, isNotchIntegrated: true, collapsedBottom: 19),
@@ -86,6 +86,6 @@ final class IslandShellRadiiTests: XCTestCase {
 
         XCTAssertEqual(IslandContentTransitionTiming.shellDuration(settings: settings, reduceMotion: true), 0.24)
         XCTAssertEqual(profile.kind, .agentAttention)
-        XCTAssertEqual(profile.heightDelta, 4)
+        XCTAssertEqual(profile.heightDelta, 60)
     }
 }

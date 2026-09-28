@@ -530,6 +530,49 @@ final class AgentAttentionPolicyTests: XCTestCase {
         XCTAssertNotNil(allowed.soundIntent)
     }
 
+
+    func testAgentNotchPeekDurationsAreReasonSpecific() throws {
+        let now = Date(timeIntervalSince1970: 450)
+        let approval = AgentAttentionPolicyEngine.apply(
+            events: [attention("approval-duration", reason: .approvalRequired, priority: .approvalRequired, at: now)],
+            sessions: [],
+            now: now,
+            state: AgentAttentionPolicyState(),
+            options: AgentAttentionPolicyOptions(peekDuration: 9)
+        )
+        XCTAssertEqual(
+            try XCTUnwrap(approval.state.presentation?.retractAt).timeIntervalSince(now),
+            5,
+            accuracy: 0.001
+        )
+
+        let completion = AgentAttentionPolicyEngine.apply(
+            events: [attention("completion-duration", reason: .completed, priority: .completed, at: now)],
+            sessions: [],
+            now: now,
+            state: AgentAttentionPolicyState(),
+            options: AgentAttentionPolicyOptions(peekDuration: 9)
+        )
+        XCTAssertEqual(
+            try XCTUnwrap(completion.state.presentation?.retractAt).timeIntervalSince(now),
+            3,
+            accuracy: 0.001
+        )
+
+        let failure = AgentAttentionPolicyEngine.apply(
+            events: [attention("failure-duration", reason: .failed, priority: .failure, at: now)],
+            sessions: [],
+            now: now,
+            state: AgentAttentionPolicyState(),
+            options: AgentAttentionPolicyOptions(peekDuration: 9)
+        )
+        XCTAssertEqual(
+            try XCTUnwrap(failure.state.presentation?.retractAt).timeIntervalSince(now),
+            5,
+            accuracy: 0.001
+        )
+    }
+
     func testApprovalCreatesPersistentBadgeWhileCompletionDoesNot() {
         let now = Date(timeIntervalSince1970: 500)
         var state = AgentAttentionPolicyState()
@@ -566,6 +609,95 @@ final class AgentAttentionPolicyTests: XCTestCase {
             priority: priority,
             timestamp: date,
             displaySummary: id
+        )
+    }
+}
+
+@MainActor
+final class AgentAttentionCoordinatorTests: XCTestCase {
+    func testCompletionIsDebouncedForOneSecondBeforeThreeSecondPeek() async throws {
+        let coordinator = AgentAttentionCoordinator()
+        let now = Date()
+        let session = session(state: .completed, now: now)
+        let event = attention(
+            id: "completed-once",
+            session: session.id,
+            reason: .completed,
+            priority: .completed,
+            now: now
+        )
+
+        coordinator.synchronize(attentionEvents: [event], sessions: [session], now: now)
+        XCTAssertNil(coordinator.presentation)
+
+        try await Task.sleep(for: .milliseconds(1_100))
+
+        let presentation = try XCTUnwrap(coordinator.presentation)
+        XCTAssertEqual(presentation.primary?.eventID.rawValue, "completed-once")
+        XCTAssertGreaterThan(presentation.retractAt.timeIntervalSince(Date()), 2.5)
+        XCTAssertLessThanOrEqual(presentation.retractAt.timeIntervalSince(Date()), 3.1)
+    }
+
+    func testCompletionDebounceCancelsPresentationWhenSessionBecomesActiveAgain() async throws {
+        let coordinator = AgentAttentionCoordinator()
+        let now = Date()
+        let completed = session(state: .completed, now: now)
+        let event = attention(
+            id: "completed-stale",
+            session: completed.id,
+            reason: .completed,
+            priority: .completed,
+            now: now
+        )
+
+        coordinator.synchronize(attentionEvents: [event], sessions: [completed], now: now)
+        var active = completed
+        active.state = .working
+        active.lastUpdatedAt = now.addingTimeInterval(0.2)
+        coordinator.synchronize(attentionEvents: [event], sessions: [active], now: now.addingTimeInterval(0.2))
+
+        try await Task.sleep(for: .milliseconds(1_100))
+        XCTAssertNil(coordinator.presentation)
+    }
+
+    private func session(state: AgentState, now: Date) -> AgentSession {
+        AgentSession(
+            id: AgentSessionInstanceID(
+                sessionID: AgentSessionID(provider: .codex, nativeID: "attention-session"),
+                generation: AgentSessionGeneration(rawValue: 1)
+            ),
+            source: .terminal,
+            state: state,
+            project: AgentProjectContext(displayName: "DynamicIsland"),
+            capabilities: AgentCapabilities(),
+            usage: AgentUsage(),
+            tools: [:],
+            commands: [:],
+            approvals: [:],
+            subagents: [:],
+            recentActivity: [],
+            startedAt: now.addingTimeInterval(-10),
+            endedAt: nil,
+            lastUpdatedAt: now,
+            availability: .loaded
+        )
+    }
+
+    private func attention(
+        id: String,
+        session: AgentSessionInstanceID,
+        reason: AgentAttentionReason,
+        priority: AgentAttentionPriority,
+        now: Date
+    ) -> AgentAttentionEvent {
+        AgentAttentionEvent(
+            eventID: AgentEventID(rawValue: id),
+            session: session,
+            source: .terminal,
+            reason: reason,
+            priority: priority,
+            timestamp: now,
+            displaySummary: "Task complete"
         )
     }
 }

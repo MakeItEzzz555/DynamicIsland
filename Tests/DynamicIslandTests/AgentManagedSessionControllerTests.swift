@@ -628,8 +628,11 @@ final class AgentManagedSessionControllerTests: XCTestCase {
         let started = await controller.startNewSession(cwd: "/tmp/DynamicIsland")
         XCTAssertEqual(started?.model, "model-b")
         let startedModels = await provider.startedSessionModels()
+        let startedCWDs = await provider.startedSessionCWDs()
         XCTAssertEqual(startedModels, ["model-b"])
+        XCTAssertEqual(startedCWDs, ["/tmp/DynamicIsland"])
         XCTAssertEqual(store.sessions.count, 1)
+        XCTAssertEqual(controller.selectedSessionID?.sessionID.nativeID, started?.nativeSessionID)
 
         await provider.setStartFailure(true)
         let before = store.sessions.count
@@ -1468,6 +1471,7 @@ private actor PersistentSnapshotFakeProvider: AgentInteractiveProvider {
     private var submitFailure = false
     private var startFailure = false
     private var startedModels: [String?] = []
+    private var startedCWDs: [String?] = []
     private var approvalResolutionFailure = false
     private var approvalDecisionLog: [String] = []
     private var interruptFailure = false
@@ -1573,6 +1577,7 @@ private actor PersistentSnapshotFakeProvider: AgentInteractiveProvider {
     func startSession(cwd: String?, model: String?) async throws -> AgentManagedSessionDescriptor {
         if startFailure { throw CodexAppServerError.rpcError(code: -1, message: "start failed") }
         startedModels.append(model)
+        startedCWDs.append(cwd)
         let nativeID = "started-\(startedModels.count)"
         return AgentManagedSessionDescriptor(
             provider: provider,
@@ -1589,6 +1594,10 @@ private actor PersistentSnapshotFakeProvider: AgentInteractiveProvider {
 
     func startedSessionModels() -> [String?] {
         startedModels
+    }
+
+    func startedSessionCWDs() -> [String?] {
+        startedCWDs
     }
 
     func resumeSession(

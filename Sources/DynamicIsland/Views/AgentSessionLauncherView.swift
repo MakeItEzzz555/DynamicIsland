@@ -1,0 +1,360 @@
+import AppKit
+import SwiftUI
+
+struct AgentSessionLauncherView: View {
+    let sessions: [AgentSession]
+    @ObservedObject var managedControl: AgentManagedSessionController
+    let onSelectSession: (AgentSessionInstanceID) -> Void
+    let onDismiss: () -> Void
+
+    @State private var query = ""
+    @State private var selectedRepositoryPath: String?
+    @State private var starting = false
+
+    private var liveSessions: [AgentSession] {
+        AgentSessionLauncherProjection.liveSessions(sessions, query: query)
+    }
+
+    private var repositories: [AgentLocalRepositoryChoice] {
+        AgentSessionLauncherProjection.repositories(sessions, query: query)
+    }
+
+    private var selectedProvider: AgentProvider {
+        managedControl.managedProvider ?? managedControl.managedProviders.first ?? .codex
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 7) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.white.opacity(0.38))
+                TextField("Search sessions or local repositories", text: $query)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 10.5, weight: .medium))
+                Button(action: onDismiss) {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.white.opacity(0.38))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 9)
+            .frame(height: 30)
+            .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+            ScrollView(.vertical, showsIndicators: true) {
+                LazyVStack(alignment: .leading, spacing: 4) {
+                    launcherSectionTitle("LIVE SESSIONS")
+                    if liveSessions.isEmpty {
+                        launcherEmpty("No matching live or resumable sessions")
+                    } else {
+                        ForEach(liveSessions, id: \.id) { session in
+                            liveSessionRow(session)
+                        }
+                    }
+
+                    launcherSectionTitle("OPEN REPOSITORY")
+                        .padding(.top, 6)
+
+                    ForEach(repositories) { repo in
+                        repositoryRow(repo)
+                    }
+
+                    Button {
+                        chooseRepository()
+                    } label: {
+                        Label("Choose local repository…", systemImage: "folder.badge.plus")
+                            .font(.system(size: 9.5, weight: .semibold))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 8)
+                            .frame(height: 30)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.white.opacity(0.64))
+                }
+                .padding(.vertical, 2)
+            }
+            .frame(maxHeight: 205)
+
+            if let path = selectedRepositoryPath {
+                Divider().overlay(.white.opacity(0.055))
+                newSessionControls(path: path)
+            }
+        }
+        .padding(9)
+        .background(Color.black.opacity(0.96), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .stroke(.white.opacity(0.11), lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.55), radius: 12, y: 5)
+        .onExitCommand(perform: onDismiss)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Agent session and repository launcher")
+    }
+
+    private func launcherSectionTitle(_ title: String) -> some View {
+        Text(title)
+            .font(.system(size: 7.5, weight: .bold))
+            .foregroundStyle(.white.opacity(0.32))
+            .tracking(0.7)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+    }
+
+    private func launcherEmpty(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 9, weight: .medium))
+            .foregroundStyle(.white.opacity(0.30))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
+    }
+
+    private func liveSessionRow(_ session: AgentSession) -> some View {
+        let project = AgentPrivacyProjection.displayProject(session.project)
+        let source = project.sourceApplicationName ?? session.source.rawValue
+        let model = project.model ?? "model unavailable"
+        let branch = project.gitBranch
+        return Button {
+            onSelectSession(session.id)
+            onDismiss()
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: AgentVisualStyle.providerSymbol(session.id.sessionID.provider))
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(AgentVisualStyle.providerAccent(session.id.sessionID.provider))
+                    .frame(width: 18)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(project.displayName ?? AgentSessionPresentation.primaryTitle(for: session))
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.88))
+                        .lineLimit(1)
+                    Text("\(source) · \(model) · \(AgentSessionPresentation.displayedStateLabel(for: session, at: Date()))")
+                        .font(.system(size: 8.5, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.40))
+                        .lineLimit(1)
+                    HStack(spacing: 5) {
+                        if let branch, !branch.isEmpty {
+                            Label(branch, systemImage: "arrow.triangle.branch")
+                                .lineLimit(1)
+                        }
+                        Spacer(minLength: 4)
+                        Text("…\(session.id.sessionID.nativeID.suffix(4))")
+                            .fontDesign(.monospaced)
+                    }
+                    .font(.system(size: 8, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.30))
+                }
+                Spacer(minLength: 4)
+                if managedControl.isManaged(session) {
+                    Image(systemName: "link.circle.fill")
+                        .foregroundStyle(.green.opacity(0.68))
+                        .help("Managed by DynamicIsland")
+                } else {
+                    Image(systemName: "eye")
+                        .foregroundStyle(.white.opacity(0.30))
+                        .help("Observed externally")
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(.white.opacity(0.025), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+    }
+
+    private func repositoryRow(_ repo: AgentLocalRepositoryChoice) -> some View {
+        Button {
+            selectedRepositoryPath = repo.path
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: selectedRepositoryPath == repo.path ? "folder.fill" : "folder")
+                    .foregroundStyle(selectedRepositoryPath == repo.path ? .cyan.opacity(0.8) : .white.opacity(0.42))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(repo.name)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.82))
+                    HStack(spacing: 5) {
+                        if let branch = repo.branch {
+                            Label(branch, systemImage: "arrow.triangle.branch")
+                        }
+                        Text(repo.path)
+                            .truncationMode(.middle)
+                    }
+                    .font(.system(size: 8, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.28))
+                    .lineLimit(1)
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 8)
+            .frame(minHeight: 34)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(
+            selectedRepositoryPath == repo.path ? Color.white.opacity(0.065) : .clear,
+            in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+        )
+    }
+
+    private func newSessionControls(path: String) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack {
+                Label(URL(fileURLWithPath: path).lastPathComponent, systemImage: "plus.circle.fill")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.82))
+                Spacer()
+                Text("New Agent Session")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.34))
+            }
+
+            HStack(spacing: 5) {
+                ForEach(managedControl.managedProviders, id: \.self) { provider in
+                    Button {
+                        managedControl.selectProvider(provider)
+                    } label: {
+                        Label(provider.stableName.capitalized, systemImage: AgentVisualStyle.providerSymbol(provider))
+                            .font(.system(size: 8.5, weight: .semibold))
+                            .padding(.horizontal, 7)
+                            .frame(height: 24)
+                            .background(
+                                provider == selectedProvider ? Color.white.opacity(0.11) : Color.white.opacity(0.035),
+                                in: Capsule()
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            let models = managedControl.availableModels(for: selectedProvider)
+            if !models.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 5) {
+                        modelChoice("Default", model: nil)
+                        ForEach(models) { option in
+                            modelChoice(option.displayName, model: option.model)
+                        }
+                    }
+                }
+                .scrollBounceBehavior(.basedOnSize)
+            }
+
+            Button {
+                guard !starting else { return }
+                starting = true
+                Task { @MainActor in
+                    let descriptor = await managedControl.startNewSession(cwd: path)
+                    starting = false
+                    if descriptor != nil { onDismiss() }
+                }
+            } label: {
+                Label(starting ? "Starting…" : "Start in repository", systemImage: "terminal.fill")
+                    .font(.system(size: 9.5, weight: .bold))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 29)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.black.opacity(0.88))
+            .background(.white.opacity(starting ? 0.55 : 0.92), in: RoundedRectangle(cornerRadius: 7))
+            .disabled(starting || !managedControl.interactiveCapabilities.contains(.startSession))
+        }
+    }
+
+    private func modelChoice(_ title: String, model: String?) -> some View {
+        let selected = managedControl.newSessionModel(for: selectedProvider) == model
+        return Button {
+            _ = managedControl.selectNewSessionModel(model, for: selectedProvider)
+        } label: {
+            Text(title)
+                .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                .foregroundStyle(.white.opacity(selected ? 0.86 : 0.46))
+                .padding(.horizontal, 7)
+                .frame(height: 22)
+                .background(.white.opacity(selected ? 0.09 : 0.025), in: Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func chooseRepository() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Use Repository"
+        panel.message = "Choose a local repository or project folder for the new agent session."
+        if panel.runModal() == .OK, let url = panel.url {
+            selectedRepositoryPath = url.path
+        }
+    }
+
+
+}
+
+struct AgentLocalRepositoryChoice: Identifiable, Equatable {
+    let path: String
+    let name: String
+    let branch: String?
+
+    var id: String { path }
+}
+
+enum AgentSessionLauncherProjection {
+    static func liveSessions(_ sessions: [AgentSession], query: String) -> [AgentSession] {
+        sessions.filter { session in
+            let relevant: Bool
+            switch session.state {
+            case .working, .runningTool, .runningCommand, .thinking, .planning,
+                 .planReady, .waitingForApproval, .waitingForUser:
+                relevant = true
+            case .idle, .completed, .failed, .interrupted:
+                relevant = session.availability == .resumable
+            }
+            guard relevant else { return false }
+            guard !query.isEmpty else { return true }
+            let project = AgentPrivacyProjection.displayProject(session.project)
+            return [
+                project.displayName,
+                project.gitBranch,
+                project.model,
+                project.sourceApplicationName,
+                session.id.sessionID.provider.stableName,
+                session.id.sessionID.nativeID
+            ].compactMap { $0 }.contains { $0.localizedCaseInsensitiveContains(query) }
+        }
+        .sorted { lhs, rhs in
+            if lhs.lastUpdatedAt != rhs.lastUpdatedAt { return lhs.lastUpdatedAt > rhs.lastUpdatedAt }
+            return lhs.id.sessionID.nativeID < rhs.id.sessionID.nativeID
+        }
+    }
+
+    static func repositories(
+        _ sessions: [AgentSession],
+        query: String,
+        fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }
+    ) -> [AgentLocalRepositoryChoice] {
+        var seen = Set<String>()
+        return sessions.compactMap { session -> AgentLocalRepositoryChoice? in
+            guard let path = session.project.workingDirectory?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !path.isEmpty,
+                  fileExists(path),
+                  seen.insert(path).inserted else { return nil }
+            let display = session.project.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return AgentLocalRepositoryChoice(
+                path: path,
+                name: (display?.isEmpty == false ? display! : URL(fileURLWithPath: path).lastPathComponent),
+                branch: session.project.gitBranch
+            )
+        }
+        .filter { choice in
+            query.isEmpty ||
+            choice.name.localizedCaseInsensitiveContains(query) ||
+            choice.path.localizedCaseInsensitiveContains(query) ||
+            (choice.branch?.localizedCaseInsensitiveContains(query) ?? false)
+        }
+        .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+}
+

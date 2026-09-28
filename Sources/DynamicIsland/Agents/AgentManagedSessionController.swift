@@ -672,6 +672,11 @@ final class AgentManagedSessionController: ObservableObject {
             )
             markManaged(descriptor)
             _ = await emitSessionAvailability(descriptor, type: .sessionStarted)
+            if let exactSession = eventStore.sessions.first(where: {
+                $0.id.sessionID == descriptor.sessionID
+            }) {
+                selectSession(exactSession.id)
+            }
             return descriptor
         } catch {
             setTransportError(Self.safeError(error, provider: selectedProvider), for: selectedProvider)

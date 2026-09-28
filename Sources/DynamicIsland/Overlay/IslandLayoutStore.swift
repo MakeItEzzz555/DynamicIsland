@@ -36,6 +36,7 @@ final class IslandLayoutStore: ObservableObject {
     @Published var panelFrame: CGRect = .zero
     @Published private(set) var isExpandedScrollGestureSuppressed = false
     @Published private(set) var expandedContentScrollRegion: CGRect = .zero
+    @Published var isTransientInteractionActive = false
 
     func setExpandedScrollGestureSuppressed(_ suppressed: Bool) {
         guard isExpandedScrollGestureSuppressed != suppressed else { return }

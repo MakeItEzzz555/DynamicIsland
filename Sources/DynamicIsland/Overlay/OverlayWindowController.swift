@@ -994,6 +994,10 @@ final class OverlayWindowController {
             debugLog("collapse check ignored; native menu is tracking")
             return
         }
+        guard !layoutStore.isTransientInteractionActive else {
+            debugLog("collapse check ignored; in-island transient interaction is active")
+            return
+        }
         guard settings.collapseOnMouseLeave, settings.autoCollapseEnabled else {
             debugLog("collapse check ignored; auto collapse disabled")
             return

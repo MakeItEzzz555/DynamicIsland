@@ -247,6 +247,8 @@ final class AgentAttentionCoordinator: ObservableObject {
     private var options: AgentAttentionPolicyOptions
     private let clock = ContinuousClock()
     private var retractTask: Task<Void, Never>?
+    private var completionDebounceTasks: [AgentAttentionEventID: Task<Void, Never>] = [:]
+    private var latestSessions: [AgentSession] = []
 
     init(options: AgentAttentionPolicyOptions = AgentAttentionPolicyOptions()) {
         self.options = options
@@ -278,6 +280,8 @@ final class AgentAttentionCoordinator: ObservableObject {
         if !enabled {
             retractTask?.cancel()
             retractTask = nil
+            completionDebounceTasks.values.forEach { $0.cancel() }
+            completionDebounceTasks.removeAll()
             policyState = AgentAttentionPolicyEngine.dismissPresentation(state: policyState)
             publish(soundIntent: nil)
         }
@@ -289,8 +293,14 @@ final class AgentAttentionCoordinator: ObservableObject {
         now: Date = Date()
     ) {
         guard isEnabled else { return }
+        latestSessions = sessions
+
+        // AgentNotch parity: true turn/session completion is deliberately
+        // debounced for one second so individual tool completions cannot cause
+        // repeated completion peeks.
+        let immediate = attentionEvents.filter { $0.reason != .completed }
         let result = AgentAttentionPolicyEngine.apply(
-            events: attentionEvents,
+            events: immediate,
             sessions: sessions,
             now: now,
             state: policyState,
@@ -299,6 +309,35 @@ final class AgentAttentionCoordinator: ObservableObject {
         policyState = result.state
         publish(soundIntent: result.soundIntent)
         scheduleRetractIfNeeded()
+
+        for event in attentionEvents where event.reason == .completed {
+            scheduleCompletion(event)
+        }
+    }
+
+    private func scheduleCompletion(_ event: AgentAttentionEvent) {
+        guard !policyState.rememberedEventIDs.contains(event.id),
+              completionDebounceTasks[event.id] == nil else { return }
+        completionDebounceTasks[event.id] = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled, let self else { return }
+            await MainActor.run {
+                self.completionDebounceTasks[event.id] = nil
+                guard self.isEnabled,
+                      let session = self.latestSessions.first(where: { $0.id == event.session }),
+                      session.state == .completed else { return }
+                let result = AgentAttentionPolicyEngine.apply(
+                    events: [event],
+                    sessions: self.latestSessions,
+                    now: Date(),
+                    state: self.policyState,
+                    options: self.options
+                )
+                self.policyState = result.state
+                self.publish(soundIntent: result.soundIntent)
+                self.scheduleRetractIfNeeded()
+            }
+        }
     }
 
     func dismissForExpansion() {

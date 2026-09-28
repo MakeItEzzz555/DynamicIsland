@@ -425,9 +425,12 @@ private struct AgentCurrentWorkSummary: View {
     let session: AgentSession
     let mode: AgentConsoleMode
 
+    private var projectedProject: AgentProjectDisplayContext {
+        AgentPrivacyProjection.displayProject(session.project)
+    }
+
     private var projectName: String {
-        AgentPrivacyProjection.displayProject(session.project).displayName
-            ?? session.id.sessionID.provider.stableName.capitalized
+        projectedProject.displayName ?? session.id.sessionID.provider.stableName.capitalized
     }
 
     private var title: String {
@@ -449,8 +452,20 @@ private struct AgentCurrentWorkSummary: View {
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.56))
                     .lineLimit(1)
-                if let branch = session.project.gitBranch, !branch.isEmpty {
+                if let branch = projectedProject.gitBranch, !branch.isEmpty {
                     Text(branch)
+                        .font(.system(size: 8.5, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.32))
+                        .lineLimit(1)
+                }
+                if let source = projectedProject.sourceApplicationName, !source.isEmpty {
+                    Text("· \(source)")
+                        .font(.system(size: 8.5, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.32))
+                        .lineLimit(1)
+                }
+                if let model = projectedProject.model, !model.isEmpty {
+                    Text("· \(model)")
                         .font(.system(size: 8.5, weight: .medium, design: .monospaced))
                         .foregroundStyle(.white.opacity(0.32))
                         .lineLimit(1)

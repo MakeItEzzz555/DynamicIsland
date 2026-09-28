@@ -322,6 +322,7 @@ struct IslandRootView: View {
     @State private var isCollapsedHovering = false
     @State private var collapsedPreviewVisible = false
     @State private var collapsedPreviewGeneration = 0
+    @StateObject private var agentGlow = AgentActivityGlowCoordinator()
     @StateObject private var gestureCoordinator = IslandGestureCoordinator()
 
     init(
@@ -362,6 +363,9 @@ struct IslandRootView: View {
         if reduceMotion || settings.reduceExtraMotion {
             return .easeInOut(duration: 0.24)
         }
+        if layoutStore.collapsedPresentationProfile.kind == .agentAttention {
+            return .interactiveSpring(response: 0.38, dampingFraction: 0.8, blendDuration: 0)
+        }
         let duration = settings.animationPreset == .instant
             ? 0.01
             : settings.animationPreset.shellDuration / max(settings.shellAnimationSpeed, 0.25)
@@ -387,7 +391,9 @@ struct IslandRootView: View {
                     isExpanded: isExpanded,
                     visualProgress: shellVisualProgress,
                     collapsedPresentationProfile: layoutStore.collapsedPresentationProfile,
-                    collapsedGlowColor: collapsedAgentGlowColor
+                    collapsedGlowColor: collapsedAgentGlowColor,
+                    collapsedBrightGlowColor: collapsedAgentBrightGlowColor,
+                    forcesCollapsedGlow: shouldShowCollapsedAgentGlow
                 ) {
                     if showsExpandedContent {
                         ExpandedIslandView(
@@ -516,6 +522,12 @@ struct IslandRootView: View {
         .onDrop(of: FileDropProviderLoader.acceptedTypes, isTargeted: fileDropTargetBinding) { providers in
             loadDroppedFilesFromCollapsedIsland(from: providers)
         }
+        .onChange(of: activeRoutineAgentProvider) { _, provider in
+            agentGlow.update(activeProvider: provider)
+        }
+        .onDisappear {
+            agentGlow.stop()
+        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("DynamicIsland")
         .animation(shellAnimation, value: islandState.state)
@@ -525,12 +537,56 @@ struct IslandRootView: View {
         .animation(collapsedPreviewAnimation, value: isCollapsedPreviewActive)
     }
 
+    private var activeRoutineAgentProvider: AgentProvider? {
+        modules.agentEvents.sessions.first(where: {
+            switch $0.state {
+            case .working, .runningTool, .runningCommand, .thinking, .planning:
+                true
+            case .waitingForApproval, .waitingForUser, .planReady,
+                 .idle, .completed, .failed, .interrupted:
+                false
+            }
+        })?.id.sessionID.provider
+    }
+
+    private var collapsedAgentProvider: AgentProvider? {
+        if let provider = agentAttention.presentation?.primary?.session.sessionID.provider {
+            return provider
+        }
+        return activeRoutineAgentProvider ?? agentGlow.provider
+    }
+
+    private var shouldShowCollapsedAgentGlow: Bool {
+        agentAttention.presentation != nil ||
+        activeRoutineAgentProvider != nil ||
+        agentGlow.provider != nil
+    }
+
     private var collapsedAgentGlowColor: Color {
-        switch agentAttention.presentation?.style {
-        case .success: .green
-        case .actionRequired: .orange
-        case .failure: .red
-        case .informational, .none: .cyan
+        if agentAttention.presentation?.style == .failure {
+            return Color(red: 0.9, green: 0.2, blue: 0.2)
+        }
+        switch collapsedAgentProvider {
+        case .codex:
+            return Color(red: 0.1, green: 0.3, blue: 0.7)
+        case .claude:
+            return Color(red: 0.9, green: 0.4, blue: 0.1)
+        case .other, .none:
+            return Color(red: 0.0, green: 0.8, blue: 1.0)
+        }
+    }
+
+    private var collapsedAgentBrightGlowColor: Color {
+        if agentAttention.presentation?.style == .failure {
+            return Color(red: 1.0, green: 0.3, blue: 0.3)
+        }
+        switch collapsedAgentProvider {
+        case .codex:
+            return Color(red: 0.2, green: 0.45, blue: 0.9)
+        case .claude:
+            return Color(red: 1.0, green: 0.55, blue: 0.2)
+        case .other, .none:
+            return Color(red: 0.4, green: 0.95, blue: 1.0)
         }
     }
 
@@ -1166,6 +1222,8 @@ struct IslandSurface<Content: View>: View {
     let visualProgress: CGFloat
     var collapsedPresentationProfile: CollapsedPresentationProfile = .normal
     var collapsedGlowColor: Color = .cyan
+    var collapsedBrightGlowColor: Color = .white
+    var forcesCollapsedGlow = false
     @ViewBuilder var content: Content
     @Environment(\.isNotchIntegratedShell) private var isNotchIntegratedShell
     @Environment(\.isShellMorphing) private var isShellMorphing
@@ -1202,19 +1260,22 @@ struct IslandSurface<Content: View>: View {
                     }
                 }
                 .overlay {
-                    if !isExpanded, collapsedPresentationProfile.glowStrength > 0 {
-                        Ellipse()
-                            .fill(collapsedGlowColor.opacity(collapsedPresentationProfile.glowStrength * 0.60))
-                            .frame(
-                                width: collapsedPresentationProfile.kind == .agentAttention ? 210 : 150,
-                                height: 22
-                            )
-                            .blur(radius: collapsedPresentationProfile.kind == .agentAttention ? 13 : 9)
-                            .offset(y: 13)
-                            .frame(maxHeight: .infinity, alignment: .bottom)
-                            .allowsHitTesting(false)
+                    if !isExpanded, collapsedPresentationProfile.glowStrength > 0 || forcesCollapsedGlow {
+                        AgentNotchGlowBorder(
+                            topCornerRadius: radii.top,
+                            bottomCornerRadius: radii.bottom,
+                            glowColor: collapsedGlowColor,
+                            brightColor: collapsedBrightGlowColor
+                        )
+                        .opacity(
+                            collapsedPresentationProfile.glowStrength > 0
+                                ? collapsedPresentationProfile.glowStrength
+                                : (forcesCollapsedGlow ? 1 : 0)
+                        )
+                        .transition(.opacity)
                     }
                 }
+                .animation(.easeOut(duration: 0.5), value: forcesCollapsedGlow)
 
             content
                 .padding(.horizontal, usesExpandedContentPadding ? 0 : collapsedHorizontalPadding)
@@ -1223,6 +1284,56 @@ struct IslandSurface<Content: View>: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .clipShape(shellShape)
         }
+    }
+}
+
+private struct AgentNotchGlowBorder: View {
+    let topCornerRadius: CGFloat
+    let bottomCornerRadius: CGFloat
+    let glowColor: Color
+    let brightColor: Color
+
+    private var frameInterval: Double {
+        ProcessInfo.processInfo.isLowPowerModeEnabled ? (1.0 / 15.0) : (1.0 / 25.0)
+    }
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: frameInterval)) { timeline in
+            let time = timeline.date.timeIntervalSinceReferenceDate
+            let rotation = (time.truncatingRemainder(dividingBy: 2.0)) / 2.0 * 360
+            IslandShellShape(
+                topCornerRadius: topCornerRadius,
+                bottomCornerRadius: bottomCornerRadius
+            )
+            .stroke(
+                AngularGradient(
+                    stops: [
+                        .init(color: .clear, location: 0.0),
+                        .init(color: glowColor.opacity(0.3), location: 0.1),
+                        .init(color: glowColor, location: 0.2),
+                        .init(color: brightColor, location: 0.3),
+                        .init(color: glowColor, location: 0.4),
+                        .init(color: glowColor.opacity(0.3), location: 0.5),
+                        .init(color: .clear, location: 0.6),
+                        .init(color: .clear, location: 1.0)
+                    ],
+                    center: .center,
+                    startAngle: .degrees(rotation),
+                    endAngle: .degrees(rotation + 360)
+                ),
+                lineWidth: 2.5
+            )
+            .shadow(color: glowColor.opacity(0.7), radius: 8)
+            .shadow(color: glowColor.opacity(0.4), radius: 16)
+            .shadow(color: glowColor.opacity(0.2), radius: 24)
+            .mask {
+                VStack(spacing: 0) {
+                    Color.clear.frame(height: 4)
+                    Color.white
+                }
+            }
+        }
+        .allowsHitTesting(false)
     }
 }
 
@@ -1382,21 +1493,32 @@ struct CompactIslandView: View {
 
         ZStack(alignment: .bottom) {
             if let attentionPresentation, let primary = attentionPresentation.primary {
-                sideSlotLayout {
-                    AgentCompactAttentionLeadingView(
-                        provider: primary.session.sessionID.provider,
-                        project: attentionSession?.project.displayName
-                    )
-                } right: {
-                    AgentCompactAttentionTrailingView(
-                        text: attentionPresentation.totalCount > 1
-                            ? "\(attentionPresentation.totalCount) agents"
-                            : String(primary.displaySummary.prefix(72)),
-                        accent: attentionAccent,
-                        symbol: attentionSymbol
+                VStack(spacing: 0) {
+                    sideSlotLayout {
+                        AgentCompactAttentionLeadingView(
+                            provider: primary.session.sessionID.provider,
+                            project: attentionSession?.project.displayName
+                        )
+                    } right: {
+                        AgentCompactAttentionTrailingView(
+                            text: attentionPresentation.totalCount > 1
+                                ? "\(attentionPresentation.totalCount) agents"
+                                : titleForAttention(primary.reason),
+                            accent: attentionAccent,
+                            symbol: attentionSymbol
+                        )
+                    }
+                    .frame(height: 22)
+
+                    Spacer(minLength: 4)
+
+                    AgentCompactPeekNotificationView(
+                        presentation: attentionPresentation,
+                        session: attentionSession
                     )
                 }
-                .transition(.opacity)
+                .padding(.bottom, 5)
+                .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .top)))
             } else {
                 compactContentRow(activeBranch: activeBranch, visualizerColor: visualizerColor)
                     .frame(height: 16)
@@ -1415,6 +1537,17 @@ struct CompactIslandView: View {
         .animation(compactContentAnimation, value: liveActivities.activities)
         .animation(compactContentAnimation, value: contentMode)
         .animation(compactContentAnimation, value: previewActive)
+    }
+
+    private func titleForAttention(_ reason: AgentAttentionReason) -> String {
+        switch reason {
+        case .approvalRequired: "Permission required"
+        case .userInputRequired: "Input required"
+        case .completed: "Task Complete"
+        case .failed: "Task Failed"
+        case .planReady: "Plan ready"
+        case .interrupted: "Interrupted"
+        }
     }
 
     @ViewBuilder

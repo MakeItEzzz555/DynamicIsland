@@ -250,8 +250,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         agentAttention.$soundIntent
             .compactMap { $0 }
             .removeDuplicates()
-            .sink { _ in
-                NSSound.beep()
+            .sink { intent in
+                SystemAgentNotificationFeedback.shared.play(intent)
             }
             .store(in: &cancellables)
 

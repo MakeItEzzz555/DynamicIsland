@@ -93,6 +93,7 @@ struct AgentDashboardContentView: View {
     let availableHeight: CGFloat
     private let initialSelectedSessionID: AgentSessionInstanceID?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var showsSessionLauncher = false
 
     init(
         sessions: [AgentSession],
@@ -141,15 +142,37 @@ struct AgentDashboardContentView: View {
                     AgentGlobalSummaryStrip(metrics: metrics, layout: layout)
                 }
 
+                AgentCLIControlBar(
+                    sessions: controlSessions,
+                    managedControl: managedControl,
+                    approvalControl: approvalControl,
+                    launcherOpen: showsSessionLauncher,
+                    onToggleLauncher: {
+                        withAnimation(.easeOut(duration: 0.14)) {
+                            showsSessionLauncher.toggle()
+                        }
+                    }
+                )
+
+                if showsSessionLauncher {
+                    AgentSessionLauncherView(
+                        sessions: sessions,
+                        managedControl: managedControl,
+                        onSelectSession: { id in managedControl.selectSession(id) },
+                        onDismiss: {
+                            withAnimation(.easeOut(duration: 0.12)) {
+                                showsSessionLauncher = false
+                            }
+                        }
+                    )
+                    .padding(.horizontal, 8)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                    .zIndex(20)
+                }
+
                 if controlSessions.isEmpty {
                     AgentEmptyConsoleState(managedControl: managedControl)
                 } else {
-                    AgentCLIControlBar(
-                        sessions: controlSessions,
-                        managedControl: managedControl,
-                        approvalControl: approvalControl
-                    )
-
                     if let pending = approvalControl.nextPendingRequest(),
                        pending.key.session != selectedSession?.id,
                        let approvalSession = sessions.first(where: { $0.id == pending.key.session }) {
@@ -188,7 +211,17 @@ struct AgentDashboardContentView: View {
             }
             managedControl.reconcileSelection(with: sessions)
         }
+        .onChange(of: showsSessionLauncher) { _, isOpen in
+            layoutStore?.isTransientInteractionActive = isOpen
+            if isOpen {
+                layoutStore?.setExpandedScrollGestureSuppressed(true)
+            } else {
+                layoutStore?.setExpandedScrollGestureSuppressed(false)
+            }
+        }
         .onDisappear {
+            layoutStore?.isTransientInteractionActive = false
+            layoutStore?.setExpandedScrollGestureSuppressed(false)
             layoutStore?.setExpandedContentScrollRegion(.zero)
         }
     }
@@ -198,6 +231,8 @@ private struct AgentCLIControlBar: View {
     let sessions: [AgentSession]
     @ObservedObject var managedControl: AgentManagedSessionController
     @ObservedObject var approvalControl: AgentApprovalController
+    let launcherOpen: Bool
+    let onToggleLauncher: () -> Void
 
     private var selectedSession: AgentSession? {
         AgentWorkspaceSelection.session(
@@ -232,7 +267,7 @@ private struct AgentCLIControlBar: View {
 
     private func controls(compact: Bool) -> some View {
         HStack(spacing: compact ? 5 : 8) {
-            providerMenu(compact: compact)
+            launcherButton(compact: compact)
 
             if let session = selectedSession {
                 HStack(spacing: 4) {
@@ -267,31 +302,33 @@ private struct AgentCLIControlBar: View {
         }
     }
 
-    private func providerMenu(compact: Bool) -> some View {
+    private func launcherButton(compact: Bool) -> some View {
         let provider = selectedSession?.id.sessionID.provider ?? managedControl.managedProvider ?? .other("agent")
-        return Menu {
-            ForEach(managedControl.managedProviders, id: \.self) { supported in
-                Button {
-                    managedControl.selectProvider(supported)
-                    managedControl.reconcileSelection(with: sessions)
-                } label: {
-                    Label(
-                        supported.stableName.capitalized,
-                        systemImage: supported == provider ? "checkmark" : AgentVisualStyle.providerSymbol(supported)
-                    )
+        let project = selectedSession.map { AgentPrivacyProjection.displayProject($0.project).displayName }
+            ?? nil
+        let title = project ?? provider.stableName.capitalized
+        return Button(action: onToggleLauncher) {
+            HStack(spacing: 4) {
+                Image(systemName: AgentVisualStyle.providerSymbol(provider))
+                if !compact {
+                    Text(title)
+                        .lineLimit(1)
                 }
+                Image(systemName: launcherOpen ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 6.5, weight: .bold))
             }
-        } label: {
-            adaptiveLabel(
-                provider.stableName.capitalized,
-                systemImage: AgentVisualStyle.providerSymbol(provider),
-                compact: compact
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(.white.opacity(0.74))
+            .padding(.horizontal, compact ? 4 : 7)
+            .frame(height: 25)
+            .background(
+                launcherOpen ? Color.white.opacity(0.09) : Color.white.opacity(0.035),
+                in: Capsule(style: .continuous)
             )
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.72))
         }
-        .menuStyle(.borderlessButton)
-        .help("Managed agent provider")
+        .buttonStyle(.plain)
+        .help("Live sessions and local repositories")
+        .accessibilityLabel("Open live sessions and repository launcher")
     }
 
     @ViewBuilder
@@ -1387,6 +1424,86 @@ struct AgentCompactAttentionTrailingView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(text)
+    }
+}
+
+
+struct AgentCompactPeekNotificationView: View {
+    let presentation: AgentAttentionPresentation
+    let session: AgentSession?
+
+    private var primary: AgentAttentionEvent? { presentation.primary }
+
+    var body: some View {
+        if let primary {
+            HStack(spacing: 10) {
+                Image(systemName: symbol(for: primary.reason))
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(accent(for: primary.reason))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(title(for: primary.reason))
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .foregroundStyle(.white)
+                        Text(primary.session.sessionID.provider.stableName.capitalized)
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(
+                                AgentVisualStyle.providerAccent(primary.session.sessionID.provider).opacity(0.80)
+                            )
+                    }
+                    Text(String(primary.displaySummary.prefix(110)))
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.66))
+                        .lineLimit(2)
+                }
+
+                Spacer(minLength: 8)
+
+                if let project = session?.project.displayName, !project.isEmpty {
+                    Text(project)
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.38))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+            .padding(.horizontal, 16)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(title(for: primary.reason)), \(primary.displaySummary)")
+        }
+    }
+
+    private func title(for reason: AgentAttentionReason) -> String {
+        switch reason {
+        case .approvalRequired: "Permission required"
+        case .userInputRequired: "Input required"
+        case .completed: "Task Complete"
+        case .failed: "Task Failed"
+        case .planReady: "Plan ready"
+        case .interrupted: "Interrupted"
+        }
+    }
+
+    private func symbol(for reason: AgentAttentionReason) -> String {
+        switch reason {
+        case .approvalRequired, .userInputRequired: "hand.raised.fill"
+        case .completed: "checkmark.circle.fill"
+        case .failed: "xmark.circle.fill"
+        case .planReady: "list.bullet.clipboard.fill"
+        case .interrupted: "stop.circle.fill"
+        }
+    }
+
+    private func accent(for reason: AgentAttentionReason) -> Color {
+        switch reason {
+        case .completed: .green
+        case .failed: .red
+        case .approvalRequired, .userInputRequired: .orange
+        case .planReady: .cyan
+        case .interrupted: .yellow
+        }
     }
 }
 

@@ -113,6 +113,17 @@ final class ExpandedScrollEventRoutingPolicyTests: XCTestCase {
         XCTAssertFalse(store.isExpandedScrollGestureSuppressed)
     }
 
+    func testTransientLauncherInteractionLockDefaultsOffAndCanHoldHoverOpen() {
+        let store = IslandLayoutStore()
+        XCTAssertFalse(store.isTransientInteractionActive)
+
+        store.isTransientInteractionActive = true
+        XCTAssertTrue(store.isTransientInteractionActive)
+
+        store.isTransientInteractionActive = false
+        XCTAssertFalse(store.isTransientInteractionActive)
+    }
+
     func testLayoutStoreRegistersAndClearsExpandedContentScrollRegion() {
         let store = IslandLayoutStore()
         XCTAssertEqual(store.expandedContentScrollRegion, .zero)
