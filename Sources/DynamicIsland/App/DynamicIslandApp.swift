@@ -89,8 +89,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let agentAttention = AgentAttentionCoordinator()
     private let agentApprovalControl = AgentApprovalController()
     private lazy var agentIngestion = AgentIngestionCoordinator(eventStore: agentEvents)
+    private lazy var agentIntegrationRouter = AgentIntegrationRouter(coordinator: agentIngestion)
     private lazy var agentBridge = AgentBridge(
         coordinator: agentIngestion,
+        integrationRouter: agentIntegrationRouter,
         approvals: agentApprovalControl
     )
     private lazy var agentManagedControl: AgentManagedSessionController = {
@@ -101,6 +103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return AgentManagedSessionController(
             providers: providers,
             coordinator: agentIngestion,
+            integrationRouter: agentIntegrationRouter,
             eventStore: agentEvents,
             approvals: agentApprovalControl
         )

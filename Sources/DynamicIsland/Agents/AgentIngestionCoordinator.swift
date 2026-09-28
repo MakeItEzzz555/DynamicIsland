@@ -124,6 +124,27 @@ actor AgentIngestionCoordinator {
         await ingestAtomically([event], from: handle)
     }
 
+    /// Read-only validation used by the integration router before it suppresses
+    /// semantically duplicate observations. A duplicate must never mask a stale
+    /// producer, policy violation, or malformed event.
+    func validateForRouting(
+        _ events: [AgentIngestionEvent],
+        from handle: AgentProducerHandle
+    ) -> Result<Void, AgentIngestionError> {
+        guard !events.isEmpty else { return .failure(.invalidEvent) }
+        do {
+            let registration = try registry.registration(for: handle)
+            for event in events {
+                try validate(event, registration: registration)
+            }
+            return .success(())
+        } catch let error as AgentIngestionError {
+            return .failure(error)
+        } catch {
+            return .failure(.invalidEvent)
+        }
+    }
+
     func ingestAtomically(
         _ events: [AgentIngestionEvent],
         from handle: AgentProducerHandle

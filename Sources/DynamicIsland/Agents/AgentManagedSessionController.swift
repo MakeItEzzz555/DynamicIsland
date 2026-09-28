@@ -21,6 +21,7 @@ final class AgentManagedSessionController: ObservableObject {
 
     private let providers: [AgentProvider: any AgentInteractiveProvider]
     private let coordinator: AgentIngestionCoordinator
+    private let integrationRouter: AgentIntegrationRouter
     private let eventStore: AgentEventStore
     private let approvals: AgentApprovalController
 
@@ -36,11 +37,13 @@ final class AgentManagedSessionController: ObservableObject {
     init(
         provider: (any AgentInteractiveProvider)?,
         coordinator: AgentIngestionCoordinator,
+        integrationRouter: AgentIntegrationRouter? = nil,
         eventStore: AgentEventStore,
         approvals: AgentApprovalController
     ) {
         self.providers = provider.map { [$0.provider: $0] } ?? [:]
         self.coordinator = coordinator
+        self.integrationRouter = integrationRouter ?? AgentIntegrationRouter(coordinator: coordinator)
         self.eventStore = eventStore
         self.approvals = approvals
         selectedProvider = provider?.provider
@@ -49,11 +52,13 @@ final class AgentManagedSessionController: ObservableObject {
     init(
         providers: [any AgentInteractiveProvider],
         coordinator: AgentIngestionCoordinator,
+        integrationRouter: AgentIntegrationRouter? = nil,
         eventStore: AgentEventStore,
         approvals: AgentApprovalController
     ) {
         self.providers = Dictionary(uniqueKeysWithValues: providers.map { ($0.provider, $0) })
         self.coordinator = coordinator
+        self.integrationRouter = integrationRouter ?? AgentIntegrationRouter(coordinator: coordinator)
         self.eventStore = eventStore
         self.approvals = approvals
         selectedProvider = Self.sortedProviders(self.providers.keys).first
@@ -1295,7 +1300,11 @@ final class AgentManagedSessionController: ObservableObject {
             payload: payload,
             continuity: AgentSessionContinuity(immutableIdentity: nativeSessionID)
         )
-        let result = await coordinator.ingest(event, from: handle)
+        let result = await integrationRouter.route(
+            event,
+            from: handle,
+            precedence: .providerNative
+        )
         guard case .success(let accepted) = result else { return nil }
         return accepted.sessionInstances.last
     }

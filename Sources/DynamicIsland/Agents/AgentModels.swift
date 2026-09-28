@@ -39,6 +39,7 @@ enum AgentSource: String, Hashable, Codable, Sendable {
     case jetbrains
     case desktopApp
     case cloud
+    case mcp
     case unknown
 }
 
@@ -514,6 +515,7 @@ struct AgentSession: Identifiable, Equatable, Sendable {
     var endedAt: Date?
     var lastUpdatedAt: Date
     var availability: AgentSessionAvailability? = nil
+    var sourceAuthority: AgentEvidenceAuthority = .heuristic
 
     var isThinking = false
     var isPlanning = false

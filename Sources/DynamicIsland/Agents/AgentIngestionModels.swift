@@ -34,6 +34,7 @@ enum AgentSourceKind: String, CaseIterable, Hashable, Codable, Sendable {
     case structuredTelemetry
     case structuredRecovery
     case processEnrichment
+    case mcpObservation
     case heuristicFallback
 }
 
@@ -316,6 +317,38 @@ struct AgentProducerPolicy: Equatable, Sendable {
             ($0, AgentEvidenceAuthority.structuredTelemetry)
         }),
         allowedCapabilities: [.tokenUsage, .contextUsage, .quotaUsage, .costUsage, .modelMetadata],
+        allowedSchemaVersions: [AgentEvent.normalizedSchemaVersion]
+    )
+
+    /// MCP is an observation boundary only. It can describe provider activity,
+    /// but never supplies managed-control or approval-resolution authority.
+    static let mcpObservation = AgentProducerPolicy(
+        allowedProviders: nil,
+        allowedSources: [.mcp],
+        allowedSourceKinds: [.mcpObservation],
+        allowedEventTypes: [
+            .sessionStarted, .sessionMetadataUpdated, .agentWorking,
+            .planningStarted, .planUpdated, .planReady,
+            .toolStarted, .toolCompleted, .commandStarted, .commandCompleted,
+            .approvalRequested, .usageUpdated, .capabilitiesUpdated,
+            .projectContextUpdated, .heartbeat
+        ],
+        authorityCeilings: [
+            .lifecycle: .processObservation,
+            .activity: .processObservation,
+            .operation: .processObservation,
+            .interaction: .processObservation,
+            .usage: .structuredTelemetry,
+            .metadata: .processObservation,
+            .capability: .processObservation,
+            .liveness: .processObservation
+        ],
+        allowedCapabilities: [
+            .sessionLifecycle, .planLifecycle, .toolLifecycle,
+            .commandLifecycle, .approvalObservation,
+            .tokenUsage, .contextUsage, .quotaUsage, .costUsage,
+            .modelMetadata, .projectContext, .gitMetadata
+        ],
         allowedSchemaVersions: [AgentEvent.normalizedSchemaVersion]
     )
 

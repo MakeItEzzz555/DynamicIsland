@@ -111,6 +111,12 @@ enum AgentEventReducer {
             )
         }
 
+        if event.source != .unknown,
+           event.authority >= session.sourceAuthority {
+            session.source = event.source
+            session.sourceAuthority = event.authority
+        }
+
         if isTerminalTransition(event.type),
            event.authority < session.terminalAuthority {
             remember(event, in: &session, limits: limits)
@@ -193,7 +199,8 @@ enum AgentEventReducer {
             startedAt: event.effectiveTimestamp,
             endedAt: nil,
             lastUpdatedAt: event.receivedTimestamp,
-            availability: availability
+            availability: availability,
+            sourceAuthority: event.authority
         )
         session.terminalAuthority = event.authority
         return session
@@ -208,7 +215,7 @@ enum AgentEventReducer {
         switch event.type {
         case .sessionStarted:
             session.terminalAuthority = max(session.terminalAuthority, event.authority)
-            mergeSessionMetadata(event.payload, source: event.source, into: &session)
+            mergeSessionMetadata(event.payload, into: &session)
             appendActivity(
                 event: event,
                 kind: .session,
@@ -226,7 +233,7 @@ enum AgentEventReducer {
             session.isWorking = true
             session.isPlanReady = false
             session.planReadyAuthority = .heuristic
-            mergeSessionMetadata(event.payload, source: event.source, into: &session)
+            mergeSessionMetadata(event.payload, into: &session)
             appendActivity(
                 event: event,
                 kind: .session,
@@ -237,7 +244,7 @@ enum AgentEventReducer {
             )
 
         case .sessionMetadataUpdated:
-            mergeSessionMetadata(event.payload, source: event.source, into: &session)
+            mergeSessionMetadata(event.payload, into: &session)
 
         case .sessionEnded:
             session.endedAt = event.effectiveTimestamp
@@ -752,10 +759,8 @@ enum AgentEventReducer {
 
     private static func mergeSessionMetadata(
         _ payload: AgentEventPayload,
-        source: AgentSource,
         into session: inout AgentSession
     ) {
-        if source != .unknown { session.source = source }
         guard case .sessionMetadata(let metadata) = payload else { return }
         if let project = metadata.project {
             mergeProject(AgentPrivacyProjection.project(project), into: &session.project)
