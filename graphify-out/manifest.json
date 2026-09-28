@@ -558,15 +558,15 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Agents/AgentEventStore.swift": {
-    "mtime": 1790611117.4533734,
-    "seen": 1790612565.011214,
-    "ast_hash": "a208403b5b0f9fdd7942e223bef7ab2b",
+    "mtime": 1790627224.5613286,
+    "seen": 1790627615.013808,
+    "ast_hash": "0a5fe80b05bb769a1bc106a02fd5ff79",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Agents/AgentModels.swift": {
-    "mtime": 1790611117.453668,
-    "seen": 1790612565.0112221,
-    "ast_hash": "91a4917459c05a91c57850f80735b055",
+    "mtime": 1790627251.8948905,
+    "seen": 1790627615.013816,
+    "ast_hash": "6b1df3a644e81df6ca7970e2bed158f6",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Agents/AgentPrivacyProjection.swift": {
@@ -588,9 +588,9 @@
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/AgentEventStoreTests.swift": {
-    "mtime": 1790611961.0820448,
-    "seen": 1790612565.0112908,
-    "ast_hash": "4f28257ea508b1edfb97dbe3abdfd505",
+    "mtime": 1790627196.2559788,
+    "seen": 1790627615.013886,
+    "ast_hash": "209f22c71c665daef9ad86ff9e5cf95a",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/AgentPrivacyProjectionTests.swift": {
@@ -870,9 +870,9 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Agents/AgentManagedSessionController.swift": {
-    "mtime": 1790611322.266554,
-    "seen": 1790612565.011221,
-    "ast_hash": "525b4bc322c38f71777f8906dcb0aad4",
+    "mtime": 1790627196.2026205,
+    "seen": 1790627615.013815,
+    "ast_hash": "61c83ec5894d517b7eaef83427cc1193",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Agents/AgentPresentation.swift": {
@@ -912,9 +912,9 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/AgentActivityViews.swift": {
-    "mtime": 1790612192.931111,
-    "seen": 1790612565.0112672,
-    "ast_hash": "852ed988edc56134ea56028925a7810c",
+    "mtime": 1790627196.1294186,
+    "seen": 1790627615.0138612,
+    "ast_hash": "338bdddf8b77511cc580fac4ab6626b0",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/AgentConsoleViews.swift": {
@@ -972,9 +972,9 @@
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/AgentUISnapshotTests.swift": {
-    "mtime": 1790604650.3896775,
-    "seen": 1790605249.099585,
-    "ast_hash": "15debca53e0715f5aa494362b2b6c637",
+    "mtime": 1790627311.7425437,
+    "seen": 1790627615.013898,
+    "ast_hash": "165fd651de86a067bb16930e63b3e7fe",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/ClaudeHookNormalizerTests.swift": {
@@ -1266,21 +1266,21 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/AgentSessionLauncherView.swift": {
-    "mtime": 1790611541.9440696,
-    "seen": 1790612565.011269,
-    "ast_hash": "5d0727962b23bfe72c7039dcbc791f97",
+    "mtime": 1790627196.1034718,
+    "seen": 1790627615.0138628,
+    "ast_hash": "e29a57021fdf138bf8845ba5fb81f892",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/AgentSessionLauncherTests.swift": {
-    "mtime": 1790611692.7486541,
-    "seen": 1790612565.011301,
-    "ast_hash": "280b9825043aec1277e8dc5aaf798d01",
+    "mtime": 1790627196.2279906,
+    "seen": 1790627615.0138948,
+    "ast_hash": "fff4f56ab603adf76c327ad31a007104",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Agents/AgentActivityGlowCoordinator.swift": {
-    "mtime": 1790612617.9456089,
-    "seen": 1790612761.4849422,
-    "ast_hash": "0aa45a8aa52c783f28e590c728677cad",
+    "mtime": 1790627196.1551523,
+    "seen": 1790627615.013798,
+    "ast_hash": "85c99c9ce2d5660fb1f733c302a98549",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/AgentActivityGlowCoordinatorTests.swift": {

@@ -204,9 +204,9 @@
     "semantic_hash": "e45da4c5467fe497679f227ded264dae"
   },
   "Sources/DynamicIsland/Views/IslandRootView.swift": {
-    "mtime": 1790612130.5151858,
-    "seen": 1790612565.011271,
-    "ast_hash": "a233c89866580f8165e3d378529af153",
+    "mtime": 1790612617.9461417,
+    "seen": 1790612761.485014,
+    "ast_hash": "4f407aba58a0b630dd900b467d2602cf",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/IslandThemeBackground.swift": {
@@ -1275,6 +1275,18 @@
     "mtime": 1790611692.7486541,
     "seen": 1790612565.011301,
     "ast_hash": "280b9825043aec1277e8dc5aaf798d01",
+    "semantic_hash": ""
+  },
+  "Sources/DynamicIsland/Agents/AgentActivityGlowCoordinator.swift": {
+    "mtime": 1790612617.9456089,
+    "seen": 1790612761.4849422,
+    "ast_hash": "0aa45a8aa52c783f28e590c728677cad",
+    "semantic_hash": ""
+  },
+  "Tests/DynamicIslandTests/AgentActivityGlowCoordinatorTests.swift": {
+    "mtime": 1790612617.9463258,
+    "seen": 1790612761.48502,
+    "ast_hash": "916a0136bc60d46af418db889235fc1a",
     "semantic_hash": ""
   }
 }
