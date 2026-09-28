@@ -660,6 +660,34 @@ final class AgentAttentionCoordinatorTests: XCTestCase {
         XCTAssertNil(coordinator.presentation)
     }
 
+    func testVisibleCompletionPeekRetractsWhenSessionBecomesActiveAgain() async throws {
+        let coordinator = AgentAttentionCoordinator()
+        let now = Date()
+        let completed = session(state: .completed, now: now)
+        let event = attention(
+            id: "completed-visible-then-active",
+            session: completed.id,
+            reason: .completed,
+            priority: .completed,
+            now: now
+        )
+
+        coordinator.synchronize(attentionEvents: [event], sessions: [completed], now: now)
+        try await Task.sleep(for: .milliseconds(1_100))
+        XCTAssertNotNil(coordinator.presentation)
+
+        var active = completed
+        active.state = .working
+        active.lastUpdatedAt = now.addingTimeInterval(1.2)
+        coordinator.synchronize(
+            attentionEvents: [event],
+            sessions: [active],
+            now: now.addingTimeInterval(1.2)
+        )
+
+        XCTAssertNil(coordinator.presentation)
+    }
+
     private func session(state: AgentState, now: Date) -> AgentSession {
         AgentSession(
             id: AgentSessionInstanceID(

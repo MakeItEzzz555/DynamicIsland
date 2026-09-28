@@ -709,6 +709,44 @@ enum AgentAttentionPolicyEngine {
         return state
     }
 
+    static func reconcilePresentation(
+        with sessions: [AgentSession],
+        state initialState: AgentAttentionPolicyState
+    ) -> AgentAttentionPolicyState {
+        guard let presentation = initialState.presentation else { return initialState }
+        let sessionsByID = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })
+        let currentItems = presentation.items.filter { event in
+            guard let session = sessionsByID[event.session] else { return false }
+            switch event.reason {
+            case .approvalRequired: return session.state == .waitingForApproval
+            case .userInputRequired: return session.state == .waitingForUser
+            case .planReady: return session.state == .planReady
+            case .completed: return session.state == .completed
+            case .failed: return session.state == .failed
+            case .interrupted: return session.state == .interrupted
+            }
+        }
+        guard currentItems != presentation.items else { return initialState }
+
+        var state = initialState
+        let generation = AgentAttentionGeneration(rawValue: state.generation.rawValue &+ 1)
+        state.generation = generation
+        guard !currentItems.isEmpty else {
+            state.presentation = nil
+            return state
+        }
+        state.presentation = AgentAttentionPresentation(
+            generation: generation,
+            items: currentItems,
+            overflowCount: 0,
+            style: currentItems.map { style(for: $0.reason) }.max(by: styleRank) ?? .informational,
+            createdAt: presentation.createdAt,
+            updatedAt: presentation.updatedAt,
+            retractAt: presentation.retractAt
+        )
+        return state
+    }
+
     static func markViewed(
         session: AgentSessionInstanceID,
         state initialState: AgentAttentionPolicyState

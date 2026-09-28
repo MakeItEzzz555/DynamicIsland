@@ -22,14 +22,13 @@ final class AgentActivityGlowCoordinator: ObservableObject {
         }
 
         guard provider != nil else { return }
+        let delay = lingerDuration
         clearTask = Task { [weak self] in
-            guard let self else { return }
-            try? await Task.sleep(for: .seconds(lingerDuration))
+            try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled else { return }
-            await MainActor.run {
-                self.provider = nil
-                self.clearTask = nil
-            }
+            guard let self else { return }
+            self.provider = nil
+            self.clearTask = nil
         }
     }
 

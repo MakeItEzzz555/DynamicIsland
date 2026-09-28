@@ -295,6 +295,16 @@ final class AgentAttentionCoordinator: ObservableObject {
         guard isEnabled else { return }
         latestSessions = sessions
 
+        let reconciledState = AgentAttentionPolicyEngine.reconcilePresentation(
+            with: sessions,
+            state: policyState
+        )
+        if reconciledState.presentation != policyState.presentation {
+            retractTask?.cancel()
+            retractTask = nil
+            policyState = reconciledState
+        }
+
         // AgentNotch parity: true turn/session completion is deliberately
         // debounced for one second so individual tool completions cannot cause
         // repeated completion peeks.

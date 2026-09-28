@@ -117,6 +117,10 @@ final class AgentUISnapshotTests: XCTestCase {
             mode: .interactive(canInterrupt: true),
             output: output
         )
+        try renderSessionLauncher(
+            sessions: [approval, working, claude] + longWorkspace,
+            output: output
+        )
     }
 
     private func renderCompactState(
@@ -172,6 +176,29 @@ final class AgentUISnapshotTests: XCTestCase {
             view,
             size: CGSize(width: 820, height: 440),
             to: output.appendingPathComponent(name + ".png")
+        )
+    }
+
+    private func renderSessionLauncher(
+        sessions: [AgentSession],
+        output: URL
+    ) throws {
+        let approvals = AgentApprovalController()
+        let managed = makeManagedControl(approvals: approvals)
+        let view = AgentSessionLauncherView(
+            sessions: sessions,
+            managedControl: managed,
+            onSelectSession: { _ in },
+            onDismiss: {}
+        )
+        .frame(width: 520, height: 300, alignment: .top)
+        .padding(18)
+        .background(Color(red: 0.025, green: 0.027, blue: 0.055))
+
+        try renderHosted(
+            view,
+            size: CGSize(width: 556, height: 336),
+            to: output.appendingPathComponent("22-in-island-session-launcher.png")
         )
     }
 

@@ -168,9 +168,9 @@ struct AgentDashboardContentView: View {
                     .padding(.horizontal, 8)
                     .transition(.opacity.combined(with: .move(edge: .top)))
                     .zIndex(20)
-                }
-
-                if controlSessions.isEmpty {
+                    .frame(maxHeight: .infinity, alignment: .top)
+                    .layoutPriority(2)
+                } else if controlSessions.isEmpty {
                     AgentEmptyConsoleState(managedControl: managedControl)
                 } else {
                     if let pending = approvalControl.nextPendingRequest(),

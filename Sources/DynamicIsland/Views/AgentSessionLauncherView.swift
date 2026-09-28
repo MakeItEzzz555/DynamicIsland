@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 
 struct AgentSessionLauncherView: View {
@@ -9,6 +8,9 @@ struct AgentSessionLauncherView: View {
 
     @State private var query = ""
     @State private var selectedRepositoryPath: String?
+    @State private var repositoryPathDraft = ""
+    @State private var showsRepositoryPathEntry = false
+    @State private var repositoryPathError: String?
     @State private var starting = false
 
     private var liveSessions: [AgentSession] {
@@ -60,9 +62,10 @@ struct AgentSessionLauncherView: View {
                     }
 
                     Button {
-                        chooseRepository()
+                        showsRepositoryPathEntry.toggle()
+                        repositoryPathError = nil
                     } label: {
-                        Label("Choose local repository…", systemImage: "folder.badge.plus")
+                        Label("Enter local repository path…", systemImage: "folder.badge.plus")
                             .font(.system(size: 9.5, weight: .semibold))
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, 8)
@@ -70,6 +73,10 @@ struct AgentSessionLauncherView: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.white.opacity(0.64))
+
+                    if showsRepositoryPathEntry {
+                        repositoryPathEntry
+                    }
                 }
                 .padding(.vertical, 2)
             }
@@ -263,6 +270,34 @@ struct AgentSessionLauncherView: View {
         }
     }
 
+    private var repositoryPathEntry: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 6) {
+                TextField("/path/to/repository", text: $repositoryPathDraft)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .onSubmit(useRepositoryPathDraft)
+                Button("Use") {
+                    useRepositoryPathDraft()
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.white.opacity(0.82))
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 28)
+            .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 7))
+
+            if let repositoryPathError {
+                Text(repositoryPathError)
+                    .font(.system(size: 8.5, weight: .medium))
+                    .foregroundStyle(.red.opacity(0.78))
+                    .padding(.horizontal, 3)
+            }
+        }
+        .padding(.horizontal, 4)
+    }
+
     private func modelChoice(_ title: String, model: String?) -> some View {
         let selected = managedControl.newSessionModel(for: selectedProvider) == model
         return Button {
@@ -278,16 +313,15 @@ struct AgentSessionLauncherView: View {
         .buttonStyle(.plain)
     }
 
-    private func chooseRepository() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = false
-        panel.prompt = "Use Repository"
-        panel.message = "Choose a local repository or project folder for the new agent session."
-        if panel.runModal() == .OK, let url = panel.url {
-            selectedRepositoryPath = url.path
+    private func useRepositoryPathDraft() {
+        guard let path = AgentSessionLauncherProjection.validRepositoryPath(repositoryPathDraft) else {
+            repositoryPathError = "Enter an existing local folder"
+            return
         }
+        selectedRepositoryPath = path
+        repositoryPathDraft = path
+        repositoryPathError = nil
+        showsRepositoryPathEntry = false
     }
 
 
@@ -337,8 +371,8 @@ enum AgentSessionLauncherProjection {
     ) -> [AgentLocalRepositoryChoice] {
         var seen = Set<String>()
         return sessions.compactMap { session -> AgentLocalRepositoryChoice? in
-            guard let path = session.project.workingDirectory?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !path.isEmpty,
+            guard let rawPath = session.project.workingDirectory,
+                  let path = canonicalRepositoryPath(rawPath),
                   fileExists(path),
                   seen.insert(path).inserted else { return nil }
             let display = session.project.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -356,5 +390,22 @@ enum AgentSessionLauncherProjection {
         }
         .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
-}
 
+    static func validRepositoryPath(
+        _ rawPath: String,
+        fileManager: FileManager = .default
+    ) -> String? {
+        guard let path = canonicalRepositoryPath(rawPath) else { return nil }
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: path, isDirectory: &isDirectory),
+              isDirectory.boolValue else { return nil }
+        return path
+    }
+
+    private static func canonicalRepositoryPath(_ rawPath: String) -> String? {
+        let trimmed = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let expanded = (trimmed as NSString).expandingTildeInPath
+        return URL(fileURLWithPath: expanded).standardizedFileURL.path
+    }
+}

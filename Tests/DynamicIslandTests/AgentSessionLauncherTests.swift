@@ -123,6 +123,34 @@ final class AgentSessionLauncherTests: XCTestCase {
         XCTAssertEqual(result.first?.name, "DynamicIsland")
     }
 
+    func testRepositoryProjectionCanonicalizesEquivalentPathsBeforeDeduplication() {
+        let now = Date()
+        let direct = makeSession(
+            nativeID: "direct",
+            state: .working,
+            availability: .loaded,
+            project: "DynamicIsland",
+            path: "/repos/DynamicIsland",
+            now: now
+        )
+        let equivalent = makeSession(
+            nativeID: "equivalent",
+            state: .idle,
+            availability: .resumable,
+            project: "DynamicIsland",
+            path: "/repos/./DynamicIsland/",
+            now: now.addingTimeInterval(-1)
+        )
+
+        let result = AgentSessionLauncherProjection.repositories(
+            [direct, equivalent],
+            query: "",
+            fileExists: { $0 == "/repos/DynamicIsland" }
+        )
+
+        XCTAssertEqual(result.map(\.path), ["/repos/DynamicIsland"])
+    }
+
     private func makeSession(
         nativeID: String,
         state: AgentState,

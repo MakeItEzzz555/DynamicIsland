@@ -670,13 +670,16 @@ final class AgentManagedSessionController: ObservableObject {
                 cwd: cwd,
                 model: newSessionModelByProvider[selectedProvider]
             )
-            markManaged(descriptor)
-            _ = await emitSessionAvailability(descriptor, type: .sessionStarted)
-            if let exactSession = eventStore.sessions.first(where: {
-                $0.id.sessionID == descriptor.sessionID
-            }) {
-                selectSession(exactSession.id)
+            guard let instance = await emitSessionAvailability(descriptor, type: .sessionStarted),
+                  instance.sessionID == descriptor.sessionID,
+                  eventStore.session(for: instance) != nil else {
+                attachmentErrors[descriptor.sessionID] = "Started session could not be attached"
+                return nil
             }
+            markManaged(descriptor)
+            verifiedAttachmentSessionIDs.insert(descriptor.sessionID)
+            attachmentErrors.removeValue(forKey: descriptor.sessionID)
+            selectSession(instance)
             return descriptor
         } catch {
             setTransportError(Self.safeError(error, provider: selectedProvider), for: selectedProvider)
