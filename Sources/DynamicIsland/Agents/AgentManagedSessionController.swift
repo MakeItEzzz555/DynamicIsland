@@ -484,10 +484,6 @@ final class AgentManagedSessionController: ObservableObject {
         managed[session.id.sessionID]?.isInterrupting == true
     }
 
-    func activeTurnStartedAt(for session: AgentSession) -> Date? {
-        managed[session.id.sessionID]?.activeTurnStartedAt
-    }
-
     func statusMessage(for session: AgentSession) -> String? {
         if managed[session.id.sessionID]?.isInterrupting == true {
             return "Stopping…"
@@ -757,7 +753,6 @@ final class AgentManagedSessionController: ObservableObject {
             updateControl(sessionID) {
                 $0.isSubmitting = false
                 $0.activeTurnID = turn.turnID
-                $0.activeTurnStartedAt = Date()
                 $0.lastError = nil
             }
             projectAcceptedUserPrompt(
@@ -827,7 +822,6 @@ final class AgentManagedSessionController: ObservableObject {
             let sessionID = AgentSessionID(provider: agentProvider, nativeID: turn.nativeSessionID)
             updateControl(sessionID) {
                 $0.activeTurnID = turn.turnID
-                $0.activeTurnStartedAt = Date()
                 $0.isSubmitting = false
                 $0.isInterrupting = false
                 $0.lastError = nil
@@ -862,7 +856,6 @@ final class AgentManagedSessionController: ObservableObject {
             updateControl(sessionID) {
                 if $0.activeTurnID == turn.turnID {
                     $0.activeTurnID = nil
-                    $0.activeTurnStartedAt = nil
                 }
                 $0.isSubmitting = false
                 $0.isInterrupting = false
@@ -902,7 +895,6 @@ final class AgentManagedSessionController: ObservableObject {
             for target in targets {
                 updateControl(target) {
                     $0.activeTurnID = nil
-                    $0.activeTurnStartedAt = nil
                     $0.isSubmitting = false
                     $0.isInterrupting = false
                     $0.lastError = AgentPrivacyProjection.summary(summary) ??
@@ -991,7 +983,6 @@ final class AgentManagedSessionController: ObservableObject {
             for key in managedIDs {
                 updateControl(key) {
                     $0.activeTurnID = nil
-                    $0.activeTurnStartedAt = nil
                     $0.isSubmitting = false
                     $0.isInterrupting = false
                     $0.lastError = transportMessage
@@ -1171,7 +1162,6 @@ final class AgentManagedSessionController: ObservableObject {
         var value = managed[descriptor.sessionID] ?? AgentManagedControlState(
             nativeSessionID: descriptor.nativeSessionID,
             activeTurnID: nil,
-            activeTurnStartedAt: nil,
             isSubmitting: false,
             isInterrupting: false,
             lastError: nil,

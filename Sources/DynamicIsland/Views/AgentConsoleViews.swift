@@ -177,17 +177,12 @@ struct AgentEmbeddedConsoleView: View {
 
         return LazyVStack(alignment: .leading, spacing: 7) {
             if timeline.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    Label(emptyStateTitle, systemImage: emptyStateSymbol)
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.58))
-                    Text(emptyStateSubtitle)
-                        .font(.system(size: 8, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.34))
-                        .lineLimit(2)
+                HStack(spacing: 6) {
+                    Image(systemName: AgentSessionPresentation.stateSymbol(session.state))
+                        .frame(width: 11)
+                    Text(AgentSessionPresentation.stateLabel(session.state))
                 }
-                .padding(.vertical, 8)
-                .padding(.horizontal, 6)
+                .foregroundStyle(.white.opacity(0.48))
             } else {
                 ForEach(timeline) { entry in
                     consoleEntryRow(entry)
@@ -209,32 +204,6 @@ struct AgentEmbeddedConsoleView: View {
         }
         .font(.system(size: 8.5, weight: .medium))
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var emptyStateTitle: String {
-        if session.availability == .resumable { return "Resumable" }
-        if case .observed = mode { return "Observed externally" }
-        if session.state == .idle || (session.isOpen && session.state == .completed) {
-            return "No recent activity"
-        }
-        return AgentSessionPresentation.stateLabel(session.state)
-    }
-
-    private var emptyStateSubtitle: String {
-        let project = AgentPrivacyProjection.displayProject(session.project)
-        if session.availability == .resumable {
-            return "\(AgentTurnTimingPresentation.relativeUpdateText(lastUpdatedAt: session.lastUpdatedAt)). Resume to continue this exact thread."
-        }
-        if case .observed = mode {
-            return "Waiting for activity from \(project.sourceApplicationName ?? "the source application")."
-        }
-        return "Ready for the next managed task."
-    }
-
-    private var emptyStateSymbol: String {
-        if session.availability == .resumable { return "arrow.clockwise" }
-        if case .observed = mode { return "eye" }
-        return AgentSessionPresentation.stateSymbol(session.state)
     }
 
     private var actionableApproval: AgentApprovalControlRequest? {
@@ -392,12 +361,11 @@ struct AgentEmbeddedConsoleView: View {
     }
 
     private var observedFooter: some View {
-        let source = AgentPrivacyProjection.displayProject(session.project).sourceApplicationName
-        return HStack(spacing: 5) {
+        HStack(spacing: 5) {
             Image(systemName: "eye")
-            Text("Observed externally")
+            Text("Observed session")
             Text("·")
-            Text(source.map { "Controlled by \($0)" } ?? "Interactive control unavailable")
+            Text("Interactive control unavailable")
         }
         .font(.system(size: 7.5, weight: .medium))
         .foregroundStyle(.white.opacity(0.34))

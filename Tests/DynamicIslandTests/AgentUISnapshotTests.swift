@@ -42,11 +42,7 @@ final class AgentUISnapshotTests: XCTestCase {
                 HStack(spacing: 12) {
                     AgentCompactAttentionLeadingView(provider: .codex, project: "storefront")
                     Spacer(minLength: 20)
-                    AgentCompactAttentionTrailingView(
-                        text: "Approval needed",
-                        accent: .orange,
-                        style: .actionRequired
-                    )
+                    AgentCompactAttentionTrailingView(text: "Approval needed", accent: .orange)
                 }
             ),
             glowColor: .orange,
@@ -190,27 +186,8 @@ final class AgentUISnapshotTests: XCTestCase {
     ) throws {
         let approvals = AgentApprovalController()
         let managed = makeManagedControl(approvals: approvals)
-        let accountUsage = AgentUsage(scopedSamples: [
-            AgentUsageKey(metric: .quotaUsed, scope: "5h"): AgentUsageSample(
-                value: 22,
-                limit: 100,
-                unit: .fraction,
-                scope: "5h",
-                source: "snapshot fixture",
-                observedAt: now
-            ),
-            AgentUsageKey(metric: .quotaUsed, scope: "weekly"): AgentUsageSample(
-                value: 50,
-                limit: 100,
-                unit: .fraction,
-                scope: "weekly",
-                source: "snapshot fixture",
-                observedAt: now
-            )
-        ])
         let view = AgentDashboardContentView(
             sessions: sessions,
-            accountUsage: accountUsage,
             showsUsage: true,
             approvalControl: approvals,
             managedControl: managed,

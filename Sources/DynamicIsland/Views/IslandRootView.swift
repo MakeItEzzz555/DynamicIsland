@@ -1390,8 +1390,7 @@ struct CompactIslandView: View {
                         text: attentionPresentation.totalCount > 1
                             ? "\(attentionPresentation.totalCount) agents"
                             : String(primary.displaySummary.prefix(72)),
-                        accent: attentionAccent,
-                        style: attentionPresentation.style
+                        accent: attentionAccent
                     )
                 }
                 .transition(.opacity)

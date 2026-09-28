@@ -39,9 +39,6 @@ struct AgentCompactPresentation: Equatable, Sendable {
 
     private static func summary(for sessions: [AgentSession]) -> String {
         if sessions.count == 1, let session = sessions.first {
-            if let active = AgentRecentActivityPresentation.active(for: session) {
-                return "\(session.id.sessionID.provider.stableName.capitalized) · \(active.title)"
-            }
             let state = session.isOpen && session.state == .completed
                 ? "idle"
                 : AgentSessionPresentation.shortStateLabel(session.state).lowercased()
@@ -835,190 +832,6 @@ struct AgentOperationSummary: Identifiable, Equatable, Sendable {
     }
 }
 
-
-enum AgentRecentActivityDisplayMode: String, Equatable, Sendable {
-    case recentList
-    case activeDetail
-}
-
-struct AgentRecentActivityItem: Identifiable, Equatable, Sendable {
-    let id: String
-    let symbol: String
-    let title: String
-    let detail: String?
-    let status: AgentOperationStatus
-    let timestamp: Date
-    let isCommand: Bool
-}
-
-enum AgentRecentActivityPresentation {
-    static let maximumItems = 5
-
-    static func make(
-        for session: AgentSession,
-        limit: Int = maximumItems
-    ) -> [AgentRecentActivityItem] {
-        let bounded = min(max(limit, 0), maximumItems)
-        let operations = AgentOperationAggregation.make(
-            for: session,
-            limit: maximumItems,
-            includePendingApprovals: true
-        )
-
-        struct Group {
-            var operation: AgentOperationSummary
-            var count: Int
-        }
-
-        var groups: [String: Group] = [:]
-        var order: [String] = []
-        for operation in operations {
-            let canGroup = (operation.status == .active || operation.status == .pending) &&
-                !operation.id.hasPrefix("approval:")
-            let key = canGroup
-                ? "\(operation.title)|\(operation.detail ?? "")|\(operation.status.rawValue)"
-                : operation.id
-            if var existing = groups[key] {
-                existing.count += operation.count
-                if operation.date > existing.operation.date {
-                    existing.operation = operation
-                }
-                groups[key] = existing
-            } else {
-                groups[key] = Group(operation: operation, count: operation.count)
-                order.append(key)
-            }
-        }
-
-        let items = order.compactMap { key -> AgentRecentActivityItem? in
-            guard let group = groups[key] else { return nil }
-            let operation = group.operation
-            return AgentRecentActivityItem(
-                id: operation.id,
-                symbol: operation.symbol,
-                title: group.count > 1 ? "\(operation.title) ×\(group.count)" : operation.displayTitle,
-                detail: operation.detail,
-                status: operation.status,
-                timestamp: operation.date,
-                isCommand: operation.isCommand
-            )
-        }
-        return Array(items.suffix(bounded))
-    }
-
-    static func active(
-        for session: AgentSession
-    ) -> AgentRecentActivityItem? {
-        make(for: session, limit: maximumItems)
-            .last(where: { $0.status == .active || $0.status == .pending })
-    }
-}
-
-struct AgentContextPresentation: Equatable, Sendable {
-    let used: Double
-    let limit: Double?
-    let progress: Double?
-    let valueText: String
-    let isStale: Bool
-
-    static func make(for session: AgentSession, now: Date = Date()) -> Self? {
-        guard session.capabilities.contains(.contextUsage),
-              let sample = session.usage[.contextUsed],
-              sample.isValid else { return nil }
-        let limit = sample.limit ?? session.usage[.contextLimit]?.value
-        let progress: Double?
-        if let limit, limit.isFinite, limit > 0 {
-            progress = min(max(sample.value / limit, 0), 1)
-        } else {
-            progress = nil
-        }
-        let usedText = compactCount(sample.value)
-        let valueText = limit.map { usedText + " / " + compactCount($0) } ?? {
-            if sample.unit == .fraction, sample.value <= 1 {
-                return "\(Int((sample.value * 100).rounded()))%"
-            }
-            return usedText
-        }()
-        return Self(
-            used: sample.value,
-            limit: limit,
-            progress: progress,
-            valueText: valueText,
-            isStale: now.timeIntervalSince(sample.observedAt) > 300
-        )
-    }
-
-    private static func compactCount(_ value: Double) -> String {
-        if value >= 1_000_000 {
-            return value.formatted(.number.precision(.fractionLength(0...1)).scale(0.000001)) + "m"
-        }
-        if value >= 1_000 {
-            return value.formatted(.number.precision(.fractionLength(0...1)).scale(0.001)) + "k"
-        }
-        return value.formatted(.number.precision(.fractionLength(0...1)))
-    }
-}
-
-enum AgentWorkspaceOwnership: String, Equatable, Sendable {
-    case managed
-    case observed
-    case resumable
-    case unavailable
-}
-
-struct AgentWorkspaceMetadataPresentation: Equatable, Sendable {
-    let project: String
-    let branch: String?
-    let model: String?
-    let threadSuffix: String
-    let ownership: AgentWorkspaceOwnership
-    let context: AgentContextPresentation?
-
-    static func make(
-        session: AgentSession,
-        isManaged: Bool,
-        canConnect: Bool
-    ) -> Self {
-        let project = AgentPrivacyProjection.displayProject(session.project)
-        let ownership: AgentWorkspaceOwnership
-        if isManaged {
-            ownership = .managed
-        } else if session.availability == .resumable {
-            ownership = canConnect ? .resumable : .unavailable
-        } else {
-            ownership = .observed
-        }
-        return Self(
-            project: project.displayName ?? session.id.sessionID.provider.stableName.capitalized,
-            branch: project.gitBranch,
-            model: project.model,
-            threadSuffix: "…" + session.id.sessionID.nativeID.suffix(4),
-            ownership: ownership,
-            context: AgentContextPresentation.make(for: session)
-        )
-    }
-}
-
-enum AgentTurnTimingPresentation {
-    static func elapsedText(startedAt: Date?, now: Date = Date()) -> String? {
-        guard let startedAt, now >= startedAt else { return nil }
-        let total = Int(now.timeIntervalSince(startedAt).rounded(.down))
-        let minutes = total / 60
-        let seconds = total % 60
-        if minutes > 0 { return "\(minutes)m \(seconds)s" }
-        return "\(seconds)s"
-    }
-
-    static func relativeUpdateText(lastUpdatedAt: Date, now: Date = Date()) -> String {
-        let seconds = max(Int(now.timeIntervalSince(lastUpdatedAt)), 0)
-        if seconds < 60 { return seconds < 5 ? "Updated now" : "Updated \(seconds)s ago" }
-        let minutes = seconds / 60
-        if minutes < 60 { return "Updated \(minutes)m ago" }
-        let hours = minutes / 60
-        return "Updated \(hours)h ago"
-    }
-}
-
 enum AgentConsoleEntryKind: String, Hashable, Sendable {
     case user
     case agent
@@ -1156,8 +969,7 @@ enum AgentOperationAggregation {
                 id: "command:\($0.correlationID.rawValue)",
                 symbol: "terminal",
                 title: commandTitle($0.displaySummary),
-                detail: safeDetail($0.displaySummary).map { "$ " + $0 } ??
-                    $0.exitCode.map { "Exit \($0)" },
+                detail: $0.exitCode.map { "Exit \($0)" },
                 status: $0.status,
                 count: 1,
                 date: $0.completedAt ?? $0.startedAt,
