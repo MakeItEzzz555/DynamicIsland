@@ -294,6 +294,27 @@ final class AgentPresentationTests: XCTestCase {
         )
     }
 
+    func testResolvedApprovalRemainsInOperationHistory() {
+        var value = session(state: .idle)
+        let request = AgentCorrelationID(rawValue: "resolved-approval")
+        value.approvals[request] = AgentApproval(
+            requestID: request,
+            summary: "Command approval",
+            operationCorrelationID: nil,
+            requestedAt: now,
+            resolvedAt: now.addingTimeInterval(1),
+            expiresAt: nil,
+            state: .approved
+        )
+
+        let operation = AgentOperationAggregation.make(
+            for: value,
+            includePendingApprovals: false
+        ).first
+        XCTAssertEqual(operation?.title, "Approved")
+        XCTAssertEqual(operation?.status, .resolved)
+    }
+
     func testAttentionPrimaryTitlePreservesDistinctStructuredTaskTitle() {
         var value = session(state: .waitingForApproval, projectName: "storefront")
         let request = AgentCorrelationID(rawValue: "approval-task")
@@ -384,6 +405,57 @@ final class AgentPresentationTests: XCTestCase {
         )
         XCTAssertEqual(metric.progress, 0.7)
         XCTAssertEqual(metric.sample.observedAt, now.addingTimeInterval(30))
+    }
+
+    func testQuotaGaugeShowsRemainingWhileContextGaugeShowsUsed() {
+        let fiveHour = AgentUsagePresentation(
+            id: "quota:5h",
+            label: "Quota · 5h",
+            sample: usageSample(value: 18, limit: 100, observedAt: now, scope: "5h"),
+            effectiveLimit: 100
+        )
+        let weekly = AgentUsagePresentation(
+            id: "quota:weekly",
+            label: "Quota · Week",
+            sample: usageSample(value: 29, limit: 100, observedAt: now, scope: "weekly"),
+            effectiveLimit: 100
+        )
+        let context = AgentUsagePresentation(
+            id: "context",
+            label: "Context",
+            sample: usageSample(value: 19, limit: 100, observedAt: now, scope: "context"),
+            effectiveLimit: 100
+        )
+
+        XCTAssertEqual(fiveHour.progress ?? -1, 0.18, accuracy: 0.0001)
+        XCTAssertEqual(fiveHour.gaugeProgress ?? -1, 0.82, accuracy: 0.0001)
+        XCTAssertEqual(fiveHour.gaugeValueText, "82% left")
+        XCTAssertEqual(weekly.gaugeProgress ?? -1, 0.71, accuracy: 0.0001)
+        XCTAssertEqual(weekly.gaugeValueText, "71% left")
+        XCTAssertEqual(context.gaugeProgress ?? -1, 0.19, accuracy: 0.0001)
+        XCTAssertEqual(context.gaugeValueText, "19%")
+    }
+
+    func testQuotaGaugeRemainingClampsAtBounds() {
+        let over = AgentUsagePresentation(
+            id: "quota:5h",
+            label: "Quota · 5h",
+            sample: usageSample(value: 140, limit: 100, observedAt: now, scope: "5h"),
+            effectiveLimit: 100
+        )
+        let under = AgentUsagePresentation(
+            id: "quota:weekly",
+            label: "Quota · Week",
+            sample: usageSample(value: -25, limit: 100, observedAt: now, scope: "weekly"),
+            effectiveLimit: 100
+        )
+        XCTAssertEqual(over.gaugeProgress ?? -1, 0, accuracy: 0.0001)
+        XCTAssertEqual(under.gaugeProgress ?? -1, 1, accuracy: 0.0001)
+    }
+
+    func testProviderVisualIdentityDoesNotMislabelCodexAsTerminal() {
+        XCTAssertEqual(AgentProviderVisualIdentity.resolve(.codex).accessibilityName, "Codex")
+        XCTAssertNotEqual(AgentProviderVisualIdentity.resolve(.codex).systemSymbolName, "terminal")
     }
 
     func testFiveHourAndWeeklyQuotaScopesCoexistAndKeepFreshestPerScope() {
@@ -491,6 +563,44 @@ final class AgentPresentationTests: XCTestCase {
         )
     }
 
+    func testWorkspaceSelectionPrefersLoadedIdleBeforeResumableAndRetained() {
+        let loaded = session(nativeID: "loaded", state: .idle, availability: .loaded)
+        let resumable = session(nativeID: "resumable", state: .idle, availability: .resumable)
+        let retained = session(nativeID: "retained", state: .completed)
+
+        XCTAssertEqual(
+            AgentWorkspaceSelection.resolve(
+                current: nil,
+                sessions: [retained, resumable, loaded]
+            ),
+            loaded.id
+        )
+        XCTAssertEqual(
+            AgentWorkspaceSelection.resolve(current: nil, sessions: [retained, resumable]),
+            resumable.id
+        )
+    }
+
+    func testWorkspaceSelectionPrioritizesExactManagedTurnBeforeObservedActive() {
+        let managed = session(nativeID: "managed", state: .idle, availability: .loaded)
+        let observed = session(nativeID: "observed", state: .working)
+        let managedIDs: Set<AgentSessionID> = [managed.id.sessionID]
+
+        XCTAssertEqual(
+            AgentWorkspaceSelection.resolve(
+                current: nil,
+                sessions: [observed, managed],
+                activeManagedSessionIDs: managedIDs
+            ),
+            managed.id
+        )
+        XCTAssertTrue(AgentWorkspaceSelection.isActive(
+            managed,
+            activeManagedSessionIDs: managedIDs
+        ))
+        XCTAssertTrue(AgentWorkspaceSelection.isActive(observed))
+    }
+
     func testWorkspaceSelectionSurvivesUnrelatedArrivalAndSelectedStateUpdate() {
         let selected = session(nativeID: "selected", state: .idle)
         let unrelated = session(nativeID: "urgent", state: .waitingForApproval)
@@ -570,6 +680,27 @@ final class AgentPresentationTests: XCTestCase {
         XCTAssertFalse(activeOnly.showsRecentSection)
     }
 
+    func testProjectPresentationGroupsSameProjectWithoutCollapsingDistinctThreads() throws {
+        let first = session(nativeID: "thread-a8f2", state: .working)
+        let second = session(nativeID: "thread-b7e1", state: .idle, availability: .loaded)
+        let third = session(nativeID: "thread-c6d0", state: .idle, availability: .resumable)
+
+        let presentation = AgentDashboardPresentation.make(
+            orderedSessions: AgentWorkspaceSelection.ordered(
+                sessions: [third, second, first]
+            )
+        )
+        let group = try XCTUnwrap(presentation.groups.first)
+
+        XCTAssertEqual(presentation.groups.count, 1)
+        XCTAssertEqual(group.title, "DynamicIsland")
+        XCTAssertEqual(group.sessions.count, 3)
+        XCTAssertEqual(
+            Set(group.sessions.map(\.id.sessionID.nativeID)),
+            ["thread-a8f2", "thread-b7e1", "thread-c6d0"]
+        )
+    }
+
     func testSelectedAttentionEmphasisOutranksSelectionAndHover() {
         let attention = session(state: .waitingForApproval)
         let ordinary = session(state: .working)
@@ -602,6 +733,49 @@ final class AgentPresentationTests: XCTestCase {
         XCTAssertEqual(large.sessionWorkspaceMinimumHeight, 142)
         XCTAssertEqual(large.selectedDetailHeight, 94)
         XCTAssertEqual(large.selectedDetailActivityLimit, 4)
+    }
+
+    func testSelectedSessionContextOverridesAccountContextWithoutChangingQuotas() {
+        var account = AgentUsage(samples: [
+            .quotaUsed: usageSample(value: 20, limit: 100, observedAt: now, scope: "5h"),
+            .contextUsed: usageSample(value: 90, limit: 100, observedAt: now, scope: "context")
+        ])
+        account.merge(AgentUsage(samples: [
+            .quotaUsed: usageSample(value: 40, limit: 100, observedAt: now, scope: "weekly")
+        ]))
+
+        var selectedUsage = AgentUsage(samples: [
+            .contextUsed: usageSample(value: 25, limit: 100, observedAt: now, scope: "context")
+        ])
+        selectedUsage.merge(AgentUsage(samples: [
+            .contextLimit: usageSample(value: 100, limit: nil, observedAt: now, scope: "context")
+        ]))
+        let selected = session(capabilities: [.contextUsage], usage: selectedUsage)
+
+        let metrics = AgentGlobalUsagePresentation.makeForSelectedSession(
+            provider: .codex,
+            accountUsage: account,
+            selectedSession: selected,
+            limit: 3
+        )
+
+        XCTAssertEqual(metrics.map(\.metric.label), ["Quota · 5h", "Quota · Week", "Context"])
+        XCTAssertEqual(metrics[0].metric.sample.value, 20)
+        XCTAssertEqual(metrics[1].metric.sample.value, 40)
+        XCTAssertEqual(metrics[2].metric.sample.value, 25)
+    }
+
+    func testNoSelectedSessionDoesNotBorrowAccountContext() {
+        let account = AgentUsage(samples: [
+            .contextUsed: usageSample(value: 55, limit: 100, observedAt: now, scope: "context")
+        ])
+        let metrics = AgentGlobalUsagePresentation.makeForSelectedSession(
+            provider: .codex,
+            accountUsage: account,
+            selectedSession: nil,
+            limit: 3
+        )
+        XCTAssertFalse(metrics.contains { $0.metric.id == "context" })
     }
 
     func testAccountUsageRendersCanonicalMetricsWithoutAnySession() {
@@ -695,8 +869,18 @@ final class AgentPresentationTests: XCTestCase {
         ])
         XCTAssertTrue(AgentApprovalPresentation.isActionable(session: value, pending: request))
 
-        let claude = session(provider: .claude, state: .waitingForApproval, capabilities: [.approvalControl])
-        XCTAssertFalse(AgentApprovalPresentation.isActionable(session: claude, pending: request))
+        var claude = session(provider: .claude, state: .waitingForApproval, capabilities: [.approvalControl])
+        let claudeRequest = AgentApprovalControlRequest(
+            key: AgentApprovalControlKey(
+                session: claude.id,
+                requestID: AgentCorrelationID(rawValue: "claude-request")
+            ),
+            summary: "Claude approval",
+            expiresAt: now.addingTimeInterval(30)
+        )
+        XCTAssertTrue(AgentApprovalPresentation.isActionable(session: claude, pending: claudeRequest))
+        claude.capabilities = AgentCapabilities()
+        XCTAssertFalse(AgentApprovalPresentation.isActionable(session: claude, pending: claudeRequest))
     }
 
     private func session(
@@ -707,7 +891,8 @@ final class AgentPresentationTests: XCTestCase {
         projectName: String = "DynamicIsland",
         model: String? = "model",
         capabilities: Set<AgentCapability> = [],
-        usage: AgentUsage = AgentUsage()
+        usage: AgentUsage = AgentUsage(),
+        availability: AgentSessionAvailability? = nil
     ) -> AgentSession {
         AgentSession(
             id: AgentSessionInstanceID(
@@ -728,7 +913,8 @@ final class AgentPresentationTests: XCTestCase {
             recentActivity: [],
             startedAt: now,
             endedAt: state.isTerminal ? now : nil,
-            lastUpdatedAt: now
+            lastUpdatedAt: now,
+            availability: availability
         )
     }
 

@@ -18,7 +18,10 @@ final class CodexAppServerClientTests: XCTestCase {
                 }}), flush=True)
             elif method == "initialized":
                 pass
-            elif method in ("thread/start", "thread/resume"):
+            elif method in ("thread/start", "thread/resume", "thread/read"):
+                if method in ("thread/resume", "thread/read") and message.get("params", {}).get("threadId") != "thread-1":
+                    print(json.dumps({"id": request_id, "error": {"code": -1, "message": "wrong thread"}}), flush=True)
+                    continue
                 print(json.dumps({"id": request_id, "result": {
                     "thread": {
                         "id": "thread-1", "cwd": "/tmp/project",
@@ -59,6 +62,9 @@ final class CodexAppServerClientTests: XCTestCase {
         let resumed = try await client.resumeThread(threadID: "thread-1")
         XCTAssertEqual(resumed.id, started.id)
 
+        let inspected = try await client.readThread(threadID: "thread-1")
+        XCTAssertEqual(inspected.id, "thread-1")
+
         let turn = try await client.startTurn(threadID: "thread-1", prompt: "hello")
         XCTAssertEqual(turn.id, "turn-1")
         let startedEvent = await eventTask.value
@@ -66,6 +72,166 @@ final class CodexAppServerClientTests: XCTestCase {
 
         try await client.interrupt(threadID: "thread-1", turnID: "turn-1")
         await client.stop()
+    }
+
+    func testApprovalUsesProviderApprovalIDAndExactResponseToken() async throws {
+        let executable = try makeFakeServer(script: #"""
+        #!/usr/bin/env python3
+        import json, sys
+        for line in sys.stdin:
+            message = json.loads(line)
+            method = message.get("method")
+            request_id = message.get("id")
+            if method == "initialize":
+                print(json.dumps({"id": request_id, "result": {}}), flush=True)
+            elif method == "thread/list":
+                print(json.dumps({"id": request_id, "result": {"data": []}}), flush=True)
+                print(json.dumps({
+                    "id": "rpc-token-7",
+                    "method": "item/commandExecution/requestApproval",
+                    "params": {
+                        "threadId": "thread-exact",
+                        "turnId": "turn-exact",
+                        "itemId": "shared-item",
+                        "approvalId": "approval-exact",
+                        "command": "git status",
+                        "reason": "Inspect repository state"
+                    }
+                }), flush=True)
+            elif request_id == "rpc-token-7":
+                if message.get("result", {}).get("decision") == "accept":
+                    sys.exit(0)
+                sys.exit(8)
+        """#)
+        let client = try CodexAppServerClient(
+            executableURL: executable,
+            requestTimeout: .seconds(2)
+        )
+        let provider = CodexAppServerProvider(client: client)
+        let events = await provider.events()
+        let approvalTask = Task<AgentManagedApprovalRequest?, Never> {
+            for await event in events {
+                if case .approvalRequested(let request) = event { return request }
+            }
+            return nil
+        }
+
+        _ = try await client.listThreads()
+        let received = await approvalTask.value
+        let request = try XCTUnwrap(received)
+        XCTAssertEqual(request.requestID, "approval-exact")
+        XCTAssertEqual(request.threadID, "thread-exact")
+        XCTAssertEqual(request.turnID, "turn-exact")
+        XCTAssertEqual(request.itemID, "shared-item")
+        try await provider.resolveApproval(request, allow: true)
+        await provider.stop()
+    }
+
+    func testModelListAndTurnModelOverrideUseProviderAuthoritativeSchema() async throws {
+        let executable = try makeFakeServer(script: #"""
+        #!/usr/bin/env python3
+        import json, sys
+        for line in sys.stdin:
+            message = json.loads(line)
+            method = message.get("method")
+            request_id = message.get("id")
+            if method == "initialize":
+                print(json.dumps({"id": request_id, "result": {}}), flush=True)
+            elif method == "model/list":
+                print(json.dumps({"id": request_id, "result": {
+                    "data": [
+                        {"id":"model-a","model":"model-a","displayName":"Model A","description":"A","hidden":False,"isDefault":True},
+                        {"id":"hidden","model":"hidden","displayName":"Hidden","description":"H","hidden":True,"isDefault":False}
+                    ],
+                    "nextCursor": None
+                }}), flush=True)
+            elif method == "thread/start":
+                model = message.get("params", {}).get("model")
+                if model != "model-a":
+                    print(json.dumps({"id": request_id, "error": {"code": -1, "message": "missing thread model"}}), flush=True)
+                else:
+                    print(json.dumps({"id": request_id, "result": {
+                        "thread": {"id":"thread-new","cwd":"/tmp","model":"model-a","canAcceptDirectInput":True},
+                        "cwd":"/tmp","model":"model-a"
+                    }}), flush=True)
+            elif method == "turn/start":
+                model = message.get("params", {}).get("model")
+                if model != "model-a":
+                    print(json.dumps({"id": request_id, "error": {"code": -1, "message": "missing model override"}}), flush=True)
+                else:
+                    print(json.dumps({"id": request_id, "result": {
+                        "turn": {"id":"turn-model","status":"inProgress"}
+                    }}), flush=True)
+        """#)
+
+        let client = try CodexAppServerClient(
+            executableURL: executable,
+            requestTimeout: .seconds(2)
+        )
+        let provider = CodexAppServerProvider(client: client)
+
+        XCTAssertEqual(provider.modelSelectionScope, .turnAndSubsequent)
+        XCTAssertEqual(provider.interactiveCapabilities, [
+            .startSession, .resumeSession, .submitPrompt, .interrupt, .selectModel,
+            .resolveApprovals, .accountUsage, .contextUsage, .streamMessages, .streamToolActivity,
+            .loadHistory
+        ])
+
+        let models = try await provider.listModels()
+        XCTAssertEqual(models.map(\.model), ["model-a"])
+        XCTAssertEqual(models.first?.displayName, "Model A")
+        XCTAssertEqual(models.first?.isDefault, true)
+
+        let newSession = try await provider.startSession(cwd: "/tmp", model: "model-a")
+        XCTAssertEqual(newSession.nativeSessionID, "thread-new")
+        XCTAssertEqual(newSession.model, "model-a")
+
+        let turn = try await provider.submit(
+            prompt: "hello",
+            nativeSessionID: "thread-1",
+            model: "model-a"
+        )
+        XCTAssertEqual(turn.turnID, "turn-model")
+        await provider.stop()
+    }
+
+    func testProviderTranscriptReturnsOnlySafeDisplayableHistory() async throws {
+        let executable = try makeFakeServer(script: #"""
+        #!/usr/bin/env python3
+        import json, sys
+        for line in sys.stdin:
+            message = json.loads(line)
+            method = message.get("method")
+            request_id = message.get("id")
+            if method == "initialize":
+                print(json.dumps({"id": request_id, "result": {}}), flush=True)
+            elif method == "thread/items/list":
+                print(json.dumps({"id": request_id, "result": {
+                    "data": [
+                        {"turnId":"t1","item":{"type":"agentMessage","id":"a1","text":"Visible answer"},"startedAtMs":2000,"completedAtMs":2100},
+                        {"turnId":"t1","item":{"type":"reasoning","id":"r1","summary":["hidden"],"content":["private"]},"startedAtMs":1500,"completedAtMs":1600},
+                        {"turnId":"t1","item":{"type":"userMessage","id":"u1","clientId":None,"content":[{"type":"text","text":"User prompt","text_elements":[]}]},"startedAtMs":1000,"completedAtMs":1100},
+                        {"turnId":"t1","item":{"type":"commandExecution","id":"c1","command":"echo SECRET","aggregatedOutput":"SECRET"},"startedAtMs":1700,"completedAtMs":1800}
+                    ],
+                    "nextCursor": None,
+                    "backwardsCursor": None
+                }}), flush=True)
+        """#)
+        let client = try CodexAppServerClient(
+            executableURL: executable,
+            requestTimeout: .seconds(2)
+        )
+        let provider = CodexAppServerProvider(client: client)
+
+        let transcript = try await provider.readTranscript(
+            nativeSessionID: "thread-1",
+            limit: 20
+        )
+
+        XCTAssertEqual(transcript.map(\.role), [.user, .command, .agent])
+        XCTAssertEqual(transcript.map(\.text), ["User prompt", "echo", "Visible answer"])
+        XCTAssertFalse(transcript.contains { $0.text.contains("SECRET") || $0.text.contains("private") })
+        await provider.stop()
     }
 
     func testServerExitFailsPendingRequest() async throws {
@@ -254,9 +420,32 @@ final class CodexAppServerClientTests: XCTestCase {
 
         let result = CodexAppServerProvider.boundedDiscovery(threads)
 
-        XCTAssertEqual(result.count, CodexAppServerProvider.maximumDiscoveredSessions)
+        XCTAssertEqual(result.count, 25)
         XCTAssertEqual(result.first?.id, "active")
         XCTAssertEqual(Set(result.map(\.id)).count, result.count)
+    }
+
+    func testDiscoveryNeverDropsLoadedSessionsWhenHistoryExceedsDisplayBound() {
+        let now = Date(timeIntervalSince1970: 2_100_000_000)
+        var threads = (0..<90).map { index in
+            CodexListedThread(
+                id: "loaded-\(index)", cwd: nil, model: nil, status: .idle,
+                updatedAt: now.addingTimeInterval(Double(index)),
+                rolloutPath: nil, canAcceptDirectInput: true
+            )
+        }
+        threads += (0..<90).map { index in
+            CodexListedThread(
+                id: "history-\(index)", cwd: nil, model: nil, status: .notLoaded,
+                updatedAt: now.addingTimeInterval(Double(index)),
+                rolloutPath: nil, canAcceptDirectInput: false
+            )
+        }
+
+        let result = CodexAppServerProvider.boundedDiscovery(threads)
+
+        XCTAssertEqual(result.filter { $0.status == .idle }.count, 90)
+        XCTAssertEqual(result.filter { $0.status == .notLoaded }.count, 0)
     }
 
     func testContextUsesLatestTurnTokensInsteadOfCumulativeThreadTotal() throws {

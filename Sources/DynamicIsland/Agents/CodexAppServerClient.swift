@@ -115,6 +115,22 @@ struct CodexListedThread: Equatable, Sendable {
     let canAcceptDirectInput: Bool
 }
 
+struct CodexThreadItemEntry: Equatable, Sendable {
+    let turnID: String
+    let item: CodexJSONValue
+    let timestamp: Date
+}
+
+
+struct CodexAvailableModel: Equatable, Sendable {
+    let id: String
+    let model: String
+    let displayName: String
+    let description: String?
+    let hidden: Bool
+    let isDefault: Bool
+}
+
 enum CodexAppServerEvent: Equatable, Sendable {
     case notification(method: String, params: CodexJSONValue)
     case serverRequest(id: CodexJSONValue, method: String, params: CodexJSONValue)
@@ -259,31 +275,96 @@ actor CodexAppServerClient {
         stopProcessOnly()
     }
 
-    func startThread(cwd: String?) async throws -> CodexManagedThread {
+    func startThread(cwd: String?, model: String? = nil) async throws -> CodexManagedThread {
         try await start()
         var params: [String: CodexJSONValue] = [:]
         if let cwd, !cwd.isEmpty { params["cwd"] = .string(cwd) }
+        if let model, !model.isEmpty { params["model"] = .string(model) }
         let result = try await request(method: "thread/start", params: .object(params))
         return try decodeThreadResponse(result, method: "thread/start")
     }
 
-    func listThreads(limit: Int = 100) async throws -> [CodexListedThread] {
+    func listThreads(limit: Int = 500) async throws -> [CodexListedThread] {
         try await start()
-        let boundedLimit = min(max(limit, 1), 200)
-        let result = try await request(
-            method: "thread/list",
-            params: .object([
+        let totalLimit = min(max(limit, 1), 500)
+        var cursor: String?
+        var result: [CodexListedThread] = []
+        var seen = Set<String>()
+
+        while result.count < totalLimit {
+            let pageLimit = min(100, totalLimit - result.count)
+            var params: [String: CodexJSONValue] = [
                 "archived": .bool(false),
-                "limit": .integer(Int64(boundedLimit)),
+                "limit": .integer(Int64(pageLimit)),
                 "sortKey": .string("recency_at"),
                 "sortDirection": .string("desc"),
                 "useStateDbOnly": .bool(false)
+            ]
+            if let cursor { params["cursor"] = .string(cursor) }
+
+            let response = try await request(
+                method: "thread/list",
+                params: .object(params)
+            )
+            guard let values = response["data"]?.arrayValue else {
+                throw CodexAppServerError.invalidResponse("thread/list")
+            }
+            for value in values {
+                guard let thread = Self.decodeListedThread(value),
+                      seen.insert(thread.id).inserted else { continue }
+                result.append(thread)
+                if result.count == totalLimit { break }
+            }
+
+            guard let next = response["nextCursor"]?.stringValue,
+                  !next.isEmpty,
+                  next != cursor,
+                  !values.isEmpty else { break }
+            cursor = next
+        }
+        return result
+    }
+
+    func readThread(threadID: String) async throws -> CodexManagedThread {
+        try await start()
+        let result = try await request(
+            method: "thread/read",
+            params: .object([
+                "threadId": .string(threadID),
+                "includeTurns": .bool(false)
+            ])
+        )
+        return try decodeThreadResponse(result, method: "thread/read")
+    }
+
+    func listModels(limit: Int = 100) async throws -> [CodexAvailableModel] {
+        try await start()
+        let boundedLimit = min(max(limit, 1), 200)
+        let result = try await request(
+            method: "model/list",
+            params: .object([
+                "limit": .integer(Int64(boundedLimit)),
+                "includeHidden": .bool(false)
             ])
         )
         guard let values = result["data"]?.arrayValue else {
-            throw CodexAppServerError.invalidResponse("thread/list")
+            throw CodexAppServerError.invalidResponse("model/list")
         }
-        return values.compactMap(Self.decodeListedThread)
+        return values.compactMap { value in
+            guard let id = value["id"]?.stringValue,
+                  let model = value["model"]?.stringValue,
+                  let displayName = value["displayName"]?.stringValue else {
+                return nil
+            }
+            return CodexAvailableModel(
+                id: id,
+                model: model,
+                displayName: displayName,
+                description: value["description"]?.stringValue,
+                hidden: value["hidden"]?.boolValue ?? false,
+                isDefault: value["isDefault"]?.boolValue ?? false
+            )
+        }
     }
 
     func readAccountRateLimits() async throws -> CodexJSONValue {
@@ -295,6 +376,28 @@ actor CodexAppServerClient {
                 "supportsLunaReserve": .bool(false)
             ])
         )
+    }
+
+    func listThreadItems(threadID: String, limit: Int = 80) async throws -> [CodexThreadItemEntry] {
+        try await start()
+        let boundedLimit = min(max(limit, 1), 100)
+        let result = try await request(
+            method: "thread/items/list",
+            params: .object([
+                "threadId": .string(threadID),
+                "limit": .integer(Int64(boundedLimit)),
+                "sortDirection": .string("desc")
+            ])
+        )
+        guard let values = result["data"]?.arrayValue else {
+            throw CodexAppServerError.invalidResponse("thread/items/list")
+        }
+        return values.compactMap(Self.decodeThreadItemEntry).sorted {
+            if $0.timestamp != $1.timestamp { return $0.timestamp < $1.timestamp }
+            let lhsID = $0.item["id"]?.stringValue ?? ""
+            let rhsID = $1.item["id"]?.stringValue ?? ""
+            return lhsID < rhsID
+        }
     }
 
     func resumeThread(threadID: String) async throws -> CodexManagedThread {
@@ -309,7 +412,11 @@ actor CodexAppServerClient {
         return try decodeThreadResponse(result, method: "thread/resume")
     }
 
-    func startTurn(threadID: String, prompt: String) async throws -> CodexManagedTurn {
+    func startTurn(
+        threadID: String,
+        prompt: String,
+        model: String? = nil
+    ) async throws -> CodexManagedTurn {
         try await start()
         let input: CodexJSONValue = .array([
             .object([
@@ -318,13 +425,17 @@ actor CodexAppServerClient {
                 "text_elements": .array([])
             ])
         ])
+        var params: [String: CodexJSONValue] = [
+            "threadId": .string(threadID),
+            "input": input,
+            "turnTrigger": .string("dynamic-island")
+        ]
+        if let model, !model.isEmpty {
+            params["model"] = .string(model)
+        }
         let result = try await request(
             method: "turn/start",
-            params: .object([
-                "threadId": .string(threadID),
-                "input": input,
-                "turnTrigger": .string("dynamic-island")
-            ])
+            params: .object(params)
         )
         guard let turn = result["turn"],
               let id = turn["id"]?.stringValue else {
@@ -375,6 +486,19 @@ actor CodexAppServerClient {
                 "message": .string("Unsupported app-server request: \(method.prefix(80))")
             ])
         ]))
+    }
+
+    private nonisolated static func decodeThreadItemEntry(_ value: CodexJSONValue) -> CodexThreadItemEntry? {
+        guard let turnID = value["turnId"]?.stringValue,
+              let item = value["item"] else { return nil }
+        let milliseconds = value["completedAtMs"]?.doubleValue
+            ?? value["startedAtMs"]?.doubleValue
+            ?? 0
+        return CodexThreadItemEntry(
+            turnID: turnID,
+            item: item,
+            timestamp: Date(timeIntervalSince1970: max(milliseconds, 0) / 1_000)
+        )
     }
 
     private nonisolated static func decodeListedThread(_ value: CodexJSONValue) -> CodexListedThread? {

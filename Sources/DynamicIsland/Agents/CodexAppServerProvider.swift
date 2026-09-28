@@ -1,9 +1,23 @@
 import Foundation
 
 actor CodexAppServerProvider: AgentInteractiveProvider {
-    static let maximumDiscoveredSessions = 20
+    static let maximumDiscoveredSessions = 64
     static let contextBaselineTokens: Double = 12_000
     nonisolated let provider: AgentProvider = .codex
+    nonisolated let interactiveCapabilities: Set<AgentInteractiveCapability> = [
+        .startSession,
+        .resumeSession,
+        .submitPrompt,
+        .interrupt,
+        .selectModel,
+        .resolveApprovals,
+        .accountUsage,
+        .contextUsage,
+        .streamMessages,
+        .streamToolActivity,
+        .loadHistory
+    ]
+    nonisolated let modelSelectionScope: AgentModelSelectionScope? = .turnAndSubsequent
     private let client: CodexAppServerClient
 
     init(client: CodexAppServerClient) {
@@ -38,7 +52,7 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
     }
 
     func discoverSessions() async throws -> [AgentDiscoveredSessionDescriptor] {
-        let threads = try await client.listThreads(limit: 100)
+        let threads = try await client.listThreads(limit: 500)
         return Self.boundedDiscovery(threads).map { thread in
             return AgentDiscoveredSessionDescriptor(
                 session: AgentManagedSessionDescriptor(
@@ -54,14 +68,50 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
         }
     }
 
+    func inspectSession(nativeSessionID: String) async throws -> AgentManagedSessionDescriptor? {
+        let thread = try await client.readThread(threadID: nativeSessionID)
+        guard thread.id == nativeSessionID else {
+            throw CodexAppServerError.invalidResponse("thread/read identity mismatch")
+        }
+        return descriptor(thread)
+    }
+
+    func readTranscript(
+        nativeSessionID: String,
+        limit: Int
+    ) async throws -> [AgentManagedTranscriptEntry] {
+        let entries = try await client.listThreadItems(
+            threadID: nativeSessionID,
+            limit: min(max(limit, 1), 100)
+        )
+        return entries.compactMap {
+            Self.mapTranscriptItem(
+                $0.item,
+                nativeSessionID: nativeSessionID,
+                turnID: $0.turnID,
+                timestamp: $0.timestamp,
+                includesSafeActivities: true
+            )
+        }
+    }
+
+    func listModels() async throws -> [AgentManagedModelDescriptor] {
+        try await client.listModels(limit: 100)
+            .filter { !$0.hidden }
+            .map {
+                AgentManagedModelDescriptor(
+                    id: $0.id,
+                    model: $0.model,
+                    displayName: $0.displayName,
+                    description: $0.description,
+                    isDefault: $0.isDefault
+                )
+            }
+    }
+
     func readAccountUsage() async throws -> AgentUsage {
         let rateResult = try await client.readAccountRateLimits()
-        var usage = Self.mapAccountRateLimits(rateResult)
-        if let listedThreads = try? await client.listThreads(limit: 50),
-           let context = Self.latestContextUsage(from: listedThreads) {
-            usage.merge(context)
-        }
-        return usage
+        return Self.mapAccountRateLimits(rateResult)
     }
 
     nonisolated static func boundedDiscovery(
@@ -77,7 +127,11 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
             return $0.id < $1.id
         }
         var seen = Set<String>()
-        return Array(ordered.filter { seen.insert($0.id).inserted }.prefix(boundedLimit))
+        let unique = ordered.filter { seen.insert($0.id).inserted }
+        let loaded = unique.filter { $0.status != .notLoaded }
+        let remaining = max(boundedLimit - loaded.count, 0)
+        let resumable = unique.filter { $0.status == .notLoaded }.prefix(remaining)
+        return loaded + resumable
     }
 
     private nonisolated static func runtimeRank(_ state: AgentDiscoveredSessionRuntimeState) -> Int {
@@ -89,18 +143,29 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
         }
     }
 
-    func startSession(cwd: String?) async throws -> AgentManagedSessionDescriptor {
-        let thread = try await client.startThread(cwd: cwd)
+    func startSession(cwd: String?, model: String?) async throws -> AgentManagedSessionDescriptor {
+        let thread = try await client.startThread(cwd: cwd, model: model)
         return descriptor(thread)
     }
 
-    func resumeSession(nativeSessionID: String) async throws -> AgentManagedSessionDescriptor {
+    func resumeSession(
+        nativeSessionID: String,
+        cwd: String?
+    ) async throws -> AgentManagedSessionDescriptor {
         let thread = try await client.resumeThread(threadID: nativeSessionID)
         return descriptor(thread)
     }
 
-    func submit(prompt: String, nativeSessionID: String) async throws -> AgentManagedTurnDescriptor {
-        let turn = try await client.startTurn(threadID: nativeSessionID, prompt: prompt)
+    func submit(
+        prompt: String,
+        nativeSessionID: String,
+        model: String?
+    ) async throws -> AgentManagedTurnDescriptor {
+        let turn = try await client.startTurn(
+            threadID: nativeSessionID,
+            prompt: prompt,
+            model: model
+        )
         return AgentManagedTurnDescriptor(nativeSessionID: nativeSessionID, turnID: turn.id)
     }
 
@@ -349,12 +414,34 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
                 guard let threadID = params["threadId"]?.stringValue,
                       let turnID = params["turnId"]?.stringValue,
                       let item = params["item"] else { return nil }
+                if let transcript = mapTranscriptItem(
+                    item,
+                    nativeSessionID: threadID,
+                    turnID: turnID,
+                    timestamp: Date(),
+                    includesSafeActivities: false
+                ) {
+                    return .transcript(transcript)
+                }
                 return mapItem(
                     item,
                     nativeSessionID: threadID,
                     turnID: turnID,
                     completed: true
                 ).map(AgentInteractiveProviderEvent.normalized)
+
+            case "item/agentMessage/delta":
+                guard let threadID = params["threadId"]?.stringValue,
+                      let turnID = params["turnId"]?.stringValue,
+                      let itemID = params["itemId"]?.stringValue,
+                      let delta = params["delta"]?.stringValue,
+                      !delta.isEmpty else { return nil }
+                return .transcriptDelta(
+                    nativeSessionID: threadID,
+                    turnID: turnID,
+                    itemID: itemID,
+                    delta: String(delta.prefix(AgentManagedTranscriptEntry.maximumTextLength))
+                )
 
             case "thread/tokenUsage/updated":
                 guard let threadID = params["threadId"]?.stringValue,
@@ -381,7 +468,8 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
                 guard let threadID = params["threadId"]?.stringValue,
                       let turnID = params["turnId"]?.stringValue,
                       let itemID = params["itemId"]?.stringValue,
-                      let requestToken = interactiveRequestToken(id) else { return nil }
+                      let requestToken = interactiveRequestToken(id),
+                      let requestID = approvalRequestIdentity(params: params, token: requestToken) else { return nil }
                 let commandSummary = AgentPrivacyProjection.commandSummary(
                     executable: params["command"]?.stringValue
                 )
@@ -391,6 +479,7 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
                 )
                 return .approvalRequested(AgentManagedApprovalRequest(
                     requestToken: requestToken,
+                    requestID: requestID,
                     kind: .command,
                     threadID: threadID,
                     turnID: turnID,
@@ -402,13 +491,15 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
                 guard let threadID = params["threadId"]?.stringValue,
                       let turnID = params["turnId"]?.stringValue,
                       let itemID = params["itemId"]?.stringValue,
-                      let requestToken = interactiveRequestToken(id) else { return nil }
+                      let requestToken = interactiveRequestToken(id),
+                      let requestID = approvalRequestIdentity(params: params, token: requestToken) else { return nil }
                 let summary = safeProviderMessage(
                     params["reason"]?.stringValue,
                     fallback: "File change approval required"
                 )
                 return .approvalRequested(AgentManagedApprovalRequest(
                     requestToken: requestToken,
+                    requestID: requestID,
                     kind: .fileChange,
                     threadID: threadID,
                     turnID: turnID,
@@ -430,6 +521,87 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
         case .integer(let value): .integer(value)
         default: nil
         }
+    }
+
+    private nonisolated static func approvalRequestIdentity(
+        params: CodexJSONValue,
+        token: AgentInteractiveRequestToken
+    ) -> String? {
+        if let approvalID = params["approvalId"]?.stringValue,
+           !approvalID.isEmpty,
+           approvalID.utf8.count <= AgentDomainLimits.identifierLength {
+            return approvalID
+        }
+        let value: String = switch token {
+        case .string(let value): value
+        case .integer(let value): String(value)
+        }
+        guard !value.isEmpty, value.utf8.count <= AgentDomainLimits.identifierLength else {
+            return nil
+        }
+        return value
+    }
+
+    private nonisolated static func mapTranscriptItem(
+        _ item: CodexJSONValue,
+        nativeSessionID: String,
+        turnID: String,
+        timestamp: Date,
+        includesSafeActivities: Bool
+    ) -> AgentManagedTranscriptEntry? {
+        guard let itemType = item["type"]?.stringValue,
+              let itemID = item["id"]?.stringValue else { return nil }
+
+        let role: AgentManagedTranscriptRole
+        let rawText: String?
+
+        switch itemType {
+        case "agentMessage":
+            role = .agent
+            rawText = item["text"]?.stringValue
+        case "userMessage":
+            role = .user
+            let textParts = item["content"]?.arrayValue?.compactMap { input -> String? in
+                guard input["type"]?.stringValue == "text" else { return nil }
+                return input["text"]?.stringValue
+            } ?? []
+            rawText = textParts.isEmpty ? nil : textParts.joined(separator: "\n")
+        case "commandExecution" where includesSafeActivities:
+            role = .command
+            rawText = AgentPrivacyProjection.commandSummary(
+                executable: item["command"]?.stringValue
+            )
+        case "fileChange" where includesSafeActivities:
+            role = .tool
+            let count = item["changes"]?.arrayValue?.count ?? 0
+            rawText = count > 0 ? "Updated \(count) file\(count == 1 ? "" : "s")" : "Updated files"
+        case "mcpToolCall" where includesSafeActivities:
+            role = .tool
+            rawText = "Used \(AgentPrivacyProjection.toolName(item["tool"]?.stringValue))"
+        case "dynamicToolCall" where includesSafeActivities:
+            role = .tool
+            rawText = "Used \(AgentPrivacyProjection.toolName(item["tool"]?.stringValue))"
+        case "webSearch" where includesSafeActivities:
+            role = .tool
+            rawText = "Searched the web"
+        case "plan" where includesSafeActivities:
+            role = .plan
+            rawText = "Plan updated"
+        default:
+            // Explicitly exclude reasoning, raw command output, environment-bearing
+            // items, and all other internal provider payloads from the transcript.
+            return nil
+        }
+
+        guard let text = AgentManagedTranscriptEntry.boundedText(rawText) else { return nil }
+        return AgentManagedTranscriptEntry(
+            id: itemID,
+            nativeSessionID: nativeSessionID,
+            turnID: turnID,
+            role: role,
+            text: text,
+            timestamp: timestamp
+        )
     }
 
     private nonisolated static func mapItem(

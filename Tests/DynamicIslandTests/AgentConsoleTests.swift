@@ -28,4 +28,77 @@ final class AgentConsoleTests: XCTestCase {
         XCTAssertFalse(AgentPromptDraftPolicy.submitsReturn(with: [.shift]))
         XCTAssertFalse(AgentPromptDraftPolicy.submitsReturn(with: []))
     }
+
+    func testConsoleProjectionMapsMessagesAndSafeOperationsAndStaysBounded() {
+        let transcript = [
+            AgentManagedTranscriptEntry(
+                id: "u1", nativeSessionID: "thread", turnID: "turn",
+                role: .user, text: "Fix it", timestamp: Date(timeIntervalSince1970: 1)
+            ),
+            AgentManagedTranscriptEntry(
+                id: "a1", nativeSessionID: "thread", turnID: "turn",
+                role: .agent, text: "Done", timestamp: Date(timeIntervalSince1970: 3)
+            ),
+            AgentManagedTranscriptEntry(
+                id: "h1", nativeSessionID: "thread", turnID: "turn",
+                role: .tool, text: "Updated 2 files", timestamp: Date(timeIntervalSince1970: 2.5)
+            )
+        ]
+        let operations = [
+            AgentOperationSummary(
+                id: "command:1", symbol: "terminal", title: "Run tests", detail: "Exit 0",
+                status: .completed, count: 1, date: Date(timeIntervalSince1970: 2),
+                isCommand: true
+            )
+        ]
+
+        let entries = AgentConsoleEntry.make(
+            transcript: transcript,
+            operations: operations,
+            limit: 2
+        )
+
+        XCTAssertEqual(entries.map(\.kind), [.tool, .agent])
+        XCTAssertEqual(entries.map(\.id), ["message:h1", "message:a1"])
+        XCTAssertFalse(entries.contains { ($0.text ?? "").contains("raw") })
+    }
+
+    func testConsoleProjectionClassifiesApprovalPlanAndError() {
+        let date = Date()
+        let operations = [
+            AgentOperationSummary(
+                id: "approval:1", symbol: "checkmark.shield", title: "Approval requested",
+                detail: "Run tests", status: .pending, count: 1, date: date, isCommand: false
+            ),
+            AgentOperationSummary(
+                id: "plan:1", symbol: "list.bullet", title: "Plan ready",
+                detail: nil, status: .completed, count: 1, date: date, isCommand: false
+            ),
+            AgentOperationSummary(
+                id: "failure:1", symbol: "exclamationmark.triangle", title: "Failed",
+                detail: "Safe error", status: .failed, count: 1, date: date, isCommand: false
+            )
+        ]
+
+        XCTAssertEqual(
+            Set(AgentConsoleEntry.make(transcript: [], operations: operations).map(\.kind)),
+            Set([.approval, .plan, .error])
+        )
+    }
+
+    func testAgentTranscriptUsesSelectedProviderIdentity() {
+        let transcript = [AgentManagedTranscriptEntry(
+            id: "a1", nativeSessionID: "same", turnID: "turn",
+            role: .agent, text: "Hello", timestamp: Date()
+        )]
+
+        XCTAssertEqual(
+            AgentConsoleEntry.make(
+                transcript: transcript,
+                operations: [],
+                provider: .claude
+            ).first?.title,
+            "Claude"
+        )
+    }
 }

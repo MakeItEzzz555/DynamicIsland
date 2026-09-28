@@ -355,12 +355,15 @@ struct AgentDashboardPresentation: Equatable, Sendable {
     let groups: [AgentProjectGroupPresentation]
 
     static func make(sessions: [AgentSession]) -> Self {
-        let ordered = sessions.sorted(by: AgentSessionPresentation.isOrderedBefore)
+        make(orderedSessions: sessions.sorted(by: AgentSessionPresentation.isOrderedBefore))
+    }
+
+    static func make(orderedSessions: [AgentSession]) -> Self {
         var keys: [String] = []
         var titles: [String: String] = [:]
         var grouped: [String: [AgentSession]] = [:]
 
-        for session in ordered {
+        for session in orderedSessions {
             let identity = projectIdentity(for: session)
             if grouped[identity.key] == nil {
                 keys.append(identity.key)
@@ -397,20 +400,93 @@ struct AgentDashboardPresentation: Equatable, Sendable {
 enum AgentWorkspaceSelection {
     static func resolve(
         current: AgentSessionInstanceID?,
-        sessions: [AgentSession]
+        sessions: [AgentSession],
+        activeManagedSessionIDs: Set<AgentSessionID> = []
     ) -> AgentSessionInstanceID? {
         if let current, sessions.contains(where: { $0.id == current }) {
             return current
         }
-        return sessions.sorted(by: AgentSessionPresentation.isOrderedBefore).first?.id
+        return ordered(
+            sessions: sessions,
+            activeManagedSessionIDs: activeManagedSessionIDs
+        ).first?.id
     }
 
     static func session(
         current: AgentSessionInstanceID?,
-        sessions: [AgentSession]
+        sessions: [AgentSession],
+        activeManagedSessionIDs: Set<AgentSessionID> = []
     ) -> AgentSession? {
-        guard let selected = resolve(current: current, sessions: sessions) else { return nil }
+        guard let selected = resolve(
+            current: current,
+            sessions: sessions,
+            activeManagedSessionIDs: activeManagedSessionIDs
+        ) else { return nil }
         return sessions.first { $0.id == selected }
+    }
+
+    static func ordered(
+        sessions: [AgentSession],
+        activeManagedSessionIDs: Set<AgentSessionID> = []
+    ) -> [AgentSession] {
+        sessions.sorted { lhs, rhs in
+            isOrderedBefore(
+                lhs,
+                rhs,
+                activeManagedSessionIDs: activeManagedSessionIDs
+            )
+        }
+    }
+
+    static func isActive(
+        _ session: AgentSession,
+        activeManagedSessionIDs: Set<AgentSessionID> = []
+    ) -> Bool {
+        if activeManagedSessionIDs.contains(session.id.sessionID) { return true }
+        guard session.isOpen else { return false }
+        switch session.state {
+        case .thinking, .planning, .working, .runningTool, .runningCommand,
+             .waitingForApproval, .waitingForUser, .planReady:
+            return true
+        case .idle, .completed, .failed, .interrupted:
+            return false
+        }
+    }
+
+    private static func isOrderedBefore(
+        _ lhs: AgentSession,
+        _ rhs: AgentSession,
+        activeManagedSessionIDs: Set<AgentSessionID>
+    ) -> Bool {
+        let lhsRank = fallbackRank(lhs, activeManagedSessionIDs: activeManagedSessionIDs)
+        let rhsRank = fallbackRank(rhs, activeManagedSessionIDs: activeManagedSessionIDs)
+        if lhsRank != rhsRank { return lhsRank < rhsRank }
+        if lhs.lastUpdatedAt != rhs.lastUpdatedAt { return lhs.lastUpdatedAt > rhs.lastUpdatedAt }
+        let lhsProvider = lhs.id.sessionID.provider.deterministicSortKey
+        let rhsProvider = rhs.id.sessionID.provider.deterministicSortKey
+        if lhsProvider != rhsProvider { return lhsProvider < rhsProvider }
+        if lhs.id.sessionID.nativeID != rhs.id.sessionID.nativeID {
+            return lhs.id.sessionID.nativeID < rhs.id.sessionID.nativeID
+        }
+        return lhs.id.generation > rhs.id.generation
+    }
+
+    private static func fallbackRank(
+        _ session: AgentSession,
+        activeManagedSessionIDs: Set<AgentSessionID>
+    ) -> Int {
+        switch AgentSessionPresentation.priority(for: session) {
+        case .actionRequired, .failure:
+            return 0
+        case .working, .thinking:
+            return activeManagedSessionIDs.contains(session.id.sessionID) ? 1 : 2
+        case .idle where session.availability != .resumable:
+            return activeManagedSessionIDs.contains(session.id.sessionID) ? 1 : 3
+        case .idle:
+            return activeManagedSessionIDs.contains(session.id.sessionID) ? 1 : 4
+        case .recent:
+            return activeManagedSessionIDs.contains(session.id.sessionID) ? 1 : 5
+        }
     }
 }
 
@@ -756,6 +832,95 @@ struct AgentOperationSummary: Identifiable, Equatable, Sendable {
     }
 }
 
+enum AgentConsoleEntryKind: String, Hashable, Sendable {
+    case user
+    case agent
+    case tool
+    case command
+    case plan
+    case approval
+    case status
+    case error
+}
+
+/// A bounded, display-only projection of provider-authorized transcript and
+/// normalized operation evidence. It deliberately carries no raw provider
+/// payload, stderr, environment, or private reasoning.
+struct AgentConsoleEntry: Identifiable, Equatable, Sendable {
+    static let maximumEntries = 80
+
+    let id: String
+    let timestamp: Date
+    let kind: AgentConsoleEntryKind
+    let title: String
+    let text: String?
+    let status: AgentOperationStatus?
+    let correlationID: String?
+
+    static func make(
+        transcript: [AgentManagedTranscriptEntry],
+        operations: [AgentOperationSummary],
+        provider: AgentProvider = .codex,
+        limit: Int = maximumEntries
+    ) -> [Self] {
+        let messages = transcript.map { message in
+            let presentation = transcriptPresentation(for: message.role, provider: provider)
+            return Self(
+                id: "message:\(message.id)",
+                timestamp: message.timestamp,
+                kind: presentation.kind,
+                title: presentation.title,
+                text: message.text,
+                status: nil,
+                correlationID: message.turnID
+            )
+        }
+        let activities = operations.map { operation in
+            Self(
+                id: "operation:\(operation.id)",
+                timestamp: operation.date,
+                kind: kind(for: operation),
+                title: operation.displayTitle,
+                text: operation.detail,
+                status: operation.status,
+                correlationID: operation.id
+            )
+        }
+        let boundedLimit = min(max(limit, 0), maximumEntries)
+        return Array((messages + activities).sorted {
+            if $0.timestamp != $1.timestamp { return $0.timestamp < $1.timestamp }
+            return $0.id < $1.id
+        }.suffix(boundedLimit))
+    }
+
+    private static func kind(for operation: AgentOperationSummary) -> AgentConsoleEntryKind {
+        if operation.isCommand { return .command }
+        let title = operation.title.lowercased()
+        if title.contains("approval") { return .approval }
+        if title.contains("plan") { return .plan }
+        if operation.status == .failed || title.contains("failed") { return .error }
+        if title == "completed" || title == "interrupted" || title.contains("waiting") {
+            return .status
+        }
+        return .tool
+    }
+
+    private static func transcriptPresentation(
+        for role: AgentManagedTranscriptRole,
+        provider: AgentProvider
+    ) -> (kind: AgentConsoleEntryKind, title: String) {
+        switch role {
+        case .user: (.user, "You")
+        case .agent: (.agent, provider.stableName.capitalized)
+        case .tool: (.tool, "Tool")
+        case .command: (.command, "Command")
+        case .plan: (.plan, "Plan")
+        case .status: (.status, "Status")
+        case .error: (.error, "Error")
+        }
+    }
+}
+
 enum AgentOperationAggregation {
     static func make(
         for session: AgentSession,
@@ -763,22 +928,28 @@ enum AgentOperationAggregation {
         includePendingApprovals: Bool = true
     ) -> [AgentOperationSummary] {
         var operations: [AgentOperationSummary] = []
-        if includePendingApprovals {
-            operations += session.approvals.values
-                .filter { $0.state == .pending }
-                .map {
-                    AgentOperationSummary(
-                        id: "approval:\($0.requestID.rawValue)",
-                        symbol: "checkmark.shield",
-                        title: "Approval requested",
-                        detail: $0.summary,
-                        status: .pending,
-                        count: 1,
-                        date: $0.requestedAt,
-                        isCommand: $0.summary.trimmingCharacters(in: .whitespaces).hasPrefix("$")
-                    )
+        operations += session.approvals.values
+            .filter { includePendingApprovals || $0.state != .pending }
+            .map { approval in
+                let presentation: (title: String, status: AgentOperationStatus) = switch approval.state {
+                case .pending: ("Approval requested", .pending)
+                case .approved: ("Approved", .resolved)
+                case .denied: ("Denied", .resolved)
+                case .cancelled: ("Approval failed", .failed)
+                case .expired: ("Approval expired", .cancelled)
+                case .unknown: ("Approval status unknown", .unknown)
                 }
-        }
+                return AgentOperationSummary(
+                    id: "approval:\(approval.requestID.rawValue)",
+                    symbol: "checkmark.shield",
+                    title: presentation.title,
+                    detail: approval.summary,
+                    status: presentation.status,
+                    count: 1,
+                    date: approval.resolvedAt ?? approval.requestedAt,
+                    isCommand: approval.summary.trimmingCharacters(in: .whitespaces).hasPrefix("$")
+                )
+            }
         operations += session.tools.values.map {
             AgentOperationSummary(
                 id: "tool:\($0.correlationID.rawValue)",
@@ -921,8 +1092,7 @@ enum AgentOperationAggregation {
 
 enum AgentApprovalPresentation {
     static func isActionable(session: AgentSession, pending: AgentApprovalControlRequest?) -> Bool {
-        session.id.sessionID.provider == .codex &&
-            session.state == .waitingForApproval &&
+        session.state == .waitingForApproval &&
             session.capabilities.contains(.approvalControl) &&
             pending?.key.session == session.id
     }
@@ -950,6 +1120,23 @@ struct AgentUsagePresentation: Identifiable, Equatable, Sendable {
         guard let effectiveLimit else { return value + " " + sample.unit.rawValue }
         let limit = effectiveLimit.formatted(.number.precision(.fractionLength(0...2)))
         return value + " / " + limit + " " + sample.unit.rawValue
+    }
+
+    var isQuotaUsage: Bool {
+        id.hasPrefix("quota:")
+    }
+
+    var gaugeProgress: Double? {
+        guard let progress else { return nil }
+        return isQuotaUsage ? min(max(1 - progress, 0), 1) : progress
+    }
+
+    var gaugeValueText: String {
+        guard let gaugeProgress else {
+            return sample.value.formatted(.number.precision(.fractionLength(0...1)))
+        }
+        let percent = Int((gaugeProgress * 100).rounded())
+        return isQuotaUsage ? "\(percent)% left" : "\(percent)%"
     }
 
     static func make(for session: AgentSession) -> [AgentUsagePresentation] {
@@ -1031,6 +1218,42 @@ struct AgentGlobalUsagePresentation: Identifiable, Equatable, Sendable {
     let id: String
     let provider: AgentProvider
     let metric: AgentUsagePresentation
+
+    static func makeForSelectedSession(
+        provider: AgentProvider,
+        accountUsage: AgentUsage,
+        selectedSession: AgentSession?,
+        limit: Int
+    ) -> [Self] {
+        var values: [Self] = []
+
+        for metric in AgentUsagePresentation.make(providerUsage: accountUsage)
+            where metric.id != "context" {
+            values.append(Self(
+                id: "\(provider.deterministicSortKey):\(metric.id)",
+                provider: provider,
+                metric: metric
+            ))
+        }
+
+        if let selectedSession,
+           selectedSession.id.sessionID.provider == provider,
+           let context = AgentUsagePresentation.make(for: selectedSession)
+                .first(where: { $0.id == "context" }) {
+            values.append(Self(
+                id: "\(provider.deterministicSortKey):context",
+                provider: provider,
+                metric: context
+            ))
+        }
+
+        return Array(values.sorted {
+            let lhsRank = canonicalRank($0.metric)
+            let rhsRank = canonicalRank($1.metric)
+            if lhsRank != rhsRank { return lhsRank < rhsRank }
+            return $0.id < $1.id
+        }.prefix(max(limit, 0)))
+    }
 
     static func make(
         sessions: [AgentSession],

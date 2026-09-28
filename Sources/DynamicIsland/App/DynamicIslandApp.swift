@@ -94,9 +94,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         approvals: agentApprovalControl
     )
     private lazy var agentManagedControl: AgentManagedSessionController = {
-        let provider = try? CodexAppServerProvider.makeDefault()
+        var providers: [any AgentInteractiveProvider] = []
+        if let codex = try? CodexAppServerProvider.makeDefault() { providers.append(codex) }
+        // Claude managed control remains research/experimental until the official
+        // Agent SDK helper boundary is implemented and validated on-device.
         return AgentManagedSessionController(
-            provider: provider,
+            providers: providers,
             coordinator: agentIngestion,
             eventStore: agentEvents,
             approvals: agentApprovalControl

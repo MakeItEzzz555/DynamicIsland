@@ -177,6 +177,7 @@ final class OverlayWindowController {
     private var visibilityGeneration: Int = 0
     private var morphGeneration: Int = 0
     private var expandedAt: CFTimeInterval = 0
+    private var nativeMenuTrackingDepth = 0
     private var collapsedScrollDelta: CGSize = .zero
     private var collapsedScrollGestureHandled = false
     private var collapsedScrollLastActionAt: CFTimeInterval?
@@ -263,6 +264,18 @@ final class OverlayWindowController {
         islandPanel.contentView = hostingView
         self.hostingView = hostingView
         debugGesture("Island hosting view installed")
+
+        NotificationCenter.default.publisher(for: NSMenu.didBeginTrackingNotification)
+            .sink { [weak self] _ in
+                self?.nativeMenuTrackingDepth += 1
+            }
+            .store(in: &cancellables)
+        NotificationCenter.default.publisher(for: NSMenu.didEndTrackingNotification)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.nativeMenuTrackingDepth = max(self.nativeMenuTrackingDepth - 1, 0)
+            }
+            .store(in: &cancellables)
 
         islandState.$state
             .sink { [weak self] _ in
@@ -530,7 +543,11 @@ final class OverlayWindowController {
             collapsedPresentationProfile: geometry.collapsedPresentationProfile,
             animated: animated
         )
-        applyCanonicalPanelFrame(geometry.expandedFrame, reason: "\(reason) initial animated=\(animated)")
+        applyCanonicalPanelFrame(
+            geometry.expandedFrame,
+            reason: "\(reason) initial animated=\(animated)",
+            animated: animated
+        )
         lastAppliedGeometrySignature = signature
         hostingView?.needsLayout = true
         updateWindowVisibility()
@@ -689,7 +706,11 @@ final class OverlayWindowController {
         #endif
     }
 
-    private func applyCanonicalPanelFrame(_ frame: NSRect, reason: String) {
+    private func applyCanonicalPanelFrame(
+        _ frame: NSRect,
+        reason: String,
+        animated: Bool = false
+    ) {
         guard frame != .zero else { return }
         guard frame.origin.x.isFinite,
               frame.origin.y.isFinite,
@@ -701,12 +722,18 @@ final class OverlayWindowController {
         }
 
         canonicalPanelFrame = frame
-        applyPhysicalPanelFrame(frame, reason: reason)
-        islandPanel.contentView?.frame = NSRect(origin: .zero, size: frame.size)
+        applyPhysicalPanelFrame(frame, reason: reason, animated: animated)
+        if !animated {
+            islandPanel.contentView?.frame = NSRect(origin: .zero, size: frame.size)
+        }
         lastOrderedVisibilityState = nil
     }
 
-    private func applyPhysicalPanelFrame(_ frame: NSRect, reason: String) {
+    private func applyPhysicalPanelFrame(
+        _ frame: NSRect,
+        reason: String,
+        animated: Bool = false
+    ) {
         guard frame != .zero else { return }
         guard frame.origin.x.isFinite,
               frame.origin.y.isFinite,
@@ -726,12 +753,30 @@ final class OverlayWindowController {
         }
 
         islandPanel.animations.removeAll()
-        islandPanel.disableScreenUpdatesUntilFlush()
         debugOverlayWindowOperation(operation: "setFrame", reason: reason)
+
+        let reduceMotion = settings.reduceExtraMotion ||
+            NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let shouldAnimate = animated &&
+            !reduceMotion &&
+            settings.animationPreset != .instant
+
+        guard shouldAnimate else {
+            islandPanel.disableScreenUpdatesUntilFlush()
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0
+                context.allowsImplicitAnimation = false
+                islandPanel.setFrame(frame, display: true)
+            }
+            return
+        }
+
+        let duration = expandedPageMorphDuration
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0
-            context.allowsImplicitAnimation = false
-            islandPanel.setFrame(frame, display: true)
+            context.duration = duration
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            context.allowsImplicitAnimation = true
+            islandPanel.animator().setFrame(frame, display: true)
         }
     }
 
@@ -740,6 +785,15 @@ final class OverlayWindowController {
             abs(lhs.origin.y - rhs.origin.y) <= tolerance &&
             abs(lhs.size.width - rhs.size.width) <= tolerance &&
             abs(lhs.size.height - rhs.size.height) <= tolerance
+    }
+
+    private var expandedPageMorphDuration: TimeInterval {
+        let reduceMotion = settings.reduceExtraMotion ||
+            NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        return IslandContentTransitionTiming.shellDuration(
+            settings: settings,
+            reduceMotion: reduceMotion
+        )
     }
 
     private func updateLayout(
@@ -771,7 +825,7 @@ final class OverlayWindowController {
             let reduceMotion = settings.reduceExtraMotion || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
             let duration = reduceMotion || settings.animationPreset == .instant
                 ? 0.01
-                : min(max(0.22 / max(settings.shellAnimationSpeed, 0.25), 0.16), 0.34)
+                : expandedPageMorphDuration
             withAnimation(.smooth(duration: duration)) {
                 updates()
             }
@@ -934,6 +988,10 @@ final class OverlayWindowController {
         debugLog("collapse check entered source=\(source) state=\(islandState.state)")
         guard islandState.state == .expanded else {
             debugLog("collapse check ignored; state is not expanded")
+            return
+        }
+        guard nativeMenuTrackingDepth == 0 else {
+            debugLog("collapse check ignored; native menu is tracking")
             return
         }
         guard settings.collapseOnMouseLeave, settings.autoCollapseEnabled else {

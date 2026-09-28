@@ -38,15 +38,20 @@ struct AgentEmbeddedConsoleView: View {
     let session: AgentSession
     var mode: AgentConsoleMode = .observed
     var maximumActivityEntries = 3
-    let onSubmit: (String) -> Bool
+    var transcriptEntries: [AgentManagedTranscriptEntry] = []
+    var layoutStore: IslandLayoutStore? = nil
+    @ObservedObject var approvalControl: AgentApprovalController
+    let onSubmit: (String) async -> Bool
     let onInterrupt: () -> Void
 
     @State private var draft = ""
+    @State private var submissionInFlight = false
+    @State private var transcriptIsNearBottom = true
+    @State private var scrollToLatestRequest = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            header
-            activity
+            transcript
             if mode.showsComposer {
                 composer
             } else {
@@ -54,11 +59,10 @@ struct AgentEmbeddedConsoleView: View {
             }
         }
         .padding(8)
-        .background(Color.black.opacity(0.24))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(.white.opacity(0.06), lineWidth: 1)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(.white.opacity(0.055))
+                .frame(height: 1)
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Selected session details for \(AgentSessionPresentation.primaryTitle(for: session))")
@@ -68,47 +72,99 @@ struct AgentEmbeddedConsoleView: View {
         }
     }
 
-    private var header: some View {
-        HStack(spacing: 7) {
-            Image(systemName: "terminal.fill")
-                .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(.white.opacity(0.72))
-            Text(AgentSessionPresentation.primaryTitle(for: session))
-                .font(.system(size: 9.5, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.90))
-                .lineLimit(1)
-            Text(session.id.sessionID.provider.stableName.capitalized)
-                .font(.system(size: 8, weight: .medium))
-                .foregroundStyle(.white.opacity(0.40))
-            Spacer(minLength: 8)
-            Label(
-                AgentSessionPresentation.shortStateLabel(session.state),
-                systemImage: AgentSessionPresentation.stateSymbol(session.state)
-            )
-            .font(.system(size: 7.5, weight: .semibold))
-            .foregroundStyle(AgentVisualStyle.accent(for: session.state).opacity(0.86))
-            if mode.canInterrupt {
-                Button(action: onInterrupt) {
-                    Label("Stop", systemImage: "stop.fill")
-                        .labelStyle(.iconOnly)
+    @ViewBuilder
+    private var transcript: some View {
+        registeredTranscript(
+            GeometryReader { viewport in
+                ScrollViewReader { proxy in
+                    ScrollView(.vertical, showsIndicators: true) {
+                        transcriptContent
+                            .padding(.vertical, 2)
+
+                        Color.clear
+                            .frame(height: 1)
+                            .id(AgentConsoleScrollAnchor.bottom)
+                            .background {
+                                GeometryReader { bottomProxy in
+                                    Color.clear.preference(
+                                        key: AgentConsoleBottomPositionPreferenceKey.self,
+                                        value: bottomProxy.frame(
+                                            in: .named(AgentConsoleCoordinateSpace.transcript)
+                                        ).maxY
+                                    )
+                                }
+                            }
+                    }
+                    .coordinateSpace(name: AgentConsoleCoordinateSpace.transcript)
+                    .scrollBounceBehavior(.basedOnSize)
+                    .onPreferenceChange(AgentConsoleBottomPositionPreferenceKey.self) { bottomY in
+                        transcriptIsNearBottom = bottomY <= viewport.size.height + 28
+                    }
+                    .onChange(of: transcriptFollowToken) { _, _ in
+                        guard transcriptIsNearBottom else { return }
+                        DispatchQueue.main.async {
+                            proxy.scrollTo(AgentConsoleScrollAnchor.bottom, anchor: .bottom)
+                        }
+                    }
+                    .onChange(of: scrollToLatestRequest) { _, _ in
+                        withAnimation(.easeOut(duration: 0.16)) {
+                            proxy.scrollTo(AgentConsoleScrollAnchor.bottom, anchor: .bottom)
+                        }
+                        transcriptIsNearBottom = true
+                    }
+                    .onAppear {
+                        DispatchQueue.main.async {
+                            proxy.scrollTo(AgentConsoleScrollAnchor.bottom, anchor: .bottom)
+                        }
+                    }
                 }
-                .buttonStyle(.borderless)
-                .help("Interrupt the current managed turn")
+            }
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .overlay(alignment: .bottomTrailing) {
+            if !transcriptIsNearBottom {
+                Button {
+                    scrollToLatestRequest &+= 1
+                } label: {
+                    Label("Latest", systemImage: "arrow.down")
+                        .font(.system(size: 8, weight: .semibold))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                }
+                .buttonStyle(.plain)
+                .background(.black.opacity(0.82), in: Capsule(style: .continuous))
+                .overlay {
+                    Capsule(style: .continuous)
+                        .stroke(.white.opacity(0.10), lineWidth: 1)
+                }
+                .foregroundStyle(.white.opacity(0.88))
+                .padding(5)
+                .help("Jump to latest agent output")
             }
         }
     }
 
-    @ViewBuilder
-    private var activity: some View {
-        let operations = Array(
-            AgentOperationAggregation.make(
-                for: session,
-                limit: maximumActivityEntries,
-                includePendingApprovals: false
-            ).suffix(maximumActivityEntries)
+    private var transcriptFollowToken: String {
+        let transcriptToken = transcriptEntries.last.map {
+            "\($0.id):\($0.text.count)"
+        } ?? "none"
+        return "\(transcriptToken):\(session.lastUpdatedAt.timeIntervalSince1970)"
+    }
+
+    private var transcriptContent: some View {
+        let operations = AgentOperationAggregation.make(
+            for: session,
+            limit: maximumActivityEntries,
+            includePendingApprovals: actionableApproval == nil && externalPendingApproval == nil
         )
-        VStack(alignment: .leading, spacing: 3) {
-            if operations.isEmpty {
+        let timeline = AgentConsoleEntry.make(
+            transcript: transcriptEntries,
+            operations: operations,
+            provider: session.id.sessionID.provider
+        )
+
+        return LazyVStack(alignment: .leading, spacing: 7) {
+            if timeline.isEmpty {
                 HStack(spacing: 6) {
                     Image(systemName: AgentSessionPresentation.stateSymbol(session.state))
                         .frame(width: 11)
@@ -116,34 +172,127 @@ struct AgentEmbeddedConsoleView: View {
                 }
                 .foregroundStyle(.white.opacity(0.48))
             } else {
-                ForEach(operations) { operation in
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Image(systemName: operation.symbol)
-                            .frame(width: 11)
-                            .foregroundStyle(operationColor(operation.status))
-                        Text(operation.displayTitle)
-                            .fontDesign(operation.isCommand ? .monospaced : .default)
-                            .foregroundStyle(.white.opacity(operation.status == .active ? 0.88 : 0.52))
-                            .lineLimit(1)
-                        if let detail = operation.detail, !detail.isEmpty {
-                            Text(detail)
-                                .fontDesign(operation.isCommand ? .monospaced : .default)
-                                .foregroundStyle(.white.opacity(0.34))
-                                .lineLimit(1)
-                        }
-                    }
+                ForEach(timeline) { entry in
+                    consoleEntryRow(entry)
                 }
+            }
+
+            if let approval = actionableApproval {
+                AgentConsoleApprovalRow(
+                    request: approval,
+                    session: session,
+                    approvalControl: approvalControl
+                )
+            } else if let approval = externalPendingApproval {
+                AgentConsoleExternalApprovalRow(
+                    approval: approval,
+                    sourceTarget: AgentSourceAssociationResolver.openTarget(for: session)
+                )
             }
         }
         .font(.system(size: 8.5, weight: .medium))
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    private var actionableApproval: AgentApprovalControlRequest? {
+        let pending = approvalControl.pendingRequest(for: session.id)
+        return AgentApprovalPresentation.isActionable(session: session, pending: pending) ? pending : nil
+    }
+
+    private var externalPendingApproval: AgentApproval? {
+        guard case .observed = mode else { return nil }
+        return session.approvals.values
+            .filter { $0.state == .pending }
+            .sorted { lhs, rhs in
+                if lhs.requestedAt != rhs.requestedAt { return lhs.requestedAt < rhs.requestedAt }
+                return lhs.requestID.rawValue < rhs.requestID.rawValue
+            }
+            .first
+    }
+
+    @ViewBuilder
+    private func consoleEntryRow(_ entry: AgentConsoleEntry) -> some View {
+        if entry.kind == .user || entry.kind == .agent {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entry.title)
+                    .font(.system(size: 7.5, weight: .bold))
+                    .foregroundStyle(
+                        entry.kind == .user
+                            ? Color.white.opacity(0.48)
+                            : Color.cyan.opacity(0.72)
+                    )
+                if let text = entry.text {
+                    Text(text)
+                        .font(.system(size: 9, weight: .regular, design: .monospaced))
+                        .foregroundStyle(.white.opacity(entry.kind == .user ? 0.72 : 0.88))
+                        .textSelection(.enabled)
+                }
+            }
+            .padding(.vertical, 2)
+        } else {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Image(systemName: symbol(for: entry.kind))
+                    .frame(width: 11)
+                    .foregroundStyle(operationColor(entry.status ?? .unknown))
+                Text(entry.title)
+                    .fontDesign(entry.kind == .command ? .monospaced : .default)
+                    .foregroundStyle(.white.opacity(entry.status == .active ? 0.88 : 0.52))
+                    .lineLimit(2)
+                if let text = entry.text, !text.isEmpty {
+                    Text(text)
+                        .fontDesign(entry.kind == .command ? .monospaced : .default)
+                        .foregroundStyle(.white.opacity(0.34))
+                        .lineLimit(2)
+                }
+            }
+        }
+    }
+
+    private func symbol(for kind: AgentConsoleEntryKind) -> String {
+        switch kind {
+        case .user: "person.fill"
+        case .agent: "sparkles"
+        case .tool: "wrench.and.screwdriver"
+        case .command: "terminal"
+        case .plan: "list.bullet.clipboard"
+        case .approval: "checkmark.shield"
+        case .status: "circle.dotted"
+        case .error: "exclamationmark.triangle.fill"
+        }
+    }
+
+    @ViewBuilder
+    private func registeredTranscript<Content: View>(_ content: Content) -> some View {
+        if let layoutStore {
+            content
+                .background {
+                    GeometryReader { proxy in
+                        Color.clear.preference(
+                            key: AgentConsoleScrollRegionPreferenceKey.self,
+                            value: proxy.frame(in: .named(IslandCanvasCoordinateSpace.name))
+                        )
+                    }
+                }
+                .onPreferenceChange(AgentConsoleScrollRegionPreferenceKey.self) { frame in
+                    let localFrame = IslandCanvasCoordinateSpace.appKitLocalRect(
+                        fromSwiftUI: frame,
+                        canvasHeight: layoutStore.canvasSize.height
+                    )
+                    layoutStore.setExpandedContentScrollRegion(localFrame)
+                }
+                .onDisappear {
+                    layoutStore.setExpandedContentScrollRegion(.zero)
+                }
+        } else {
+            content
+        }
+    }
+
     private var composer: some View {
         HStack(alignment: .bottom, spacing: 7) {
             AgentPromptEditor(
                 text: $draft,
-                placeholder: "Message Codex…",
+                placeholder: "Message \(session.id.sessionID.provider.stableName.capitalized)…",
                 onSubmit: submitDraft
             )
             .id(session.id)
@@ -154,8 +303,12 @@ struct AgentEmbeddedConsoleView: View {
                     .font(.system(size: 18, weight: .semibold))
             }
             .buttonStyle(.borderless)
-            .foregroundStyle(submissionValue != nil ? .white : .white.opacity(0.24))
-            .disabled(submissionValue == nil)
+            .foregroundStyle(
+                submissionValue != nil && !submissionInFlight
+                    ? .white
+                    : .white.opacity(0.24)
+            )
+            .disabled(submissionValue == nil || submissionInFlight)
             .keyboardShortcut(.return, modifiers: [.command])
             .help("Send prompt (Command-Return)")
             .accessibilityLabel("Send prompt")
@@ -181,8 +334,17 @@ struct AgentEmbeddedConsoleView: View {
 
     @discardableResult
     private func submitDraft() -> Bool {
-        guard let value = submissionValue, onSubmit(value) else { return false }
-        draft = ""
+        guard !submissionInFlight, let value = submissionValue else { return false }
+        submissionInFlight = true
+        let submittedDraft = value
+        let originalDraft = draft
+        Task { @MainActor in
+            let accepted = await onSubmit(submittedDraft)
+            if accepted, draft == originalDraft {
+                draft = ""
+            }
+            submissionInFlight = false
+        }
         return true
     }
 
@@ -194,6 +356,119 @@ struct AgentEmbeddedConsoleView: View {
         case .completed, .resolved: .green.opacity(0.58)
         case .cancelled, .unknown: .white.opacity(0.34)
         }
+    }
+}
+
+private enum AgentConsoleCoordinateSpace {
+    static let transcript = "dynamicIsland.agentConsole.transcript"
+}
+
+private enum AgentConsoleScrollAnchor: Hashable {
+    case bottom
+}
+
+private struct AgentConsoleBottomPositionPreferenceKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
+struct AgentConsoleApprovalRow: View {
+    let request: AgentApprovalControlRequest
+    let session: AgentSession
+    @ObservedObject var approvalControl: AgentApprovalController
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label("Waiting for approval", systemImage: "exclamationmark.shield.fill")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(.orange.opacity(0.92))
+            Text(request.summary)
+                .font(.system(size: 8.5, weight: .medium))
+                .foregroundStyle(.white.opacity(0.78))
+                .lineLimit(3)
+
+            HStack(spacing: 8) {
+                Button(role: .destructive) {
+                    approvalControl.resolve(
+                        session: session.id,
+                        requestID: request.key.requestID,
+                        decision: .deny
+                    )
+                } label: {
+                    Label("Deny", systemImage: "xmark.circle.fill")
+                }
+
+                Button {
+                    approvalControl.resolve(
+                        session: session.id,
+                        requestID: request.key.requestID,
+                        decision: .allow
+                    )
+                } label: {
+                    Label("Approve", systemImage: "checkmark.circle.fill")
+                }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .padding(8)
+        .background(.orange.opacity(0.07))
+        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .stroke(.orange.opacity(0.18), lineWidth: 1)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(session.id.sessionID.provider.stableName.capitalized) approval required")
+    }
+}
+
+private struct AgentConsoleExternalApprovalRow: View {
+    let approval: AgentApproval
+    let sourceTarget: AgentSourceOpenTarget?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label("Approval required", systemImage: "exclamationmark.shield.fill")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(.orange.opacity(0.92))
+            Text(approval.summary)
+                .font(.system(size: 8.5, weight: .medium))
+                .foregroundStyle(.white.opacity(0.78))
+                .lineLimit(3)
+            HStack(spacing: 6) {
+                Text("External session · approve in \(sourceTarget?.displayName ?? "source app")")
+                    .font(.system(size: 7.5, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.42))
+                if let sourceTarget {
+                    Button("Open \(sourceTarget.displayName)") {
+                        _ = AppLaunchService.openApp(bundleIdentifier: sourceTarget.bundleIdentifier)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+                }
+            }
+        }
+        .padding(8)
+        .background(.orange.opacity(0.07))
+        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .stroke(.orange.opacity(0.18), lineWidth: 1)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Approval required in external source application")
+    }
+}
+
+private struct AgentConsoleScrollRegionPreferenceKey: PreferenceKey {
+    static let defaultValue: CGRect = .zero
+
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        value = nextValue()
     }
 }
 

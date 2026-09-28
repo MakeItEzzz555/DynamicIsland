@@ -133,6 +133,42 @@ final class AgentBridgeSharedNetworkIntegrationTests: XCTestCase {
         }
     }
 
+    func testDedicatedCodexPermissionRouteHonorsExactSessionAutoApproveOnce() async throws {
+        let fixture = try makeBridgeFixture()
+        defer {
+            fixture.bridge.stop()
+            try? FileManager.default.removeItem(at: fixture.directory)
+        }
+        await fixture.bridge.start()
+        let permissionClient = AgentBridgeClient(
+            profiles: try AgentBridgeDiscoveryReader(recordURL: fixture.permissionRecordURL)
+        )
+        let observerClient = AgentBridgeClient(
+            profiles: try AgentBridgeDiscoveryReader(recordURL: fixture.codexRecordURL)
+        )
+        let start = Data("""
+        {"session_id":"auto-hook","cwd":"/tmp/project","hook_event_name":"SessionStart","source":"startup"}
+        """.utf8)
+        let startResult = try await observerClient.sendEvents(
+            input: CodexHookNormalizer.normalize(start)
+        )
+        XCTAssertEqual(startResult, .accepted)
+        let session = try XCTUnwrap(fixture.store.sessions.first)
+        fixture.approvals.setAutoApprove(true, for: session.id)
+        let permission = Data("""
+        {"session_id":"auto-hook","turn_id":"turn-auto","cwd":"/tmp/project","hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"description":"Run focused tests","command":"swift test --filter AgentApprovalControllerTests"}}
+        """.utf8)
+        let normalized = try CodexHookNormalizer.normalize(permission)
+
+        let decision = try await permissionClient.requestCodexPermission(input: normalized)
+        XCTAssertEqual(decision, .allow)
+        XCTAssertTrue(fixture.approvals.pendingRequests.isEmpty)
+        // Replaying the exact hook event is rejected by ingestion/replay
+        // protection and can never produce a second allow decision.
+        let replayed = try await permissionClient.requestCodexPermission(input: normalized)
+        XCTAssertNil(replayed)
+    }
+
     func testGenericBridgeCredentialCannotControlCodexApproval() async throws {
         let fixture = try makeBridgeFixture()
         defer {
