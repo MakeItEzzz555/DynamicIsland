@@ -156,15 +156,15 @@
     "semantic_hash": "12fdbee362227841e2118a763380876a"
   },
   "Sources/DynamicIsland/Overlay/IslandLayoutStore.swift": {
-    "mtime": 1790714776.5964646,
-    "seen": 1790718355.5497909,
-    "ast_hash": "8a99de217ba820718b19001fc172039d",
+    "mtime": 1790725795.0216982,
+    "seen": 1790726000.496202,
+    "ast_hash": "54b9da1a74bf9ebeac269a6a513c9bc0",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Overlay/OverlayWindowController.swift": {
-    "mtime": 1790719457.2505963,
-    "seen": 1790719582.384002,
-    "ast_hash": "aff8c4de3d725b1643f42c5ba5e475d5",
+    "mtime": 1790725795.02155,
+    "seen": 1790726000.496203,
+    "ast_hash": "0e60b6b8c0b11eb0b6a3e826495a456b",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/State/AppSettings.swift": {
@@ -912,15 +912,15 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/AgentActivityViews.swift": {
-    "mtime": 1790725409.608276,
-    "seen": 1790725497.732733,
-    "ast_hash": "a1c3eba073c157d25cf7fe6bc5a27800",
+    "mtime": 1790725835.7667174,
+    "seen": 1790726000.496209,
+    "ast_hash": "0ebf25eacf56ed887da5640c105aa2c2",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/AgentConsoleViews.swift": {
-    "mtime": 1790725191.976811,
-    "seen": 1790725328.290036,
-    "ast_hash": "3a3667e9ff5f71623c75246a34674d6f",
+    "mtime": 1790725919.9020061,
+    "seen": 1790726000.4962099,
+    "ast_hash": "14a8ca372ea4a6b693431857d08b9cab",
     "semantic_hash": ""
   },
   "Sources/DynamicIslandClaudeHookRelay/RelayMain.swift": {
@@ -1509,6 +1509,18 @@
     "mtime": 1790725479.1451826,
     "seen": 1790725497.73277,
     "ast_hash": "d717019d6cb62983ce529a4571925079",
+    "semantic_hash": ""
+  },
+  "Sources/DynamicIsland/Overlay/ExpandedHoverContainment.swift": {
+    "mtime": 1790725794.9988217,
+    "seen": 1790726000.496201,
+    "ast_hash": "b3ea6168989adcfa2c4d4bce01eab5b9",
+    "semantic_hash": ""
+  },
+  "Tests/DynamicIslandTests/AgentHoverAndComposerTests.swift": {
+    "mtime": 1790725919.9021726,
+    "seen": 1790726000.4962418,
+    "ast_hash": "5fe1cca304134236d401ff105bda8736",
     "semantic_hash": ""
   }
 }

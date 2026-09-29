@@ -65,6 +65,7 @@ struct AgentEmbeddedConsoleView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
+        .coordinateSpace(name: AgentComposerActionFrameKey.coordinateSpace)
         .overlay(alignment: .top) {
             Rectangle()
                 .fill(.white.opacity(0.055))
@@ -358,10 +359,11 @@ struct AgentEmbeddedConsoleView: View {
                 text: $draft,
                 placeholder: composerPlaceholder,
                 isEnabled: interactionState.allowsPromptSubmission && !submissionInFlight,
-                onSubmit: submitDraft
+                onSubmit: submitDraft,
+                onFocusChange: { focused in layoutStore?.setTextInputFocused(focused) }
             )
             .id(session.id)
-            .frame(minHeight: 30, maxHeight: 48)
+            .frame(minWidth: 40, maxWidth: .infinity, minHeight: 30, maxHeight: 48)
 
             if interactionState.canInterrupt {
                 Button(action: onInterrupt) {
@@ -370,6 +372,9 @@ struct AgentEmbeddedConsoleView: View {
                 }
                 .buttonStyle(.borderless)
                 .foregroundStyle(.orange.opacity(0.92))
+                .fixedSize()
+                .layoutPriority(3)
+                .reportsComposerActionFrame()
                 .help("Stop current agent turn")
                 .accessibilityLabel("Stop current agent turn")
             } else {
@@ -391,6 +396,9 @@ struct AgentEmbeddedConsoleView: View {
                     submissionInFlight
                 )
                 .keyboardShortcut(.return, modifiers: [.command])
+                .fixedSize()
+                .layoutPriority(3)
+                .reportsComposerActionFrame()
                 .help("Send prompt (Command-Return)")
                 .accessibilityLabel("Send prompt")
             }
@@ -928,6 +936,7 @@ private struct AgentPromptEditor: NSViewRepresentable {
     let placeholder: String
     let isEnabled: Bool
     let onSubmit: () -> Bool
+    var onFocusChange: (Bool) -> Void = { _ in }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text)
@@ -959,6 +968,7 @@ private struct AgentPromptEditor: NSViewRepresentable {
             .foregroundColor: NSColor.white
         ]
         editor.submitHandler = onSubmit
+        editor.focusHandler = onFocusChange
         editor.placeholder = placeholder
         editor.isEditable = isEnabled
         editor.isSelectable = true
@@ -973,6 +983,7 @@ private struct AgentPromptEditor: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         guard let editor = scroll.documentView as? AgentPromptTextView else { return }
         editor.submitHandler = isEnabled ? onSubmit : nil
+        editor.focusHandler = onFocusChange
         editor.placeholder = placeholder
         editor.isEditable = isEnabled
         if !isEnabled, editor.window?.firstResponder === editor {
@@ -986,8 +997,11 @@ private struct AgentPromptEditor: NSViewRepresentable {
     }
 
     static func dismantleNSView(_ scroll: NSScrollView, coordinator: Coordinator) {
-        guard let editor = scroll.documentView as? AgentPromptTextView,
-              editor.window?.firstResponder === editor else { return }
+        guard let editor = scroll.documentView as? AgentPromptTextView else { return }
+        let handler = editor.focusHandler
+        editor.focusHandler = nil
+        handler?(false)
+        guard editor.window?.firstResponder === editor else { return }
         editor.window?.makeFirstResponder(nil)
     }
 
@@ -1013,7 +1027,20 @@ private struct AgentPromptEditor: NSViewRepresentable {
 
 private final class AgentPromptTextView: NSTextView {
     var submitHandler: (() -> Bool)?
+    var focusHandler: ((Bool) -> Void)?
     var placeholder = ""
+
+    override func becomeFirstResponder() -> Bool {
+        let accepted = super.becomeFirstResponder()
+        if accepted { focusHandler?(true) }
+        return accepted
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let resigned = super.resignFirstResponder()
+        if resigned { focusHandler?(false) }
+        return resigned
+    }
 
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53 {
@@ -1046,5 +1073,31 @@ private final class AgentPromptTextView: NSTextView {
             at: NSPoint(x: textContainerInset.width + 1, y: textContainerInset.height),
             withAttributes: attributes
         )
+    }
+}
+
+/// Frame of the composer's Send/Stop control in the console's coordinate
+/// space. Used by layout regression tests to prove the control stays inside
+/// the console (and therefore inside the island's hover region).
+struct AgentComposerActionFrameKey: PreferenceKey {
+    static let coordinateSpace = "AgentConsoleRoot"
+    static let defaultValue: CGRect = .null
+
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        let next = nextValue()
+        if !next.isNull { value = next }
+    }
+}
+
+private extension View {
+    func reportsComposerActionFrame() -> some View {
+        background {
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: AgentComposerActionFrameKey.self,
+                    value: proxy.frame(in: .named(AgentComposerActionFrameKey.coordinateSpace))
+                )
+            }
+        }
     }
 }

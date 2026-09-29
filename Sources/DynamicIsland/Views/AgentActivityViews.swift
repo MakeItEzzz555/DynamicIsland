@@ -904,7 +904,7 @@ private struct AgentSelectedSessionControlView: View {
         Group {
             if !transcriptReady {
                 AgentTranscriptLoadingView(session: session)
-                    .frame(minHeight: detailHeight, maxHeight: .infinity)
+                    .frame(minHeight: 0, idealHeight: detailHeight, maxHeight: .infinity)
                     .transition(.opacity)
             } else if managedControl.isManaged(session), managedControl.mode(for: session).showsComposer {
                 AgentEmbeddedConsoleView(
@@ -923,7 +923,9 @@ private struct AgentSelectedSessionControlView: View {
                 onSubmit: { await managedControl.submit($0, for: session) },
                 onInterrupt: { managedControl.interrupt(session) }
             )
-            .frame(minHeight: detailHeight, maxHeight: .infinity)
+            // Ideal, not minimum: under height pressure the transcript
+            // shrinks so the composer and Send stay inside the page clip.
+            .frame(minHeight: 0, idealHeight: detailHeight, maxHeight: .infinity)
             .task(id: session.id) {
                 await managedControl.refreshTranscript(for: session)
             }
@@ -985,7 +987,7 @@ private struct AgentSelectedSessionControlView: View {
                     onSubmit: { _ in false },
                     onInterrupt: {}
                 )
-                .frame(minHeight: max(detailHeight - 31, 104), maxHeight: .infinity)
+                .frame(minHeight: 0, idealHeight: max(detailHeight - 31, 104), maxHeight: .infinity)
             }
                 .task(id: session.id) {
                     await managedControl.reconcileObservedSession(session)

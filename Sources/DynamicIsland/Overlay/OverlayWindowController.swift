@@ -148,7 +148,7 @@ final class OverlayWindowController {
         ]
     }
 
-    private let expandedHoverTolerance: CGFloat = 2
+    private let expandedHoverTolerance: CGFloat = ExpandedHoverContainment.tolerance
     private let collapsedHoverTolerance: CGFloat = 4
     private let collapsedScrollBaseThreshold: CGFloat = 8
     private let collapsedScrollQuietResetDelay: TimeInterval = 0.28
@@ -1051,14 +1051,6 @@ final class OverlayWindowController {
             debugLog("collapse check ignored; state is not expanded")
             return
         }
-        guard nativeMenuTrackingDepth == 0 else {
-            debugLog("collapse check ignored; native menu is tracking")
-            return
-        }
-        guard !layoutStore.isTransientInteractionActive else {
-            debugLog("collapse check ignored; in-island transient interaction is active")
-            return
-        }
         guard settings.collapseOnMouseLeave, settings.autoCollapseEnabled else {
             debugLog("collapse check ignored; auto collapse disabled")
             return
@@ -1072,37 +1064,37 @@ final class OverlayWindowController {
 
         let mouseLocation = currentMouseScreenLocation()
         let canonicalFrame = visibleExpandedShellScreenFrame()
-        let paddedExpandedFrame = canonicalFrame.insetBy(
-            dx: -expandedHoverTolerance,
-            dy: -expandedHoverTolerance
+        // The safe region is the full rendered shell for the current page
+        // profile. There is deliberately no absolute "distance below the
+        // screen top" test: the Agents workspace is taller than that, and
+        // its composer and Send button must remain reachable.
+        let decision = ExpandedHoverContainment.decide(
+            pointer: mouseLocation,
+            shellFrame: canonicalFrame,
+            holds: currentExpandedHoverHolds
         )
-        let containsMouse = paddedExpandedFrame.contains(mouseLocation)
         logCollapseBoundaryCheck(
             source: source,
             mouseLocation: mouseLocation,
             canonicalFrame: canonicalFrame,
-            paddedFrame: paddedExpandedFrame,
-            containsMouse: containsMouse
+            paddedFrame: ExpandedHoverContainment.safeRegion(shellFrame: canonicalFrame),
+            containsMouse: decision != .collapse
         )
-        debugLog("collapse hover contains=\(containsMouse)")
+        debugLog("collapse hover decision=\(decision)")
 
-        if source == "timer", isMouseFarBelowTop(mouseLocation) {
-            debugLog("timer hard test triggered; mouse is more than 350px below screen top; requesting sequenced collapse")
-            updateMousePassthrough(at: mouseLocation)
-            requestCollapseWithSequencing()
-            return
-        }
-
-        if !containsMouse {
-            debugLog("mouse outside padded hover rect; requesting sequenced collapse")
+        if decision == .collapse {
+            debugLog("mouse outside expanded shell; requesting sequenced collapse")
             updateMousePassthrough(at: mouseLocation)
             requestCollapseWithSequencing()
         }
     }
 
-    private func isMouseFarBelowTop(_ mouseLocation: NSPoint) -> Bool {
-        let screenTop = visibleExpandedShellScreenFrame().maxY
-        return screenTop - mouseLocation.y > 350
+    private var currentExpandedHoverHolds: ExpandedHoverContainment.Holds {
+        var holds: ExpandedHoverContainment.Holds = []
+        if nativeMenuTrackingDepth > 0 { holds.insert(.menuTracking) }
+        if layoutStore.isTransientInteractionActive { holds.insert(.transientInteraction) }
+        if layoutStore.isTextInputFocused, islandPanel.isKeyWindow { holds.insert(.textInput) }
+        return holds
     }
 
     private func visibleExpandedShellScreenFrame() -> NSRect {

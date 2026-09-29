@@ -40,6 +40,13 @@ final class IslandLayoutStore: ObservableObject {
     @Published private(set) var isExpandedScrollGestureSuppressed = false
     @Published private(set) var expandedContentScrollRegion: CGRect = .zero
     @Published var isTransientInteractionActive = false
+    /// An in-island text editor (Agents composer) is first responder.
+    @Published private(set) var isTextInputFocused = false
+
+    func setTextInputFocused(_ focused: Bool) {
+        guard isTextInputFocused != focused else { return }
+        isTextInputFocused = focused
+    }
 
     func setExpandedScrollGestureSuppressed(_ suppressed: Bool) {
         guard isExpandedScrollGestureSuppressed != suppressed else { return }
