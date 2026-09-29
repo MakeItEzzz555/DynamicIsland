@@ -777,3 +777,568 @@ Therefore:
 
 This plan intentionally targets parity without contaminating DynamicIsland's codebase with incompatible source.
 
+
+---
+
+# Reference lock — audited source snapshot
+
+Audited public Droppy repository:
+- repository: `1of1Adam/Droppy`
+- branch: `main`
+- audited HEAD: `dd2d16ccbdc6aa22b456e199442b43a07aa446af`
+- source license: GPL-3.0 + Commons Clause
+- README/source tree inspected through the connected GitHub integration
+- video references: both user-supplied recordings from 2026-09-29 were inspected frame-by-frame at regular intervals
+
+The implementation rule remains clean-room behavioral parity: use Droppy to understand features, interaction models, component hierarchy, and capability surfaces, but implement equivalent DynamicIsland-owned code rather than copying GPL/Commons-Clause source or assets.
+
+---
+
+# Complete Droppy parity checklist
+
+This checklist is intentionally broader than the phase summaries above. A final parity audit must account for every item here.
+
+## Core notch / shell behavior
+
+- physical-notch mode
+- notch-less floating Dynamic Island mode
+- hide/exclude notch overlay from screenshots/screen recordings where technically supported
+- drop-zone activation while dragging
+- drag-hover shell expansion
+- collapsed/expanded shell animation
+- multiple compact HUD/live-activity layouts
+- external-display placement
+- multi-display behavior
+- auto-hide/settle behavior
+- per-feature enable/disable
+- centralized animation language / motion constants
+- accessibility and Reduce Motion
+- haptic/feedback abstraction where supported
+- widget placement/personalization
+
+## File Shelf parity
+
+- drag files
+- drag folders
+- drag images
+- drag URLs
+- file promises
+- persistent shelf
+- optional watched folders
+- pinned/favorite entries
+- folder creation/grouping
+- Quick Look
+- rename
+- reveal/open in Finder
+- copy
+- move
+- share
+- AirDrop
+- Messages share target
+- Mail share target
+- generic Share sheet
+- remove from shelf
+- delete-original action only with explicit confirmation
+- ZIP
+- unzip/extract
+- compression
+- file conversion
+- OCR
+- metadata/details
+- Quickshare
+- multi-select
+- batch actions
+- thumbnail cache
+- temporary-file ownership cleanup
+- smart export/destination rules
+- drag quick-action orbit below island
+- hover scaling and descriptive action label
+- one-drop/one-action semantics
+
+## Floating Basket parity
+
+- shake-to-spawn during drag
+- configurable shake sensitivity
+- movable floating basket
+- multiple baskets
+- color-coded baskets
+- list view
+- grid view
+- stack preview
+- basket switcher
+- quick action bar
+- batch drag out
+- shelf -> basket
+- basket -> shelf
+- copy/share/open/remove
+- auto-hide when empty
+- idle auto-hide
+- drag destination awareness
+- deterministic temp-file retention
+
+## Clipboard parity
+
+- text
+- rich text where safe
+- images
+- files
+- URLs
+- colors
+- source application metadata
+- source application icon
+- persistence across restart
+- full-text search
+- source filtering
+- tags
+- custom tag colors
+- rename tags
+- favorites
+- stars
+- flags/pins
+- rename clipboard item/title
+- copy-back
+- paste
+- open
+- share
+- push to shelf
+- push to basket
+- image preview
+- PDF preview
+- Office/document Quick Look preview
+- inline video preview
+- link preview
+- per-app exclusions
+- password-manager exclusion
+- bounded memory/disk history
+- clipboard settings shortcuts
+
+## System HUD parity
+
+- volume
+- mute
+- display brightness
+- keyboard backlight when trustworthy
+- battery/power
+- charging state
+- Caps Lock
+- Do Not Disturb / Focus
+- AirPods connected
+- AirPods left/right/case battery when available
+- AirPods charging
+- now playing
+- notification banner
+- microphone indicator
+- camera indicator
+- update/status HUD
+- configurable HUD enablement
+- configurable timeout
+- external display behavior
+- central priority/arbitration queue
+- no competing HUD shell thrash
+
+## Media parity
+
+- Apple Music
+- Spotify
+- browser media sources already supported by DynamicIsland
+- album art
+- title/artist
+- play/pause
+- previous/next
+- scrub
+- duration/progress
+- source-app open
+- system volume
+- shuffle where supported
+- repeat where supported
+- love/favorite where supported
+- lyrics entry point where supported
+- audio spectrum/visualizer
+- compact media HUD
+- expanded media controls
+- lock-screen style media panel only if it fits DynamicIsland architecture
+- per-provider integration diagnostics/settings
+
+## Capture parity
+
+- area screenshot
+- window screenshot
+- full-screen screenshot
+- screen recording
+- cursor capture option
+- microphone option
+- system audio option only with explicit permission and supported APIs
+- recording duration/live activity
+- stop control
+- copy screenshot to clipboard
+- save
+- add to shelf
+- share
+- editor
+- crop
+- arrow
+- line
+- rectangle
+- ellipse
+- text
+- blur/redaction
+- undo
+- redo
+- configurable capture shortcuts
+
+## Quickshare / transfer parity
+
+- upload file
+- progress
+- cancel
+- shareable link
+- copy result link
+- result notification/live activity
+- upload history where useful
+- provider abstraction so DynamicIsland is not hard-wired to one service
+- privacy disclosure and opt-in
+
+## Conversion / smart export parity
+
+- image format conversion
+- image resize/quality
+- metadata stripping
+- video conversion
+- audio conversion
+- FFmpeg optional adapter
+- target-size video compression
+- progress
+- cancel
+- safe output naming
+- collision handling
+- return result to shelf/basket
+- destination presets
+- background operation center
+
+## Extension / integration parity
+
+First-party or adapter-backed entries should cover:
+- Apple Music
+- Spotify
+- Notification HUD
+- Window Snap
+- High Alert / keep awake
+- Terminal
+- Alfred
+- Finder services
+- Quickshare
+- Video Target Size
+- Element Capture
+- Voice Transcribe
+- Background Removal
+- Menu Bar Manager
+- Reminders / To Do
+- Camera / Notchface
+- Messages
+- Mail
+- Calendar
+- Clock, only through a truthful supported route
+- Shortcuts
+- Codex
+- Claude
+
+Every integration page must show:
+- installed/detected
+- permission state
+- health
+- supported capabilities
+- unsupported capabilities omitted
+- test action
+- shortcut configuration
+- settings
+- enable/disable
+- live preview when meaningful
+
+## Productivity extensions parity
+
+### Window Snap
+- halves
+- quarters
+- thirds
+- multi-display
+- keyboard shortcuts
+- live snap preview
+- drag zones
+- app exclusions
+
+### Keep Awake / High Alert
+- indefinite
+- preset durations
+- custom duration
+- schedules
+- visible activity
+- correct power assertion teardown
+
+### Terminal
+- integrated terminal surface
+- quick command mode
+- command history only by opt-in
+- configurable shell
+- configurable external terminal
+- hotkey
+- process lifecycle
+- working-directory context
+- terminal task activity
+- safe termination
+
+### Voice Transcribe
+- mic recording
+- recording live indicator
+- on-device transcription/model path
+- model install/manage
+- copy transcript
+- save transcript
+- share transcript
+- shelf output
+- configurable shortcut
+
+### Background Removal
+- local model/Vision/CoreML path
+- before/after preview
+- export
+- shelf result
+- progress/cancel
+
+### Camera / Notchface
+- camera permission
+- device selector
+- live notch preview
+- compact open/close
+- teardown capture when closed
+
+### Menu Bar Manager
+- hide/reveal organization only if a stable supported implementation is possible
+- never steal system menu-bar event ownership
+
+### Finder / Alfred / Shortcuts
+- Finder services to Shelf/Basket
+- Alfred workflows/deep links
+- Shortcuts intents/URL scheme hooks where useful
+
+## Notifications and actionable messaging parity
+
+- captured notification banner
+- app icon/name
+- title/sender
+- body
+- queue/arbitration
+- timeout
+- click to source app
+- per-app ignore list
+- Focus/DND respect
+- Full Disk Access onboarding only if required by chosen implementation
+- reply field only when authoritative reply capability exists
+- preserve draft until send confirmation
+- send failure state
+- exact conversation targeting
+- Messages adapter first
+- WhatsApp/Telegram adapters only if reliable for installed version
+- Open App fallback instead of fake reply
+
+## Reminders / calendar / clock parity
+
+### Reminders
+- natural-language quick capture if reliable
+- list selection
+- due date
+- completion
+- upcoming live activity
+
+### Calendar
+- next meeting
+- starts soon
+- in-progress timer
+- join URL where available
+
+### Clock
+- timer creation/read/stop only through real API/automation
+- alarm read/control only where trustworthy
+- stopwatch only if real state can be observed
+- otherwise expose a DynamicIsland-native timer rather than pretending to control Clock
+
+## Live activity parity
+
+- volume
+- brightness
+- keyboard backlight
+- media
+- AirPods
+- battery/power
+- Focus/DND
+- notifications
+- messages/reply
+- screen recording
+- mic
+- camera
+- timer
+- alarm
+- meeting
+- reminder
+- download
+- Quickshare
+- conversion
+- compression
+- file transfer
+- keep-awake
+- agent
+- terminal task
+- app update/status
+
+Each live activity must define:
+- source authority
+- start evidence
+- progress evidence
+- completion evidence
+- dismiss policy
+- priority
+- collision behavior
+- compact rendering
+- expanded rendering if applicable
+
+## Agents parity / beyond Droppy
+
+DynamicIsland should keep its stronger existing Agents architecture and extend it rather than replacing it:
+- Codex exact thread identity
+- Claude exact session identity
+- observed vs managed distinction
+- current-thread ranking
+- transcript
+- composer
+- stop
+- approvals
+- session auto-approve policy
+- project/repository grouping
+- usage/context metrics
+- attention/completion glow
+- compact live activity
+- provider integration settings
+- future providers through capability adapters
+
+## Settings / personalization parity
+
+Settings should eventually contain:
+- General
+- Island
+- Appearance
+- Motion
+- Tabs / navigation
+- Media
+- Shelf
+- Basket
+- Clipboard
+- HUDs
+- Capture
+- Live Activities
+- Agents
+- Integrations
+- Extensions
+- Quickshare
+- Accessibility
+- Advanced
+- About
+
+Live/sandboxed production-component previews should exist for:
+- notch mode
+- notchless mode
+- shell width/height
+- corner radius
+- background/material/transparency
+- compact widget placement
+- media compact HUD
+- media expanded player
+- volume HUD
+- brightness HUD
+- AirPods HUD
+- notification banner
+- file drag quick-action orbit
+- basket
+- clipboard card/list style
+- agent compact state/glow
+- screen-recording indicator
+- live-activity placement
+
+Customization controls to evaluate:
+- widget ordering
+- left/right/below-notch placement
+- per-widget visibility
+- per-display settings
+- animation intensity
+- duration/timeout
+- hover behavior
+- shell material/background
+- accent style
+- visualizer style
+- preview/test buttons
+- reset section / reset all
+
+---
+
+# Video-derived parity notes
+
+## Recording 1
+
+The first recording confirms the interaction quality target, not just feature names:
+- quick-action circles physically detach below the island during drag;
+- target hover is magnified and visually selected before drop;
+- action explanation appears while hovering;
+- shelf actions are dense but discoverable through context menus;
+- settings use visual previews rather than text-only toggles;
+- extension settings are presented as first-class product surfaces;
+- drag/file actions avoid taking over the whole shelf unnecessarily;
+- basket/shelf/clipboard form one connected workflow rather than isolated features.
+
+DynamicIsland should copy that workflow philosophy, not the source implementation.
+
+## Recording 2
+
+The second recording adds product-level expectations:
+- live activities are central to the product identity;
+- AirPods and system HUDs are transient notch-native experiences;
+- messaging notification/reply is shown as an inline activity;
+- notchless Macs get equivalent floating-island treatment;
+- multiple compact live activities can use different shapes/layouts;
+- capture/edit flows are first-class;
+- personalization is marketed as a core feature, not an advanced afterthought.
+
+---
+
+# Phase dependency correction
+
+The safest implementation order after the current Agents branch is:
+
+1. **Foundation parity inventory + feature registry**
+2. **System HUD engine** — volume/brightness/backlight/battery/AirPods arbitration
+3. **Shelf drag-action orbit** — Share/AirDrop/Convert/Compress/Quickshare
+4. **Background operation center** — conversion/compression/upload progress
+5. **Capture suite** — screenshots, recorder, editor
+6. **Settings preview framework** — reusable sandboxed production component previews
+7. **Settings 2.0 sidebar/integration pages**
+8. **Floating Basket**
+9. **Clipboard 2.0**
+10. **Extension/integration registry**
+11. **Notification HUD + Focus/DND**
+12. **Rich live activities**
+13. **Terminal / Keep Awake / Window Snap / Reminders / Voice / Camera / Background Removal**
+14. **Actionable messaging**
+15. **Media source-specific parity completion**
+16. **Widget/layout personalization editor**
+17. **Final source/video parity audit + release polish**
+
+Do not mix all of these into one giant commit. Each phase must leave the app shippable and preserve the existing canonical shell.
+
+---
+
+# Definition of complete parity
+
+Droppy parity is complete only when:
+- every item in this checklist is either **Implemented**, **Intentionally Not Supported**, or **Blocked by macOS/API constraints**;
+- every blocked item records the exact technical reason;
+- every implemented action has truthful capability/permission state;
+- the two supplied recordings can be replayed as acceptance scripts and each visible interaction has a DynamicIsland equivalent;
+- DynamicIsland's existing stronger features (Agents, browser media detection, usage metrics, exact session authority, current transition work) remain intact;
+- final UI/interaction quality is consistent across Media, Agents, Shelf, HUDs, Capture, Clipboard, and settings previews.
