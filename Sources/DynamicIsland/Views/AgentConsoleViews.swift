@@ -614,10 +614,12 @@ private struct AgentWorkspaceActivityGroups: View {
     let sessions: [AgentSession]
     let selectedSessionID: AgentSessionInstanceID
     let onSelect: (AgentSessionInstanceID) -> Void
+    @Environment(\.agentProjectLocations) private var projectLocations
 
     private var groups: [AgentProjectGroupPresentation] {
         AgentDashboardPresentation.make(
-            orderedSessions: AgentWorkspaceSelection.ordered(sessions: sessions)
+            orderedSessions: AgentWorkspaceSelection.ordered(sessions: sessions),
+            locations: projectLocations
         ).groups
     }
 

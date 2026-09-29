@@ -141,6 +141,7 @@ struct AgentTranscriptLoadGate: Equatable, Sendable {
 struct AgentActivityDashboardView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var agentEvents: AgentEventStore
+    @ObservedObject var projects: AgentProjectProjectionStore
     @ObservedObject var approvalControl: AgentApprovalController
     @ObservedObject var managedControl: AgentManagedSessionController
     @ObservedObject var layoutStore: IslandLayoutStore
@@ -169,6 +170,7 @@ struct AgentActivityDashboardView: View {
             presentationGeneration: presentation.generation,
             transcriptLoadDelay: reduceMotion ? 0 : 0.04
         )
+        .environment(\.agentProjectLocations, projects.index)
         .onAppear {
             beginPresentation()
         }
@@ -240,6 +242,7 @@ struct AgentDashboardContentView: View {
     private let initialSelectedSessionID: AgentSessionInstanceID?
     @State private var showsSessionLauncher = false
     @State private var transcriptLoadGate = AgentTranscriptLoadGate()
+    @Environment(\.agentProjectLocations) private var projectLocations
 
     init(
         sessions: [AgentSession],
@@ -415,7 +418,8 @@ struct AgentDashboardContentView: View {
         let preferred = AgentSessionLauncherProjection.preferredSelection(
             current: managedControl.selectedSessionID,
             sessions: sessions,
-            activeManagedSessionIDs: managedControl.activeManagedSessionIDs
+            activeManagedSessionIDs: managedControl.activeManagedSessionIDs,
+            locations: projectLocations
         )
         if preferred != managedControl.selectedSessionID {
             managedControl.selectSession(preferred)

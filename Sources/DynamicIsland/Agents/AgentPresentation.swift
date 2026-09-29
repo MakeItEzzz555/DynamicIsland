@@ -354,17 +354,26 @@ struct AgentProjectGroupPresentation: Identifiable, Equatable, Sendable {
 struct AgentDashboardPresentation: Equatable, Sendable {
     let groups: [AgentProjectGroupPresentation]
 
-    static func make(sessions: [AgentSession]) -> Self {
-        make(orderedSessions: sessions.sorted(by: AgentSessionPresentation.isOrderedBefore))
+    static func make(
+        sessions: [AgentSession],
+        locations: AgentProjectLocationIndex = .empty
+    ) -> Self {
+        make(
+            orderedSessions: sessions.sorted(by: AgentSessionPresentation.isOrderedBefore),
+            locations: locations
+        )
     }
 
-    static func make(orderedSessions: [AgentSession]) -> Self {
+    static func make(
+        orderedSessions: [AgentSession],
+        locations: AgentProjectLocationIndex = .empty
+    ) -> Self {
         var keys: [String] = []
         var titles: [String: String] = [:]
         var grouped: [String: [AgentSession]] = [:]
 
         for session in orderedSessions {
-            let identity = projectIdentity(for: session)
+            let identity = projectIdentity(for: session, locations: locations)
             if grouped[identity.key] == nil {
                 keys.append(identity.key)
                 titles[identity.key] = identity.title
@@ -381,19 +390,12 @@ struct AgentDashboardPresentation: Equatable, Sendable {
         })
     }
 
-    private static func projectIdentity(for session: AgentSession) -> (key: String, title: String) {
-        if let project = session.project.displayName?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !project.isEmpty {
-            let repository = session.project.repositoryIdentity?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let discriminator = repository.flatMap { $0.isEmpty ? nil : $0.lowercased() } ?? ""
-            return ("project:\(project.lowercased())|\(discriminator)", project)
-        }
-        if let repository = session.project.repositoryIdentity?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !repository.isEmpty {
-            return ("repository:\(repository.lowercased())", repository)
-        }
-        let provider = session.id.sessionID.provider.stableName.capitalized
-        return ("provider:\(session.id.sessionID.provider.deterministicSortKey)", "\(provider) sessions")
+    private static func projectIdentity(
+        for session: AgentSession,
+        locations: AgentProjectLocationIndex
+    ) -> (key: String, title: String) {
+        let key = AgentProjectGrouping.key(for: session, locations: locations, fallback: .perProvider)
+        return (key.rawValue, key.title)
     }
 }
 

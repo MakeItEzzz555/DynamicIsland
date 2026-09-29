@@ -13,19 +13,22 @@ struct AgentSessionLauncherView: View {
     @State private var repositoryPathError: String?
     @State private var starting = false
     @State private var projectedRepositories: [AgentLocalRepositoryChoice] = []
+    @Environment(\.agentProjectLocations) private var projectLocations
 
     private var liveSessions: [AgentSession] {
         AgentSessionLauncherProjection.liveSessions(
             sessions,
             query: query,
-            activeManagedSessionIDs: managedControl.activeManagedSessionIDs
+            activeManagedSessionIDs: managedControl.activeManagedSessionIDs,
+            locations: projectLocations
         )
     }
 
     private var currentSessionIDs: Set<AgentSessionInstanceID> {
         AgentSessionLauncherProjection.currentSessionIDs(
             sessions,
-            activeManagedSessionIDs: managedControl.activeManagedSessionIDs
+            activeManagedSessionIDs: managedControl.activeManagedSessionIDs,
+            locations: projectLocations
         )
     }
 
@@ -384,7 +387,8 @@ enum AgentSessionLauncherProjection {
         current: AgentSessionInstanceID?,
         sessions: [AgentSession],
         now: Date = Date(),
-        activeManagedSessionIDs: Set<AgentSessionID> = []
+        activeManagedSessionIDs: Set<AgentSessionID> = [],
+        locations: AgentProjectLocationIndex = .empty
     ) -> AgentSessionInstanceID? {
         if let current, sessions.contains(where: { $0.id == current }) {
             return current
@@ -392,20 +396,23 @@ enum AgentSessionLauncherProjection {
         return projectSummaries(
             sessions,
             now: now,
-            activeManagedSessionIDs: activeManagedSessionIDs
+            activeManagedSessionIDs: activeManagedSessionIDs,
+            locations: locations
         ).compactMap { $0.current?.id }.first
     }
 
     static func currentSessionIDs(
         _ sessions: [AgentSession],
         now: Date = Date(),
-        activeManagedSessionIDs: Set<AgentSessionID> = []
+        activeManagedSessionIDs: Set<AgentSessionID> = [],
+        locations: AgentProjectLocationIndex = .empty
     ) -> Set<AgentSessionInstanceID> {
         Set(
             projectSummaries(
                 sessions,
                 now: now,
-                activeManagedSessionIDs: activeManagedSessionIDs
+                activeManagedSessionIDs: activeManagedSessionIDs,
+                locations: locations
             ).compactMap { $0.current?.id }
         )
     }
@@ -413,9 +420,10 @@ enum AgentSessionLauncherProjection {
     static func projectSummaries(
         _ sessions: [AgentSession],
         now: Date = Date(),
-        activeManagedSessionIDs: Set<AgentSessionID> = []
+        activeManagedSessionIDs: Set<AgentSessionID> = [],
+        locations: AgentProjectLocationIndex = .empty
     ) -> [AgentProjectSessionSummary] {
-        let groups = Dictionary(grouping: sessions, by: projectIdentity)
+        let groups = Dictionary(grouping: sessions) { projectIdentity($0, locations: locations) }
         return groups.map { key, projectSessions in
             let orderedCurrent = projectSessions.sorted {
                 isPreferredCurrent(
@@ -472,7 +480,8 @@ enum AgentSessionLauncherProjection {
         query: String,
         now: Date = Date(),
         recentObservedWindow: TimeInterval = 300,
-        activeManagedSessionIDs: Set<AgentSessionID> = []
+        activeManagedSessionIDs: Set<AgentSessionID> = [],
+        locations: AgentProjectLocationIndex = .empty
     ) -> [AgentSession] {
         let candidates = sessions.filter { session in
             let recentOpenObservation =
@@ -506,13 +515,13 @@ enum AgentSessionLauncherProjection {
                 activeManagedSessionIDs: activeManagedSessionIDs
             )
         }
-        let activeProjects = Set(active.map(projectIdentity))
+        let activeProjects = Set(active.map { projectIdentity($0, locations: locations) })
         var latestInactiveByProject: [String: AgentSession] = [:]
         for session in projectedCandidates where !AgentWorkspaceSelection.isActive(
             session,
             activeManagedSessionIDs: activeManagedSessionIDs
         ) {
-            let project = projectIdentity(session)
+            let project = projectIdentity(session, locations: locations)
             guard !activeProjects.contains(project) else { continue }
             if let current = latestInactiveByProject[project],
                isPreferredHistorical(current, over: session) {
@@ -524,7 +533,8 @@ enum AgentSessionLauncherProjection {
         let currentIDs = currentSessionIDs(
             projectedCandidates,
             now: now,
-            activeManagedSessionIDs: activeManagedSessionIDs
+            activeManagedSessionIDs: activeManagedSessionIDs,
+            locations: locations
         )
         return (active + Array(latestInactiveByProject.values))
             .sorted {
@@ -544,21 +554,13 @@ enum AgentSessionLauncherProjection {
             }
     }
 
-    private static func projectIdentity(_ session: AgentSession) -> String {
-        if let repository = session.project.repositoryIdentity?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-           !repository.isEmpty {
-            return "repository:\(repository.lowercased())"
-        }
-        if let workingDirectory = session.project.workingDirectory,
-           let path = canonicalRepositoryPath(workingDirectory) {
-            let root = canonicalRepositoryRoot(path) ?? path
-            return "path:\(root.lowercased())"
-        }
-        // Without a stable repository/path identity it is safer to keep the
-        // historical session distinct than to merge unrelated projects that
-        // merely share a display name.
-        return "session:\(session.id.sessionID.provider.deterministicSortKey):\(session.id.sessionID.nativeID)"
+    /// Pure: reads only the cached location index, never the filesystem,
+    /// because it runs from SwiftUI body recomputation.
+    static func projectIdentity(
+        _ session: AgentSession,
+        locations: AgentProjectLocationIndex = .empty
+    ) -> String {
+        AgentProjectGrouping.key(for: session, locations: locations, fallback: .perSession).rawValue
     }
 
     private static func isPreferredCurrent(
@@ -696,7 +698,7 @@ enum AgentSessionLauncherProjection {
         _ sessions: [AgentSession],
         query: String,
         fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) },
-        repositoryRoot: (String) -> String? = { canonicalRepositoryRoot($0) }
+        repositoryRoot: (String) -> String? = { AgentProjectResolver.resolve($0)?.repositoryRoot }
     ) -> [AgentLocalRepositoryChoice] {
         var seen = Set<String>()
         return sessions
@@ -713,8 +715,7 @@ enum AgentSessionLauncherProjection {
                 return lhs.id.generation < rhs.id.generation
             }
             .compactMap { session -> AgentLocalRepositoryChoice? in
-                guard let rawPath = session.project.workingDirectory,
-                      let path = canonicalRepositoryPath(rawPath),
+                guard let path = AgentProjectResolver.normalize(session.project.workingDirectory),
                       fileExists(path) else { return nil }
                 let root = repositoryRoot(path) ?? path
                 guard seen.insert(root).inserted else { return nil }
@@ -732,36 +733,10 @@ enum AgentSessionLauncherProjection {
         _ rawPath: String,
         fileManager: FileManager = .default
     ) -> String? {
-        guard let path = canonicalRepositoryPath(rawPath) else { return nil }
+        guard let path = AgentProjectResolver.normalize(rawPath) else { return nil }
         var isDirectory: ObjCBool = false
         guard fileManager.fileExists(atPath: path, isDirectory: &isDirectory),
               isDirectory.boolValue else { return nil }
         return path
-    }
-
-    private static func canonicalRepositoryPath(_ rawPath: String) -> String? {
-        let trimmed = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        let expanded = (trimmed as NSString).expandingTildeInPath
-        return URL(fileURLWithPath: expanded).standardizedFileURL.path
-    }
-
-    private static func canonicalRepositoryRoot(_ path: String) -> String? {
-        guard FileManager.default.fileExists(atPath: path) else { return nil }
-        var candidate = URL(fileURLWithPath: path, isDirectory: true)
-            .standardizedFileURL
-            .resolvingSymlinksInPath()
-
-        while true {
-            if FileManager.default.fileExists(
-                atPath: candidate.appendingPathComponent(".git").path
-            ) {
-                return candidate.path
-            }
-
-            let parent = candidate.deletingLastPathComponent()
-            guard parent.path != candidate.path else { return nil }
-            candidate = parent
-        }
     }
 }

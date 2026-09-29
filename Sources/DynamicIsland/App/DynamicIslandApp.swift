@@ -135,6 +135,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let navigation = IslandNavigationStore()
     private let geometryService = NotchGeometryService()
     private let agentEvents = AgentEventStore()
+    private let agentProjects = AgentProjectProjectionStore()
     private let agentAttention = AgentAttentionCoordinator()
     private let agentApprovalControl = AgentApprovalController()
     private lazy var agentIngestion = AgentIngestionCoordinator(eventStore: agentEvents)
@@ -195,8 +196,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             agentAttention: agentAttention,
             agentApprovalControl: agentApprovalControl,
             agentManagedControl: agentManagedControl,
+            agentProjects: agentProjects,
             productivity: productivity
         )
+        agentProjects.observe(agentEvents.$sessions)
         #if DEBUG
         debugPrint(
             "DynamicIsland AppDelegate modules",

@@ -3099,6 +3099,7 @@ struct ExpandedIslandView: View {
         AgentActivityDashboardView(
             settings: settings,
             agentEvents: agentEvents,
+            projects: modules.agentProjects,
             approvalControl: modules.agentApprovalControl,
             managedControl: modules.agentManagedControl,
             layoutStore: layoutStore,
