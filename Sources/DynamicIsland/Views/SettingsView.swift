@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 private enum SettingsSection: String, CaseIterable, Identifiable {
@@ -42,6 +43,7 @@ struct SettingsView: View {
     @StateObject private var agentSetup = AgentIntegrationSetupController()
     @StateObject private var agentDiagnostics: AgentIntegrationDiagnosticsController
     @State private var selectedSection: SettingsSection = .island
+    @State private var systemHUDAccessibilityGranted = SystemHUDAccessibilityPermission.isGranted
 
     init(
         settings: AppSettings,
@@ -103,6 +105,9 @@ struct SettingsView: View {
             }
         }
         .frame(width: 920, height: 700)
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            systemHUDAccessibilityGranted = SystemHUDAccessibilityPermission.isGranted
+        }
     }
 
     private var islandSection: some View {
@@ -629,6 +634,42 @@ struct SettingsView: View {
             }
             SettingsGroup("System HUDs") {
                 Toggle("Enable system HUDs", isOn: $settings.systemHUDsEnabled)
+                Toggle(
+                    "Replace macOS volume / brightness HUD",
+                    isOn: $settings.replaceMacOSSystemHUDs
+                )
+                .disabled(!settings.systemHUDsEnabled)
+
+                if settings.replaceMacOSSystemHUDs {
+                    HStack(spacing: 8) {
+                        Label(
+                            systemHUDAccessibilityGranted
+                                ? "Accessibility granted"
+                                : "Accessibility required",
+                            systemImage: systemHUDAccessibilityGranted
+                                ? "checkmark.circle.fill"
+                                : "exclamationmark.triangle.fill"
+                        )
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(systemHUDAccessibilityGranted ? .green : .orange)
+
+                        Spacer(minLength: 0)
+
+                        if !systemHUDAccessibilityGranted {
+                            Button("Grant Access") {
+                                _ = SystemHUDAccessibilityPermission.request()
+                                systemHUDAccessibilityGranted = SystemHUDAccessibilityPermission.isGranted
+                            }
+                            .buttonStyle(.borderless)
+                        }
+
+                        Button("Open Settings") {
+                            SystemHUDAccessibilityPermission.openSettings()
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                }
+
                 Toggle("Volume", isOn: $settings.volumeHUDEnabled)
                     .disabled(!settings.systemHUDsEnabled)
                 Toggle("Brightness", isOn: $settings.brightnessHUDEnabled)
@@ -643,8 +684,9 @@ struct SettingsView: View {
                 SystemHUDSettingsPreview(settings: settings)
                     .opacity(settings.systemHUDsEnabled ? 1 : 0.45)
                 HelpText(
-                    "Uses the real system output volume and display brightness when macOS exposes a trustworthy value. " +
-                    "Unsupported controls are not simulated."
+                    settings.replaceMacOSSystemHUDs
+                        ? "With Accessibility granted, DynamicIsland changes volume / brightness itself and suppresses the native macOS HUD only after the change succeeds. Unsupported devices fall through to macOS."
+                        : "Passive mode leaves macOS controls untouched and mirrors trustworthy volume / brightness values in DynamicIsland."
                 )
             }
 

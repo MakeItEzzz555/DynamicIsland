@@ -336,6 +336,7 @@ public final class AppSettings: ObservableObject {
     }
     @Published public var liveActivityAnimationEnabled: Bool { didSet { save(liveActivityAnimationEnabled, for: Key.liveActivityAnimationEnabled) } }
     @Published public var systemHUDsEnabled: Bool { didSet { save(systemHUDsEnabled, for: Key.systemHUDsEnabled) } }
+    @Published public var replaceMacOSSystemHUDs: Bool { didSet { save(replaceMacOSSystemHUDs, for: Key.replaceMacOSSystemHUDs) } }
     @Published public var volumeHUDEnabled: Bool { didSet { save(volumeHUDEnabled, for: Key.volumeHUDEnabled) } }
     @Published public var brightnessHUDEnabled: Bool { didSet { save(brightnessHUDEnabled, for: Key.brightnessHUDEnabled) } }
     @Published public var systemHUDDurationSeconds: Double { didSet { save(systemHUDDurationSeconds, for: Key.systemHUDDurationSeconds) } }
@@ -548,6 +549,7 @@ public final class AppSettings: ObservableObject {
         liveActivityAutoDismissSeconds = Self.double(defaults, Key.liveActivityAutoDismissSeconds, 6.0)
         liveActivityAnimationEnabled = Self.bool(defaults, Key.liveActivityAnimationEnabled, true)
         systemHUDsEnabled = Self.bool(defaults, Key.systemHUDsEnabled, true)
+        replaceMacOSSystemHUDs = Self.bool(defaults, Key.replaceMacOSSystemHUDs, true)
         volumeHUDEnabled = Self.bool(defaults, Key.volumeHUDEnabled, true)
         brightnessHUDEnabled = Self.bool(defaults, Key.brightnessHUDEnabled, true)
         systemHUDDurationSeconds = Self.double(defaults, Key.systemHUDDurationSeconds, 1.4)
@@ -666,7 +668,8 @@ public final class AppSettings: ObservableObject {
             Key.statsEnabled, Key.showCPU, Key.showMemory, Key.showGPU, Key.showNetwork, Key.showDisk, Key.showBattery, Key.showUptime,
             Key.clipboardHistoryEnabled, Key.clipboardHistoryMaximumItems,
             Key.clipboardHistoryPersistenceEnabled, Key.clipboardHistoryCaptureImagesEnabled,
-            Key.showExpandedLiveActivitiesSection
+            Key.showExpandedLiveActivitiesSection, Key.systemHUDsEnabled, Key.replaceMacOSSystemHUDs,
+            Key.volumeHUDEnabled, Key.brightnessHUDEnabled, Key.systemHUDDurationSeconds
         ])
         reload()
     }
@@ -834,6 +837,7 @@ public final class AppSettings: ObservableObject {
         liveActivityAutoDismissSeconds = Self.double(defaults, Key.liveActivityAutoDismissSeconds, 6.0)
         liveActivityAnimationEnabled = Self.bool(defaults, Key.liveActivityAnimationEnabled, true)
         systemHUDsEnabled = Self.bool(defaults, Key.systemHUDsEnabled, true)
+        replaceMacOSSystemHUDs = Self.bool(defaults, Key.replaceMacOSSystemHUDs, true)
         volumeHUDEnabled = Self.bool(defaults, Key.volumeHUDEnabled, true)
         brightnessHUDEnabled = Self.bool(defaults, Key.brightnessHUDEnabled, true)
         systemHUDDurationSeconds = Self.double(defaults, Key.systemHUDDurationSeconds, 1.4)
@@ -1352,6 +1356,7 @@ private enum Key {
     static let liveActivityAutoDismissSeconds = "liveActivityAutoDismissSeconds"
     static let liveActivityAnimationEnabled = "liveActivityAnimationEnabled"
     static let systemHUDsEnabled = "systemHUDsEnabled"
+    static let replaceMacOSSystemHUDs = "replaceMacOSSystemHUDs"
     static let volumeHUDEnabled = "volumeHUDEnabled"
     static let brightnessHUDEnabled = "brightnessHUDEnabled"
     static let systemHUDDurationSeconds = "systemHUDDurationSeconds"
@@ -1432,7 +1437,7 @@ private enum Key {
         showMusicLiveActivity, showTimerLiveActivity, showFileDropLiveActivity,
         showBatteryLiveActivity, showCalendarLiveActivity, showDownloadsLiveActivity,
         liveActivityAutoDismissEnabled, liveActivityAutoDismissSeconds, liveActivityAnimationEnabled,
-        systemHUDsEnabled, volumeHUDEnabled, brightnessHUDEnabled, systemHUDDurationSeconds,
+        systemHUDsEnabled, replaceMacOSSystemHUDs, volumeHUDEnabled, brightnessHUDEnabled, systemHUDDurationSeconds,
         collapsedPriorityRunningTimer, collapsedPriorityPlayingMedia, collapsedPriorityPausedTimer,
         collapsedPriorityRecentFiles, collapsedPriorityPausedMedia,
         gesturesEnabled, gestureInputSource, expandGestureEnabled, collapseGestureEnabled,

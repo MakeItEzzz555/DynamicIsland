@@ -93,17 +93,20 @@ final class AppSettingsTests: XCTestCase {
     func testSystemHUDDefaultsAndPersistence() {
         let first = AppSettings(defaults: defaults)
         XCTAssertTrue(first.systemHUDsEnabled)
+        XCTAssertTrue(first.replaceMacOSSystemHUDs)
         XCTAssertTrue(first.volumeHUDEnabled)
         XCTAssertTrue(first.brightnessHUDEnabled)
         XCTAssertEqual(first.systemHUDDurationSeconds, 1.4, accuracy: 0.001)
 
         first.systemHUDsEnabled = false
+        first.replaceMacOSSystemHUDs = false
         first.volumeHUDEnabled = false
         first.brightnessHUDEnabled = false
         first.systemHUDDurationSeconds = 2.2
 
         let second = AppSettings(defaults: defaults)
         XCTAssertFalse(second.systemHUDsEnabled)
+        XCTAssertFalse(second.replaceMacOSSystemHUDs)
         XCTAssertFalse(second.volumeHUDEnabled)
         XCTAssertFalse(second.brightnessHUDEnabled)
         XCTAssertEqual(second.systemHUDDurationSeconds, 2.2, accuracy: 0.001)
