@@ -430,25 +430,28 @@ final class BackgroundRemovalController: ObservableObject, IslandCapabilityAdapt
     }
 
     private func publishActivity(source: URL) {
-        liveActivities.update(
-            DynamicIslandLiveActivity(
-                id: Self.activityID,
-                kind: .backgroundRemoval,
-                title: "Removing background",
-                subtitle: source.lastPathComponent,
-                symbolName: "person.crop.rectangle",
-                priority: 84,
-                isActive: true,
-                progress: nil,
-                updatedAt: now(),
-                lifecycle: LiveActivityLifecycleMetadata(
-                    authority: .vision,
-                    startEvidence: "Vision foreground segmentation request started",
-                    progressEvidence: nil,
-                    completionEvidence: "A decoded PNG result was written to local storage",
-                    dismissPolicy: .untilSourceEnds,
-                    supportsCancellation: true
-                )
+        liveActivities.update(Self.makeActivity(filename: source.lastPathComponent, updatedAt: now()))
+    }
+
+    /// Production activity shape; also used by Settings previews.
+    static func makeActivity(filename: String, updatedAt: Date) -> DynamicIslandLiveActivity {
+        DynamicIslandLiveActivity(
+            id: activityID,
+            kind: .backgroundRemoval,
+            title: "Removing background",
+            subtitle: filename,
+            symbolName: "person.crop.rectangle",
+            priority: 84,
+            isActive: true,
+            progress: nil,
+            updatedAt: updatedAt,
+            lifecycle: LiveActivityLifecycleMetadata(
+                authority: .vision,
+                startEvidence: "Vision foreground segmentation request started",
+                progressEvidence: nil,
+                completionEvidence: "A decoded PNG result was written to local storage",
+                dismissPolicy: .untilSourceEnds,
+                supportsCancellation: true
             )
         )
     }

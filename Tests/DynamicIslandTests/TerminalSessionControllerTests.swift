@@ -42,6 +42,34 @@ private final class FakeTerminalProcessRunner: TerminalProcessRunning {
 
 @MainActor
 final class TerminalSessionControllerTests: XCTestCase {
+    func testCommandHistoryRequiresOptInAndCanBeCleared() throws {
+        let runner = FakeTerminalProcessRunner()
+        let fixture = makeFixture(runner: runner)
+        XCTAssertFalse(fixture.controller.persistCommandHistory)
+
+        fixture.controller.persistCommandHistory = true
+        try fixture.controller.run(command: "echo one")
+        XCTAssertEqual(fixture.controller.commandHistory, ["echo one"])
+
+        fixture.controller.clearCommandHistory()
+        XCTAssertTrue(fixture.controller.commandHistory.isEmpty)
+
+        fixture.controller.terminate()
+        fixture.controller.persistCommandHistory = true
+        XCTAssertTrue(fixture.controller.commandHistory.isEmpty)
+    }
+
+    func testDisablingHistoryOptInDiscardsHistory() throws {
+        let runner = FakeTerminalProcessRunner()
+        let fixture = makeFixture(runner: runner)
+        fixture.controller.persistCommandHistory = true
+        try fixture.controller.run(command: "echo one")
+
+        fixture.controller.persistCommandHistory = false
+
+        XCTAssertTrue(fixture.controller.commandHistory.isEmpty)
+    }
+
     func testStartUsesConfiguredShellAndWorkingDirectoryAndPublishesActivity() throws {
         let runner = FakeTerminalProcessRunner()
         let fixture = makeFixture(runner: runner)
@@ -52,7 +80,7 @@ final class TerminalSessionControllerTests: XCTestCase {
         XCTAssertEqual(runner.receivedShell, "/bin/zsh")
         XCTAssertEqual(runner.receivedWorkingDirectory?.path, "/tmp")
         XCTAssertTrue(fixture.controller.isRunning)
-        XCTAssertEqual(fixture.controller.commandHistory, ["echo hello"])
+        XCTAssertTrue(fixture.controller.commandHistory.isEmpty, "History is off by default")
 
         let activity = fixture.activities.activities.first
         XCTAssertEqual(activity?.kind, .terminalTask)

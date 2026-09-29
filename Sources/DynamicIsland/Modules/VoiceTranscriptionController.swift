@@ -641,49 +641,60 @@ final class VoiceTranscriptionController: ObservableObject, IslandCapabilityAdap
     }
 
     private func publishRecordingActivity(startedAt: Date) {
-        liveActivities.update(
-            DynamicIslandLiveActivity(
-                id: Self.recordingActivityID,
-                kind: .voiceRecording,
-                title: "Recording",
-                subtitle: "Voice Transcribe",
-                symbolName: "mic.fill",
-                priority: 92,
-                isActive: true,
-                progress: nil,
-                updatedAt: startedAt,
-                lifecycle: LiveActivityLifecycleMetadata(
-                    authority: .avFoundation,
-                    startEvidence: "AVAudioRecorder reported recording started",
-                    progressEvidence: nil,
-                    completionEvidence: "AVAudioRecorder stopped and released the microphone",
-                    dismissPolicy: .untilSourceEnds,
-                    supportsCancellation: true
-                )
-            )
-        )
+        liveActivities.update(Self.makeRecordingActivity(startedAt: startedAt))
     }
 
     private func publishTranscriptionActivity() {
         liveActivities.update(
-            DynamicIslandLiveActivity(
-                id: Self.transcriptionActivityID,
-                kind: .voiceTranscription,
-                title: "Transcribing",
-                subtitle: recognizerAvailability.supportsOnDeviceRecognition ? "On-device" : "Apple speech service",
-                symbolName: "waveform",
-                priority: 86,
-                isActive: true,
-                progress: nil,
-                updatedAt: now(),
-                lifecycle: LiveActivityLifecycleMetadata(
-                    authority: .systemAPI,
-                    startEvidence: "Speech recognition task started",
-                    progressEvidence: nil,
-                    completionEvidence: "Speech recognition returned a final result or error",
-                    dismissPolicy: .untilSourceEnds,
-                    supportsCancellation: true
-                )
+            Self.makeTranscriptionActivity(
+                onDevice: recognizerAvailability.supportsOnDeviceRecognition,
+                updatedAt: now()
+            )
+        )
+    }
+
+    /// Production activity shape; also used by Settings previews.
+    static func makeRecordingActivity(startedAt: Date) -> DynamicIslandLiveActivity {
+        DynamicIslandLiveActivity(
+            id: recordingActivityID,
+            kind: .voiceRecording,
+            title: "Recording",
+            subtitle: "Voice Transcribe",
+            symbolName: "mic.fill",
+            priority: 92,
+            isActive: true,
+            progress: nil,
+            updatedAt: startedAt,
+            lifecycle: LiveActivityLifecycleMetadata(
+                authority: .avFoundation,
+                startEvidence: "AVAudioRecorder reported recording started",
+                progressEvidence: nil,
+                completionEvidence: "AVAudioRecorder stopped and released the microphone",
+                dismissPolicy: .untilSourceEnds,
+                supportsCancellation: true
+            )
+        )
+    }
+
+    /// Production activity shape; also used by Settings previews.
+    static func makeTranscriptionActivity(onDevice: Bool, updatedAt: Date) -> DynamicIslandLiveActivity {
+        DynamicIslandLiveActivity(
+            id: transcriptionActivityID,
+            kind: .voiceTranscription,
+            title: "Transcribing",
+            subtitle: onDevice ? "On-device" : "Apple speech service",
+            symbolName: "waveform",
+            priority: 86,
+            isActive: true,
+            progress: nil,
+            updatedAt: updatedAt,
+            lifecycle: LiveActivityLifecycleMetadata(
+                authority: .systemAPI,
+                startEvidence: "Speech recognition task started",
+                progressEvidence: nil,
+                completionEvidence: "Speech recognition returned a final result or error",
+                dismissPolicy: .untilSourceEnds,
+                supportsCancellation: true
             )
         )
     }

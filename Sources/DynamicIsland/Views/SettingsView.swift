@@ -12,6 +12,7 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
     case stats = "Stats"
     case agents = "AI Agents"
     case clipboard = "Clipboard"
+    case productivity = "Productivity"
     case liveActivities = "Live Activities"
     case gestures = "Gestures"
     case advanced = "Advanced"
@@ -30,6 +31,7 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
         case .stats: "chart.xyaxis.line"
         case .agents: "cpu"
         case .clipboard: "doc.on.clipboard"
+        case .productivity: "wand.and.stars"
         case .liveActivities: "waveform.path.ecg"
         case .gestures: "hand.raised"
         case .advanced: "gearshape.2"
@@ -40,6 +42,7 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
 struct SettingsView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var shortcuts: ShortcutsStore
+    let productivity: ProductivityModules
     @StateObject private var agentSetup = AgentIntegrationSetupController()
     @StateObject private var agentDiagnostics: AgentIntegrationDiagnosticsController
     @State private var selectedSection: SettingsSection = .island
@@ -49,10 +52,12 @@ struct SettingsView: View {
         settings: AppSettings,
         shortcuts: ShortcutsStore,
         agentIngestion: AgentIngestionCoordinator,
-        agentEvents: AgentEventStore
+        agentEvents: AgentEventStore,
+        productivity: ProductivityModules
     ) {
         self.settings = settings
         self.shortcuts = shortcuts
+        self.productivity = productivity
         _agentDiagnostics = StateObject(
             wrappedValue: AgentIntegrationDiagnosticsController(
                 coordinator: agentIngestion,
@@ -92,6 +97,10 @@ struct SettingsView: View {
                         agentsSection
                     case .clipboard:
                         clipboardSection
+                    case .productivity:
+                        settingsForm("Productivity") {
+                            ProductivitySettingsView(productivity: productivity)
+                        }
                     case .liveActivities:
                         liveActivitiesSection
                     case .gestures:
@@ -231,6 +240,7 @@ struct SettingsView: View {
                 Toggle("Tray tab", isOn: $settings.showTrayTab)
                 Toggle("Timer tab", isOn: $settings.showTimerTab)
                 Toggle("Stats tab", isOn: $settings.showStatsTab)
+                Toggle("Tools tab", isOn: $settings.showToolsTab)
                 Toggle("Activities tab", isOn: $settings.showActivitiesTab)
                     .disabled(true)
                 Toggle("Live Activities tab", isOn: $settings.showLiveActivitiesTab)
@@ -1008,7 +1018,7 @@ struct AgentSourceHealthRow: View {
     }
 }
 
-private struct SettingsGroup<Content: View>: View {
+struct SettingsGroup<Content: View>: View {
     let title: String
     @ViewBuilder let content: Content
 
@@ -1069,7 +1079,7 @@ private struct PriorityStepperRow: View {
     }
 }
 
-private struct HelpText: View {
+struct HelpText: View {
     let text: String
 
     init(_ text: String) {
@@ -1254,17 +1264,6 @@ private struct SystemHUDSettingsPreview: View {
 }
 
 
-private enum LiveActivityLayoutPreviewScenario: String, CaseIterable, Identifiable {
-    case media = "Media"
-    case mediaTimer = "Media + Timer"
-    case mediaBatteryTimer = "Battery + Media + Timer"
-    case agentTimer = "Agent + Timer"
-    case mediaVolume = "Media + Volume HUD"
-    case constrained = "Constrained"
-
-    var id: String { rawValue }
-}
-
 private struct LiveActivityLayoutSettingsPreview: View {
     @ObservedObject var settings: AppSettings
     @State private var scenario: LiveActivityLayoutPreviewScenario = .mediaTimer
@@ -1285,7 +1284,7 @@ private struct LiveActivityLayoutSettingsPreview: View {
                     }
                 }
                 .labelsHidden()
-                .frame(width: 175)
+                .frame(width: 215)
             }
 
             ZStack(alignment: .topLeading) {
@@ -1414,77 +1413,6 @@ private struct LiveActivityLayoutSettingsPreview: View {
     }
 
     private var activities: [DynamicIslandLiveActivity] {
-        let now = Date(timeIntervalSince1970: 1_000)
-        let media = DynamicIslandLiveActivity(
-            id: "preview-media",
-            kind: .media,
-            title: "Now Playing",
-            subtitle: "Artist",
-            symbolName: "music.note",
-            priority: 80,
-            isActive: true,
-            progress: 0.42,
-            updatedAt: now
-        )
-        let timer = DynamicIslandLiveActivity(
-            id: "preview-timer",
-            kind: .timer,
-            title: "Timer",
-            subtitle: "4:18",
-            symbolName: "timer",
-            priority: 90,
-            isActive: true,
-            progress: 0.64,
-            updatedAt: now
-        )
-        let battery = DynamicIslandLiveActivity(
-            id: "preview-battery",
-            kind: .battery,
-            title: "Battery",
-            subtitle: "18%",
-            symbolName: "battery.25percent",
-            priority: 85,
-            isActive: true,
-            progress: 0.18,
-            updatedAt: now,
-            batteryState: .low
-        )
-        let agent = DynamicIslandLiveActivity(
-            id: "preview-agent",
-            kind: .agent,
-            title: "Codex",
-            subtitle: "Working",
-            symbolName: "terminal.fill",
-            priority: 130,
-            isActive: true,
-            progress: nil,
-            updatedAt: now
-        )
-        let volume = DynamicIslandLiveActivity(
-            id: "preview-system",
-            kind: .system,
-            title: "Volume",
-            subtitle: "68%",
-            symbolName: "speaker.wave.2.fill",
-            priority: 200,
-            isActive: true,
-            progress: 0.68,
-            updatedAt: now
-        )
-
-        switch scenario {
-        case .media:
-            return [media]
-        case .mediaTimer:
-            return [media, timer]
-        case .mediaBatteryTimer:
-            return [media, battery, timer]
-        case .agentTimer:
-            return [agent, timer]
-        case .mediaVolume:
-            return [media, timer, volume]
-        case .constrained:
-            return [media, battery, timer]
-        }
+        LiveActivityPreviewCatalog.activities(for: scenario)
     }
 }

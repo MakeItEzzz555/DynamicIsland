@@ -210,6 +210,7 @@ public final class AppSettings: ObservableObject {
     @Published public var showTrayTab: Bool { didSet { save(showTrayTab, for: Key.showTrayTab) } }
     @Published public var showTimerTab: Bool { didSet { save(showTimerTab, for: Key.showTimerTab) } }
     @Published public var showStatsTab: Bool { didSet { save(showStatsTab, for: Key.showStatsTab) } }
+    @Published public var showToolsTab: Bool { didSet { save(showToolsTab, for: Key.showToolsTab) } }
     @Published public var showAgentsTab: Bool { didSet { save(showAgentsTab, for: Key.showAgentsTab) } }
     @Published public var showActivitiesTab: Bool { didSet { save(showActivitiesTab, for: Key.showActivitiesTab) } }
     @Published public var showLiveActivitiesTab: Bool { didSet { save(showLiveActivitiesTab, for: Key.showLiveActivitiesTab) } }
@@ -456,6 +457,7 @@ public final class AppSettings: ObservableObject {
         showTrayTab = Self.bool(defaults, Key.showTrayTab, true)
         showTimerTab = Self.bool(defaults, Key.showTimerTab, true)
         showStatsTab = Self.bool(defaults, Key.showStatsTab, true)
+        showToolsTab = Self.bool(defaults, Key.showToolsTab, true)
         showAgentsTab = Self.bool(defaults, Key.showAgentsTab, true)
         agentActivityEnabled = Self.bool(defaults, Key.agentActivityEnabled, true)
         agentCompletionAlertsEnabled = Self.bool(defaults, Key.agentCompletionAlertsEnabled, true)
@@ -680,7 +682,7 @@ public final class AppSettings: ObservableObject {
 
     public func resetModuleSettings() {
         reset(keys: [
-            Key.showTrayTab, Key.showTimerTab, Key.showStatsTab, Key.showAgentsTab,
+            Key.showTrayTab, Key.showTimerTab, Key.showStatsTab, Key.showToolsTab, Key.showAgentsTab,
             Key.agentActivityEnabled, Key.agentCompletionAlertsEnabled, Key.agentApprovalAlertsEnabled,
             Key.agentSoundsEnabled, Key.agentUsageMetricsEnabled, Key.agentPeekDurationSeconds,
             Key.defaultExpandedTab,
@@ -767,6 +769,7 @@ public final class AppSettings: ObservableObject {
         showTrayTab = Self.bool(defaults, Key.showTrayTab, true)
         showTimerTab = Self.bool(defaults, Key.showTimerTab, true)
         showStatsTab = Self.bool(defaults, Key.showStatsTab, true)
+        showToolsTab = Self.bool(defaults, Key.showToolsTab, true)
         showAgentsTab = Self.bool(defaults, Key.showAgentsTab, true)
         agentActivityEnabled = Self.bool(defaults, Key.agentActivityEnabled, true)
         agentCompletionAlertsEnabled = Self.bool(defaults, Key.agentCompletionAlertsEnabled, true)
@@ -1301,6 +1304,7 @@ private enum Key {
     static let showTrayTab = "showTrayTab"
     static let showTimerTab = "showTimerTab"
     static let showStatsTab = "showStatsTab"
+    static let showToolsTab = "showToolsTab"
     static let showAgentsTab = "showAgentsTab"
     static let agentActivityEnabled = "agentActivityEnabled"
     static let agentCompletionAlertsEnabled = "agentCompletionAlertsEnabled"
@@ -1459,7 +1463,7 @@ private enum Key {
         collapsedHoverPreviewTitleIconName, collapsedHoverPreviewArtistIconName, animationPreset, reduceExtraMotion,
         shellAnimationSpeed, contentAnimationEnabled, contentStaggerEnabled, contentStaggerAmount,
         useBlurTransitions, useScaleTransitions, showIslandTab, showTrayTab,
-        showTimerTab, showStatsTab, showAgentsTab, agentActivityEnabled,
+        showTimerTab, showStatsTab, showToolsTab, showAgentsTab, agentActivityEnabled,
         agentCompletionAlertsEnabled, agentApprovalAlertsEnabled, agentSoundsEnabled,
         agentUsageMetricsEnabled, agentPeekDurationSeconds,
         showActivitiesTab, showLiveActivitiesTab, showGesturesTab,

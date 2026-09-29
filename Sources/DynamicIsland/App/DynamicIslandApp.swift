@@ -294,7 +294,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 settings: settings,
                 shortcuts: shortcuts,
                 agentIngestion: agentIngestion,
-                agentEvents: agentEvents
+                agentEvents: agentEvents,
+                productivity: productivity
             )
         }
         settingsController?.show()

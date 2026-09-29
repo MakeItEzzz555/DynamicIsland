@@ -506,25 +506,28 @@ final class CameraPreviewController: ObservableObject, IslandCapabilityAdapter {
     }
 
     private func publishActivity(device: CameraDeviceDescriptor) {
-        liveActivities.update(
-            DynamicIslandLiveActivity(
-                id: Self.activityID,
-                kind: .camera,
-                title: "Camera",
-                subtitle: device.name,
-                symbolName: "camera.fill",
-                priority: 94,
-                isActive: true,
-                progress: nil,
-                updatedAt: now(),
-                lifecycle: LiveActivityLifecycleMetadata(
-                    authority: .avFoundation,
-                    startEvidence: "AVCaptureSession reported isRunning",
-                    progressEvidence: nil,
-                    completionEvidence: "AVCaptureSession stopped and inputs were removed",
-                    dismissPolicy: .untilSourceEnds,
-                    supportsCancellation: true
-                )
+        liveActivities.update(Self.makeActivity(deviceName: device.name, updatedAt: now()))
+    }
+
+    /// Production activity shape; also used by Settings previews.
+    static func makeActivity(deviceName: String, updatedAt: Date) -> DynamicIslandLiveActivity {
+        DynamicIslandLiveActivity(
+            id: activityID,
+            kind: .camera,
+            title: "Camera",
+            subtitle: deviceName,
+            symbolName: "camera.fill",
+            priority: 94,
+            isActive: true,
+            progress: nil,
+            updatedAt: updatedAt,
+            lifecycle: LiveActivityLifecycleMetadata(
+                authority: .avFoundation,
+                startEvidence: "AVCaptureSession reported isRunning",
+                progressEvidence: nil,
+                completionEvidence: "AVCaptureSession stopped and inputs were removed",
+                dismissPolicy: .untilSourceEnds,
+                supportsCancellation: true
             )
         )
     }

@@ -237,24 +237,39 @@ final class KeepAwakeController: ObservableObject, IslandCapabilityAdapter {
         }
 
         liveActivities.update(
-            DynamicIslandLiveActivity(
-                id: Self.activityID,
-                kind: .keepAwake,
-                title: "Keep Awake",
+            Self.makeActivity(
                 subtitle: statusText(at: date),
-                symbolName: "cup.and.saucer.fill",
-                priority: 72,
-                isActive: true,
                 progress: progress(at: date),
-                updatedAt: date,
-                lifecycle: LiveActivityLifecycleMetadata(
-                    authority: .systemAPI,
-                    startEvidence: "IOPM power assertion acquired",
-                    progressEvidence: configuredDuration == nil ? nil : "authoritative elapsed duration",
-                    completionEvidence: "power assertion released",
-                    dismissPolicy: .untilSourceEnds,
-                    supportsCancellation: true
-                )
+                hasDuration: configuredDuration != nil,
+                updatedAt: date
+            )
+        )
+    }
+
+    /// Production activity shape; also used by Settings previews.
+    static func makeActivity(
+        subtitle: String,
+        progress: Double?,
+        hasDuration: Bool,
+        updatedAt: Date
+    ) -> DynamicIslandLiveActivity {
+        DynamicIslandLiveActivity(
+            id: activityID,
+            kind: .keepAwake,
+            title: "Keep Awake",
+            subtitle: subtitle,
+            symbolName: "cup.and.saucer.fill",
+            priority: 72,
+            isActive: true,
+            progress: progress,
+            updatedAt: updatedAt,
+            lifecycle: LiveActivityLifecycleMetadata(
+                authority: .systemAPI,
+                startEvidence: "IOPM power assertion acquired",
+                progressEvidence: hasDuration ? "authoritative elapsed duration" : nil,
+                completionEvidence: "power assertion released",
+                dismissPolicy: .untilSourceEnds,
+                supportsCancellation: true
             )
         )
     }

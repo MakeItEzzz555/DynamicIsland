@@ -9,7 +9,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         settings: AppSettings,
         shortcuts: ShortcutsStore,
         agentIngestion: AgentIngestionCoordinator,
-        agentEvents: AgentEventStore
+        agentEvents: AgentEventStore,
+        productivity: ProductivityModules
     ) {
         window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 920, height: 700),
@@ -25,7 +26,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
                 settings: settings,
                 shortcuts: shortcuts,
                 agentIngestion: agentIngestion,
-                agentEvents: agentEvents
+                agentEvents: agentEvents,
+                productivity: productivity
             )
         )
         super.init()

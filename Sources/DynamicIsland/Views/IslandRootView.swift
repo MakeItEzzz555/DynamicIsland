@@ -2784,6 +2784,8 @@ struct ExpandedIslandView: View {
             timerPage(metrics: metrics)
         case .stats:
             statsPage(metrics: metrics)
+        case .tools:
+            toolsPage(metrics: metrics)
         }
     }
 
@@ -3163,6 +3165,18 @@ struct ExpandedIslandView: View {
             pageHeight: metrics.pageHeight,
             onTimerStarted: onTimerStarted
         )
+            .innerBlurScaleClean(
+                settings: settings,
+                isVisible: contentVisible,
+                isRemoval: isContentRemoving,
+                index: 1,
+                reduceMotion: reduceMotion
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private func toolsPage(metrics: ExpandedIslandLayoutMetrics) -> some View {
+        ProductivityToolsPageView(productivity: modules.productivity, pageHeight: metrics.pageHeight)
             .innerBlurScaleClean(
                 settings: settings,
                 isVisible: contentVisible,

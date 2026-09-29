@@ -147,7 +147,15 @@ final class TerminalSessionController: ObservableObject, IslandCapabilityAdapter
     @Published private(set) var commandHistory: [String] = []
     @Published var shellPath: String
     @Published var workingDirectoryPath: String
-    @Published var persistCommandHistory = false
+    /// Opt-in, off by default. History is kept in memory for this app
+    /// session only and is never written to disk.
+    @Published var persistCommandHistory = false {
+        didSet {
+            if !persistCommandHistory {
+                commandHistory = []
+            }
+        }
+    }
 
     private let runner: TerminalProcessRunning
     private let liveActivities: LiveActivityStore
@@ -238,7 +246,9 @@ final class TerminalSessionController: ObservableObject, IslandCapabilityAdapter
                 }
             )
             processHandle = handle
-            commandHistory.append(command)
+            if persistCommandHistory {
+                commandHistory.append(command)
+            }
             state = .running(command: command)
             publishActivity(
                 title: terminalTitle(for: command),
@@ -258,6 +268,10 @@ final class TerminalSessionController: ObservableObject, IslandCapabilityAdapter
     func terminate() {
         guard isRunning else { return }
         processHandle?.terminate()
+    }
+
+    func clearCommandHistory() {
+        commandHistory = []
     }
 
     func resetOutput() {
@@ -332,24 +346,41 @@ final class TerminalSessionController: ObservableObject, IslandCapabilityAdapter
         completionEvidence: String?
     ) {
         liveActivities.update(
-            DynamicIslandLiveActivity(
-                id: Self.activityID,
-                kind: .terminalTask,
+            Self.makeActivity(
                 title: title,
                 subtitle: subtitle,
-                symbolName: "terminal.fill",
-                priority: 88,
                 isActive: isActive,
-                progress: nil,
-                updatedAt: now(),
-                lifecycle: LiveActivityLifecycleMetadata(
-                    authority: .process,
-                    startEvidence: "Foundation Process successfully launched",
-                    progressEvidence: "stdout/stderr stream and Process.isRunning",
-                    completionEvidence: completionEvidence,
-                    dismissPolicy: isActive ? .untilSourceEnds : .automatic,
-                    supportsCancellation: true
-                )
+                completionEvidence: completionEvidence,
+                updatedAt: now()
+            )
+        )
+    }
+
+    /// Production activity shape; also used by Settings previews.
+    static func makeActivity(
+        title: String,
+        subtitle: String,
+        isActive: Bool,
+        completionEvidence: String?,
+        updatedAt: Date
+    ) -> DynamicIslandLiveActivity {
+        DynamicIslandLiveActivity(
+            id: activityID,
+            kind: .terminalTask,
+            title: title,
+            subtitle: subtitle,
+            symbolName: "terminal.fill",
+            priority: 88,
+            isActive: isActive,
+            progress: nil,
+            updatedAt: updatedAt,
+            lifecycle: LiveActivityLifecycleMetadata(
+                authority: .process,
+                startEvidence: "Foundation Process successfully launched",
+                progressEvidence: "stdout/stderr stream and Process.isRunning",
+                completionEvidence: completionEvidence,
+                dismissPolicy: isActive ? .untilSourceEnds : .automatic,
+                supportsCancellation: true
             )
         )
     }

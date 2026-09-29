@@ -505,27 +505,28 @@ final class RemindersController: ObservableObject, IslandCapabilityAdapter {
             return
         }
 
-        let subtitle = reminder.dueDate.map { Self.activityDateFormatter.string(from: $0) } ?? reminder.listTitle
+        liveActivities.update(Self.makeActivity(for: reminder, updatedAt: date))
+    }
 
-        liveActivities.update(
-            DynamicIslandLiveActivity(
-                id: Self.activityID,
-                kind: .reminder,
-                title: reminder.title,
-                subtitle: subtitle,
-                symbolName: "checklist",
-                priority: 78,
-                isActive: true,
-                progress: nil,
-                updatedAt: date,
-                lifecycle: LiveActivityLifecycleMetadata(
-                    authority: .eventKit,
-                    startEvidence: "EventKit returned an authoritative incomplete reminder",
-                    progressEvidence: nil,
-                    completionEvidence: "EventKit reminder completion state",
-                    dismissPolicy: .untilSourceEnds,
-                    supportsCancellation: false
-                )
+    /// Production activity shape; also used by Settings previews.
+    static func makeActivity(for reminder: ReminderDescriptor, updatedAt: Date) -> DynamicIslandLiveActivity {
+        DynamicIslandLiveActivity(
+            id: activityID,
+            kind: .reminder,
+            title: reminder.title,
+            subtitle: reminder.dueDate.map { activityDateFormatter.string(from: $0) } ?? reminder.listTitle,
+            symbolName: "checklist",
+            priority: 78,
+            isActive: true,
+            progress: nil,
+            updatedAt: updatedAt,
+            lifecycle: LiveActivityLifecycleMetadata(
+                authority: .eventKit,
+                startEvidence: "EventKit returned an authoritative incomplete reminder",
+                progressEvidence: nil,
+                completionEvidence: "EventKit reminder completion state",
+                dismissPolicy: .untilSourceEnds,
+                supportsCancellation: false
             )
         )
     }

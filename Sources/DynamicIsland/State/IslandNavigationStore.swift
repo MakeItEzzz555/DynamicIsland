@@ -6,6 +6,7 @@ enum ExpandedIslandPage: CaseIterable {
     case tray
     case timer
     case stats
+    case tools
 
     var title: String {
         switch self {
@@ -19,6 +20,8 @@ enum ExpandedIslandPage: CaseIterable {
             "Timer"
         case .stats:
             "Stats"
+        case .tools:
+            "Tools"
         }
     }
 
@@ -34,6 +37,8 @@ enum ExpandedIslandPage: CaseIterable {
             "timer"
         case .stats:
             "chart.xyaxis.line"
+        case .tools:
+            "wand.and.stars"
         }
     }
 
@@ -60,6 +65,9 @@ final class IslandNavigationStore: ObservableObject {
         }
         if settings.statsEnabled && settings.showStatsTab {
             pages.append(.stats)
+        }
+        if settings.showToolsTab {
+            pages.append(.tools)
         }
         return pages
     }
