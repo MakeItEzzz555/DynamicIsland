@@ -1342,3 +1342,140 @@ Droppy parity is complete only when:
 - the two supplied recordings can be replayed as acceptance scripts and each visible interaction has a DynamicIsland equivalent;
 - DynamicIsland's existing stronger features (Agents, browser media detection, usage metrics, exact session authority, current transition work) remain intact;
 - final UI/interaction quality is consistent across Media, Agents, Shelf, HUDs, Capture, Clipboard, and settings previews.
+
+---
+
+# Supplemental visual acceptance references — 2026-09-29
+
+Additional user-provided screenshots and recording sharpen the required UI parity. These are acceptance references for behavior/composition only; do not copy branding, artwork, or proprietary source.
+
+## Side-by-side compact Live Activities
+
+Reference screenshot shows three simultaneous compact surfaces around the physical notch:
+- left circular utility/activity control;
+- center elongated media/activity pill integrated with the notch;
+- right circular timed/progress activity;
+- all three remain visually independent but share one horizontal composition and consistent black/glass treatment;
+- circular activities use radial progress/outline treatment;
+- the center pill can combine artwork on the left with a compact waveform/visualizer on the right;
+- activities can coexist rather than forcing a single winner when width permits.
+
+DynamicIsland requirement:
+- extend live-activity layout from single-winner arbitration to primary + sidecar slots where safe;
+- support leadingSidecar, primary, and trailingSidecar compact placements;
+- allow circular and pill-shaped activity families;
+- each activity advertises its minimum/ideal width and whether it can be a sidecar;
+- priority still decides collisions, but compatible activities may coexist;
+- physical-notch safe areas remain authoritative;
+- notchless mode mirrors the same three-slot composition;
+- dragging/reordering compact widgets in Settings eventually maps directly to these slots.
+
+Acceptance examples:
+- media primary + keep-awake sidecar;
+- media primary + timer sidecar;
+- agent primary + timer sidecar;
+- recording primary + mic/camera status sidecar;
+- volume HUD temporarily preempts a sidecar or primary according to priority without destroying the underlying activity state.
+
+## Expanded Media — Playing Next
+
+Reference screenshot adds an explicit richer now-playing target:
+- current artwork/title/artist on the left;
+- progress bar with elapsed and remaining time;
+- previous / play-pause / next controls;
+- favorite/star;
+- shuffle;
+- output/device action when supported;
+- right-hand Playing Next queue;
+- multiple upcoming songs with artwork/title/artist;
+- queue entries can be promoted/moved when the source integration genuinely supports queue mutation;
+- queue pane is visually separated but remains inside the same expanded island surface.
+
+DynamicIsland requirement:
+- preserve the current reliable media provider precedence and existing core controls;
+- add provider capability flags for readQueue, moveQueueItem, shuffle, repeat, favorite, and selectOutputDevice only if a trustworthy route exists;
+- Apple Music should be the first queue-capable implementation if provider APIs/automation are reliable;
+- Spotify queue display/control should only be exposed where the chosen adapter can truthfully read/mutate it;
+- browser providers must not show fake queue controls;
+- expanded layout must degrade gracefully when queue capabilities are absent;
+- queue rendering must be lazy/bounded and must not block shell transitions.
+
+## Supplemental recording observations
+
+The latest supplied recording confirms additional acceptance details:
+- an active conversion/compression operation is represented as a compact progress activity near the notch;
+- live-activity gallery demonstrates many different compact geometries rather than one universal pill;
+- examples visually include timed progress, battery/power, connectivity/network-like activity, messaging, music, utility toggles, and progress bars;
+- inline messaging/reply is treated as a first-class notch interaction;
+- clipboard is presented as rich visual cards, not only rows of text;
+- screenshot editing is shown as a dedicated editor window/surface after capture;
+- completed cloud/share/upload work produces a compact success notification/activity;
+- the rich media surface returns without losing its previous playback context after other transient activities dismiss;
+- floating basket creation is presented as a drag-time gesture and should not interrupt the original drag session.
+
+## Live Activity layout architecture update
+
+Add a slot-aware presentation layer above LiveActivityStore:
+
+LiveActivityPlacement:
+- leadingSidecar
+- primary
+- trailingSidecar
+- overlayTransient
+
+LiveActivityPresentationDescriptor fields:
+- activityID
+- preferredPlacement
+- allowedPlacements
+- minimumWidth
+- idealWidth
+- compactShape
+- priority
+- preemptionPolicy
+- coexistencePolicy
+
+Compact shapes should at least cover:
+- circle
+- capsule
+- notchWing
+- elongatedPill
+- progressPill
+
+Rules:
+- transient HUDs may overlay/preempt presentation but must not erase persistent activity state;
+- sidecars disappear first under constrained width;
+- primary remains centered with physical-notch geometry;
+- sidecar hit targets never overlap notch/camera exclusion;
+- activities restore smoothly after transient HUD dismissal;
+- animation must use one shared shell/layout transaction rather than three independent window animations.
+
+## Media layout acceptance update
+
+Expanded Media should support two responsive modes:
+
+### Standard
+- current track only;
+- existing DynamicIsland player layout;
+- used when queue is unavailable or width is constrained.
+
+### Queue-expanded
+- left/current-track column;
+- central divider;
+- right Playing Next column;
+- bounded queue preview;
+- queue scroll does not steal the main island collapse gesture;
+- queue mutations show immediate pending state and reconcile against provider truth;
+- no optimistic permanent reorder if provider rejects mutation.
+
+## Settings preview additions
+
+Settings 2.0 preview framework must add production-style previews for:
+- three-slot live activities around the notch;
+- circular sidecar radial progress;
+- primary media pill + sidecars;
+- queue-expanded media player;
+- transient HUD preemption/restoration;
+- conversion progress activity;
+- upload/share success activity.
+
+These previews should be sandbox state only and must not start real timers, recordings, conversions, or provider mutations.
