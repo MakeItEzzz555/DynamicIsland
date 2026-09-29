@@ -1216,6 +1216,19 @@ private extension View {
     }
 }
 
+private struct ExpandedPageMorphModifier: ViewModifier {
+    let opacity: Double
+    let scale: CGFloat
+    let offsetY: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(opacity)
+            .scaleEffect(scale, anchor: .top)
+            .offset(y: offsetY)
+    }
+}
+
 struct IslandSurface<Content: View>: View {
     @ObservedObject var settings: AppSettings
     let isExpanded: Bool
@@ -2202,7 +2215,6 @@ struct ExpandedIslandView: View {
                     pageView(navigation.selectedPage, metrics: metrics)
                         .id(navigation.selectedPage)
                         .transition(pageSwitchTransition)
-                        .animation(pageSwitchAnimation, value: navigation.selectedPage)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: metrics.pageHeight, alignment: .topLeading)
@@ -2230,22 +2242,6 @@ struct ExpandedIslandView: View {
         }
     }
 
-    private var pageSwitchAnimation: Animation {
-        guard !reduceMotion,
-              settings.contentAnimationEnabled,
-              settings.animationPreset != .instant else {
-            return .linear(duration: 0.01)
-        }
-
-        let shellDuration = IslandContentTransitionTiming.shellDuration(
-            settings: settings,
-            reduceMotion: reduceMotion
-        )
-        let contentDuration = max(shellDuration * 0.58, 0.16)
-        let contentDelay = shellDuration * 0.06
-        return .smooth(duration: contentDuration).delay(contentDelay)
-    }
-
     private var pageSwitchTransition: AnyTransition {
         guard !reduceMotion,
               settings.contentAnimationEnabled,
@@ -2253,9 +2249,27 @@ struct ExpandedIslandView: View {
             return .opacity
         }
 
+        let shellDuration = IslandContentTransitionTiming.shellDuration(
+            settings: settings,
+            reduceMotion: reduceMotion
+        )
+        let insertion = AnyTransition.modifier(
+            active: ExpandedPageMorphModifier(opacity: 0, scale: 0.988, offsetY: -4),
+            identity: ExpandedPageMorphModifier(opacity: 1, scale: 1, offsetY: 0)
+        )
+        .animation(
+            .smooth(duration: max(shellDuration * 0.56, 0.16))
+                .delay(shellDuration * 0.08)
+        )
+        let removal = AnyTransition.modifier(
+            active: ExpandedPageMorphModifier(opacity: 0, scale: 0.994, offsetY: 3),
+            identity: ExpandedPageMorphModifier(opacity: 1, scale: 1, offsetY: 0)
+        )
+        .animation(.easeOut(duration: max(shellDuration * 0.34, 0.12)))
+
         return .asymmetric(
-            insertion: .opacity.combined(with: .scale(scale: 0.985, anchor: .top)),
-            removal: .opacity.combined(with: .scale(scale: 0.992, anchor: .top))
+            insertion: insertion,
+            removal: removal
         )
     }
 
@@ -2887,6 +2901,7 @@ private struct ExpandedIslandPageButton: View {
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
         .animation(hoverAnimation, value: isHovering)
+        .animation(selectionAnimation, value: selected)
         .accessibilityLabel(page.accessibilityLabel)
         .accessibilityValue(selected ? "Selected" : "Not selected")
         .accessibilityAddTraits(selected ? .isSelected : [])
@@ -2908,6 +2923,10 @@ private struct ExpandedIslandPageButton: View {
 
     private var hoverAnimation: Animation {
         reduceMotion ? .linear(duration: 0.01) : .easeOut(duration: 0.14)
+    }
+
+    private var selectionAnimation: Animation {
+        reduceMotion ? .linear(duration: 0.01) : .easeOut(duration: 0.16)
     }
 }
 

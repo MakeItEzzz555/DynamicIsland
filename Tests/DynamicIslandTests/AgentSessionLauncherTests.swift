@@ -213,6 +213,93 @@ final class AgentSessionLauncherTests: XCTestCase {
         XCTAssertEqual(result.map(\.path), ["/repos/DynamicIsland"])
     }
 
+    func testRepositoryProjectionDeduplicatesNestedWorkingDirectoriesAtRepositoryRoot() {
+        let now = Date()
+        let nested = makeSession(
+            nativeID: "nested",
+            state: .working,
+            availability: .loaded,
+            project: "DynamicIsland",
+            path: "/repos/DynamicIsland/Sources/DynamicIsland",
+            now: now
+        )
+        let root = makeSession(
+            nativeID: "root",
+            state: .idle,
+            availability: .resumable,
+            project: "DynamicIsland",
+            path: "/repos/DynamicIsland",
+            now: now.addingTimeInterval(-1)
+        )
+
+        let result = AgentSessionLauncherProjection.repositories(
+            [root, nested],
+            query: "",
+            fileExists: { $0.hasPrefix("/repos/DynamicIsland") },
+            repositoryRoot: { _ in "/repos/DynamicIsland" }
+        )
+
+        XCTAssertEqual(result.map(\.path), ["/repos/DynamicIsland"])
+    }
+
+    func testRepositoryProjectionPrefersNewestSessionMetadataForSharedRepository() {
+        let now = Date()
+        let older = makeSession(
+            nativeID: "older",
+            state: .idle,
+            availability: .resumable,
+            project: "Old display",
+            path: "/repos/DynamicIsland",
+            now: now.addingTimeInterval(-20)
+        )
+        let newer = makeSession(
+            nativeID: "newer",
+            state: .working,
+            availability: .loaded,
+            project: "DynamicIsland",
+            path: "/repos/DynamicIsland/Sources",
+            now: now
+        )
+
+        let result = AgentSessionLauncherProjection.repositories(
+            [older, newer],
+            query: "",
+            fileExists: { _ in true },
+            repositoryRoot: { _ in "/repos/DynamicIsland" }
+        )
+
+        XCTAssertEqual(result.count, 1)
+        XCTAssertEqual(result.first?.name, "DynamicIsland")
+        XCTAssertEqual(result.first?.branch, "main")
+    }
+
+    func testRepositoryProjectionFindsRealGitRootFromNestedWorkingDirectory() throws {
+        let fileManager = FileManager.default
+        let temporaryRoot = fileManager.temporaryDirectory
+            .appendingPathComponent("DynamicIslandLauncherTests-(UUID().uuidString)")
+        let repository = temporaryRoot.appendingPathComponent("DynamicIsland")
+        let nested = repository.appendingPathComponent("Sources/DynamicIsland")
+        try fileManager.createDirectory(
+            at: repository.appendingPathComponent(".git"),
+            withIntermediateDirectories: true
+        )
+        try fileManager.createDirectory(at: nested, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: temporaryRoot) }
+
+        let session = makeSession(
+            nativeID: "nested-real-repo",
+            state: .working,
+            availability: .loaded,
+            project: "DynamicIsland",
+            path: nested.path,
+            now: Date()
+        )
+
+        let result = AgentSessionLauncherProjection.repositories([session], query: "")
+
+        XCTAssertEqual(result.map(\.path), [repository.path])
+    }
+
     private func makeSession(
         nativeID: String,
         state: AgentState,

@@ -383,28 +383,43 @@ enum AgentSessionLauncherProjection {
     static func repositories(
         _ sessions: [AgentSession],
         query: String,
-        fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }
+        fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) },
+        repositoryRoot: (String) -> String? = { canonicalRepositoryRoot($0) }
     ) -> [AgentLocalRepositoryChoice] {
         var seen = Set<String>()
-        return sessions.compactMap { session -> AgentLocalRepositoryChoice? in
-            guard let rawPath = session.project.workingDirectory,
-                  let path = canonicalRepositoryPath(rawPath),
-                  fileExists(path),
-                  seen.insert(path).inserted else { return nil }
-            let display = session.project.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
-            return AgentLocalRepositoryChoice(
-                path: path,
-                name: (display?.isEmpty == false ? display! : URL(fileURLWithPath: path).lastPathComponent),
-                branch: session.project.gitBranch
-            )
-        }
-        .filter { choice in
-            query.isEmpty ||
-            choice.name.localizedCaseInsensitiveContains(query) ||
-            choice.path.localizedCaseInsensitiveContains(query) ||
-            (choice.branch?.localizedCaseInsensitiveContains(query) ?? false)
-        }
-        .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        return sessions
+            .sorted { (lhs: AgentSession, rhs: AgentSession) -> Bool in
+                if lhs.lastUpdatedAt != rhs.lastUpdatedAt {
+                    return lhs.lastUpdatedAt > rhs.lastUpdatedAt
+                }
+                if lhs.id.sessionID.provider != rhs.id.sessionID.provider {
+                    return lhs.id.sessionID.provider.stableName < rhs.id.sessionID.provider.stableName
+                }
+                if lhs.id.sessionID.nativeID != rhs.id.sessionID.nativeID {
+                    return lhs.id.sessionID.nativeID < rhs.id.sessionID.nativeID
+                }
+                return lhs.id.generation < rhs.id.generation
+            }
+            .compactMap { session -> AgentLocalRepositoryChoice? in
+                guard let rawPath = session.project.workingDirectory,
+                      let path = canonicalRepositoryPath(rawPath),
+                      fileExists(path) else { return nil }
+                let root = repositoryRoot(path) ?? path
+                guard seen.insert(root).inserted else { return nil }
+                let display = session.project.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
+                return AgentLocalRepositoryChoice(
+                    path: root,
+                    name: (display?.isEmpty == false ? display! : URL(fileURLWithPath: root).lastPathComponent),
+                    branch: session.project.gitBranch
+                )
+            }
+            .filter { choice in
+                query.isEmpty ||
+                choice.name.localizedCaseInsensitiveContains(query) ||
+                choice.path.localizedCaseInsensitiveContains(query) ||
+                (choice.branch?.localizedCaseInsensitiveContains(query) ?? false)
+            }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
     static func validRepositoryPath(
@@ -423,5 +438,24 @@ enum AgentSessionLauncherProjection {
         guard !trimmed.isEmpty else { return nil }
         let expanded = (trimmed as NSString).expandingTildeInPath
         return URL(fileURLWithPath: expanded).standardizedFileURL.path
+    }
+
+    private static func canonicalRepositoryRoot(_ path: String) -> String? {
+        guard FileManager.default.fileExists(atPath: path) else { return nil }
+        var candidate = URL(fileURLWithPath: path, isDirectory: true)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+
+        while true {
+            if FileManager.default.fileExists(
+                atPath: candidate.appendingPathComponent(".git").path
+            ) {
+                return candidate.path
+            }
+
+            let parent = candidate.deletingLastPathComponent()
+            guard parent.path != candidate.path else { return nil }
+            candidate = parent
+        }
     }
 }
