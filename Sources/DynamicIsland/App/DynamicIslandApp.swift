@@ -109,6 +109,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         liveActivities: liveActivities,
         capabilities: capabilityRegistry
     )
+    private lazy var backgroundRemoval = BackgroundRemovalController(
+        liveActivities: liveActivities,
+        capabilities: capabilityRegistry,
+        addToShelf: { [weak self] urls in
+            self?.fileShelf.add(urls)
+        }
+    )
     private lazy var productivity = ProductivityModules(
         capabilities: capabilityRegistry,
         keepAwake: keepAwakeController,
@@ -116,7 +123,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         terminal: terminalController,
         reminders: remindersController,
         voice: voiceTranscription,
-        camera: cameraPreview
+        camera: cameraPreview,
+        backgroundRemoval: backgroundRemoval
     )
     private lazy var systemHUDController = SystemHUDController(
         settings: settings,
@@ -264,6 +272,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         terminalController.terminate()
         voiceTranscription.cancel()
         cameraPreview.terminate()
+        backgroundRemoval.terminate()
         systemHUDController.stop()
         agentBridge.stop()
         agentManagedControl.stop()

@@ -24,9 +24,9 @@
     "semantic_hash": "0b4b7c29df007001c39c574a0dda9bd2"
   },
   "Sources/DynamicIsland/App/DynamicIslandApp.swift": {
-    "mtime": 1790723542.7956972,
-    "seen": 1790723636.723358,
-    "ast_hash": "cf03aa7124a12829e0c90f1148dbaf28",
+    "mtime": 1790723708.0305812,
+    "seen": 1790723795.355811,
+    "ast_hash": "d967ca486e700e6b510213cf6482eae6",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/App/LaunchAtLoginController.swift": {
@@ -1362,9 +1362,9 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Modules/ProductivityModules.swift": {
-    "mtime": 1790723542.7958336,
-    "seen": 1790723636.723382,
-    "ast_hash": "ba57a2c87af9d95605f8411b40eabc47",
+    "mtime": 1790723708.03077,
+    "seen": 1790723795.3558369,
+    "ast_hash": "6a586b292ad24f2f110288e97ea9a7d4",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/KeepAwakeControllerTests.swift": {
@@ -1449,6 +1449,18 @@
     "mtime": 1790723601.4735544,
     "seen": 1790723636.723444,
     "ast_hash": "03ad0357fbeb3e9fe66d3b7c22aed4a9",
+    "semantic_hash": ""
+  },
+  "Sources/DynamicIsland/Modules/BackgroundRemovalController.swift": {
+    "mtime": 1790723721.1923647,
+    "seen": 1790723795.355819,
+    "ast_hash": "92cff55f52098f0a5e7f7b1293aa98df",
+    "semantic_hash": ""
+  },
+  "Tests/DynamicIslandTests/BackgroundRemovalControllerTests.swift": {
+    "mtime": 1790723768.1573105,
+    "seen": 1790723795.355895,
+    "ast_hash": "576665b0d02d9245f87125843bff0ef2",
     "semantic_hash": ""
   }
 }

@@ -8,4 +8,5 @@ struct ProductivityModules {
     let reminders: RemindersController
     let voice: VoiceTranscriptionController
     let camera: CameraPreviewController
+    let backgroundRemoval: BackgroundRemovalController
 }

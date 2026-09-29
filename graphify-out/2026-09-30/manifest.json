@@ -12,9 +12,9 @@
     "semantic_hash": ""
   },
   "Scripts/package_app.sh": {
-    "mtime": 1790723364.0943158,
-    "seen": 1790723452.277389,
-    "ast_hash": "54b8d27feb916e223e21d29ff2db2477",
+    "mtime": 1790723622.3856091,
+    "seen": 1790723636.7233121,
+    "ast_hash": "949d2724284caec6405e069b39477f92",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/App/AppLaunchService.swift": {
@@ -24,9 +24,9 @@
     "semantic_hash": "0b4b7c29df007001c39c574a0dda9bd2"
   },
   "Sources/DynamicIsland/App/DynamicIslandApp.swift": {
-    "mtime": 1790723347.2789903,
-    "seen": 1790723452.277434,
-    "ast_hash": "ad24f4d101d20edc1d7fc06fed6e0af3",
+    "mtime": 1790723542.7956972,
+    "seen": 1790723636.723358,
+    "ast_hash": "cf03aa7124a12829e0c90f1148dbaf28",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/App/LaunchAtLoginController.swift": {
@@ -1362,9 +1362,9 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Modules/ProductivityModules.swift": {
-    "mtime": 1790723347.2791555,
-    "seen": 1790723452.277457,
-    "ast_hash": "40d928d7892480075c2e9d6363f06aec",
+    "mtime": 1790723542.7958336,
+    "seen": 1790723636.723382,
+    "ast_hash": "ba57a2c87af9d95605f8411b40eabc47",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/KeepAwakeControllerTests.swift": {
@@ -1431,6 +1431,24 @@
     "mtime": 1790723428.4677267,
     "seen": 1790723452.27756,
     "ast_hash": "4ddc7211f38376b50abf077c6f5d9049",
+    "semantic_hash": ""
+  },
+  "Sources/DynamicIsland/Modules/CameraPreviewController.swift": {
+    "mtime": 1790723622.385187,
+    "seen": 1790723636.7233658,
+    "ast_hash": "035a86b79db09d755f75a28a3e737b71",
+    "semantic_hash": ""
+  },
+  "Sources/DynamicIsland/Views/CameraPreviewView.swift": {
+    "mtime": 1790723542.8003032,
+    "seen": 1790723636.723402,
+    "ast_hash": "0356b79ae474c023cf805a231331cf1a",
+    "semantic_hash": ""
+  },
+  "Tests/DynamicIslandTests/CameraPreviewControllerTests.swift": {
+    "mtime": 1790723601.4735544,
+    "seen": 1790723636.723444,
+    "ast_hash": "03ad0357fbeb3e9fe66d3b7c22aed4a9",
     "semantic_hash": ""
   }
 }
