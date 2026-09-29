@@ -81,6 +81,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let timerNotifications = TimerCompletionNotificationCoordinator()
     private let stats = SystemStatsController()
     private let liveActivities = LiveActivityStore()
+    private let capabilityRegistry = IslandCapabilityRegistry()
+    private lazy var keepAwakeController = KeepAwakeController(
+        liveActivities: liveActivities,
+        capabilities: capabilityRegistry
+    )
+    private lazy var productivity = ProductivityModules(
+        capabilities: capabilityRegistry,
+        keepAwake: keepAwakeController
+    )
     private lazy var systemHUDController = SystemHUDController(
         settings: settings,
         liveActivities: liveActivities
@@ -149,7 +158,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             agentEvents: agentEvents,
             agentAttention: agentAttention,
             agentApprovalControl: agentApprovalControl,
-            agentManagedControl: agentManagedControl
+            agentManagedControl: agentManagedControl,
+            productivity: productivity
         )
         #if DEBUG
         debugPrint(
@@ -222,6 +232,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             print("[ClipboardHistory] termination finalization \(clipboardFinalization)")
         }
         #endif
+        keepAwakeController.stop()
         systemHUDController.stop()
         agentBridge.stop()
         agentManagedControl.stop()

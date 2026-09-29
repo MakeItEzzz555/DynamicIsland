@@ -28,4 +28,5 @@ struct IslandModules {
     let agentAttention: AgentAttentionCoordinator
     let agentApprovalControl: AgentApprovalController
     let agentManagedControl: AgentManagedSessionController
+    let productivity: ProductivityModules
 }
