@@ -1,13 +1,18 @@
 import Foundation
 
+struct CodexRolloutCandidate: Equatable, Sendable {
+    let url: URL
+    let modifiedAt: Date
+}
+
 enum CodexRolloutSessionDiscovery {
-    static func recentRollouts(
+    static func recentRolloutCandidates(
         in sessionsDirectory: URL,
         now: Date = Date(),
         recentWindow: TimeInterval = 300,
         limit: Int = 32,
         fileManager: FileManager = .default
-    ) -> [URL] {
+    ) -> [CodexRolloutCandidate] {
         guard fileManager.fileExists(atPath: sessionsDirectory.path),
               let enumerator = fileManager.enumerator(
                 at: sessionsDirectory,
@@ -33,7 +38,23 @@ enum CodexRolloutSessionDiscovery {
                 return $0.url.path < $1.url.path
             }
             .prefix(max(0, limit))
-            .map(\.url)
+            .map { CodexRolloutCandidate(url: $0.url, modifiedAt: $0.modified) }
+    }
+
+    static func recentRollouts(
+        in sessionsDirectory: URL,
+        now: Date = Date(),
+        recentWindow: TimeInterval = 300,
+        limit: Int = 32,
+        fileManager: FileManager = .default
+    ) -> [URL] {
+        recentRolloutCandidates(
+            in: sessionsDirectory,
+            now: now,
+            recentWindow: recentWindow,
+            limit: limit,
+            fileManager: fileManager
+        ).map(\.url)
     }
 }
 
@@ -44,6 +65,7 @@ actor CodexRolloutSessionMonitor {
     private let recentWindow: TimeInterval
     private let maximumSessions: Int
     private var watched: Set<URL> = []
+    private var lastObservedModificationDates: [URL: Date] = [:]
     private var scanTask: Task<Void, Never>?
 
     init(
@@ -83,8 +105,8 @@ actor CodexRolloutSessionMonitor {
         let directory = sessionsDirectory
         let window = recentWindow
         let limit = maximumSessions
-        let urls = await Task.detached(priority: .utility) {
-            CodexRolloutSessionDiscovery.recentRollouts(
+        let candidates = await Task.detached(priority: .utility) {
+            CodexRolloutSessionDiscovery.recentRolloutCandidates(
                 in: directory,
                 now: now,
                 recentWindow: window,
@@ -92,15 +114,29 @@ actor CodexRolloutSessionMonitor {
             )
         }.value
 
-        let current = Set(urls)
-        for url in urls where !watched.contains(url) {
-            if await adapter.attach(fileURL: url, initialPolicy: .boundedCatchUp) {
-                watched.insert(url)
+        let current = Set(candidates.map(\.url))
+        for candidate in candidates {
+            let url = candidate.url
+            if !watched.contains(url) {
+                if await adapter.attach(fileURL: url, initialPolicy: .boundedCatchUp) {
+                    watched.insert(url)
+                }
+            }
+            guard watched.contains(url) else { continue }
+            let previousModification = lastObservedModificationDates[url]
+            if previousModification == nil || candidate.modifiedAt > previousModification! {
+                await adapter.observeFileActivity(
+                    fileURL: url,
+                    modifiedAt: candidate.modifiedAt,
+                    observedAt: now
+                )
+                lastObservedModificationDates[url] = candidate.modifiedAt
             }
         }
         for url in watched.subtracting(current) {
             await adapter.detach(fileURL: url)
             watched.remove(url)
+            lastObservedModificationDates.removeValue(forKey: url)
         }
         await adapter.reconcileAll()
     }
@@ -109,6 +145,7 @@ actor CodexRolloutSessionMonitor {
         scanTask?.cancel()
         scanTask = nil
         watched.removeAll()
+        lastObservedModificationDates.removeAll()
         await adapter.stop()
     }
 

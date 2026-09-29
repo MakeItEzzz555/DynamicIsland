@@ -731,6 +731,44 @@ actor CodexRolloutRecoveryAdapter {
         await tailer.stop()
     }
 
+    func observeFileActivity(
+        fileURL: URL,
+        modifiedAt: Date,
+        observedAt: Date = Date()
+    ) async {
+        guard let producer,
+              let parser = parsers[fileURL],
+              let nativeID = parser.sessionID else { return }
+
+        let modifiedMilliseconds = Int64((modifiedAt.timeIntervalSince1970 * 1_000).rounded())
+        let event = AgentIngestionEvent(
+            schemaVersion: AgentEvent.normalizedSchemaVersion,
+            eventID: AgentEventID(
+                rawValue: "codex-rollout-activity-\(nativeID)-\(modifiedMilliseconds)"
+            ),
+            provider: .codex,
+            source: parser.source,
+            nativeSessionID: nativeID,
+            assertedGeneration: nil,
+            type: .heartbeat,
+            providerTimestamp: modifiedAt,
+            receivedTimestamp: observedAt,
+            correlationID: nil,
+            sequence: nil,
+            authority: .localStructuredRecord,
+            payload: .none,
+            continuity: AgentSessionContinuity(immutableIdentity: nativeID)
+        )
+        let result = await integrationRouter.routeAtomically(
+            [event],
+            from: producer,
+            precedence: .secondaryObservation
+        )
+        if case .failure = result {
+            _ = await coordinator.updateHealth(.degraded, error: .storeRejected, for: producer)
+        }
+    }
+
     func reconcileAll() async {
         let currentTailers = Array(tailers.values)
         for tailer in currentTailers {

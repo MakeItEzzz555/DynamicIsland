@@ -514,6 +514,10 @@ struct AgentSession: Identifiable, Equatable, Sendable {
     let startedAt: Date
     var endedAt: Date?
     var lastUpdatedAt: Date
+    /// Best provider/source activity timestamp when one is available. This is
+    /// distinct from lastUpdatedAt (local ingestion time), so bounded catch-up
+    /// cannot make an old rollout look newly active merely because the app launched.
+    var activityEvidenceAt: Date? = nil
     var availability: AgentSessionAvailability? = nil
     var sourceAuthority: AgentEvidenceAuthority = .heuristic
 

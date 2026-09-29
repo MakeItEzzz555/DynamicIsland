@@ -359,29 +359,99 @@ struct AgentLocalRepositoryChoice: Identifiable, Equatable {
     var id: String { path }
 }
 
+struct AgentProjectSessionSummary: Equatable {
+    let repositoryIdentity: String
+    let current: AgentSession?
+    let otherActive: [AgentSession]
+    let latestResumable: AgentSession?
+}
+
 enum AgentSessionLauncherProjection {
+    static func preferredSelection(
+        current: AgentSessionInstanceID?,
+        sessions: [AgentSession],
+        now: Date = Date(),
+        activeManagedSessionIDs: Set<AgentSessionID> = []
+    ) -> AgentSessionInstanceID? {
+        if let current, sessions.contains(where: { $0.id == current }) {
+            return current
+        }
+        return projectSummaries(
+            sessions,
+            now: now,
+            activeManagedSessionIDs: activeManagedSessionIDs
+        ).compactMap { $0.current?.id }.first
+    }
+
     static func currentSessionIDs(
         _ sessions: [AgentSession],
         now: Date = Date(),
         activeManagedSessionIDs: Set<AgentSessionID> = []
     ) -> Set<AgentSessionInstanceID> {
-        var currentByProject: [String: AgentSession] = [:]
-        for session in sessions {
-            let key = projectIdentity(session)
-            guard let existing = currentByProject[key] else {
-                currentByProject[key] = session
-                continue
-            }
-            if isPreferredCurrent(
-                session,
-                over: existing,
+        Set(
+            projectSummaries(
+                sessions,
                 now: now,
                 activeManagedSessionIDs: activeManagedSessionIDs
-            ) {
-                currentByProject[key] = session
+            ).compactMap { $0.current?.id }
+        )
+    }
+
+    static func projectSummaries(
+        _ sessions: [AgentSession],
+        now: Date = Date(),
+        activeManagedSessionIDs: Set<AgentSessionID> = []
+    ) -> [AgentProjectSessionSummary] {
+        let groups = Dictionary(grouping: sessions, by: projectIdentity)
+        return groups.map { key, projectSessions in
+            let orderedCurrent = projectSessions.sorted {
+                isPreferredCurrent(
+                    $0,
+                    over: $1,
+                    now: now,
+                    activeManagedSessionIDs: activeManagedSessionIDs
+                )
             }
+            let current = orderedCurrent.first
+            let active = projectSessions.filter {
+                AgentWorkspaceSelection.isActive(
+                    $0,
+                    activeManagedSessionIDs: activeManagedSessionIDs
+                ) && !AgentSessionPresentation.hasStaleActiveSignal($0, at: now)
+            }
+            let otherActive = active
+                .filter { $0.id != current?.id }
+                .sorted { isPreferredHistorical($0, over: $1) }
+            let latestResumable = projectSessions
+                .filter {
+                    guard $0.id != current?.id else { return false }
+                    if $0.availability == .resumable { return true }
+                    guard !AgentWorkspaceSelection.isActive(
+                        $0,
+                        activeManagedSessionIDs: activeManagedSessionIDs
+                    ) else { return false }
+                    return $0.endedAt == nil &&
+                        now.timeIntervalSince($0.lastUpdatedAt) <= 300
+                }
+                .sorted { isPreferredHistorical($0, over: $1) }
+                .first
+            return AgentProjectSessionSummary(
+                repositoryIdentity: key,
+                current: current,
+                otherActive: otherActive,
+                latestResumable: latestResumable
+            )
         }
-        return Set(currentByProject.values.map(\.id))
+        .sorted {
+            guard let lhs = $0.current else { return false }
+            guard let rhs = $1.current else { return true }
+            return isPreferredCurrent(
+                lhs,
+                over: rhs,
+                now: now,
+                activeManagedSessionIDs: activeManagedSessionIDs
+            )
+        }
     }
 
     static func liveSessions(
@@ -409,7 +479,15 @@ enum AgentSessionLauncherProjection {
             return relevant || !query.isEmpty
         }
 
-        let active = candidates.filter {
+        // Apply search before project collapsing. This keeps the default
+        // launcher clean while allowing an exact/suffix thread-ID search to
+        // recover an older exact session even when the same project has a
+        // different active thread.
+        let projectedCandidates = query.isEmpty
+            ? candidates
+            : candidates.filter { matchesSearch($0, query: query) }
+
+        let active = projectedCandidates.filter {
             AgentWorkspaceSelection.isActive(
                 $0,
                 activeManagedSessionIDs: activeManagedSessionIDs
@@ -417,7 +495,7 @@ enum AgentSessionLauncherProjection {
         }
         let activeProjects = Set(active.map(projectIdentity))
         var latestInactiveByProject: [String: AgentSession] = [:]
-        for session in candidates where !AgentWorkspaceSelection.isActive(
+        for session in projectedCandidates where !AgentWorkspaceSelection.isActive(
             session,
             activeManagedSessionIDs: activeManagedSessionIDs
         ) {
@@ -431,12 +509,11 @@ enum AgentSessionLauncherProjection {
         }
 
         let currentIDs = currentSessionIDs(
-            candidates,
+            projectedCandidates,
             now: now,
             activeManagedSessionIDs: activeManagedSessionIDs
         )
         return (active + Array(latestInactiveByProject.values))
-            .filter { query.isEmpty || matchesSearch($0, query: query) }
             .sorted {
                 let lhsCurrent = currentIDs.contains($0.id)
                 let rhsCurrent = currentIDs.contains($1.id)
@@ -488,24 +565,50 @@ enum AgentSessionLauncherProjection {
         now: Date,
         activeManagedSessionIDs: Set<AgentSessionID>
     ) -> Int {
+        // Tier 1: exact DynamicIsland-managed active ownership.
         if activeManagedSessionIDs.contains(session.id.sessionID) { return 0 }
-        if AgentWorkspaceSelection.isActive(
+
+        let freshActive = AgentWorkspaceSelection.isActive(
             session,
             activeManagedSessionIDs: activeManagedSessionIDs
-        ), !AgentSessionPresentation.hasStaleActiveSignal(session, at: now) {
+        ) && !AgentSessionPresentation.hasStaleActiveSignal(session, at: now)
+
+        // Tier 2: fresh Codex structured-rollout activity. Rollout events stamp
+        // lastUpdatedAt at append-observation time, so freshness is already
+        // represented without exposing rollout file internals to SwiftUI.
+        if session.id.sessionID.provider == .codex,
+           session.sourceAuthority == .localStructuredRecord,
+           freshActive {
             return 1
         }
-        if session.endedAt == nil, now.timeIntervalSince(session.lastUpdatedAt) <= 60 {
+
+        // Tier 3: provider-native/lifecycle evidence that the exact thread is loaded/active.
+        if session.sourceAuthority >= .lifecycle, freshActive {
             return 2
         }
-        if session.availability == .resumable { return 3 }
-        return 4
+
+        // Other fresh observed active work is still stronger than idle history.
+        if freshActive { return 3 }
+
+        // Tier 4: recently observed open thread, including a rollout that is
+        // quiet right now but was appended recently.
+        let freshness = session.activityEvidenceAt ?? session.lastUpdatedAt
+        if session.endedAt == nil,
+           now.timeIntervalSince(freshness) <= 60 {
+            return 4
+        }
+
+        // Tier 5: only fall back to resumable history when no live evidence wins.
+        if session.availability == .resumable { return 5 }
+        return 6
     }
 
     private static func isPreferredHistorical(_ lhs: AgentSession, over rhs: AgentSession) -> Bool {
+        let lhsActivity = lhs.activityEvidenceAt ?? lhs.lastUpdatedAt
+        let rhsActivity = rhs.activityEvidenceAt ?? rhs.lastUpdatedAt
+        if lhsActivity != rhsActivity { return lhsActivity > rhsActivity }
         if lhs.lastUpdatedAt != rhs.lastUpdatedAt { return lhs.lastUpdatedAt > rhs.lastUpdatedAt }
         if lhs.id.generation != rhs.id.generation { return lhs.id.generation > rhs.id.generation }
-        if lhs.startedAt != rhs.startedAt { return lhs.startedAt > rhs.startedAt }
         if lhs.sourceAuthority != rhs.sourceAuthority { return lhs.sourceAuthority > rhs.sourceAuthority }
         let lhsSource = sourceStrength(lhs.source)
         let rhsSource = sourceStrength(rhs.source)

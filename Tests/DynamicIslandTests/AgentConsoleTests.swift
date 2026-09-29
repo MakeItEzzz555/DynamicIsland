@@ -121,6 +121,37 @@ final class AgentConsoleTests: XCTestCase {
         )
     }
 
+    func testAgentsPresentationGenerationRetriggersAndRejectsStaleReveal() {
+        var state = AgentsPagePresentationState()
+        let first = state.begin()
+        XCTAssertEqual(state.phase, .entering)
+        XCTAssertTrue(state.revealChrome(generation: first))
+        XCTAssertTrue(state.chromeVisible)
+
+        state.cancel()
+        XCTAssertEqual(state.phase, .inactive)
+        XCTAssertFalse(state.revealTranscript(generation: first))
+
+        let second = state.begin()
+        XCTAssertNotEqual(second, first)
+        XCTAssertTrue(state.revealChrome(generation: second))
+        XCTAssertTrue(state.revealTranscript(generation: second))
+        XCTAssertTrue(state.transcriptReady)
+    }
+
+    func testLeavingAgentsCancelsPresentationLifecycle() {
+        var state = AgentsPagePresentationState()
+        let generation = state.begin()
+        XCTAssertTrue(state.revealChrome(generation: generation))
+
+        state.cancel()
+
+        XCTAssertEqual(state.phase, .inactive)
+        XCTAssertFalse(state.chromeVisible)
+        XCTAssertFalse(state.transcriptReady)
+        XCTAssertFalse(state.revealTranscript(generation: generation))
+    }
+
     func testDeferredTranscriptLoadCancellationRejectsDelayedCompletion() {
         let session = sessionID("first")
         var gate = AgentTranscriptLoadGate()

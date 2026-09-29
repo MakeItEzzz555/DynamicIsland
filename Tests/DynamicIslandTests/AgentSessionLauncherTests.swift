@@ -95,6 +95,35 @@ final class AgentSessionLauncherTests: XCTestCase {
         )
     }
 
+
+    func testExactHistoricalThreadSearchWorksDespiteDifferentActiveThreadInSameProject() {
+        let now = Date(timeIntervalSince1970: 10_000)
+        let active = makeSession(
+            nativeID: "current-active-aaaa",
+            state: .working,
+            availability: .loaded,
+            project: "DynamicIsland",
+            path: "/tmp/DynamicIsland",
+            now: now
+        )
+        let historical = makeSession(
+            nativeID: "historical-thread-bd7b",
+            state: .idle,
+            availability: .resumable,
+            project: "DynamicIsland",
+            path: "/tmp/DynamicIsland",
+            now: now.addingTimeInterval(-600)
+        )
+
+        let result = AgentSessionLauncherProjection.liveSessions(
+            [active, historical],
+            query: "bd7b",
+            now: now
+        )
+
+        XCTAssertEqual(result.map { $0.id.sessionID.nativeID }, ["historical-thread-bd7b"])
+    }
+
     func testLiveSessionSearchMatchesSourceModelBranchAndExactNativeID() {
         let now = Date()
         var session = makeSession(
@@ -215,6 +244,174 @@ final class AgentSessionLauncherTests: XCTestCase {
         )
 
         XCTAssertEqual(current, Set([managed.id]))
+    }
+
+    func testProjectSummarySeparatesCurrentOtherActiveAndLatestResumable() throws {
+        let now = Date(timeIntervalSince1970: 40_000)
+        var current = makeSession(
+            nativeID: "current",
+            state: .working,
+            availability: .loaded,
+            project: "DynamicIsland",
+            path: "/repos/DynamicIsland",
+            now: now
+        )
+        current.sourceAuthority = .localStructuredRecord
+        let other = makeSession(
+            nativeID: "other-active",
+            state: .runningCommand,
+            availability: .loaded,
+            project: "DynamicIsland",
+            path: "/repos/DynamicIsland",
+            now: now.addingTimeInterval(-2)
+        )
+        let resumable = makeSession(
+            nativeID: "resume",
+            state: .idle,
+            availability: .resumable,
+            project: "DynamicIsland",
+            path: "/repos/DynamicIsland",
+            now: now.addingTimeInterval(-10)
+        )
+
+        let summary = try XCTUnwrap(
+            AgentSessionLauncherProjection.projectSummaries(
+                [resumable, other, current],
+                now: now
+            ).first
+        )
+
+        XCTAssertEqual(summary.current?.id.sessionID.nativeID, "current")
+        XCTAssertEqual(summary.otherActive.map { $0.id.sessionID.nativeID }, ["other-active"])
+        XCTAssertEqual(summary.latestResumable?.id.sessionID.nativeID, "resume")
+    }
+
+
+    func testCurrentThreadUsesActivityEvidenceBeforeCatchUpIngestionRecency() {
+        let now = Date(timeIntervalSince1970: 45_000)
+        var actuallyActive = makeSession(
+            nativeID: "real-active",
+            state: .working,
+            availability: .loaded,
+            project: "DynamicIsland",
+            path: "/repos/DynamicIsland",
+            now: now.addingTimeInterval(-1)
+        )
+        actuallyActive.sourceAuthority = .localStructuredRecord
+        actuallyActive.activityEvidenceAt = now.addingTimeInterval(-2)
+
+        var catchUpOnly = makeSession(
+            nativeID: "catchup-old",
+            state: .working,
+            availability: .loaded,
+            project: "DynamicIsland",
+            path: "/repos/DynamicIsland",
+            now: now
+        )
+        catchUpOnly.sourceAuthority = .localStructuredRecord
+        catchUpOnly.activityEvidenceAt = now.addingTimeInterval(-180)
+
+        let current = AgentSessionLauncherProjection.currentSessionIDs(
+            [catchUpOnly, actuallyActive],
+            now: now
+        )
+
+        XCTAssertEqual(current, Set([actuallyActive.id]))
+    }
+
+    func testFreshRolloutActivityBeatsNewerIdleRollout() {
+        let now = Date(timeIntervalSince1970: 40_000)
+        var appending = makeSession(
+            nativeID: "appending",
+            state: .working,
+            availability: .loaded,
+            project: "DynamicIsland",
+            path: "/repos/DynamicIsland",
+            now: now.addingTimeInterval(-3)
+        )
+        appending.sourceAuthority = .localStructuredRecord
+
+        var newerIdle = makeSession(
+            nativeID: "newer-idle",
+            state: .idle,
+            availability: .resumable,
+            project: "DynamicIsland",
+            path: "/repos/DynamicIsland",
+            now: now
+        )
+        newerIdle.sourceAuthority = .localStructuredRecord
+
+        let current = AgentSessionLauncherProjection.currentSessionIDs(
+            [newerIdle, appending],
+            now: now
+        )
+
+        XCTAssertEqual(current, Set([appending.id]))
+    }
+
+
+    func testPreferredSelectionKeepsExplicitValidSessionEvenWhenAnotherIsCurrent() {
+        let now = Date(timeIntervalSince1970: 50_000)
+        let selected = makeSession(
+            nativeID: "selected",
+            state: .idle,
+            availability: .resumable,
+            project: "DynamicIsland",
+            path: "/repos/DynamicIsland",
+            now: now.addingTimeInterval(-30)
+        )
+        var active = makeSession(
+            nativeID: "active",
+            state: .working,
+            availability: .loaded,
+            project: "DynamicIsland",
+            path: "/repos/DynamicIsland",
+            now: now
+        )
+        active.sourceAuthority = .localStructuredRecord
+
+        XCTAssertEqual(
+            AgentSessionLauncherProjection.preferredSelection(
+                current: selected.id,
+                sessions: [active, selected],
+                now: now
+            ),
+            selected.id
+        )
+    }
+
+    func testPreferredSelectionFallsBackToProjectCurrentWhenSelectionMissing() {
+        let now = Date(timeIntervalSince1970: 50_000)
+        let missing = AgentSessionInstanceID(
+            sessionID: AgentSessionID(provider: .codex, nativeID: "missing"),
+            generation: AgentSessionGeneration(rawValue: 1)
+        )
+        var active = makeSession(
+            nativeID: "active-current",
+            state: .working,
+            availability: .loaded,
+            project: "DynamicIsland",
+            path: "/repos/DynamicIsland",
+            now: now
+        )
+        active.sourceAuthority = .localStructuredRecord
+        let resumable = makeSession(
+            nativeID: "resume",
+            state: .idle,
+            availability: .resumable,
+            project: "DynamicIsland",
+            path: "/repos/DynamicIsland",
+            now: now.addingTimeInterval(-5)
+        )
+
+        XCTAssertEqual(
+            AgentSessionLauncherProjection.preferredSelection(
+                current: missing,
+                sessions: [resumable, active],
+                now: now
+            ),
+            active.id
+        )
     }
 
     func testFiveResumableThreadsForSameRepositoryShowOnlyNewestExactSession() {

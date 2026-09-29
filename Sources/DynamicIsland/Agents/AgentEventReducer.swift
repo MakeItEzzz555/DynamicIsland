@@ -158,6 +158,13 @@ enum AgentEventReducer {
         case .applied(let attention):
             remember(event, in: &session, limits: limits)
             session.lastUpdatedAt = max(session.lastUpdatedAt, event.receivedTimestamp)
+            if let activityTimestamp = event.providerTimestamp {
+                if let current = session.activityEvidenceAt {
+                    session.activityEvidenceAt = max(current, activityTimestamp)
+                } else {
+                    session.activityEvidenceAt = activityTimestamp
+                }
+            }
             if !session.state.isTerminal {
                 session.state = primaryState(for: session)
             }

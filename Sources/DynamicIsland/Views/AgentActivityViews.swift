@@ -61,6 +61,53 @@ private extension AgentVisualStyle {
     }
 }
 
+enum AgentsPagePresentationPhase: Int, Equatable, Sendable {
+    case inactive
+    case entering
+    case chromeVisible
+    case transcriptReady
+}
+
+struct AgentsPagePresentationState: Equatable, Sendable {
+    private(set) var phase: AgentsPagePresentationPhase = .inactive
+    private(set) var generation = 0
+
+    @discardableResult
+    mutating func begin() -> Int {
+        generation &+= 1
+        phase = .entering
+        return generation
+    }
+
+    @discardableResult
+    mutating func revealChrome(generation expected: Int) -> Bool {
+        guard generation == expected, phase == .entering else { return false }
+        phase = .chromeVisible
+        return true
+    }
+
+    @discardableResult
+    mutating func revealTranscript(generation expected: Int) -> Bool {
+        guard generation == expected,
+              phase == .chromeVisible || phase == .entering else { return false }
+        phase = .transcriptReady
+        return true
+    }
+
+    mutating func cancel() {
+        generation &+= 1
+        phase = .inactive
+    }
+
+    var chromeVisible: Bool {
+        phase == .chromeVisible || phase == .transcriptReady
+    }
+
+    var transcriptReady: Bool {
+        phase == .transcriptReady
+    }
+}
+
 struct AgentTranscriptLoadGate: Equatable, Sendable {
     private(set) var requestedSessionID: AgentSessionInstanceID?
     private(set) var readySessionID: AgentSessionInstanceID?
@@ -101,6 +148,8 @@ struct AgentActivityDashboardView: View {
     let contentVisible: Bool
     let isContentRemoving: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var presentation = AgentsPagePresentationState()
+    @State private var presentationTask: Task<Void, Never>?
 
     var body: some View {
         let visibleSessions = agentEvents.sessions.filter(managedControl.shouldPresent)
@@ -113,14 +162,63 @@ struct AgentActivityDashboardView: View {
             layoutStore: layoutStore,
             availableHeight: availableHeight,
             settings: settings,
-            contentVisible: contentVisible,
+            contentVisible: contentVisible && presentation.chromeVisible,
             isContentRemoving: isContentRemoving,
             reduceMotion: reduceMotion,
-            transcriptLoadDelay: IslandContentTransitionTiming.shellDuration(
-                settings: settings,
-                reduceMotion: reduceMotion
-            )
+            transcriptPresentationReady: presentation.transcriptReady,
+            presentationGeneration: presentation.generation,
+            transcriptLoadDelay: reduceMotion ? 0 : 0.04
         )
+        .onAppear {
+            beginPresentation()
+        }
+        .onChange(of: contentVisible) { _, isVisible in
+            if isVisible {
+                if presentation.phase == .inactive {
+                    beginPresentation()
+                }
+            } else {
+                cancelPresentation()
+            }
+        }
+        .onDisappear {
+            cancelPresentation()
+        }
+    }
+
+    private func beginPresentation() {
+        presentationTask?.cancel()
+        let generation = presentation.begin()
+        let shellDuration = IslandContentTransitionTiming.shellDuration(
+            settings: settings,
+            reduceMotion: reduceMotion
+        )
+        let chromeDelay = reduceMotion
+            ? 0
+            : IslandContentTransitionTiming.expansionContentDelay(shellDuration: shellDuration)
+        let transcriptDelay = max(0, shellDuration - chromeDelay)
+
+        presentationTask = Task { @MainActor in
+            if chromeDelay > 0 {
+                try? await Task.sleep(for: .seconds(chromeDelay))
+            } else {
+                await Task.yield()
+            }
+            guard !Task.isCancelled else { return }
+            _ = presentation.revealChrome(generation: generation)
+
+            if transcriptDelay > 0 {
+                try? await Task.sleep(for: .seconds(transcriptDelay))
+            }
+            guard !Task.isCancelled else { return }
+            _ = presentation.revealTranscript(generation: generation)
+        }
+    }
+
+    private func cancelPresentation() {
+        presentationTask?.cancel()
+        presentationTask = nil
+        presentation.cancel()
     }
 }
 
@@ -136,6 +234,8 @@ struct AgentDashboardContentView: View {
     let contentVisible: Bool
     let isContentRemoving: Bool
     let reduceMotion: Bool
+    let transcriptPresentationReady: Bool
+    let presentationGeneration: Int
     let transcriptLoadDelay: TimeInterval
     private let initialSelectedSessionID: AgentSessionInstanceID?
     @State private var showsSessionLauncher = false
@@ -154,6 +254,8 @@ struct AgentDashboardContentView: View {
         contentVisible: Bool = true,
         isContentRemoving: Bool = false,
         reduceMotion: Bool = false,
+        transcriptPresentationReady: Bool = true,
+        presentationGeneration: Int = 0,
         transcriptLoadDelay: TimeInterval = 0.4
     ) {
         self.sessions = sessions
@@ -168,6 +270,8 @@ struct AgentDashboardContentView: View {
         self.contentVisible = contentVisible
         self.isContentRemoving = isContentRemoving
         self.reduceMotion = reduceMotion
+        self.transcriptPresentationReady = transcriptPresentationReady
+        self.presentationGeneration = presentationGeneration
         self.transcriptLoadDelay = transcriptLoadDelay
     }
 
@@ -248,7 +352,7 @@ struct AgentDashboardContentView: View {
                     }
 
                     if let selectedSession {
-                        stagedAgentContent(index: 3) {
+                        stagedAgentContent(index: 4) {
                             AgentSelectedSessionControlView(
                                 session: selectedSession,
                                 sessions: controlSessions,
@@ -265,21 +369,31 @@ struct AgentDashboardContentView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: proxy.size.height, alignment: .topLeading)
-            .task(id: selectedSession?.id) {
-                await deferTranscript(for: selectedSession?.id)
+            .task(
+                id: AgentTranscriptPresentationRequest(
+                    sessionID: selectedSession?.id,
+                    presentationGeneration: presentationGeneration,
+                    isAllowed: transcriptPresentationReady
+                )
+            ) {
+                await deferTranscript(
+                    for: selectedSession?.id,
+                    isAllowed: transcriptPresentationReady,
+                    presentationGeneration: presentationGeneration
+                )
             }
         }
         .frame(maxWidth: .infinity, maxHeight: availableHeight, alignment: .topLeading)
         .foregroundStyle(.white)
         .onChange(of: sessions.map(\.id)) { _, _ in
-            managedControl.reconcileSelection(with: sessions)
+            reconcileWorkspaceSelection()
         }
         .onAppear {
             if managedControl.selectedSessionID == nil,
                let initialSelectedSessionID {
                 managedControl.selectSession(initialSelectedSessionID)
             }
-            managedControl.reconcileSelection(with: sessions)
+            reconcileWorkspaceSelection()
         }
         .onChange(of: showsSessionLauncher) { _, isOpen in
             layoutStore?.isTransientInteractionActive = isOpen
@@ -295,6 +409,18 @@ struct AgentDashboardContentView: View {
             layoutStore?.setExpandedScrollGestureSuppressed(false)
             layoutStore?.setExpandedContentScrollRegion(.zero)
         }
+    }
+
+    private func reconcileWorkspaceSelection() {
+        let preferred = AgentSessionLauncherProjection.preferredSelection(
+            current: managedControl.selectedSessionID,
+            sessions: sessions,
+            activeManagedSessionIDs: managedControl.activeManagedSessionIDs
+        )
+        if preferred != managedControl.selectedSessionID {
+            managedControl.selectSession(preferred)
+        }
+        managedControl.reconcileSelection(with: sessions)
     }
 
     @ViewBuilder
@@ -317,20 +443,39 @@ struct AgentDashboardContentView: View {
     }
 
     @MainActor
-    private func deferTranscript(for sessionID: AgentSessionInstanceID?) async {
-        guard let sessionID else {
+    private func deferTranscript(
+        for sessionID: AgentSessionInstanceID?,
+        isAllowed: Bool,
+        presentationGeneration expectedPresentationGeneration: Int
+    ) async {
+        guard isAllowed, let sessionID else {
             transcriptLoadGate.cancel()
             return
         }
         let generation = transcriptLoadGate.begin(for: sessionID)
         do {
-            try await Task.sleep(for: .seconds(transcriptLoadDelay))
+            if transcriptLoadDelay > 0 {
+                try await Task.sleep(for: .seconds(transcriptLoadDelay))
+            } else {
+                await Task.yield()
+            }
             try Task.checkCancellation()
         } catch {
             return
         }
+        guard presentationGeneration == expectedPresentationGeneration,
+              transcriptPresentationReady else {
+            transcriptLoadGate.cancel()
+            return
+        }
         _ = transcriptLoadGate.complete(for: sessionID, generation: generation)
     }
+}
+
+private struct AgentTranscriptPresentationRequest: Hashable {
+    let sessionID: AgentSessionInstanceID?
+    let presentationGeneration: Int
+    let isAllowed: Bool
 }
 
 private struct AgentCLIControlBar: View {

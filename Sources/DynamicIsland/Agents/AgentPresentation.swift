@@ -197,7 +197,8 @@ enum AgentSessionPresentation {
         }
         switch session.state {
         case .thinking, .planning, .working, .runningTool, .runningCommand:
-            return date.timeIntervalSince(session.lastUpdatedAt) > activeSignalFreshnessInterval
+            let freshness = session.activityEvidenceAt ?? session.lastUpdatedAt
+            return date.timeIntervalSince(freshness) > activeSignalFreshnessInterval
         case .waitingForApproval, .waitingForUser, .planReady,
              .idle, .completed, .failed, .interrupted:
             return false
