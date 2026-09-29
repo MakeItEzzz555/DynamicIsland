@@ -105,13 +105,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.fileShelf.add(urls)
         }
     )
+    private lazy var cameraPreview = CameraPreviewController(
+        liveActivities: liveActivities,
+        capabilities: capabilityRegistry
+    )
     private lazy var productivity = ProductivityModules(
         capabilities: capabilityRegistry,
         keepAwake: keepAwakeController,
         windowSnap: windowSnapController,
         terminal: terminalController,
         reminders: remindersController,
-        voice: voiceTranscription
+        voice: voiceTranscription,
+        camera: cameraPreview
     )
     private lazy var systemHUDController = SystemHUDController(
         settings: settings,
@@ -258,6 +263,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         keepAwakeController.stop()
         terminalController.terminate()
         voiceTranscription.cancel()
+        cameraPreview.terminate()
         systemHUDController.stop()
         agentBridge.stop()
         agentManagedControl.stop()

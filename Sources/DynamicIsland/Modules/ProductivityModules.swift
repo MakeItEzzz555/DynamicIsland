@@ -7,4 +7,5 @@ struct ProductivityModules {
     let terminal: TerminalSessionController
     let reminders: RemindersController
     let voice: VoiceTranscriptionController
+    let camera: CameraPreviewController
 }
