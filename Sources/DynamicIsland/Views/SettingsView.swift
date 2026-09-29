@@ -674,6 +674,20 @@ struct SettingsView: View {
                     .disabled(!settings.systemHUDsEnabled)
                 Toggle("Brightness", isOn: $settings.brightnessHUDEnabled)
                     .disabled(!settings.systemHUDsEnabled)
+                Toggle("Caps Lock", isOn: $settings.capsLockHUDEnabled)
+                    .disabled(!settings.systemHUDsEnabled)
+                Toggle("Battery status", isOn: $settings.batteryStatusHUDEnabled)
+                    .disabled(!settings.systemHUDsEnabled)
+                Toggle("Low / critical battery", isOn: $settings.lowBatteryHUDEnabled)
+                    .disabled(!settings.systemHUDsEnabled)
+                Toggle("Audio output device", isOn: $settings.audioDeviceHUDEnabled)
+                    .disabled(!settings.systemHUDsEnabled)
+                Toggle("Focus status", isOn: $settings.focusHUDEnabled)
+                    .disabled(!settings.systemHUDsEnabled)
+                HelpText(
+                    "Focus status uses Apple's Focus Status API and may request permission the first time it is enabled. " +
+                    "DynamicIsland shows only generic On / Off state because the public API does not expose the active Focus name."
+                )
                 SliderRow(
                     title: "Display duration",
                     value: $settings.systemHUDDurationSeconds,
@@ -1088,29 +1102,44 @@ struct ShortcutEditorRow: View {
 }
 
 
+private enum SystemHUDPreviewCase: String, CaseIterable, Identifiable {
+    case volume = "Volume"
+    case brightness = "Brightness"
+    case capsOn = "Caps Lock On"
+    case capsOff = "Caps Lock Off"
+    case charging = "Charging"
+    case lowBattery = "Low Battery"
+    case criticalBattery = "Critical Battery"
+    case airPods = "AirPods Pro"
+    case headphones = "Headphones"
+    case focus = "Focus"
+
+    var id: String { rawValue }
+}
+
 private struct SystemHUDSettingsPreview: View {
     @ObservedObject var settings: AppSettings
     @State private var previewValue = 0.68
+    @State private var previewCase: SystemHUDPreviewCase = .volume
 
     var body: some View {
         VStack(spacing: 8) {
-            Text("Live Preview")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            HStack {
+                Text("Live Preview")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Picker("Preview", selection: $previewCase) {
+                    ForEach(SystemHUDPreviewCase.allCases) { item in
+                        Text(item.rawValue).tag(item)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 145)
+            }
 
             CollapsedSystemHUDCompactView(
-                activity: DynamicIslandLiveActivity(
-                    id: "settings-system-hud",
-                    kind: .system,
-                    title: "Volume",
-                    subtitle: "\(Int(previewValue * 100))%",
-                    symbolName: "speaker.wave.2.fill",
-                    priority: 200,
-                    isActive: true,
-                    progress: previewValue,
-                    updatedAt: Date()
-                ),
+                activity: previewActivity,
                 layout: CompactCollapsedSideSlotGeometry(
                     isNotchIntegrated: false,
                     leftRegionWidth: 0,
@@ -1122,10 +1151,88 @@ private struct SystemHUDSettingsPreview: View {
             .padding(.horizontal, 14)
             .background(Color.black, in: Capsule(style: .continuous))
 
-            Slider(value: $previewValue, in: 0...1)
-                .frame(maxWidth: 220)
+            if previewActivity.progress != nil {
+                Slider(value: $previewValue, in: 0...1)
+                    .frame(maxWidth: 220)
+            }
         }
         .padding(.vertical, 4)
         .allowsHitTesting(settings.systemHUDsEnabled)
+    }
+
+    private var previewActivity: DynamicIslandLiveActivity {
+        let descriptor: SystemHUDDescriptor
+        switch previewCase {
+        case .volume:
+            descriptor = SystemHUDDescriptor(
+                kind: .volume,
+                title: "Volume",
+                subtitle: "\(Int(previewValue * 100))%",
+                symbolName: "speaker.wave.2.fill",
+                progress: previewValue,
+                priority: 120
+            )
+        case .brightness:
+            descriptor = SystemHUDDescriptor(
+                kind: .brightness,
+                title: "Brightness",
+                subtitle: "\(Int(previewValue * 100))%",
+                symbolName: "sun.max.fill",
+                progress: previewValue,
+                priority: 120
+            )
+        case .capsOn:
+            descriptor = SystemHUDDescriptor(
+                kind: .capsLock, title: "Caps Lock On", subtitle: "ABC",
+                symbolName: "capslock.fill", priority: 130
+            )
+        case .capsOff:
+            descriptor = SystemHUDDescriptor(
+                kind: .capsLock, title: "Caps Lock Off", subtitle: "abc",
+                symbolName: "capslock", priority: 130
+            )
+        case .charging:
+            descriptor = SystemHUDDescriptor(
+                kind: .battery, title: "Charging", subtitle: "\(Int(previewValue * 100))%",
+                symbolName: "battery.100percent.bolt", progress: previewValue, priority: 155
+            )
+        case .lowBattery:
+            descriptor = SystemHUDDescriptor(
+                kind: .battery, title: "Low Battery", subtitle: "15%",
+                symbolName: "battery.25percent", progress: 0.15, priority: 180
+            )
+        case .criticalBattery:
+            descriptor = SystemHUDDescriptor(
+                kind: .battery, title: "Critical Battery", subtitle: "8%",
+                symbolName: "exclamationmark.triangle.fill", progress: 0.08, priority: 190
+            )
+        case .airPods:
+            descriptor = SystemHUDDescriptor(
+                kind: .audioDevice, title: "AirPods Pro", subtitle: "Output Changed",
+                symbolName: "airpodspro", priority: 165
+            )
+        case .headphones:
+            descriptor = SystemHUDDescriptor(
+                kind: .audioDevice, title: "Headphones", subtitle: "Output Changed",
+                symbolName: "headphones", priority: 165
+            )
+        case .focus:
+            descriptor = SystemHUDDescriptor(
+                kind: .focus, title: "Focus", subtitle: "On",
+                symbolName: "moon.fill", priority: 140
+            )
+        }
+
+        return DynamicIslandLiveActivity(
+            id: "settings-system-hud",
+            kind: .system,
+            title: descriptor.title,
+            subtitle: descriptor.subtitle,
+            symbolName: descriptor.symbolName,
+            priority: 200,
+            isActive: true,
+            progress: descriptor.progress,
+            updatedAt: Date()
+        )
     }
 }

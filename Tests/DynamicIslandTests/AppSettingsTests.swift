@@ -96,12 +96,22 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertTrue(first.replaceMacOSSystemHUDs)
         XCTAssertTrue(first.volumeHUDEnabled)
         XCTAssertTrue(first.brightnessHUDEnabled)
+        XCTAssertTrue(first.capsLockHUDEnabled)
+        XCTAssertTrue(first.batteryStatusHUDEnabled)
+        XCTAssertTrue(first.lowBatteryHUDEnabled)
+        XCTAssertTrue(first.audioDeviceHUDEnabled)
+        XCTAssertFalse(first.focusHUDEnabled)
         XCTAssertEqual(first.systemHUDDurationSeconds, 1.4, accuracy: 0.001)
 
         first.systemHUDsEnabled = false
         first.replaceMacOSSystemHUDs = false
         first.volumeHUDEnabled = false
         first.brightnessHUDEnabled = false
+        first.capsLockHUDEnabled = false
+        first.batteryStatusHUDEnabled = false
+        first.lowBatteryHUDEnabled = false
+        first.audioDeviceHUDEnabled = false
+        first.focusHUDEnabled = true
         first.systemHUDDurationSeconds = 2.2
 
         let second = AppSettings(defaults: defaults)
@@ -109,7 +119,24 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertFalse(second.replaceMacOSSystemHUDs)
         XCTAssertFalse(second.volumeHUDEnabled)
         XCTAssertFalse(second.brightnessHUDEnabled)
+        XCTAssertFalse(second.capsLockHUDEnabled)
+        XCTAssertFalse(second.batteryStatusHUDEnabled)
+        XCTAssertFalse(second.lowBatteryHUDEnabled)
+        XCTAssertFalse(second.audioDeviceHUDEnabled)
+        XCTAssertTrue(second.focusHUDEnabled)
         XCTAssertEqual(second.systemHUDDurationSeconds, 2.2, accuracy: 0.001)
+
+        second.resetModuleSettings()
+        XCTAssertTrue(second.systemHUDsEnabled)
+        XCTAssertTrue(second.replaceMacOSSystemHUDs)
+        XCTAssertTrue(second.volumeHUDEnabled)
+        XCTAssertTrue(second.brightnessHUDEnabled)
+        XCTAssertTrue(second.capsLockHUDEnabled)
+        XCTAssertTrue(second.batteryStatusHUDEnabled)
+        XCTAssertTrue(second.lowBatteryHUDEnabled)
+        XCTAssertTrue(second.audioDeviceHUDEnabled)
+        XCTAssertFalse(second.focusHUDEnabled)
+        XCTAssertEqual(second.systemHUDDurationSeconds, 1.4, accuracy: 0.001)
     }
 
     func testSystemHUDSnapshotSymbolsMatchState() {

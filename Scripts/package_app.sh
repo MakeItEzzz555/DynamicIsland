@@ -60,6 +60,8 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <true/>
   <key>NSAppleEventsUsageDescription</key>
   <string>DynamicIsland can read and control Spotify or Music playback when you use the media module.</string>
+  <key>NSFocusStatusUsageDescription</key>
+  <string>DynamicIsland can show a brief notch HUD when your Focus status changes.</string>
 </dict>
 </plist>
 PLIST

@@ -1768,34 +1768,48 @@ struct CollapsedSystemHUDCompactView: View {
                     height: CollapsedActivityLayoutProfile.systemHUDLeftContentWidth
                 )
         } right: {
-            HStack(spacing: 4) {
-                GeometryReader { proxy in
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(.white.opacity(0.14))
-                        Capsule()
-                            .fill(.white.opacity(0.88))
-                            .frame(width: proxy.size.width * CGFloat(progress))
+            if let progress {
+                HStack(spacing: 4) {
+                    GeometryReader { proxy in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(.white.opacity(0.14))
+                            Capsule()
+                                .fill(.white.opacity(0.88))
+                                .frame(width: proxy.size.width * CGFloat(progress))
+                        }
                     }
-                }
-                .frame(width: 25, height: 3.5)
+                    .frame(width: 25, height: 3.5)
 
-                Text(percentText)
-                    .font(.system(size: 7.4, weight: .bold, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(.white.opacity(0.82))
-                    .frame(width: 19, alignment: .trailing)
+                    Text(percentText(for: progress))
+                        .font(.system(size: 7.4, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(.white.opacity(0.82))
+                        .frame(width: 19, alignment: .trailing)
+                }
+                .frame(width: CollapsedActivityLayoutProfile.systemHUDRightContentWidth)
+            } else {
+                Text(activity.subtitle ?? activity.title)
+                    .font(.system(size: 7.2, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.84))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.55)
+                    .frame(
+                        width: CollapsedActivityLayoutProfile.systemHUDRightContentWidth,
+                        alignment: .trailing
+                    )
             }
-            .frame(width: CollapsedActivityLayoutProfile.systemHUDRightContentWidth)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .accessibilityLabel("\(activity.title), \(percentText)")
+        .accessibilityLabel(
+            [activity.title, activity.subtitle].compactMap { $0 }.joined(separator: ", ")
+        )
     }
 
-    private var progress: Double {
-        LiveActivityStore.clampedProgress(activity.progress) ?? 0
+    private var progress: Double? {
+        LiveActivityStore.clampedProgress(activity.progress)
     }
 
-    private var percentText: String {
+    private func percentText(for progress: Double) -> String {
         "\(Int((progress * 100).rounded()))%"
     }
 }

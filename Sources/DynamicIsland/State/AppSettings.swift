@@ -339,6 +339,11 @@ public final class AppSettings: ObservableObject {
     @Published public var replaceMacOSSystemHUDs: Bool { didSet { save(replaceMacOSSystemHUDs, for: Key.replaceMacOSSystemHUDs) } }
     @Published public var volumeHUDEnabled: Bool { didSet { save(volumeHUDEnabled, for: Key.volumeHUDEnabled) } }
     @Published public var brightnessHUDEnabled: Bool { didSet { save(brightnessHUDEnabled, for: Key.brightnessHUDEnabled) } }
+    @Published public var capsLockHUDEnabled: Bool { didSet { save(capsLockHUDEnabled, for: Key.capsLockHUDEnabled) } }
+    @Published public var batteryStatusHUDEnabled: Bool { didSet { save(batteryStatusHUDEnabled, for: Key.batteryStatusHUDEnabled) } }
+    @Published public var lowBatteryHUDEnabled: Bool { didSet { save(lowBatteryHUDEnabled, for: Key.lowBatteryHUDEnabled) } }
+    @Published public var audioDeviceHUDEnabled: Bool { didSet { save(audioDeviceHUDEnabled, for: Key.audioDeviceHUDEnabled) } }
+    @Published public var focusHUDEnabled: Bool { didSet { save(focusHUDEnabled, for: Key.focusHUDEnabled) } }
     @Published public var systemHUDDurationSeconds: Double { didSet { save(systemHUDDurationSeconds, for: Key.systemHUDDurationSeconds) } }
     @Published public var collapsedPriorityRunningTimer: Int {
         didSet { normalizeCollapsedPriorityRunningTimer(oldValue: oldValue) }
@@ -552,6 +557,11 @@ public final class AppSettings: ObservableObject {
         replaceMacOSSystemHUDs = Self.bool(defaults, Key.replaceMacOSSystemHUDs, true)
         volumeHUDEnabled = Self.bool(defaults, Key.volumeHUDEnabled, true)
         brightnessHUDEnabled = Self.bool(defaults, Key.brightnessHUDEnabled, true)
+        capsLockHUDEnabled = Self.bool(defaults, Key.capsLockHUDEnabled, true)
+        batteryStatusHUDEnabled = Self.bool(defaults, Key.batteryStatusHUDEnabled, true)
+        lowBatteryHUDEnabled = Self.bool(defaults, Key.lowBatteryHUDEnabled, true)
+        audioDeviceHUDEnabled = Self.bool(defaults, Key.audioDeviceHUDEnabled, true)
+        focusHUDEnabled = Self.bool(defaults, Key.focusHUDEnabled, false)
         systemHUDDurationSeconds = Self.double(defaults, Key.systemHUDDurationSeconds, 1.4)
         collapsedPriorityRunningTimer = Self.int(defaults, Key.collapsedPriorityRunningTimer, CollapsedLiveActivityPrioritySource.runningTimer.defaultPriority)
         collapsedPriorityPlayingMedia = Self.int(defaults, Key.collapsedPriorityPlayingMedia, CollapsedLiveActivityPrioritySource.playingMedia.defaultPriority)
@@ -669,7 +679,9 @@ public final class AppSettings: ObservableObject {
             Key.clipboardHistoryEnabled, Key.clipboardHistoryMaximumItems,
             Key.clipboardHistoryPersistenceEnabled, Key.clipboardHistoryCaptureImagesEnabled,
             Key.showExpandedLiveActivitiesSection, Key.systemHUDsEnabled, Key.replaceMacOSSystemHUDs,
-            Key.volumeHUDEnabled, Key.brightnessHUDEnabled, Key.systemHUDDurationSeconds
+            Key.volumeHUDEnabled, Key.brightnessHUDEnabled, Key.capsLockHUDEnabled,
+            Key.batteryStatusHUDEnabled, Key.lowBatteryHUDEnabled, Key.audioDeviceHUDEnabled,
+            Key.focusHUDEnabled, Key.systemHUDDurationSeconds
         ])
         reload()
     }
@@ -840,6 +852,11 @@ public final class AppSettings: ObservableObject {
         replaceMacOSSystemHUDs = Self.bool(defaults, Key.replaceMacOSSystemHUDs, true)
         volumeHUDEnabled = Self.bool(defaults, Key.volumeHUDEnabled, true)
         brightnessHUDEnabled = Self.bool(defaults, Key.brightnessHUDEnabled, true)
+        capsLockHUDEnabled = Self.bool(defaults, Key.capsLockHUDEnabled, true)
+        batteryStatusHUDEnabled = Self.bool(defaults, Key.batteryStatusHUDEnabled, true)
+        lowBatteryHUDEnabled = Self.bool(defaults, Key.lowBatteryHUDEnabled, true)
+        audioDeviceHUDEnabled = Self.bool(defaults, Key.audioDeviceHUDEnabled, true)
+        focusHUDEnabled = Self.bool(defaults, Key.focusHUDEnabled, false)
         systemHUDDurationSeconds = Self.double(defaults, Key.systemHUDDurationSeconds, 1.4)
         collapsedPriorityRunningTimer = Self.int(defaults, Key.collapsedPriorityRunningTimer, CollapsedLiveActivityPrioritySource.runningTimer.defaultPriority)
         collapsedPriorityPlayingMedia = Self.int(defaults, Key.collapsedPriorityPlayingMedia, CollapsedLiveActivityPrioritySource.playingMedia.defaultPriority)
@@ -1359,6 +1376,11 @@ private enum Key {
     static let replaceMacOSSystemHUDs = "replaceMacOSSystemHUDs"
     static let volumeHUDEnabled = "volumeHUDEnabled"
     static let brightnessHUDEnabled = "brightnessHUDEnabled"
+    static let capsLockHUDEnabled = "capsLockHUDEnabled"
+    static let batteryStatusHUDEnabled = "batteryStatusHUDEnabled"
+    static let lowBatteryHUDEnabled = "lowBatteryHUDEnabled"
+    static let audioDeviceHUDEnabled = "audioDeviceHUDEnabled"
+    static let focusHUDEnabled = "focusHUDEnabled"
     static let systemHUDDurationSeconds = "systemHUDDurationSeconds"
     static let collapsedPriorityRunningTimer = "collapsedPriorityRunningTimer"
     static let collapsedPriorityPlayingMedia = "collapsedPriorityPlayingMedia"
@@ -1437,7 +1459,9 @@ private enum Key {
         showMusicLiveActivity, showTimerLiveActivity, showFileDropLiveActivity,
         showBatteryLiveActivity, showCalendarLiveActivity, showDownloadsLiveActivity,
         liveActivityAutoDismissEnabled, liveActivityAutoDismissSeconds, liveActivityAnimationEnabled,
-        systemHUDsEnabled, replaceMacOSSystemHUDs, volumeHUDEnabled, brightnessHUDEnabled, systemHUDDurationSeconds,
+        systemHUDsEnabled, replaceMacOSSystemHUDs, volumeHUDEnabled, brightnessHUDEnabled,
+        capsLockHUDEnabled, batteryStatusHUDEnabled, lowBatteryHUDEnabled, audioDeviceHUDEnabled,
+        focusHUDEnabled, systemHUDDurationSeconds,
         collapsedPriorityRunningTimer, collapsedPriorityPlayingMedia, collapsedPriorityPausedTimer,
         collapsedPriorityRecentFiles, collapsedPriorityPausedMedia,
         gesturesEnabled, gestureInputSource, expandGestureEnabled, collapseGestureEnabled,

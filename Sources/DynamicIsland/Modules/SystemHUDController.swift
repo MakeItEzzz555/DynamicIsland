@@ -7,10 +7,286 @@ import CoreGraphics
 import Foundation
 import IOKit
 import IOKit.graphics
+import Intents
 
-enum SystemHUDKind: Equatable, Sendable {
+enum SystemHUDKind: String, Equatable, Sendable, CaseIterable {
     case volume
     case brightness
+    case capsLock
+    case battery
+    case audioDevice
+    case focus
+}
+
+struct SystemHUDDescriptor: Equatable, Sendable {
+    let kind: SystemHUDKind
+    let title: String
+    let subtitle: String
+    let symbolName: String
+    let progress: Double?
+    let priority: Int
+    let updatedAt: Date
+    let preferredDuration: TimeInterval
+    let coalescingKey: String
+
+    init(
+        kind: SystemHUDKind,
+        title: String,
+        subtitle: String,
+        symbolName: String,
+        progress: Double? = nil,
+        priority: Int,
+        updatedAt: Date = Date(),
+        preferredDuration: TimeInterval = 1.4,
+        coalescingKey: String? = nil
+    ) {
+        self.kind = kind
+        self.title = title
+        self.subtitle = subtitle
+        self.symbolName = symbolName
+        self.progress = progress.map { min(max($0, 0), 1) }
+        self.priority = priority
+        self.updatedAt = updatedAt
+        self.preferredDuration = preferredDuration
+        self.coalescingKey = coalescingKey ?? kind.rawValue
+    }
+}
+
+struct SystemHUDArbiter: Equatable, Sendable {
+    private(set) var current: SystemHUDDescriptor?
+    private(set) var generation = 0
+
+    @discardableResult
+    mutating func present(_ descriptor: SystemHUDDescriptor) -> Int? {
+        if let current,
+           current.coalescingKey != descriptor.coalescingKey,
+           current.priority > descriptor.priority {
+            return nil
+        }
+
+        generation &+= 1
+        current = descriptor
+        return generation
+    }
+
+    @discardableResult
+    mutating func dismiss(generation expected: Int) -> Bool {
+        guard generation == expected, current != nil else { return false }
+        generation &+= 1
+        current = nil
+        return true
+    }
+
+    mutating func clear() {
+        generation &+= 1
+        current = nil
+    }
+}
+
+struct CapsLockHUDStateTracker: Equatable, Sendable {
+    private(set) var lastState: Bool?
+
+    mutating func transition(to enabled: Bool, at date: Date = Date()) -> SystemHUDDescriptor? {
+        guard lastState != enabled else { return nil }
+        lastState = enabled
+        return SystemHUDDescriptor(
+            kind: .capsLock,
+            title: enabled ? "Caps Lock On" : "Caps Lock Off",
+            subtitle: enabled ? "ABC" : "abc",
+            symbolName: enabled ? "capslock.fill" : "capslock",
+            priority: 130,
+            updatedAt: date,
+            preferredDuration: 1.1
+        )
+    }
+}
+
+struct FocusHUDStateTracker: Equatable, Sendable {
+    private(set) var lastState: Bool?
+
+    mutating func transition(to isFocused: Bool, at date: Date = Date()) -> SystemHUDDescriptor? {
+        guard lastState != isFocused else { return nil }
+        lastState = isFocused
+        return SystemHUDDescriptor(
+            kind: .focus,
+            title: "Focus",
+            subtitle: isFocused ? "On" : "Off",
+            symbolName: isFocused ? "moon.fill" : "moon",
+            priority: 140,
+            updatedAt: date,
+            preferredDuration: 1.5
+        )
+    }
+}
+
+enum BatteryHUDBand: Equatable, Sendable {
+    case normal
+    case low
+    case critical
+}
+
+struct BatteryHUDStateTracker: Equatable, Sendable {
+    private(set) var previous: BatteryActivitySnapshot?
+    private(set) var band: BatteryHUDBand = .normal
+
+    mutating func transition(
+        to snapshot: BatteryActivitySnapshot,
+        statusEnabled: Bool,
+        lowBatteryEnabled: Bool,
+        at date: Date = Date()
+    ) -> SystemHUDDescriptor? {
+        let previous = self.previous
+        self.previous = snapshot
+
+        let percentage = snapshot.percentage ?? 0
+        let nextBand: BatteryHUDBand
+        if !snapshot.isPluggedIn && percentage <= 10 {
+            nextBand = .critical
+        } else if !snapshot.isPluggedIn && percentage <= 20 {
+            nextBand = .low
+        } else {
+            nextBand = .normal
+        }
+
+        defer { band = nextBand }
+
+        if lowBatteryEnabled, nextBand != band {
+            switch nextBand {
+            case .critical:
+                return SystemHUDDescriptor(
+                    kind: .battery,
+                    title: "Critical Battery",
+                    subtitle: "\(percentage)%",
+                    symbolName: "exclamationmark.triangle.fill",
+                    progress: Double(percentage) / 100,
+                    priority: 190,
+                    updatedAt: date,
+                    preferredDuration: 2.5,
+                    coalescingKey: "battery-critical"
+                )
+            case .low:
+                return SystemHUDDescriptor(
+                    kind: .battery,
+                    title: "Low Battery",
+                    subtitle: "\(percentage)%",
+                    symbolName: "battery.25percent",
+                    progress: Double(percentage) / 100,
+                    priority: 180,
+                    updatedAt: date,
+                    preferredDuration: 2.2,
+                    coalescingKey: "battery-low"
+                )
+            case .normal:
+                break
+            }
+        }
+
+        guard statusEnabled, let previous else { return nil }
+
+        if previous.isPluggedIn != snapshot.isPluggedIn {
+            if snapshot.isPluggedIn {
+                return SystemHUDDescriptor(
+                    kind: .battery,
+                    title: snapshot.isCharged ? "Battery Full" : "Charging",
+                    subtitle: "\(percentage)%",
+                    symbolName: snapshot.isCharged ? "battery.100percent" : "battery.100percent.bolt",
+                    progress: Double(percentage) / 100,
+                    priority: 155,
+                    updatedAt: date,
+                    preferredDuration: 1.8,
+                    coalescingKey: "battery-power-source"
+                )
+            } else {
+                return SystemHUDDescriptor(
+                    kind: .battery,
+                    title: "On Battery",
+                    subtitle: "\(percentage)%",
+                    symbolName: "battery.75percent",
+                    progress: Double(percentage) / 100,
+                    priority: 155,
+                    updatedAt: date,
+                    preferredDuration: 1.8,
+                    coalescingKey: "battery-power-source"
+                )
+            }
+        }
+
+        if !previous.isCharged, snapshot.isCharged {
+            return SystemHUDDescriptor(
+                kind: .battery,
+                title: "Battery Full",
+                subtitle: "\(percentage)%",
+                symbolName: "battery.100percent",
+                progress: Double(percentage) / 100,
+                priority: 150,
+                updatedAt: date,
+                preferredDuration: 1.8,
+                coalescingKey: "battery-full"
+            )
+        }
+
+        return nil
+    }
+}
+
+enum AudioOutputDeviceKind: Equatable, Sendable {
+    case airPods
+    case airPodsPro
+    case airPodsMax
+    case beats
+    case headphones
+    case earbuds
+    case generic
+
+    static func classify(name: String) -> AudioOutputDeviceKind {
+        let value = name.lowercased()
+        if value.contains("airpods pro") { return .airPodsPro }
+        if value.contains("airpods max") { return .airPodsMax }
+        if value.contains("airpods") { return .airPods }
+        if value.contains("beats") { return .beats }
+        if value.contains("earbud") || value.contains("buds") { return .earbuds }
+        if value.contains("headphone") || value.contains("headset") || value.contains("wh-") {
+            return .headphones
+        }
+        return .generic
+    }
+
+    var symbolName: String {
+        switch self {
+        case .airPods, .airPodsPro, .earbuds: "airpodspro"
+        case .airPodsMax, .beats, .headphones: "headphones"
+        case .generic: "speaker.wave.2.fill"
+        }
+    }
+}
+
+struct AudioOutputDeviceSnapshot: Equatable, Sendable {
+    let deviceID: AudioObjectID
+    let name: String
+    let kind: AudioOutputDeviceKind
+}
+
+struct AudioOutputHUDStateTracker: Equatable, Sendable {
+    private(set) var previousDeviceID: AudioObjectID?
+
+    mutating func transition(
+        to snapshot: AudioOutputDeviceSnapshot,
+        at date: Date = Date()
+    ) -> SystemHUDDescriptor? {
+        defer { previousDeviceID = snapshot.deviceID }
+        guard let previousDeviceID else { return nil }
+        guard previousDeviceID != snapshot.deviceID else { return nil }
+
+        return SystemHUDDescriptor(
+            kind: .audioDevice,
+            title: snapshot.name,
+            subtitle: "Output Changed",
+            symbolName: snapshot.kind.symbolName,
+            priority: 165,
+            updatedAt: date,
+            preferredDuration: 1.8
+        )
+    }
 }
 
 struct SystemHUDSnapshot: Equatable, Sendable {
@@ -23,6 +299,10 @@ struct SystemHUDSnapshot: Equatable, Sendable {
         switch kind {
         case .volume: isMuted || value <= 0.0001 ? "Muted" : "Volume"
         case .brightness: "Brightness"
+        case .capsLock: "Caps Lock"
+        case .battery: "Battery"
+        case .audioDevice: "Audio Output"
+        case .focus: "Focus"
         }
     }
 
@@ -35,7 +315,31 @@ struct SystemHUDSnapshot: Equatable, Sendable {
             return "speaker.wave.3.fill"
         case .brightness:
             return "sun.max.fill"
+        case .capsLock:
+            return "capslock"
+        case .battery:
+            return "battery.100percent"
+        case .audioDevice:
+            return "headphones"
+        case .focus:
+            return "moon.fill"
         }
+    }
+}
+
+extension SystemHUDSnapshot {
+    var descriptor: SystemHUDDescriptor {
+        let normalized = min(max(value, 0), 1)
+        return SystemHUDDescriptor(
+            kind: kind,
+            title: title,
+            subtitle: "\(Int((normalized * 100).rounded()))%",
+            symbolName: symbolName,
+            progress: normalized,
+            priority: 120,
+            updatedAt: updatedAt,
+            preferredDuration: 1.4
+        )
     }
 }
 
@@ -261,7 +565,7 @@ private final class SystemMediaControlBackend {
         }
         return readSystemVolume()
     }
-    private func defaultOutputDevice() -> AudioObjectID? {
+    func currentOutputDeviceID() -> AudioObjectID? {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDefaultOutputDevice,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -282,6 +586,27 @@ private final class SystemMediaControlBackend {
         return deviceID
     }
 
+    func outputDeviceName(deviceID: AudioObjectID) -> String? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioObjectPropertyName,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        guard AudioObjectHasProperty(deviceID, &address) else { return nil }
+        var value: Unmanaged<CFString>?
+        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        let status = AudioObjectGetPropertyData(
+            deviceID,
+            &address,
+            0,
+            nil,
+            &size,
+            &value
+        )
+        guard status == noErr, let value else { return nil }
+        return value.takeUnretainedValue() as String
+    }
+
     private func readSystemVolume() -> SystemHUDSnapshot? {
         guard let volume = readVolumeScalar() else { return nil }
         return SystemHUDSnapshot(
@@ -293,7 +618,7 @@ private final class SystemMediaControlBackend {
     }
 
     private func readVolumeScalar() -> Float32? {
-        guard let deviceID = defaultOutputDevice() else { return nil }
+        guard let deviceID = currentOutputDeviceID() else { return nil }
 
         var virtualAddress = AudioObjectPropertyAddress(
             mSelector: kAudioHardwareServiceDeviceProperty_VirtualMainVolume,
@@ -341,7 +666,7 @@ private final class SystemMediaControlBackend {
     }
 
     private func writeVolumeScalar(_ value: Float32) -> Bool {
-        guard let deviceID = defaultOutputDevice() else { return false }
+        guard let deviceID = currentOutputDeviceID() else { return false }
         let target = min(max(value, 0), 1)
 
         var virtualAddress = AudioObjectPropertyAddress(
@@ -401,7 +726,7 @@ private final class SystemMediaControlBackend {
         ) == noErr
     }
     private func readMute() -> Bool? {
-        guard let deviceID = defaultOutputDevice() else { return nil }
+        guard let deviceID = currentOutputDeviceID() else { return nil }
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyMute,
             mScope: kAudioDevicePropertyScopeOutput,
@@ -419,7 +744,7 @@ private final class SystemMediaControlBackend {
     }
 
     private func setMute(_ muted: Bool) -> Bool {
-        guard let deviceID = defaultOutputDevice() else { return false }
+        guard let deviceID = currentOutputDeviceID() else { return false }
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyMute,
             mScope: kAudioDevicePropertyScopeOutput,
@@ -634,14 +959,156 @@ private final class SystemMediaControlBackend {
         return true
     }
 }
+
+private final class DefaultAudioOutputObserver: @unchecked Sendable {
+    private var listener: AudioObjectPropertyListenerBlock?
+    private var handler: (@Sendable () -> Void)?
+
+    func start(handler: @escaping @Sendable () -> Void) -> Bool {
+        stop()
+        self.handler = handler
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            self?.handler?()
+        }
+        let status = AudioObjectAddPropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject),
+            &address,
+            DispatchQueue.main,
+            block
+        )
+        guard status == noErr else {
+            self.handler = nil
+            return false
+        }
+        listener = block
+        return true
+    }
+
+    func stop() {
+        guard let listener else {
+            handler = nil
+            return
+        }
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        AudioObjectRemovePropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject),
+            &address,
+            DispatchQueue.main,
+            listener
+        )
+        self.listener = nil
+        handler = nil
+    }
+}
+
+private final class PowerSourceChangeObserver: @unchecked Sendable {
+    private var runLoopSource: CFRunLoopSource?
+
+    func start(handler: @escaping @Sendable () -> Void) -> Bool {
+        stop()
+        let box = CallbackBox(handler)
+        let context = Unmanaged.passRetained(box).toOpaque()
+        guard let source = IOPSNotificationCreateRunLoopSource({ context in
+            guard let context else { return }
+            let box = Unmanaged<CallbackBox>.fromOpaque(context).takeUnretainedValue()
+            box.handler()
+        }, context)?.takeRetainedValue() else {
+            Unmanaged<CallbackBox>.fromOpaque(context).release()
+            return false
+        }
+
+        sourceContext = context
+        runLoopSource = source
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .defaultMode)
+        return true
+    }
+
+    func stop() {
+        if let source = runLoopSource {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .defaultMode)
+        }
+        runLoopSource = nil
+        if let sourceContext {
+            Unmanaged<CallbackBox>.fromOpaque(sourceContext).release()
+            self.sourceContext = nil
+        }
+    }
+
+    deinit { stop() }
+
+    private var sourceContext: UnsafeMutableRawPointer?
+
+    private final class CallbackBox: @unchecked Sendable {
+        let handler: @Sendable () -> Void
+        init(_ handler: @escaping @Sendable () -> Void) { self.handler = handler }
+    }
+}
+
+private final class FocusStatusObserver: @unchecked Sendable {
+    private var observation: NSKeyValueObservation?
+
+    func start(handler: @escaping @Sendable (Bool) -> Void) {
+        stop()
+        let center = INFocusStatusCenter.default
+        observation = center.observe(\.focusStatus, options: [.new]) { _, change in
+            guard let isFocused = change.newValue?.isFocused else { return }
+            handler(isFocused)
+        }
+    }
+
+    func stop() {
+        observation?.invalidate()
+        observation = nil
+    }
+
+    var authorizationStatus: INFocusStatusAuthorizationStatus {
+        INFocusStatusCenter.default.authorizationStatus
+    }
+
+    var currentState: Bool? {
+        INFocusStatusCenter.default.focusStatus.isFocused
+    }
+
+    func requestAuthorization(
+        completion: @escaping @Sendable (INFocusStatusAuthorizationStatus) -> Void
+    ) {
+        INFocusStatusCenter.default.requestAuthorization { status in
+            completion(status)
+        }
+    }
+}
+
 @MainActor
 final class SystemHUDController {
     private weak var settings: AppSettings?
     private let liveActivities: LiveActivityStore
     private let backend = SystemMediaControlBackend()
+    private let batteryProvider = BatteryActivityProvider()
     private let interceptor = SystemMediaKeyInterceptor()
-    private var globalMonitor: Any?
-    private var localMonitor: Any?
+    private let audioOutputObserver = DefaultAudioOutputObserver()
+    private let powerSourceObserver = PowerSourceChangeObserver()
+    private let focusObserver = FocusStatusObserver()
+
+    private var passiveGlobalMonitor: Any?
+    private var passiveLocalMonitor: Any?
+    private var capsGlobalMonitor: Any?
+    private var capsLocalMonitor: Any?
+
+    private var arbiter = SystemHUDArbiter()
+    private var capsTracker = CapsLockHUDStateTracker()
+    private var batteryTracker = BatteryHUDStateTracker()
+    private var audioTracker = AudioOutputHUDStateTracker()
+    private var focusTracker = FocusHUDStateTracker()
+
     private var dismissTask: Task<Void, Never>?
     private var passiveRefreshTask: Task<Void, Never>?
     private var cancellables: Set<AnyCancellable> = []
@@ -659,17 +1126,13 @@ final class SystemHUDController {
 
         settings?.objectWillChange
             .sink { [weak self] in
-                DispatchQueue.main.async {
-                    self?.reconfigure()
-                }
+                DispatchQueue.main.async { self?.reconfigure() }
             }
             .store(in: &cancellables)
 
         NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
             .sink { [weak self] _ in
-                DispatchQueue.main.async {
-                    self?.reconfigure()
-                }
+                DispatchQueue.main.async { self?.reconfigure() }
             }
             .store(in: &cancellables)
 
@@ -678,19 +1141,29 @@ final class SystemHUDController {
 
     func stop() {
         stopPassiveMonitoring()
+        stopCapsLockMonitoring()
         interceptor.stop()
+        audioOutputObserver.stop()
+        powerSourceObserver.stop()
+        focusObserver.stop()
         dismissTask?.cancel()
         passiveRefreshTask?.cancel()
         dismissTask = nil
         passiveRefreshTask = nil
         cancellables.removeAll()
+        arbiter.clear()
         liveActivities.remove(id: LiveActivityStore.systemHUDActivityID)
     }
 
     func reconfigure() {
         guard let settings, settings.systemHUDsEnabled else {
             stopPassiveMonitoring()
+            stopCapsLockMonitoring()
             interceptor.stop()
+            audioOutputObserver.stop()
+            powerSourceObserver.stop()
+            focusObserver.stop()
+            arbiter.clear()
             liveActivities.remove(id: LiveActivityStore.systemHUDActivityID)
             return
         }
@@ -710,14 +1183,9 @@ final class SystemHUDController {
                default:
                    return false
                }
-
-               guard let snapshot = backend.perform(keyCode: keyCode) else {
-                   // Fail open: unsupported or failed mutations stay owned by macOS.
-                   return false
-               }
-
+               guard let snapshot = backend.perform(keyCode: keyCode) else { return false }
                Task { @MainActor [weak self] in
-                   self?.present(snapshot)
+                   self?.present(snapshot.descriptor)
                }
                return true
            }) {
@@ -726,15 +1194,39 @@ final class SystemHUDController {
             interceptor.stop()
             startPassiveMonitoring()
         }
+
+        settings.capsLockHUDEnabled ? startCapsLockMonitoring() : stopCapsLockMonitoring()
+
+        if settings.audioDeviceHUDEnabled {
+            _ = audioOutputObserver.start { [weak self] in
+                Task { @MainActor in self?.handleAudioOutputChange() }
+            }
+            seedAudioOutputIdentity()
+        } else {
+            audioOutputObserver.stop()
+            audioTracker = AudioOutputHUDStateTracker()
+        }
+
+        if settings.batteryStatusHUDEnabled || settings.lowBatteryHUDEnabled {
+            _ = powerSourceObserver.start { [weak self] in
+                Task { @MainActor in self?.handleBatteryChange() }
+            }
+            seedBatteryState()
+        } else {
+            powerSourceObserver.stop()
+            batteryTracker = BatteryHUDStateTracker()
+        }
+
+        configureFocusObservation(enabled: settings.focusHUDEnabled)
     }
 
     private func startPassiveMonitoring() {
-        guard globalMonitor == nil, localMonitor == nil else { return }
-        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .systemDefined) {
+        guard passiveGlobalMonitor == nil, passiveLocalMonitor == nil else { return }
+        passiveGlobalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .systemDefined) {
             [weak self] event in
             Task { @MainActor in self?.handlePassive(event) }
         }
-        localMonitor = NSEvent.addLocalMonitorForEvents(matching: .systemDefined) {
+        passiveLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: .systemDefined) {
             [weak self] event in
             Task { @MainActor in self?.handlePassive(event) }
             return event
@@ -742,18 +1234,45 @@ final class SystemHUDController {
     }
 
     private func stopPassiveMonitoring() {
-        if let globalMonitor { NSEvent.removeMonitor(globalMonitor) }
-        if let localMonitor { NSEvent.removeMonitor(localMonitor) }
-        globalMonitor = nil
-        localMonitor = nil
+        if let passiveGlobalMonitor { NSEvent.removeMonitor(passiveGlobalMonitor) }
+        if let passiveLocalMonitor { NSEvent.removeMonitor(passiveLocalMonitor) }
+        passiveGlobalMonitor = nil
+        passiveLocalMonitor = nil
+    }
+
+    private func startCapsLockMonitoring() {
+        guard capsGlobalMonitor == nil, capsLocalMonitor == nil else { return }
+        capsGlobalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) {
+            [weak self] event in
+            Task { @MainActor in self?.handleCapsLock(event) }
+        }
+        capsLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) {
+            [weak self] event in
+            Task { @MainActor in self?.handleCapsLock(event) }
+            return event
+        }
+        _ = capsTracker.transition(to: NSEvent.modifierFlags.contains(.capsLock))
+    }
+
+    private func stopCapsLockMonitoring() {
+        if let capsGlobalMonitor { NSEvent.removeMonitor(capsGlobalMonitor) }
+        if let capsLocalMonitor { NSEvent.removeMonitor(capsLocalMonitor) }
+        capsGlobalMonitor = nil
+        capsLocalMonitor = nil
+        capsTracker = CapsLockHUDStateTracker()
+    }
+
+    private func handleCapsLock(_ event: NSEvent) {
+        guard settings?.capsLockHUDEnabled == true else { return }
+        let enabled = event.modifierFlags.contains(.capsLock)
+        guard let descriptor = capsTracker.transition(to: enabled) else { return }
+        present(descriptor)
     }
 
     private func handlePassive(_ event: NSEvent) {
         guard event.subtype.rawValue == 8,
               let settings,
-              settings.systemHUDsEnabled else {
-            return
-        }
+              settings.systemHUDsEnabled else { return }
 
         let data = event.data1
         let keyCode = UInt32((data & 0xFFFF0000) >> 16)
@@ -771,49 +1290,136 @@ final class SystemHUDController {
 
         passiveRefreshTask?.cancel()
         passiveRefreshTask = Task { @MainActor [weak self] in
-            do {
-                try await Task.sleep(for: .milliseconds(45))
-            } catch {
-                return
-            }
+            do { try await Task.sleep(for: .milliseconds(45)) } catch { return }
             guard !Task.isCancelled,
                   let self,
-                  let snapshot = backend.currentSnapshot(for: keyCode) else {
-                return
-            }
-            present(snapshot)
+                  let snapshot = backend.currentSnapshot(for: keyCode) else { return }
+            present(snapshot.descriptor)
         }
     }
 
-    private func present(_ snapshot: SystemHUDSnapshot) {
-        let value = min(max(snapshot.value, 0), 1)
+    private func seedBatteryState() {
+        guard let snapshot = batteryProvider.snapshot() else { return }
+        _ = batteryTracker.transition(
+            to: snapshot,
+            statusEnabled: false,
+            lowBatteryEnabled: false
+        )
+    }
+
+    private func handleBatteryChange() {
+        guard let settings,
+              let snapshot = batteryProvider.snapshot(),
+              let descriptor = batteryTracker.transition(
+                to: snapshot,
+                statusEnabled: settings.batteryStatusHUDEnabled,
+                lowBatteryEnabled: settings.lowBatteryHUDEnabled
+              ) else { return }
+        present(descriptor)
+    }
+
+    private func seedAudioOutputIdentity() {
+        guard let snapshot = currentAudioOutputSnapshot() else { return }
+        _ = audioTracker.transition(to: snapshot)
+    }
+
+    private func handleAudioOutputChange() {
+        guard settings?.audioDeviceHUDEnabled == true,
+              let snapshot = currentAudioOutputSnapshot(),
+              let descriptor = audioTracker.transition(to: snapshot) else { return }
+        present(descriptor)
+    }
+
+    private func currentAudioOutputSnapshot() -> AudioOutputDeviceSnapshot? {
+        guard let deviceID = backend.currentOutputDeviceID(),
+              let name = backend.outputDeviceName(deviceID: deviceID) else { return nil }
+        return AudioOutputDeviceSnapshot(
+            deviceID: deviceID,
+            name: name,
+            kind: AudioOutputDeviceKind.classify(name: name)
+        )
+    }
+
+    private func configureFocusObservation(enabled: Bool) {
+        guard enabled else {
+            focusObserver.stop()
+            focusTracker = FocusHUDStateTracker()
+            return
+        }
+
+        switch focusObserver.authorizationStatus {
+        case .authorized:
+            startFocusObservation()
+        case .notDetermined:
+            focusObserver.requestAuthorization { [weak self] status in
+                Task { @MainActor in
+                    guard let self else { return }
+                    if status == .authorized {
+                        self.startFocusObservation()
+                    } else {
+                        self.focusObserver.stop()
+                    }
+                }
+            }
+        case .denied, .restricted:
+            focusObserver.stop()
+        @unknown default:
+            focusObserver.stop()
+        }
+    }
+
+    private func startFocusObservation() {
+        focusTracker = FocusHUDStateTracker()
+        if let currentState = focusObserver.currentState {
+            _ = focusTracker.transition(to: currentState)
+        }
+        focusObserver.start { [weak self] isFocused in
+            Task { @MainActor in
+                guard let self,
+                      self.settings?.focusHUDEnabled == true,
+                      let descriptor = self.focusTracker.transition(to: isFocused) else {
+                    return
+                }
+                self.present(descriptor)
+            }
+        }
+    }
+
+    private func present(_ descriptor: SystemHUDDescriptor) {
+        guard let generation = arbiter.present(descriptor) else { return }
+        let current = arbiter.current ?? descriptor
         liveActivities.update(
             DynamicIslandLiveActivity(
                 id: LiveActivityStore.systemHUDActivityID,
                 kind: .system,
-                title: snapshot.title,
-                subtitle: "\(Int((value * 100).rounded()))%",
-                symbolName: snapshot.symbolName,
+                title: current.title,
+                subtitle: current.subtitle,
+                symbolName: current.symbolName,
                 priority: 200,
                 isActive: true,
-                progress: value,
-                updatedAt: snapshot.updatedAt
+                progress: current.progress,
+                updatedAt: current.updatedAt
             )
         )
-        scheduleDismiss()
+        scheduleDismiss(generation: generation, descriptor: current)
     }
 
-    private func scheduleDismiss() {
+    private func scheduleDismiss(generation: Int, descriptor: SystemHUDDescriptor) {
         dismissTask?.cancel()
-        let duration = max(0.5, min(settings?.systemHUDDurationSeconds ?? 1.4, 5))
+        let configured = settings?.systemHUDDurationSeconds ?? descriptor.preferredDuration
+        let requestedDuration: TimeInterval
+        switch descriptor.kind {
+        case .battery:
+            requestedDuration = max(configured, descriptor.preferredDuration)
+        default:
+            requestedDuration = configured
+        }
+        let duration = max(0.5, min(requestedDuration, 5))
         dismissTask = Task { @MainActor [weak self] in
-            do {
-                try await Task.sleep(for: .seconds(duration))
-            } catch {
-                return
-            }
-            guard !Task.isCancelled else { return }
-            self?.liveActivities.remove(id: LiveActivityStore.systemHUDActivityID)
+            do { try await Task.sleep(for: .seconds(duration)) } catch { return }
+            guard !Task.isCancelled, let self else { return }
+            guard arbiter.dismiss(generation: generation) else { return }
+            liveActivities.remove(id: LiveActivityStore.systemHUDActivityID)
         }
     }
 
@@ -822,8 +1428,6 @@ final class SystemHUDController {
     }
 
     nonisolated static func readDisplayBrightness() -> Double? {
-        SystemMediaControlBackend()
-            .currentSnapshot(for: SystemMediaKey.brightnessUp)?
-            .value
+        SystemMediaControlBackend().currentSnapshot(for: SystemMediaKey.brightnessUp)?.value
     }
 }

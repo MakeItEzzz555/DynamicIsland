@@ -23,6 +23,28 @@ final class CollapsedLiveActivitySelectorTests: XCTestCase {
         XCTAssertEqual(mode, .system(hud))
     }
 
+    func testRemovingSystemHUDRestoresUnderlyingPersistentWinner() {
+        let media = activity(id: "media", kind: .media, title: "Song", isActive: true)
+        let hud = activity(id: "systemHUD", kind: .system, title: "Volume")
+        let toggles = CollapsedLiveActivitySourceToggles(
+            liveActivitiesEnabled: true,
+            timerEnabled: true,
+            mediaEnabled: true,
+            fileTrayEnabled: true,
+            batteryEnabled: true,
+            systemHUDEnabled: true
+        )
+
+        XCTAssertEqual(
+            select([media, hud], toggles: toggles),
+            .system(hud)
+        )
+        XCTAssertEqual(
+            select([media], toggles: toggles),
+            .media
+        )
+    }
+
     func testSystemHUDCanRenderWhenPersistentLiveActivitiesAreDisabled() {
         let hud = activity(id: "systemHUD", kind: .system, title: "Brightness")
         let mode = select(
