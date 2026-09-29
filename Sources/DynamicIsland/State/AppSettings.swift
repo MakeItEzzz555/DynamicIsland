@@ -335,6 +335,12 @@ public final class AppSettings: ObservableObject {
         didSet { normalizeLiveActivityDismiss(oldValue: oldValue) }
     }
     @Published public var liveActivityAnimationEnabled: Bool { didSet { save(liveActivityAnimationEnabled, for: Key.liveActivityAnimationEnabled) } }
+    @Published public var allowSimultaneousLiveActivitySidecars: Bool {
+        didSet { save(allowSimultaneousLiveActivitySidecars, for: Key.allowSimultaneousLiveActivitySidecars) }
+    }
+    @Published public var timerSidecarPreference: LiveActivitySidePreference {
+        didSet { save(timerSidecarPreference.rawValue, for: Key.timerSidecarPreference) }
+    }
     @Published public var systemHUDsEnabled: Bool { didSet { save(systemHUDsEnabled, for: Key.systemHUDsEnabled) } }
     @Published public var replaceMacOSSystemHUDs: Bool { didSet { save(replaceMacOSSystemHUDs, for: Key.replaceMacOSSystemHUDs) } }
     @Published public var volumeHUDEnabled: Bool { didSet { save(volumeHUDEnabled, for: Key.volumeHUDEnabled) } }
@@ -553,6 +559,16 @@ public final class AppSettings: ObservableObject {
         liveActivityAutoDismissEnabled = Self.bool(defaults, Key.liveActivityAutoDismissEnabled, true)
         liveActivityAutoDismissSeconds = Self.double(defaults, Key.liveActivityAutoDismissSeconds, 6.0)
         liveActivityAnimationEnabled = Self.bool(defaults, Key.liveActivityAnimationEnabled, true)
+        allowSimultaneousLiveActivitySidecars = Self.bool(
+            defaults,
+            Key.allowSimultaneousLiveActivitySidecars,
+            true
+        )
+        timerSidecarPreference = Self.enumValue(
+            defaults,
+            Key.timerSidecarPreference,
+            .automatic
+        )
         systemHUDsEnabled = Self.bool(defaults, Key.systemHUDsEnabled, true)
         replaceMacOSSystemHUDs = Self.bool(defaults, Key.replaceMacOSSystemHUDs, true)
         volumeHUDEnabled = Self.bool(defaults, Key.volumeHUDEnabled, true)
@@ -678,7 +694,8 @@ public final class AppSettings: ObservableObject {
             Key.statsEnabled, Key.showCPU, Key.showMemory, Key.showGPU, Key.showNetwork, Key.showDisk, Key.showBattery, Key.showUptime,
             Key.clipboardHistoryEnabled, Key.clipboardHistoryMaximumItems,
             Key.clipboardHistoryPersistenceEnabled, Key.clipboardHistoryCaptureImagesEnabled,
-            Key.showExpandedLiveActivitiesSection, Key.systemHUDsEnabled, Key.replaceMacOSSystemHUDs,
+            Key.showExpandedLiveActivitiesSection, Key.allowSimultaneousLiveActivitySidecars,
+            Key.timerSidecarPreference, Key.systemHUDsEnabled, Key.replaceMacOSSystemHUDs,
             Key.volumeHUDEnabled, Key.brightnessHUDEnabled, Key.capsLockHUDEnabled,
             Key.batteryStatusHUDEnabled, Key.lowBatteryHUDEnabled, Key.audioDeviceHUDEnabled,
             Key.focusHUDEnabled, Key.systemHUDDurationSeconds
@@ -848,6 +865,16 @@ public final class AppSettings: ObservableObject {
         liveActivityAutoDismissEnabled = Self.bool(defaults, Key.liveActivityAutoDismissEnabled, true)
         liveActivityAutoDismissSeconds = Self.double(defaults, Key.liveActivityAutoDismissSeconds, 6.0)
         liveActivityAnimationEnabled = Self.bool(defaults, Key.liveActivityAnimationEnabled, true)
+        allowSimultaneousLiveActivitySidecars = Self.bool(
+            defaults,
+            Key.allowSimultaneousLiveActivitySidecars,
+            true
+        )
+        timerSidecarPreference = Self.enumValue(
+            defaults,
+            Key.timerSidecarPreference,
+            .automatic
+        )
         systemHUDsEnabled = Self.bool(defaults, Key.systemHUDsEnabled, true)
         replaceMacOSSystemHUDs = Self.bool(defaults, Key.replaceMacOSSystemHUDs, true)
         volumeHUDEnabled = Self.bool(defaults, Key.volumeHUDEnabled, true)
@@ -1372,6 +1399,8 @@ private enum Key {
     static let liveActivityAutoDismissEnabled = "liveActivityAutoDismissEnabled"
     static let liveActivityAutoDismissSeconds = "liveActivityAutoDismissSeconds"
     static let liveActivityAnimationEnabled = "liveActivityAnimationEnabled"
+    static let allowSimultaneousLiveActivitySidecars = "allowSimultaneousLiveActivitySidecars"
+    static let timerSidecarPreference = "timerSidecarPreference"
     static let systemHUDsEnabled = "systemHUDsEnabled"
     static let replaceMacOSSystemHUDs = "replaceMacOSSystemHUDs"
     static let volumeHUDEnabled = "volumeHUDEnabled"

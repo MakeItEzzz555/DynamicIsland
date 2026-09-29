@@ -90,6 +90,24 @@ final class AppSettingsTests: XCTestCase {
     }
 
     @MainActor
+    func testLiveActivitySidecarSettingsDefaultsPersistenceAndReset() {
+        let first = AppSettings(defaults: defaults)
+        XCTAssertTrue(first.allowSimultaneousLiveActivitySidecars)
+        XCTAssertEqual(first.timerSidecarPreference, .automatic)
+
+        first.allowSimultaneousLiveActivitySidecars = false
+        first.timerSidecarPreference = .leading
+
+        let second = AppSettings(defaults: defaults)
+        XCTAssertFalse(second.allowSimultaneousLiveActivitySidecars)
+        XCTAssertEqual(second.timerSidecarPreference, .leading)
+
+        second.resetModuleSettings()
+        XCTAssertTrue(second.allowSimultaneousLiveActivitySidecars)
+        XCTAssertEqual(second.timerSidecarPreference, .automatic)
+    }
+
+    @MainActor
     func testSystemHUDDefaultsAndPersistence() {
         let first = AppSettings(defaults: defaults)
         XCTAssertTrue(first.systemHUDsEnabled)

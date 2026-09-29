@@ -1,11 +1,12 @@
 import Foundation
 
-enum DynamicIslandLiveActivityKind: String, Equatable {
+enum DynamicIslandLiveActivityKind: String, Equatable, Sendable {
     case media
     case timer
     case fileTray
     case battery
     case system
+    case agent
 }
 
 enum CollapsedLiveActivityPrioritySource: String, CaseIterable, Identifiable {
@@ -146,6 +147,7 @@ struct CollapsedLiveActivitySourceToggles: Equatable {
 enum CollapsedIslandContentMode: Equatable {
     case inactive
     case media
+    case agent(DynamicIslandLiveActivity)
     case system(DynamicIslandLiveActivity)
     case timer(DynamicIslandLiveActivity)
     case fileTray(DynamicIslandLiveActivity)
@@ -173,7 +175,7 @@ enum LiveActivityTimeFormatting {
     }
 }
 
-struct DynamicIslandLiveActivity: Identifiable, Equatable {
+struct DynamicIslandLiveActivity: Identifiable, Equatable, Sendable {
     let id: String
     let kind: DynamicIslandLiveActivityKind
     let title: String
@@ -303,6 +305,8 @@ enum CollapsedLiveActivitySelector {
             }
         case .system:
             return .systemHUD
+        case .agent:
+            return nil
         }
     }
 

@@ -611,50 +611,100 @@ final class OverlayWindowController {
             let session = attention.primary.flatMap { modules.agentEvents.session(for: $0.session) }
             return AgentCollapsedShellPresentation.attention(attention, session: session)
         }
-        guard case .inactive = collapsedContentMode else { return .normal }
-        return AgentCollapsedShellPresentation.routine(
-            sessions: modules.agentEvents.sessions,
-            enabled: settings.agentActivityEnabled
-        ) ?? .normal
+        switch collapsedContentMode {
+        case .inactive, .agent:
+            return AgentCollapsedShellPresentation.routine(
+                sessions: modules.agentEvents.sessions,
+                enabled: settings.agentActivityEnabled
+            ) ?? .normal
+        default:
+            return .normal
+        }
     }
 
     private func collapsedActivityLayoutProfile(
         activities: [DynamicIslandLiveActivity]
     ) -> CollapsedActivityLayoutProfile? {
-        switch collapsedContentMode(activities: activities) {
-        case .inactive:
-            return nil
+        let resolution = collapsedLayoutResolution(activities: activities)
+        if resolution.primary == nil, resolution.overlayTransient != nil {
+            return .systemHUD
+        }
+
+        guard let primary = resolution.primary?.activity else { return nil }
+        switch primary.kind {
         case .media:
             return .media(
                 showsArtwork: settings.showAlbumArtwork,
                 showsVisualizer: settings.showVisualizer && settings.showCollapsedVisualizer
             )
-        case .system:
-            return .systemHUD
+        case .agent:
+            return nil
         case .timer:
             return .timer
         case .fileTray:
             return .file
         case .battery:
             return .battery
+        case .system:
+            return .systemHUD
         }
     }
 
     private func collapsedContentMode(activities: [DynamicIslandLiveActivity]) -> CollapsedIslandContentMode {
-        CollapsedLiveActivitySelector.select(
-            activities: activities,
+        guard let primary = collapsedLayoutResolution(activities: activities).primary?.activity else {
+            return .inactive
+        }
+        switch primary.kind {
+        case .media:
+            return .media
+        case .agent:
+            return .agent(primary)
+        case .timer:
+            return .timer(primary)
+        case .fileTray:
+            return .fileTray(primary)
+        case .battery:
+            return .battery(primary)
+        case .system:
+            return .inactive
+        }
+    }
+
+    private func collapsedLayoutResolution(
+        activities: [DynamicIslandLiveActivity]
+    ) -> LiveActivityLayoutResolution {
+        let toggles = CollapsedLiveActivitySourceToggles(
+            liveActivitiesEnabled: settings.liveActivitiesEnabled,
+            timerEnabled: settings.timerEnabled && settings.showTimerLiveActivity,
+            mediaEnabled: settings.mediaEnabled &&
+                settings.showMusicLiveActivity &&
+                (settings.showMediaWhenPaused || modules.media.isPlaying),
+            fileTrayEnabled: settings.trayEnabled &&
+                settings.fileShelfEnabled &&
+                settings.showFileDropLiveActivity,
+            batteryEnabled: settings.showBatteryLiveActivity,
+            systemHUDEnabled: settings.systemHUDsEnabled
+        )
+        let projected = LiveActivityRuntimeProjection.activities(
+            stored: activities,
             priorities: settings.collapsedLiveActivityPrioritySettings,
-            toggles: CollapsedLiveActivitySourceToggles(
-                liveActivitiesEnabled: settings.liveActivitiesEnabled,
-                timerEnabled: settings.timerEnabled && settings.showTimerLiveActivity,
-                mediaEnabled: settings.mediaEnabled &&
-                    settings.showMusicLiveActivity &&
-                    (settings.showMediaWhenPaused || modules.media.isPlaying),
-                fileTrayEnabled: settings.trayEnabled &&
-                    settings.fileShelfEnabled &&
-                    settings.showFileDropLiveActivity,
-                batteryEnabled: settings.showBatteryLiveActivity,
-                systemHUDEnabled: settings.systemHUDsEnabled
+            toggles: toggles,
+            agentSessions: modules.agentEvents.sessions,
+            agentEnabled: settings.agentActivityEnabled &&
+                modules.agentAttention.presentation == nil
+        )
+        return LiveActivityLayoutResolver.resolve(
+            activities: projected,
+            context: LiveActivityLayoutContext(
+                availableWidth: max(resolvedExpandedSize.width, settings.collapsedSize.width),
+                hasHardwareNotch: layoutStore.hasHardwareNotch,
+                hardwareNotchWidth: layoutStore.hardwareNotchWidth,
+                primaryMinimumWidth: max(settings.collapsedSize.width, 172),
+                primaryIdealWidth: max(settings.collapsedSize.width, 226),
+                sidecarDiameter: LiveActivitySidecarMetrics.diameter,
+                sidecarGap: LiveActivitySidecarMetrics.gap,
+                allowSimultaneousSidecars: settings.allowSimultaneousLiveActivitySidecars,
+                timerSidePreference: settings.timerSidecarPreference
             )
         )
     }
@@ -1093,8 +1143,19 @@ final class OverlayWindowController {
         // Window-level passthrough is the primary click-through control. Returning nil from the
         // hosting view hit-test is kept only as a secondary safeguard because the NSPanel itself
         // can still block clicks for other apps when its frame covers the screen.
-        let interactiveRect = currentVisibleIslandScreenRect
-        let shouldReceiveMouse = !interactiveRect.isEmpty && interactiveRect.contains(screenPoint)
+        let shouldReceiveMouse: Bool
+        if islandState.state == .expanded || layoutStore.isCollapseShellOnly {
+            let interactiveRect = currentVisibleIslandScreenRect
+            shouldReceiveMouse = !interactiveRect.isEmpty && interactiveRect.contains(screenPoint)
+        } else {
+            shouldReceiveMouse = collapsedVisibleLocalFrames.contains { frame in
+                let screenFrame = screenRect(for: frame)
+                guard !screenFrame.isEmpty else { return false }
+                return screenFrame
+                    .insetBy(dx: -collapsedHoverTolerance, dy: -collapsedHoverTolerance)
+                    .contains(screenPoint)
+            }
+        }
         islandPanel.ignoresMouseEvents = !shouldReceiveMouse
     }
 
@@ -1276,10 +1337,29 @@ final class OverlayWindowController {
         return baseRegion.insetBy(dx: -tolerance, dy: -tolerance)
     }
 
+    private var collapsedVisibleLocalFrames: [CGRect] {
+        if layoutStore.collapsedPreviewActive,
+           !layoutStore.collapsedPreviewSurfaceFrame.isEmpty {
+            return [layoutStore.collapsedPreviewSurfaceFrame]
+        }
+
+        var frames = [layoutStore.collapsedSurfaceFrame]
+        if !layoutStore.collapsedLeadingSidecarFrame.isEmpty {
+            frames.append(layoutStore.collapsedLeadingSidecarFrame)
+        }
+        if !layoutStore.collapsedTrailingSidecarFrame.isEmpty {
+            frames.append(layoutStore.collapsedTrailingSidecarFrame)
+        }
+        return frames
+    }
+
     private var collapsedInteractiveSurfaceFrame: CGRect {
         if layoutStore.collapsedPreviewActive,
            !layoutStore.collapsedPreviewSurfaceFrame.isEmpty {
             return layoutStore.collapsedPreviewSurfaceFrame
+        }
+        if !layoutStore.collapsedCompositeInteractionFrame.isEmpty {
+            return layoutStore.collapsedCompositeInteractionFrame
         }
         return layoutStore.collapsedSurfaceFrame
     }

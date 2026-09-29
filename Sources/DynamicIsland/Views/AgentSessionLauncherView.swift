@@ -12,6 +12,7 @@ struct AgentSessionLauncherView: View {
     @State private var showsRepositoryPathEntry = false
     @State private var repositoryPathError: String?
     @State private var starting = false
+    @State private var projectedRepositories: [AgentLocalRepositoryChoice] = []
 
     private var liveSessions: [AgentSession] {
         AgentSessionLauncherProjection.liveSessions(
@@ -29,7 +30,11 @@ struct AgentSessionLauncherView: View {
     }
 
     private var repositories: [AgentLocalRepositoryChoice] {
-        AgentSessionLauncherProjection.repositories(sessions, query: query)
+        AgentSessionLauncherProjection.filterRepositories(projectedRepositories, query: query)
+    }
+
+    private var repositoryProjectionKey: String {
+        AgentSessionLauncherProjection.repositoryProjectionKey(sessions)
     }
 
     private var selectedProvider: AgentProvider {
@@ -105,6 +110,14 @@ struct AgentSessionLauncherView: View {
                 .stroke(.white.opacity(0.11), lineWidth: 1)
         }
         .shadow(color: .black.opacity(0.55), radius: 12, y: 5)
+        .task(id: repositoryProjectionKey) {
+            let snapshot = sessions
+            let projected = await Task.detached(priority: .utility) {
+                AgentSessionLauncherProjection.repositories(snapshot, query: "")
+            }.value
+            guard !Task.isCancelled else { return }
+            projectedRepositories = projected
+        }
         .onExitCommand(perform: onDismiss)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Agent session and repository launcher")
@@ -351,7 +364,7 @@ struct AgentSessionLauncherView: View {
 
 }
 
-struct AgentLocalRepositoryChoice: Identifiable, Equatable {
+struct AgentLocalRepositoryChoice: Identifiable, Equatable, Sendable {
     let path: String
     let name: String
     let branch: String?
@@ -642,6 +655,43 @@ enum AgentSessionLauncherProjection {
         ].compactMap { $0 }.contains { $0.localizedCaseInsensitiveContains(query) }
     }
 
+    static func repositoryProjectionKey(_ sessions: [AgentSession]) -> String {
+        sessions
+            .sorted { lhs, rhs in
+                repositoryProjectionSessionKey(lhs) < repositoryProjectionSessionKey(rhs)
+            }
+            .map { session in
+                let project = session.project
+                return [
+                    repositoryProjectionSessionKey(session),
+                    project.workingDirectory ?? "",
+                    project.displayName ?? "",
+                    project.gitBranch ?? ""
+                ].joined(separator: "|")
+            }
+            .joined(separator: "\n")
+    }
+
+    private static func repositoryProjectionSessionKey(_ session: AgentSession) -> String {
+        [
+            session.id.sessionID.provider.deterministicSortKey,
+            session.id.sessionID.nativeID,
+            String(session.id.generation.rawValue)
+        ].joined(separator: ":")
+    }
+
+    static func filterRepositories(
+        _ repositories: [AgentLocalRepositoryChoice],
+        query: String
+    ) -> [AgentLocalRepositoryChoice] {
+        guard !query.isEmpty else { return repositories }
+        return repositories.filter { choice in
+            choice.name.localizedCaseInsensitiveContains(query) ||
+            choice.path.localizedCaseInsensitiveContains(query) ||
+            (choice.branch?.localizedCaseInsensitiveContains(query) ?? false)
+        }
+    }
+
     static func repositories(
         _ sessions: [AgentSession],
         query: String,
@@ -674,12 +724,6 @@ enum AgentSessionLauncherProjection {
                     name: (display?.isEmpty == false ? display! : URL(fileURLWithPath: root).lastPathComponent),
                     branch: session.project.gitBranch
                 )
-            }
-            .filter { choice in
-                query.isEmpty ||
-                choice.name.localizedCaseInsensitiveContains(query) ||
-                choice.path.localizedCaseInsensitiveContains(query) ||
-                (choice.branch?.localizedCaseInsensitiveContains(query) ?? false)
             }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }

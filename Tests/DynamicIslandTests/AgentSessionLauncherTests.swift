@@ -768,6 +768,75 @@ final class AgentSessionLauncherTests: XCTestCase {
         XCTAssertEqual(result.map(\.path), [repository.path])
     }
 
+    func testRepositoryProjectionKeyIgnoresActivityOnlyUpdates() {
+        let now = Date(timeIntervalSince1970: 10_000)
+        let original = makeSession(
+            nativeID: "same-thread",
+            state: .idle,
+            availability: .resumable,
+            project: "DynamicIsland",
+            path: "/repos/DynamicIsland",
+            now: now
+        )
+        var activityUpdate = original
+        activityUpdate.state = .working
+        activityUpdate.lastUpdatedAt = now.addingTimeInterval(120)
+
+        XCTAssertEqual(
+            AgentSessionLauncherProjection.repositoryProjectionKey([original]),
+            AgentSessionLauncherProjection.repositoryProjectionKey([activityUpdate])
+        )
+    }
+
+    func testRepositoryProjectionKeyChangesWhenRepositoryMetadataChanges() {
+        let now = Date(timeIntervalSince1970: 10_000)
+        let original = makeSession(
+            nativeID: "same-thread",
+            state: .idle,
+            availability: .resumable,
+            project: "DynamicIsland",
+            path: "/repos/DynamicIsland",
+            now: now
+        )
+        var moved = original
+        moved.project.workingDirectory = "/repos/Other"
+
+        XCTAssertNotEqual(
+            AgentSessionLauncherProjection.repositoryProjectionKey([original]),
+            AgentSessionLauncherProjection.repositoryProjectionKey([moved])
+        )
+    }
+
+    func testRepositoryFilteringIsPureAndDoesNotRequireFilesystemProjection() {
+        let repositories = [
+            AgentLocalRepositoryChoice(
+                path: "/repos/DynamicIsland",
+                name: "DynamicIsland",
+                branch: "main"
+            ),
+            AgentLocalRepositoryChoice(
+                path: "/repos/Website",
+                name: "Website",
+                branch: "feature/ui"
+            )
+        ]
+
+        XCTAssertEqual(
+            AgentSessionLauncherProjection.filterRepositories(
+                repositories,
+                query: "feature/ui"
+            ).map(\.path),
+            ["/repos/Website"]
+        )
+        XCTAssertEqual(
+            AgentSessionLauncherProjection.filterRepositories(
+                repositories,
+                query: "dynamic"
+            ).map(\.path),
+            ["/repos/DynamicIsland"]
+        )
+    }
+
     private func makeSession(
         nativeID: String,
         generation: UInt64 = 1,

@@ -384,6 +384,10 @@ struct IslandRootView: View {
     }
 
     var body: some View {
+        animatedIslandCanvas
+    }
+
+    private var baseIslandCanvas: some View {
         ZStack(alignment: .topLeading) {
             if settings.overlayEnabled {
                 IslandSurface(
@@ -395,146 +399,209 @@ struct IslandRootView: View {
                     collapsedBrightGlowColor: collapsedAgentBrightGlowColor,
                     forcesCollapsedGlow: shouldShowCollapsedAgentGlow
                 ) {
-                    if showsExpandedContent {
-                        ExpandedIslandView(
-                            settings: settings,
-                            modules: modules,
-                            contentVisible: contentVisible,
-                            shouldRenderContent: expandedContentMounted,
-                            isContentRemoving: isContentRemoving,
-                            onShortcutLaunched: onRequestCollapse,
-                            onTimerStarted: {
-                                if settings.collapseAfterStartingTimer {
-                                    onRequestCollapse()
-                                }
-                            },
-                            rendersExpandedVisualContent: rendersExpandedVisualContent,
-                            onOpenSettings: onOpenSettings,
-                            layoutStore: layoutStore,
-                            escapeRouter: escapeRouter,
-                            islandGestureCoordinator: gestureCoordinator,
-                            islandGestureContext: gestureContext,
-                            islandGestureCallbacks: gestureCallbacks,
-                            islandSwipeSensitivity: settings.gestureSensitivity
-                        )
-                    } else {
-                        CompactIslandView(
-                            settings: settings,
-                            modules: modules,
-                            contentMode: collapsedContentMode,
-                            previewContent: CollapsedPreviewContent.mounted(
-                                collapsedPreviewContent,
-                                previewActive: isCollapsedPreviewActive
-                            ),
-                            previewActive: isCollapsedPreviewActive,
-                            hardwareNotchWidth: layoutStore.hardwareNotchWidth,
-                            collapsedLeftRegionWidth: layoutStore.collapsedLeftRegionWidth,
-                            collapsedNotchCoreWidth: layoutStore.collapsedNotchCoreWidth,
-                            collapsedRightRegionWidth: layoutStore.collapsedRightRegionWidth,
-                            isNotchIntegratedShell: layoutStore.hasHardwareNotch
-                        )
-                            .contentShape(Rectangle())
-                            .onHover(perform: handleCollapsedHover)
-                            .onTapGesture {
-                                guard settings.expandOnClick else { return }
-                                deactivateCollapsedPreview()
-                                if let attention = agentAttention.presentation,
-                                   let primary = attention.primary {
-                                    navigation.showAgents()
-                                    modules.agentManagedControl.selectSession(primary.session)
-                                }
-                                onRequestExpand()
-                            }
-                            .modifier(
-                                IslandPointerGestureModifier(
-                                    settings: settings,
-                                    coordinator: gestureCoordinator,
-                                    context: gestureContext,
-                                    callbacks: gestureCallbacks,
-                                    swipeSensitivity: settings.gestureSensitivity
-                                )
-                            )
-                    }
+                    islandSurfaceContent
                 }
                 .notchIntegrated(layoutStore.hasHardwareNotch)
                 .shellMorphing(layoutStore.isShellMorphing)
                 .collapseShellOnly(layoutStore.isCollapseShellOnly)
                 .frame(width: surfaceSize.width, height: surfaceSize.height)
-                .position(x: surfaceFrame.midX, y: layoutStore.canvasSize.height - surfaceFrame.midY)
+                .position(
+                    x: surfaceFrame.midX,
+                    y: layoutStore.canvasSize.height - surfaceFrame.midY
+                )
                 .id(layoutStore.overlayPresentationGeneration)
+
+                collapsedSidecarOverlay
             }
         }
         .shellMorphing(layoutStore.isShellMorphing)
         .collapseShellOnly(layoutStore.isCollapseShellOnly)
-        .frame(width: layoutStore.canvasSize.width, height: layoutStore.canvasSize.height, alignment: .topLeading)
+        .frame(
+            width: layoutStore.canvasSize.width,
+            height: layoutStore.canvasSize.height,
+            alignment: .topLeading
+        )
         .coordinateSpace(name: IslandCanvasCoordinateSpace.name)
-        .onAppear {
-            modules.navigation.ensureValidSelection(using: settings)
-            synchronizePresentationForCurrentState()
-            updateCollapsedPreviewLayout()
-        }
-        .onChange(of: layoutStore.overlayPresentationGeneration) { _, _ in
-            sequenceGeneration += 1
-            deactivateCollapsedPreview()
-            finalizeCompactPresentation()
-        }
-        .onChange(of: islandState.state) { _, newValue in
-            handleStateChange(newValue)
-        }
-        .onChange(of: isCollapsedPreviewActive) { _, _ in
-            updateCollapsedPreviewLayout()
-        }
-        .onChange(of: collapsedPreviewSurfaceFrame) { _, _ in
-            updateCollapsedPreviewLayout()
-        }
-        .onChange(of: settings.collapsedHoverPreviewEnabled) { _, enabled in
-            if !enabled {
-                deactivateCollapsedPreview()
-            }
-        }
-        .onChange(of: navigation.isFileDropTargeted) { _, _ in
-            if !isCollapsedPreviewAllowed {
-                deactivateCollapsedPreview()
-            } else {
+    }
+
+    private var presentationObservedCanvas: some View {
+        baseIslandCanvas
+            .onAppear {
+                modules.navigation.ensureValidSelection(using: settings)
+                synchronizePresentationForCurrentState()
                 updateCollapsedPreviewLayout()
+                synchronizeCollapsedSidecarGeometry()
             }
-        }
-        .onChange(of: media.hasActiveMediaSource) { _, _ in
-            if !isCollapsedPreviewAllowed {
+            .onChange(of: layoutStore.overlayPresentationGeneration) { _, _ in
+                sequenceGeneration += 1
                 deactivateCollapsedPreview()
-            }
-        }
-        .onChange(of: layoutStore.isExpandedContentExiting) { _, newValue in
-            if newValue {
-                beginContentExitSequence()
-            }
-        }
-        .onChange(of: layoutStore.isCollapseShellOnly) { _, newValue in
-            if !newValue, islandState.state == .collapsed {
                 finalizeCompactPresentation()
             }
-        }
-        .onReceive(settings.objectWillChange) { _ in
-            DispatchQueue.main.async {
-                modules.navigation.ensureValidSelection(using: settings)
+            .onChange(of: islandState.state) { _, newValue in
+                handleStateChange(newValue)
+                synchronizeCollapsedSidecarGeometry()
             }
+            .onChange(of: isCollapsedPreviewActive) { _, _ in
+                updateCollapsedPreviewLayout()
+                synchronizeCollapsedSidecarGeometry()
+            }
+            .onChange(of: collapsedCompositeGeometry) { _, _ in
+                synchronizeCollapsedSidecarGeometry()
+            }
+            .onChange(of: agentAttention.presentation != nil) { _, _ in
+                synchronizeCollapsedSidecarGeometry()
+            }
+    }
+
+    private var navigationObservedCanvas: some View {
+        presentationObservedCanvas
+            .onChange(of: collapsedPreviewSurfaceFrame) { _, _ in
+                updateCollapsedPreviewLayout()
+            }
+            .onChange(of: settings.collapsedHoverPreviewEnabled) { _, enabled in
+                if !enabled {
+                    deactivateCollapsedPreview()
+                }
+            }
+            .onChange(of: navigation.isFileDropTargeted) { _, _ in
+                if !isCollapsedPreviewAllowed {
+                    deactivateCollapsedPreview()
+                } else {
+                    updateCollapsedPreviewLayout()
+                }
+            }
+            .onChange(of: media.hasActiveMediaSource) { _, _ in
+                if !isCollapsedPreviewAllowed {
+                    deactivateCollapsedPreview()
+                }
+            }
+            .onChange(of: layoutStore.isExpandedContentExiting) { _, newValue in
+                if newValue {
+                    beginContentExitSequence()
+                }
+            }
+            .onChange(of: layoutStore.isCollapseShellOnly) { _, newValue in
+                if !newValue, islandState.state == .collapsed {
+                    finalizeCompactPresentation()
+                }
+            }
+    }
+
+    private var interactionObservedCanvas: some View {
+        navigationObservedCanvas
+            .onReceive(settings.objectWillChange) { _ in
+                DispatchQueue.main.async {
+                    modules.navigation.ensureValidSelection(using: settings)
+                }
+            }
+            .onDrop(
+                of: FileDropProviderLoader.acceptedTypes,
+                isTargeted: fileDropTargetBinding
+            ) { providers in
+                loadDroppedFilesFromCollapsedIsland(from: providers)
+            }
+            .onChange(of: activeRoutineAgentProvider) { _, provider in
+                agentGlow.update(activeProvider: provider)
+            }
+            .onDisappear {
+                agentGlow.stop()
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("DynamicIsland")
+    }
+
+    private var animatedIslandCanvas: some View {
+        interactionObservedCanvas
+            .animation(shellAnimation, value: islandState.state)
+            .animation(shellAnimation, value: layoutStore.isShellMorphing)
+            .animation(shellAnimation, value: layoutStore.collapsedSurfaceFrame)
+            .animation(shellAnimation, value: layoutStore.collapsedPresentationProfile)
+            .animation(collapsedPreviewAnimation, value: isCollapsedPreviewActive)
+    }
+
+    @ViewBuilder
+    private var islandSurfaceContent: some View {
+        if showsExpandedContent {
+            ExpandedIslandView(
+                settings: settings,
+                modules: modules,
+                contentVisible: contentVisible,
+                shouldRenderContent: expandedContentMounted,
+                isContentRemoving: isContentRemoving,
+                onShortcutLaunched: onRequestCollapse,
+                onTimerStarted: {
+                    if settings.collapseAfterStartingTimer {
+                        onRequestCollapse()
+                    }
+                },
+                rendersExpandedVisualContent: rendersExpandedVisualContent,
+                onOpenSettings: onOpenSettings,
+                layoutStore: layoutStore,
+                escapeRouter: escapeRouter,
+                islandGestureCoordinator: gestureCoordinator,
+                islandGestureContext: gestureContext,
+                islandGestureCallbacks: gestureCallbacks,
+                islandSwipeSensitivity: settings.gestureSensitivity
+            )
+        } else {
+            compactIslandContent
         }
-        .onDrop(of: FileDropProviderLoader.acceptedTypes, isTargeted: fileDropTargetBinding) { providers in
-            loadDroppedFilesFromCollapsedIsland(from: providers)
+    }
+
+    private var compactIslandContent: some View {
+        CompactIslandView(
+            settings: settings,
+            modules: modules,
+            contentMode: collapsedContentMode,
+            layoutResolution: collapsedLayoutResolution,
+            previewContent: CollapsedPreviewContent.mounted(
+                collapsedPreviewContent,
+                previewActive: isCollapsedPreviewActive
+            ),
+            previewActive: isCollapsedPreviewActive,
+            hardwareNotchWidth: layoutStore.hardwareNotchWidth,
+            collapsedLeftRegionWidth: layoutStore.collapsedLeftRegionWidth,
+            collapsedNotchCoreWidth: layoutStore.collapsedNotchCoreWidth,
+            collapsedRightRegionWidth: layoutStore.collapsedRightRegionWidth,
+            isNotchIntegratedShell: layoutStore.hasHardwareNotch
+        )
+        .contentShape(Rectangle())
+        .onHover(perform: handleCollapsedHover)
+        .onTapGesture {
+            guard settings.expandOnClick else { return }
+            deactivateCollapsedPreview()
+            if let attention = agentAttention.presentation,
+               let primary = attention.primary {
+                navigation.showAgents()
+                modules.agentManagedControl.selectSession(primary.session)
+            }
+            onRequestExpand()
         }
-        .onChange(of: activeRoutineAgentProvider) { _, provider in
-            agentGlow.update(activeProvider: provider)
+        .modifier(
+            IslandPointerGestureModifier(
+                settings: settings,
+                coordinator: gestureCoordinator,
+                context: gestureContext,
+                callbacks: gestureCallbacks,
+                swipeSensitivity: settings.gestureSensitivity
+            )
+        )
+    }
+
+    @ViewBuilder
+    private var collapsedSidecarOverlay: some View {
+        if !showsExpandedContent,
+           agentAttention.presentation == nil,
+           !isCollapsedPreviewActive {
+            LiveActivitySidecarLayer(
+                resolution: collapsedLayoutResolution,
+                compositeGeometry: collapsedCompositeGeometry,
+                canvasHeight: layoutStore.canvasSize.height,
+                reduceMotion: reduceMotion,
+                onActivate: activateSidecar
+            )
+            .animation(shellAnimation, value: collapsedLayoutResolution)
         }
-        .onDisappear {
-            agentGlow.stop()
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("DynamicIsland")
-        .animation(shellAnimation, value: islandState.state)
-        .animation(shellAnimation, value: layoutStore.isShellMorphing)
-        .animation(shellAnimation, value: layoutStore.collapsedSurfaceFrame)
-        .animation(shellAnimation, value: layoutStore.collapsedPresentationProfile)
-        .animation(collapsedPreviewAnimation, value: isCollapsedPreviewActive)
     }
 
     private var activeRoutineAgentProvider: AgentProvider? {
@@ -598,7 +665,8 @@ struct IslandRootView: View {
         IslandGestureContext(
             presentationState: islandState.state,
             selectedPage: navigation.selectedPage,
-            mediaControlAvailable: collapsedContentMode == .media && media.isTransportControlAvailable,
+            mediaControlAvailable: collapsedLayoutResolution.primary?.activity.kind == .media &&
+                media.isTransportControlAvailable,
             timerIsRunning: modules.timer.isRunning,
             timerCanResume: modules.timer.remainingSeconds > 0,
             collapsedPreviewActive: isCollapsedPreviewActive,
@@ -674,21 +742,113 @@ struct IslandRootView: View {
         return CollapsedPreviewContent(rows: rows)
     }
 
-    private var collapsedContentMode: CollapsedIslandContentMode {
-        CollapsedLiveActivitySelector.select(
-            activities: liveActivities.activities,
+    private var collapsedSourceToggles: CollapsedLiveActivitySourceToggles {
+        CollapsedLiveActivitySourceToggles(
+            liveActivitiesEnabled: settings.liveActivitiesEnabled,
+            timerEnabled: settings.timerEnabled && settings.showTimerLiveActivity,
+            mediaEnabled: settings.mediaEnabled &&
+                settings.showMusicLiveActivity &&
+                (settings.showMediaWhenPaused || media.isPlaying),
+            fileTrayEnabled: settings.trayEnabled &&
+                settings.fileShelfEnabled &&
+                settings.showFileDropLiveActivity,
+            batteryEnabled: settings.showBatteryLiveActivity,
+            systemHUDEnabled: settings.systemHUDsEnabled
+        )
+    }
+
+    private var collapsedLayoutActivities: [DynamicIslandLiveActivity] {
+        LiveActivityRuntimeProjection.activities(
+            stored: liveActivities.activities,
             priorities: settings.collapsedLiveActivityPrioritySettings,
-            toggles: CollapsedLiveActivitySourceToggles(
-                liveActivitiesEnabled: settings.liveActivitiesEnabled,
-                timerEnabled: settings.timerEnabled && settings.showTimerLiveActivity,
-                mediaEnabled: settings.mediaEnabled &&
-                    settings.showMusicLiveActivity &&
-                    (settings.showMediaWhenPaused || media.isPlaying),
-                fileTrayEnabled: settings.trayEnabled && settings.fileShelfEnabled && settings.showFileDropLiveActivity,
-                batteryEnabled: settings.showBatteryLiveActivity,
-                systemHUDEnabled: settings.systemHUDsEnabled
+            toggles: collapsedSourceToggles,
+            agentSessions: modules.agentEvents.sessions,
+            agentEnabled: settings.agentActivityEnabled && agentAttention.presentation == nil
+        )
+    }
+
+    private var collapsedLayoutResolution: LiveActivityLayoutResolution {
+        LiveActivityLayoutResolver.resolve(
+            activities: collapsedLayoutActivities,
+            context: LiveActivityLayoutContext(
+                availableWidth: max(layoutStore.canvasSize.width, layoutStore.collapsedSurfaceFrame.width),
+                hasHardwareNotch: layoutStore.hasHardwareNotch,
+                hardwareNotchWidth: layoutStore.hardwareNotchWidth,
+                primaryMinimumWidth: max(layoutStore.collapsedSurfaceFrame.width, 172),
+                primaryIdealWidth: max(layoutStore.collapsedSurfaceFrame.width, 226),
+                sidecarDiameter: LiveActivitySidecarMetrics.diameter,
+                sidecarGap: LiveActivitySidecarMetrics.gap,
+                allowSimultaneousSidecars: settings.allowSimultaneousLiveActivitySidecars,
+                timerSidePreference: settings.timerSidecarPreference
             )
         )
+    }
+
+    private var collapsedContentMode: CollapsedIslandContentMode {
+        guard let primary = collapsedLayoutResolution.primary?.activity else {
+            return .inactive
+        }
+        switch primary.kind {
+        case .media:
+            return .media
+        case .agent:
+            return .agent(primary)
+        case .timer:
+            return .timer(primary)
+        case .fileTray:
+            return .fileTray(primary)
+        case .battery:
+            return .battery(primary)
+        case .system:
+            return .inactive
+        }
+    }
+
+    private var collapsedCompositeGeometry: LiveActivityCompositeGeometry {
+        LiveActivityCompositeGeometry.resolve(
+            primaryFrame: layoutStore.collapsedSurfaceFrame,
+            canvasSize: layoutStore.canvasSize,
+            resolution: collapsedLayoutResolution,
+            sidecarDiameter: LiveActivitySidecarMetrics.diameter,
+            sidecarGap: LiveActivitySidecarMetrics.gap
+        )
+    }
+
+    private func activateSidecar(_ presentation: LiveActivityPresentation) {
+        switch presentation.activity.kind {
+        case .timer:
+            navigation.showTimer()
+            onRequestExpand()
+        case .agent:
+            navigation.showAgents()
+            onRequestExpand()
+        case .media:
+            navigation.showIsland()
+            onRequestExpand()
+        case .fileTray:
+            navigation.showTray()
+            onRequestExpand()
+        case .battery, .system:
+            break
+        }
+    }
+
+    private func synchronizeCollapsedSidecarGeometry() {
+        if islandState.state == .collapsed,
+           agentAttention.presentation == nil,
+           !isCollapsedPreviewActive {
+            layoutStore.updateCollapsedSidecars(collapsedCompositeGeometry)
+        } else {
+            layoutStore.updateCollapsedSidecars(
+                LiveActivityCompositeGeometry.resolve(
+                    primaryFrame: layoutStore.collapsedSurfaceFrame,
+                    canvasSize: layoutStore.canvasSize,
+                    resolution: .empty,
+                    sidecarDiameter: LiveActivitySidecarMetrics.diameter,
+                    sidecarGap: LiveActivitySidecarMetrics.gap
+                )
+            )
+        }
     }
 
     private var isCollapsedPreviewAllowed: Bool {
@@ -843,6 +1003,17 @@ struct IslandRootView: View {
                 symbolName: activity.symbolName,
                 fallbackSymbolName: "battery.75percent",
                 kind: .battery,
+                isPrimary: isPrimary
+            )
+        case .agent:
+            return CollapsedPreviewRowContent(
+                id: activity.id,
+                title: activity.title,
+                subtitle: activity.subtitle,
+                trailingText: nil,
+                symbolName: activity.symbolName,
+                fallbackSymbolName: "cpu",
+                kind: .liveActivity,
                 isPrimary: isPrimary
             )
         case .system:
@@ -1435,6 +1606,7 @@ struct CompactIslandView: View {
     @ObservedObject var settings: AppSettings
     let modules: IslandModules
     let contentMode: CollapsedIslandContentMode
+    let layoutResolution: LiveActivityLayoutResolution
     let previewContent: CollapsedPreviewContent?
     let previewActive: Bool
     let hardwareNotchWidth: CGFloat
@@ -1454,6 +1626,7 @@ struct CompactIslandView: View {
         settings: AppSettings,
         modules: IslandModules,
         contentMode: CollapsedIslandContentMode = .inactive,
+        layoutResolution: LiveActivityLayoutResolution = .empty,
         previewContent: CollapsedPreviewContent? = nil,
         previewActive: Bool = false,
         hardwareNotchWidth: CGFloat = 0,
@@ -1465,6 +1638,7 @@ struct CompactIslandView: View {
         self.settings = settings
         self.modules = modules
         self.contentMode = contentMode
+        self.layoutResolution = layoutResolution
         self.previewContent = previewContent
         self.previewActive = previewActive
         self.hardwareNotchWidth = hardwareNotchWidth
@@ -1567,69 +1741,105 @@ struct CompactIslandView: View {
     @ViewBuilder
     private func compactContentRow(activeBranch: Bool, visualizerColor: Color) -> some View {
         ZStack {
-            switch contentMode {
-            case .media where activeBranch:
+            persistentCompactContent(activeBranch: activeBranch, visualizerColor: visualizerColor)
+
+            if let overlay = layoutResolution.overlayTransient?.activity {
+                CollapsedSystemHUDCompactView(
+                    activity: overlay,
+                    layout: sideSlotGeometry
+                )
+                .background(Color.black.opacity(0.97))
+                .transition(.compactMediaContent)
+                .zIndex(10)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func persistentCompactContent(activeBranch: Bool, visualizerColor: Color) -> some View {
+        switch contentMode {
+        case .media where activeBranch:
+            sideSlotLayout {
+                if settings.showAlbumArtwork {
+                    CompactMediaView(media: media)
+                }
+            } right: {
+                if settings.showVisualizer && settings.showCollapsedVisualizer {
+                    AudioVisualizerView(
+                        isPlaying: media.isPlaying,
+                        isActive: media.hasActiveMediaSource,
+                        accentColor: visualizerColor,
+                        variant: .compact,
+                        barCount: 7,
+                        pauseDuringShellMorph: settings.disableVisualizerDuringMorph
+                    )
+                }
+            }
+            .transition(.compactMediaContent)
+
+        case .agent:
+            if let presentation = AgentCompactPresentation.make(
+                sessions: agentEvents.sessions,
+                enabled: settings.agentActivityEnabled
+            ), let primary = presentation.sessions.first {
                 sideSlotLayout {
-                    if settings.showAlbumArtwork {
-                        CompactMediaView(media: media)
-                    }
+                    AgentCompactRoutineLeadingView(session: primary)
                 } right: {
-                    if settings.showVisualizer && settings.showCollapsedVisualizer {
-                        AudioVisualizerView(
-                            isPlaying: media.isPlaying,
-                            isActive: media.hasActiveMediaSource,
-                            accentColor: visualizerColor,
-                            variant: .compact,
-                            barCount: 7,
-                            pauseDuringShellMorph: settings.disableVisualizerDuringMorph
-                        )
-                    }
+                    AgentCompactRoutineTrailingView(session: primary)
                 }
                 .transition(.compactMediaContent)
-            case .system(let activity):
-                CollapsedSystemHUDCompactView(
-                    activity: activity,
-                    layout: sideSlotGeometry
-                )
-                    .transition(.compactMediaContent)
-            case .timer(let activity):
-                CollapsedTimerActivityCompactView(
-                    activity: activity,
-                    layout: sideSlotGeometry
-                )
-                    .transition(.compactMediaContent)
-            case .fileTray(let activity):
-                CollapsedFileActivityCompactView(
-                    activity: activity,
-                    layout: sideSlotGeometry
-                )
-                    .transition(.compactMediaContent)
-            case .battery(let activity):
-                CollapsedBatteryActivityCompactView(
-                    activity: activity,
-                    layout: sideSlotGeometry
-                )
-                    .transition(.compactMediaContent)
-            case .inactive:
-                if agentAttention.presentation == nil,
-                   let presentation = AgentCompactPresentation.make(
-                       sessions: agentEvents.sessions,
-                       enabled: settings.agentActivityEnabled
-                   ), let primary = presentation.sessions.first {
-                    sideSlotLayout {
-                        AgentCompactRoutineLeadingView(session: primary)
-                    } right: {
-                        AgentCompactRoutineTrailingView(session: primary)
-                    }
-                        .transition(.opacity)
-                } else {
-                    Color.clear
-                        .transition(.opacity)
+            } else {
+                Color.clear
+            }
+
+        case .system(let activity):
+            CollapsedSystemHUDCompactView(
+                activity: activity,
+                layout: sideSlotGeometry
+            )
+            .transition(.compactMediaContent)
+
+        case .timer(let activity):
+            CollapsedTimerActivityCompactView(
+                activity: activity,
+                layout: sideSlotGeometry
+            )
+            .transition(.compactMediaContent)
+
+        case .fileTray(let activity):
+            CollapsedFileActivityCompactView(
+                activity: activity,
+                layout: sideSlotGeometry
+            )
+            .transition(.compactMediaContent)
+
+        case .battery(let activity):
+            CollapsedBatteryActivityCompactView(
+                activity: activity,
+                layout: sideSlotGeometry
+            )
+            .transition(.compactMediaContent)
+
+        case .inactive:
+            if agentAttention.presentation == nil,
+               let presentation = AgentCompactPresentation.make(
+                   sessions: agentEvents.sessions,
+                   enabled: settings.agentActivityEnabled
+               ), let primary = presentation.sessions.first {
+                sideSlotLayout {
+                    AgentCompactRoutineLeadingView(session: primary)
+                } right: {
+                    AgentCompactRoutineTrailingView(session: primary)
                 }
-            case .media:
+                .transition(.opacity)
+            } else {
                 Color.clear
                     .transition(.opacity)
             }
+
+        case .media:
+            Color.clear
+                .transition(.opacity)
         }
     }
 
@@ -1751,6 +1961,218 @@ struct CompactCollapsedSideSlotLayout<Left: View, Right: View>: View {
                 right()
             }
         }
+    }
+}
+
+
+enum LiveActivitySidecarMetrics {
+    static let diameter: CGFloat = 30
+    static let gap: CGFloat = 7
+}
+
+struct RadialActivityProgressView<Content: View>: View {
+    let progress: Double
+    let content: Content
+
+    init(
+        progress: Double,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.progress = min(max(progress, 0), 1)
+        self.content = content()
+    }
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(.white.opacity(0.12), lineWidth: 1.6)
+
+            Circle()
+                .trim(from: 0, to: progress)
+                .stroke(
+                    .white.opacity(0.88),
+                    style: StrokeStyle(lineWidth: 1.8, lineCap: .round)
+                )
+                .rotationEffect(.degrees(-90))
+
+            content
+        }
+        .animation(.easeInOut(duration: 0.18), value: progress)
+    }
+}
+
+struct CircleSidecarView: View {
+    let symbolName: String
+    let accessibilityLabel: String
+
+    var body: some View {
+        ZStack {
+            Circle().fill(Color.black.opacity(0.98))
+            Circle().stroke(.white.opacity(0.12), lineWidth: 1)
+            SafeSystemImage(symbolName: symbolName, fallbackSymbolName: "circle.fill")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(.white.opacity(0.88))
+        }
+        .accessibilityLabel(accessibilityLabel)
+    }
+}
+
+struct ProgressCircleSidecarView: View {
+    let activity: DynamicIslandLiveActivity
+
+    var body: some View {
+        RadialActivityProgressView(progress: progress) {
+            if activity.kind == .timer {
+                Image(systemName: activity.isActive ? "timer" : "pause.fill")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(activity.isActive ? .orange : .white.opacity(0.86))
+            } else {
+                SafeSystemImage(
+                    symbolName: activity.symbolName,
+                    fallbackSymbolName: "circle.fill"
+                )
+                .font(.system(size: 8.5, weight: .bold))
+                .foregroundStyle(sidecarAccent)
+            }
+        }
+        .padding(2)
+        .background(Color.black.opacity(0.98), in: Circle())
+        .overlay(Circle().stroke(.white.opacity(0.08), lineWidth: 1))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityValue("\(Int((progress * 100).rounded())) percent")
+    }
+
+    private var progress: Double {
+        LiveActivityStore.clampedProgress(activity.progress) ?? 0
+    }
+
+    private var sidecarAccent: Color {
+        switch activity.kind {
+        case .battery:
+            switch activity.batteryState {
+            case .low: .orange
+            case .charging, .pluggedIn: .green
+            case .full, .none: .white.opacity(0.86)
+            }
+        default:
+            .white.opacity(0.86)
+        }
+    }
+
+    private var accessibilityLabel: String {
+        [activity.title, activity.subtitle]
+            .compactMap { $0 }
+            .joined(separator: ", ")
+    }
+}
+
+struct CompactCapsuleSidecarView: View {
+    let activity: DynamicIslandLiveActivity
+
+    var body: some View {
+        HStack(spacing: 3) {
+            SafeSystemImage(
+                symbolName: activity.symbolName,
+                fallbackSymbolName: "circle.fill"
+            )
+            .font(.system(size: 8, weight: .bold))
+
+            if let subtitle = activity.subtitle {
+                Text(subtitle)
+                    .font(.system(size: 6.8, weight: .bold, design: .rounded))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.55)
+            }
+        }
+        .foregroundStyle(.white.opacity(0.86))
+        .padding(.horizontal, 5)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.black.opacity(0.98), in: Capsule())
+        .overlay(Capsule().stroke(.white.opacity(0.11), lineWidth: 1))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(
+            [activity.title, activity.subtitle]
+                .compactMap { $0 }
+                .joined(separator: ", ")
+        )
+    }
+}
+
+struct LiveActivitySidecarLayer: View {
+    let resolution: LiveActivityLayoutResolution
+    let compositeGeometry: LiveActivityCompositeGeometry
+    let canvasHeight: CGFloat
+    let reduceMotion: Bool
+    let onActivate: (LiveActivityPresentation) -> Void
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            if let leading = resolution.leadingSidecar,
+               let frame = compositeGeometry.leadingSidecarFrame {
+                sidecarButton(leading)
+                    .frame(width: frame.width, height: frame.height)
+                    .position(x: frame.midX, y: canvasHeight - frame.midY)
+                    .transition(sidecarTransition)
+            }
+
+            if let trailing = resolution.trailingSidecar,
+               let frame = compositeGeometry.trailingSidecarFrame {
+                sidecarButton(trailing)
+                    .frame(width: frame.width, height: frame.height)
+                    .position(x: frame.midX, y: canvasHeight - frame.midY)
+                    .transition(sidecarTransition)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .allowsHitTesting(true)
+    }
+
+    @ViewBuilder
+    private func sidecarButton(_ presentation: LiveActivityPresentation) -> some View {
+        Button {
+            onActivate(presentation)
+        } label: {
+            sidecarView(presentation)
+        }
+        .buttonStyle(.plain)
+        .help(sidecarHelp(presentation.activity))
+        .accessibilityLabel(sidecarHelp(presentation.activity))
+    }
+
+    @ViewBuilder
+    private func sidecarView(_ presentation: LiveActivityPresentation) -> some View {
+        switch presentation.descriptor.compactShape {
+        case .circle:
+            if presentation.activity.progress != nil {
+                ProgressCircleSidecarView(activity: presentation.activity)
+            } else {
+                CircleSidecarView(
+                    symbolName: presentation.activity.symbolName,
+                    accessibilityLabel: sidecarHelp(presentation.activity)
+                )
+            }
+        case .capsule, .progressPill:
+            CompactCapsuleSidecarView(activity: presentation.activity)
+        case .notchWing, .elongatedPill:
+            CircleSidecarView(
+                symbolName: presentation.activity.symbolName,
+                accessibilityLabel: sidecarHelp(presentation.activity)
+            )
+        }
+    }
+
+    private var sidecarTransition: AnyTransition {
+        if reduceMotion {
+            return .opacity
+        }
+        return .opacity.combined(with: .scale(scale: 0.82))
+    }
+
+    private func sidecarHelp(_ activity: DynamicIslandLiveActivity) -> String {
+        [activity.title, activity.subtitle]
+            .compactMap { $0 }
+            .joined(separator: " · ")
     }
 }
 
@@ -3126,6 +3548,10 @@ private struct LiveActivitiesModuleView: View {
             navigation.showIsland()
         case .battery:
             break
+        case .agent:
+            if settings.agentActivityEnabled, settings.showAgentsTab {
+                navigation.showAgents()
+            }
         case .system:
             break
         }

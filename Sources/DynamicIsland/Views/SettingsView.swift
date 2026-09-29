@@ -704,6 +704,22 @@ struct SettingsView: View {
                 )
             }
 
+            SettingsGroup("Multi-Activity Layout") {
+                Toggle(
+                    "Allow simultaneous sidecars",
+                    isOn: $settings.allowSimultaneousLiveActivitySidecars
+                )
+                Picker("Timer side", selection: $settings.timerSidecarPreference) {
+                    ForEach(LiveActivitySidePreference.allCases) { preference in
+                        Text(preference.displayName).tag(preference)
+                    }
+                }
+                LiveActivityLayoutSettingsPreview(settings: settings)
+                HelpText(
+                    "Automatic placement keeps the strongest activity in the center and moves compatible compact activities into leading or trailing sidecars. Transient HUDs overlay the composition without destroying it."
+                )
+            }
+
             SettingsGroup("Collapsed Live Activity Priority") {
                 PriorityStepperRow(
                     title: CollapsedLiveActivityPrioritySource.runningTimer.displayName,
@@ -1234,5 +1250,241 @@ private struct SystemHUDSettingsPreview: View {
             progress: descriptor.progress,
             updatedAt: Date()
         )
+    }
+}
+
+
+private enum LiveActivityLayoutPreviewScenario: String, CaseIterable, Identifiable {
+    case media = "Media"
+    case mediaTimer = "Media + Timer"
+    case mediaBatteryTimer = "Battery + Media + Timer"
+    case agentTimer = "Agent + Timer"
+    case mediaVolume = "Media + Volume HUD"
+    case constrained = "Constrained"
+
+    var id: String { rawValue }
+}
+
+private struct LiveActivityLayoutSettingsPreview: View {
+    @ObservedObject var settings: AppSettings
+    @State private var scenario: LiveActivityLayoutPreviewScenario = .mediaTimer
+
+    private let canvasSize = CGSize(width: 320, height: 68)
+    private let primaryFrame = CGRect(x: 52, y: 19, width: 216, height: 34)
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Text("Layout Preview")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Picker("Scenario", selection: $scenario) {
+                    ForEach(LiveActivityLayoutPreviewScenario.allCases) { item in
+                        Text(item.rawValue).tag(item)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 175)
+            }
+
+            ZStack(alignment: .topLeading) {
+                Color.clear
+
+                previewPrimary
+                    .frame(width: primaryFrame.width, height: primaryFrame.height)
+                    .position(
+                        x: primaryFrame.midX,
+                        y: canvasSize.height - primaryFrame.midY
+                    )
+
+                LiveActivitySidecarLayer(
+                    resolution: resolution,
+                    compositeGeometry: compositeGeometry,
+                    canvasHeight: canvasSize.height,
+                    reduceMotion: true,
+                    onActivate: { _ in }
+                )
+
+                if let overlay = resolution.overlayTransient?.activity {
+                    CollapsedSystemHUDCompactView(
+                        activity: overlay,
+                        layout: CompactCollapsedSideSlotGeometry(
+                            isNotchIntegrated: false,
+                            leftRegionWidth: 0,
+                            notchCoreWidth: 0,
+                            rightRegionWidth: 0
+                        )
+                    )
+                    .padding(.horizontal, 14)
+                    .frame(width: primaryFrame.width, height: primaryFrame.height)
+                    .background(Color.black.opacity(0.985), in: Capsule())
+                    .position(
+                        x: primaryFrame.midX,
+                        y: canvasSize.height - primaryFrame.midY
+                    )
+                }
+            }
+            .frame(width: canvasSize.width, height: canvasSize.height)
+            .background(.white.opacity(0.02), in: RoundedRectangle(cornerRadius: 10))
+            .overlay {
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(.white.opacity(0.06), lineWidth: 1)
+            }
+        }
+    }
+
+    private var previewPrimary: some View {
+        HStack(spacing: 7) {
+            if resolution.primary?.activity.kind == .media {
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(.white.opacity(0.17))
+                    .frame(width: 22, height: 22)
+                    .overlay {
+                        Image(systemName: "music.note")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(.white.opacity(0.75))
+                    }
+            } else if let primary = resolution.primary?.activity {
+                Image(systemName: primary.symbolName)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Color.white.opacity(0.85))
+                    .frame(width: 22)
+            }
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(resolution.primary?.activity.title ?? "DynamicIsland")
+                    .font(.system(size: 9.5, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .lineLimit(1)
+                if let subtitle = resolution.primary?.activity.subtitle {
+                    Text(subtitle)
+                        .font(.system(size: 7.5, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.44))
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer(minLength: 4)
+
+            if resolution.primary?.activity.kind == .media {
+                HStack(alignment: .bottom, spacing: 2) {
+                    ForEach(0..<5, id: \.self) { index in
+                        Capsule()
+                            .fill(.white.opacity(0.62))
+                            .frame(width: 2, height: CGFloat(5 + (index % 3) * 3))
+                    }
+                }
+                .frame(width: 22, height: 15)
+            }
+        }
+        .padding(.horizontal, 8)
+        .background(Color.black.opacity(0.985), in: Capsule(style: .continuous))
+        .overlay {
+            Capsule(style: .continuous)
+                .stroke(.white.opacity(0.08), lineWidth: 1)
+        }
+    }
+
+    private var resolution: LiveActivityLayoutResolution {
+        LiveActivityLayoutResolver.resolve(
+            activities: activities,
+            context: LiveActivityLayoutContext(
+                availableWidth: scenario == .constrained ? 240 : canvasSize.width,
+                hasHardwareNotch: false,
+                hardwareNotchWidth: 0,
+                primaryMinimumWidth: 172,
+                primaryIdealWidth: primaryFrame.width,
+                sidecarDiameter: LiveActivitySidecarMetrics.diameter,
+                sidecarGap: LiveActivitySidecarMetrics.gap,
+                allowSimultaneousSidecars: settings.allowSimultaneousLiveActivitySidecars,
+                timerSidePreference: settings.timerSidecarPreference
+            )
+        )
+    }
+
+    private var compositeGeometry: LiveActivityCompositeGeometry {
+        LiveActivityCompositeGeometry.resolve(
+            primaryFrame: primaryFrame,
+            canvasSize: canvasSize,
+            resolution: resolution,
+            sidecarDiameter: LiveActivitySidecarMetrics.diameter,
+            sidecarGap: LiveActivitySidecarMetrics.gap
+        )
+    }
+
+    private var activities: [DynamicIslandLiveActivity] {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let media = DynamicIslandLiveActivity(
+            id: "preview-media",
+            kind: .media,
+            title: "Now Playing",
+            subtitle: "Artist",
+            symbolName: "music.note",
+            priority: 80,
+            isActive: true,
+            progress: 0.42,
+            updatedAt: now
+        )
+        let timer = DynamicIslandLiveActivity(
+            id: "preview-timer",
+            kind: .timer,
+            title: "Timer",
+            subtitle: "4:18",
+            symbolName: "timer",
+            priority: 90,
+            isActive: true,
+            progress: 0.64,
+            updatedAt: now
+        )
+        let battery = DynamicIslandLiveActivity(
+            id: "preview-battery",
+            kind: .battery,
+            title: "Battery",
+            subtitle: "18%",
+            symbolName: "battery.25percent",
+            priority: 85,
+            isActive: true,
+            progress: 0.18,
+            updatedAt: now,
+            batteryState: .low
+        )
+        let agent = DynamicIslandLiveActivity(
+            id: "preview-agent",
+            kind: .agent,
+            title: "Codex",
+            subtitle: "Working",
+            symbolName: "terminal.fill",
+            priority: 130,
+            isActive: true,
+            progress: nil,
+            updatedAt: now
+        )
+        let volume = DynamicIslandLiveActivity(
+            id: "preview-system",
+            kind: .system,
+            title: "Volume",
+            subtitle: "68%",
+            symbolName: "speaker.wave.2.fill",
+            priority: 200,
+            isActive: true,
+            progress: 0.68,
+            updatedAt: now
+        )
+
+        switch scenario {
+        case .media:
+            return [media]
+        case .mediaTimer:
+            return [media, timer]
+        case .mediaBatteryTimer:
+            return [media, battery, timer]
+        case .agentTimer:
+            return [agent, timer]
+        case .mediaVolume:
+            return [media, timer, volume]
+        case .constrained:
+            return [media, battery, timer]
+        }
     }
 }

@@ -33,6 +33,9 @@ final class IslandLayoutStore: ObservableObject {
     @Published var isExpandedContentExiting = false
     @Published var collapsedPreviewActive = false
     @Published var collapsedPreviewSurfaceFrame: CGRect = .zero
+    @Published private(set) var collapsedLeadingSidecarFrame: CGRect = .zero
+    @Published private(set) var collapsedTrailingSidecarFrame: CGRect = .zero
+    @Published private(set) var collapsedCompositeInteractionFrame: CGRect = .zero
     @Published var panelFrame: CGRect = .zero
     @Published private(set) var isExpandedScrollGestureSuppressed = false
     @Published private(set) var expandedContentScrollRegion: CGRect = .zero
@@ -78,6 +81,9 @@ final class IslandLayoutStore: ObservableObject {
         expandedSurfaceFrame = canvas.expandedSurfaceFrame
         collapsedPreviewActive = false
         collapsedPreviewSurfaceFrame = .zero
+        collapsedLeadingSidecarFrame = .zero
+        collapsedTrailingSidecarFrame = .zero
+        collapsedCompositeInteractionFrame = collapsedSurfaceFrame
         collapsedSize = collapsedSurfaceFrame.size
         expandedSize = canvas.expandedSurfaceFrame.size
         self.hasHardwareNotch = hasHardwareNotch
@@ -120,6 +126,9 @@ final class IslandLayoutStore: ObservableObject {
         if !collapsedPreviewActive {
             collapsedPreviewSurfaceFrame = .zero
         }
+        collapsedLeadingSidecarFrame = .zero
+        collapsedTrailingSidecarFrame = .zero
+        collapsedCompositeInteractionFrame = collapsedSurfaceFrame
         collapsedSize = collapsedSurfaceFrame.size
         expandedSize = localExpandedFrame.size
         self.hasHardwareNotch = hasHardwareNotch
@@ -163,6 +172,22 @@ final class IslandLayoutStore: ObservableObject {
             )
         }
         #endif
+    }
+
+    func updateCollapsedSidecars(_ geometry: LiveActivityCompositeGeometry) {
+        let leading = geometry.leadingSidecarFrame?.integral ?? .zero
+        let trailing = geometry.trailingSidecarFrame?.integral ?? .zero
+        let interaction = geometry.interactionFrame.integral
+
+        if collapsedLeadingSidecarFrame != leading {
+            collapsedLeadingSidecarFrame = leading
+        }
+        if collapsedTrailingSidecarFrame != trailing {
+            collapsedTrailingSidecarFrame = trailing
+        }
+        if collapsedCompositeInteractionFrame != interaction {
+            collapsedCompositeInteractionFrame = interaction
+        }
     }
 
     func updateCollapsedPreview(active: Bool, frame: CGRect) {
