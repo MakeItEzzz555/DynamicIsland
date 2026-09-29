@@ -86,9 +86,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         liveActivities: liveActivities,
         capabilities: capabilityRegistry
     )
+    private lazy var windowSnapController = WindowSnapController(
+        liveActivities: liveActivities,
+        capabilities: capabilityRegistry
+    )
     private lazy var productivity = ProductivityModules(
         capabilities: capabilityRegistry,
-        keepAwake: keepAwakeController
+        keepAwake: keepAwakeController,
+        windowSnap: windowSnapController
     )
     private lazy var systemHUDController = SystemHUDController(
         settings: settings,

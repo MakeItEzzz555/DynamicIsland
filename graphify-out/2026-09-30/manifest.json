@@ -24,9 +24,9 @@
     "semantic_hash": "0b4b7c29df007001c39c574a0dda9bd2"
   },
   "Sources/DynamicIsland/App/DynamicIslandApp.swift": {
-    "mtime": 1790707982.143513,
-    "seen": 1790708622.063468,
-    "ast_hash": "34738c2da0e37c47138cda3bb6909e6a",
+    "mtime": 1790719775.0367913,
+    "seen": 1790719873.94559,
+    "ast_hash": "a137c5bda7fcb842cf938771df939b4c",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/App/LaunchAtLoginController.swift": {
@@ -102,9 +102,9 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Modules/IslandModule.swift": {
-    "mtime": 1790530876.8259673,
-    "seen": 1790587127.787943,
-    "ast_hash": "71555bb8a7b3d16c855d99b6936b9f1c",
+    "mtime": 1790719775.0364213,
+    "seen": 1790719873.945606,
+    "ast_hash": "fb483d3bcfc8e2e95bf46740e73532a2",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Modules/LiveActivityStore.swift": {
@@ -1353,6 +1353,24 @@
     "mtime": 1790719555.87991,
     "seen": 1790719582.3840709,
     "ast_hash": "984e627b5f8026c67df826fb4afc1802",
+    "semantic_hash": ""
+  },
+  "Sources/DynamicIsland/Modules/KeepAwakeController.swift": {
+    "mtime": 1790719775.0090184,
+    "seen": 1790719873.945607,
+    "ast_hash": "03e4f606acecf41c83e6cdc6f50b1bd5",
+    "semantic_hash": ""
+  },
+  "Sources/DynamicIsland/Modules/ProductivityModules.swift": {
+    "mtime": 1790719775.011563,
+    "seen": 1790719873.945614,
+    "ast_hash": "8a63b796d57c13cc6b7019f2f05b14bc",
+    "semantic_hash": ""
+  },
+  "Tests/DynamicIslandTests/KeepAwakeControllerTests.swift": {
+    "mtime": 1790719775.0416136,
+    "seen": 1790719873.945696,
+    "ast_hash": "c8c90b49b2d77f90465b30261f07e47b",
     "semantic_hash": ""
   }
 }
