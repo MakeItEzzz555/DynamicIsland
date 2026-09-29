@@ -90,10 +90,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         liveActivities: liveActivities,
         capabilities: capabilityRegistry
     )
+    private lazy var terminalController = TerminalSessionController(
+        liveActivities: liveActivities,
+        capabilities: capabilityRegistry
+    )
     private lazy var productivity = ProductivityModules(
         capabilities: capabilityRegistry,
         keepAwake: keepAwakeController,
-        windowSnap: windowSnapController
+        windowSnap: windowSnapController,
+        terminal: terminalController
     )
     private lazy var systemHUDController = SystemHUDController(
         settings: settings,
@@ -238,6 +243,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         #endif
         keepAwakeController.stop()
+        terminalController.terminate()
         systemHUDController.stop()
         agentBridge.stop()
         agentManagedControl.stop()
