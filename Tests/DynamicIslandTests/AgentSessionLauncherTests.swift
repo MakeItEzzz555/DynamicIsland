@@ -134,6 +134,89 @@ final class AgentSessionLauncherTests: XCTestCase {
         )
     }
 
+
+    func testCurrentThreadPerProjectPrefersFreshActiveOverNewerResumable() {
+        let now = Date(timeIntervalSince1970: 30_000)
+        let active = makeSession(
+            nativeID: "active-current",
+            state: .working,
+            availability: .loaded,
+            project: "DynamicIsland",
+            path: "/repos/DynamicIsland",
+            now: now.addingTimeInterval(-5)
+        )
+        let resumable = makeSession(
+            nativeID: "newer-resumable",
+            state: .idle,
+            availability: .resumable,
+            project: "DynamicIsland",
+            path: "/repos/DynamicIsland",
+            now: now
+        )
+
+        let current = AgentSessionLauncherProjection.currentSessionIDs(
+            [resumable, active],
+            now: now
+        )
+
+        XCTAssertEqual(current, Set([active.id]))
+    }
+
+    func testCurrentThreadPerProjectRejectsStaleActiveInFavorOfFreshResumable() {
+        let now = Date(timeIntervalSince1970: 30_000)
+        let staleActive = makeSession(
+            nativeID: "stale-active",
+            state: .working,
+            availability: .loaded,
+            project: "DynamicIsland",
+            path: "/repos/DynamicIsland",
+            now: now.addingTimeInterval(-120)
+        )
+        let resumable = makeSession(
+            nativeID: "fresh-resumable",
+            state: .idle,
+            availability: .resumable,
+            project: "DynamicIsland",
+            path: "/repos/DynamicIsland",
+            now: now.addingTimeInterval(-10)
+        )
+
+        let current = AgentSessionLauncherProjection.currentSessionIDs(
+            [staleActive, resumable],
+            now: now
+        )
+
+        XCTAssertEqual(current, Set([resumable.id]))
+    }
+
+    func testCurrentThreadPerProjectPrefersActiveManagedThread() {
+        let now = Date(timeIntervalSince1970: 30_000)
+        let managed = makeSession(
+            nativeID: "managed",
+            state: .idle,
+            availability: .loaded,
+            project: "DynamicIsland",
+            path: "/repos/DynamicIsland",
+            now: now.addingTimeInterval(-30)
+        )
+        let observed = makeSession(
+            nativeID: "observed",
+            state: .working,
+            availability: .loaded,
+            project: "DynamicIsland",
+            path: "/repos/DynamicIsland",
+            now: now
+        )
+
+        let current = AgentSessionLauncherProjection.currentSessionIDs(
+            [managed, observed],
+            now: now,
+            activeManagedSessionIDs: Set([managed.id.sessionID])
+        )
+
+        XCTAssertEqual(current, Set([managed.id]))
+    }
+
     func testFiveResumableThreadsForSameRepositoryShowOnlyNewestExactSession() {
         let now = Date(timeIntervalSince1970: 20_000)
         let sessions = (0..<5).map { index in

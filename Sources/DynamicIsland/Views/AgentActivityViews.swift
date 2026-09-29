@@ -98,6 +98,8 @@ struct AgentActivityDashboardView: View {
     @ObservedObject var managedControl: AgentManagedSessionController
     @ObservedObject var layoutStore: IslandLayoutStore
     let availableHeight: CGFloat
+    let contentVisible: Bool
+    let isContentRemoving: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -110,6 +112,10 @@ struct AgentActivityDashboardView: View {
             managedControl: managedControl,
             layoutStore: layoutStore,
             availableHeight: availableHeight,
+            settings: settings,
+            contentVisible: contentVisible,
+            isContentRemoving: isContentRemoving,
+            reduceMotion: reduceMotion,
             transcriptLoadDelay: IslandContentTransitionTiming.shellDuration(
                 settings: settings,
                 reduceMotion: reduceMotion
@@ -126,6 +132,10 @@ struct AgentDashboardContentView: View {
     @ObservedObject var managedControl: AgentManagedSessionController
     var layoutStore: IslandLayoutStore? = nil
     let availableHeight: CGFloat
+    let settings: AppSettings?
+    let contentVisible: Bool
+    let isContentRemoving: Bool
+    let reduceMotion: Bool
     let transcriptLoadDelay: TimeInterval
     private let initialSelectedSessionID: AgentSessionInstanceID?
     @State private var showsSessionLauncher = false
@@ -140,6 +150,10 @@ struct AgentDashboardContentView: View {
         layoutStore: IslandLayoutStore? = nil,
         availableHeight: CGFloat,
         initialSelectedSessionID: AgentSessionInstanceID? = nil,
+        settings: AppSettings? = nil,
+        contentVisible: Bool = true,
+        isContentRemoving: Bool = false,
+        reduceMotion: Bool = false,
         transcriptLoadDelay: TimeInterval = 0.4
     ) {
         self.sessions = sessions
@@ -150,6 +164,10 @@ struct AgentDashboardContentView: View {
         self.layoutStore = layoutStore
         self.availableHeight = availableHeight
         self.initialSelectedSessionID = initialSelectedSessionID
+        self.settings = settings
+        self.contentVisible = contentVisible
+        self.isContentRemoving = isContentRemoving
+        self.reduceMotion = reduceMotion
         self.transcriptLoadDelay = transcriptLoadDelay
     }
 
@@ -177,20 +195,24 @@ struct AgentDashboardContentView: View {
                 : []
             VStack(alignment: .leading, spacing: 7) {
                 if showsUsage, !metrics.isEmpty {
-                    AgentGlobalSummaryStrip(metrics: metrics, layout: layout)
+                    stagedAgentContent(index: 1) {
+                        AgentGlobalSummaryStrip(metrics: metrics, layout: layout)
+                    }
                 }
 
-                AgentCLIControlBar(
+                stagedAgentContent(index: 2) {
+                    AgentCLIControlBar(
                     sessions: controlSessions,
                     managedControl: managedControl,
                     approvalControl: approvalControl,
                     launcherOpen: showsSessionLauncher,
-                    onToggleLauncher: {
-                        withAnimation(.easeOut(duration: 0.14)) {
-                            showsSessionLauncher.toggle()
+                        onToggleLauncher: {
+                            withAnimation(.easeOut(duration: 0.14)) {
+                                showsSessionLauncher.toggle()
+                            }
                         }
-                    }
-                )
+                    )
+                }
 
                 if showsSessionLauncher {
                     AgentSessionLauncherView(
@@ -209,30 +231,36 @@ struct AgentDashboardContentView: View {
                     .frame(maxHeight: .infinity, alignment: .top)
                     .layoutPriority(2)
                 } else if controlSessions.isEmpty {
-                    AgentEmptyConsoleState(managedControl: managedControl)
+                    stagedAgentContent(index: 3) {
+                        AgentEmptyConsoleState(managedControl: managedControl)
+                    }
                 } else {
                     if let pending = approvalControl.nextPendingRequest(),
                        pending.key.session != selectedSession?.id,
                        let approvalSession = sessions.first(where: { $0.id == pending.key.session }) {
-                        AgentConsoleApprovalRow(
-                            request: pending,
-                            session: approvalSession,
-                            approvalControl: approvalControl
-                        )
+                        stagedAgentContent(index: 3) {
+                            AgentConsoleApprovalRow(
+                                request: pending,
+                                session: approvalSession,
+                                approvalControl: approvalControl
+                            )
+                        }
                     }
 
                     if let selectedSession {
-                        AgentSelectedSessionControlView(
-                            session: selectedSession,
-                            sessions: controlSessions,
-                            managedControl: managedControl,
-                            approvalControl: approvalControl,
-                            detailHeight: max(verticalLayout.selectedDetailHeight, 138),
-                            activityLimit: max(verticalLayout.selectedDetailActivityLimit, 6),
-                            layoutStore: layoutStore,
-                            transcriptReady: transcriptLoadGate.isReady(for: selectedSession.id)
-                        )
-                        .layoutPriority(2)
+                        stagedAgentContent(index: 3) {
+                            AgentSelectedSessionControlView(
+                                session: selectedSession,
+                                sessions: controlSessions,
+                                managedControl: managedControl,
+                                approvalControl: approvalControl,
+                                detailHeight: max(verticalLayout.selectedDetailHeight, 138),
+                                activityLimit: max(verticalLayout.selectedDetailActivityLimit, 6),
+                                layoutStore: layoutStore,
+                                transcriptReady: transcriptLoadGate.isReady(for: selectedSession.id)
+                            )
+                            .layoutPriority(2)
+                        }
                     }
                 }
             }
@@ -266,6 +294,25 @@ struct AgentDashboardContentView: View {
             layoutStore?.isTransientInteractionActive = false
             layoutStore?.setExpandedScrollGestureSuppressed(false)
             layoutStore?.setExpandedContentScrollRegion(.zero)
+        }
+    }
+
+    @ViewBuilder
+    private func stagedAgentContent<Content: View>(
+        index: Int,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        if let settings {
+            content()
+                .innerBlurScaleClean(
+                    settings: settings,
+                    isVisible: contentVisible,
+                    isRemoval: isContentRemoving,
+                    index: index,
+                    reduceMotion: reduceMotion
+                )
+        } else {
+            content()
         }
     }
 

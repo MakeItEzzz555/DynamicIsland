@@ -1063,7 +1063,7 @@ private struct BlurBounceModifier: ViewModifier {
 
 /// Drives the "materialize in place" animation for the inner tray content only.
 /// The tray shell still uses the bouncy spring from IslandRootView.
-private struct InnerBlurScaleCleanModifier: ViewModifier {
+struct InnerBlurScaleCleanModifier: ViewModifier {
     let isVisible: Bool
     let isRemoval: Bool
     let delay: Double
@@ -1180,7 +1180,7 @@ static var blurBounce: AnyTransition {
 }
 }
 
-private extension View {
+extension View {
     func innerBlurScaleClean(
         settings: AppSettings,
         isVisible: Bool,
@@ -2555,14 +2555,9 @@ struct ExpandedIslandView: View {
             approvalControl: modules.agentApprovalControl,
             managedControl: modules.agentManagedControl,
             layoutStore: layoutStore,
-            availableHeight: metrics.pageHeight
-        )
-        .innerBlurScaleClean(
-            settings: settings,
-            isVisible: contentVisible,
-            isRemoval: isContentRemoving,
-            index: 1,
-            reduceMotion: reduceMotion
+            availableHeight: metrics.pageHeight,
+            contentVisible: contentVisible,
+            isContentRemoving: isContentRemoving
         )
         .frame(maxWidth: .infinity, maxHeight: metrics.pageHeight, alignment: .topLeading)
     }

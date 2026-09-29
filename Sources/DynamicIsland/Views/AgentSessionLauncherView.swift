@@ -21,6 +21,13 @@ struct AgentSessionLauncherView: View {
         )
     }
 
+    private var currentSessionIDs: Set<AgentSessionInstanceID> {
+        AgentSessionLauncherProjection.currentSessionIDs(
+            sessions,
+            activeManagedSessionIDs: managedControl.activeManagedSessionIDs
+        )
+    }
+
     private var repositories: [AgentLocalRepositoryChoice] {
         AgentSessionLauncherProjection.repositories(sessions, query: query)
     }
@@ -157,6 +164,19 @@ struct AgentSessionLauncherView: View {
                     .foregroundStyle(.white.opacity(0.30))
                 }
                 Spacer(minLength: 4)
+                if currentSessionIDs.contains(session.id) {
+                    Text("Current")
+                        .font(.system(size: 7.5, weight: .bold))
+                        .foregroundStyle(.cyan.opacity(0.88))
+                        .padding(.horizontal, 6)
+                        .frame(height: 18)
+                        .background(.cyan.opacity(0.10), in: Capsule(style: .continuous))
+                        .overlay {
+                            Capsule(style: .continuous)
+                                .stroke(.cyan.opacity(0.18), lineWidth: 1)
+                        }
+                        .help("Most current thread for this project")
+                }
                 if managedControl.isManaged(session) {
                     Image(systemName: "link.circle.fill")
                         .foregroundStyle(.green.opacity(0.68))
@@ -340,6 +360,30 @@ struct AgentLocalRepositoryChoice: Identifiable, Equatable {
 }
 
 enum AgentSessionLauncherProjection {
+    static func currentSessionIDs(
+        _ sessions: [AgentSession],
+        now: Date = Date(),
+        activeManagedSessionIDs: Set<AgentSessionID> = []
+    ) -> Set<AgentSessionInstanceID> {
+        var currentByProject: [String: AgentSession] = [:]
+        for session in sessions {
+            let key = projectIdentity(session)
+            guard let existing = currentByProject[key] else {
+                currentByProject[key] = session
+                continue
+            }
+            if isPreferredCurrent(
+                session,
+                over: existing,
+                now: now,
+                activeManagedSessionIDs: activeManagedSessionIDs
+            ) {
+                currentByProject[key] = session
+            }
+        }
+        return Set(currentByProject.values.map(\.id))
+    }
+
     static func liveSessions(
         _ sessions: [AgentSession],
         query: String,
@@ -386,9 +430,17 @@ enum AgentSessionLauncherProjection {
             latestInactiveByProject[project] = session
         }
 
+        let currentIDs = currentSessionIDs(
+            candidates,
+            now: now,
+            activeManagedSessionIDs: activeManagedSessionIDs
+        )
         return (active + Array(latestInactiveByProject.values))
             .filter { query.isEmpty || matchesSearch($0, query: query) }
             .sorted {
+                let lhsCurrent = currentIDs.contains($0.id)
+                let rhsCurrent = currentIDs.contains($1.id)
+                if lhsCurrent != rhsCurrent { return lhsCurrent }
                 let lhsActive = AgentWorkspaceSelection.isActive(
                     $0,
                     activeManagedSessionIDs: activeManagedSessionIDs
@@ -417,6 +469,37 @@ enum AgentSessionLauncherProjection {
         // historical session distinct than to merge unrelated projects that
         // merely share a display name.
         return "session:\(session.id.sessionID.provider.deterministicSortKey):\(session.id.sessionID.nativeID)"
+    }
+
+    private static func isPreferredCurrent(
+        _ lhs: AgentSession,
+        over rhs: AgentSession,
+        now: Date,
+        activeManagedSessionIDs: Set<AgentSessionID>
+    ) -> Bool {
+        let lhsRank = currentRank(lhs, now: now, activeManagedSessionIDs: activeManagedSessionIDs)
+        let rhsRank = currentRank(rhs, now: now, activeManagedSessionIDs: activeManagedSessionIDs)
+        if lhsRank != rhsRank { return lhsRank < rhsRank }
+        return isPreferredHistorical(lhs, over: rhs)
+    }
+
+    private static func currentRank(
+        _ session: AgentSession,
+        now: Date,
+        activeManagedSessionIDs: Set<AgentSessionID>
+    ) -> Int {
+        if activeManagedSessionIDs.contains(session.id.sessionID) { return 0 }
+        if AgentWorkspaceSelection.isActive(
+            session,
+            activeManagedSessionIDs: activeManagedSessionIDs
+        ), !AgentSessionPresentation.hasStaleActiveSignal(session, at: now) {
+            return 1
+        }
+        if session.endedAt == nil, now.timeIntervalSince(session.lastUpdatedAt) <= 60 {
+            return 2
+        }
+        if session.availability == .resumable { return 3 }
+        return 4
     }
 
     private static func isPreferredHistorical(_ lhs: AgentSession, over rhs: AgentSession) -> Bool {
