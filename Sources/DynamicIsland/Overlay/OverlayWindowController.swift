@@ -41,6 +41,27 @@ struct ExpandedScrollEventRoutingPolicy {
     }
 }
 
+/// Classifies scroll intent from trackpad deltas.
+///
+/// Returns nil while the movement is too small to judge, so a noisy first
+/// frame cannot decide ownership. Over a registered content region (the
+/// Agents transcript) a gesture only counts as horizontal, and therefore as
+/// an island page/close gesture, when horizontal movement clearly dominates.
+enum ExpandedScrollIntent {
+    static let minimumDelta: CGFloat = 1.5
+    static let contentHorizontalDominance: CGFloat = 1.8
+
+    static func isVertical(deltaX: CGFloat, deltaY: CGFloat, insideContent: Bool) -> Bool? {
+        let x = abs(deltaX)
+        let y = abs(deltaY)
+        guard max(x, y) >= minimumDelta else { return nil }
+        if insideContent {
+            return x <= y * contentHorizontalDominance
+        }
+        return y >= x
+    }
+}
+
 enum ExpandedContentScrollSequencePhase: Equatable {
     case physicalBegan
     case physicalChanged
@@ -85,7 +106,10 @@ struct ExpandedContentScrollSequenceOwnership: Equatable {
             owner = .island
         }
 
-        let route: ExpandedScrollEventRoute = owner == .content
+        // While intent is still undecided, a sequence that began inside the
+        // content region scrolls the content instead of feeding island gestures.
+        let route: ExpandedScrollEventRoute =
+            owner == .content || (owner == nil && startedInsideContent)
             ? .passThroughToContent
             : .islandGesture
 
@@ -1574,9 +1598,11 @@ final class OverlayWindowController {
            event.hasPreciseScrollingDeltas {
             let region = screenRect(for: layoutStore.expandedContentScrollRegion)
             let startsInsideContent = !region.isEmpty && region.contains(NSEvent.mouseLocation)
-            let deltaX = abs(event.scrollingDeltaX)
-            let deltaY = abs(event.scrollingDeltaY)
-            let verticalIntent: Bool? = deltaX == 0 && deltaY == 0 ? nil : deltaY >= deltaX
+            let verticalIntent = ExpandedScrollIntent.isVertical(
+                deltaX: event.scrollingDeltaX,
+                deltaY: event.scrollingDeltaY,
+                insideContent: startsInsideContent
+            )
             contentSequenceActive = expandedContentScrollOwnership.route(
                 phase: expandedContentSequencePhase(for: event),
                 startsInsideContent: startsInsideContent,

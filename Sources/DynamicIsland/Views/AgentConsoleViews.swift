@@ -16,6 +16,64 @@ enum AgentConsoleMode: Equatable, Sendable {
     }
 }
 
+/// Auto-follow policy for the live transcript.
+///
+/// Following is a user intent: it turns off only when the viewport moves
+/// away from the bottom without new content (the user scrolled up), and it
+/// turns back on when the user returns near the bottom. Content growth alone
+/// never cancels following, so live output keeps the view pinned while the
+/// user is at the bottom and never yanks it back while they read history.
+struct AgentTranscriptFollowState: Equatable, Sendable {
+    static let nearBottomThreshold: CGFloat = 28
+    /// Layout passes tolerated while an auto-scroll is still landing.
+    static let autoScrollGracePasses = 4
+
+    private(set) var isFollowing = true
+    private(set) var hasUnseenContent = false
+    private var lastContentToken: String?
+    private var pendingAutoScrollPasses = 0
+
+    /// `distanceFromBottom` is content bottom minus viewport height (>= 0
+    /// when content extends below the viewport).
+    mutating func observeViewport(distanceFromBottom: CGFloat, contentToken: String) {
+        let contentChanged = lastContentToken != nil && lastContentToken != contentToken
+        lastContentToken = contentToken
+        let nearBottom = distanceFromBottom <= Self.nearBottomThreshold
+        if nearBottom {
+            isFollowing = true
+            hasUnseenContent = false
+            pendingAutoScrollPasses = 0
+        } else if contentChanged {
+            return
+        } else if pendingAutoScrollPasses > 0 {
+            pendingAutoScrollPasses -= 1
+        } else {
+            isFollowing = false
+        }
+    }
+
+    /// New content arrived. Returns whether the view should scroll to it.
+    mutating func contentDidChange(to contentToken: String) -> Bool {
+        lastContentToken = contentToken
+        if isFollowing {
+            pendingAutoScrollPasses = Self.autoScrollGracePasses
+            return true
+        }
+        hasUnseenContent = true
+        return false
+    }
+
+    mutating func jumpToLatest() {
+        isFollowing = true
+        hasUnseenContent = false
+        pendingAutoScrollPasses = Self.autoScrollGracePasses
+    }
+
+    mutating func reset() {
+        self = AgentTranscriptFollowState()
+    }
+}
+
 enum AgentPromptDraftPolicy {
     static let maximumLength = 8_000
 
@@ -49,8 +107,7 @@ struct AgentEmbeddedConsoleView: View {
 
     @State private var draft = ""
     @State private var submissionInFlight = false
-    @State private var transcriptIsNearBottom = true
-    @State private var hasNewActivityOffscreen = false
+    @State private var follow = AgentTranscriptFollowState()
     @State private var scrollToLatestRequest = 0
 
     var body: some View {
@@ -75,8 +132,7 @@ struct AgentEmbeddedConsoleView: View {
         .accessibilityLabel("Selected session details for \(AgentSessionPresentation.primaryTitle(for: session))")
         .onChange(of: session.id) { _, _ in
             draft = ""
-            hasNewActivityOffscreen = false
-            transcriptIsNearBottom = true
+            follow.reset()
         }
         .onChange(of: mode.showsComposer) { _, isInteractive in
             if !isInteractive { draft = "" }
@@ -109,16 +165,13 @@ struct AgentEmbeddedConsoleView: View {
                     .coordinateSpace(name: AgentConsoleCoordinateSpace.transcript)
                     .scrollBounceBehavior(.basedOnSize)
                     .onPreferenceChange(AgentConsoleBottomPositionPreferenceKey.self) { bottomY in
-                        transcriptIsNearBottom = bottomY <= viewport.size.height + 28
-                        if transcriptIsNearBottom {
-                            hasNewActivityOffscreen = false
-                        }
+                        follow.observeViewport(
+                            distanceFromBottom: bottomY - viewport.size.height,
+                            contentToken: transcriptFollowToken
+                        )
                     }
-                    .onChange(of: transcriptFollowToken) { _, _ in
-                        guard transcriptIsNearBottom else {
-                            hasNewActivityOffscreen = true
-                            return
-                        }
+                    .onChange(of: transcriptFollowToken) { _, token in
+                        guard follow.contentDidChange(to: token) else { return }
                         DispatchQueue.main.async {
                             proxy.scrollTo(AgentConsoleScrollAnchor.bottom, anchor: .bottom)
                         }
@@ -127,8 +180,7 @@ struct AgentEmbeddedConsoleView: View {
                         withAnimation(.easeOut(duration: 0.16)) {
                             proxy.scrollTo(AgentConsoleScrollAnchor.bottom, anchor: .bottom)
                         }
-                        transcriptIsNearBottom = true
-                        hasNewActivityOffscreen = false
+                        follow.jumpToLatest()
                     }
                     .onAppear {
                         DispatchQueue.main.async {
@@ -140,7 +192,7 @@ struct AgentEmbeddedConsoleView: View {
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .overlay(alignment: .bottomTrailing) {
-            if !transcriptIsNearBottom && hasNewActivityOffscreen {
+            if !follow.isFollowing && follow.hasUnseenContent {
                 Button {
                     scrollToLatestRequest &+= 1
                 } label: {
@@ -1054,6 +1106,19 @@ private final class AgentPromptTextView: NSTextView {
         super.keyDown(with: event)
     }
 
+    /// The app is an accessory with no visible menu bar, so standard editing
+    /// shortcuts are handled here when the composer owns focus.
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard window?.firstResponder === self,
+              let action = AgentPromptEditingShortcut.action(
+                  characters: event.charactersIgnoringModifiers,
+                  modifiers: event.modifierFlags
+              ) else {
+            return super.performKeyEquivalent(with: event)
+        }
+        return NSApp.sendAction(action, to: self, from: self)
+    }
+
     override func mouseDown(with event: NSEvent) {
         if isEditable {
             window?.makeKey()
@@ -1098,6 +1163,25 @@ private extension View {
                     value: proxy.frame(in: .named(AgentComposerActionFrameKey.coordinateSpace))
                 )
             }
+        }
+    }
+}
+
+/// Standard text-editing shortcuts for the Agents composer.
+enum AgentPromptEditingShortcut {
+    static func action(characters: String?, modifiers: NSEvent.ModifierFlags) -> Selector? {
+        let flags = modifiers.intersection(.deviceIndependentFlagsMask)
+        guard flags.contains(.command), !flags.contains(.control), !flags.contains(.option) else {
+            return nil
+        }
+        switch (characters?.lowercased(), flags.contains(.shift)) {
+        case ("a", false): return #selector(NSResponder.selectAll(_:))
+        case ("c", false): return #selector(NSText.copy(_:))
+        case ("v", false): return #selector(NSText.paste(_:))
+        case ("x", false): return #selector(NSText.cut(_:))
+        case ("z", false): return Selector(("undo:"))
+        case ("z", true): return Selector(("redo:"))
+        default: return nil
         }
     }
 }

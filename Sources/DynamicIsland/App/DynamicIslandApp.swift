@@ -171,6 +171,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var cancellables: Set<AnyCancellable> = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        EditMenuInstaller.installIfNeeded()
         shortcuts.seedDefaultsIfNeeded()
         timer.setLifecycleHandler { [weak self] event in
             guard let self else { return }

@@ -24,9 +24,9 @@
     "semantic_hash": "0b4b7c29df007001c39c574a0dda9bd2"
   },
   "Sources/DynamicIsland/App/DynamicIslandApp.swift": {
-    "mtime": 1790725191.9744546,
-    "seen": 1790725328.289994,
-    "ast_hash": "7b29c23949af9779f78ae328ba8c6be3",
+    "mtime": 1790726178.8495023,
+    "seen": 1790726263.270412,
+    "ast_hash": "8a5752e3c45bc03321d3f0ea1caddd70",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/App/LaunchAtLoginController.swift": {
@@ -162,9 +162,9 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Overlay/OverlayWindowController.swift": {
-    "mtime": 1790725795.02155,
-    "seen": 1790726000.496203,
-    "ast_hash": "0e60b6b8c0b11eb0b6a3e826495a456b",
+    "mtime": 1790726089.7403884,
+    "seen": 1790726263.270452,
+    "ast_hash": "0d4a425552df3f4bfbdbf1c020ccded0",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/State/AppSettings.swift": {
@@ -918,9 +918,9 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/AgentConsoleViews.swift": {
-    "mtime": 1790725919.9020061,
-    "seen": 1790726000.4962099,
-    "ast_hash": "14a8ca372ea4a6b693431857d08b9cab",
+    "mtime": 1790726150.8050363,
+    "seen": 1790726263.2704582,
+    "ast_hash": "61a4f6bed5718356ee64390afed4971c",
     "semantic_hash": ""
   },
   "Sources/DynamicIslandClaudeHookRelay/RelayMain.swift": {
@@ -1521,6 +1521,18 @@
     "mtime": 1790725919.9021726,
     "seen": 1790726000.4962418,
     "ast_hash": "5fe1cca304134236d401ff105bda8736",
+    "semantic_hash": ""
+  },
+  "Sources/DynamicIsland/App/EditMenuInstaller.swift": {
+    "mtime": 1790726178.827649,
+    "seen": 1790726263.270414,
+    "ast_hash": "17fff63b1d3b742c5bd5495064df7ffc",
+    "semantic_hash": ""
+  },
+  "Tests/DynamicIslandTests/AgentCLIScrollAndFocusTests.swift": {
+    "mtime": 1790726217.3884902,
+    "seen": 1790726263.270486,
+    "ast_hash": "02a93c797b9fa3b41666b5aa132dc6b5",
     "semantic_hash": ""
   }
 }
