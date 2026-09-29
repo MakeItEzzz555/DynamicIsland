@@ -6,4 +6,5 @@ struct ProductivityModules {
     let windowSnap: WindowSnapController
     let terminal: TerminalSessionController
     let reminders: RemindersController
+    let voice: VoiceTranscriptionController
 }

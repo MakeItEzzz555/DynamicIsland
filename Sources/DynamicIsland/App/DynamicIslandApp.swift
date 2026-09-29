@@ -98,12 +98,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         liveActivities: liveActivities,
         capabilities: capabilityRegistry
     )
+    private lazy var voiceTranscription = VoiceTranscriptionController(
+        liveActivities: liveActivities,
+        capabilities: capabilityRegistry,
+        addToShelf: { [weak self] urls in
+            self?.fileShelf.add(urls)
+        }
+    )
     private lazy var productivity = ProductivityModules(
         capabilities: capabilityRegistry,
         keepAwake: keepAwakeController,
         windowSnap: windowSnapController,
         terminal: terminalController,
-        reminders: remindersController
+        reminders: remindersController,
+        voice: voiceTranscription
     )
     private lazy var systemHUDController = SystemHUDController(
         settings: settings,
@@ -249,6 +257,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #endif
         keepAwakeController.stop()
         terminalController.terminate()
+        voiceTranscription.cancel()
         systemHUDController.stop()
         agentBridge.stop()
         agentManagedControl.stop()
