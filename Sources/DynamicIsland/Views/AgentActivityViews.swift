@@ -171,6 +171,10 @@ struct AgentActivityDashboardView: View {
             transcriptLoadDelay: reduceMotion ? 0 : 0.04
         )
         .environment(\.agentProjectLocations, projects.index)
+        .environment(\.agentProjectSelection, AgentProjectSelectionBinding(
+            key: projects.selectedProjectKey,
+            set: { projects.selectedProjectKey = $0 }
+        ))
         .onAppear {
             beginPresentation()
         }
@@ -243,6 +247,7 @@ struct AgentDashboardContentView: View {
     @State private var showsSessionLauncher = false
     @State private var transcriptLoadGate = AgentTranscriptLoadGate()
     @Environment(\.agentProjectLocations) private var projectLocations
+    @Environment(\.agentProjectSelection) private var projectSelection
 
     init(
         sessions: [AgentSession],
@@ -280,9 +285,24 @@ struct AgentDashboardContentView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let controlSessions = (managedControl.selectedProvider ?? managedControl.managedProvider).map { provider in
+            let providerSessions = (managedControl.selectedProvider ?? managedControl.managedProvider).map { provider in
                 sessions.filter { $0.id.sessionID.provider == provider }
             } ?? sessions
+            let projectOptions = AgentProjectFilter.options(
+                for: providerSessions,
+                locations: projectLocations,
+                activeManagedSessionIDs: managedControl.activeManagedSessionIDs
+            )
+            let effectiveProjectKey = AgentProjectFilter.isEffective(
+                projectSelection.key,
+                in: providerSessions,
+                locations: projectLocations
+            ) ? projectSelection.key : nil
+            let controlSessions = AgentProjectFilter.filter(
+                providerSessions,
+                projectKey: effectiveProjectKey,
+                locations: projectLocations
+            )
             let layout = AgentDashboardLayoutProjection.make(width: proxy.size.width)
             let verticalLayout = AgentWorkspaceVerticalLayoutProjection.make(
                 availableHeight: proxy.size.height
@@ -312,6 +332,11 @@ struct AgentDashboardContentView: View {
                     sessions: controlSessions,
                     managedControl: managedControl,
                     approvalControl: approvalControl,
+                    projectOptions: projectOptions,
+                    selectedProjectKey: effectiveProjectKey,
+                    onSelectProject: { key in
+                        selectProject(key, among: providerSessions)
+                    },
                     launcherOpen: showsSessionLauncher,
                         onToggleLauncher: {
                             withAnimation(.easeOut(duration: 0.14)) {
@@ -414,6 +439,26 @@ struct AgentDashboardContentView: View {
         }
     }
 
+    /// Filter change only: cached lookups, no filesystem work, and the
+    /// selected exact session is kept whenever it belongs to the project.
+    private func selectProject(_ key: String?, among providerSessions: [AgentSession]) {
+        projectSelection.set(key)
+        let filtered = AgentProjectFilter.filter(
+            providerSessions,
+            projectKey: key,
+            locations: projectLocations
+        )
+        let preferred = AgentSessionLauncherProjection.preferredSelection(
+            current: managedControl.selectedSessionID,
+            sessions: filtered,
+            activeManagedSessionIDs: managedControl.activeManagedSessionIDs,
+            locations: projectLocations
+        )
+        if preferred != managedControl.selectedSessionID {
+            managedControl.selectSession(preferred)
+        }
+    }
+
     private func reconcileWorkspaceSelection() {
         let preferred = AgentSessionLauncherProjection.preferredSelection(
             current: managedControl.selectedSessionID,
@@ -486,6 +531,9 @@ private struct AgentCLIControlBar: View {
     let sessions: [AgentSession]
     @ObservedObject var managedControl: AgentManagedSessionController
     @ObservedObject var approvalControl: AgentApprovalController
+    var projectOptions: [AgentProjectOption] = []
+    var selectedProjectKey: String? = nil
+    var onSelectProject: (String?) -> Void = { _ in }
     let launcherOpen: Bool
     let onToggleLauncher: () -> Void
 
@@ -523,6 +571,7 @@ private struct AgentCLIControlBar: View {
     private func controls(compact: Bool) -> some View {
         HStack(spacing: compact ? 5 : 8) {
             launcherButton(compact: compact)
+            projectMenu(compact: compact)
 
             if let session = selectedSession {
                 HStack(spacing: 4) {
@@ -584,6 +633,58 @@ private struct AgentCLIControlBar: View {
         .buttonStyle(.plain)
         .help("Live sessions and local repositories")
         .accessibilityLabel("Open live sessions and repository launcher")
+    }
+
+    @ViewBuilder
+    private func projectMenu(compact: Bool) -> some View {
+        if projectOptions.count > 1 || selectedProjectKey != nil {
+            let selected = projectOptions.first { $0.id == selectedProjectKey }
+            Menu {
+                Button {
+                    onSelectProject(nil)
+                } label: {
+                    Label("All projects", systemImage: selectedProjectKey == nil ? "checkmark" : "square.stack")
+                }
+                Divider()
+                ForEach(projectOptions) { option in
+                    Button {
+                        onSelectProject(option.id)
+                    } label: {
+                        Label(
+                            projectMenuTitle(option),
+                            systemImage: option.id == selectedProjectKey ? "checkmark" : "folder"
+                        )
+                    }
+                }
+            } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: "folder")
+                    if !compact {
+                        Text(selected?.title ?? "All projects")
+                            .lineLimit(1)
+                    }
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 6.5, weight: .bold))
+                }
+                .font(.system(size: 9.5, weight: .semibold))
+                .foregroundStyle(.white.opacity(selected == nil ? 0.52 : 0.78))
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help(selected?.path ?? "Filter sessions by project")
+            .accessibilityLabel("Project filter: \(selected?.title ?? "All projects")")
+        }
+    }
+
+    private func projectMenuTitle(_ option: AgentProjectOption) -> String {
+        var parts = [option.title]
+        parts.append(option.activeCount > 0
+            ? "\(option.activeCount) active"
+            : "\(option.sessionCount) session\(option.sessionCount == 1 ? "" : "s")")
+        if option.providers.count > 1 {
+            parts.append(option.providers.map { $0.stableName.capitalized }.joined(separator: " + "))
+        }
+        return parts.joined(separator: " · ")
     }
 
     @ViewBuilder
@@ -720,7 +821,13 @@ private struct AgentCLIControlBar: View {
         }
     }
 
+    @Environment(\.agentProjectLocations) private var projectLocations
+
     private func sessionLabel(_ session: AgentSession) -> String {
+        if let label = AgentProjectFilter.displayLabel(for: session, locations: projectLocations),
+           !label.isEmpty {
+            return label
+        }
         let project = AgentPrivacyProjection.displayProject(session.project)
         if let displayName = project.displayName, !displayName.isEmpty {
             return displayName

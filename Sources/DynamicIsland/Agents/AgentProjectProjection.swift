@@ -263,6 +263,8 @@ final class AgentProjectProjectionStore: ObservableObject {
     @Published private(set) var index: AgentProjectLocationIndex = .empty
     @Published private(set) var status: Status = .idle
     @Published private(set) var lastRefreshAt: Date?
+    /// Agents project filter. UI state only; never part of session identity.
+    @Published var selectedProjectKey: String?
 
     private let fileSystem: AgentProjectFileSystem
     private let now: () -> Date
@@ -358,5 +360,127 @@ extension EnvironmentValues {
     var agentProjectLocations: AgentProjectLocationIndex {
         get { self[AgentProjectLocationsKey.self] }
         set { self[AgentProjectLocationsKey.self] = newValue }
+    }
+}
+
+/// One selectable project in the Agents project picker.
+struct AgentProjectOption: Identifiable, Equatable, Sendable {
+    let id: String
+    let title: String
+    /// Repository root or working directory the option represents.
+    let path: String?
+    let sessionCount: Int
+    let activeCount: Int
+    let providers: [AgentProvider]
+    let lastActivityAt: Date
+}
+
+/// Pure project filtering over cached locations. Cheap enough for view
+/// recomputation: no filesystem access, dictionary lookups only.
+enum AgentProjectFilter {
+    static func options(
+        for sessions: [AgentSession],
+        locations: AgentProjectLocationIndex,
+        activeManagedSessionIDs: Set<AgentSessionID> = []
+    ) -> [AgentProjectOption] {
+        var order: [String] = []
+        var buckets: [String: (key: AgentProjectGroupKey, sessions: [AgentSession], path: String?)] = [:]
+        for session in sessions {
+            let key = AgentProjectGrouping.key(for: session, locations: locations)
+            if buckets[key.rawValue] == nil {
+                order.append(key.rawValue)
+                let location = locations.location(for: session.project.workingDirectory)
+                buckets[key.rawValue] = (key, [], location?.repositoryRoot ?? location?.canonicalPath
+                    ?? AgentProjectResolver.normalize(session.project.workingDirectory))
+            }
+            buckets[key.rawValue]?.sessions.append(session)
+        }
+        return order.compactMap { raw -> AgentProjectOption? in
+            guard let bucket = buckets[raw] else { return nil }
+            let active = bucket.sessions.filter {
+                AgentWorkspaceSelection.isActive($0, activeManagedSessionIDs: activeManagedSessionIDs)
+            }
+            var providers: [AgentProvider] = []
+            for session in bucket.sessions where !providers.contains(session.id.sessionID.provider) {
+                providers.append(session.id.sessionID.provider)
+            }
+            return AgentProjectOption(
+                id: raw,
+                title: bucket.key.title,
+                path: bucket.path,
+                sessionCount: bucket.sessions.count,
+                activeCount: active.count,
+                providers: providers.sorted { $0.deterministicSortKey < $1.deterministicSortKey },
+                lastActivityAt: bucket.sessions
+                    .map { $0.activityEvidenceAt ?? $0.lastUpdatedAt }
+                    .max() ?? .distantPast
+            )
+        }
+        .sorted { lhs, rhs in
+            if (lhs.activeCount > 0) != (rhs.activeCount > 0) { return lhs.activeCount > 0 }
+            if lhs.lastActivityAt != rhs.lastActivityAt { return lhs.lastActivityAt > rhs.lastActivityAt }
+            let order = lhs.title.localizedCaseInsensitiveCompare(rhs.title)
+            if order != .orderedSame { return order == .orderedAscending }
+            return lhs.id < rhs.id
+        }
+    }
+
+    /// Returns the sessions in `projectKey`. A nil key, or a key that no
+    /// longer matches any session, shows everything rather than hiding work.
+    static func filter(
+        _ sessions: [AgentSession],
+        projectKey: String?,
+        locations: AgentProjectLocationIndex
+    ) -> [AgentSession] {
+        guard let projectKey else { return sessions }
+        let matching = sessions.filter {
+            AgentProjectGrouping.key(for: $0, locations: locations).rawValue == projectKey
+        }
+        return matching.isEmpty ? sessions : matching
+    }
+
+    /// Whether `projectKey` still names a project present in `sessions`.
+    static func isEffective(
+        _ projectKey: String?,
+        in sessions: [AgentSession],
+        locations: AgentProjectLocationIndex
+    ) -> Bool {
+        guard let projectKey else { return false }
+        return sessions.contains {
+            AgentProjectGrouping.key(for: $0, locations: locations).rawValue == projectKey
+        }
+    }
+
+    /// Compact project label for one session: `repo/apps/web` for a
+    /// session inside a repository subdirectory, otherwise the project name.
+    static func displayLabel(
+        for session: AgentSession,
+        locations: AgentProjectLocationIndex
+    ) -> String? {
+        if let location = locations.location(for: session.project.workingDirectory),
+           let repositoryName = location.repositoryName {
+            if let within = location.pathWithinRepository {
+                return "\(repositoryName)/\(within)"
+            }
+            return repositoryName
+        }
+        return AgentPrivacyProjection.displayProject(session.project).displayName
+    }
+}
+
+struct AgentProjectSelectionBinding: Sendable {
+    let key: String?
+    let set: @MainActor @Sendable (String?) -> Void
+}
+
+private struct AgentProjectSelectionKey: EnvironmentKey {
+    static let defaultValue = AgentProjectSelectionBinding(key: nil, set: { _ in })
+}
+
+extension EnvironmentValues {
+    /// Selected Agents project filter, owned by `AgentProjectProjectionStore`.
+    var agentProjectSelection: AgentProjectSelectionBinding {
+        get { self[AgentProjectSelectionKey.self] }
+        set { self[AgentProjectSelectionKey.self] = newValue }
     }
 }
