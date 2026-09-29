@@ -61,6 +61,36 @@ private extension AgentVisualStyle {
     }
 }
 
+struct AgentTranscriptLoadGate: Equatable, Sendable {
+    private(set) var requestedSessionID: AgentSessionInstanceID?
+    private(set) var readySessionID: AgentSessionInstanceID?
+    private(set) var generation = 0
+
+    mutating func begin(for sessionID: AgentSessionInstanceID) -> Int {
+        generation &+= 1
+        requestedSessionID = sessionID
+        readySessionID = nil
+        return generation
+    }
+
+    @discardableResult
+    mutating func complete(for sessionID: AgentSessionInstanceID, generation expected: Int) -> Bool {
+        guard expected == generation, requestedSessionID == sessionID else { return false }
+        readySessionID = sessionID
+        return true
+    }
+
+    mutating func cancel() {
+        generation &+= 1
+        requestedSessionID = nil
+        readySessionID = nil
+    }
+
+    func isReady(for sessionID: AgentSessionInstanceID?) -> Bool {
+        sessionID != nil && readySessionID == sessionID
+    }
+}
+
 struct AgentActivityDashboardView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var agentEvents: AgentEventStore
@@ -68,6 +98,7 @@ struct AgentActivityDashboardView: View {
     @ObservedObject var managedControl: AgentManagedSessionController
     @ObservedObject var layoutStore: IslandLayoutStore
     let availableHeight: CGFloat
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         let visibleSessions = agentEvents.sessions.filter(managedControl.shouldPresent)
@@ -78,7 +109,11 @@ struct AgentActivityDashboardView: View {
             approvalControl: approvalControl,
             managedControl: managedControl,
             layoutStore: layoutStore,
-            availableHeight: availableHeight
+            availableHeight: availableHeight,
+            transcriptLoadDelay: IslandContentTransitionTiming.shellDuration(
+                settings: settings,
+                reduceMotion: reduceMotion
+            )
         )
     }
 }
@@ -91,9 +126,10 @@ struct AgentDashboardContentView: View {
     @ObservedObject var managedControl: AgentManagedSessionController
     var layoutStore: IslandLayoutStore? = nil
     let availableHeight: CGFloat
+    let transcriptLoadDelay: TimeInterval
     private let initialSelectedSessionID: AgentSessionInstanceID?
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showsSessionLauncher = false
+    @State private var transcriptLoadGate = AgentTranscriptLoadGate()
 
     init(
         sessions: [AgentSession],
@@ -103,7 +139,8 @@ struct AgentDashboardContentView: View {
         managedControl: AgentManagedSessionController,
         layoutStore: IslandLayoutStore? = nil,
         availableHeight: CGFloat,
-        initialSelectedSessionID: AgentSessionInstanceID? = nil
+        initialSelectedSessionID: AgentSessionInstanceID? = nil,
+        transcriptLoadDelay: TimeInterval = 0.4
     ) {
         self.sessions = sessions
         self.accountUsage = accountUsage
@@ -113,6 +150,7 @@ struct AgentDashboardContentView: View {
         self.layoutStore = layoutStore
         self.availableHeight = availableHeight
         self.initialSelectedSessionID = initialSelectedSessionID
+        self.transcriptLoadDelay = transcriptLoadDelay
     }
 
     var body: some View {
@@ -191,13 +229,17 @@ struct AgentDashboardContentView: View {
                             approvalControl: approvalControl,
                             detailHeight: max(verticalLayout.selectedDetailHeight, 138),
                             activityLimit: max(verticalLayout.selectedDetailActivityLimit, 6),
-                            layoutStore: layoutStore
+                            layoutStore: layoutStore,
+                            transcriptReady: transcriptLoadGate.isReady(for: selectedSession.id)
                         )
                         .layoutPriority(2)
                     }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: proxy.size.height, alignment: .topLeading)
+            .task(id: selectedSession?.id) {
+                await deferTranscript(for: selectedSession?.id)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: availableHeight, alignment: .topLeading)
         .foregroundStyle(.white)
@@ -220,10 +262,27 @@ struct AgentDashboardContentView: View {
             }
         }
         .onDisappear {
+            transcriptLoadGate.cancel()
             layoutStore?.isTransientInteractionActive = false
             layoutStore?.setExpandedScrollGestureSuppressed(false)
             layoutStore?.setExpandedContentScrollRegion(.zero)
         }
+    }
+
+    @MainActor
+    private func deferTranscript(for sessionID: AgentSessionInstanceID?) async {
+        guard let sessionID else {
+            transcriptLoadGate.cancel()
+            return
+        }
+        let generation = transcriptLoadGate.begin(for: sessionID)
+        do {
+            try await Task.sleep(for: .seconds(transcriptLoadDelay))
+            try Task.checkCancellation()
+        } catch {
+            return
+        }
+        _ = transcriptLoadGate.complete(for: sessionID, generation: generation)
     }
 }
 
@@ -536,10 +595,16 @@ private struct AgentSelectedSessionControlView: View {
     let detailHeight: CGFloat
     let activityLimit: Int
     let layoutStore: IslandLayoutStore?
+    let transcriptReady: Bool
 
     var body: some View {
-        if managedControl.isManaged(session), managedControl.mode(for: session).showsComposer {
-            AgentEmbeddedConsoleView(
+        Group {
+            if !transcriptReady {
+                AgentTranscriptLoadingView(session: session)
+                    .frame(minHeight: detailHeight, maxHeight: .infinity)
+                    .transition(.opacity)
+            } else if managedControl.isManaged(session), managedControl.mode(for: session).showsComposer {
+                AgentEmbeddedConsoleView(
                 session: session,
                 mode: managedControl.mode(for: session),
                 maximumActivityEntries: activityLimit,
@@ -617,14 +682,51 @@ private struct AgentSelectedSessionControlView: View {
                 )
                 .frame(minHeight: max(detailHeight - 31, 104), maxHeight: .infinity)
             }
-            .task(id: session.id) {
-                await managedControl.reconcileObservedSession(session)
+                .task(id: session.id) {
+                    await managedControl.reconcileObservedSession(session)
+                }
             }
         }
+        .animation(.easeOut(duration: 0.16), value: transcriptReady)
     }
 
     private func providerName(_ session: AgentSession) -> String {
         session.id.sessionID.provider.stableName.capitalized
+    }
+}
+
+private struct AgentTranscriptLoadingView: View {
+    let session: AgentSession
+
+    var body: some View {
+        GeometryReader { _ in
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(spacing: 7) {
+                    Image(systemName: AgentSessionPresentation.stateSymbol(session.state))
+                        .foregroundStyle(AgentVisualStyle.accent(for: session.state).opacity(0.78))
+                    Text(AgentSessionPresentation.displayedPrimaryTitle(for: session, at: Date()))
+                        .font(.system(size: 10, weight: .semibold))
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
+                    Text(AgentSessionPresentation.displayedStateLabel(for: session, at: Date()))
+                        .font(.system(size: 8.5, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.40))
+                }
+
+                Spacer(minLength: 0)
+
+                Label("Loading session…", systemImage: "ellipsis")
+                    .font(.system(size: 9.5, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.38))
+
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Loading selected agent session")
+        }
     }
 }
 

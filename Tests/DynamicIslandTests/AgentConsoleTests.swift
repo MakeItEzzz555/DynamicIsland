@@ -120,4 +120,48 @@ final class AgentConsoleTests: XCTestCase {
             "Claude"
         )
     }
+
+    func testDeferredTranscriptLoadCancellationRejectsDelayedCompletion() {
+        let session = sessionID("first")
+        var gate = AgentTranscriptLoadGate()
+        let generation = gate.begin(for: session)
+
+        gate.cancel()
+
+        XCTAssertFalse(gate.complete(for: session, generation: generation))
+        XCTAssertFalse(gate.isReady(for: session))
+    }
+
+    func testSelectedSessionChangeCancelsStaleTranscriptCompletion() {
+        let first = sessionID("first")
+        let second = sessionID("second")
+        var gate = AgentTranscriptLoadGate()
+        let firstGeneration = gate.begin(for: first)
+        let secondGeneration = gate.begin(for: second)
+
+        XCTAssertFalse(gate.complete(for: first, generation: firstGeneration))
+        XCTAssertTrue(gate.complete(for: second, generation: secondGeneration))
+        XCTAssertFalse(gate.isReady(for: first))
+        XCTAssertTrue(gate.isReady(for: second))
+    }
+
+    func testLeavingAgentsClearsReadyTranscriptState() {
+        let session = sessionID("selected")
+        var gate = AgentTranscriptLoadGate()
+        let generation = gate.begin(for: session)
+        XCTAssertTrue(gate.complete(for: session, generation: generation))
+
+        gate.cancel()
+
+        XCTAssertFalse(gate.isReady(for: session))
+        XCTAssertNil(gate.requestedSessionID)
+        XCTAssertNil(gate.readySessionID)
+    }
+
+    private func sessionID(_ nativeID: String) -> AgentSessionInstanceID {
+        AgentSessionInstanceID(
+            sessionID: AgentSessionID(provider: .codex, nativeID: nativeID),
+            generation: AgentSessionGeneration(rawValue: 1)
+        )
+    }
 }

@@ -14,7 +14,11 @@ struct AgentSessionLauncherView: View {
     @State private var starting = false
 
     private var liveSessions: [AgentSession] {
-        AgentSessionLauncherProjection.liveSessions(sessions, query: query)
+        AgentSessionLauncherProjection.liveSessions(
+            sessions,
+            query: query,
+            activeManagedSessionIDs: managedControl.activeManagedSessionIDs
+        )
     }
 
     private var repositories: [AgentLocalRepositoryChoice] {
@@ -340,9 +344,10 @@ enum AgentSessionLauncherProjection {
         _ sessions: [AgentSession],
         query: String,
         now: Date = Date(),
-        recentObservedWindow: TimeInterval = 300
+        recentObservedWindow: TimeInterval = 300,
+        activeManagedSessionIDs: Set<AgentSessionID> = []
     ) -> [AgentSession] {
-        sessions.filter { session in
+        let candidates = sessions.filter { session in
             let recentOpenObservation =
                 session.endedAt == nil &&
                 now.timeIntervalSince(session.lastUpdatedAt) <= recentObservedWindow
@@ -357,27 +362,98 @@ enum AgentSessionLauncherProjection {
                 // AgentNotch's five-minute rollout window.
                 relevant = session.availability == .resumable || recentOpenObservation
             }
-            // The unfiltered launcher stays intentionally small, but an
-            // explicit search must be able to recover an older exact thread
-            // (for example an idle session still open in VS Code).
-            guard relevant || !query.isEmpty else { return false }
-            guard !query.isEmpty else { return true }
-            let project = AgentPrivacyProjection.displayProject(session.project)
-            return [
-                project.displayName,
-                session.project.workingDirectory,
-                session.project.workingDirectory.map { URL(fileURLWithPath: $0).lastPathComponent },
-                project.gitBranch,
-                project.model,
-                project.sourceApplicationName,
-                session.id.sessionID.provider.stableName,
-                session.id.sessionID.nativeID
-            ].compactMap { $0 }.contains { $0.localizedCaseInsensitiveContains(query) }
+            return relevant || !query.isEmpty
         }
-        .sorted { lhs, rhs in
-            if lhs.lastUpdatedAt != rhs.lastUpdatedAt { return lhs.lastUpdatedAt > rhs.lastUpdatedAt }
-            return lhs.id.sessionID.nativeID < rhs.id.sessionID.nativeID
+
+        let active = candidates.filter {
+            AgentWorkspaceSelection.isActive(
+                $0,
+                activeManagedSessionIDs: activeManagedSessionIDs
+            )
         }
+        let activeProjects = Set(active.map(projectIdentity))
+        var latestInactiveByProject: [String: AgentSession] = [:]
+        for session in candidates where !AgentWorkspaceSelection.isActive(
+            session,
+            activeManagedSessionIDs: activeManagedSessionIDs
+        ) {
+            let project = projectIdentity(session)
+            guard !activeProjects.contains(project) else { continue }
+            if let current = latestInactiveByProject[project],
+               isPreferredHistorical(current, over: session) {
+                continue
+            }
+            latestInactiveByProject[project] = session
+        }
+
+        return (active + Array(latestInactiveByProject.values))
+            .filter { query.isEmpty || matchesSearch($0, query: query) }
+            .sorted {
+                let lhsActive = AgentWorkspaceSelection.isActive(
+                    $0,
+                    activeManagedSessionIDs: activeManagedSessionIDs
+                )
+                let rhsActive = AgentWorkspaceSelection.isActive(
+                    $1,
+                    activeManagedSessionIDs: activeManagedSessionIDs
+                )
+                if lhsActive != rhsActive { return lhsActive }
+                return isPreferredHistorical($0, over: $1)
+            }
+    }
+
+    private static func projectIdentity(_ session: AgentSession) -> String {
+        if let repository = session.project.repositoryIdentity?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !repository.isEmpty {
+            return "repository:\(repository.lowercased())"
+        }
+        if let workingDirectory = session.project.workingDirectory,
+           let path = canonicalRepositoryPath(workingDirectory) {
+            let root = canonicalRepositoryRoot(path) ?? path
+            return "path:\(root.lowercased())"
+        }
+        // Without a stable repository/path identity it is safer to keep the
+        // historical session distinct than to merge unrelated projects that
+        // merely share a display name.
+        return "session:\(session.id.sessionID.provider.deterministicSortKey):\(session.id.sessionID.nativeID)"
+    }
+
+    private static func isPreferredHistorical(_ lhs: AgentSession, over rhs: AgentSession) -> Bool {
+        if lhs.lastUpdatedAt != rhs.lastUpdatedAt { return lhs.lastUpdatedAt > rhs.lastUpdatedAt }
+        if lhs.id.generation != rhs.id.generation { return lhs.id.generation > rhs.id.generation }
+        if lhs.startedAt != rhs.startedAt { return lhs.startedAt > rhs.startedAt }
+        if lhs.sourceAuthority != rhs.sourceAuthority { return lhs.sourceAuthority > rhs.sourceAuthority }
+        let lhsSource = sourceStrength(lhs.source)
+        let rhsSource = sourceStrength(rhs.source)
+        if lhsSource != rhsSource { return lhsSource > rhsSource }
+        return lhs.id.sessionID.nativeID > rhs.id.sessionID.nativeID
+    }
+
+    private static func sourceStrength(_ source: AgentSource) -> Int {
+        switch source {
+        case .desktopApp: 6
+        case .vscode: 5
+        case .jetbrains: 4
+        case .terminal: 3
+        case .cloud: 2
+        case .mcp: 1
+        case .unknown: 0
+        }
+    }
+
+    private static func matchesSearch(_ session: AgentSession, query: String) -> Bool {
+        let project = AgentPrivacyProjection.displayProject(session.project)
+        return [
+            project.displayName,
+            session.project.workingDirectory,
+            session.project.workingDirectory.map { URL(fileURLWithPath: $0).lastPathComponent },
+            project.gitBranch,
+            project.model,
+            project.sourceApplicationName,
+            session.id.sessionID.provider.stableName,
+            session.id.sessionID.nativeID
+        ].compactMap { $0 }.contains { $0.localizedCaseInsensitiveContains(query) }
     }
 
     static func repositories(

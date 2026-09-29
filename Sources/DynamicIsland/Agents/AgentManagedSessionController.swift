@@ -34,6 +34,7 @@ final class AgentManagedSessionController: ObservableObject {
     private var pendingApprovalConfirmations: [String: PendingApprovalConfirmation] = [:]
     private var approvalConfirmationTasks: [String: Task<Void, Never>] = [:]
     private var knownDiscoveredSessionIDs: Set<AgentSessionID> = []
+    private var hydratedTranscriptSessionIDs: Set<AgentSessionID> = []
 
     init(
         provider: (any AgentInteractiveProvider)?,
@@ -252,6 +253,7 @@ final class AgentManagedSessionController: ObservableObject {
         accountUsageByProvider.removeAll()
         transportErrorsByProvider.removeAll()
         transcripts.removeAll()
+        hydratedTranscriptSessionIDs.removeAll()
         modelsByProvider.removeAll()
         verifiedAttachmentSessionIDs.removeAll()
         reconcilingAttachmentSessionIDs.removeAll()
@@ -533,7 +535,8 @@ final class AgentManagedSessionController: ObservableObject {
                 attachmentErrors[sessionID] = "Official thread is unavailable for managed attachment"
                 return
             }
-            if provider.interactiveCapabilities.contains(.loadHistory) {
+            if provider.interactiveCapabilities.contains(.loadHistory),
+               !hydratedTranscriptSessionIDs.contains(sessionID) {
                 try await hydrateTranscript(
                     sessionID: sessionID,
                     provider: provider,
@@ -543,6 +546,8 @@ final class AgentManagedSessionController: ObservableObject {
             knownDiscoveredSessionIDs.insert(sessionID)
             verifiedAttachmentSessionIDs.insert(sessionID)
             attachmentErrors.removeValue(forKey: sessionID)
+        } catch is CancellationError {
+            return
         } catch {
             verifiedAttachmentSessionIDs.remove(sessionID)
             attachmentErrors[sessionID] = "Official thread is unavailable for managed attachment"
@@ -551,13 +556,16 @@ final class AgentManagedSessionController: ObservableObject {
 
     func refreshTranscript(for session: AgentSession, limit: Int = 80) async {
         guard let provider = providers[session.id.sessionID.provider],
-              provider.interactiveCapabilities.contains(.loadHistory) else { return }
+              provider.interactiveCapabilities.contains(.loadHistory),
+              !hydratedTranscriptSessionIDs.contains(session.id.sessionID) else { return }
         do {
             try await hydrateTranscript(
                 sessionID: session.id.sessionID,
                 provider: provider,
                 limit: limit
             )
+        } catch is CancellationError {
+            return
         } catch CodexAppServerError.rpcError(let code, _) where code == -32601 {
             // Some persisted/legacy threads cannot serve the paginated v2
             // history method. Keep any live trustworthy entries and leave
@@ -606,7 +614,8 @@ final class AgentManagedSessionController: ObservableObject {
                       inspected.sessionID == sessionID else {
                     throw CodexAppServerError.invalidResponse("thread/read identity mismatch")
                 }
-                if provider.interactiveCapabilities.contains(.loadHistory) {
+                if provider.interactiveCapabilities.contains(.loadHistory),
+                   !self.hydratedTranscriptSessionIDs.contains(sessionID) {
                     try await self.hydrateTranscript(
                         sessionID: sessionID,
                         provider: provider,
@@ -646,6 +655,7 @@ final class AgentManagedSessionController: ObservableObject {
             nativeSessionID: sessionID.nativeID,
             limit: min(max(limit, 1), 100)
         )
+        try Task.checkCancellation()
         guard entries.allSatisfy({ $0.nativeSessionID == sessionID.nativeID }) else {
             throw CodexAppServerError.invalidResponse("thread/items/list identity mismatch")
         }
@@ -653,6 +663,7 @@ final class AgentManagedSessionController: ObservableObject {
             current: transcripts[sessionID] ?? [],
             incoming: entries
         )
+        hydratedTranscriptSessionIDs.insert(sessionID)
     }
 
     private static func hasExternallyActiveTurn(_ session: AgentSession) -> Bool {

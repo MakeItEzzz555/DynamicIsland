@@ -299,7 +299,7 @@ final class AgentManagedSessionControllerTests: XCTestCase {
         let attachmentCalls = await provider.calls()
         XCTAssertEqual(attachmentCalls, [
             "inspect:official-thread", "history:official-thread",
-            "inspect:official-thread", "history:official-thread", "resume:official-thread"
+            "inspect:official-thread", "resume:official-thread"
         ])
     }
 

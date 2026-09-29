@@ -134,6 +134,194 @@ final class AgentSessionLauncherTests: XCTestCase {
         )
     }
 
+    func testFiveResumableThreadsForSameRepositoryShowOnlyNewestExactSession() {
+        let now = Date(timeIntervalSince1970: 20_000)
+        let sessions = (0..<5).map { index in
+            makeSession(
+                nativeID: "resume-\(index)",
+                state: .idle,
+                availability: .resumable,
+                project: "DynamicIsland",
+                path: "/repos/DynamicIsland",
+                now: now.addingTimeInterval(TimeInterval(index))
+            )
+        }
+
+        let visible = AgentSessionLauncherProjection.liveSessions(sessions, query: "")
+
+        XCTAssertEqual(visible.map { $0.id.sessionID.nativeID }, ["resume-4"])
+        XCTAssertEqual(Set(sessions.map { $0.id.sessionID.nativeID }).count, 5)
+    }
+
+    func testSimultaneousActiveSessionsForSameRepositoryRemainDistinct() {
+        let now = Date()
+        let first = makeSession(
+            nativeID: "active-one",
+            state: .working,
+            availability: .loaded,
+            project: "DynamicIsland",
+            path: "/repos/DynamicIsland",
+            now: now
+        )
+        let second = makeSession(
+            nativeID: "active-two",
+            state: .runningCommand,
+            availability: .loaded,
+            project: "DynamicIsland",
+            path: "/repos/DynamicIsland",
+            now: now.addingTimeInterval(-1)
+        )
+
+        let visible = AgentSessionLauncherProjection.liveSessions([second, first], query: "")
+
+        XCTAssertEqual(
+            Set(visible.map { $0.id.sessionID.nativeID }),
+            Set(["active-one", "active-two"])
+        )
+    }
+
+    func testActiveSessionHidesSameRepositoryResumableRepresentative() {
+        let now = Date()
+        let active = makeSession(
+            nativeID: "active",
+            state: .thinking,
+            availability: .loaded,
+            project: "DynamicIsland",
+            path: "/repos/DynamicIsland",
+            now: now.addingTimeInterval(-5)
+        )
+        let resumable = makeSession(
+            nativeID: "newer-resumable",
+            state: .idle,
+            availability: .resumable,
+            project: "DynamicIsland",
+            path: "/repos/DynamicIsland",
+            now: now
+        )
+
+        let visible = AgentSessionLauncherProjection.liveSessions([resumable, active], query: "")
+
+        XCTAssertEqual(visible.map { $0.id.sessionID.nativeID }, ["active"])
+    }
+
+    func testHistoricalRepresentativeUsesTimestampThenGenerationAndProvenance() {
+        let now = Date()
+        var weaker = makeSession(
+            nativeID: "weaker",
+            generation: 1,
+            state: .idle,
+            availability: .resumable,
+            project: "DynamicIsland",
+            path: "/repos/DynamicIsland",
+            now: now
+        )
+        weaker.sourceAuthority = .processObservation
+        var stronger = makeSession(
+            nativeID: "stronger",
+            generation: 2,
+            state: .idle,
+            availability: .resumable,
+            project: "DynamicIsland",
+            path: "/repos/DynamicIsland",
+            now: now
+        )
+        stronger.sourceAuthority = .lifecycle
+        let newest = makeSession(
+            nativeID: "newest",
+            generation: 1,
+            state: .idle,
+            availability: .resumable,
+            project: "DynamicIsland",
+            path: "/repos/DynamicIsland",
+            now: now.addingTimeInterval(1)
+        )
+
+        XCTAssertEqual(
+            AgentSessionLauncherProjection.liveSessions([weaker, stronger], query: "")
+                .first?.id.sessionID.nativeID,
+            "stronger"
+        )
+        XCTAssertEqual(
+            AgentSessionLauncherProjection.liveSessions([stronger, newest], query: "")
+                .first?.id.sessionID.nativeID,
+            "newest"
+        )
+    }
+
+
+    func testHistoricalSameRepositoryAcrossProvidersCollapsesToNewestRepresentative() {
+        let now = Date()
+        let codex = makeSession(
+            nativeID: "codex-old",
+            state: .idle,
+            availability: .resumable,
+            project: "DynamicIsland",
+            path: "/repos/DynamicIsland",
+            now: now.addingTimeInterval(-20)
+        )
+        var claude = makeSession(
+            nativeID: "claude-new",
+            state: .idle,
+            availability: .resumable,
+            project: "DynamicIsland",
+            path: "/repos/DynamicIsland",
+            now: now
+        )
+        claude = AgentSession(
+            id: AgentSessionInstanceID(
+                sessionID: AgentSessionID(provider: .claude, nativeID: "claude-new"),
+                generation: claude.id.generation
+            ),
+            source: claude.source,
+            state: claude.state,
+            project: claude.project,
+            capabilities: claude.capabilities,
+            usage: claude.usage,
+            tools: claude.tools,
+            commands: claude.commands,
+            approvals: claude.approvals,
+            subagents: claude.subagents,
+            recentActivity: claude.recentActivity,
+            startedAt: claude.startedAt,
+            endedAt: claude.endedAt,
+            lastUpdatedAt: claude.lastUpdatedAt,
+            availability: claude.availability,
+            sourceAuthority: claude.sourceAuthority
+        )
+
+        let visible = AgentSessionLauncherProjection.liveSessions([codex, claude], query: "")
+
+        XCTAssertEqual(visible.count, 1)
+        XCTAssertEqual(visible.first?.id.sessionID.nativeID, "claude-new")
+    }
+
+    func testSearchReturnsLatestVisibleRepositoryRepresentative() {
+        let now = Date()
+        let old = makeSession(
+            nativeID: "old-thread",
+            state: .idle,
+            availability: .resumable,
+            project: "DynamicIsland",
+            path: "/repos/DynamicIsland",
+            now: now.addingTimeInterval(-100)
+        )
+        let latest = makeSession(
+            nativeID: "latest-thread",
+            state: .idle,
+            availability: .resumable,
+            project: "DynamicIsland",
+            path: "/repos/DynamicIsland",
+            now: now
+        )
+
+        let visible = AgentSessionLauncherProjection.liveSessions(
+            [old, latest],
+            query: "DynamicIsland"
+        )
+
+        XCTAssertEqual(visible.map { $0.id.sessionID.nativeID }, ["latest-thread"])
+    }
+
     func testRepositoryProjectionUsesOnlyExistingLocalPathsAndDeduplicatesByPath() {
         let now = Date()
         let first = makeSession(
@@ -302,6 +490,7 @@ final class AgentSessionLauncherTests: XCTestCase {
 
     private func makeSession(
         nativeID: String,
+        generation: UInt64 = 1,
         state: AgentState,
         availability: AgentSessionAvailability?,
         project: String,
@@ -311,7 +500,7 @@ final class AgentSessionLauncherTests: XCTestCase {
         AgentSession(
             id: AgentSessionInstanceID(
                 sessionID: AgentSessionID(provider: .codex, nativeID: nativeID),
-                generation: AgentSessionGeneration(rawValue: 1)
+                generation: AgentSessionGeneration(rawValue: generation)
             ),
             source: .terminal,
             state: state,
