@@ -627,6 +627,27 @@ struct SettingsView: View {
                     .disabled(true)
                 HelpText("Music, Timer, File Tray, and Battery activities appear in the Island tab. Calendar, Downloads, and auto-dismiss controls are reserved for later phases.")
             }
+            SettingsGroup("System HUDs") {
+                Toggle("Enable system HUDs", isOn: $settings.systemHUDsEnabled)
+                Toggle("Volume", isOn: $settings.volumeHUDEnabled)
+                    .disabled(!settings.systemHUDsEnabled)
+                Toggle("Brightness", isOn: $settings.brightnessHUDEnabled)
+                    .disabled(!settings.systemHUDsEnabled)
+                SliderRow(
+                    title: "Display duration",
+                    value: $settings.systemHUDDurationSeconds,
+                    range: 0.5...3.0,
+                    format: "%.1fs",
+                    disabled: !settings.systemHUDsEnabled
+                )
+                SystemHUDSettingsPreview(settings: settings)
+                    .opacity(settings.systemHUDsEnabled ? 1 : 0.45)
+                HelpText(
+                    "Uses the real system output volume and display brightness when macOS exposes a trustworthy value. " +
+                    "Unsupported controls are not simulated."
+                )
+            }
+
             SettingsGroup("Collapsed Live Activity Priority") {
                 PriorityStepperRow(
                     title: CollapsedLiveActivityPrioritySource.runningTimer.displayName,
@@ -1021,5 +1042,48 @@ struct ShortcutEditorRow: View {
             shortcut[keyPath: keyPath] = newValue
             onUpdate(shortcut)
         }
+    }
+}
+
+
+private struct SystemHUDSettingsPreview: View {
+    @ObservedObject var settings: AppSettings
+    @State private var previewValue = 0.68
+
+    var body: some View {
+        VStack(spacing: 8) {
+            Text("Live Preview")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            CollapsedSystemHUDCompactView(
+                activity: DynamicIslandLiveActivity(
+                    id: "settings-system-hud",
+                    kind: .system,
+                    title: "Volume",
+                    subtitle: "\(Int(previewValue * 100))%",
+                    symbolName: "speaker.wave.2.fill",
+                    priority: 200,
+                    isActive: true,
+                    progress: previewValue,
+                    updatedAt: Date()
+                ),
+                layout: CompactCollapsedSideSlotGeometry(
+                    isNotchIntegrated: false,
+                    leftRegionWidth: 0,
+                    notchCoreWidth: 0,
+                    rightRegionWidth: 0
+                )
+            )
+            .frame(width: 190, height: 32)
+            .padding(.horizontal, 14)
+            .background(Color.black, in: Capsule(style: .continuous))
+
+            Slider(value: $previewValue, in: 0...1)
+                .frame(maxWidth: 220)
+        }
+        .padding(.vertical, 4)
+        .allowsHitTesting(settings.systemHUDsEnabled)
     }
 }

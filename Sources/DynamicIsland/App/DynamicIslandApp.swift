@@ -81,6 +81,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let timerNotifications = TimerCompletionNotificationCoordinator()
     private let stats = SystemStatsController()
     private let liveActivities = LiveActivityStore()
+    private lazy var systemHUDController = SystemHUDController(
+        settings: settings,
+        liveActivities: liveActivities
+    )
     private lazy var clipboardHistory = ClipboardHistoryStore(settings: settings)
     private let batteryActivityProvider = BatteryActivityProvider()
     private let navigation = IslandNavigationStore()
@@ -182,6 +186,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .store(in: &cancellables)
 
         installLiveActivityObservers()
+        systemHUDController.start()
         installAgentActivityObservers()
         Task { [codexRolloutMonitor] in
             await codexRolloutMonitor.start()
@@ -217,6 +222,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             print("[ClipboardHistory] termination finalization \(clipboardFinalization)")
         }
         #endif
+        systemHUDController.stop()
         agentBridge.stop()
         agentManagedControl.stop()
         Task { [codexRolloutMonitor] in

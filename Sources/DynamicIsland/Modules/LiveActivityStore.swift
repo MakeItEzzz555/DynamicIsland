@@ -9,6 +9,7 @@ enum DynamicIslandLiveActivityKind: String, Equatable {
 }
 
 enum CollapsedLiveActivityPrioritySource: String, CaseIterable, Identifiable {
+    case systemHUD
     case runningTimer
     case playingMedia
     case lowBattery
@@ -22,6 +23,8 @@ enum CollapsedLiveActivityPrioritySource: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
+        case .systemHUD:
+            "System HUD"
         case .runningTimer:
             "Running Timer"
         case .playingMedia:
@@ -43,6 +46,8 @@ enum CollapsedLiveActivityPrioritySource: String, CaseIterable, Identifiable {
 
     var defaultPriority: Int {
         switch self {
+        case .systemHUD:
+            200
         case .runningTimer:
             100
         case .playingMedia:
@@ -62,22 +67,24 @@ enum CollapsedLiveActivityPrioritySource: String, CaseIterable, Identifiable {
 
     var defaultRank: Int {
         switch self {
-        case .runningTimer:
+        case .systemHUD:
             0
-        case .playingMedia:
+        case .runningTimer:
             1
-        case .lowBattery:
+        case .playingMedia:
             2
-        case .pausedTimer:
+        case .lowBattery:
             3
-        case .recentFiles:
+        case .pausedTimer:
             4
-        case .pausedMedia:
+        case .recentFiles:
             5
-        case .chargingBattery:
+        case .pausedMedia:
             6
-        case .fullBattery:
+        case .chargingBattery:
             7
+        case .fullBattery:
+            8
         }
     }
 }
@@ -104,6 +111,8 @@ struct CollapsedLiveActivityPrioritySettings: Equatable {
     func priority(for source: CollapsedLiveActivityPrioritySource) -> Int {
         let value: Int
         switch source {
+        case .systemHUD:
+            value = source.defaultPriority
         case .runningTimer:
             value = runningTimer
         case .playingMedia:
@@ -131,11 +140,13 @@ struct CollapsedLiveActivitySourceToggles: Equatable {
     var mediaEnabled: Bool
     var fileTrayEnabled: Bool
     var batteryEnabled: Bool
+    var systemHUDEnabled: Bool = false
 }
 
 enum CollapsedIslandContentMode: Equatable {
     case inactive
     case media
+    case system(DynamicIslandLiveActivity)
     case timer(DynamicIslandLiveActivity)
     case fileTray(DynamicIslandLiveActivity)
     case battery(DynamicIslandLiveActivity)
@@ -205,7 +216,7 @@ enum CollapsedLiveActivitySelector {
         priorities: CollapsedLiveActivityPrioritySettings,
         toggles: CollapsedLiveActivitySourceToggles
     ) -> CollapsedIslandContentMode {
-        guard toggles.liveActivitiesEnabled else { return .inactive }
+        guard toggles.liveActivitiesEnabled || toggles.systemHUDEnabled else { return .inactive }
 
         guard let selected = candidates(
             activities: activities,
@@ -218,6 +229,8 @@ enum CollapsedLiveActivitySelector {
         }
 
         switch selected.source {
+        case .systemHUD:
+            return .system(selected.activity)
         case .playingMedia, .pausedMedia:
             return .media
         case .runningTimer, .pausedTimer:
@@ -235,7 +248,7 @@ enum CollapsedLiveActivitySelector {
         toggles: CollapsedLiveActivitySourceToggles,
         maxCount: Int = 3
     ) -> [DynamicIslandLiveActivity] {
-        guard toggles.liveActivitiesEnabled, maxCount > 0 else { return [] }
+        guard (toggles.liveActivitiesEnabled || toggles.systemHUDEnabled), maxCount > 0 else { return [] }
 
         return candidates(
             activities: activities,
@@ -289,7 +302,7 @@ enum CollapsedLiveActivitySelector {
                 return nil
             }
         case .system:
-            return nil
+            return .systemHUD
         }
     }
 
@@ -298,14 +311,16 @@ enum CollapsedLiveActivitySelector {
         toggles: CollapsedLiveActivitySourceToggles
     ) -> Bool {
         switch source {
+        case .systemHUD:
+            return toggles.systemHUDEnabled
         case .runningTimer, .pausedTimer:
-            return toggles.timerEnabled
+            return toggles.liveActivitiesEnabled && toggles.timerEnabled
         case .playingMedia, .pausedMedia:
-            return toggles.mediaEnabled
+            return toggles.liveActivitiesEnabled && toggles.mediaEnabled
         case .recentFiles:
-            return toggles.fileTrayEnabled
+            return toggles.liveActivitiesEnabled && toggles.fileTrayEnabled
         case .lowBattery, .chargingBattery, .fullBattery:
-            return toggles.batteryEnabled
+            return toggles.liveActivitiesEnabled && toggles.batteryEnabled
         }
     }
 
@@ -328,6 +343,7 @@ final class LiveActivityStore: ObservableObject {
     static let timerActivityID = "timer"
     static let mediaActivityID = "media"
     static let fileTrayActivityID = "fileTray"
+    static let systemHUDActivityID = "systemHUD"
     nonisolated static let batteryActivityID = "battery"
 
     @Published private(set) var activities: [DynamicIslandLiveActivity] = []

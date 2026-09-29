@@ -335,6 +335,10 @@ public final class AppSettings: ObservableObject {
         didSet { normalizeLiveActivityDismiss(oldValue: oldValue) }
     }
     @Published public var liveActivityAnimationEnabled: Bool { didSet { save(liveActivityAnimationEnabled, for: Key.liveActivityAnimationEnabled) } }
+    @Published public var systemHUDsEnabled: Bool { didSet { save(systemHUDsEnabled, for: Key.systemHUDsEnabled) } }
+    @Published public var volumeHUDEnabled: Bool { didSet { save(volumeHUDEnabled, for: Key.volumeHUDEnabled) } }
+    @Published public var brightnessHUDEnabled: Bool { didSet { save(brightnessHUDEnabled, for: Key.brightnessHUDEnabled) } }
+    @Published public var systemHUDDurationSeconds: Double { didSet { save(systemHUDDurationSeconds, for: Key.systemHUDDurationSeconds) } }
     @Published public var collapsedPriorityRunningTimer: Int {
         didSet { normalizeCollapsedPriorityRunningTimer(oldValue: oldValue) }
     }
@@ -543,6 +547,10 @@ public final class AppSettings: ObservableObject {
         liveActivityAutoDismissEnabled = Self.bool(defaults, Key.liveActivityAutoDismissEnabled, true)
         liveActivityAutoDismissSeconds = Self.double(defaults, Key.liveActivityAutoDismissSeconds, 6.0)
         liveActivityAnimationEnabled = Self.bool(defaults, Key.liveActivityAnimationEnabled, true)
+        systemHUDsEnabled = Self.bool(defaults, Key.systemHUDsEnabled, true)
+        volumeHUDEnabled = Self.bool(defaults, Key.volumeHUDEnabled, true)
+        brightnessHUDEnabled = Self.bool(defaults, Key.brightnessHUDEnabled, true)
+        systemHUDDurationSeconds = Self.double(defaults, Key.systemHUDDurationSeconds, 1.4)
         collapsedPriorityRunningTimer = Self.int(defaults, Key.collapsedPriorityRunningTimer, CollapsedLiveActivityPrioritySource.runningTimer.defaultPriority)
         collapsedPriorityPlayingMedia = Self.int(defaults, Key.collapsedPriorityPlayingMedia, CollapsedLiveActivityPrioritySource.playingMedia.defaultPriority)
         collapsedPriorityPausedTimer = Self.int(defaults, Key.collapsedPriorityPausedTimer, CollapsedLiveActivityPrioritySource.pausedTimer.defaultPriority)
@@ -825,6 +833,10 @@ public final class AppSettings: ObservableObject {
         liveActivityAutoDismissEnabled = Self.bool(defaults, Key.liveActivityAutoDismissEnabled, true)
         liveActivityAutoDismissSeconds = Self.double(defaults, Key.liveActivityAutoDismissSeconds, 6.0)
         liveActivityAnimationEnabled = Self.bool(defaults, Key.liveActivityAnimationEnabled, true)
+        systemHUDsEnabled = Self.bool(defaults, Key.systemHUDsEnabled, true)
+        volumeHUDEnabled = Self.bool(defaults, Key.volumeHUDEnabled, true)
+        brightnessHUDEnabled = Self.bool(defaults, Key.brightnessHUDEnabled, true)
+        systemHUDDurationSeconds = Self.double(defaults, Key.systemHUDDurationSeconds, 1.4)
         collapsedPriorityRunningTimer = Self.int(defaults, Key.collapsedPriorityRunningTimer, CollapsedLiveActivityPrioritySource.runningTimer.defaultPriority)
         collapsedPriorityPlayingMedia = Self.int(defaults, Key.collapsedPriorityPlayingMedia, CollapsedLiveActivityPrioritySource.playingMedia.defaultPriority)
         collapsedPriorityPausedTimer = Self.int(defaults, Key.collapsedPriorityPausedTimer, CollapsedLiveActivityPrioritySource.pausedTimer.defaultPriority)
@@ -1339,6 +1351,10 @@ private enum Key {
     static let liveActivityAutoDismissEnabled = "liveActivityAutoDismissEnabled"
     static let liveActivityAutoDismissSeconds = "liveActivityAutoDismissSeconds"
     static let liveActivityAnimationEnabled = "liveActivityAnimationEnabled"
+    static let systemHUDsEnabled = "systemHUDsEnabled"
+    static let volumeHUDEnabled = "volumeHUDEnabled"
+    static let brightnessHUDEnabled = "brightnessHUDEnabled"
+    static let systemHUDDurationSeconds = "systemHUDDurationSeconds"
     static let collapsedPriorityRunningTimer = "collapsedPriorityRunningTimer"
     static let collapsedPriorityPlayingMedia = "collapsedPriorityPlayingMedia"
     static let collapsedPriorityPausedTimer = "collapsedPriorityPausedTimer"
@@ -1416,6 +1432,7 @@ private enum Key {
         showMusicLiveActivity, showTimerLiveActivity, showFileDropLiveActivity,
         showBatteryLiveActivity, showCalendarLiveActivity, showDownloadsLiveActivity,
         liveActivityAutoDismissEnabled, liveActivityAutoDismissSeconds, liveActivityAnimationEnabled,
+        systemHUDsEnabled, volumeHUDEnabled, brightnessHUDEnabled, systemHUDDurationSeconds,
         collapsedPriorityRunningTimer, collapsedPriorityPlayingMedia, collapsedPriorityPausedTimer,
         collapsedPriorityRecentFiles, collapsedPriorityPausedMedia,
         gesturesEnabled, gestureInputSource, expandGestureEnabled, collapseGestureEnabled,

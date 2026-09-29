@@ -685,7 +685,8 @@ struct IslandRootView: View {
                     settings.showMusicLiveActivity &&
                     (settings.showMediaWhenPaused || media.isPlaying),
                 fileTrayEnabled: settings.trayEnabled && settings.fileShelfEnabled && settings.showFileDropLiveActivity,
-                batteryEnabled: settings.showBatteryLiveActivity
+                batteryEnabled: settings.showBatteryLiveActivity,
+                systemHUDEnabled: settings.systemHUDsEnabled
             )
         )
     }
@@ -1585,6 +1586,12 @@ struct CompactIslandView: View {
                     }
                 }
                 .transition(.compactMediaContent)
+            case .system(let activity):
+                CollapsedSystemHUDCompactView(
+                    activity: activity,
+                    layout: sideSlotGeometry
+                )
+                    .transition(.compactMediaContent)
             case .timer(let activity):
                 CollapsedTimerActivityCompactView(
                     activity: activity,
@@ -1744,6 +1751,52 @@ struct CompactCollapsedSideSlotLayout<Left: View, Right: View>: View {
                 right()
             }
         }
+    }
+}
+
+struct CollapsedSystemHUDCompactView: View {
+    let activity: DynamicIslandLiveActivity
+    let layout: CompactCollapsedSideSlotGeometry
+
+    var body: some View {
+        CompactCollapsedSideSlotLayout(geometry: layout) {
+            SafeSystemImage(symbolName: activity.symbolName, fallbackSymbolName: "slider.horizontal.3")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(.white.opacity(0.92))
+                .frame(
+                    width: CollapsedActivityLayoutProfile.systemHUDLeftContentWidth,
+                    height: CollapsedActivityLayoutProfile.systemHUDLeftContentWidth
+                )
+        } right: {
+            HStack(spacing: 4) {
+                GeometryReader { proxy in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(.white.opacity(0.14))
+                        Capsule()
+                            .fill(.white.opacity(0.88))
+                            .frame(width: proxy.size.width * CGFloat(progress))
+                    }
+                }
+                .frame(width: 25, height: 3.5)
+
+                Text(percentText)
+                    .font(.system(size: 7.4, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(.white.opacity(0.82))
+                    .frame(width: 19, alignment: .trailing)
+            }
+            .frame(width: CollapsedActivityLayoutProfile.systemHUDRightContentWidth)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityLabel("\(activity.title), \(percentText)")
+    }
+
+    private var progress: Double {
+        LiveActivityStore.clampedProgress(activity.progress) ?? 0
+    }
+
+    private var percentText: String {
+        "\(Int((progress * 100).rounded()))%"
     }
 }
 

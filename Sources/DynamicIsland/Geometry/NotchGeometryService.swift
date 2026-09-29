@@ -125,6 +125,8 @@ public struct CollapsedActivityLayoutProfile: Equatable, Sendable {
     public static let batteryRightContentWidth: CGFloat = 34
     public static let fileLeftContentWidth: CGFloat = 17
     public static let fileRightContentWidth: CGFloat = 44
+    public static let systemHUDLeftContentWidth: CGFloat = 16
+    public static let systemHUDRightContentWidth: CGFloat = 48
 
     public let leftContentWidth: CGFloat
     public let rightContentWidth: CGFloat
@@ -151,6 +153,10 @@ public struct CollapsedActivityLayoutProfile: Equatable, Sendable {
     static let timer = Self(leftContentWidth: timerLeftContentWidth, rightContentWidth: timerRightContentWidth)
     static let battery = Self(leftContentWidth: batteryLeftContentWidth, rightContentWidth: batteryRightContentWidth)
     static let file = Self(leftContentWidth: fileLeftContentWidth, rightContentWidth: fileRightContentWidth)
+    static let systemHUD = Self(
+        leftContentWidth: systemHUDLeftContentWidth,
+        rightContentWidth: systemHUDRightContentWidth
+    )
 }
 
 struct CollapsedActivityResolvedGeometry: Equatable {

@@ -90,6 +90,41 @@ final class AppSettingsTests: XCTestCase {
     }
 
     @MainActor
+    func testSystemHUDDefaultsAndPersistence() {
+        let first = AppSettings(defaults: defaults)
+        XCTAssertTrue(first.systemHUDsEnabled)
+        XCTAssertTrue(first.volumeHUDEnabled)
+        XCTAssertTrue(first.brightnessHUDEnabled)
+        XCTAssertEqual(first.systemHUDDurationSeconds, 1.4, accuracy: 0.001)
+
+        first.systemHUDsEnabled = false
+        first.volumeHUDEnabled = false
+        first.brightnessHUDEnabled = false
+        first.systemHUDDurationSeconds = 2.2
+
+        let second = AppSettings(defaults: defaults)
+        XCTAssertFalse(second.systemHUDsEnabled)
+        XCTAssertFalse(second.volumeHUDEnabled)
+        XCTAssertFalse(second.brightnessHUDEnabled)
+        XCTAssertEqual(second.systemHUDDurationSeconds, 2.2, accuracy: 0.001)
+    }
+
+    func testSystemHUDSnapshotSymbolsMatchState() {
+        XCTAssertEqual(
+            SystemHUDSnapshot(kind: .volume, value: 0, isMuted: true, updatedAt: .distantPast).symbolName,
+            "speaker.slash.fill"
+        )
+        XCTAssertEqual(
+            SystemHUDSnapshot(kind: .volume, value: 0.8, isMuted: false, updatedAt: .distantPast).symbolName,
+            "speaker.wave.3.fill"
+        )
+        XCTAssertEqual(
+            SystemHUDSnapshot(kind: .brightness, value: 0.5, isMuted: false, updatedAt: .distantPast).symbolName,
+            "sun.max.fill"
+        )
+    }
+
+    @MainActor
     func testClipboardHistoryDefaults() {
         let settings = AppSettings(defaults: defaults)
 

@@ -629,6 +629,8 @@ final class OverlayWindowController {
                 showsArtwork: settings.showAlbumArtwork,
                 showsVisualizer: settings.showVisualizer && settings.showCollapsedVisualizer
             )
+        case .system:
+            return .systemHUD
         case .timer:
             return .timer
         case .fileTray:
@@ -651,7 +653,8 @@ final class OverlayWindowController {
                 fileTrayEnabled: settings.trayEnabled &&
                     settings.fileShelfEnabled &&
                     settings.showFileDropLiveActivity,
-                batteryEnabled: settings.showBatteryLiveActivity
+                batteryEnabled: settings.showBatteryLiveActivity,
+                systemHUDEnabled: settings.systemHUDsEnabled
             )
         )
     }
