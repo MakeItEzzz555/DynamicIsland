@@ -188,6 +188,14 @@ final class LiveActivitySidecarSnapshotTests: XCTestCase {
         case .battery: "battery.25percent"
         case .system: "speaker.wave.2.fill"
         case .agent: "cpu"
+        case .keepAwake: "cup.and.saucer.fill"
+        case .terminalTask: "terminal.fill"
+        case .windowSnapPreview: "rectangle.split.2x1"
+        case .reminder: "checklist"
+        case .voiceRecording: "mic.fill"
+        case .voiceTranscription: "waveform"
+        case .camera: "camera.fill"
+        case .backgroundRemoval: "person.crop.rectangle"
         }
         let priority: Int = switch kind {
         case .system: 200
@@ -196,6 +204,14 @@ final class LiveActivitySidecarSnapshotTests: XCTestCase {
         case .media: 80
         case .battery: 85
         case .fileTray: 60
+        case .keepAwake: 72
+        case .terminalTask: 88
+        case .windowSnapPreview: 170
+        case .reminder: 78
+        case .voiceRecording: 125
+        case .voiceTranscription: 105
+        case .camera: 128
+        case .backgroundRemoval: 84
         }
         return DynamicIslandLiveActivity(
             id: id,

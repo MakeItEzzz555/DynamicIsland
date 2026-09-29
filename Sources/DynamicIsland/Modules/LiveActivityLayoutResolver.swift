@@ -214,7 +214,110 @@ enum LiveActivityPresentationPolicy {
                 coexistencePolicy: .sidecarAllowed,
                 preemptionPolicy: .persistent
             )
+
+        case .keepAwake:
+            return sidecarDescriptor(
+                activity,
+                preferredPlacement: .trailingSidecar,
+                shape: .capsule,
+                priority: max(activity.priority, 72)
+            )
+
+        case .terminalTask:
+            return sidecarDescriptor(
+                activity,
+                preferredPlacement: .trailingSidecar,
+                shape: .capsule,
+                priority: max(activity.priority, 88)
+            )
+
+        case .windowSnapPreview:
+            return LiveActivityPresentationDescriptor(
+                activityID: activity.id,
+                preferredPlacement: .overlayTransient,
+                allowedPlacements: [.overlayTransient],
+                compactShape: .capsule,
+                minimumWidth: 88,
+                idealWidth: 150,
+                priority: max(activity.priority, 170),
+                coexistencePolicy: .exclusive,
+                preemptionPolicy: .transientOverlay
+            )
+
+        case .reminder:
+            return sidecarDescriptor(
+                activity,
+                preferredPlacement: .leadingSidecar,
+                shape: .capsule,
+                priority: max(activity.priority, 78)
+            )
+
+        case .voiceRecording:
+            return primaryDescriptor(
+                activity,
+                shape: .progressPill,
+                priority: max(activity.priority, 125)
+            )
+
+        case .voiceTranscription:
+            return primaryDescriptor(
+                activity,
+                shape: .progressPill,
+                priority: max(activity.priority, 105)
+            )
+
+        case .camera:
+            return primaryDescriptor(
+                activity,
+                shape: .elongatedPill,
+                priority: max(activity.priority, 128)
+            )
+
+        case .backgroundRemoval:
+            return sidecarDescriptor(
+                activity,
+                preferredPlacement: .leadingSidecar,
+                shape: .circle,
+                priority: max(activity.priority, 84)
+            )
         }
+    }
+
+    private static func sidecarDescriptor(
+        _ activity: DynamicIslandLiveActivity,
+        preferredPlacement: LiveActivityPlacement,
+        shape: LiveActivityCompactShape,
+        priority: Int
+    ) -> LiveActivityPresentationDescriptor {
+        LiveActivityPresentationDescriptor(
+            activityID: activity.id,
+            preferredPlacement: preferredPlacement,
+            allowedPlacements: [.leadingSidecar, .trailingSidecar, .primary],
+            compactShape: shape,
+            minimumWidth: shape == .circle ? 28 : 30,
+            idealWidth: shape == .circle ? 32 : 58,
+            priority: priority,
+            coexistencePolicy: .sidecarPreferred,
+            preemptionPolicy: .persistent
+        )
+    }
+
+    private static func primaryDescriptor(
+        _ activity: DynamicIslandLiveActivity,
+        shape: LiveActivityCompactShape,
+        priority: Int
+    ) -> LiveActivityPresentationDescriptor {
+        LiveActivityPresentationDescriptor(
+            activityID: activity.id,
+            preferredPlacement: .primary,
+            allowedPlacements: [.primary],
+            compactShape: shape,
+            minimumWidth: 176,
+            idealWidth: 228,
+            priority: priority,
+            coexistencePolicy: .sidecarAllowed,
+            preemptionPolicy: .persistent
+        )
     }
 
     private static func batteryPriority(_ activity: DynamicIslandLiveActivity) -> Int {
@@ -439,6 +542,11 @@ enum LiveActivityRuntimeProjection {
             toggles: toggles,
             maxCount: 16
         )
+
+        let projectedIDs = Set(result.map(\.id))
+        result.append(contentsOf: stored.filter {
+            $0.kind.usesDirectLayoutProjection && !projectedIDs.contains($0.id)
+        })
 
         if let compact = AgentCompactPresentation.make(
             sessions: agentSessions,

@@ -801,6 +801,9 @@ struct IslandRootView: View {
             return .battery(primary)
         case .system:
             return .inactive
+        case .keepAwake, .terminalTask, .windowSnapPreview, .reminder,
+             .voiceRecording, .voiceTranscription, .camera, .backgroundRemoval:
+            return .generic(primary)
         }
     }
 
@@ -828,7 +831,8 @@ struct IslandRootView: View {
         case .fileTray:
             navigation.showTray()
             onRequestExpand()
-        case .battery, .system:
+        case .battery, .system, .keepAwake, .terminalTask, .windowSnapPreview,
+             .reminder, .voiceRecording, .voiceTranscription, .camera, .backgroundRemoval:
             break
         }
     }
@@ -1018,6 +1022,18 @@ struct IslandRootView: View {
             )
         case .system:
             return nil
+        case .keepAwake, .terminalTask, .windowSnapPreview, .reminder,
+             .voiceRecording, .voiceTranscription, .camera, .backgroundRemoval:
+            return CollapsedPreviewRowContent(
+                id: activity.id,
+                title: activity.title,
+                subtitle: activity.subtitle,
+                trailingText: nil,
+                symbolName: activity.symbolName,
+                fallbackSymbolName: "circle.fill",
+                kind: .liveActivity,
+                isPrimary: isPrimary
+            )
         }
     }
 
@@ -1820,6 +1836,13 @@ struct CompactIslandView: View {
             )
             .transition(.compactMediaContent)
 
+        case .generic(let activity):
+            CollapsedGenericActivityCompactView(
+                activity: activity,
+                layout: sideSlotGeometry
+            )
+            .transition(.compactMediaContent)
+
         case .inactive:
             if agentAttention.presentation == nil,
                let presentation = AgentCompactPresentation.make(
@@ -2173,6 +2196,39 @@ struct LiveActivitySidecarLayer: View {
         [activity.title, activity.subtitle]
             .compactMap { $0 }
             .joined(separator: " · ")
+    }
+}
+
+struct CollapsedGenericActivityCompactView: View {
+    let activity: DynamicIslandLiveActivity
+    let layout: CompactCollapsedSideSlotGeometry
+
+    var body: some View {
+        CompactCollapsedSideSlotLayout(geometry: layout) {
+            SafeSystemImage(symbolName: activity.symbolName, fallbackSymbolName: "circle.fill")
+                .font(.system(size: 10.5, weight: .bold))
+                .foregroundStyle(.white.opacity(0.9))
+                .frame(
+                    width: CollapsedActivityLayoutProfile.genericActivityLeftContentWidth,
+                    height: CollapsedActivityLayoutProfile.genericActivityLeftContentWidth
+                )
+        } right: {
+            Text(activity.subtitle ?? activity.title)
+                .font(.system(size: 8.5, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.84))
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+                .frame(
+                    width: CollapsedActivityLayoutProfile.genericActivityRightContentWidth,
+                    alignment: .trailing
+                )
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(
+            [activity.title, activity.subtitle]
+                .compactMap { $0 }
+                .joined(separator: ", ")
+        )
     }
 }
 
@@ -3553,6 +3609,9 @@ private struct LiveActivitiesModuleView: View {
                 navigation.showAgents()
             }
         case .system:
+            break
+        case .keepAwake, .terminalTask, .windowSnapPreview, .reminder,
+             .voiceRecording, .voiceTranscription, .camera, .backgroundRemoval:
             break
         }
     }

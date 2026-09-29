@@ -182,6 +182,57 @@ final class LiveActivityLayoutResolverTests: XCTestCase {
         XCTAssertEqual(result.leadingSidecar?.activity.id, "battery")
     }
 
+    func testKeepAwakeCanCoexistAsSidecarWithMediaPrimary() {
+        let result = resolve([
+            activity("media", .media, priority: 80),
+            activity("awake", .keepAwake, priority: 72)
+        ])
+
+        XCTAssertEqual(result.primary?.activity.id, "media")
+        XCTAssertEqual(result.trailingSidecar?.activity.id, "awake")
+    }
+
+    func testVoiceRecordingPrefersPrimaryOverMedia() {
+        let result = resolve([
+            activity("media", .media, priority: 80),
+            activity("voice", .voiceRecording, priority: 125)
+        ])
+
+        XCTAssertEqual(result.primary?.activity.id, "voice")
+        XCTAssertEqual(result.primary?.descriptor.preemptionPolicy, .persistent)
+    }
+
+    func testWindowSnapPreviewIsTransientOverlayAndPreservesPersistentSlots() {
+        let persistent = resolve(fullSet)
+        let withPreview = resolve(
+            fullSet + [activity("snap", .windowSnapPreview, priority: 170)]
+        )
+
+        XCTAssertEqual(withPreview.persistentActivityIDs, persistent.persistentActivityIDs)
+        XCTAssertEqual(withPreview.overlayTransient?.activity.id, "snap")
+        XCTAssertEqual(withPreview.overlayTransient?.descriptor.preemptionPolicy, .transientOverlay)
+    }
+
+    func testProductivityKindsExposeDeterministicPresentationMetadata() {
+        let expectations: [(DynamicIslandLiveActivityKind, LiveActivityPlacement, LiveActivityPreemptionPolicy)] = [
+            (.keepAwake, .trailingSidecar, .persistent),
+            (.terminalTask, .trailingSidecar, .persistent),
+            (.windowSnapPreview, .overlayTransient, .transientOverlay),
+            (.reminder, .leadingSidecar, .persistent),
+            (.voiceRecording, .primary, .persistent),
+            (.voiceTranscription, .primary, .persistent),
+            (.camera, .primary, .persistent),
+            (.backgroundRemoval, .leadingSidecar, .persistent)
+        ]
+
+        for (kind, placement, preemption) in expectations {
+            let item = activity(kind.rawValue, kind, priority: 1)
+            let descriptor = LiveActivityPresentationPolicy.descriptor(for: item)
+            XCTAssertEqual(descriptor.preferredPlacement, placement, "kind=\(kind.rawValue)")
+            XCTAssertEqual(descriptor.preemptionPolicy, preemption, "kind=\(kind.rawValue)")
+        }
+    }
+
     private var fullSet: [DynamicIslandLiveActivity] {
         [
             activity("media", .media, priority: 80),

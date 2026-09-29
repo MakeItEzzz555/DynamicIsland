@@ -127,6 +127,8 @@ public struct CollapsedActivityLayoutProfile: Equatable, Sendable {
     public static let fileRightContentWidth: CGFloat = 44
     public static let systemHUDLeftContentWidth: CGFloat = 16
     public static let systemHUDRightContentWidth: CGFloat = 48
+    public static let genericActivityLeftContentWidth: CGFloat = 16
+    public static let genericActivityRightContentWidth: CGFloat = 52
 
     public let leftContentWidth: CGFloat
     public let rightContentWidth: CGFloat
@@ -156,6 +158,10 @@ public struct CollapsedActivityLayoutProfile: Equatable, Sendable {
     static let systemHUD = Self(
         leftContentWidth: systemHUDLeftContentWidth,
         rightContentWidth: systemHUDRightContentWidth
+    )
+    static let genericActivity = Self(
+        leftContentWidth: genericActivityLeftContentWidth,
+        rightContentWidth: genericActivityRightContentWidth
     )
 }
 

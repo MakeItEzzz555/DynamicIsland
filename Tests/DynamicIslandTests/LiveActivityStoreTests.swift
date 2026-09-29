@@ -73,3 +73,48 @@ final class LiveActivityStoreTests: XCTestCase {
         )
     }
 }
+
+extension LiveActivityStoreTests {
+    func testLifecycleMetadataDefaultsToLegacyAuthority() {
+        let value = DynamicIslandLiveActivity(
+            id: "legacy",
+            kind: .media,
+            title: "Media",
+            subtitle: nil,
+            symbolName: "music.note",
+            priority: 80,
+            isActive: true,
+            progress: nil,
+            updatedAt: Date(timeIntervalSince1970: 1_000)
+        )
+
+        XCTAssertEqual(value.lifecycle.authority, .applicationState)
+        XCTAssertEqual(value.lifecycle.dismissPolicy, .automatic)
+        XCTAssertFalse(value.lifecycle.supportsCancellation)
+    }
+
+    func testLifecycleMetadataPreservesTruthfulSourceEvidence() {
+        let metadata = LiveActivityLifecycleMetadata(
+            authority: .process,
+            startEvidence: "child process started",
+            progressEvidence: "streaming process state",
+            completionEvidence: "process exit status",
+            dismissPolicy: .untilSourceEnds,
+            supportsCancellation: true
+        )
+        let value = DynamicIslandLiveActivity(
+            id: "terminal",
+            kind: .terminalTask,
+            title: "Build",
+            subtitle: "Running",
+            symbolName: "terminal",
+            priority: 88,
+            isActive: true,
+            progress: nil,
+            updatedAt: Date(timeIntervalSince1970: 1_000),
+            lifecycle: metadata
+        )
+
+        XCTAssertEqual(value.lifecycle, metadata)
+    }
+}

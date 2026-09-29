@@ -7,6 +7,24 @@ enum DynamicIslandLiveActivityKind: String, Equatable, Sendable {
     case battery
     case system
     case agent
+    case keepAwake
+    case terminalTask
+    case windowSnapPreview
+    case reminder
+    case voiceRecording
+    case voiceTranscription
+    case camera
+    case backgroundRemoval
+
+    var usesDirectLayoutProjection: Bool {
+        switch self {
+        case .keepAwake, .terminalTask, .windowSnapPreview, .reminder,
+             .voiceRecording, .voiceTranscription, .camera, .backgroundRemoval:
+            true
+        case .media, .timer, .fileTray, .battery, .system, .agent:
+            false
+        }
+    }
 }
 
 enum CollapsedLiveActivityPrioritySource: String, CaseIterable, Identifiable {
@@ -152,6 +170,42 @@ enum CollapsedIslandContentMode: Equatable {
     case timer(DynamicIslandLiveActivity)
     case fileTray(DynamicIslandLiveActivity)
     case battery(DynamicIslandLiveActivity)
+    case generic(DynamicIslandLiveActivity)
+}
+
+enum LiveActivitySourceAuthority: String, Equatable, Codable, Sendable {
+    case applicationState
+    case systemAPI
+    case accessibilityAPI
+    case process
+    case eventKit
+    case avFoundation
+    case vision
+    case integrationAdapter
+}
+
+enum LiveActivityDismissPolicy: String, Equatable, Codable, Sendable {
+    case automatic
+    case userDismissible
+    case untilSourceEnds
+}
+
+struct LiveActivityLifecycleMetadata: Equatable, Sendable {
+    let authority: LiveActivitySourceAuthority
+    let startEvidence: String
+    let progressEvidence: String?
+    let completionEvidence: String?
+    let dismissPolicy: LiveActivityDismissPolicy
+    let supportsCancellation: Bool
+
+    static let legacy = LiveActivityLifecycleMetadata(
+        authority: .applicationState,
+        startEvidence: "existing application state",
+        progressEvidence: nil,
+        completionEvidence: nil,
+        dismissPolicy: .automatic,
+        supportsCancellation: false
+    )
 }
 
 enum BatteryLiveActivityState: String, Equatable {
@@ -186,6 +240,7 @@ struct DynamicIslandLiveActivity: Identifiable, Equatable, Sendable {
     let progress: Double?
     let updatedAt: Date
     let batteryState: BatteryLiveActivityState?
+    let lifecycle: LiveActivityLifecycleMetadata
 
     init(
         id: String,
@@ -197,7 +252,8 @@ struct DynamicIslandLiveActivity: Identifiable, Equatable, Sendable {
         isActive: Bool,
         progress: Double?,
         updatedAt: Date,
-        batteryState: BatteryLiveActivityState? = nil
+        batteryState: BatteryLiveActivityState? = nil,
+        lifecycle: LiveActivityLifecycleMetadata = .legacy
     ) {
         self.id = id
         self.kind = kind
@@ -209,6 +265,7 @@ struct DynamicIslandLiveActivity: Identifiable, Equatable, Sendable {
         self.progress = progress
         self.updatedAt = updatedAt
         self.batteryState = batteryState
+        self.lifecycle = lifecycle
     }
 }
 
@@ -305,7 +362,8 @@ enum CollapsedLiveActivitySelector {
             }
         case .system:
             return .systemHUD
-        case .agent:
+        case .agent, .keepAwake, .terminalTask, .windowSnapPreview, .reminder,
+             .voiceRecording, .voiceTranscription, .camera, .backgroundRemoval:
             return nil
         }
     }
