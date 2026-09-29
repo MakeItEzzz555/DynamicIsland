@@ -62,6 +62,8 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <string>DynamicIsland can read and control Spotify or Music playback when you use the media module.</string>
   <key>NSFocusStatusUsageDescription</key>
   <string>DynamicIsland can show a brief notch HUD when your Focus status changes.</string>
+  <key>NSRemindersUsageDescription</key>
+  <string>After you grant access, DynamicIsland reads your reminder lists and upcoming reminders to show them in the island, and creates or completes reminders only when you ask it to.</string>
 </dict>
 </plist>
 PLIST

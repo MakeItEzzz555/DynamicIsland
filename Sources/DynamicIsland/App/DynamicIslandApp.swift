@@ -94,11 +94,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         liveActivities: liveActivities,
         capabilities: capabilityRegistry
     )
+    private lazy var remindersController = RemindersController(
+        liveActivities: liveActivities,
+        capabilities: capabilityRegistry
+    )
     private lazy var productivity = ProductivityModules(
         capabilities: capabilityRegistry,
         keepAwake: keepAwakeController,
         windowSnap: windowSnapController,
-        terminal: terminalController
+        terminal: terminalController,
+        reminders: remindersController
     )
     private lazy var systemHUDController = SystemHUDController(
         settings: settings,

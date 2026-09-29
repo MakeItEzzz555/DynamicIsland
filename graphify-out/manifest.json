@@ -12,9 +12,9 @@
     "semantic_hash": ""
   },
   "Scripts/package_app.sh": {
-    "mtime": 1790718241.3866975,
-    "seen": 1790718355.549723,
-    "ast_hash": "445623d87dfc7b6e96332313d0ca08c1",
+    "mtime": 1790723195.4379435,
+    "seen": 1790723211.502524,
+    "ast_hash": "16c5a107f127d6823af65c98681f36a4",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/App/AppLaunchService.swift": {
@@ -24,9 +24,9 @@
     "semantic_hash": "0b4b7c29df007001c39c574a0dda9bd2"
   },
   "Sources/DynamicIsland/App/DynamicIslandApp.swift": {
-    "mtime": 1790720151.815908,
-    "seen": 1790720226.502243,
-    "ast_hash": "a70e5505bb9ade8731e6fbacfc31125e",
+    "mtime": 1790722730.0066338,
+    "seen": 1790723211.5025668,
+    "ast_hash": "2801d4fd85852f1283ce9f05df8cb1b5",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/App/LaunchAtLoginController.swift": {
@@ -1362,9 +1362,9 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Modules/ProductivityModules.swift": {
-    "mtime": 1790720151.8145308,
-    "seen": 1790720226.502265,
-    "ast_hash": "6b7d535bb34784bdfea893eb61cec814",
+    "mtime": 1790722730.0063229,
+    "seen": 1790723211.5025878,
+    "ast_hash": "aa6b827eabb5676c1dc15ede71c53153",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/KeepAwakeControllerTests.swift": {
@@ -1401,6 +1401,24 @@
     "mtime": 1790720151.8207135,
     "seen": 1790720226.5023592,
     "ast_hash": "f0f050c4292b387e9addc8026c5e3383",
+    "semantic_hash": ""
+  },
+  "Sources/DynamicIsland/Modules/RemindersController.swift": {
+    "mtime": 1790723136.318697,
+    "seen": 1790723211.502589,
+    "ast_hash": "489a298b8795b09b2956f117ec0d7a4c",
+    "semantic_hash": ""
+  },
+  "Tests/DynamicIslandTests/RemindersControllerTests.swift": {
+    "mtime": 1790723180.2840683,
+    "seen": 1790723211.502681,
+    "ast_hash": "45adb9c7a8be51f3707fd3345ddf09e5",
+    "semantic_hash": ""
+  },
+  "CLAUDE.md": {
+    "mtime": 1790722956.9450674,
+    "seen": 1790723211.502698,
+    "ast_hash": "8653c98af186b489e9a3684c5329c6ba",
     "semantic_hash": ""
   }
 }

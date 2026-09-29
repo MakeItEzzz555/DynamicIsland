@@ -5,4 +5,5 @@ struct ProductivityModules {
     let keepAwake: KeepAwakeController
     let windowSnap: WindowSnapController
     let terminal: TerminalSessionController
+    let reminders: RemindersController
 }

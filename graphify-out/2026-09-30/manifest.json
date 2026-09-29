@@ -24,9 +24,9 @@
     "semantic_hash": "0b4b7c29df007001c39c574a0dda9bd2"
   },
   "Sources/DynamicIsland/App/DynamicIslandApp.swift": {
-    "mtime": 1790719991.5754473,
-    "seen": 1790720051.114468,
-    "ast_hash": "a6406ad6d336679166946e450dedc74c",
+    "mtime": 1790720151.815908,
+    "seen": 1790720226.502243,
+    "ast_hash": "a70e5505bb9ade8731e6fbacfc31125e",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/App/LaunchAtLoginController.swift": {
@@ -1362,9 +1362,9 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Modules/ProductivityModules.swift": {
-    "mtime": 1790719991.5752258,
-    "seen": 1790720051.114491,
-    "ast_hash": "49007dc557d19e61a52f7b75abc3b496",
+    "mtime": 1790720151.8145308,
+    "seen": 1790720226.502265,
+    "ast_hash": "6b7d535bb34784bdfea893eb61cec814",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/KeepAwakeControllerTests.swift": {
@@ -1383,6 +1383,24 @@
     "mtime": 1790719991.5801868,
     "seen": 1790720051.114593,
     "ast_hash": "ded15d0ccf35f4b48d8c9970ae30ae23",
+    "semantic_hash": ""
+  },
+  "Sources/DynamicIsland/Modules/TerminalSessionController.swift": {
+    "mtime": 1790720151.790773,
+    "seen": 1790720226.502269,
+    "ast_hash": "6e1fc36cfe322db66a2e432d2db9036c",
+    "semantic_hash": ""
+  },
+  "Sources/DynamicIsland/Views/TerminalSessionView.swift": {
+    "mtime": 1790720183.6438203,
+    "seen": 1790720226.5022871,
+    "ast_hash": "09764e43778036ac33a54ffbd140b615",
+    "semantic_hash": ""
+  },
+  "Tests/DynamicIslandTests/TerminalSessionControllerTests.swift": {
+    "mtime": 1790720151.8207135,
+    "seen": 1790720226.5023592,
+    "ast_hash": "f0f050c4292b387e9addc8026c5e3383",
     "semantic_hash": ""
   }
 }
