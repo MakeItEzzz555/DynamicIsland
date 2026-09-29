@@ -37,6 +37,7 @@ enum AgentPromptDraftPolicy {
 struct AgentEmbeddedConsoleView: View {
     let session: AgentSession
     var mode: AgentConsoleMode = .observed
+    var interactionState: AgentManagedInteractionState = .observed
     var maximumActivityEntries = 3
     var transcriptEntries: [AgentManagedTranscriptEntry] = []
     var workspaceSessions: [AgentSession] = []
@@ -56,6 +57,7 @@ struct AgentEmbeddedConsoleView: View {
         VStack(alignment: .leading, spacing: 7) {
             transcript
             if mode.showsComposer {
+                managedInteractionFooter
                 composer
             } else {
                 observedFooter
@@ -354,27 +356,64 @@ struct AgentEmbeddedConsoleView: View {
         HStack(alignment: .bottom, spacing: 7) {
             AgentPromptEditor(
                 text: $draft,
-                placeholder: "Message \(session.id.sessionID.provider.stableName.capitalized)…",
+                placeholder: composerPlaceholder,
+                isEnabled: interactionState.allowsPromptSubmission && !submissionInFlight,
                 onSubmit: submitDraft
             )
             .id(session.id)
             .frame(minHeight: 30, maxHeight: 48)
 
-            Button(action: { _ = submitDraft() }) {
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.system(size: 18, weight: .semibold))
+            if interactionState.canInterrupt {
+                Button(action: onInterrupt) {
+                    Image(systemName: "stop.circle.fill")
+                        .font(.system(size: 18, weight: .semibold))
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.orange.opacity(0.92))
+                .help("Stop current agent turn")
+                .accessibilityLabel("Stop current agent turn")
+            } else {
+                Button(action: { _ = submitDraft() }) {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.system(size: 18, weight: .semibold))
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(
+                    submissionValue != nil &&
+                    interactionState.allowsPromptSubmission &&
+                    !submissionInFlight
+                        ? .white
+                        : .white.opacity(0.24)
+                )
+                .disabled(
+                    submissionValue == nil ||
+                    !interactionState.allowsPromptSubmission ||
+                    submissionInFlight
+                )
+                .keyboardShortcut(.return, modifiers: [.command])
+                .help("Send prompt (Command-Return)")
+                .accessibilityLabel("Send prompt")
             }
-            .buttonStyle(.borderless)
-            .foregroundStyle(
-                submissionValue != nil && !submissionInFlight
-                    ? .white
-                    : .white.opacity(0.24)
-            )
-            .disabled(submissionValue == nil || submissionInFlight)
-            .keyboardShortcut(.return, modifiers: [.command])
-            .help("Send prompt (Command-Return)")
-            .accessibilityLabel("Send prompt")
         }
+    }
+
+    private var managedInteractionFooter: some View {
+        HStack(spacing: 6) {
+            Image(systemName: interactionSymbol)
+                .font(.system(size: 7.5, weight: .semibold))
+            Text(interactionLabel)
+                .font(.system(size: 7.5, weight: .medium))
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            if interactionState.canInterrupt {
+                Text("Stop available")
+                    .font(.system(size: 7, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.28))
+            }
+        }
+        .foregroundStyle(interactionColor)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(interactionLabel)
     }
 
     private var observedFooter: some View {
@@ -390,13 +429,69 @@ struct AgentEmbeddedConsoleView: View {
         .accessibilityLabel("Observed session. Interactive control unavailable.")
     }
 
+    private var composerPlaceholder: String {
+        switch interactionState {
+        case .ready:
+            "Message \(session.id.sessionID.provider.stableName.capitalized)…"
+        case .submitting:
+            "Sending…"
+        case .working:
+            "\(session.id.sessionID.provider.stableName.capitalized) is working…"
+        case .stopping:
+            "Stopping…"
+        case .failed:
+            "Retry when ready…"
+        case .connecting, .checkingAttachment:
+            "Connecting…"
+        case .observed:
+            "Managed control unavailable"
+        }
+    }
+
+    private var interactionLabel: String {
+        switch interactionState {
+        case .observed: "Observed · read only"
+        case .connecting: "Connecting to exact thread…"
+        case .checkingAttachment: "Checking official thread…"
+        case .ready: "Connected · ready for prompt"
+        case .submitting: "Sending prompt…"
+        case .working: "Agent is working"
+        case .stopping: "Stopping current turn…"
+        case .failed(let message): message
+        }
+    }
+
+    private var interactionSymbol: String {
+        switch interactionState {
+        case .observed: "eye"
+        case .connecting, .checkingAttachment: "link.badge.plus"
+        case .ready: "checkmark.circle.fill"
+        case .submitting: "paperplane.fill"
+        case .working: "sparkles"
+        case .stopping: "stop.circle"
+        case .failed: "exclamationmark.triangle.fill"
+        }
+    }
+
+    private var interactionColor: Color {
+        switch interactionState {
+        case .ready: .green.opacity(0.62)
+        case .submitting, .working: .cyan.opacity(0.70)
+        case .stopping: .orange.opacity(0.80)
+        case .failed: .red.opacity(0.76)
+        case .observed, .connecting, .checkingAttachment: .white.opacity(0.34)
+        }
+    }
+
     private var submissionValue: String? {
         AgentPromptDraftPolicy.submission(from: draft)
     }
 
     @discardableResult
     private func submitDraft() -> Bool {
-        guard !submissionInFlight, let value = submissionValue else { return false }
+        guard !submissionInFlight,
+              interactionState.allowsPromptSubmission,
+              let value = submissionValue else { return false }
         submissionInFlight = true
         let submittedDraft = value
         let originalDraft = draft
@@ -829,6 +924,7 @@ private struct AgentConsoleScrollRegionPreferenceKey: PreferenceKey {
 private struct AgentPromptEditor: NSViewRepresentable {
     @Binding var text: String
     let placeholder: String
+    let isEnabled: Bool
     let onSubmit: () -> Bool
 
     func makeCoordinator() -> Coordinator {
@@ -862,7 +958,7 @@ private struct AgentPromptEditor: NSViewRepresentable {
         ]
         editor.submitHandler = onSubmit
         editor.placeholder = placeholder
-        editor.isEditable = true
+        editor.isEditable = isEnabled
         editor.isSelectable = true
         editor.setAccessibilityLabel("Agent prompt")
         editor.setAccessibilityHelp("Command-Return sends. Shift-Return inserts a new line. Escape releases focus.")
@@ -874,8 +970,12 @@ private struct AgentPromptEditor: NSViewRepresentable {
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         guard let editor = scroll.documentView as? AgentPromptTextView else { return }
-        editor.submitHandler = onSubmit
+        editor.submitHandler = isEnabled ? onSubmit : nil
         editor.placeholder = placeholder
+        editor.isEditable = isEnabled
+        if !isEnabled, editor.window?.firstResponder === editor {
+            editor.window?.makeFirstResponder(nil)
+        }
         let boundedText = AgentPromptDraftPolicy.bounded(text)
         if editor.string != boundedText {
             editor.string = boundedText

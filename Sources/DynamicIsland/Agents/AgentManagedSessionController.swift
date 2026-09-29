@@ -487,6 +487,25 @@ final class AgentManagedSessionController: ObservableObject {
         return .interactive(canInterrupt: canInterrupt)
     }
 
+    func interactionState(for session: AgentSession) -> AgentManagedInteractionState {
+        let sessionID = session.id.sessionID
+        if connecting.contains(sessionID) { return .connecting }
+        if reconcilingAttachmentSessionIDs.contains(sessionID) { return .checkingAttachment }
+        guard let state = managed[sessionID] else {
+            if let error = attachmentErrors[sessionID] { return .failed(error) }
+            return .observed
+        }
+        if state.isInterrupting { return .stopping }
+        if state.isSubmitting { return .submitting }
+        if state.activeTurnID != nil {
+            let canInterrupt = state.canInterrupt &&
+                capabilities(for: sessionID.provider).contains(.interrupt)
+            return .working(canInterrupt: canInterrupt)
+        }
+        if let error = state.lastError { return .failed(error) }
+        return state.canSubmit ? .ready : .observed
+    }
+
     func isInterrupting(_ session: AgentSession) -> Bool {
         managed[session.id.sessionID]?.isInterrupting == true
     }
@@ -762,9 +781,7 @@ final class AgentManagedSessionController: ObservableObject {
               provider.interactiveCapabilities.contains(.submitPrompt),
               let bounded = AgentPromptDraftPolicy.submission(from: prompt),
               var state = managed[session.id.sessionID],
-              state.acceptsDirectInput,
-              !state.isSubmitting,
-              !state.isInterrupting else {
+              state.canSubmit else {
             return false
         }
 

@@ -155,9 +155,16 @@ final class AgentUISnapshotTests: XCTestCase {
         output: URL
     ) throws {
         let approvals = AgentApprovalController()
+        let interactionState: AgentManagedInteractionState = switch mode {
+        case .observed:
+            .observed
+        case .interactive(let canInterrupt):
+            canInterrupt ? .working(canInterrupt: true) : .ready
+        }
         let view = AgentEmbeddedConsoleView(
             session: session,
             mode: mode,
+            interactionState: interactionState,
             maximumActivityEntries: 6,
             transcriptEntries: [],
             workspaceSessions: [session],

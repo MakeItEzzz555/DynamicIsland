@@ -712,6 +712,76 @@ final class AgentManagedSessionControllerTests: XCTestCase {
         controller.stop()
     }
 
+
+    @MainActor
+    func testManagedInteractionStateTracksReadyWorkingStoppingAndFailure() async throws {
+        let provider = PersistentSnapshotFakeProvider(
+            sessions: [Self.descriptor(id: "interaction-thread", state: .idle)],
+            usage: AgentUsage()
+        )
+        let store = AgentEventStore()
+        let controller = AgentManagedSessionController(
+            provider: provider,
+            coordinator: AgentIngestionCoordinator(eventStore: store),
+            eventStore: store,
+            approvals: AgentApprovalController()
+        )
+        await controller.refreshPersistentSnapshot()
+        let observed = try XCTUnwrap(store.sessions.first)
+        controller.connect(observed)
+        try await Task.sleep(for: .milliseconds(20))
+
+        let managed = try XCTUnwrap(store.sessions.first)
+        XCTAssertEqual(controller.interactionState(for: managed), .ready)
+
+        let accepted = await controller.submit("hello", for: managed)
+        XCTAssertTrue(accepted)
+        guard case .working(let canInterrupt) = controller.interactionState(for: managed) else {
+            return XCTFail("Expected working interaction state")
+        }
+        XCTAssertTrue(canInterrupt)
+
+        controller.interrupt(managed)
+        XCTAssertEqual(controller.interactionState(for: managed), .stopping)
+
+        await provider.yield(.turnCompleted(
+            .init(nativeSessionID: "interaction-thread", turnID: "turn-submit"),
+            state: .completed,
+            summary: nil
+        ))
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertEqual(controller.interactionState(for: managed), .ready)
+        controller.stop()
+    }
+
+    @MainActor
+    func testSecondPromptIsRejectedWhileManagedTurnIsActive() async throws {
+        let provider = PersistentSnapshotFakeProvider(
+            sessions: [Self.descriptor(id: "single-turn-thread", state: .idle)],
+            usage: AgentUsage()
+        )
+        let store = AgentEventStore()
+        let controller = AgentManagedSessionController(
+            provider: provider,
+            coordinator: AgentIngestionCoordinator(eventStore: store),
+            eventStore: store,
+            approvals: AgentApprovalController()
+        )
+        await controller.refreshPersistentSnapshot()
+        let observed = try XCTUnwrap(store.sessions.first)
+        controller.connect(observed)
+        try await Task.sleep(for: .milliseconds(20))
+        let managed = try XCTUnwrap(store.sessions.first)
+
+        let firstAccepted = await controller.submit("first", for: managed)
+        let secondAccepted = await controller.submit("second", for: managed)
+        let submitted = await provider.submittedPrompts()
+        XCTAssertTrue(firstAccepted)
+        XCTAssertFalse(secondAccepted)
+        XCTAssertEqual(submitted, ["first"])
+        controller.stop()
+    }
+
     @MainActor
     func testSubmitReportsProviderAcceptanceAndFailureSynchronouslyToComposer() async throws {
         let provider = PersistentSnapshotFakeProvider(
@@ -751,6 +821,13 @@ final class AgentManagedSessionControllerTests: XCTestCase {
         )))
         try await Task.sleep(for: .milliseconds(20))
         XCTAssertEqual(controller.transcript(for: session).map(\.text), ["hello"])
+
+        await provider.yield(.turnCompleted(
+            .init(nativeSessionID: "submit-thread", turnID: "turn-submit"),
+            state: .completed,
+            summary: nil
+        ))
+        try await Task.sleep(for: .milliseconds(20))
 
         await provider.setSubmitFailure(true)
         let rejected = await controller.submit("keep this draft", for: session)

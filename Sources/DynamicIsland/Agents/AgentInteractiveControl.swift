@@ -162,6 +162,27 @@ protocol AgentInteractiveProvider: Sendable {
     func stop() async
 }
 
+enum AgentManagedInteractionState: Equatable, Sendable {
+    case observed
+    case connecting
+    case checkingAttachment
+    case ready
+    case submitting
+    case working(canInterrupt: Bool)
+    case stopping
+    case failed(String)
+
+    var allowsPromptSubmission: Bool {
+        if case .ready = self { return true }
+        return false
+    }
+
+    var canInterrupt: Bool {
+        if case let .working(canInterrupt) = self { return canInterrupt }
+        return false
+    }
+}
+
 struct AgentManagedControlState: Equatable, Sendable {
     let nativeSessionID: String
     var activeTurnID: String?
@@ -172,5 +193,12 @@ struct AgentManagedControlState: Equatable, Sendable {
 
     var canInterrupt: Bool {
         activeTurnID != nil && !isInterrupting
+    }
+
+    var canSubmit: Bool {
+        acceptsDirectInput &&
+        activeTurnID == nil &&
+        !isSubmitting &&
+        !isInterrupting
     }
 }

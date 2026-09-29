@@ -152,6 +152,26 @@ final class AgentConsoleTests: XCTestCase {
         XCTAssertFalse(state.revealTranscript(generation: generation))
     }
 
+    func testManagedControlStateAllowsPromptOnlyWhileIdleAndReady() {
+        var state = AgentManagedControlState(
+            nativeSessionID: "thread",
+            activeTurnID: nil,
+            isSubmitting: false,
+            isInterrupting: false,
+            lastError: nil,
+            acceptsDirectInput: true
+        )
+        XCTAssertTrue(state.canSubmit)
+
+        state.activeTurnID = "turn"
+        XCTAssertFalse(state.canSubmit)
+        XCTAssertTrue(state.canInterrupt)
+
+        state.isInterrupting = true
+        XCTAssertFalse(state.canSubmit)
+        XCTAssertFalse(state.canInterrupt)
+    }
+
     func testDeferredTranscriptLoadCancellationRejectsDelayedCompletion() {
         let session = sessionID("first")
         var gate = AgentTranscriptLoadGate()

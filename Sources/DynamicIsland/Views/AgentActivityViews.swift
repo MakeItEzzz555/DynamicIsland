@@ -799,6 +799,7 @@ private struct AgentSelectedSessionControlView: View {
                 AgentEmbeddedConsoleView(
                 session: session,
                 mode: managedControl.mode(for: session),
+                interactionState: managedControl.interactionState(for: session),
                 maximumActivityEntries: activityLimit,
                 transcriptEntries: managedControl.transcript(for: session),
                 workspaceSessions: AgentWorkspaceSelection.ordered(
@@ -860,6 +861,7 @@ private struct AgentSelectedSessionControlView: View {
                 AgentEmbeddedConsoleView(
                     session: session,
                     mode: .observed,
+                    interactionState: managedControl.interactionState(for: session),
                     maximumActivityEntries: activityLimit,
                     transcriptEntries: managedControl.transcript(for: session),
                     workspaceSessions: AgentWorkspaceSelection.ordered(
