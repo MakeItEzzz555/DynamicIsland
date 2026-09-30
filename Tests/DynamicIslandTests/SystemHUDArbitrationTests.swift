@@ -280,6 +280,22 @@ final class SystemHUDArbitrationTests: XCTestCase {
         XCTAssertLessThanOrEqual(hud.collapsedFrame.width, normal.collapsedFrame.width + 60, "no width explosion (width profile is unchanged by the height fix)")
     }
 
+    func testFloatingIslandBelowTheNotchDoesNotReserveTheNotchBand() {
+        let hud = NotchGeometryService().geometry(
+            for: notchedScreen(notchHeight: 38),
+            collapsedSize: CGSize(width: 190, height: 29.87),
+            expandedSize: CGSize(width: 760, height: 260),
+            collapsedPresentationProfile: .systemHUD(value: 0.5),
+            useAdaptiveNotchSizing: false
+        )
+        XCTAssertEqual(
+            hud.collapsedFrame.height,
+            (29.87 + CollapsedPresentationProfile.systemHUDSliderBandHeight).rounded(.up),
+            accuracy: 1,
+            "a floating island is not occluded by the notch"
+        )
+    }
+
     func testBrightnessAndVolumeResolveIdenticalHUDShellGeometryAtEveryValue() {
         let service = NotchGeometryService()
         let screen = notchedScreen(notchHeight: 34)

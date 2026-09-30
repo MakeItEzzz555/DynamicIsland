@@ -407,7 +407,10 @@ public final class NotchGeometryService {
                 collapsedPresentationProfile.minimumFloatingWidth
             ),
             height: collapsedPresentationProfile.kind == .systemHUD
-                ? max(collapsedSize.height, notchRect?.height ?? 0) + collapsedPresentationProfile.heightDelta
+                // Only a notch-integrated island shares its top band with
+                // the hardware notch; a floating island is never occluded.
+                ? max(collapsedSize.height, useAdaptiveNotchSizing ? (notchRect?.height ?? 0) : 0)
+                    + collapsedPresentationProfile.heightDelta
                 : collapsedSize.height + collapsedPresentationProfile.heightDelta
         )
         let collapsedGeometry: CollapsedActivityResolvedGeometry
