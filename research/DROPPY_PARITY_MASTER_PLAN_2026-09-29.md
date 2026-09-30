@@ -1530,8 +1530,8 @@ Status values follow the Definition of complete parity: **Pending** (tracked, no
 | G5 | Folder items on the Shelf browse into a hierarchical submenu ("Open Folder") | Rec 1 0:18 | 3 — Shelf orbit / File Shelf parity | Pending |
 | G6 | In-place rename of Shelf items | Rec 1 0:24–0:25 | 3 — File Shelf parity | Pending |
 | G7 | Extract Text (OCR) result window with Copy to Clipboard | Rec 1 1:17 | 3 (action entry) + 4 (operation); Vision text recognition, local only | Pending |
-| G8 | Remove Background from a Shelf item's context menu | Rec 1 0:21 | 3 (entry point) → reuses item 13's BackgroundRemovalController | Pending (engine done, entry point missing) |
-| G9 | Convert to JPEG/PNG/etc. with progress activity ("Converting to JPEG", Cancel) | Rec 2 1:12–1:14 | 4 — Background operation center (Phase 4 conversion section) | Pending |
+| G8 | Remove Background from a Shelf item's context menu | Rec 1 0:21 | 3 (entry point) → reuses item 13's BackgroundRemovalController | **Implemented** as the Remove Background circle of the Tray quick-action orbit (result returns to the Tray); a context-menu entry is still Pending |
+| G9 | Convert to JPEG/PNG/etc. with progress activity ("Converting to JPEG", Cancel) | Rec 2 1:12–1:14 | 4 — Background operation center (Phase 4 conversion section) | **Partial**: Convert circle converts one image to PNG/JPEG/HEIC/TIFF with native ImageIO (runtime encoder check, collision-safe sibling, never overwrites). No progress live activity/Cancel yet (conversions are short); non-image formats Pending |
 | G10 | Quickshare / cloud upload producing a share link (uploads to a third-party host) | Rec 1 0:17 ("Droppy Quickshare … 0x0.st"); Rec 2 "Droppy Cloud" | 3 (entry) + 4 (upload operation) | **Requires Approval** (sends user files to an external service; host choice and privacy policy must be approved) |
 | G11 | Clipboard manager window: tag creation with colour, tag filter popover, per-item Tag submenu, Favorite, Flag as Important, Rename, Move to Shelf/Basket, preview pane with metadata | Rec 1 0:37–0:50 | 9 — Clipboard 2.0 (Phase 6 section) | Pending |
 | G12 | Clipboard visual card strip in the notch (text, image, colour swatch, file cards) | Rec 2 "Every copy you make." 0:31–0:34 | 9 — Clipboard 2.0 | Pending |
@@ -1541,7 +1541,7 @@ Status values follow the Definition of complete parity: **Pending** (tracked, no
 | G16 | Pomodoro-style Focus/Break timer widget | Rec 2 1:05 | 16 (widget) using existing TimerController | Pending |
 | G17 | AirPods "Connected" live activity with battery ring | Rec 2 0:13 | 12 — Rich live activities (AirPods section) | Pending |
 | G18 | Many compact live activities: update available, charging, full battery, VPN connected + timer, backup drive capacity, caps lock, focus, message | Rec 2 0:25–0:29 | 12 — Rich live activities | Partial (battery, caps lock, focus, agents exist) |
-| G19 | Message notification with inline reply field in the notch (iMessage/WhatsApp/Telegram) | Rec 2 0:14–0:21 | 14 — Actionable messaging (execution Phase 14, done) | **Blocked by macOS/API constraints** for incoming observation and inline reply on all three providers; **Open-App fallback** for Messages. Pipeline and UI implemented provider-neutrally (see Phase 14 results) |
+| G19 | Message notification with inline reply field in the notch (iMessage/WhatsApp/Telegram) | Rec 2 0:14–0:21 | 14 — Actionable messaging (execution Phase 14, done) | Apple Messages: **Implemented behind explicit opt-in** (approved narrow Full Disk Access for Notification Center + chat.db reads, Automation for the send); exact-conversation-or-no-send; **requires real-device validation**. WhatsApp/Telegram: not installed, no adapter. See Phase 14 continuation below |
 | G20 | Notchless Mac: island floats as a Dynamic Island with the same activities | Rec 2 0:21–0:24 | Existing floating island; verify parity in 17 | Implemented (verify in final audit) |
 | G21 | Screenshot capture ("Element Capture": any window/region/screen) and annotation editor | Rec 2 0:48–0:57 | 5 — Capture suite (Phase 2 section) | Pending |
 | G22 | Screen-recording video editor with cursor tracking | Rec 2 0:58–1:00 | 5 — Capture suite | Pending; may be Candidate — evaluate (large scope) |
@@ -1580,3 +1580,26 @@ reply / Open-App / read-only modes, and Messaging settings with privacy-safe dia
 Would change the classification only with explicit approval (stop boundaries): Accessibility reading of
 Notification Center banners (still no exact reply target), Full Disk Access to `chat.db`, or UI-scripted
 sends.
+
+---
+
+# Phase 14 continuation and Tray quick actions (2026-09-30)
+
+Full Disk Access was approved **only** for Phase 14 messaging: reading Notification Center data for
+ingestion and reading the local Messages database for exact iMessage conversation correlation.
+
+| Provider | Incoming | Exact conversation | Reply | Send confirmation | Classification |
+|---|---|---|---|---|---|
+| Apple Messages | Notification Center database, read-only, opt-in ("Read message notifications"), schema-validated at runtime, starts from the newest record (no history backfill) | `chat.db` read-only: one incoming message matching the notification body within a bounded time window → that chat's GUID; ambiguous or none → no send | Apple Events `send` to `chat id` (parameters passed as descriptors, never interpolated); chat existence checked first | Outgoing message with the same text observed in that chat in `chat.db` within 6 s → **Sent**; otherwise **Uncertain** (draft kept) | **Implemented behind opt-in; requires real-device validation** |
+| WhatsApp / Telegram | None | No | No | No | Unchanged: not installed, no adapter |
+
+Fail-closed rules: no prompt on launch; no FDA → "Full Disk Access required" with an Open System Settings
+action; unknown schema → unavailable; Automation denied → reply disabled with the reason; message bodies
+are never logged and history is never copied. The reply target is captured when composing starts and
+never follows a newer notification.
+
+Tray quick-action orbit (G3-adjacent, G8, G9): three circles below the expanded shell on the Tray page
+only — Remove Background, Convert, Share (NSSharingServicePicker anchored to the circle). Targets are the
+explicit tile selection or the single Tray file. The circles are part of hover containment, hit-testing
+and mouse passthrough. The drag-time orbit of G3 (AirDrop/Messages/Mail/Quickshare during a drag) is
+still Pending.

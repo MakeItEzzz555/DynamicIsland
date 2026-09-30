@@ -63,3 +63,24 @@ Approaches that would change this and therefore **Require Approval** (stop bound
 reading the Notification Center UI through Accessibility, reading `chat.db` (Full Disk Access /
 private database), or UI-scripting message sends. Even with Accessibility, notification banners
 expose only display names, which are not an exact reply target.
+
+## Update after approval (2026-09-30, Phase 14 continuation)
+
+Full Disk Access was approved narrowly for two reads: Notification Center data (ingestion) and the local
+Messages database (exact conversation correlation). This supersedes the "Blocked" classification above for
+Apple Messages only:
+
+- **Incoming**: `SystemNotificationMonitor` reads the Notification Center database read-only
+  (`SQLITE_OPEN_READONLY`), only while the user has enabled message notification reading. Required tables
+  and columns are checked at runtime; an unknown schema reports unavailable instead of guessing.
+- **Exact identity**: `MessagesConversationResolver` matches the notification to exactly one incoming
+  `chat.db` message by body within a bounded window and returns that chat's GUID. Zero or several matches
+  → no reply target.
+- **Send**: Apple Events `send` to that `chat id`. Because `send` returns nothing, the adapter confirms by
+  observing the outgoing message in the same chat in `chat.db`; if it is not seen within 6 s the outcome is
+  **Uncertain** and the draft is kept.
+- **Not used**: Accessibility, UI scripting, screen coordinates, private frameworks, history import.
+
+The Notification Center and Messages schemas could not be inspected from the development shell (no Full
+Disk Access there); behaviour is covered by fixture databases. **Real-device validation is required** before
+this path is considered verified.
