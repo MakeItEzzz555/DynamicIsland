@@ -98,25 +98,48 @@ struct ScreenRecordingStateMachine: Equatable, Sendable {
 
 /// Source timestamp authority for production retiming and deterministic tests.
 /// Paused source time is removed from the output timeline.
+/// Two timelines: ScreenCaptureKit sample timestamps (host clock) and the
+/// recording session timeline (active elapsed time, pauses excluded).
+///
+/// ScreenCaptureKit only delivers complete frames when the screen changes, so
+/// pause, resume and stop are measured at the host-clock time the user acted,
+/// never at the last or next changed frame. A static screen therefore keeps
+/// accumulating active time with no new frames.
 struct ScreenRecordingTimelineClock: Equatable, Sendable {
     private(set) var sourceOrigin: TimeInterval?
+    /// Sum of completed pause intervals.
     private(set) var pausedDuration: TimeInterval = 0
     private(set) var isPaused = false
     private var pauseStartedAt: TimeInterval?
-    private var resumePending = false
-    private var lastSourceTime: TimeInterval?
+    /// Samples captured before this host time belong to a pause that ended.
+    private var resumedAt: TimeInterval?
+    /// Host time the user pressed Stop; later samples are not recorded.
+    private(set) var stoppedAt: TimeInterval?
 
-    mutating func pause() {
-        guard !isPaused else { return }
-        isPaused = true
-        pauseStartedAt = lastSourceTime
-        resumePending = false
+    /// Host-clock "now", the same clock ScreenCaptureKit stamps samples with.
+    static func hostNow() -> TimeInterval {
+        CMTimeGetSeconds(CMClockGetTime(CMClockGetHostTimeClock()))
     }
 
-    mutating func resume() {
-        guard isPaused else { return }
+    mutating func pause(at now: TimeInterval) {
+        guard !isPaused, now.isFinite else { return }
+        isPaused = true
+        pauseStartedAt = now
+    }
+
+    mutating func resume(at now: TimeInterval) {
+        guard isPaused, now.isFinite else { return }
         isPaused = false
-        resumePending = true
+        if let pauseStartedAt, sourceOrigin != nil {
+            pausedDuration += max(now - max(pauseStartedAt, sourceOrigin ?? pauseStartedAt), 0)
+        }
+        pauseStartedAt = nil
+        resumedAt = now
+    }
+
+    mutating func stop(at now: TimeInterval) {
+        guard stoppedAt == nil, now.isFinite else { return }
+        stoppedAt = now
     }
 
     mutating func adjustedTime(
@@ -124,28 +147,37 @@ struct ScreenRecordingTimelineClock: Equatable, Sendable {
         establishesOrigin: Bool
     ) -> TimeInterval? {
         guard sourceTime.isFinite else { return nil }
-        lastSourceTime = sourceTime
-
-        if sourceOrigin == nil {
-            guard establishesOrigin else { return nil }
-            sourceOrigin = sourceTime
-        }
+        if let stoppedAt, sourceTime >= stoppedAt { return nil }
 
         if isPaused {
-            if pauseStartedAt == nil { pauseStartedAt = sourceTime }
+            // Only samples captured before the pause began (in flight) count.
+            guard let pauseStartedAt, sourceTime < pauseStartedAt else { return nil }
+        } else if let resumedAt, sourceTime < resumedAt {
+            // Captured during the pause, delivered after resume.
             return nil
         }
 
-        if resumePending {
-            if let pauseStartedAt {
-                pausedDuration += max(sourceTime - pauseStartedAt, 0)
-            }
-            self.pauseStartedAt = nil
-            resumePending = false
+        if sourceOrigin == nil {
+            guard establishesOrigin, !isPaused else { return nil }
+            sourceOrigin = sourceTime
         }
-
         guard let sourceOrigin else { return nil }
         return max(sourceTime - sourceOrigin - pausedDuration, 0)
+    }
+
+    /// Active recorded time at `now`; frozen at the pause boundary while paused.
+    func activeDuration(at now: TimeInterval) -> TimeInterval {
+        guard let sourceOrigin else { return 0 }
+        var effectiveNow = isPaused ? (pauseStartedAt ?? now) : now
+        if let stoppedAt { effectiveNow = min(effectiveNow, stoppedAt) }
+        return max(effectiveNow - sourceOrigin - pausedDuration, 0)
+    }
+
+    /// Writer session end for a stop at `now`: the active recording end, never
+    /// earlier than the last appended frame. Nil when no video ever arrived.
+    func sessionEndTime(at now: TimeInterval, lastVideoEnd: TimeInterval) -> TimeInterval? {
+        guard sourceOrigin != nil else { return nil }
+        return max(activeDuration(at: now), lastVideoEnd)
     }
 }
 
@@ -169,7 +201,10 @@ final class ScreenRecordingStreamOutput: NSObject, SCStreamOutput, SCStreamDeleg
     private var sessionStarted = false
     private var finished = false
     private var firstFrameReported = false
-    private var latestDuration: TimeInterval = 0
+    /// End of the last appended video frame on the session timeline.
+    private var lastVideoEnd: TimeInterval = 0
+    /// Publishes the active duration while the screen is static (no frames).
+    private var timelineTicker: DispatchSourceTimer?
     private var lastVideoPresentationTime: TimeInterval = -.infinity
     private var lastPreviewTime: TimeInterval = -.infinity
 
@@ -254,12 +289,43 @@ final class ScreenRecordingStreamOutput: NSObject, SCStreamOutput, SCStreamDeleg
         }
     }
 
-    func pause() {
-        queue.async { [weak self] in self?.clock.pause() }
+    /// Applies the pause at the host time it was requested and returns the
+    /// frozen active duration, so the UI shows the exact pause boundary.
+    @discardableResult
+    func pause() -> TimeInterval {
+        let now = ScreenRecordingTimelineClock.hostNow()
+        return queue.sync {
+            clock.pause(at: now)
+            return clock.activeDuration(at: now)
+        }
     }
 
     func resume() {
-        queue.async { [weak self] in self?.clock.resume() }
+        let now = ScreenRecordingTimelineClock.hostNow()
+        queue.async { [weak self] in self?.clock.resume(at: now) }
+    }
+
+    /// Marks the Stop boundary before SCStream shutdown, so frames captured
+    /// during stopCapture's round trip are not recorded.
+    func markStopRequested(at now: TimeInterval) {
+        queue.async { [weak self] in self?.clock.stop(at: now) }
+    }
+
+    private func startTimelineTickerIfNeeded() {
+        guard timelineTicker == nil else { return }
+        let ticker = DispatchSource.makeTimerSource(queue: queue)
+        ticker.schedule(deadline: .now() + 0.5, repeating: 0.5, leeway: .milliseconds(100))
+        ticker.setEventHandler { [weak self] in
+            guard let self, !self.finished else { return }
+            self.onTimeline?(self.clock.activeDuration(at: ScreenRecordingTimelineClock.hostNow()))
+        }
+        timelineTicker = ticker
+        ticker.resume()
+    }
+
+    private func stopTimelineTicker() {
+        timelineTicker?.cancel()
+        timelineTicker = nil
     }
 
     /// Stops accepting samples and cancels an unfinished writer without deleting
@@ -274,6 +340,7 @@ final class ScreenRecordingStreamOutput: NSObject, SCStreamOutput, SCStreamDeleg
                 }
                 if !self.finished {
                     self.finished = true
+                    self.stopTimelineTicker()
                     self.writer.cancelWriting()
                 }
                 continuation.resume()
@@ -281,7 +348,11 @@ final class ScreenRecordingStreamOutput: NSObject, SCStreamOutput, SCStreamDeleg
         }
     }
 
-    func finish() async throws -> URL {
+    /// Finalizes the movie. `stoppedAt` is the host-clock time the user
+    /// pressed Stop; the session ends at the active recording time then, so
+    /// static periods (no new frames) keep their real duration and the last
+    /// frame is held by AVAssetWriter until that point.
+    func finish(stoppedAt: TimeInterval = ScreenRecordingTimelineClock.hostNow()) async throws -> URL {
         try await withCheckedThrowingContinuation { continuation in
             queue.async { [weak self] in
                 guard let self else {
@@ -293,20 +364,17 @@ final class ScreenRecordingStreamOutput: NSObject, SCStreamOutput, SCStreamDeleg
                     return
                 }
                 self.finished = true
-                guard self.sessionStarted else {
+                self.stopTimelineTicker()
+                self.clock.stop(at: stoppedAt)
+                guard self.sessionStarted,
+                      let sessionEnd = self.clock.sessionEndTime(at: stoppedAt, lastVideoEnd: self.lastVideoEnd),
+                      sessionEnd > 0 else {
                     self.writer.cancelWriting()
                     continuation.resume(throwing: ScreenRecordingError.noVideoSamples)
                     return
                 }
 
-                if self.latestDuration > 0 {
-                    self.writer.endSession(
-                        atSourceTime: CMTime(
-                            seconds: self.latestDuration,
-                            preferredTimescale: 600
-                        )
-                    )
-                }
+                self.writer.endSession(atSourceTime: CMTime(seconds: sessionEnd, preferredTimescale: 60_000))
                 self.videoInput.markAsFinished()
                 self.systemAudioInput?.markAsFinished()
                 self.microphoneInput?.markAsFinished()
@@ -397,12 +465,13 @@ final class ScreenRecordingStreamOutput: NSObject, SCStreamOutput, SCStreamDeleg
             lastVideoPresentationTime = adjustedSeconds
             let sourceDuration = CMTimeGetSeconds(CMSampleBufferGetDuration(sampleBuffer))
             let frameDuration = sourceDuration.isFinite && sourceDuration > 0 ? sourceDuration : (1.0 / 60.0)
-            latestDuration = max(latestDuration, adjustedSeconds + frameDuration)
-            onTimeline?(latestDuration)
+            lastVideoEnd = max(lastVideoEnd, adjustedSeconds + frameDuration)
 
             if !firstFrameReported {
                 firstFrameReported = true
                 onFirstVideoFrame?()
+                onTimeline?(0)
+                startTimelineTickerIfNeeded()
             }
 
             if adjustedSeconds - lastPreviewTime >= 0.20 {

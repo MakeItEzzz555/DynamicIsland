@@ -186,7 +186,9 @@ final class ScreenRecordingController: ObservableObject {
 
     func pause() {
         guard machine.pause() else { return }
-        streamOutput?.pause()
+        if let frozen = streamOutput?.pause() {
+            recordedDuration = max(frozen, 0)
+        }
         phase = machine.phase
         statusText = "Paused"
         publishLiveActivity()
@@ -207,6 +209,9 @@ final class ScreenRecordingController: ObservableObject {
     }
 
     func stopAndSave() async {
+        // The movie ends when the user pressed Stop, not after stopCapture's
+        // round trip.
+        let stoppedAt = ScreenRecordingTimelineClock.hostNow()
         guard machine.beginFinalizing() else { return }
         let generation = lifecycleGeneration
         phase = machine.phase
@@ -220,13 +225,14 @@ final class ScreenRecordingController: ObservableObject {
             // itself remains authoritative here; writer finalization below owns
             // success/failure from this point forward.
             streamOutput?.onFailure = nil
+            streamOutput?.markStopRequested(at: stoppedAt)
             if let stream {
                 try await stream.stopCapture()
             }
             guard generation == lifecycleGeneration, let output = streamOutput else {
                 return
             }
-            let url = try await output.finish()
+            let url = try await output.finish(stoppedAt: stoppedAt)
             let duration = try await Self.validateRecording(at: url)
             guard generation == lifecycleGeneration else { return }
 
