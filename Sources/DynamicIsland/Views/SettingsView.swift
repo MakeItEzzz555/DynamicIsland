@@ -380,9 +380,9 @@ struct SettingsView: View {
 
     private var timerSection: some View {
         settingsForm("Timer") {
-            if let previews {
-                TimerSettingsPreview(timer: previews.timer)
-            }
+            // No Timer page preview yet: the production DedicatedTimerPageView
+            // is private to IslandRootView.swift, and a lookalike is not
+            // allowed (see SettingsAuditCatalog.knownPreviewGaps).
             SettingsGroup("Timer") {
                 Toggle("Enable timer", isOn: $settings.timerEnabled)
                 Toggle("Preset buttons", isOn: $settings.timerPresetsEnabled)
@@ -1267,7 +1267,7 @@ private struct SystemHUDSettingsPreview: View {
 }
 
 
-private struct LiveActivityLayoutSettingsPreview: View {
+struct LiveActivityLayoutSettingsPreview: View {
     @ObservedObject var settings: AppSettings
     @State private var scenario: LiveActivityLayoutPreviewScenario = .mediaTimer
 
@@ -1416,6 +1416,32 @@ private struct LiveActivityLayoutSettingsPreview: View {
     }
 
     private var activities: [DynamicIslandLiveActivity] {
-        LiveActivityPreviewCatalog.activities(for: scenario)
+        Self.publishedActivities(
+            LiveActivityPreviewCatalog.activities(for: scenario),
+            settings: LiveActivitySettingsSnapshot(settings: settings)
+        )
+    }
+
+    /// Applies the same per-source switches the composition root applies
+    /// before publishing media, timer, file tray and battery activities, so
+    /// toggling them updates this preview immediately.
+    static func publishedActivities(
+        _ activities: [DynamicIslandLiveActivity],
+        settings: LiveActivitySettingsSnapshot
+    ) -> [DynamicIslandLiveActivity] {
+        activities.filter { activity in
+            switch activity.kind {
+            case .media:
+                settings.liveActivitiesEnabled && settings.showMusicLiveActivity
+            case .timer:
+                settings.liveActivitiesEnabled && settings.showTimerLiveActivity
+            case .fileTray:
+                settings.liveActivitiesEnabled && settings.showFileDropLiveActivity
+            case .battery:
+                settings.liveActivitiesEnabled && settings.showBatteryLiveActivity
+            default:
+                true
+            }
+        }
     }
 }

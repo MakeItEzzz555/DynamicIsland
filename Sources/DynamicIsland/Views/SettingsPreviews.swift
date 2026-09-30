@@ -563,11 +563,28 @@ struct RightWorkspaceSettingsPreview: View {
     }
 
     private func sync() {
+        let previousDefault = previewStore.configuration.defaultPage
         previewStore.update { $0 = workspace.configuration }
-        if !workspace.configuration.visiblePages.contains(page) {
-            page = workspace.configuration.defaultPage
-        }
+        page = Self.previewPage(
+            current: page,
+            previousDefault: previousDefault,
+            configuration: workspace.configuration
+        )
         previewStore.show(page)
+    }
+
+    /// The page the preview shows after a settings change: a newly chosen
+    /// default page is shown immediately; a hidden page falls back to the
+    /// default; otherwise the page picked in the preview stays.
+    static func previewPage(
+        current: RightWorkspacePage,
+        previousDefault: RightWorkspacePage,
+        configuration: RightWorkspaceConfiguration
+    ) -> RightWorkspacePage {
+        if configuration.defaultPage != previousDefault || !configuration.visiblePages.contains(current) {
+            return configuration.defaultPage
+        }
+        return current
     }
 }
 
@@ -664,18 +681,6 @@ struct ClipboardSettingsPreview: View {
     var body: some View {
         SettingsPreviewSandbox(title: "Clipboard Preview (your current history)", height: 240) { _ in
             ClipboardHistoryView(store: store, onClose: {})
-        }
-    }
-}
-
-struct TimerSettingsPreview: View {
-    let timer: TimerController
-
-    var body: some View {
-        SettingsPreviewSandbox(title: "Timer Preview", height: 170) { _ in
-            TimerModuleView(timer: timer)
-                .frame(width: 380)
-                .frame(maxWidth: .infinity)
         }
     }
 }

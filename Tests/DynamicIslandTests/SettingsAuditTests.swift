@@ -43,13 +43,88 @@ final class SettingsAuditTests: XCTestCase {
     }
 
     func testEveryUserFacingVisualSettingHasALivePreview() {
-        XCTAssertFalse(
-            SettingsAuditCatalog.entries.contains { $0.classification == .visualWithoutPreview },
-            "Every user-facing visual setting must have a live production-component preview"
-        )
+        // Only the pinned, documented gaps may lack a production-component
+        // preview; the set may shrink but never grow.
+        let withoutPreview = Set(SettingsAuditCatalog.entries
+            .filter { $0.classification == .visualWithoutPreview }
+            .map(\.key))
+        XCTAssertEqual(withoutPreview, SettingsAuditCatalog.knownPreviewGaps,
+                       "Every user-facing visual setting must have a live production-component preview")
+        XCTAssertLessThanOrEqual(SettingsAuditCatalog.knownPreviewGaps.count, 6)
         for entry in SettingsAuditCatalog.entries where entry.classification == .visual {
             XCTAssertNotNil(entry.preview, "\(entry.key) is visual but has no preview")
         }
+    }
+
+    /// Workspace personalization and messaging preferences live outside
+    /// AppSettings; every stored field must be audited and have a reader.
+    func testWorkspaceAndMessagingPreferencesAreAuditedWithProductionReaders() throws {
+        let workspaceFields = Set(Mirror(reflecting: RightWorkspaceConfiguration.default).children.compactMap(\.label))
+        let messagingFields = Set(Mirror(reflecting: MessagingController.Preferences()).children.compactMap(\.label))
+        let audited = Set(SettingsAuditCatalog.entries.map(\.key))
+        XCTAssertEqual(
+            Set(audited.filter { $0.hasPrefix("rightWorkspace.") }.map { String($0.dropFirst("rightWorkspace.".count)) }),
+            workspaceFields
+        )
+        XCTAssertEqual(
+            Set(audited.filter { $0.hasPrefix("messaging.") }.map { String($0.dropFirst("messaging.".count)) }),
+            messagingFields
+        )
+
+        // Production reader token per workspace field, searched outside
+        // Settings files and the store/model file itself.
+        let readers: [String: String] = [
+            "pageOrder": "visiblePages", "hiddenPages": "visiblePages",
+            "defaultPage": "defaultPage", "indicatorStyle": "indicatorStyle", "swipeEnabled": "swipeEnabled",
+            "toolOrder": "visibleTools", "hiddenTools": "visibleTools",
+            "sectionOrder": "visibleSections", "hiddenSections": "visibleSections"
+        ]
+        XCTAssertEqual(Set(readers.keys), workspaceFields)
+        let excluded: Set<String> = ["SettingsView.swift", "SettingsAudit.swift", "SettingsPreviews.swift",
+                                     "RightWorkspaceSettingsView.swift"]
+        var production = try allSources().filter { !excluded.contains($0.name) }
+        // defaultPage is applied by the store itself (launch + on change).
+        let storeText = try source("State/RightWorkspace.swift")
+        XCTAssertTrue(storeText.contains("currentPage = configuration.defaultPage"))
+        production.removeAll { $0.name == "RightWorkspace.swift" }
+        for (field, token) in readers where field != "defaultPage" {
+            XCTAssertTrue(production.contains { $0.text.contains(".\(token)") }, "\(field) has no production reader (\(token))")
+        }
+        let messagingSource = try source("Messaging/MessagingController.swift")
+        for field in messagingFields {
+            XCTAssertTrue(messagingSource.contains("preferences.\(field)"), "messaging \(field) has no production reader")
+        }
+    }
+
+    @MainActor
+    func testLiveActivityLayoutPreviewAppliesPerSourceSwitches() {
+        let all = [LiveActivityPreviewCatalog.media, LiveActivityPreviewCatalog.timer, LiveActivityPreviewCatalog.battery]
+        func kinds(_ snapshot: LiveActivitySettingsSnapshot) -> [DynamicIslandLiveActivityKind] {
+            LiveActivityLayoutSettingsPreview.publishedActivities(all, settings: snapshot).map(\.kind)
+        }
+        XCTAssertEqual(kinds(.init(liveActivitiesEnabled: true, showMusicLiveActivity: true, showTimerLiveActivity: true,
+                                   showFileDropLiveActivity: true, showBatteryLiveActivity: true)),
+                       [.media, .timer, .battery])
+        XCTAssertEqual(kinds(.init(liveActivitiesEnabled: true, showMusicLiveActivity: false, showTimerLiveActivity: true,
+                                   showFileDropLiveActivity: true, showBatteryLiveActivity: false)),
+                       [.timer])
+        XCTAssertEqual(kinds(.init(liveActivitiesEnabled: false, showMusicLiveActivity: true, showTimerLiveActivity: true,
+                                   showFileDropLiveActivity: true, showBatteryLiveActivity: true)),
+                       [])
+    }
+
+    @MainActor
+    func testRightWorkspacePreviewShowsNewDefaultPageImmediately() {
+        var config = RightWorkspaceConfiguration.default
+        config.defaultPage = .appsMedia
+        XCTAssertEqual(RightWorkspaceSettingsPreview.previewPage(current: .productivity, previousDefault: .overview,
+                                                                 configuration: config), .appsMedia)
+        XCTAssertEqual(RightWorkspaceSettingsPreview.previewPage(current: .productivity, previousDefault: .appsMedia,
+                                                                 configuration: config), .productivity,
+                       "an unrelated change keeps the page picked in the preview")
+        config.hiddenPages = [.productivity]
+        XCTAssertEqual(RightWorkspaceSettingsPreview.previewPage(current: .productivity, previousDefault: .appsMedia,
+                                                                 configuration: config), .appsMedia)
     }
 
     /// Keeps the "no production reader" finding truthful, and makes sure a

@@ -10,7 +10,6 @@ enum SettingsPreviewID: String, CaseIterable, Sendable {
     case media = "Media Player Preview"
     case mediaLauncher = "No-source Launcher Preview"
     case fileTray = "File Tray Preview"
-    case timer = "Timer Preview"
     case stats = "Stats Preview"
     case agents = "Agents Preview"
     case clipboard = "Clipboard Preview"
@@ -115,8 +114,8 @@ enum SettingsAuditCatalog {
                   "Drop, context-menu and performance behavior.")
         + entries(["maxShelfFiles", "persistFileShelfAcrossLaunches"], .dataPersistence, "Shelf capacity and persistence.")
         // Timer
-        + visual(["timerPresetsEnabled", "timerPreset1Minutes", "timerPreset2Minutes", "timerPreset3Minutes"], .timer)
-        + visual(["showTimerProgressRing", "timerRingAnimationEnabled"], .liveActivityLayout)
+        + entries(["timerPresetsEnabled", "timerPreset1Minutes", "timerPreset2Minutes", "timerPreset3Minutes",
+                   "showTimerProgressRing", "timerRingAnimationEnabled"], .visualWithoutPreview, timerPreviewGapNote)
         + entries(["timerEnabled", "timerSoundEnabled", "timerNotificationEnabled", "collapseAfterStartingTimer"], .behavioral,
                   "Timer behavior and alerts.")
         + entries(["keepIslandExpandedWhenTimerRunning", "showTimerInCollapsedIsland"], .deprecatedHidden, deprecatedNote)
@@ -165,7 +164,25 @@ enum SettingsAuditCatalog {
                   "rightWorkspace.sectionOrder", "rightWorkspace.hiddenSections"], .rightWorkspace)
         + entries(["rightWorkspace.swipeEnabled"], .behavioral, "Two-finger paging over the right half.")
         + entries(["spotify.webAPI.clientID"], .externalIntegration,
-                  "Spotify Web API client; connection state and errors shown in Right Workspace settings.")
+                  "Developer-only override (DEBUG builds). Release builds read the packaged Info.plist Client ID; none is packaged today, so Settings shows 'Not configured'. Local Spotify controls never depend on it.")
+        // Messaging (MessagingController.Preferences, persisted by MessagingPreferencesPersistence)
+        + entries(["messaging.enabled", "messaging.mutedProviders"], .behavioral,
+                  "Read by MessagingController presentation and adapter observation.")
+        + entries(["messaging.showPreviewOnCompact"], .behavioral,
+                  "Privacy: the compact message activity subtitle shows the message text or 'New message' (MessagingController.compactPreview). Settings never renders message content.")
+        + entries(["messaging.readsSystemNotifications"], .permission,
+                  "Opt-in Notification Center reading; requires Full Disk Access, status shown in Messaging settings.")
+
+    /// Visual settings whose production component cannot be rendered in a
+    /// Settings preview yet. They do have production readers. The Timer page
+    /// (`DedicatedTimerPageView`) is private to IslandRootView.swift; the
+    /// previous Timer preview rendered a lookalike and was removed. A test
+    /// pins this set so it can only shrink.
+    static let knownPreviewGaps: Set<String> = [
+        "timerPresetsEnabled", "timerPreset1Minutes", "timerPreset2Minutes", "timerPreset3Minutes",
+        "showTimerProgressRing", "timerRingAnimationEnabled"
+    ]
+    static let timerPreviewGapNote = "Read by the production Timer page (DedicatedTimerPageView). No preview: that view is private to IslandRootView.swift and lookalikes are not allowed; needs the IslandRootView owner to make it internal."
 
     static var appSettingsKeys: [String] {
         entries.map(\.key).filter { !$0.contains(".") }

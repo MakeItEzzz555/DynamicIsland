@@ -216,12 +216,17 @@ final class RightWorkspaceStore: ObservableObject {
         change(&next)
         next = next.normalized
         guard next != configuration else { return }
+        let defaultPageChanged = next.defaultPage != configuration.defaultPage
         configuration = next
         if let data = try? JSONEncoder().encode(next) {
             defaults.set(data, forKey: Self.defaultsKey)
         }
         if !next.visiblePages.contains(currentPage) {
             currentPage = next.defaultPage
+        } else if defaultPageChanged {
+            // Choosing a default page takes effect immediately (and at every
+            // launch), so the change is visible in the island and preview.
+            show(next.defaultPage)
         }
     }
 

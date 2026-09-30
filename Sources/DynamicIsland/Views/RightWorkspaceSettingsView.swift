@@ -34,6 +34,7 @@ struct RightWorkspaceSettingsView: View {
                         Text(page.title).tag(page)
                     }
                 }
+                HelpText("Shown when DynamicIsland starts. Choosing a default page also switches to it now.")
                 Picker("Page indicator", selection: Binding(
                     get: { workspace.configuration.indicatorStyle },
                     set: { style in workspace.update { $0.indicatorStyle = style } }

@@ -5,15 +5,15 @@ A unit test keeps it in sync with every `@Published` property in `AppSettings`.
 
 | Classification | Count |
 |---|---|
-| VISUAL | 93 |
-| VISUAL (no preview, justified) | 0 |
-| BEHAVIORAL | 66 |
-| PERMISSION | 1 |
+| VISUAL | 87 |
+| VISUAL (no preview, justified) | 6 |
+| BEHAVIORAL | 69 |
+| PERMISSION | 2 |
 | DATA/PERSISTENCE | 5 |
 | EXTERNAL INTEGRATION | 1 |
 | NO PRODUCTION READER | 0 |
 | DEPRECATED / HIDDEN | 33 |
-| **Total** | **199** |
+| **Total** | **203** |
 
 | Setting | Classification | Live preview | Note |
 |---|---|---|---|
@@ -113,12 +113,12 @@ A unit test keeps it in sync with every `@Published` property in `AppSettings`.
 | `deferThumbnailsDuringMorph` | BEHAVIORAL | — | Drop, context-menu and performance behavior. |
 | `maxShelfFiles` | DATA/PERSISTENCE | — | Shelf capacity and persistence. |
 | `persistFileShelfAcrossLaunches` | DATA/PERSISTENCE | — | Shelf capacity and persistence. |
-| `timerPresetsEnabled` | VISUAL | Timer Preview |  |
-| `timerPreset1Minutes` | VISUAL | Timer Preview |  |
-| `timerPreset2Minutes` | VISUAL | Timer Preview |  |
-| `timerPreset3Minutes` | VISUAL | Timer Preview |  |
-| `showTimerProgressRing` | VISUAL | Live Activity Layout Preview |  |
-| `timerRingAnimationEnabled` | VISUAL | Live Activity Layout Preview |  |
+| `timerPresetsEnabled` | VISUAL (no preview, justified) | — | Read by the production Timer page (DedicatedTimerPageView). No preview: that view is private to IslandRootView.swift and lookalikes are not allowed; needs the IslandRootView owner to make it internal. |
+| `timerPreset1Minutes` | VISUAL (no preview, justified) | — | Read by the production Timer page (DedicatedTimerPageView). No preview: that view is private to IslandRootView.swift and lookalikes are not allowed; needs the IslandRootView owner to make it internal. |
+| `timerPreset2Minutes` | VISUAL (no preview, justified) | — | Read by the production Timer page (DedicatedTimerPageView). No preview: that view is private to IslandRootView.swift and lookalikes are not allowed; needs the IslandRootView owner to make it internal. |
+| `timerPreset3Minutes` | VISUAL (no preview, justified) | — | Read by the production Timer page (DedicatedTimerPageView). No preview: that view is private to IslandRootView.swift and lookalikes are not allowed; needs the IslandRootView owner to make it internal. |
+| `showTimerProgressRing` | VISUAL (no preview, justified) | — | Read by the production Timer page (DedicatedTimerPageView). No preview: that view is private to IslandRootView.swift and lookalikes are not allowed; needs the IslandRootView owner to make it internal. |
+| `timerRingAnimationEnabled` | VISUAL (no preview, justified) | — | Read by the production Timer page (DedicatedTimerPageView). No preview: that view is private to IslandRootView.swift and lookalikes are not allowed; needs the IslandRootView owner to make it internal. |
 | `timerEnabled` | BEHAVIORAL | — | Timer behavior and alerts. |
 | `timerSoundEnabled` | BEHAVIORAL | — | Timer behavior and alerts. |
 | `timerNotificationEnabled` | BEHAVIORAL | — | Timer behavior and alerts. |
@@ -215,4 +215,8 @@ A unit test keeps it in sync with every `@Published` property in `AppSettings`.
 | `rightWorkspace.sectionOrder` | VISUAL | Right Workspace Preview |  |
 | `rightWorkspace.hiddenSections` | VISUAL | Right Workspace Preview |  |
 | `rightWorkspace.swipeEnabled` | BEHAVIORAL | — | Two-finger paging over the right half. |
-| `spotify.webAPI.clientID` | EXTERNAL INTEGRATION | — | Spotify Web API client; connection state and errors shown in Right Workspace settings. |
+| `spotify.webAPI.clientID` | EXTERNAL INTEGRATION | — | Developer-only override (DEBUG builds). Release builds read the packaged Info.plist Client ID; none is packaged today, so Settings shows 'Not configured'. Local Spotify controls never depend on it. |
+| `messaging.enabled` | BEHAVIORAL | — | Read by MessagingController presentation and adapter observation. |
+| `messaging.mutedProviders` | BEHAVIORAL | — | Read by MessagingController presentation and adapter observation. |
+| `messaging.showPreviewOnCompact` | BEHAVIORAL | — | Privacy: the compact message activity subtitle shows the message text or 'New message' (MessagingController.compactPreview). Settings never renders message content. |
+| `messaging.readsSystemNotifications` | PERMISSION | — | Opt-in Notification Center reading; requires Full Disk Access, status shown in Messaging settings. |

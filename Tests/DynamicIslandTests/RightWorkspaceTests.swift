@@ -120,6 +120,26 @@ final class RightWorkspaceTests: XCTestCase {
 
     // MARK: Configuration
 
+    @MainActor
+    func testChangingDefaultPageSwitchesImmediatelyAndPersistsForLaunch() throws {
+        let suite = "RightWorkspaceTests.default.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = RightWorkspaceStore(defaults: defaults)
+        XCTAssertEqual(store.currentPage, .overview)
+
+        store.update { $0.defaultPage = .appsMedia }
+        XCTAssertEqual(store.currentPage, .appsMedia, "a new default page is shown immediately")
+        XCTAssertEqual(store.transitionDirection, 1)
+
+        store.showPrevious()
+        XCTAssertEqual(store.currentPage, .productivity)
+        store.update { $0.indicatorStyle = .hidden }
+        XCTAssertEqual(store.currentPage, .productivity, "unrelated changes never move the page")
+
+        XCTAssertEqual(RightWorkspaceStore(defaults: defaults).currentPage, .appsMedia, "launch starts on the default page")
+    }
+
     func testNormalizationRemovesDuplicatesAddsMissingAndKeepsAVisiblePage() {
         var config = RightWorkspaceConfiguration.default
         config.pageOrder = [.productivity, .productivity]
