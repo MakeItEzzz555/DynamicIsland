@@ -204,9 +204,9 @@
     "semantic_hash": "e45da4c5467fe497679f227ded264dae"
   },
   "Sources/DynamicIsland/Views/IslandRootView.swift": {
-    "mtime": 1790774947.1133401,
-    "seen": 1790775695.816122,
-    "ast_hash": "4f496ef0b648fe084524cfe283e663ec",
+    "mtime": 1790776296.0267184,
+    "seen": 1790776564.422892,
+    "ast_hash": "2737cd4924089128a51b721159a5f9c7",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/IslandThemeBackground.swift": {
@@ -216,15 +216,15 @@
     "semantic_hash": "7d21f4464cfa88e7e7a536e36ce2f7e1"
   },
   "Sources/DynamicIsland/Views/ModuleViews.swift": {
-    "mtime": 1790743639.6329882,
-    "seen": 1790743896.705411,
-    "ast_hash": "de2a917a82c96c899dd5870d7f7a08b2",
+    "mtime": 1790776296.0272691,
+    "seen": 1790776564.4228961,
+    "ast_hash": "bbe7ac9206a92515b75c29aa4ef3dbbd",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/SettingsView.swift": {
-    "mtime": 1790775122.1135468,
-    "seen": 1790775695.816135,
-    "ast_hash": "b68c2a84f651d5dbf8ff16ab9073d030",
+    "mtime": 1790776296.0285168,
+    "seen": 1790776564.422904,
+    "ast_hash": "975105883c85b99c2905072e35e8057e",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/AppSettingsTests.swift": {
@@ -1770,9 +1770,9 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/State/RightWorkspace.swift": {
-    "mtime": 1790774484.3867443,
-    "seen": 1790775695.816113,
-    "ast_hash": "165ac2def36e51389f73b17818fec0a2",
+    "mtime": 1790775965.6358893,
+    "seen": 1790776564.422882,
+    "ast_hash": "059b2b0143785b7f1926b1ef4765fbbe",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/AppsMediaDeckView.swift": {
@@ -1800,15 +1800,15 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/SettingsAudit.swift": {
-    "mtime": 1790775122.11377,
-    "seen": 1790775695.816134,
-    "ast_hash": "3068bfb43e31f6dc4fd03bfcfabdefa5",
+    "mtime": 1790776296.028828,
+    "seen": 1790776564.422902,
+    "ast_hash": "6a72644d06e78b6624165c80f0aa1384",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/SettingsPreviews.swift": {
-    "mtime": 1790771209.4802904,
-    "seen": 1790771900.00933,
-    "ast_hash": "4970aa6a36092ac5dd9ced827cfccd72",
+    "mtime": 1790776296.027919,
+    "seen": 1790776564.422903,
+    "ast_hash": "ee81c246e36c66269ff27e6ebe01bee9",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/WorkspaceDesignSystem.swift": {
@@ -1836,9 +1836,9 @@
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/RightWorkspaceSnapshotTests.swift": {
-    "mtime": 1790771722.6295033,
-    "seen": 1790771900.009429,
-    "ast_hash": "6312369b163364af9b0813a6a809d2ba",
+    "mtime": 1790776488.6981502,
+    "seen": 1790776564.423003,
+    "ast_hash": "fcb3be8bc9f15dd33f6d4f71cafbc1de",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/RightWorkspaceTests.swift": {
@@ -1848,9 +1848,9 @@
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/SettingsAuditTests.swift": {
-    "mtime": 1790775122.1139553,
-    "seen": 1790775695.816289,
-    "ast_hash": "bf758e9e0faee16239fe90e533aef158",
+    "mtime": 1790776296.028991,
+    "seen": 1790776564.423004,
+    "ast_hash": "368ea3b91622f44de0fd953ac1e8644b",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/SpotifyLibraryTests.swift": {
@@ -1860,15 +1860,15 @@
     "semantic_hash": ""
   },
   "research/SETTINGS_PREVIEW_AUDIT.md": {
-    "mtime": 1790775156.6761754,
-    "seen": 1790775695.816328,
-    "ast_hash": "cf0f27a1c551c0b80dff6e109b317fa1",
+    "mtime": 1790776474.5208955,
+    "seen": 1790776564.423039,
+    "ast_hash": "8ea958d3832d6f0e1e3455039caea257",
     "semantic_hash": ""
   },
   "research/SOURCE_PARITY_MANIFEST.md": {
-    "mtime": 1790771496.8822968,
-    "seen": 1790771900.009467,
-    "ast_hash": "5122e672c3da27206a9917b2e840480f",
+    "mtime": 1790775965.6349952,
+    "seen": 1790776564.42304,
+    "ast_hash": "25b6ccdd70c2650fdb381cbed60c61a8",
     "semantic_hash": ""
   },
   "research/Screen Recording 2026-01-12 at 11.21.36\u202fPM.mov": {
