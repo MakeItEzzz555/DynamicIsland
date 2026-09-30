@@ -414,7 +414,33 @@ final class MediaController: ObservableObject {
         automationExecutor.invalidate()
     }
 
+    // MARK: Settings preview role
+
+    /// True only for the inert controller Settings uses to render the
+    /// production media components with a labeled sample track. It never
+    /// polls providers and never sends commands.
+    private(set) var isSettingsPreview = false
+
+    static func settingsPreview() -> MediaController {
+        let controller = MediaController(startsAutomatically: false)
+        controller.isSettingsPreview = true
+        controller.title = "Preview Track"
+        controller.artist = "Sample Artist"
+        controller.sourceName = "Settings Preview"
+        controller.isPlaying = true
+        controller.hasActiveMediaSource = true
+        controller.isTransportControlAvailable = true
+        controller.isSeekControlAvailable = true
+        controller.isVolumeControlAvailable = true
+        controller.hasPlaybackProgress = true
+        controller.playbackPosition = 74
+        controller.duration = 212
+        controller.volume = 0.6
+        return controller
+    }
+
     func refresh() {
+        guard !isSettingsPreview else { return }
         guard let start = refreshCoordinator.request() else { return }
         beginRefresh(start)
     }
@@ -1489,6 +1515,7 @@ final class MediaController: ObservableObject {
         isVolume: Bool = false,
         completion: @escaping @Sendable (MediaAutomationScriptResult) -> Void = { _ in }
     ) {
+        guard !isSettingsPreview else { return }
         let target: MediaAutomationTarget = player == .spotify ? .spotify : .music
         automationExecutor.submitCommand(
             MediaAutomationOperation(

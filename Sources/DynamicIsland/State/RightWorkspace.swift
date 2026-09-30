@@ -166,6 +166,18 @@ struct RightWorkspaceConfiguration: Codable, Equatable, Sendable {
         return result
     }
 
+    mutating func setVisibility<T: Hashable>(
+        _ item: T,
+        visible: Bool,
+        in keyPath: WritableKeyPath<RightWorkspaceConfiguration, Set<T>>
+    ) {
+        if visible {
+            self[keyPath: keyPath].remove(item)
+        } else {
+            self[keyPath: keyPath].insert(item)
+        }
+    }
+
     mutating func move<T: Equatable>(_ keyPath: WritableKeyPath<RightWorkspaceConfiguration, [T]>, item: T, by offset: Int) {
         var list = self[keyPath: keyPath]
         guard let index = list.firstIndex(of: item) else { return }

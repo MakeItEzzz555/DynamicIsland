@@ -333,6 +333,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         overlayController?.reposition()
     }
 
+    /// Real objects the Settings previews render read-only, plus
+    /// preview-only objects that exist solely inside Settings.
+    private func settingsPreviewDependencies() -> SettingsPreviewDependencies {
+        let previewActivities = LiveActivityStore()
+        let previewCapabilities = IslandCapabilityRegistry()
+        return SettingsPreviewDependencies(
+            timer: timer,
+            stats: stats,
+            clipboardHistory: clipboardHistory,
+            shortcuts: shortcuts,
+            rightWorkspace: rightWorkspace,
+            workspaceServices: workspaceServices,
+            agentManagedControl: agentManagedControl,
+            productivity: productivity,
+            previewMedia: MediaController.settingsPreview(),
+            previewShelf: SettingsPreviewFixtures.previewShelf(settings: settings),
+            previewBackgroundRemoval: BackgroundRemovalController(
+                liveActivities: previewActivities,
+                capabilities: previewCapabilities,
+                addToShelf: { _ in }
+            )
+        )
+    }
+
     private func openSettings() {
         if settingsController == nil {
             settingsController = SettingsWindowController(
@@ -343,7 +367,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 productivity: productivity,
                 agentManagedControl: agentManagedControl,
                 agentProjects: agentProjects,
-                messaging: messaging
+                messaging: messaging,
+                previews: settingsPreviewDependencies()
             )
         }
         settingsController?.show()

@@ -233,7 +233,22 @@ enum IslandShellLayout {
     static let expandedBottomPadding: CGFloat = 20
 }
 
-private struct ExpandedIslandLayoutMetrics {
+/// Shell expand/collapse animation shared by the island and its Settings
+/// preview, so the preview animates exactly like the island.
+@MainActor
+enum IslandShellMotion {
+    static func shellAnimation(settings: AppSettings, reduceMotion: Bool) -> Animation {
+        if reduceMotion || settings.reduceExtraMotion {
+            return .easeInOut(duration: 0.24)
+        }
+        let duration = settings.animationPreset == .instant
+            ? 0.01
+            : settings.animationPreset.shellDuration / max(settings.shellAnimationSpeed, 0.25)
+        return .smooth(duration: duration)
+    }
+}
+
+struct ExpandedIslandLayoutMetrics {
     let containerSize: CGSize
     let horizontalPadding: CGFloat
     let topPadding: CGFloat = IslandShellLayout.expandedTopPadding
@@ -360,16 +375,11 @@ struct IslandRootView: View {
     }
 
     private var shellAnimation: Animation {
-        if reduceMotion || settings.reduceExtraMotion {
-            return .easeInOut(duration: 0.24)
-        }
-        if layoutStore.collapsedPresentationProfile.kind == .agentAttention {
+        if !(reduceMotion || settings.reduceExtraMotion),
+           layoutStore.collapsedPresentationProfile.kind == .agentAttention {
             return .interactiveSpring(response: 0.38, dampingFraction: 0.8, blendDuration: 0)
         }
-        let duration = settings.animationPreset == .instant
-            ? 0.01
-            : settings.animationPreset.shellDuration / max(settings.shellAnimationSpeed, 0.25)
-        return .smooth(duration: duration)
+        return IslandShellMotion.shellAnimation(settings: settings, reduceMotion: reduceMotion)
     }
 
     private var shellMorphProgress: CGFloat {
@@ -3500,7 +3510,7 @@ private struct ExpandedHeaderButton: View {
     }
 }
 
-private struct ExpandedIslandPageSwitcher: View {
+struct ExpandedIslandPageSwitcher: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var navigation: IslandNavigationStore
 
@@ -3811,7 +3821,7 @@ private struct ExtraLiveActivityCard: View {
     }
 }
 
-private struct StatsPageView: View {
+struct StatsPageView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var stats: SystemStatsController
     let metrics: ExpandedIslandLayoutMetrics

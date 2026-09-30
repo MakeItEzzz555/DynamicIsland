@@ -13,6 +13,7 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
     case agents = "AI Agents"
     case clipboard = "Clipboard"
     case productivity = "Productivity"
+    case rightWorkspace = "Right Workspace"
     case messaging = "Messaging"
     case liveActivities = "Live Activities"
     case gestures = "Gestures"
@@ -33,6 +34,7 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
         case .agents: "cpu"
         case .clipboard: "doc.on.clipboard"
         case .productivity: "wand.and.stars"
+        case .rightWorkspace: "rectangle.split.3x1"
         case .messaging: "message"
         case .liveActivities: "waveform.path.ecg"
         case .gestures: "hand.raised"
@@ -49,6 +51,7 @@ struct SettingsView: View {
     let agentManagedControl: AgentManagedSessionController?
     let agentProjects: AgentProjectProjectionStore?
     let messaging: MessagingController?
+    let previews: SettingsPreviewDependencies?
     @StateObject private var agentSetup = AgentIntegrationSetupController()
     @StateObject private var agentDiagnostics: AgentIntegrationDiagnosticsController
     @State private var selectedSection: SettingsSection = .island
@@ -62,9 +65,11 @@ struct SettingsView: View {
         productivity: ProductivityModules,
         agentManagedControl: AgentManagedSessionController? = nil,
         agentProjects: AgentProjectProjectionStore? = nil,
-        messaging: MessagingController? = nil
+        messaging: MessagingController? = nil,
+        previews: SettingsPreviewDependencies? = nil
     ) {
         self.messaging = messaging
+        self.previews = previews
         self.settings = settings
         self.shortcuts = shortcuts
         self.productivity = productivity
@@ -112,7 +117,26 @@ struct SettingsView: View {
                         clipboardSection
                     case .productivity:
                         settingsForm("Productivity") {
+                            if let previews {
+                                ProductivityDeckSettingsPreview(
+                                    workspace: previews.rightWorkspace,
+                                    productivity: productivity,
+                                    shelf: previews.previewShelf
+                                )
+                            }
                             ProductivitySettingsView(productivity: productivity)
+                        }
+                    case .rightWorkspace:
+                        settingsForm("Right Workspace") {
+                            if let previews {
+                                RightWorkspaceSettingsView(
+                                    settings: settings,
+                                    workspace: previews.rightWorkspace,
+                                    dependencies: previews
+                                )
+                            } else {
+                                HelpText("Right workspace settings are unavailable.")
+                            }
                         }
                     case .messaging:
                         settingsForm("Messaging") {
@@ -142,6 +166,7 @@ struct SettingsView: View {
 
     private var islandSection: some View {
         settingsForm("Island") {
+            IslandShellSettingsPreview(settings: settings)
             SettingsGroup("General") {
                 Toggle("Enable overlay", isOn: $settings.overlayEnabled)
                 Toggle("Launch at login", isOn: $settings.launchAtLoginEnabled)
@@ -182,6 +207,7 @@ struct SettingsView: View {
 
     private var appearanceSection: some View {
         settingsForm("Appearance") {
+            IslandShellSettingsPreview(settings: settings)
             SettingsGroup("Shell") {
                 Picker("Island Theme", selection: $settings.islandThemeStyle) {
                     ForEach(IslandThemeStyle.allCases) { theme in
@@ -235,6 +261,7 @@ struct SettingsView: View {
 
     private var motionSection: some View {
         settingsForm("Motion") {
+            IslandShellSettingsPreview(settings: settings)
             SettingsGroup("Animation") {
                 Picker("Preset", selection: $settings.animationPreset) {
                     ForEach(AnimationPreset.allCases) { preset in
@@ -255,6 +282,7 @@ struct SettingsView: View {
 
     private var tabsSection: some View {
         settingsForm("Tabs") {
+            IslandShellSettingsPreview(settings: settings)
             SettingsGroup("Visible Tabs") {
                 Toggle("Island tab", isOn: .constant(true))
                     .disabled(true)
@@ -284,6 +312,9 @@ struct SettingsView: View {
 
     private var mediaSection: some View {
         settingsForm("Media") {
+            if let previews {
+                MediaSettingsPreview(settings: settings, media: previews.previewMedia)
+            }
             SettingsGroup("Visibility") {
                 Toggle("Enable media", isOn: $settings.mediaEnabled)
                 Toggle("Show when paused", isOn: $settings.showMediaWhenPaused)
@@ -329,6 +360,13 @@ struct SettingsView: View {
 
     private var traySection: some View {
         settingsForm("Tray") {
+            if let previews {
+                FileTraySettingsPreview(
+                    settings: settings,
+                    shelf: previews.previewShelf,
+                    backgroundRemoval: previews.previewBackgroundRemoval
+                )
+            }
             SettingsGroup("Tray") {
                 Toggle("Enable tray", isOn: $settings.trayEnabled)
                 Toggle("Enable file shelf", isOn: $settings.fileShelfEnabled)
@@ -360,6 +398,9 @@ struct SettingsView: View {
 
     private var timerSection: some View {
         settingsForm("Timer") {
+            if let previews {
+                TimerSettingsPreview(timer: previews.timer)
+            }
             SettingsGroup("Timer") {
                 Toggle("Enable timer", isOn: $settings.timerEnabled)
                 Toggle("Preset buttons", isOn: $settings.timerPresetsEnabled)
@@ -394,6 +435,9 @@ struct SettingsView: View {
 
     private var agentsSection: some View {
         settingsForm("AI Agents") {
+            if let control = previews?.agentManagedControl {
+                AgentsSettingsPreview(managedControl: control)
+            }
             SettingsGroup("Agent Activity") {
                 Toggle("Enable agent activity", isOn: $settings.agentActivityEnabled)
                 Toggle("Show Agents tab", isOn: $settings.showAgentsTab)
@@ -600,6 +644,9 @@ struct SettingsView: View {
 
     private var statsSection: some View {
         settingsForm("Stats") {
+            if let previews {
+                StatsSettingsPreview(settings: settings, stats: previews.stats)
+            }
             SettingsGroup("Stats") {
                 Toggle("Enable stats", isOn: $settings.statsEnabled)
                 SliderRow(title: "Refresh interval", value: $settings.statsRefreshIntervalSeconds, range: 0.5...10.0, format: "%.1fs")
@@ -793,6 +840,9 @@ struct SettingsView: View {
 
     private var clipboardSection: some View {
         settingsForm("Clipboard") {
+            if let previews {
+                ClipboardSettingsPreview(store: previews.clipboardHistory)
+            }
             SettingsGroup("Clipboard History") {
                 Toggle("Enable clipboard history", isOn: $settings.clipboardHistoryEnabled)
                 Stepper(

@@ -116,3 +116,67 @@ final class WorkspaceRenderHarness {
         )
     }
 }
+
+/// Opt-in renders of the Settings live previews (same env var).
+@MainActor
+final class SettingsPreviewSnapshotTests: XCTestCase {
+    func testRenderSettingsPreviews() async throws {
+        guard let path = ProcessInfo.processInfo.environment["DYNAMIC_ISLAND_WORKSPACE_SNAPSHOT_DIR"] else {
+            throw XCTSkip("Set DYNAMIC_ISLAND_WORKSPACE_SNAPSHOT_DIR to render settings previews.")
+        }
+        let output = URL(fileURLWithPath: path, isDirectory: true)
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        let harness = WorkspaceRenderHarness()
+        harness.settings.clipboardHistoryEnabled = false
+        let previewActivities = LiveActivityStore()
+        let registry = IslandCapabilityRegistry()
+        let claude = ClaudeInteractiveProvider(
+            client: try ClaudeCodeStreamingClient(executableURL: URL(fileURLWithPath: "/usr/bin/true"))
+        )
+        let agents = AgentManagedSessionController(
+            providers: [claude, CodexAppServerProvider(client: try CodexAppServerClient())],
+            coordinator: AgentIngestionCoordinator(eventStore: AgentEventStore()),
+            eventStore: AgentEventStore(),
+            approvals: AgentApprovalController()
+        )
+        agents.selectProvider(.claude)
+        let deps = SettingsPreviewDependencies(
+            timer: TimerController(),
+            stats: SystemStatsController(),
+            clipboardHistory: ClipboardHistoryStore(settings: harness.settings, automaticallySchedulesTimer: false),
+            shortcuts: harness.shortcuts,
+            rightWorkspace: harness.store,
+            workspaceServices: harness.services,
+            agentManagedControl: agents,
+            productivity: harness.productivity,
+            previewMedia: MediaController.settingsPreview(),
+            previewShelf: SettingsPreviewFixtures.previewShelf(settings: harness.settings),
+            previewBackgroundRemoval: BackgroundRemovalController(
+                liveActivities: previewActivities, capabilities: registry, addToShelf: { _ in }
+            )
+        )
+        let settings = harness.settings
+        let views: [(String, AnyView)] = [
+            ("50-settings-island", AnyView(IslandShellSettingsPreview(settings: settings))),
+            ("51-settings-media", AnyView(MediaSettingsPreview(settings: settings, media: deps.previewMedia))),
+            ("52-settings-right-workspace", AnyView(RightWorkspaceSettingsView(settings: settings, workspace: deps.rightWorkspace, dependencies: deps))),
+            ("53-settings-agents", AnyView(AgentsSettingsPreview(managedControl: agents))),
+            ("54-settings-tray", AnyView(FileTraySettingsPreview(settings: settings, shelf: deps.previewShelf, backgroundRemoval: deps.previewBackgroundRemoval))),
+            ("55-settings-timer", AnyView(TimerSettingsPreview(timer: deps.timer))),
+            ("56-settings-stats", AnyView(StatsSettingsPreview(settings: settings, stats: deps.stats))),
+            ("57-settings-productivity", AnyView(ProductivityDeckSettingsPreview(workspace: deps.rightWorkspace, productivity: deps.productivity, shelf: deps.previewShelf)))
+        ]
+        for (name, view) in views {
+            let size = CGSize(width: 700, height: name.contains("right-workspace") ? 900 : 320)
+            let hosting = NSHostingView(rootView: view.padding(20).frame(width: size.width, height: size.height, alignment: .top)
+                .background(Color(nsColor: .windowBackgroundColor)))
+            hosting.frame = CGRect(origin: .zero, size: size)
+            hosting.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(300))
+            hosting.layoutSubtreeIfNeeded()
+            let rep = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
+            hosting.cacheDisplay(in: hosting.bounds, to: rep)
+            try XCTUnwrap(rep.representation(using: .png, properties: [:])).write(to: output.appendingPathComponent(name + ".png"))
+        }
+    }
+}

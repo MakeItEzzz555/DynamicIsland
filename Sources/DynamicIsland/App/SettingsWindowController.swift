@@ -13,7 +13,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         productivity: ProductivityModules,
         agentManagedControl: AgentManagedSessionController? = nil,
         agentProjects: AgentProjectProjectionStore? = nil,
-        messaging: MessagingController? = nil
+        messaging: MessagingController? = nil,
+        previews: SettingsPreviewDependencies? = nil
     ) {
         window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 920, height: 700),
@@ -33,7 +34,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
                 productivity: productivity,
                 agentManagedControl: agentManagedControl,
                 agentProjects: agentProjects,
-                messaging: messaging
+                messaging: messaging,
+                previews: previews
             )
         )
         super.init()

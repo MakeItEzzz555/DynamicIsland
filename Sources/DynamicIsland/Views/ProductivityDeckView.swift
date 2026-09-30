@@ -91,11 +91,12 @@ struct ProductivityDeckView: View {
 struct CameraMirrorView: View {
     @ObservedObject var controller: CameraPreviewController
     let diameter: CGFloat
+    @Environment(\.isSettingsPreview) private var isSettingsPreview
 
     var body: some View {
         ZStack {
             Circle().fill(Color.black.opacity(0.24))
-            if let session = controller.previewSession {
+            if !isSettingsPreview, let session = controller.previewSession {
                 CameraPreviewView(session: session, mirrored: true)
                     .clipShape(Circle())
                     .accessibilityHidden(true)
@@ -109,9 +110,13 @@ struct CameraMirrorView: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Camera mirror, \(controller.statusText)")
         .task {
+            // Settings previews show the mirror's shell only; they never
+            // start capture.
+            guard !isSettingsPreview else { return }
             await controller.attachPreviewConsumer()
         }
         .onDisappear {
+            guard !isSettingsPreview else { return }
             Task { await controller.detachPreviewConsumer() }
         }
     }
