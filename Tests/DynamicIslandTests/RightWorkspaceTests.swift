@@ -88,6 +88,19 @@ final class RightWorkspaceTests: XCTestCase {
         XCTAssertEqual(Array(normalized.toolOrder.prefix(2)), [.voice, .camera])
     }
 
+    func testRelativePageOffsetsAreStableAcrossSwitches() {
+        let pages: [RightWorkspacePage] = [.overview, .productivity, .appsMedia]
+        func relative(_ page: RightWorkspacePage, current: RightWorkspacePage) -> Int {
+            let pageIndex = pages.firstIndex(of: page)!
+            let currentIndex = pages.firstIndex(of: current)!
+            return pageIndex - currentIndex
+        }
+        XCTAssertEqual(relative(.overview, current: .productivity), -1)
+        XCTAssertEqual(relative(.productivity, current: .productivity), 0)
+        XCTAssertEqual(relative(.appsMedia, current: .productivity), 1)
+        XCTAssertEqual(relative(.productivity, current: .appsMedia), -1)
+    }
+
     @MainActor
     func testStorePersistsOrderPagesWithoutWrappingAndDirection() throws {
         let suite = "RightWorkspaceTests-\(UUID().uuidString)"

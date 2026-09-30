@@ -107,6 +107,7 @@ struct CameraMirrorView: View {
     @ObservedObject var controller: CameraPreviewController
     let diameter: CGFloat
     @Environment(\.isSettingsPreview) private var isSettingsPreview
+    @Environment(\.rightWorkspacePageIsActive) private var isWorkspacePageActive
 
     var body: some View {
         ZStack {
@@ -125,10 +126,20 @@ struct CameraMirrorView: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Camera mirror, \(controller.statusText)")
         .task {
-            // Settings previews show the mirror's shell only; they never
+            // Settings previews and hidden-but-mounted workspace pages never
             // start capture.
-            guard !isSettingsPreview else { return }
+            guard !isSettingsPreview, isWorkspacePageActive else { return }
             await controller.attachPreviewConsumer()
+        }
+        .onChange(of: isWorkspacePageActive) { _, active in
+            guard !isSettingsPreview else { return }
+            Task {
+                if active {
+                    await controller.attachPreviewConsumer()
+                } else {
+                    await controller.detachPreviewConsumer()
+                }
+            }
         }
         .onDisappear {
             guard !isSettingsPreview else { return }

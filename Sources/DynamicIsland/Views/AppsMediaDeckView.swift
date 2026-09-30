@@ -98,6 +98,7 @@ struct AppLibrarySectionView: View {
     @ObservedObject var store: AppLibraryStore
     let layoutStore: IslandLayoutStore?
     @State private var query = ""
+    @Environment(\.rightWorkspacePageIsActive) private var isWorkspacePageActive
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -121,7 +122,12 @@ struct AppLibrarySectionView: View {
 
             content
         }
-        .onAppear { store.refreshIfNeeded() }
+        .onAppear {
+            if isWorkspacePageActive { store.refreshIfNeeded() }
+        }
+        .onChange(of: isWorkspacePageActive) { _, active in
+            if active { store.refreshIfNeeded() }
+        }
     }
 
     @ViewBuilder
@@ -217,6 +223,7 @@ struct SpotifySectionView: View {
     let media: MediaController?
     let layoutStore: IslandLayoutStore?
     let onOpenSettings: () -> Void
+    @Environment(\.rightWorkspacePageIsActive) private var isWorkspacePageActive
 
     enum Tab: String, CaseIterable, Identifiable {
         case queue = "Queue"
@@ -320,7 +327,16 @@ struct SpotifySectionView: View {
                 .modifier(WorkspaceScrollRegion(layoutStore: layoutStore))
             }
         }
-        .task { if controller.snapshot == nil { await controller.refresh() } }
+        .task {
+            if isWorkspacePageActive, controller.snapshot == nil {
+                await controller.refresh()
+            }
+        }
+        .onChange(of: isWorkspacePageActive) { _, active in
+            if active, controller.snapshot == nil {
+                Task { await controller.refresh() }
+            }
+        }
     }
 
     private func items(for tab: Tab) -> [SpotifyMediaItem] {
@@ -368,6 +384,7 @@ struct SpotifySectionView: View {
 struct CalendarSectionView: View {
     @ObservedObject var controller: CalendarEventsController
     let layoutStore: IslandLayoutStore?
+    @Environment(\.rightWorkspacePageIsActive) private var isWorkspacePageActive
 
     var body: some View {
         Group {
@@ -396,8 +413,17 @@ struct CalendarSectionView: View {
             }
         }
         .onAppear {
+            guard isWorkspacePageActive else { return }
             controller.refresh()
             controller.startObserving()
+        }
+        .onChange(of: isWorkspacePageActive) { _, active in
+            if active {
+                controller.refresh()
+                controller.startObserving()
+            } else {
+                controller.stopObserving()
+            }
         }
         .onDisappear { controller.stopObserving() }
     }

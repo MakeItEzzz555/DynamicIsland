@@ -1,5 +1,19 @@
 import SwiftUI
 
+private struct RightWorkspacePageActiveKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
+extension EnvironmentValues {
+    /// Whether a mounted right-workspace page is the currently visible page.
+    /// Hidden pages remain mounted solely to preserve native ScrollView state;
+    /// expensive controllers use this value to suspend themselves.
+    var rightWorkspacePageIsActive: Bool {
+        get { self[RightWorkspacePageActiveKey.self] }
+        set { self[RightWorkspacePageActiveKey.self] = newValue }
+    }
+}
+
 /// The Island page's right column as a paged workspace. Exactly one page
 /// occupies the column's geometry; paging never changes the island size.
 /// Pages change by two-finger horizontal swipe over this column (routed by
@@ -20,40 +34,52 @@ struct RightWorkspaceView<Overview: View, Productivity: View, AppsMedia: View>: 
     @ViewBuilder let productivity: () -> Productivity
     @ViewBuilder let appsMedia: () -> AppsMedia
 
-    /// Page actually rendered. Updated one pass after the store so the
-    /// outgoing page is re-rendered with the new direction before it is
-    /// removed (a removed view keeps the transition of its last render).
-    @State private var displayedPage: RightWorkspacePage?
-
     var body: some View {
-        let shownPage = displayedPage ?? store.currentPage
         let pages = store.configuration.visiblePages
+        let currentPage = pages.contains(store.currentPage)
+            ? store.currentPage
+            : (pages.first ?? .overview)
         let showsIndicator = Self.showsIndicator(store.configuration)
+
         GeometryReader { proxy in
             let pageHeight = max(proxy.size.height - (showsIndicator ? Self.indicatorBand : 0), 0)
             VStack(spacing: 0) {
-            ZStack(alignment: .topLeading) {
-                page(shownPage)
-                    .frame(width: proxy.size.width, height: pageHeight, alignment: .topLeading)
-                    .id(shownPage)
-                    .transition(WorkspaceMotion.pageTransition(
-                        direction: store.transitionDirection,
-                        width: proxy.size.width,
-                        reduceMotion: reduceMotion
-                    ))
-                    .accessibilityElement(children: .contain)
-                    .accessibilityLabel("\(shownPage.title) page")
-            }
-            .frame(width: proxy.size.width, height: pageHeight, alignment: .topLeading)
-            .clipped()
-            if showsIndicator {
-                RightWorkspacePageIndicator(
-                    pages: pages,
-                    current: store.currentPage,
-                    onSelect: { store.show($0) }
+                ZStack(alignment: .topLeading) {
+                    ForEach(pages) { workspacePage in
+                        let isCurrent = workspacePage == currentPage
+                        let relative = pageRelativeOffset(
+                            workspacePage,
+                            current: currentPage,
+                            pages: pages
+                        )
+                        page(workspacePage)
+                            .frame(width: proxy.size.width, height: pageHeight, alignment: .topLeading)
+                            .offset(x: reduceMotion ? 0 : CGFloat(relative) * proxy.size.width * WorkspaceMotion.pageTravelFraction)
+                            .blur(radius: isCurrent || reduceMotion || WorkspaceMotion.prefersLightweightEffects
+                                ? 0
+                                : WorkspaceMotion.transitionBlurRadius)
+                            .opacity(isCurrent ? 1 : 0)
+                            .allowsHitTesting(isCurrent)
+                            .accessibilityHidden(!isCurrent)
+                            .environment(\.rightWorkspacePageIsActive, isCurrent)
+                            .zIndex(isCurrent ? 1 : 0)
+                    }
+                }
+                .frame(width: proxy.size.width, height: pageHeight, alignment: .topLeading)
+                .clipped()
+                .animation(
+                    WorkspaceMotion.smoothContent(reduceMotion: reduceMotion),
+                    value: store.currentPage
                 )
-                .frame(height: Self.indicatorBand)
-            }
+
+                if showsIndicator {
+                    RightWorkspacePageIndicator(
+                        pages: pages,
+                        current: currentPage,
+                        onSelect: { store.show($0) }
+                    )
+                    .frame(height: Self.indicatorBand)
+                }
             }
             .background {
                 if let layoutStore {
@@ -72,19 +98,11 @@ struct RightWorkspaceView<Overview: View, Productivity: View, AppsMedia: View>: 
                 }
             }
         }
-        .onChange(of: store.currentPage) { _, newPage in
-            withAnimation(WorkspaceMotion.smoothContent(reduceMotion: reduceMotion)) {
-                displayedPage = newPage
-            }
-        }
-        .onAppear {
-            displayedPage = store.currentPage
-        }
         .onDisappear {
             layoutStore?.setRightWorkspaceRegion(.zero)
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Right workspace, \(store.currentPage.title)")
+        .accessibilityLabel("Right workspace, \(currentPage.title)")
         .accessibilityAdjustableAction { direction in
             switch direction {
             case .increment: store.showNext()
@@ -92,6 +110,18 @@ struct RightWorkspaceView<Overview: View, Productivity: View, AppsMedia: View>: 
             @unknown default: break
             }
         }
+    }
+
+    private func pageRelativeOffset(
+        _ page: RightWorkspacePage,
+        current: RightWorkspacePage,
+        pages: [RightWorkspacePage]
+    ) -> Int {
+        guard let pageIndex = pages.firstIndex(of: page),
+              let currentIndex = pages.firstIndex(of: current) else {
+            return 0
+        }
+        return pageIndex - currentIndex
     }
 
     @ViewBuilder
