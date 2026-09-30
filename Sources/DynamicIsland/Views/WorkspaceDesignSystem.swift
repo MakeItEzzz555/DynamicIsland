@@ -50,15 +50,16 @@ private struct WorkspaceTileButtonBody: View {
     @State private var isHovering = false
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.islandDisplayMetrics) private var displayMetrics
 
     var body: some View {
         configuration.label
             .background(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                RoundedRectangle(cornerRadius: resolvedCornerRadius, style: .continuous)
                     .fill(backgroundColor)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                RoundedRectangle(cornerRadius: resolvedCornerRadius, style: .continuous)
                     .strokeBorder(borderColor, lineWidth: isOn ? 2 : 1)
             )
             .scaleEffect(scale)
@@ -66,7 +67,11 @@ private struct WorkspaceTileButtonBody: View {
             .animation(WorkspaceDesign.hover(reduceMotion: reduceMotion), value: configuration.isPressed)
             .animation(WorkspaceDesign.hover(reduceMotion: reduceMotion), value: isHovering)
             .onHover { isHovering = $0 && isEnabled }
-            .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: resolvedCornerRadius, style: .continuous))
+    }
+
+    private var resolvedCornerRadius: CGFloat {
+        cornerRadius * displayMetrics.cornerRadiusScale
     }
 
     private var scale: CGFloat {
@@ -89,6 +94,7 @@ private struct WorkspaceTileButtonBody: View {
 
 /// Standard content for a workspace tool tile: icon, title, live status.
 struct WorkspaceTileLabel: View {
+    @Environment(\.islandDisplayMetrics) private var displayMetrics
     let symbol: String
     let title: String
     let status: String?
@@ -97,25 +103,25 @@ struct WorkspaceTileLabel: View {
     var isBusy = false
 
     var body: some View {
-        HStack(spacing: 7) {
+        HStack(spacing: displayMetrics.spacing(7, minimum: 6, maximum: 9)) {
             ZStack {
                 if isBusy {
                     ProgressView().controlSize(.mini)
                 } else {
                     Image(systemName: symbol)
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: displayMetrics.icon(12, minimum: 10, maximum: 15), weight: .semibold))
                         .foregroundStyle(isOn ? accent : .white.opacity(0.78))
                 }
             }
-            .frame(width: 18)
-            VStack(alignment: .leading, spacing: 1) {
+            .frame(width: 18 * displayMetrics.compactControlScale)
+            VStack(alignment: .leading, spacing: max(1, displayMetrics.spacingScale)) {
                 Text(title)
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.system(size: displayMetrics.font(10, minimum: 8.8, maximum: 12.2), weight: .semibold))
                     .foregroundStyle(.white.opacity(0.9))
                     .lineLimit(1)
                 if let status {
                     Text(status)
-                        .font(.system(size: 8.5, weight: .medium))
+                        .font(.system(size: displayMetrics.font(8.5, minimum: 7.6, maximum: 10.2), weight: .medium))
                         .foregroundStyle(.white.opacity(0.5))
                         .lineLimit(1)
                         .truncationMode(.tail)
@@ -123,7 +129,7 @@ struct WorkspaceTileLabel: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, displayMetrics.spacing(8, minimum: 7, maximum: 10))
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
 }

@@ -131,4 +131,75 @@ final class IslandDisplayMetricsTests: XCTestCase {
             XCTAssertLessThanOrEqual(metrics.rightStackWidth, metrics.innerWidth)
         }
     }
+
+    func testRepresentativeGeometryMatrixNeverEscapesTargetDisplayAndRemainsTopAnchored() {
+        let fixtures: [(CGSize, Bool)] = [
+            (.init(width: 1280, height: 720), false),
+            (.init(width: 1366, height: 768), false),
+            (.init(width: 1440, height: 900), false),
+            (.init(width: 1512, height: 982), true),
+            (.init(width: 1728, height: 1117), true),
+            (.init(width: 1680, height: 1050), false),
+            (.init(width: 1920, height: 1080), false),
+            (.init(width: 2560, height: 1440), false),
+            (.init(width: 3440, height: 1440), false),
+            (.init(width: 3840, height: 2160), false),
+            (.init(width: 5120, height: 2880), false),
+            (.init(width: 6016, height: 3384), false)
+        ]
+        let service = NotchGeometryService()
+
+        for (size, notched) in fixtures {
+            let display = IslandDisplayMetricsResolver.resolve(
+                snapshot(width: size.width, height: size.height, notched: notched)
+            )
+            let top: CGFloat = notched ? 32 : 0
+            let left = notched
+                ? CGRect(x: 0, y: size.height - top, width: (size.width - 180) / 2, height: top)
+                : nil
+            let right = notched
+                ? CGRect(x: (size.width + 180) / 2, y: size.height - top, width: (size.width - 180) / 2, height: top)
+                : nil
+            let screen = ScreenSnapshot(
+                frame: CGRect(origin: .zero, size: size),
+                visibleFrame: CGRect(x: 0, y: 0, width: size.width, height: size.height - 26),
+                safeAreaInsets: NSEdgeInsets(top: top, left: 0, bottom: 0, right: 0),
+                auxiliaryTopLeftArea: left,
+                auxiliaryTopRightArea: right
+            )
+            let geometry = service.geometry(
+                for: screen,
+                collapsedSize: CGSize(width: 216, height: 34),
+                expandedSize: CGSize(
+                    width: 760 * display.expandedShellScale,
+                    height: 260 * display.expandedShellScale
+                )
+            )
+
+            for frame in [geometry.collapsedFrame, geometry.expandedFrame] {
+                XCTAssertTrue(frame.origin.x.isFinite && frame.origin.y.isFinite)
+                XCTAssertTrue(frame.width.isFinite && frame.height.isFinite)
+                XCTAssertGreaterThan(frame.width, 0)
+                XCTAssertGreaterThan(frame.height, 0)
+                XCTAssertGreaterThanOrEqual(frame.minX, screen.frame.minX - 1)
+                XCTAssertLessThanOrEqual(frame.maxX, screen.frame.maxX + 1)
+                XCTAssertGreaterThanOrEqual(frame.minY, screen.frame.minY - 1)
+                XCTAssertLessThanOrEqual(frame.maxY, screen.frame.maxY + 1)
+            }
+
+            let expectedTopGap: CGFloat = notched ? 0 : 10
+            XCTAssertEqual(
+                geometry.expandedFrame.maxY,
+                screen.frame.maxY - expectedTopGap,
+                accuracy: 1,
+                "expanded shell must remain top anchored for \(size)"
+            )
+            XCTAssertEqual(geometry.hasHardwareNotch, notched)
+            if let notchRect = geometry.notchRect {
+                XCTAssertTrue(geometry.collapsedFrame.intersects(notchRect))
+                XCTAssertGreaterThanOrEqual(geometry.collapsedFrame.width, notchRect.width)
+            }
+        }
+    }
+
 }

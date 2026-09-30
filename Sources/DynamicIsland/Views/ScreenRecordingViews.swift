@@ -32,21 +32,22 @@ struct CollapsedScreenRecordingActivityView: View {
     @ObservedObject var controller: ScreenRecordingController
     let layout: CompactCollapsedSideSlotGeometry
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.islandDisplayMetrics) private var displayMetrics
     @State private var pulse = false
 
     var body: some View {
         CompactCollapsedSideSlotLayout(geometry: layout) {
             preview
                 .frame(
-                    width: CollapsedActivityLayoutProfile.screenRecordingLeftContentWidth,
-                    height: 38
+                    width: CollapsedActivityLayoutProfile.screenRecordingLeftContentWidth * displayMetrics.collapsedSideContentScale,
+                    height: 38 * displayMetrics.compactControlScale
                 )
         } right: {
-            VStack(alignment: .trailing, spacing: 4) {
-                HStack(spacing: 5) {
+            VStack(alignment: .trailing, spacing: displayMetrics.spacing(4, minimum: 3, maximum: 5)) {
+                HStack(spacing: displayMetrics.spacing(5, minimum: 4, maximum: 6)) {
                     Circle()
                         .fill(controller.phase == .paused ? Color.red.opacity(0.38) : .red)
-                        .frame(width: 7, height: 7)
+                        .frame(width: 7 * displayMetrics.compactControlScale, height: 7 * displayMetrics.compactControlScale)
                         .opacity(controller.phase == .recording && !reduceMotion ? (pulse ? 0.38 : 1) : 0.82)
                         .animation(
                             controller.phase == .recording && !reduceMotion
@@ -55,19 +56,19 @@ struct CollapsedScreenRecordingActivityView: View {
                             value: pulse
                         )
                     Text(controller.formattedDuration)
-                        .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                        .font(.system(size: displayMetrics.font(9.5, minimum: 8.5, maximum: 11.5), weight: .bold, design: .monospaced))
                         .monospacedDigit()
                         .foregroundStyle(.white.opacity(0.94))
                         .lineLimit(1)
                 }
 
-                HStack(spacing: 5) {
+                HStack(spacing: displayMetrics.spacing(5, minimum: 4, maximum: 6)) {
                     Button {
                         controller.togglePause()
                     } label: {
                         Image(systemName: controller.phase == .paused ? "play.fill" : "pause.fill")
-                            .font(.system(size: 8, weight: .bold))
-                            .frame(width: 22, height: 16)
+                            .font(.system(size: displayMetrics.icon(8, minimum: 7, maximum: 10), weight: .bold))
+                            .frame(width: 22 * displayMetrics.compactControlScale, height: 16 * displayMetrics.compactControlScale)
                     }
                     .buttonStyle(.plain)
                     .background(.white.opacity(0.10), in: Capsule())
@@ -78,8 +79,8 @@ struct CollapsedScreenRecordingActivityView: View {
                         Task { await controller.stopAndSave() }
                     } label: {
                         Image(systemName: "stop.fill")
-                            .font(.system(size: 7.5, weight: .bold))
-                            .frame(width: 22, height: 16)
+                            .font(.system(size: displayMetrics.icon(7.5, minimum: 7, maximum: 9.5), weight: .bold))
+                            .frame(width: 22 * displayMetrics.compactControlScale, height: 16 * displayMetrics.compactControlScale)
                     }
                     .buttonStyle(.plain)
                     .background(.red.opacity(0.82), in: Capsule())
@@ -89,7 +90,7 @@ struct CollapsedScreenRecordingActivityView: View {
                 .foregroundStyle(.white)
             }
             .frame(
-                width: CollapsedActivityLayoutProfile.screenRecordingRightContentWidth,
+                width: CollapsedActivityLayoutProfile.screenRecordingRightContentWidth * displayMetrics.collapsedSideContentScale,
                 alignment: .trailing
             )
         }
@@ -113,19 +114,19 @@ struct CollapsedScreenRecordingActivityView: View {
             Image(nsImage: image)
                 .resizable()
                 .aspectRatio(contentMode: .fill)
-                .frame(width: 54, height: 34)
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .frame(width: 54 * displayMetrics.collapsedSideContentScale, height: 34 * displayMetrics.compactControlScale)
+                .clipShape(RoundedRectangle(cornerRadius: 6 * displayMetrics.cornerRadiusScale, style: .continuous))
                 .overlay {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    RoundedRectangle(cornerRadius: 6 * displayMetrics.cornerRadiusScale, style: .continuous)
                         .stroke(.white.opacity(0.12), lineWidth: 1)
                 }
         } else {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
+            RoundedRectangle(cornerRadius: 6 * displayMetrics.cornerRadiusScale, style: .continuous)
                 .fill(.white.opacity(0.08))
-                .frame(width: 54, height: 34)
+                .frame(width: 54 * displayMetrics.collapsedSideContentScale, height: 34 * displayMetrics.compactControlScale)
                 .overlay {
                     Image(systemName: "rectangle.dashed.badge.record")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: displayMetrics.icon(12, minimum: 10, maximum: 14), weight: .semibold))
                         .foregroundStyle(.white.opacity(0.64))
                 }
         }
@@ -135,16 +136,17 @@ struct CollapsedScreenRecordingActivityView: View {
 struct ScreenRecordingSetupView: View {
     @ObservedObject var controller: ScreenRecordingController
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.islandDisplayMetrics) private var displayMetrics
     @State private var targetKind: ScreenRecordingTargetKind = .display
     @State private var displayID: CGDirectDisplayID?
     @State private var windowID: CGWindowID?
     @State private var isChoosingArea = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: displayMetrics.spacing(14, minimum: 12, maximum: 17)) {
             HStack {
                 Label("Screen Record", systemImage: "record.circle")
-                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                    .font(.system(size: displayMetrics.font(16, minimum: 14, maximum: 18), weight: .bold, design: .rounded))
                 Spacer()
                 Button {
                     dismiss()
@@ -177,8 +179,8 @@ struct ScreenRecordingSetupView: View {
                     .foregroundStyle(.orange)
             }
         }
-        .padding(18)
-        .frame(width: 440)
+        .padding(displayMetrics.spacing(18, minimum: 16, maximum: 22))
+        .frame(width: 440 * displayMetrics.expandedCardScale)
         .background(.black.opacity(0.96))
         .preferredColorScheme(.dark)
         .task {
@@ -295,18 +297,18 @@ struct ScreenRecordingSetupView: View {
                 Image(nsImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .frame(maxWidth: .infinity, maxHeight: 190)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .frame(maxWidth: .infinity, maxHeight: 190 * displayMetrics.expandedCardScale)
+                    .clipShape(RoundedRectangle(cornerRadius: 12 * displayMetrics.cornerRadiusScale, style: .continuous))
                     .overlay {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        RoundedRectangle(cornerRadius: 12 * displayMetrics.cornerRadiusScale, style: .continuous)
                             .stroke(.white.opacity(0.08), lineWidth: 1)
                     }
             }
 
-            HStack(spacing: 10) {
+            HStack(spacing: displayMetrics.spacing(10, minimum: 8, maximum: 12)) {
                 Circle()
                     .fill(controller.phase == .paused ? Color.red.opacity(0.38) : Color.red)
-                    .frame(width: 9, height: 9)
+                    .frame(width: 9 * displayMetrics.compactControlScale, height: 9 * displayMetrics.compactControlScale)
                     .opacity(controller.phase == .recording ? 1 : 0.75)
                     .animation(
                         controller.phase == .recording
@@ -317,9 +319,9 @@ struct ScreenRecordingSetupView: View {
                     .accessibilityHidden(true)
 
                 Text(controller.phase == .paused ? "Paused" : controller.phase == .finalizing ? "Saving" : "Recording")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: displayMetrics.font(11, minimum: 9.5, maximum: 13), weight: .bold))
                 Text(controller.formattedDuration)
-                    .font(.system(size: 12, weight: .bold, design: .monospaced))
+                    .font(.system(size: displayMetrics.font(12, minimum: 10.5, maximum: 14), weight: .bold, design: .monospaced))
                     .monospacedDigit()
 
                 Spacer()
