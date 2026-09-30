@@ -390,10 +390,16 @@ final class OverlayWindowController {
                         self.layoutStore.setExpandedContentScrollRegion(.zero)
                     }
                     guard self.islandState.state == .expanded else { return }
+                    self.beginExpandedPageMorph()
                     self.reposition(
                         animated: true,
                         reason: "expandedPageChanged",
-                        force: true
+                        force: true,
+                        // The NSPanel owns the physical width/height morph.
+                        // Committing the target local geometry without a second
+                        // SwiftUI frame animation prevents two timing curves
+                        // from pulling the shell away from its top anchor.
+                        animateLayoutStore: false
                     )
                 }
             }
@@ -534,7 +540,12 @@ final class OverlayWindowController {
         }
     }
 
-    func reposition(animated: Bool = false, reason: String = "unspecified", force: Bool = false) {
+    func reposition(
+        animated: Bool = false,
+        reason: String = "unspecified",
+        force: Bool = false,
+        animateLayoutStore: Bool? = nil
+    ) {
         guard canPresentOverlay else { return }
         let signature = currentGeometrySignature
         guard force || signature != lastAppliedGeometrySignature else {
@@ -569,7 +580,7 @@ final class OverlayWindowController {
             collapsedNotchCoreWidth: geometry.collapsedNotchCoreWidth,
             collapsedRightRegionWidth: geometry.collapsedRightRegionWidth,
             collapsedPresentationProfile: geometry.collapsedPresentationProfile,
-            animated: animated
+            animated: animateLayoutStore ?? animated
         )
         applyCanonicalPanelFrame(
             expandedPresentationProfile.panelFrame(forExpandedFrame: geometry.expandedFrame),
@@ -861,6 +872,15 @@ final class OverlayWindowController {
         }
 
         let duration = expandedPageMorphDuration
+        #if DEBUG
+        if reason.contains("expandedPageChanged") {
+            let topDrift = abs(frame.maxY - islandPanel.frame.maxY)
+            assert(
+                topDrift <= 1.0,
+                "Expanded page morph must preserve the physical top edge; drift=\(topDrift)"
+            )
+        }
+        #endif
         NSAnimationContext.runAnimationGroup { context in
             context.duration = duration
             context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
@@ -1283,6 +1303,30 @@ final class OverlayWindowController {
             if state == .collapsed {
                 self.layoutStore.isExpandedContentExiting = false
             }
+            self.updateWindowVisibility()
+        }
+    }
+
+    /// Marks an expanded tab-to-tab geometry change as one coordinated shell
+    /// morph. The physical NSPanel frame is the sole geometry animation; inner
+    /// content has its own transition but the shell itself is never scaled.
+    private func beginExpandedPageMorph() {
+        guard canPresentOverlay, islandState.state == .expanded else { return }
+        let sessionGeneration = presentationSession.generation
+        morphGeneration += 1
+        let generation = morphGeneration
+        layoutStore.isShellMorphing = true
+        layoutStore.isCollapseShellOnly = false
+
+        let reduceMotion = settings.reduceExtraMotion || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let clearDelay = IslandContentTransitionTiming.shellDuration(
+            settings: settings,
+            reduceMotion: reduceMotion
+        )
+        DispatchQueue.main.asyncAfter(deadline: .now() + clearDelay) { [weak self] in
+            guard let self else { return }
+            guard self.allowsOverlayWork(generation: sessionGeneration), generation == self.morphGeneration else { return }
+            self.layoutStore.isShellMorphing = false
             self.updateWindowVisibility()
         }
     }

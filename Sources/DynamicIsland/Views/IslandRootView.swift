@@ -1448,13 +1448,13 @@ extension View {
 
 private struct ExpandedPageMorphModifier: ViewModifier {
     let opacity: Double
-    let scale: CGFloat
+    let blur: CGFloat
     let offsetY: CGFloat
 
     func body(content: Content) -> some View {
         content
             .opacity(opacity)
-            .scaleEffect(scale, anchor: .top)
+            .blur(radius: blur)
             .offset(y: offsetY)
     }
 }
@@ -2845,16 +2845,24 @@ struct ExpandedIslandView: View {
             reduceMotion: reduceMotion
         )
         let insertion = AnyTransition.modifier(
-            active: ExpandedPageMorphModifier(opacity: 0, scale: 0.988, offsetY: -4),
-            identity: ExpandedPageMorphModifier(opacity: 1, scale: 1, offsetY: 0)
+            active: ExpandedPageMorphModifier(
+                opacity: 0,
+                blur: WorkspaceMotion.prefersLightweightEffects ? 0 : WorkspaceMotion.transitionBlurRadius,
+                offsetY: -4
+            ),
+            identity: ExpandedPageMorphModifier(opacity: 1, blur: 0, offsetY: 0)
         )
         .animation(
             .smooth(duration: max(shellDuration * 0.56, 0.16))
                 .delay(shellDuration * 0.08)
         )
         let removal = AnyTransition.modifier(
-            active: ExpandedPageMorphModifier(opacity: 0, scale: 0.994, offsetY: 3),
-            identity: ExpandedPageMorphModifier(opacity: 1, scale: 1, offsetY: 0)
+            active: ExpandedPageMorphModifier(
+                opacity: 0,
+                blur: WorkspaceMotion.prefersLightweightEffects ? 0 : WorkspaceMotion.transitionBlurRadius,
+                offsetY: 3
+            ),
+            identity: ExpandedPageMorphModifier(opacity: 1, blur: 0, offsetY: 0)
         )
         .animation(.easeOut(duration: max(shellDuration * 0.34, 0.12)))
 

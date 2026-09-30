@@ -335,6 +335,47 @@ final class NotchGeometryServiceTests: XCTestCase {
         XCTAssertEqual(restored.collapsedFrame, standard.collapsedFrame)
     }
 
+    func testExpandedTabMorphKeepsTopEdgeAndCenterInvariantAtEverySample() {
+        let service = NotchGeometryService()
+        let snapshot = ScreenSnapshot(
+            frame: CGRect(x: 0, y: 0, width: 1512, height: 982),
+            visibleFrame: CGRect(x: 0, y: 0, width: 1512, height: 944),
+            safeAreaInsets: NSEdgeInsets(top: 38, left: 0, bottom: 0, right: 0),
+            auxiliaryTopLeftArea: CGRect(x: 0, y: 944, width: 635, height: 38),
+            auxiliaryTopRightArea: CGRect(x: 877, y: 944, width: 635, height: 38)
+        )
+        let collapsed = CGSize(width: 190, height: 44)
+        let base = CGSize(width: 860, height: 286)
+        let standard = service.geometry(
+            for: snapshot,
+            collapsedSize: collapsed,
+            expandedSize: ExpandedPresentationProfile.standard.resolvedSize(from: base)
+        ).expandedFrame
+        let agents = service.geometry(
+            for: snapshot,
+            collapsedSize: collapsed,
+            expandedSize: ExpandedPresentationProfile.agentsWorkspace.resolvedSize(from: base)
+        ).expandedFrame
+
+        XCTAssertEqual(standard.maxY, agents.maxY, accuracy: 0.001)
+        XCTAssertEqual(standard.midX, agents.midX, accuracy: 0.001)
+
+        for progress: CGFloat in [0, 0.1, 0.25, 0.5, 0.75, 0.9, 1] {
+            let width = standard.width + (agents.width - standard.width) * progress
+            let height = standard.height + (agents.height - standard.height) * progress
+            let centerX = standard.midX + (agents.midX - standard.midX) * progress
+            let topY = standard.maxY + (agents.maxY - standard.maxY) * progress
+            let frame = CGRect(
+                x: centerX - width / 2,
+                y: topY - height,
+                width: width,
+                height: height
+            )
+            XCTAssertEqual(frame.maxY, standard.maxY, accuracy: 0.001)
+            XCTAssertEqual(frame.midX, standard.midX, accuracy: 0.001)
+        }
+    }
+
     func testAgentsGeometryUsesCanonicalNarrowScreenClamp() {
         let service = NotchGeometryService()
         let snapshot = ScreenSnapshot(
