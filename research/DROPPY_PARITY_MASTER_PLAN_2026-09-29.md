@@ -1479,3 +1479,81 @@ Settings 2.0 preview framework must add production-style previews for:
 - upload/share success activity.
 
 These previews should be sandbox state only and must not start real timers, recordings, conversions, or provider mutations.
+
+---
+
+# Video re-review and gap mapping — 2026-09-30 (after Phase 13G)
+
+Source: the two supplied recordings, re-reviewed frame by frame on 2026-09-30.
+- `Screen Recording 2026-09-29 at 8.58.03 PM.mov` (83 s): Droppy's own README demo video played from `github.com/1of1Adam/Droppy`.
+- `Screen Recording 2026-09-29 at 9.04.02 PM.mov` (75 s): Droppy's marketing/purchase page (`getdroppy.app`).
+
+## Reference policy for these gaps (user decision, 2026-09-30)
+
+Option 2 applies: Droppy and AgentNotch are close **behavioural/UX** references for layout logic, interactions, flows, spatial composition, hover behaviour, compact→expanded transitions, information hierarchy and notch-native interaction. Their source code, assets, icons, artwork, branding and proprietary visual styling are **not** copied; DynamicIsland keeps its own implementation and visual identity. Where DynamicIsland's architecture is stronger (exact Codex/Claude session identity, managed Codex control, repository/project metadata, approvals, provider usage telemetry, live-activity arbitration, single-shell architecture) it is preserved; references improve the UX layer only.
+
+## Roadmap crosswalk
+
+The execution order is the **Phase dependency correction** list above (items 1–17). Execution phase numbers used in commits map onto it as follows:
+
+| Execution phase | Dependency-order item | Status |
+|---|---|---|
+| Phase 13 (13A–13F) | 13 — Terminal / Keep Awake / Window Snap / Reminders / Voice / Camera / Background Removal | Done |
+| Phase 13G | Agents stabilization (not a Droppy item; Agents parity/beyond-Droppy section) | Done |
+| **Phase 14 (next)** | **14 — Actionable messaging** | **Next; not started** |
+| Later phases | 3, 5, 8, 9, 10, 12 (remaining), 15, 16, 17 | Pending (see gap table) |
+
+No new phases are created. Every video-derived gap below is attached to an existing dependency-order item, and all of them are re-checked in item 17 (final source/video parity audit).
+
+## Current DynamicIsland baseline (verified in source, 2026-09-30)
+
+- Tray/Shelf context menu: Quick Look, Open, Reveal in Finder, Copy Path, Copy File Name, Remove.
+- No floating Basket, no shake detection, no drag quick-action orbit.
+- Clipboard: bounded text/URL/image history with copy-back (opt-in monitoring and persistence); no search, pinning, tags, tag filters, rename or flags.
+- No OCR / Extract Text, no format conversion or compression actions, no cloud share links.
+- System HUDs: volume, brightness, Caps Lock, Focus. No AirPods/Bluetooth device activity.
+- Tools page (13F): Keep Awake, Window Snap, Voice, Camera, Background Removal, Reminders; embedded terminal lives in Settings.
+- Menu bar menu: Settings, Show/Hide Island, Quit.
+- Notchless displays: floating island (existing).
+
+## Gap table
+
+Status values follow the Definition of complete parity: **Pending** (tracked, not implemented), **Partial**, **Requires Approval**, **Candidate — evaluate** (may end as Intentionally Not Supported).
+
+| # | Gap observed in recordings | Evidence | Maps to (dependency item / plan section) | Status |
+|---|---|---|---|---|
+| G1 | Shake-while-dragging spawns a floating Basket at the pointer; Basket has Drop / Cloud / AirDrop / Convert targets | Rec 2 "Or shake it." 0:04–0:07, 1:12; Rec 1 0:26–0:32 | 8 — Floating Basket (Phase 5 section) | Pending |
+| G2 | Basket expanded panel: file count + size header, grid/list toggle, back button, per-item context menu ("Move to Shelf", "Remove from Basket"), drag-out | Rec 1 0:28–0:32 | 8 — Floating Basket | Pending |
+| G3 | Drag quick-action circles detach below the notch during a drag (AirDrop, Messages, Mail, Quickshare), hover magnifies and explains the target | Rec 1 0:12–0:16, 0:34 | 3 — Shelf drag-action orbit (Phase 3 section) | Pending |
+| G4 | Rich Shelf context menu: Copy, Open, Move to…, Open With…, Share, Quickshare, Save, Convert to…, Extract Text, Remove Background, Compress, Create ZIP, Rename, Remove from Shelf | Rec 1 0:21–0:23, 1:15 | 3 — Shelf orbit (actions) + 4 — Background operation center (long-running convert/compress/zip) | Partial (6 of ~14 actions) |
+| G5 | Folder items on the Shelf browse into a hierarchical submenu ("Open Folder") | Rec 1 0:18 | 3 — Shelf orbit / File Shelf parity | Pending |
+| G6 | In-place rename of Shelf items | Rec 1 0:24–0:25 | 3 — File Shelf parity | Pending |
+| G7 | Extract Text (OCR) result window with Copy to Clipboard | Rec 1 1:17 | 3 (action entry) + 4 (operation); Vision text recognition, local only | Pending |
+| G8 | Remove Background from a Shelf item's context menu | Rec 1 0:21 | 3 (entry point) → reuses item 13's BackgroundRemovalController | Pending (engine done, entry point missing) |
+| G9 | Convert to JPEG/PNG/etc. with progress activity ("Converting to JPEG", Cancel) | Rec 2 1:12–1:14 | 4 — Background operation center (Phase 4 conversion section) | Pending |
+| G10 | Quickshare / cloud upload producing a share link (uploads to a third-party host) | Rec 1 0:17 ("Droppy Quickshare … 0x0.st"); Rec 2 "Droppy Cloud" | 3 (entry) + 4 (upload operation) | **Requires Approval** (sends user files to an external service; host choice and privacy policy must be approved) |
+| G11 | Clipboard manager window: tag creation with colour, tag filter popover, per-item Tag submenu, Favorite, Flag as Important, Rename, Move to Shelf/Basket, preview pane with metadata | Rec 1 0:37–0:50 | 9 — Clipboard 2.0 (Phase 6 section) | Pending |
+| G12 | Clipboard visual card strip in the notch (text, image, colour swatch, file cards) | Rec 2 "Every copy you make." 0:31–0:34 | 9 — Clipboard 2.0 | Pending |
+| G13 | Notch terminal as an inline command bar under the notch with command suggestions list and quick buttons | Rec 1 0:36–0:38 | 13 follow-up UX within Terminal (Phase 9 Terminal section); presentation only — TerminalSessionController is done | Pending (engine done, notch presentation missing) |
+| G14 | Widget/layout personalization: "Customize Shelf" mode, drag widgets into place, widget strip (Focus/Break timer 25:00, apps, weather, etc.) below media | Rec 2 "Make it yours." 1:01–1:07 | 16 — Widget/layout personalization editor (Phase 13 section) | Pending |
+| G15 | Island context menu: Customize Shelf, Open Clipboard, Open Settings, Quit | Rec 2 1:03 | 16 (Customize entry) + 7 — Settings 2.0 | Pending |
+| G16 | Pomodoro-style Focus/Break timer widget | Rec 2 1:05 | 16 (widget) using existing TimerController | Pending |
+| G17 | AirPods "Connected" live activity with battery ring | Rec 2 0:13 | 12 — Rich live activities (AirPods section) | Pending |
+| G18 | Many compact live activities: update available, charging, full battery, VPN connected + timer, backup drive capacity, caps lock, focus, message | Rec 2 0:25–0:29 | 12 — Rich live activities | Partial (battery, caps lock, focus, agents exist) |
+| G19 | Message notification with inline reply field in the notch (iMessage/WhatsApp/Telegram) | Rec 2 0:14–0:21 | **14 — Actionable messaging (execution Phase 14, next)** | Pending — next phase |
+| G20 | Notchless Mac: island floats as a Dynamic Island with the same activities | Rec 2 0:21–0:24 | Existing floating island; verify parity in 17 | Implemented (verify in final audit) |
+| G21 | Screenshot capture ("Element Capture": any window/region/screen) and annotation editor | Rec 2 0:48–0:57 | 5 — Capture suite (Phase 2 section) | Pending |
+| G22 | Screen-recording video editor with cursor tracking | Rec 2 0:58–1:00 | 5 — Capture suite | Pending; may be Candidate — evaluate (large scope) |
+| G23 | Spotlight-like launcher ("Thunderstorm") and select-text-anywhere action ("DropClip") | Rec 2 0:37–0:41 | 10 — Extension/integration registry (Phase 8 section) | Candidate — evaluate |
+| G24 | Meetings extension (mute, camera, share controls in the notch) | Rec 2 0:41 | 12 — Rich live activities (Calendar/Meetings) + 10 | Candidate — evaluate (depends on per-app control APIs) |
+| G25 | Extension store UI with Featured, All, filters (Installed / Disabled / AI / Productivity / Media), per-extension sheet with Enable/Disable, settings and shortcuts | Rec 1 0:59–1:13 | 10 — Extension/integration registry + 7 — Settings 2.0 | Pending |
+| G26 | Third-party-app extensions shown in the catalog (Alfred workflow, Spotify, Apple Music, Finder Services, Menu Bar Manager, Lyrics, Calendar, LocalSend, Mac Duo, LiquidMouse, Converter, Video Target Size) | Rec 1 1:01; Rec 2 0:37 | 10 — Extension/integration registry; Finder/Alfred items already listed in Phase 9 | Candidate — evaluate individually |
+| G27 | Settings sidebar grouped as General / Shelf / Basket / Clipboard / HUDs / Lock Screen / Extensions / Quickshare / Accessibility / About, with visual previews (shelf preview, basket preview) | Rec 1 0:54–0:57 | 7 — Settings 2.0 + 6 — Settings preview framework | Partial (DynamicIsland has its own sidebar and live-activity preview) |
+| G28 | Lock-screen media/unlock animation settings | Rec 1 0:59 | 15 — Media parity completion | Candidate — evaluate (lock-screen overlay feasibility) |
+| G29 | Voice Transcribe settings: model selection/size, language, installed models list with Delete, recording shortcuts | Rec 1 1:12 | 13 follow-up (Voice) — model management currently classified Intentionally Not Supported on the SFSpeechRecognizer path; shortcuts blocked on a global shortcut system | Intentionally Not Supported (models) / Pending (shortcuts, with 16 or 10) |
+| G30 | Window Snap keyboard shortcut table (halves, quarters, thirds, displays) | Rec 1 1:08–1:09 | 13 follow-up (Window Snap) — needs a global shortcut system, see 10 | Pending (requires shortcut infrastructure decision) |
+| G31 | Keep Awake ("High Alert") sheet with quick timers and an active indicator | Rec 1 1:02–1:05 | 13 — Keep Awake (done in Tools/Settings) | Implemented (visual refinement in 17) |
+
+## Acceptance
+
+Item 17 (final source/video parity audit) must replay both recordings as acceptance scripts and close every row above as Implemented, Intentionally Not Supported (with reason), Blocked by macOS/API constraints (with reason), or Requires Approval.
