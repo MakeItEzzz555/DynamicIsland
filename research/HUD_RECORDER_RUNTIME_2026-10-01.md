@@ -101,3 +101,35 @@ frame, so a static screen (the lock screen here) yields a very short file
 (0.017 s for ~3.5 s). `ScreenRecordingLiveTests` fails its `> 0.5 s` duration
 check in this locked environment for that reason; engine/controller are
 byte-identical to `56c8be2`, where the test passed in an unlocked session.
+
+## 4. Intermittent HUD height under persistent compact media — 2026-10-01 follow-up
+
+### User evidence
+
+A runtime screenshot showed the interactive Volume/Brightness slider rendered over the compact island while the physical collapsed shell sometimes remained at the shallower persistent-media geometry. This made the slider look as though it stayed behind/inside the notch rather than receiving its dedicated lower slider band.
+
+### Root cause
+
+The physical window controller subscribed to `LiveActivityStore.activities`, but de-duplicated updates using only `collapsedActivityLayoutProfile(activities:)`. A system HUD is intentionally a transient overlay: when compact media remains the persistent primary activity, adding Volume/Brightness does **not** change the media activity profile. Therefore Combine suppressed the geometry refresh even though `collapsedPresentationProfile` had changed from `.normal` to `.systemHUD` and required a taller physical frame.
+
+This explains the intermittent behavior: HUD height worked when the underlying activity/layout profile changed, but could stay shallow when the HUD overlaid an unchanged media primary.
+
+### Fix
+
+Live-activity geometry invalidation now keys on both:
+
+- the persistent `CollapsedActivityLayoutProfile`, and
+- the transient `CollapsedPresentationProfile`.
+
+A media → media+HUD transition therefore triggers the collapsed presentation morph and a window `reposition`, while HUD progress-only changes remain de-duplicated because `.systemHUD(value:)` intentionally does not encode the numeric value into shell geometry.
+
+Regression tests prove:
+
+- media + normal presentation != media + interactive-HUD presentation;
+- 10% HUD and 100% HUD produce the same physical geometry signature, so repeated key/slider value changes do not restart the window morph.
+
+## 5. Collapse choreography follow-up
+
+The branch already contains `1234f39 fix(motion): make collapse mirror the expansion choreography`. Its contraction contract was revalidated after the HUD fix: all primary pages finish the outgoing shrink/blur/fade before the top-pinned shell contracts, slower presets lengthen both phases, Reduce Motion keeps the ordering without decorative scale/blur, and stale collapse requests cannot hide newer expanded content.
+
+An opt-in reverse choreography renderer was added for Agents, Island, Tray and Tools → collapsed in both full and Reduce Motion modes so future regressions can be inspected frame-by-frame rather than relying only on scalar motion tests.
