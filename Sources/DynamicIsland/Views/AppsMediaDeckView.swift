@@ -259,6 +259,12 @@ struct SpotifySectionView: View {
                 action: "Connect Spotify",
                 perform: { Task { await controller.connect() } }
             )
+        case .reconnectRequired:
+            setupMessage(
+                controller.lastError ?? "Spotify needs to be reconnected.",
+                action: "Reconnect Spotify",
+                perform: { Task { await controller.connect() } }
+            )
         case .connecting:
             ProgressView("Waiting for Spotify sign-in…")
                 .controlSize(.small)

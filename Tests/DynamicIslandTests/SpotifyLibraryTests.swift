@@ -15,11 +15,12 @@ private final class SpotifyTestCredentialStore: SpotifyCredentialStoring, @unche
         lock.withLock { value }
     }
 
-    func store(accessToken: String, expiresAt: Date, refreshToken: String?) {
+    func store(accessToken: String, expiresAt: Date, refreshToken: String?, authorizationDate: Date?) {
         lock.withLock {
             value.accessToken = accessToken
             value.accessTokenExpiry = expiresAt
             if let refreshToken { value.refreshToken = refreshToken }
+            if let authorizationDate { value.authorizationDate = authorizationDate }
         }
     }
 
@@ -246,6 +247,8 @@ final class SpotifyLibraryTests: XCTestCase {
         XCTAssertEqual(stored.accessToken, "access-1")
         XCTAssertEqual(stored.refreshToken, "refresh-1")
         XCTAssertGreaterThan(stored.accessTokenExpiry ?? .distantPast, Date())
+        XCTAssertNotNil(stored.authorizationDate)
+        XCTAssertLessThan(abs(stored.authorizationDate?.timeIntervalSinceNow ?? .infinity), 5)
     }
 
     @MainActor
@@ -401,4 +404,119 @@ final class SpotifyLibraryTests: XCTestCase {
         XCTAssertTrue(controller.snapshot?.likedSongs.isEmpty ?? false)
         XCTAssertEqual(mutationCounter.value, 2)
     }
+
+    func testRefreshAuthorizationExpiresSixCalendarMonthsAfterOriginalAuthorization() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let authorized = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 1, day: 1)))
+        let fiveMonthsLater = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 6, day: 1)))
+        let sevenMonthsLater = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 8, day: 1)))
+        XCTAssertFalse(SpotifyWebAPI.refreshAuthorizationExpired(authorizationDate: authorized, now: fiveMonthsLater))
+        XCTAssertTrue(SpotifyWebAPI.refreshAuthorizationExpired(authorizationDate: authorized, now: sevenMonthsLater))
+    }
+
+    @MainActor
+    func testExpiredStoredAuthorizationRequiresReconnectAndClearsCredentials() {
+        let oldAuthorization = Calendar.current.date(byAdding: .month, value: -7, to: Date())!
+        let credentials = SpotifyTestCredentialStore(SpotifyStoredCredentials(
+            accessToken: "access",
+            accessTokenExpiry: Date().addingTimeInterval(600),
+            refreshToken: "refresh",
+            authorizationDate: oldAuthorization
+        ))
+        let controller = SpotifyLibraryController(
+            configuration: SpotifyAuthConfiguration(clientID: "Abc123456", source: .appBundle),
+            tokens: credentials,
+            session: .spotifyTestSession()
+        )
+        XCTAssertEqual(controller.connectionState, .reconnectRequired)
+        XCTAssertEqual(controller.lastError, SpotifyLibraryError.reauthorizationRequired.errorDescription)
+        XCTAssertEqual(credentials.credentials(), SpotifyStoredCredentials())
+        XCTAssertEqual(credentials.clearCount, 1)
+    }
+
+    @MainActor
+    func testExpiredRefreshTokenInvalidGrantRequiresReconnectWithoutRetryStorm() async {
+        let credentials = SpotifyTestCredentialStore(SpotifyStoredCredentials(
+            accessToken: "expired",
+            accessTokenExpiry: Date().addingTimeInterval(-60),
+            refreshToken: "refresh",
+            authorizationDate: Date()
+        ))
+        let tokenCounter = SpotifyRequestCounter()
+        SpotifyMockURLProtocol.handler = { request in
+            if request.url?.host == "accounts.spotify.com" {
+                tokenCounter.increment()
+                return (400, [:], Data("{\"error\":\"invalid_grant\"}".utf8))
+            }
+            XCTFail("Web API request should not run after invalid_grant")
+            return (500, [:], Data())
+        }
+        let controller = SpotifyLibraryController(
+            configuration: SpotifyAuthConfiguration(clientID: "Abc123456", source: .appBundle),
+            tokens: credentials,
+            session: .spotifyTestSession()
+        )
+        await controller.refresh()
+        XCTAssertEqual(tokenCounter.value, 1)
+        XCTAssertEqual(controller.connectionState, .reconnectRequired)
+        XCTAssertEqual(controller.lastError, SpotifyLibraryError.reauthorizationRequired.errorDescription)
+        XCTAssertEqual(credentials.credentials(), SpotifyStoredCredentials())
+        XCTAssertEqual(credentials.clearCount, 1)
+    }
+
+    @MainActor
+    func testSuccessfulRefreshPreservesOriginalAuthorizationDate() async {
+        let originalAuthorization = Date().addingTimeInterval(-60 * 60 * 24 * 30)
+        let credentials = SpotifyTestCredentialStore(SpotifyStoredCredentials(
+            accessToken: "expired",
+            accessTokenExpiry: Date().addingTimeInterval(-60),
+            refreshToken: "refresh",
+            authorizationDate: originalAuthorization
+        ))
+        SpotifyMockURLProtocol.handler = { request in
+            if request.url?.host == "accounts.spotify.com" {
+                return (200, [:], Data("{\"access_token\":\"new-access\",\"expires_in\":3600}".utf8))
+            }
+            if request.url?.path == "/v1/me/player/queue" { return (200, [:], Data("{\"queue\":[]}".utf8)) }
+            return (200, [:], Data("{\"items\":[],\"next\":null}".utf8))
+        }
+        let controller = SpotifyLibraryController(
+            configuration: SpotifyAuthConfiguration(clientID: "Abc123456", source: .appBundle),
+            tokens: credentials,
+            session: .spotifyTestSession()
+        )
+        await controller.refresh()
+        XCTAssertEqual(credentials.credentials().authorizationDate, originalAuthorization)
+        XCTAssertEqual(credentials.credentials().accessToken, "new-access")
+        XCTAssertEqual(controller.connectionState, .connected)
+    }
+
+    @MainActor
+    func testQuotaExceededIsDistinctFromOrdinaryRateLimitAndDoesNotRetry() async {
+        let credentials = SpotifyTestCredentialStore(SpotifyStoredCredentials(
+            accessToken: "access",
+            accessTokenExpiry: Date().addingTimeInterval(600),
+            refreshToken: "refresh",
+            authorizationDate: Date()
+        ))
+        let counter = SpotifyRequestCounter()
+        SpotifyMockURLProtocol.handler = { request in
+            counter.increment()
+            if request.url?.path == "/v1/me/player/queue" {
+                return (429, ["Retry-After": "42"], Data("{\"error\":{\"status\":429,\"message\":\"Too many requests\",\"reason\":\"QUOTA_EXCEEDED\"}}".utf8))
+            }
+            return (200, [:], Data("{\"items\":[],\"next\":null}".utf8))
+        }
+        let controller = SpotifyLibraryController(
+            configuration: SpotifyAuthConfiguration(clientID: "Abc123456", source: .appBundle),
+            tokens: credentials,
+            session: .spotifyTestSession()
+        )
+        await controller.refresh()
+        XCTAssertEqual(counter.value, 3)
+        XCTAssertEqual(controller.lastError, SpotifyLibraryError.quotaExceeded(retryAfterSeconds: 42).errorDescription)
+        XCTAssertEqual(controller.connectionState, .connected)
+    }
+
 }

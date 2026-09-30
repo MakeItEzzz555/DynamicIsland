@@ -90,6 +90,8 @@ enum SpotifyLibraryError: LocalizedError, Equatable {
     case unauthorized
     case forbidden
     case rateLimited(retryAfterSeconds: Int?)
+    case quotaExceeded(retryAfterSeconds: Int?)
+    case reauthorizationRequired
     case requestFailed(Int)
     case invalidResponse
     case unsupportedItem
@@ -113,6 +115,11 @@ enum SpotifyLibraryError: LocalizedError, Equatable {
         case .rateLimited(let seconds):
             if let seconds { return "Spotify is rate limiting requests. Try again in \(seconds)s." }
             return "Spotify is rate limiting requests. Try again shortly."
+        case .quotaExceeded(let seconds):
+            if let seconds { return "Spotify's developer quota is exhausted. Try again in \(seconds)s." }
+            return "Spotify's developer quota is exhausted. Try again later."
+        case .reauthorizationRequired:
+            return "Spotify needs to be reconnected"
         case .requestFailed(let code):
             return "Spotify request failed (\(code))"
         case .invalidResponse:
@@ -140,6 +147,26 @@ enum SpotifyWebAPI {
     static let authorizeURL = URL(string: "https://accounts.spotify.com/authorize")!
     static let tokenURL = URL(string: "https://accounts.spotify.com/api/token")!
     static let apiBase = URL(string: "https://api.spotify.com/v1/")!
+
+    /// Spotify refresh tokens expire six calendar months after the original
+    /// user authorization. Access-token refreshes do not extend this deadline.
+    static func refreshAuthorizationExpired(authorizationDate: Date, now: Date = Date()) -> Bool {
+        guard let expiry = Calendar(identifier: .gregorian).date(byAdding: .month, value: 6, to: authorizationDate) else {
+            return false
+        }
+        return now >= expiry
+    }
+
+    static func oauthError(from data: Data) -> String? {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return object["error"] as? String
+    }
+
+    static func apiErrorReason(from data: Data) -> String? {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let error = object["error"] as? [String: Any] else { return nil }
+        return error["reason"] as? String
+    }
 
     static func authorizationURL(clientID: String, challenge: String, state: String) -> URL {
         var components = URLComponents(url: authorizeURL, resolvingAgainstBaseURL: false)!
@@ -305,11 +332,14 @@ struct SpotifyStoredCredentials: Equatable, Sendable {
     var accessToken: String?
     var accessTokenExpiry: Date?
     var refreshToken: String?
+    /// Spotify's six-month refresh-token lifetime is measured from the user's
+    /// original authorization, not from subsequent access-token refreshes.
+    var authorizationDate: Date? = nil
 }
 
 protocol SpotifyCredentialStoring: Sendable {
     func credentials() -> SpotifyStoredCredentials
-    func store(accessToken: String, expiresAt: Date, refreshToken: String?)
+    func store(accessToken: String, expiresAt: Date, refreshToken: String?, authorizationDate: Date?)
     func clear()
 }
 
@@ -318,10 +348,14 @@ struct SpotifyTokenStore: SpotifyCredentialStoring, Sendable {
 
     func credentials() -> SpotifyStoredCredentials {
         let expiry = read(account: "access-expiry").flatMap(TimeInterval.init).map(Date.init(timeIntervalSince1970:))
+        let authorizationDate = read(account: "authorization-date")
+            .flatMap(TimeInterval.init)
+            .map(Date.init(timeIntervalSince1970:))
         return SpotifyStoredCredentials(
             accessToken: read(account: "access-token"),
             accessTokenExpiry: expiry,
-            refreshToken: read(account: "refresh-token")
+            refreshToken: read(account: "refresh-token"),
+            authorizationDate: authorizationDate
         )
     }
 
@@ -329,11 +363,14 @@ struct SpotifyTokenStore: SpotifyCredentialStoring, Sendable {
         credentials().refreshToken
     }
 
-    func store(accessToken: String, expiresAt: Date, refreshToken: String?) {
+    func store(accessToken: String, expiresAt: Date, refreshToken: String?, authorizationDate: Date?) {
         write(accessToken, account: "access-token")
         write(String(expiresAt.timeIntervalSince1970), account: "access-expiry")
         if let refreshToken {
             write(refreshToken, account: "refresh-token")
+        }
+        if let authorizationDate {
+            write(String(authorizationDate.timeIntervalSince1970), account: "authorization-date")
         }
     }
 
@@ -342,7 +379,7 @@ struct SpotifyTokenStore: SpotifyCredentialStoring, Sendable {
     }
 
     func clear() {
-        ["access-token", "access-expiry", "refresh-token"].forEach { account in
+        ["access-token", "access-expiry", "refresh-token", "authorization-date"].forEach { account in
             SecItemDelete(query(account: account) as CFDictionary)
         }
     }
@@ -381,6 +418,7 @@ final class SpotifyLibraryController: NSObject, ObservableObject {
     enum ConnectionState: Equatable {
         case needsClientID
         case disconnected
+        case reconnectRequired
         case connecting
         case connected
     }
@@ -443,6 +481,17 @@ final class SpotifyLibraryController: NSObject, ObservableObject {
             ? .needsClientID
             : (stored.refreshToken == nil ? .disconnected : .connected)
         super.init()
+
+        if !resolvedID.isEmpty,
+           stored.refreshToken != nil,
+           let authorizationDate = stored.authorizationDate,
+           SpotifyWebAPI.refreshAuthorizationExpired(authorizationDate: authorizationDate) {
+            tokens.clear()
+            accessToken = nil
+            accessTokenExpiry = nil
+            connectionState = .reconnectRequired
+            lastError = SpotifyLibraryError.reauthorizationRequired.errorDescription
+        }
     }
 
     #if DEBUG
@@ -494,6 +543,7 @@ final class SpotifyLibraryController: NSObject, ObservableObject {
             return
         }
 
+        let startingState = connectionState
         lifecycleGeneration &+= 1
         let operationGeneration = lifecycleGeneration
         connectionState = .connecting
@@ -523,7 +573,8 @@ final class SpotifyLibraryController: NSObject, ObservableObject {
                     "code_verifier": verifier
                 ],
                 invalidGrantError: .authorizationFailed,
-                generation: operationGeneration
+                generation: operationGeneration,
+                authorizationDate: Date()
             )
             guard operationGeneration == lifecycleGeneration else { return }
             connectionState = .connected
@@ -531,14 +582,17 @@ final class SpotifyLibraryController: NSObject, ObservableObject {
         } catch let error as SpotifyLibraryError {
             guard operationGeneration == lifecycleGeneration else { return }
             lastError = error.errorDescription
-            connectionState = .disconnected
+            connectionState = startingState == .reconnectRequired ? .reconnectRequired : .disconnected
         } catch is CancellationError {
             guard operationGeneration == lifecycleGeneration else { return }
-            connectionState = .disconnected
+            connectionState = startingState == .reconnectRequired ? .reconnectRequired : .disconnected
+            if startingState == .reconnectRequired {
+                lastError = SpotifyLibraryError.reauthorizationRequired.errorDescription
+            }
         } catch {
             guard operationGeneration == lifecycleGeneration else { return }
             lastError = SpotifyLibraryError.authorizationFailed.errorDescription
-            connectionState = .disconnected
+            connectionState = startingState == .reconnectRequired ? .reconnectRequired : .disconnected
         }
     }
 
@@ -566,7 +620,8 @@ final class SpotifyLibraryController: NSObject, ObservableObject {
             next.queue = Array(queue.queue.prefix(20))
         } catch {
             guard operationGeneration == lifecycleGeneration else { return }
-            if case SpotifyLibraryError.unauthorized = error {
+            if let spotify = error as? SpotifyLibraryError,
+               spotify == .unauthorized || spotify == .reauthorizationRequired {
                 handle(error)
                 return
             }
@@ -580,7 +635,8 @@ final class SpotifyLibraryController: NSObject, ObservableObject {
             nextPlaylistsURL = page.next
         } catch {
             guard operationGeneration == lifecycleGeneration else { return }
-            if case SpotifyLibraryError.unauthorized = error {
+            if let spotify = error as? SpotifyLibraryError,
+               spotify == .unauthorized || spotify == .reauthorizationRequired {
                 handle(error)
                 return
             }
@@ -594,7 +650,8 @@ final class SpotifyLibraryController: NSObject, ObservableObject {
             nextLikedSongsURL = page.next
         } catch {
             guard operationGeneration == lifecycleGeneration else { return }
-            if case SpotifyLibraryError.unauthorized = error {
+            if let spotify = error as? SpotifyLibraryError,
+               spotify == .unauthorized || spotify == .reauthorizationRequired {
                 handle(error)
                 return
             }
@@ -868,6 +925,9 @@ final class SpotifyLibraryController: NSObject, ObservableObject {
             throw SpotifyLibraryError.forbidden
         case 429:
             let retry = http.value(forHTTPHeaderField: "Retry-After").flatMap(Int.init)
+            if SpotifyWebAPI.apiErrorReason(from: data) == "QUOTA_EXCEEDED" {
+                throw SpotifyLibraryError.quotaExceeded(retryAfterSeconds: retry)
+            }
             throw SpotifyLibraryError.rateLimited(retryAfterSeconds: retry)
         default:
             throw SpotifyLibraryError.requestFailed(http.statusCode)
@@ -875,6 +935,12 @@ final class SpotifyLibraryController: NSObject, ObservableObject {
     }
 
     private func validAccessToken(forceRefresh: Bool = false) async throws -> String {
+        let stored = tokens.credentials()
+        if let authorizationDate = stored.authorizationDate,
+           SpotifyWebAPI.refreshAuthorizationExpired(authorizationDate: authorizationDate) {
+            markReconnectRequired()
+            throw SpotifyLibraryError.reauthorizationRequired
+        }
         if !forceRefresh,
            let accessToken,
            let accessTokenExpiry,
@@ -888,7 +954,13 @@ final class SpotifyLibraryController: NSObject, ObservableObject {
         if let refreshTask {
             return try await refreshTask.value
         }
-        guard let refresh = tokens.credentials().refreshToken else {
+        let stored = tokens.credentials()
+        if let authorizationDate = stored.authorizationDate,
+           SpotifyWebAPI.refreshAuthorizationExpired(authorizationDate: authorizationDate) {
+            markReconnectRequired()
+            throw SpotifyLibraryError.reauthorizationRequired
+        }
+        guard let refresh = stored.refreshToken else {
             throw SpotifyLibraryError.notConnected
         }
         guard !clientID.isEmpty else {
@@ -903,7 +975,7 @@ final class SpotifyLibraryController: NSObject, ObservableObject {
                     "refresh_token": refresh,
                     "client_id": self.clientID
                 ],
-                invalidGrantError: .unauthorized
+                invalidGrantError: .reauthorizationRequired
             )
             guard let token = self.accessToken else { throw SpotifyLibraryError.unauthorized }
             return token
@@ -922,7 +994,8 @@ final class SpotifyLibraryController: NSObject, ObservableObject {
     private func exchange(
         _ form: [String: String],
         invalidGrantError: SpotifyLibraryError,
-        generation: Int? = nil
+        generation: Int? = nil,
+        authorizationDate: Date? = nil
     ) async throws {
         var request = URLRequest(url: SpotifyWebAPI.tokenURL)
         request.httpMethod = "POST"
@@ -938,12 +1011,20 @@ final class SpotifyLibraryController: NSObject, ObservableObject {
         }
         guard http.statusCode == 200 else {
             switch http.statusCode {
-            case 400, 401:
-                throw invalidGrantError
+            case 400:
+                if SpotifyWebAPI.oauthError(from: data) == "invalid_grant" {
+                    throw invalidGrantError
+                }
+                throw SpotifyLibraryError.authorizationFailed
+            case 401:
+                throw SpotifyLibraryError.authorizationFailed
             case 403:
                 throw SpotifyLibraryError.forbidden
             case 429:
                 let retry = http.value(forHTTPHeaderField: "Retry-After").flatMap(Int.init)
+                if SpotifyWebAPI.apiErrorReason(from: data) == "QUOTA_EXCEEDED" {
+                    throw SpotifyLibraryError.quotaExceeded(retryAfterSeconds: retry)
+                }
                 throw SpotifyLibraryError.rateLimited(retryAfterSeconds: retry)
             default:
                 throw SpotifyLibraryError.requestFailed(http.statusCode)
@@ -960,10 +1041,17 @@ final class SpotifyLibraryController: NSObject, ObservableObject {
             throw CancellationError()
         }
         let expiry = Date().addingTimeInterval(TimeInterval(object["expires_in"] as? Int ?? 3600))
-        let refresh = (object["refresh_token"] as? String) ?? tokens.credentials().refreshToken
+        let stored = tokens.credentials()
+        let refresh = (object["refresh_token"] as? String) ?? stored.refreshToken
+        let originalAuthorizationDate = authorizationDate ?? stored.authorizationDate
         accessToken = token
         accessTokenExpiry = expiry
-        tokens.store(accessToken: token, expiresAt: expiry, refreshToken: refresh)
+        tokens.store(
+            accessToken: token,
+            expiresAt: expiry,
+            refreshToken: refresh,
+            authorizationDate: originalAuthorizationDate
+        )
     }
 
     private func authenticate(url: URL) async throws -> URL {
@@ -992,10 +1080,28 @@ final class SpotifyLibraryController: NSObject, ObservableObject {
         }
     }
 
+    private func markReconnectRequired() {
+        lifecycleGeneration &+= 1
+        tokens.clear()
+        accessToken = nil
+        accessTokenExpiry = nil
+        snapshot = nil
+        selectedPlaylist = nil
+        playlistItems = []
+        nextPlaylistsURL = nil
+        nextLikedSongsURL = nil
+        nextPlaylistItemsURL = nil
+        pendingItemURIs = []
+        connectionState = clientID.isEmpty ? .needsClientID : .reconnectRequired
+        lastError = SpotifyLibraryError.reauthorizationRequired.errorDescription
+    }
+
     private func handle(_ error: Error) {
         if let spotify = error as? SpotifyLibraryError {
             lastError = spotify.errorDescription
-            if spotify == .unauthorized {
+            if spotify == .reauthorizationRequired {
+                markReconnectRequired()
+            } else if spotify == .unauthorized {
                 disconnect()
                 lastError = spotify.errorDescription
             }

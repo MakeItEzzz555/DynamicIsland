@@ -16,7 +16,7 @@ private final class ParityLockedSources: @unchecked Sendable {
 
 private final class ParityNoCredentialStore: SpotifyCredentialStoring, @unchecked Sendable {
     func credentials() -> SpotifyStoredCredentials { SpotifyStoredCredentials() }
-    func store(accessToken: String, expiresAt: Date, refreshToken: String?) {}
+    func store(accessToken: String, expiresAt: Date, refreshToken: String?, authorizationDate: Date?) {}
     func clear() {}
 }
 

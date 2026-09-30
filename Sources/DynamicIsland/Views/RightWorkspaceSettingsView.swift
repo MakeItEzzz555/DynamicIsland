@@ -165,13 +165,13 @@ struct SpotifyConnectionSettingsView: View {
                         controller.disconnect()
                     }
                 }
-            case .disconnected:
+            case .disconnected, .reconnectRequired:
                 HStack {
                     Text(controller.lastError ?? "Connect your Spotify account to enable the library workspace.")
                         .font(.caption)
                         .foregroundStyle(controller.lastError == nil ? Color.secondary : Color.orange)
                     Spacer()
-                    Button("Connect Spotify") {
+                    Button(controller.connectionState == .reconnectRequired ? "Reconnect Spotify" : "Connect Spotify") {
                         Task { await controller.connect() }
                     }
                     .buttonStyle(.borderedProminent)
@@ -258,6 +258,8 @@ struct SpotifyConnectionSettingsView: View {
             Text("Connecting…").foregroundStyle(.secondary)
         case .disconnected:
             Text("Disconnected").foregroundStyle(.secondary)
+        case .reconnectRequired:
+            Text("Reconnect required").foregroundStyle(.orange)
         case .needsClientID:
             Text("Not configured").foregroundStyle(.orange)
         }
