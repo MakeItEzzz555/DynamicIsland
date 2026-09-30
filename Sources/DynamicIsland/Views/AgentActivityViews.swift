@@ -322,8 +322,10 @@ struct AgentDashboardContentView: View {
                     selectedSession: selectedSession
                 ).prefix(layout.maximumGaugeCount + 1))
                 : []
+            let usageInHeader = !usageIndicators.isEmpty &&
+                proxy.size.width >= AgentWorkspaceHeaderLayout.inlineUsageMinimumWidth
             VStack(alignment: .leading, spacing: 7) {
-                if showsUsage, !usageIndicators.isEmpty {
+                if showsUsage, !usageIndicators.isEmpty, !usageInHeader {
                     stagedAgentContent(index: 1) {
                         AgentUsageIndicatorRow(
                             indicators: usageIndicators,
@@ -344,6 +346,7 @@ struct AgentDashboardContentView: View {
                     onSelectProject: { key in
                         selectProject(key, among: providerSessions)
                     },
+                    trailingUsage: usageInHeader ? usageIndicators : [],
                     launcherOpen: showsSessionLauncher,
                         onToggleLauncher: {
                             withAnimation(.easeOut(duration: 0.14)) {
@@ -541,6 +544,7 @@ private struct AgentCLIControlBar: View {
     var projectOptions: [AgentProjectOption] = []
     var selectedProjectKey: String? = nil
     var onSelectProject: (String?) -> Void = { _ in }
+    var trailingUsage: [AgentUsageIndicator] = []
     let launcherOpen: Bool
     let onToggleLauncher: () -> Void
 
@@ -553,16 +557,22 @@ private struct AgentCLIControlBar: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        HStack(alignment: .center, spacing: 12) {
             ViewThatFits(in: .horizontal) {
                 controls(compact: false)
                     .fixedSize(horizontal: true, vertical: false)
                 controls(compact: true)
                     .frame(maxWidth: .infinity)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .frame(height: 31)
 
+            if !trailingUsage.isEmpty {
+                AgentUsageIndicatorRow(indicators: trailingUsage, spacing: 12)
+                    .layoutPriority(2)
+            }
         }
+        .frame(minHeight: trailingUsage.isEmpty ? 31 : AgentUsageIndicatorCircle.diameter + 4)
         .padding(.horizontal, 10)
         .padding(.bottom, 3)
         .overlay(alignment: .bottom) {
@@ -664,7 +674,7 @@ private struct AgentCLIControlBar: View {
                     }
                 }
             } label: {
-                HStack(spacing: 3) {
+                HStack(spacing: 4) {
                     Image(systemName: "folder")
                     if !compact {
                         Text(selected?.title ?? "All projects")
@@ -673,10 +683,18 @@ private struct AgentCLIControlBar: View {
                     Image(systemName: "chevron.down")
                         .font(.system(size: 6.5, weight: .bold))
                 }
-                .font(.system(size: 9.5, weight: .semibold))
+                .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(.white.opacity(selected == nil ? 0.52 : 0.78))
+                .padding(.horizontal, compact ? 4 : 7)
+                .frame(height: 25)
+                .background(Color.white.opacity(0.035), in: Capsule(style: .continuous))
+                .contentShape(Capsule(style: .continuous))
             }
-            .menuStyle(.borderlessButton)
+            // Plain button menu style keeps the custom label typography;
+            // the borderless style substitutes the system control font.
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
             .fixedSize()
             .help(selected?.path ?? "Filter sessions by project")
             .accessibilityLabel("Project filter: \(selected?.title ?? "All projects")")
@@ -1911,4 +1929,11 @@ struct AgentCompactRoutineTrailingView: View {
         }
         .accessibilityElement(children: .combine)
     }
+}
+
+enum AgentWorkspaceHeaderLayout {
+    /// Below this width usage indicators get their own centered row above
+    /// the controls; at or above it they sit at the trailing edge of the
+    /// control row so the transcript keeps the vertical space.
+    static let inlineUsageMinimumWidth: CGFloat = 820
 }

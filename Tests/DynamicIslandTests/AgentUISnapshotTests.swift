@@ -85,6 +85,13 @@ final class AgentUISnapshotTests: XCTestCase {
             output: output
         )
         try renderWorkspaceDashboard(
+            name: "23-agents-workspace-inline-usage",
+            sessions: [approval, working, claude, completed],
+            selectedSessionID: working.id,
+            width: 946,
+            output: output
+        )
+        try renderWorkspaceDashboard(
             name: "14-selected-attention-workspace",
             sessions: [approval, working, completed],
             selectedSessionID: nil,
@@ -297,6 +304,7 @@ final class AgentUISnapshotTests: XCTestCase {
         name: String,
         sessions: [AgentSession],
         selectedSessionID: AgentSessionInstanceID?,
+        width: CGFloat = 820,
         output: URL
     ) throws {
         let approvals = AgentApprovalController()
@@ -317,7 +325,7 @@ final class AgentUISnapshotTests: XCTestCase {
 
         try renderHosted(
             view,
-            size: CGSize(width: 820, height: 480),
+            size: CGSize(width: width, height: 480),
             to: output.appendingPathComponent(name + ".png")
         )
     }

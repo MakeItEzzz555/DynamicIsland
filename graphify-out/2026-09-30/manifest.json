@@ -876,9 +876,9 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Agents/AgentPresentation.swift": {
-    "mtime": 1790725142.7839863,
-    "seen": 1790725328.28998,
-    "ast_hash": "5ac3489283e43f1985d3557b347ea939",
+    "mtime": 1790726356.2785745,
+    "seen": 1790726531.421669,
+    "ast_hash": "861c12275414403376aa811667706bc6",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Agents/AgentSourceAssociation.swift": {
@@ -888,9 +888,9 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Agents/ClaudeTranscriptRecovery.swift": {
-    "mtime": 1790371122.2992067,
-    "seen": 1790521306.218653,
-    "ast_hash": "6d8f228617e68c807adafa58f017c6c9",
+    "mtime": 1790726356.278089,
+    "seen": 1790726531.4216802,
+    "ast_hash": "e4fe33fd3f4fa87de92cfc6b7b432b0d",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Agents/CodexAppServerClient.swift": {
@@ -912,9 +912,9 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/AgentActivityViews.swift": {
-    "mtime": 1790725835.7667174,
-    "seen": 1790726000.496209,
-    "ast_hash": "0ebf25eacf56ed887da5640c105aa2c2",
+    "mtime": 1790726422.6247363,
+    "seen": 1790726531.421741,
+    "ast_hash": "f88d9ecadb6f932b973a76b430685d16",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/AgentConsoleViews.swift": {
@@ -1533,6 +1533,24 @@
     "mtime": 1790726217.3884902,
     "seen": 1790726263.270486,
     "ast_hash": "02a93c797b9fa3b41666b5aa132dc6b5",
+    "semantic_hash": ""
+  },
+  "Sources/DynamicIsland/Agents/AgentUsageTelemetry.swift": {
+    "mtime": 1790726390.6678936,
+    "seen": 1790726531.421675,
+    "ast_hash": "a2137252b13e61ce139a5f57d6ade228",
+    "semantic_hash": ""
+  },
+  "Sources/DynamicIsland/Views/AgentUsageIndicatorViews.swift": {
+    "mtime": 1790726422.6037016,
+    "seen": 1790726531.421744,
+    "ast_hash": "a40c332b7d4559d8e16962fda2f9c5a8",
+    "semantic_hash": ""
+  },
+  "Tests/DynamicIslandTests/AgentUsageTelemetryTests.swift": {
+    "mtime": 1790726500.8462806,
+    "seen": 1790726531.421797,
+    "ast_hash": "0c122242d2c86b69bb8ec0dda1c7d65e",
     "semantic_hash": ""
   }
 }

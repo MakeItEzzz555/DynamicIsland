@@ -406,7 +406,7 @@ struct AgentEmbeddedConsoleView: View {
     }
 
     private var composer: some View {
-        HStack(alignment: .bottom, spacing: 7) {
+        HStack(alignment: .bottom, spacing: 4) {
             AgentPromptEditor(
                 text: $draft,
                 placeholder: composerPlaceholder,
@@ -454,6 +454,16 @@ struct AgentEmbeddedConsoleView: View {
                 .help("Send prompt (Command-Return)")
                 .accessibilityLabel("Send prompt")
             }
+        }
+        .padding(.trailing, 5)
+        .padding(.bottom, 3)
+        .background(
+            Color.white.opacity(0.045),
+            in: RoundedRectangle(cornerRadius: 9, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .stroke(Color.white.opacity(0.08), lineWidth: 1)
         }
     }
 
