@@ -623,20 +623,24 @@ final class AgentManagedSessionControllerTests: XCTestCase {
             approvals: AgentApprovalController()
         )
         await controller.refreshPersistentSnapshot()
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("DynamicIsland-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
 
         XCTAssertTrue(controller.selectNewSessionModel("model-b", for: .codex))
-        let started = await controller.startNewSession(cwd: "/tmp/DynamicIsland")
+        let started = await controller.startNewSession(cwd: folder.path)
         XCTAssertEqual(started?.model, "model-b")
         let startedModels = await provider.startedSessionModels()
         let startedCWDs = await provider.startedSessionCWDs()
         XCTAssertEqual(startedModels, ["model-b"])
-        XCTAssertEqual(startedCWDs, ["/tmp/DynamicIsland"])
+        XCTAssertEqual(startedCWDs, [folder.path])
         XCTAssertEqual(store.sessions.count, 1)
         XCTAssertEqual(controller.selectedSessionID?.sessionID.nativeID, started?.nativeSessionID)
 
         await provider.setStartFailure(true)
         let before = store.sessions.count
-        let failed = await controller.startNewSession(cwd: "/tmp/DynamicIsland")
+        let failed = await controller.startNewSession(cwd: folder.path)
         XCTAssertNil(failed)
         XCTAssertEqual(store.sessions.count, before)
         controller.stop()

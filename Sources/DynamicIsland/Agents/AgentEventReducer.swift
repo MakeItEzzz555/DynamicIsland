@@ -11,7 +11,7 @@ struct AgentEventStoreLimits: Equatable, Sendable {
     var completedSessionRetention: TimeInterval
 
     static let standard = AgentEventStoreLimits(
-        maximumSessions: 32,
+        maximumSessions: 96,
         maximumActivityPerSession: 200,
         maximumGlobalActivity: 2_000,
         maximumRememberedEventIDs: 512,

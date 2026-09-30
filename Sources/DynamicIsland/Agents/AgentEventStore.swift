@@ -151,7 +151,14 @@ final class AgentEventStore: ObservableObject {
             }
             .sorted(by: sessionAgeSort)
 
-        guard let oldest = candidates.first else { return false }
+        // Persisted history that is only resumable (not loaded, not working)
+        // is re-discoverable, so it yields its slot before a new or live
+        // session is refused. Loaded idle sessions are still never evicted.
+        let resumableHistory = sessionsByID.values
+            .filter { $0.availability == .resumable && $0.state == .idle }
+            .sorted(by: sessionAgeSort)
+
+        guard let oldest = candidates.first ?? resumableHistory.first else { return false }
         removeSession(oldest.id)
         return sessionsByID.count < limits.maximumSessions
     }

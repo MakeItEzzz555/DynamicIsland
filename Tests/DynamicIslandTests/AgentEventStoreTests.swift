@@ -255,6 +255,25 @@ final class AgentEventStoreTests: XCTestCase {
         XCTAssertEqual(store.sessions.count, 2)
     }
 
+    func testCapacityLetsResumableHistoryYieldToNewSession() {
+        var limits = makeLimits()
+        limits.maximumSessions = 2
+        let store = AgentEventStore(limits: limits)
+        let history = AgentTestFixture.sessionID(.codex, "history")
+        let live = AgentTestFixture.sessionID(.claude, "live")
+        store.ingest(AgentTestFixture.event(
+            "history", sessionID: history, type: .sessionStarted, offset: 0,
+            payload: .sessionMetadata(AgentSessionMetadata(project: nil, availability: .resumable))
+        ))
+        store.ingest(start(live, name: "live", offset: 1))
+
+        let newID = AgentTestFixture.sessionID(.codex, "new")
+        XCTAssertEqual(store.ingest(start(newID, name: "new", offset: 2)), .applied)
+        XCTAssertNil(store.session(for: instance(history, generation: 1)))
+        XCTAssertNotNil(store.session(for: instance(live, generation: 1)), "loaded sessions are never evicted")
+        XCTAssertNotNil(store.session(for: instance(newID, generation: 1)))
+    }
+
     func testGenerationReplacementCanUseCapacityOwnedByPriorGeneration() {
         var limits = makeLimits()
         limits.maximumSessions = 1

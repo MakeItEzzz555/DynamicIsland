@@ -327,7 +327,13 @@ final class AgentManagedSessionController: ObservableObject {
         }
 
         do {
-            let discovered = try await provider.discoverSessions()
+            // Bounded per provider: persisted history must never fill the
+            // store and crowd out new or live sessions (it used to reject
+            // every new session once 32 discovered threads were ingested).
+            let discovered = Self.boundedDiscovery(
+                try await provider.discoverSessions(),
+                keeping: Set(managed.keys)
+            )
             guard !Task.isCancelled else { return }
             let refreshedIDs = Set(discovered.map(\.session.sessionID))
             discoveredSessionIDs.subtract(discoveredSessionIDs.filter { $0.provider == agentProvider })
@@ -339,6 +345,26 @@ final class AgentManagedSessionController: ObservableObject {
         } catch {
             setTransportError(Self.safeError(error, provider: agentProvider), for: agentProvider)
         }
+    }
+
+    static let maximumDiscoveredSessionsPerProvider = 32
+
+    /// Managed sessions first, then loaded before resumable, then recency.
+    static func boundedDiscovery(
+        _ discovered: [AgentDiscoveredSessionDescriptor],
+        keeping managedIDs: Set<AgentSessionID> = [],
+        limit: Int = maximumDiscoveredSessionsPerProvider
+    ) -> [AgentDiscoveredSessionDescriptor] {
+        func rank(_ descriptor: AgentDiscoveredSessionDescriptor) -> Int {
+            if managedIDs.contains(descriptor.session.sessionID) { return 0 }
+            return descriptor.runtimeState == .notLoaded ? 2 : 1
+        }
+        return Array(discovered.sorted {
+            let lhs = rank($0), rhs = rank($1)
+            if lhs != rhs { return lhs < rhs }
+            if $0.updatedAt != $1.updatedAt { return $0.updatedAt > $1.updatedAt }
+            return $0.session.nativeSessionID < $1.session.nativeSessionID
+        }.prefix(max(limit, 0)))
     }
 
     private static func sortedProviders<S: Sequence>(_ providers: S) -> [AgentProvider]
@@ -472,6 +498,10 @@ final class AgentManagedSessionController: ObservableObject {
         for state: AgentDiscoveredSessionRuntimeState
     ) -> AgentSessionAvailability {
         state == .notLoaded ? .resumable : .loaded
+    }
+
+    func session(for instance: AgentSessionInstanceID) -> AgentSession? {
+        eventStore.session(for: instance)
     }
 
     func isManaged(_ session: AgentSession) -> Bool {
@@ -697,33 +727,111 @@ final class AgentManagedSessionController: ObservableObject {
         }
     }
 
+    /// Compatibility wrapper for the selected provider.
     @discardableResult
     func startNewSession(cwd: String?) async -> AgentManagedSessionDescriptor? {
-        guard let selectedProvider,
-              let provider = providers[selectedProvider],
-              provider.interactiveCapabilities.contains(.startSession) else { return nil }
+        guard let selectedProvider, let cwd else { return nil }
+        guard case .success(let started) = await startManagedSession(
+            provider: selectedProvider,
+            cwd: cwd
+        ) else { return nil }
+        return started.descriptor
+    }
+
+    /// Starts a new managed session in an explicit folder and attaches it
+    /// as one transaction: the exact session is in the store, managed and
+    /// selected (so it is composer-ready) before success is returned. Any
+    /// failure is returned with a user-facing reason; nothing is selected.
+    func startManagedSession(
+        provider agentProvider: AgentProvider,
+        cwd rawCWD: String
+    ) async -> Result<AgentManagedStartedSession, AgentManagedStartFailure> {
+        guard let provider = providers[agentProvider],
+              provider.interactiveCapabilities.contains(.startSession) else {
+            return .failure(.init("\(providerName(agentProvider)) cannot start sessions here"))
+        }
+        guard let cwd = Self.validatedWorkingDirectory(rawCWD) else {
+            return .failure(.init("Folder not found. Choose an existing folder"))
+        }
         startObserving()
+        selectProvider(agentProvider)
+        let descriptor: AgentManagedSessionDescriptor
         do {
-            let descriptor = try await provider.startSession(
+            descriptor = try await provider.startSession(
                 cwd: cwd,
-                model: newSessionModelByProvider[selectedProvider],
-                agent: newSessionAgentByProvider[selectedProvider]
+                model: newSessionModelByProvider[agentProvider],
+                agent: newSessionAgentByProvider[agentProvider]
             )
-            guard let instance = await emitSessionAvailability(descriptor, type: .sessionStarted),
-                  instance.sessionID == descriptor.sessionID,
+        } catch {
+            let message = Self.safeError(error, provider: agentProvider)
+            setTransportError(message, for: agentProvider)
+            debugTransition("start failed provider=\(agentProvider.stableName) error=\(message)")
+            return .failure(.init(message))
+        }
+        guard descriptor.provider == agentProvider else {
+            return .failure(.init("\(providerName(agentProvider)) returned a different provider"))
+        }
+        switch await emitSessionAvailabilityResult(descriptor, type: .sessionStarted) {
+        case .failure(let reason):
+            debugTransition("attach failed provider=\(agentProvider.stableName) session=…\(descriptor.nativeSessionID.suffix(6)) reason=\(reason)")
+            return .failure(.init("Session could not be attached (\(reason))"))
+        case .success(let instance):
+            guard instance.sessionID == descriptor.sessionID,
                   eventStore.session(for: instance) != nil else {
-                attachmentErrors[descriptor.sessionID] = "Started session could not be attached"
-                return nil
+                return .failure(.init("Session could not be attached (identity mismatch)"))
             }
             markManaged(descriptor)
+            knownDiscoveredSessionIDs.insert(descriptor.sessionID)
+            discoveredSessionIDs.insert(descriptor.sessionID)
             verifiedAttachmentSessionIDs.insert(descriptor.sessionID)
             attachmentErrors.removeValue(forKey: descriptor.sessionID)
+            setTransportError(nil, for: agentProvider)
             selectSession(instance)
-            return descriptor
-        } catch {
-            setTransportError(Self.safeError(error, provider: selectedProvider), for: selectedProvider)
-            return nil
+            debugTransition("started provider=\(agentProvider.stableName) session=…\(descriptor.nativeSessionID.suffix(6)) mode=\(eventStore.session(for: instance).map { mode(for: $0) }.map(String.init(describing:)) ?? "-")")
+            return .success(AgentManagedStartedSession(instance: instance, descriptor: descriptor))
         }
+    }
+
+    /// The exact chosen folder (standardized; never rewritten to a
+    /// repository root or its symlink target), or nil when it is not an
+    /// existing directory (a symlink to a directory is accepted).
+    nonisolated static func validatedWorkingDirectory(_ raw: String) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let expanded = (trimmed as NSString).expandingTildeInPath
+        guard expanded.hasPrefix("/") else { return nil }
+        var path = expanded
+        while path.count > 1, path.hasSuffix("/") { path.removeLast() }
+        guard !path.split(separator: "/").contains(where: { $0 == "." || $0 == ".." }) else { return nil }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
+              isDirectory.boolValue else { return nil }
+        return path
+    }
+
+    // MARK: Composer drafts (per exact session instance, memory only)
+
+    private var composerDrafts: [AgentSessionInstanceID: String] = [:]
+
+    func composerDraft(for session: AgentSessionInstanceID) -> String {
+        composerDrafts[session] ?? ""
+    }
+
+    func setComposerDraft(_ text: String, for session: AgentSessionInstanceID) {
+        let bounded = AgentPromptDraftPolicy.bounded(text)
+        if bounded.isEmpty {
+            composerDrafts.removeValue(forKey: session)
+        } else {
+            composerDrafts[session] = bounded
+        }
+    }
+
+    private func debugTransition(_ message: @autoclosure () -> String) {
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["DYNAMIC_ISLAND_AGENT_TRANSITION_LOGS"] == "1" {
+            print("[AgentTransition] \(message())")
+        }
+        #endif
     }
 
     /// Configured agents/profiles the provider exposes (Claude: the
@@ -1378,8 +1486,15 @@ final class AgentManagedSessionController: ObservableObject {
         _ descriptor: AgentManagedSessionDescriptor,
         type: AgentEventType
     ) async -> AgentSessionInstanceID? {
+        try? await emitSessionAvailabilityResult(descriptor, type: type).get()
+    }
+
+    private func emitSessionAvailabilityResult(
+        _ descriptor: AgentManagedSessionDescriptor,
+        type: AgentEventType
+    ) async -> Result<AgentSessionInstanceID, AgentManagedStartFailure> {
         let project = projectContext(for: descriptor)
-        let instance = await emit(
+        let result = await emitResult(
             provider: descriptor.provider,
             nativeSessionID: descriptor.nativeSessionID,
             type: type,
@@ -1388,6 +1503,7 @@ final class AgentManagedSessionController: ObservableObject {
                 availability: .loaded
             ))
         )
+        guard case .success(let instance) = result else { return result }
 
         let now = Date()
         let capabilities = AgentCapabilities(evidence: Dictionary(uniqueKeysWithValues:
@@ -1404,7 +1520,7 @@ final class AgentManagedSessionController: ObservableObject {
             type: .capabilitiesUpdated,
             payload: .capabilities(capabilities)
         )
-        return instance
+        return .success(instance)
     }
 
     @discardableResult
@@ -1416,7 +1532,27 @@ final class AgentManagedSessionController: ObservableObject {
         payload: AgentEventPayload,
         providerTimestamp: Date? = nil
     ) async -> AgentSessionInstanceID? {
-        guard let handle = await ensureProducer(for: provider) else { return nil }
+        try? await emitResult(
+            provider: provider,
+            nativeSessionID: nativeSessionID,
+            type: type,
+            correlationID: correlationID,
+            payload: payload,
+            providerTimestamp: providerTimestamp
+        ).get()
+    }
+
+    private func emitResult(
+        provider: AgentProvider,
+        nativeSessionID: String,
+        type: AgentEventType,
+        correlationID: AgentCorrelationID? = nil,
+        payload: AgentEventPayload,
+        providerTimestamp: Date? = nil
+    ) async -> Result<AgentSessionInstanceID, AgentManagedStartFailure> {
+        guard let handle = await ensureProducer(for: provider) else {
+            return .failure(.init("producer registration failed"))
+        }
         let event = AgentIngestionEvent(
             schemaVersion: AgentEvent.normalizedSchemaVersion,
             eventID: AgentEventID(rawValue:
@@ -1439,8 +1575,25 @@ final class AgentManagedSessionController: ObservableObject {
             from: handle,
             precedence: .providerNative
         )
-        guard case .success(let accepted) = result else { return nil }
-        return accepted.sessionInstances.last
+        switch result {
+        case .success(let accepted):
+            guard let instance = accepted.sessionInstances.last else {
+                return .failure(.init("no session instance"))
+            }
+            return .success(instance)
+        case .failure(let error):
+            return .failure(.init(Self.ingestionReason(error)))
+        }
+    }
+
+    private nonisolated static func ingestionReason(_ error: AgentIngestionError) -> String {
+        switch error {
+        case .storeRejected: "session store refused it"
+        case .policyViolation: "producer policy refused it"
+        case .staleProducer: "stale producer"
+        case .identityConflict: "identity conflict"
+        default: "invalid event"
+        }
     }
 
     private func normalizedCapabilities(for provider: AgentProvider) -> Set<AgentCapability> {
@@ -1608,6 +1761,16 @@ final class AgentManagedSessionController: ObservableObject {
         case .other: "Agent"
         }
     }
+}
+
+struct AgentManagedStartedSession: Equatable, Sendable {
+    let instance: AgentSessionInstanceID
+    let descriptor: AgentManagedSessionDescriptor
+}
+
+struct AgentManagedStartFailure: Error, Equatable, Sendable {
+    let message: String
+    init(_ message: String) { self.message = message }
 }
 
 private struct PendingApprovalConfirmation: Sendable {
