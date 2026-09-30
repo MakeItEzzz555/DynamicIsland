@@ -672,7 +672,7 @@ final class OverlayWindowController {
         case .system:
             return .systemHUD
         case .keepAwake, .terminalTask, .reminder, .voiceRecording,
-             .voiceTranscription, .camera, .backgroundRemoval:
+             .voiceTranscription, .camera, .backgroundRemoval, .message:
             return .genericActivity
         case .windowSnapPreview:
             return .systemHUD
@@ -697,7 +697,7 @@ final class OverlayWindowController {
         case .system:
             return .inactive
         case .keepAwake, .terminalTask, .windowSnapPreview, .reminder,
-             .voiceRecording, .voiceTranscription, .camera, .backgroundRemoval:
+             .voiceRecording, .voiceTranscription, .camera, .backgroundRemoval, .message:
             return .generic(primary)
         }
     }

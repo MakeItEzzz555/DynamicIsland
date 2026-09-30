@@ -280,6 +280,16 @@ enum LiveActivityPresentationPolicy {
                 shape: .circle,
                 priority: max(activity.priority, 84)
             )
+
+        case .message:
+            // Persistent (not a transient overlay): a message awaiting the
+            // user's action survives volume/brightness HUDs. Priority comes
+            // from MessagingController (fresh vs acknowledged).
+            return primaryDescriptor(
+                activity,
+                shape: .notchWing,
+                priority: activity.priority
+            )
         }
     }
 
