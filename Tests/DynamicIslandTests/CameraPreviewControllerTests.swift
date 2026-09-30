@@ -243,6 +243,27 @@ final class CameraPreviewControllerTests: XCTestCase {
         XCTAssertTrue(fixture.controller.isRunning)
     }
 
+    func testExplicitMirrorOpenCloseAndReopenReleasesOwnedCapture() async throws {
+        let fixture = makeFixture()
+
+        try await fixture.controller.startPreviewConsumer()
+        XCTAssertEqual(fixture.devices.requestCount, 1)
+        XCTAssertTrue(fixture.controller.isRunning)
+        XCTAssertEqual(fixture.controller.activePreviewConsumers, 1)
+
+        await fixture.controller.detachPreviewConsumer()
+        XCTAssertFalse(fixture.controller.isRunning)
+        XCTAssertEqual(fixture.controller.activePreviewConsumers, 0)
+        XCTAssertEqual(fixture.session.stopCount, 1)
+
+        try await fixture.controller.startPreviewConsumer()
+        XCTAssertEqual(fixture.devices.requestCount, 1, "permission remains granted after closing the mirror")
+        XCTAssertTrue(fixture.controller.isRunning)
+        await fixture.controller.detachPreviewConsumer()
+        XCTAssertFalse(fixture.controller.isRunning)
+        XCTAssertEqual(fixture.session.stopCount, 2)
+    }
+
     // MARK: Fixture
 
     private struct Fixture {

@@ -3161,7 +3161,8 @@ struct ExpandedIslandView: View {
                             productivity: modules.productivity,
                             fileShelf: modules.fileShelf,
                             tools: modules.rightWorkspace.configuration.visibleTools,
-                            reduceMotion: reduceMotion || settings.reduceExtraMotion
+                            reduceMotion: reduceMotion || settings.reduceExtraMotion,
+                            layoutStore: layoutStore
                         )
                     },
                     appsMedia: {

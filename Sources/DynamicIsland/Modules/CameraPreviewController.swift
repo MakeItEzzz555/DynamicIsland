@@ -451,6 +451,29 @@ final class CameraPreviewController: ObservableObject, IslandCapabilityAdapter {
         }
     }
 
+    /// Explicit action from the mirror UI. Unlike attachPreviewConsumer(),
+    /// this is allowed to request camera permission and guarantees that this
+    /// preview consumer owns the session it starts, so closing the mirror can
+    /// release capture resources without affecting another explicit camera use.
+    func startPreviewConsumer() async throws {
+        if previewConsumers == 0 {
+            previewConsumers = 1
+        }
+        guard isEnabled else { throw CameraPreviewError.disabled }
+        if isRunning {
+            // The running capture may belong to another explicit consumer.
+            // This mirror observes it but must not claim ownership or stop it.
+            return
+        }
+        consumerStartedSession = true
+        do {
+            try await open()
+        } catch {
+            consumerStartedSession = false
+            throw error
+        }
+    }
+
     /// The last visible preview surface disappeared: stop capture that a
     /// surface started. An explicit user-opened preview is left alone.
     func detachPreviewConsumer() async {

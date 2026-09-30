@@ -62,6 +62,26 @@ enum ExpandedScrollIntent {
     }
 }
 
+/// Camera Mirror must suppress only island-level vertical swipe actions. It
+/// never consumes vertical input itself, so the native ScrollView remains the
+/// event owner. Strong horizontal intent remains eligible for workspace/tab
+/// navigation through the normal gesture router.
+enum CameraMirrorScrollRoutingPolicy {
+    static func shouldPassThroughToContent(
+        mirrorActive: Bool,
+        pointerInsideRightWorkspace: Bool,
+        deltaX: CGFloat,
+        deltaY: CGFloat
+    ) -> Bool {
+        guard mirrorActive, pointerInsideRightWorkspace else { return false }
+        return ExpandedScrollIntent.isVertical(
+            deltaX: deltaX,
+            deltaY: deltaY,
+            insideContent: true
+        ) != false
+    }
+}
+
 enum ExpandedContentScrollSequencePhase: Equatable {
     case physicalBegan
     case physicalChanged
@@ -1743,6 +1763,25 @@ final class OverlayWindowController {
             resetExpandedContentScrollTracking()
             logExpandedScrollPassThroughIfNeeded(reason: "global-suppression")
             return true
+        }
+
+        if isExpanded,
+           settings.gesturesEnabled,
+           settings.gestureInputSource == .trackpad,
+           event.hasPreciseScrollingDeltas {
+            let rightRegion = screenRect(for: layoutStore.rightWorkspaceRegion)
+            let insideRightWorkspace = !rightRegion.isEmpty && rightRegion.contains(NSEvent.mouseLocation)
+            if CameraMirrorScrollRoutingPolicy.shouldPassThroughToContent(
+                mirrorActive: layoutStore.isRightWorkspaceMirrorActive,
+                pointerInsideRightWorkspace: insideRightWorkspace,
+                deltaX: event.scrollingDeltaX,
+                deltaY: event.scrollingDeltaY
+            ) {
+                resetExpandedScrollTracking()
+                resetExpandedContentScrollTracking()
+                logExpandedScrollPassThroughIfNeeded(reason: "camera-mirror-vertical")
+                return true
+            }
         }
 
         var contentSequenceActive = false

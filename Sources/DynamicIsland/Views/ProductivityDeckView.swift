@@ -12,24 +12,28 @@ struct ProductivityDeckView: View {
     let tools: [RightWorkspaceTool]
     @ObservedObject var capabilities: IslandCapabilityRegistry
     let reduceMotion: Bool
+    let layoutStore: IslandLayoutStore?
+    @State private var isMirrorPresented = true
 
     init(
         productivity: ProductivityModules,
         fileShelf: FileShelfStore,
         tools: [RightWorkspaceTool],
-        reduceMotion: Bool
+        reduceMotion: Bool,
+        layoutStore: IslandLayoutStore? = nil
     ) {
         self.productivity = productivity
         self.fileShelf = fileShelf
         self.tools = tools
         self.capabilities = productivity.capabilities
         self.reduceMotion = reduceMotion
+        self.layoutStore = layoutStore
     }
 
     var body: some View {
         GeometryReader { proxy in
-            let showsCamera = tools.contains(.camera)
-            let gridTools = tools.filter { $0 != .camera }
+            let showsCamera = tools.contains(.camera) && isMirrorPresented
+            let gridTools = tools.filter { $0 != .camera || !isMirrorPresented }
             let availableWidth = max(proxy.size.width, 1)
             let availableHeight = max(proxy.size.height, 60)
             let mirror = min(max(availableWidth * 0.34, 104), 154)
@@ -42,8 +46,17 @@ struct ProductivityDeckView: View {
             ScrollView(.vertical, showsIndicators: false) {
                 HStack(alignment: .top, spacing: 10) {
                     if showsCamera {
-                        CameraMirrorView(controller: productivity.camera, diameter: mirror)
-                            .frame(width: mirror, height: min(contentHeight, max(mirror, availableHeight)), alignment: .top)
+                        CameraMirrorView(
+                            controller: productivity.camera,
+                            diameter: mirror,
+                            layoutStore: layoutStore,
+                            onClose: {
+                                withAnimation(WorkspaceMotion.smoothContent(reduceMotion: reduceMotion)) {
+                                    isMirrorPresented = false
+                                }
+                            }
+                        )
+                        .frame(width: mirror, height: min(contentHeight, max(mirror + 30, availableHeight)), alignment: .top)
                     }
                     if !gridTools.isEmpty {
                         toolGrid(
@@ -76,7 +89,12 @@ struct ProductivityDeckView: View {
                     tool: tool,
                     productivity: productivity,
                     fileShelf: fileShelf,
-                    snapshot: capabilities.snapshot(for: capabilityID(tool))
+                    snapshot: capabilities.snapshot(for: capabilityID(tool)),
+                    onOpenMirror: tool == .camera ? {
+                        withAnimation(WorkspaceMotion.smoothContent(reduceMotion: reduceMotion)) {
+                            isMirrorPresented = true
+                        }
+                    } : nil
                 )
                 .frame(height: min(rowHeight, 48))
             }
@@ -106,44 +124,61 @@ struct ProductivityDeckView: View {
 struct CameraMirrorView: View {
     @ObservedObject var controller: CameraPreviewController
     let diameter: CGFloat
+    let layoutStore: IslandLayoutStore?
+    let onClose: () -> Void
     @Environment(\.isSettingsPreview) private var isSettingsPreview
     @Environment(\.rightWorkspacePageIsActive) private var isWorkspacePageActive
+    @State private var ownsPreviewConsumer = false
 
     var body: some View {
-        ZStack {
-            Circle().fill(Color.black.opacity(0.24))
-            if !isSettingsPreview, let session = controller.previewSession {
-                CameraPreviewView(session: session, mirrored: true)
-                    .clipShape(Circle())
-                    .accessibilityHidden(true)
-            } else {
-                placeholder
+        VStack(spacing: 6) {
+            ZStack {
+                Circle().fill(Color.black.opacity(0.24))
+                if !isSettingsPreview, let session = controller.previewSession {
+                    CameraPreviewView(session: session, mirrored: true)
+                        .clipShape(Circle())
+                        .accessibilityHidden(true)
+                } else {
+                    placeholder
+                }
+            }
+            .frame(width: diameter, height: diameter)
+            .overlay(Circle().stroke(Color.white.opacity(0.08), lineWidth: 1))
+            .shadow(color: .black.opacity(0.3), radius: 8, y: 4)
+
+            if !isSettingsPreview {
+                Button { closeMirror() } label: {
+                    Label("Close Mirror", systemImage: "xmark")
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 24)
+                }
+                .buttonStyle(WorkspaceTileButtonStyle(cornerRadius: 12))
+                .accessibilityLabel("Close Camera Mirror")
             }
         }
-        .frame(width: diameter, height: diameter)
-        .overlay(Circle().stroke(Color.white.opacity(0.08), lineWidth: 1))
-        .shadow(color: .black.opacity(0.3), radius: 8, y: 4)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Camera mirror, \(controller.statusText)")
         .task {
-            // Settings previews and hidden-but-mounted workspace pages never
-            // start capture.
             guard !isSettingsPreview, isWorkspacePageActive else { return }
-            await controller.attachPreviewConsumer()
+            layoutStore?.setRightWorkspaceMirrorActive(true)
+            await attachIfNeeded()
         }
         .onChange(of: isWorkspacePageActive) { _, active in
             guard !isSettingsPreview else { return }
+            layoutStore?.setRightWorkspaceMirrorActive(active)
             Task {
                 if active {
-                    await controller.attachPreviewConsumer()
+                    await attachIfNeeded()
                 } else {
-                    await controller.detachPreviewConsumer()
+                    await detachIfNeeded()
                 }
             }
         }
         .onDisappear {
             guard !isSettingsPreview else { return }
-            Task { await controller.detachPreviewConsumer() }
+            layoutStore?.setRightWorkspaceMirrorActive(false)
+            Task { await detachIfNeeded() }
         }
     }
 
@@ -161,7 +196,7 @@ struct CameraMirrorView: View {
                 .frame(maxWidth: diameter * 0.7)
             switch controller.permissionState {
             case .notDetermined:
-                Button { Task { try? await controller.open() } } label: { mirrorButtonLabel("Allow") }
+                Button { Task { try? await controller.startPreviewConsumer() } } label: { mirrorButtonLabel("Allow") }
                     .buttonStyle(WorkspaceTileButtonStyle(isOn: true, accent: .cyan, cornerRadius: 8))
                     .font(.system(size: 9, weight: .semibold))
                     .accessibilityLabel("Allow camera access")
@@ -177,7 +212,7 @@ struct CameraMirrorView: View {
                 if controller.phase != .starting {
                     // Capture normally starts on appear; this covers a
                     // failed or externally stopped session.
-                    Button { Task { try? await controller.open() } } label: { mirrorButtonLabel(controller.phase == .idle ? "Start" : "Retry") }
+                    Button { Task { try? await controller.startPreviewConsumer() } } label: { mirrorButtonLabel(controller.phase == .idle ? "Start" : "Retry") }
                         .buttonStyle(WorkspaceTileButtonStyle(cornerRadius: 8))
                         .font(.system(size: 9, weight: .semibold))
                         .accessibilityLabel("Start camera mirror")
@@ -185,6 +220,28 @@ struct CameraMirrorView: View {
             }
         }
         .padding(8)
+    }
+
+    @MainActor
+    private func attachIfNeeded() async {
+        guard !ownsPreviewConsumer else { return }
+        await controller.attachPreviewConsumer()
+        ownsPreviewConsumer = true
+    }
+
+    @MainActor
+    private func detachIfNeeded() async {
+        guard ownsPreviewConsumer else { return }
+        ownsPreviewConsumer = false
+        await controller.detachPreviewConsumer()
+    }
+
+    private func closeMirror() {
+        layoutStore?.setRightWorkspaceMirrorActive(false)
+        Task { @MainActor in
+            await detachIfNeeded()
+            onClose()
+        }
     }
 
     private func mirrorButtonLabel(_ title: String) -> some View {
@@ -203,6 +260,7 @@ private struct ProductivityToolTile: View {
     let productivity: ProductivityModules
     let fileShelf: FileShelfStore
     let snapshot: IslandCapabilitySnapshot?
+    let onOpenMirror: (() -> Void)?
 
     @State private var message: String?
     @State private var converting = false
@@ -267,8 +325,20 @@ private struct ProductivityToolTile: View {
         case .reminders:
             RemindersTile(controller: productivity.reminders, status: snapshot?.statusText)
         case .camera:
-            EmptyView()
+            Button { onOpenMirror?() } label: {
+                WorkspaceTileLabel(
+                    symbol: tool.symbolName,
+                    title: "Camera",
+                    status: "Open Mirror"
+                )
+            }
+            .buttonStyle(WorkspaceTileButtonStyle(isOn: controllerIsCameraActive, accent: .cyan))
+            .accessibilityLabel("Open Camera Mirror")
         }
+    }
+
+    private var controllerIsCameraActive: Bool {
+        snapshot?.isActive ?? false
     }
 
     private func convert(to format: FileConversionFormat) {

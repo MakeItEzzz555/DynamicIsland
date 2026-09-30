@@ -50,6 +50,47 @@ final class ExpandedScrollIntentTests: XCTestCase {
     }
 }
 
+final class CameraMirrorScrollRoutingPolicyTests: XCTestCase {
+    func testMirrorVerticalAndUndecidedInputPassesThroughToContent() {
+        XCTAssertTrue(CameraMirrorScrollRoutingPolicy.shouldPassThroughToContent(
+            mirrorActive: true,
+            pointerInsideRightWorkspace: true,
+            deltaX: 2,
+            deltaY: 12
+        ))
+        XCTAssertTrue(CameraMirrorScrollRoutingPolicy.shouldPassThroughToContent(
+            mirrorActive: true,
+            pointerInsideRightWorkspace: true,
+            deltaX: 0.4,
+            deltaY: 0.3
+        ))
+    }
+
+    func testMirrorStrongHorizontalInputRemainsEligibleForNavigation() {
+        XCTAssertFalse(CameraMirrorScrollRoutingPolicy.shouldPassThroughToContent(
+            mirrorActive: true,
+            pointerInsideRightWorkspace: true,
+            deltaX: 20,
+            deltaY: 2
+        ))
+    }
+
+    func testPolicyDoesNotChangeOtherRegionsOrInactiveMirror() {
+        XCTAssertFalse(CameraMirrorScrollRoutingPolicy.shouldPassThroughToContent(
+            mirrorActive: false,
+            pointerInsideRightWorkspace: true,
+            deltaX: 1,
+            deltaY: 12
+        ))
+        XCTAssertFalse(CameraMirrorScrollRoutingPolicy.shouldPassThroughToContent(
+            mirrorActive: true,
+            pointerInsideRightWorkspace: false,
+            deltaX: 1,
+            deltaY: 12
+        ))
+    }
+}
+
 final class AgentTranscriptFollowStateTests: XCTestCase {
     func testFollowsNewContentWhileAtBottom() {
         var state = AgentTranscriptFollowState()

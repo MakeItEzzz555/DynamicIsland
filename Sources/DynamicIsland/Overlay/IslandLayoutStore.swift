@@ -47,6 +47,15 @@ final class IslandLayoutStore: ObservableObject {
     /// Panel-local region of the Island page's right workspace; horizontal
     /// swipes that start inside it page the workspace.
     @Published private(set) var rightWorkspaceRegion: CGRect = .zero
+    /// True only while the real Camera Mirror surface is visible on the active
+    /// right-workspace page. The overlay uses this to reject island-level
+    /// vertical actions without consuming native vertical scrolling.
+    @Published private(set) var isRightWorkspaceMirrorActive = false
+
+    func setRightWorkspaceMirrorActive(_ active: Bool) {
+        guard isRightWorkspaceMirrorActive != active else { return }
+        isRightWorkspaceMirrorActive = active
+    }
 
     func setRightWorkspaceRegion(_ frame: CGRect) {
         let next = frame.isEmpty || frame.isNull || frame.isInfinite ? .zero : frame.integral
