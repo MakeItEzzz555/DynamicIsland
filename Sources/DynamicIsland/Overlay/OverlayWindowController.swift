@@ -17,6 +17,16 @@ struct OverlayGeometrySignature: Equatable, CustomStringConvertible {
     }
 }
 
+/// Geometry-relevant subset of live-activity state. In particular, the
+/// transient Volume/Brightness HUD can overlay persistent compact media while
+/// keeping the same activity layout profile. Its presentation profile still
+/// changes the physical collapsed height, so it must participate in Combine
+/// de-duplication independently from the underlying media profile.
+struct CollapsedLiveActivityGeometrySignature: Equatable {
+    let activityProfile: CollapsedActivityLayoutProfile?
+    let presentationProfile: CollapsedPresentationProfile
+}
+
 enum ExpandedScrollEventRoute: Equatable {
     case islandGesture
     case passThroughToContent
@@ -476,15 +486,17 @@ final class OverlayWindowController {
             .store(in: &cancellables)
 
         modules.liveActivities.$activities
-            .map { [weak self] activities in
-                self?.collapsedActivityLayoutProfile(activities: activities)
+            .compactMap { [weak self] activities -> CollapsedLiveActivityGeometrySignature? in
+                guard let self else { return nil }
+                return self.collapsedLiveActivityGeometrySignature(activities: activities)
             }
             .removeDuplicates()
             .sink { [weak self] _ in
                 let generation = self?.presentationSession.generation
                 DispatchQueue.main.async { [weak self] in
                     guard let self, self.allowsOverlayWork(generation: generation) else { return }
-                    self.reposition(animated: true, reason: "collapsedActivityPresenceChanged")
+                    self.beginCollapsedPresentationMorph()
+                    self.reposition(animated: true, reason: "collapsedLiveActivityGeometryChanged")
                 }
             }
             .store(in: &cancellables)
@@ -665,7 +677,13 @@ final class OverlayWindowController {
     }
 
     private var activeInteractiveSystemHUD: DynamicIslandLiveActivity? {
-        modules.liveActivities.activities.first {
+        activeInteractiveSystemHUD(activities: modules.liveActivities.activities)
+    }
+
+    private func activeInteractiveSystemHUD(
+        activities: [DynamicIslandLiveActivity]
+    ) -> DynamicIslandLiveActivity? {
+        activities.first {
             guard $0.id == LiveActivityStore.systemHUDActivityID else { return false }
             return $0.systemHUDKind == .volume || $0.systemHUDKind == .brightness
         }
@@ -680,17 +698,33 @@ final class OverlayWindowController {
     }
 
     private var collapsedPresentationProfile: CollapsedPresentationProfile {
+        collapsedPresentationProfile(activities: modules.liveActivities.activities)
+    }
+
+    private func collapsedLiveActivityGeometrySignature(
+        activities: [DynamicIslandLiveActivity]
+    ) -> CollapsedLiveActivityGeometrySignature {
+        CollapsedLiveActivityGeometrySignature(
+            activityProfile: collapsedActivityLayoutProfile(activities: activities),
+            presentationProfile: collapsedPresentationProfile(activities: activities)
+        )
+    }
+
+    private func collapsedPresentationProfile(
+        activities: [DynamicIslandLiveActivity]
+    ) -> CollapsedPresentationProfile {
         if let attention = modules.agentAttention.presentation {
             let session = attention.primary.flatMap { modules.agentEvents.session(for: $0.session) }
             return AgentCollapsedShellPresentation.attention(attention, session: session)
         }
-        if let hud = activeInteractiveSystemHUD {
+        if let hud = activeInteractiveSystemHUD(activities: activities) {
             return .systemHUD(value: hud.progress ?? 0)
         }
-        if case .screenRecording = collapsedContentMode {
+        let mode = collapsedContentMode(activities: activities)
+        if case .screenRecording = mode {
             return .screenRecording
         }
-        switch collapsedContentMode {
+        switch mode {
         case .inactive, .agent:
             return AgentCollapsedShellPresentation.routine(
                 sessions: modules.agentEvents.sessions,

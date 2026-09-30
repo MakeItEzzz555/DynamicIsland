@@ -540,6 +540,44 @@ final class NotchGeometryServiceTests: XCTestCase {
         XCTAssertEqual(store.collapsedSize, CGSize(width: 190, height: 44))
         XCTAssertEqual(store.collapsedPresentationProfile, .normal)
     }
+
+
+    func testCollapsedLiveActivityGeometrySignatureDetectsSystemHUDOverlayOverMedia() {
+        let media = CollapsedActivityLayoutProfile.media(showsArtwork: true, showsVisualizer: true)
+        let normal = CollapsedLiveActivityGeometrySignature(
+            activityProfile: media,
+            presentationProfile: .normal
+        )
+        let hud = CollapsedLiveActivityGeometrySignature(
+            activityProfile: media,
+            presentationProfile: .systemHUD(value: 0.42)
+        )
+
+        XCTAssertNotEqual(
+            normal,
+            hud,
+            "A transient interactive HUD must invalidate collapsed geometry even when media remains the persistent primary activity"
+        )
+    }
+
+    func testCollapsedLiveActivityGeometrySignatureDoesNotInvalidateForHUDProgressOnly() {
+        let media = CollapsedActivityLayoutProfile.media(showsArtwork: true, showsVisualizer: true)
+        let low = CollapsedLiveActivityGeometrySignature(
+            activityProfile: media,
+            presentationProfile: .systemHUD(value: 0.10)
+        )
+        let high = CollapsedLiveActivityGeometrySignature(
+            activityProfile: media,
+            presentationProfile: .systemHUD(value: 1.0)
+        )
+
+        XCTAssertEqual(
+            low,
+            high,
+            "Changing only the HUD value should update content, not restart the physical collapsed-shell morph"
+        )
+    }
+
 }
 
 private final class HostPlacementProbe {
