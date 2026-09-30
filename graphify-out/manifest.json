@@ -204,9 +204,9 @@
     "semantic_hash": "e45da4c5467fe497679f227ded264dae"
   },
   "Sources/DynamicIsland/Views/IslandRootView.swift": {
-    "mtime": 1790787017.2889063,
-    "seen": 1790787306.2896352,
-    "ast_hash": "a34d7872ac12e6cabcf38abb72b0aa7f",
+    "mtime": 1790787754.5461764,
+    "seen": 1790790212.569978,
+    "ast_hash": "5a8042da9de7be06954c46d693e552cc",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/IslandThemeBackground.swift": {
@@ -432,9 +432,9 @@
     "semantic_hash": ""
   },
   "context.md": {
-    "mtime": 1790371122.3239532,
-    "seen": 1790521306.2187772,
-    "ast_hash": "0461c10f611fdd433a209754529b3eb0",
+    "mtime": 1790789346.7169116,
+    "seen": 1790790212.570123,
+    "ast_hash": "76cad328c3f4e2dc8fefcc9818f49378",
     "semantic_hash": ""
   },
   "research/ARCHITECTURE_BASELINE.md": {
@@ -1260,9 +1260,9 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Agents/AgentNotificationFeedback.swift": {
-    "mtime": 1790786117.845892,
-    "seen": 1790787306.289535,
-    "ast_hash": "78da99ce5743d2735a2607b1c9666068",
+    "mtime": 1790789762.474283,
+    "seen": 1790790212.5698938,
+    "ast_hash": "e37ec285c7a1c3efa6a31a49c9351558",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/AgentSessionLauncherView.swift": {
@@ -1476,8 +1476,8 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/ProductivitySettingsView.swift": {
-    "mtime": 1790724101.3240056,
-    "seen": 1790724307.1532328,
+    "mtime": 1790789977.2597969,
+    "seen": 1790790212.569986,
     "ast_hash": "49e4f3496d7761747799877ef88330d7",
     "semantic_hash": ""
   },
@@ -1674,15 +1674,15 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Messaging/MessagesConversationResolver.swift": {
-    "mtime": 1790741010.875968,
-    "seen": 1790743896.7053561,
-    "ast_hash": "4f9acf097eac8c4a42d0979ed49e1f48",
+    "mtime": 1790789880.0945137,
+    "seen": 1790790212.5699232,
+    "ast_hash": "37c1ed784e242ec615a59db8f57c1dc4",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Messaging/ReadOnlySQLite.swift": {
-    "mtime": 1790740919.7167869,
-    "seen": 1790743896.70536,
-    "ast_hash": "2a3fac8625ad27246d5cea67b2aa00b7",
+    "mtime": 1790789772.1198182,
+    "seen": 1790790212.5699258,
+    "ast_hash": "2d08d8d2fda1062a41384290a36966ef",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Messaging/SystemNotificationMonitor.swift": {
@@ -1764,9 +1764,9 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Modules/SpotifyLibraryController.swift": {
-    "mtime": 1790780624.0900662,
-    "seen": 1790781027.368093,
-    "ast_hash": "9c81110f2ef0ba22e511abe11ad8fef6",
+    "mtime": 1790789502.5012152,
+    "seen": 1790790212.569952,
+    "ast_hash": "dea79beccaeefa60a73f3467b27ce73b",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/State/RightWorkspace.swift": {
@@ -1776,9 +1776,9 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/AppsMediaDeckView.swift": {
-    "mtime": 1790786886.4362686,
-    "seen": 1790787306.28963,
-    "ast_hash": "81ec06fea6dbeef6d5e5fb638f9bff17",
+    "mtime": 1790789114.5634177,
+    "seen": 1790790212.569974,
+    "ast_hash": "bc912e9ae516dfa12dcb1408883b0f62",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/ProductivityDeckView.swift": {
@@ -1788,9 +1788,9 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/RightWorkspaceSettingsView.swift": {
-    "mtime": 1790786886.4714537,
-    "seen": 1790787306.289653,
-    "ast_hash": "66337cbadf323ee6e213f24618c189c7",
+    "mtime": 1790789112.0910237,
+    "seen": 1790790212.569988,
+    "ast_hash": "ceaf200e54aa7d2e55d32b16d8336ab5",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/RightWorkspaceView.swift": {
@@ -1854,9 +1854,9 @@
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/SpotifyLibraryTests.swift": {
-    "mtime": 1790780446.2151456,
-    "seen": 1790781027.368234,
-    "ast_hash": "4a0b3fb4d385b7e3926239dabf7f3e50",
+    "mtime": 1790789390.9811604,
+    "seen": 1790790212.5701,
+    "ast_hash": "30258791913d49fe1ac86b15f70d1b0d",
     "semantic_hash": ""
   },
   "research/SETTINGS_PREVIEW_AUDIT.md": {
@@ -1866,9 +1866,9 @@
     "semantic_hash": ""
   },
   "research/SOURCE_PARITY_MANIFEST.md": {
-    "mtime": 1790784477.1411157,
-    "seen": 1790784609.581022,
-    "ast_hash": "93703d0ad6b39add23561ed830924184",
+    "mtime": 1790789349.1278057,
+    "seen": 1790790212.570142,
+    "ast_hash": "5377314c0d2b910d7d16a3f68ac3a6f1",
     "semantic_hash": ""
   },
   "research/Screen Recording 2026-01-12 at 11.21.36\u202fPM.mov": {
@@ -1896,9 +1896,9 @@
     "semantic_hash": ""
   },
   "research/SPOTIFY_OAUTH_CONFIGURATION.md": {
-    "mtime": 1790778260.213873,
-    "seen": 1790781027.368271,
-    "ast_hash": "60fb58b483dd9a5fc3ee7e4c491d895b",
+    "mtime": 1790789411.1851778,
+    "seen": 1790790212.570144,
+    "ast_hash": "bfb07d49a431cef646bd6c0a03646d7c",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Overlay/ExpandedShellMorph.swift": {
@@ -1914,9 +1914,9 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/ExpandedIslandMotion.swift": {
-    "mtime": 1790786807.1680684,
-    "seen": 1790787306.289633,
-    "ast_hash": "4f7a84f5673591c509d70c9a33dd1f07",
+    "mtime": 1790787754.5465665,
+    "seen": 1790790212.569977,
+    "ast_hash": "ecd4c77b925aeb3bcded30aebbff195f",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/AgentLiveApprovalEndToEndTests.swift": {
@@ -1932,21 +1932,33 @@
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/ExpandedIslandMotionTests.swift": {
-    "mtime": 1790786807.168969,
-    "seen": 1790787306.289736,
-    "ast_hash": "31d26a8aa9233d8d50b6a770abfe260f",
+    "mtime": 1790787795.472006,
+    "seen": 1790790212.5700622,
+    "ast_hash": "88757e1c59366d84fc9ea82e79d8e27b",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/MediaCapabilityParityTests.swift": {
-    "mtime": 1790786886.4368436,
-    "seen": 1790787306.289762,
-    "ast_hash": "0858b5bf2a9c6e346bc2bb8446b60982",
+    "mtime": 1790789178.388048,
+    "seen": 1790790212.57008,
+    "ast_hash": "5cb58a10520e03545f02606e6432ec2a",
     "semantic_hash": ""
   },
   "research/PHASE15_16_STATUS_2026-09-30.md": {
     "mtime": 1790786886.4875493,
     "seen": 1790787306.28983,
     "ast_hash": "8422dfca0169d74da4717e24df5122a4",
+    "semantic_hash": ""
+  },
+  "research/PHASE17_STATUS_2026-09-30.md": {
+    "mtime": 1790790186.953138,
+    "seen": 1790790212.570139,
+    "ast_hash": "fb4c44284873f9b612384690149d5ec6",
+    "semantic_hash": ""
+  },
+  "research/SPOTIFY_DISTRIBUTOR_SETUP.md": {
+    "mtime": 1790789333.0642643,
+    "seen": 1790790212.570143,
+    "ast_hash": "ebaa61c447a545977a583414fab27d46",
     "semantic_hash": ""
   }
 }
