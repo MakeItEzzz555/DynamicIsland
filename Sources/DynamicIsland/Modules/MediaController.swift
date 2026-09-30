@@ -569,6 +569,24 @@ final class MediaController: ObservableObject {
         refresh()
     }
 
+    /// Plays a Spotify item through Spotify's own scripting dictionary
+    /// (`play track`). Only well-formed Spotify URIs are accepted, so no
+    /// caller text is ever interpolated into the script.
+    @discardableResult
+    func playSpotifyURI(_ uri: String) -> Bool {
+        guard Self.isValidSpotifyURI(uri) else { return false }
+        send(command: "play track \"\(uri)\"", to: .spotify)
+        refresh()
+        return true
+    }
+
+    nonisolated static func isValidSpotifyURI(_ uri: String) -> Bool {
+        uri.range(
+            of: #"^spotify:(track|album|playlist|episode|show|artist):[A-Za-z0-9]{8,40}$"#,
+            options: .regularExpression
+        ) != nil
+    }
+
     func nextTrack() {
         guard isTransportControlAvailable else { return }
         requestArtworkFlip(direction: .next, reason: "nextTrack command")
