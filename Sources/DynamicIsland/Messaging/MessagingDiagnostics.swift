@@ -6,6 +6,7 @@ struct MessagingPreferencesPersistence {
     static let enabledKey = "messaging.enabled"
     static let showPreviewKey = "messaging.showPreviewOnCompact"
     static let mutedProvidersKey = "messaging.mutedProviders"
+    static let readsNotificationsKey = "messaging.readsSystemNotifications"
 
     let defaults: UserDefaults
 
@@ -17,6 +18,7 @@ struct MessagingPreferencesPersistence {
         if defaults.object(forKey: Self.showPreviewKey) != nil {
             preferences.showPreviewOnCompact = defaults.bool(forKey: Self.showPreviewKey)
         }
+        preferences.readsSystemNotifications = defaults.bool(forKey: Self.readsNotificationsKey)
         let muted = defaults.stringArray(forKey: Self.mutedProvidersKey) ?? []
         preferences.mutedProviders = Set(muted.compactMap(Self.provider(named:)))
         return preferences
@@ -26,6 +28,7 @@ struct MessagingPreferencesPersistence {
         defaults.set(preferences.enabled, forKey: Self.enabledKey)
         defaults.set(preferences.showPreviewOnCompact, forKey: Self.showPreviewKey)
         defaults.set(preferences.mutedProviders.map(\.stableName).sorted(), forKey: Self.mutedProvidersKey)
+        defaults.set(preferences.readsSystemNotifications, forKey: Self.readsNotificationsKey)
     }
 
     static func provider(named name: String) -> MessagingProviderID? {

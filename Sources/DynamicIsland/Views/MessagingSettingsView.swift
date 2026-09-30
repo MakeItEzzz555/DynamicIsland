@@ -6,6 +6,8 @@ import SwiftUI
 struct MessagingSettingsView: View {
     @ObservedObject var controller: MessagingController
     @State private var copied = false
+    @State private var fullDiskAccess: FullDiskAccessState = .unknown
+    @State private var automation: MessagesAutomationPermission = .unknown
 
     var body: some View {
         let report = MessagingDiagnosticsReport.make(controller: controller)
@@ -15,6 +17,22 @@ struct MessagingSettingsView: View {
                 Toggle("Show message preview on the compact island", isOn: $controller.preferences.showPreviewOnCompact)
                     .disabled(!controller.preferences.enabled)
                 HelpText("Messages are kept in memory only while they are shown. Message text, conversations and reply drafts are never saved to disk or included in diagnostics.")
+            }
+
+            SettingsGroup("Message Notifications & Replies") {
+                Toggle("Read message notifications", isOn: $controller.preferences.readsSystemNotifications)
+                    .disabled(!controller.preferences.enabled)
+                HelpText("DynamicIsland reads new Messages notifications from Notification Center and matches each one to its exact conversation in your local Messages database, read-only. macOS requires Full Disk Access for this. It is used only for this feature, and replies are only offered when a notification matches exactly one conversation.")
+                statusRow("Full Disk Access", fullDiskAccessText, ok: fullDiskAccess == .granted)
+                statusRow("Automation (Messages)", automationText, ok: automation == .granted)
+                HStack {
+                    Button("Open Full Disk Access Settings") {
+                        NSWorkspace.shared.open(FullDiskAccessProbe.settingsURL)
+                    }
+                    Button("Re-check") { recheck() }
+                }
+                .controlSize(.small)
+                HelpText("Automation permission is requested by macOS the first time you send a reply.")
             }
 
             SettingsGroup("Providers") {
@@ -28,7 +46,7 @@ struct MessagingSettingsView: View {
 
             SettingsGroup("Diagnostics") {
                 HStack {
-                    Button("Refresh") { controller.refreshProviders() }
+                    Button("Refresh") { recheck() }
                     Button(copied ? "Copied" : "Copy Diagnostics") {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(report.plainText(), forType: .string)
@@ -39,6 +57,8 @@ struct MessagingSettingsView: View {
                 HelpText("Includes provider availability and capabilities only. Never includes message text, names, handles or conversation identifiers.")
             }
         }
+        .onAppear { recheck() }
+        .onChange(of: controller.preferences.readsSystemNotifications) { _, _ in recheck() }
     }
 
     @ViewBuilder
@@ -69,7 +89,9 @@ struct MessagingSettingsView: View {
             detail("Incoming", row.observationSummary)
             detail("Reply", row.replySummary)
             detail("Exact conversation", row.exactTarget ? "Available" : (row.limitations[.exactConversationTarget] ?? "Not available"))
-            detail("Permission", row.hasAdapter ? "None required" : "—")
+            detail("Permission", row.provider == .messages
+                ? "Full Disk Access (reading) and Automation (sending)"
+                : (row.hasAdapter ? "None required" : "—"))
             detail("Fallback", row.fallbackSummary)
             detail("Last event", row.lastEventAt.map { $0.formatted(date: .abbreviated, time: .shortened) } ?? "Never")
             if row.hasAdapter, row.openAction {
@@ -78,6 +100,43 @@ struct MessagingSettingsView: View {
                 }
                 .controlSize(.small)
             }
+        }
+    }
+
+    private var fullDiskAccessText: String {
+        switch fullDiskAccess {
+        case .granted: "Granted"
+        case .denied: "Not granted — add DynamicIsland in Privacy & Security › Full Disk Access"
+        case .unknown: "Unknown on this macOS version"
+        }
+    }
+
+    private var automationText: String {
+        switch automation {
+        case .granted: "Allowed"
+        case .denied: "Denied — allow DynamicIsland for Messages in Privacy & Security › Automation"
+        case .notDetermined: "Not asked yet"
+        case .unknown: "Unknown (Messages is not running)"
+        }
+    }
+
+    private func recheck() {
+        fullDiskAccess = FullDiskAccessProbe.state()
+        automation = (controller.adapters[.messages] as? MessagesAppAdapter)?.automationPermission ?? .unknown
+        controller.refreshProviders()
+    }
+
+    private func statusRow(_ label: String, _ value: String, ok: Bool) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: ok ? "checkmark.circle.fill" : "exclamationmark.circle")
+                .foregroundStyle(ok ? Color.green : Color.orange)
+            Text(label)
+                .font(.system(size: 11, weight: .medium))
+                .frame(width: 150, alignment: .leading)
+            Text(value)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 

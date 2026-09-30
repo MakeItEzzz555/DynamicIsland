@@ -19,6 +19,13 @@ protocol MessagingProviderAdapter: AnyObject {
     /// Returns false when nothing could be opened.
     func open(_ conversation: MessagingConversation?) -> Bool
     func refresh()
+    /// Starts/stops reading incoming messages. Only called after the user
+    /// opts in; adapters without an incoming source ignore it.
+    func setObservationEnabled(_ enabled: Bool)
+}
+
+extension MessagingProviderAdapter {
+    func setObservationEnabled(_ enabled: Bool) {}
 }
 
 // MARK: - Focus
@@ -40,7 +47,9 @@ final class SystemMessagingFocusProvider: MessagingFocusProviding {
     private var observation: NSKeyValueObservation?
 
     init() {
-        observation = INFocusStatusCenter.default.observe(\.focusStatus, options: [.new]) { [weak self] _, _ in
+        // KVO may fire off the main thread; the handler must not inherit
+        // main-actor isolation from this initializer.
+        observation = INFocusStatusCenter.default.observe(\.focusStatus, options: [.new]) { @Sendable [weak self] _, _ in
             Task { @MainActor [weak self] in self?.onChange?() }
         }
     }
@@ -212,6 +221,9 @@ final class MessagingController: ObservableObject {
         var enabled = true
         var showPreviewOnCompact = true
         var mutedProviders: Set<MessagingProviderID> = []
+        /// Opt-in: read incoming message notifications (needs Full Disk
+        /// Access). Off by default; never enabled or requested at launch.
+        var readsSystemNotifications = false
     }
 
     @Published private(set) var queue = MessagingQueue()
@@ -228,6 +240,7 @@ final class MessagingController: ObservableObject {
     private let sendTimeout: TimeInterval
     private let presentationEnabled: () -> Bool
     private var settleTasks: [MessagingConversationID: Task<Void, Never>] = [:]
+    private var observationEnabled: [MessagingProviderID: Bool] = [:]
 
     init(
         adapters: [MessagingProviderAdapter],
@@ -253,6 +266,7 @@ final class MessagingController: ObservableObject {
         focus.onChange = { [weak self] in
             self?.focusDidChange()
         }
+        applyObservation()
         publishActivity()
     }
 
@@ -471,7 +485,21 @@ final class MessagingController: ObservableObject {
         ))
     }
 
+    /// Toggles adapters only when their desired state changes, so other
+    /// preference edits never restart (and re-baseline) observation.
+    private func applyObservation() {
+        for (provider, adapter) in adapters {
+            let desired = preferences.enabled &&
+                preferences.readsSystemNotifications &&
+                !preferences.mutedProviders.contains(provider)
+            guard observationEnabled[provider] != desired else { continue }
+            observationEnabled[provider] = desired
+            adapter.setObservationEnabled(desired)
+        }
+    }
+
     private func applyPreferences() {
+        applyObservation()
         if !preferences.enabled {
             for id in settleTasks.keys { settleTasks[id]?.cancel() }
             settleTasks.removeAll()

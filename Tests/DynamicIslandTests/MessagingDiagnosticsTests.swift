@@ -22,7 +22,8 @@ final class MessagingDiagnosticsTests: XCTestCase {
         XCTAssertEqual(Set(stored.keys), [
             MessagingPreferencesPersistence.enabledKey,
             MessagingPreferencesPersistence.showPreviewKey,
-            MessagingPreferencesPersistence.mutedProvidersKey
+            MessagingPreferencesPersistence.mutedProvidersKey,
+            MessagingPreferencesPersistence.readsNotificationsKey
         ])
     }
 
