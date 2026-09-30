@@ -1,8 +1,10 @@
 # Spotify OAuth configuration
 
-DynamicIsland uses Spotify Authorization Code with PKCE. Release users do not create a Spotify developer application or enter a Client ID.
+DynamicIsland uses Spotify Authorization Code with PKCE. Release users do **not** create a Spotify developer application or enter a Client ID.
 
-For a packaged build, create the DynamicIsland Spotify application once in Spotify's developer dashboard and register this redirect URI exactly:
+The distributor setup and current provider constraints are documented in `research/SPOTIFY_DISTRIBUTOR_SETUP.md`.
+
+For a packaged build, the DynamicIsland distributor creates the Spotify developer application once and registers this redirect URI exactly:
 
 `dynamicisland://spotify-callback`
 
@@ -16,4 +18,10 @@ The package script writes the value to the generated app `Info.plist` as `Dynami
 
 Debug builds retain a developer-only Client-ID override in Settings so local contributors can test OAuth without changing tracked source. Release Settings never expose the Client ID.
 
-Spotify access, expiry, and refresh credentials are stored in Keychain. Disconnect removes all stored Spotify credentials.
+Spotify access, expiry, refresh credentials, and the original authorization timestamp are stored in Keychain. Disconnect removes them all.
+
+Spotify user refresh tokens expire six months after the original authorization. DynamicIsland preserves that original timestamp across access-token refreshes. A known six-month expiry or token-endpoint `invalid_grant` clears stale credentials and requires an explicit **Reconnect Spotify** action.
+
+HTTP 429 responses are not automatically retried. A structured Spotify `QUOTA_EXCEEDED` response is surfaced separately from ordinary rate limiting.
+
+Local Spotify.app media detection and playback controls are independent from Web API configuration and remain available when no Client ID is packaged.
