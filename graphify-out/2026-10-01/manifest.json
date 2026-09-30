@@ -24,9 +24,9 @@
     "semantic_hash": "0b4b7c29df007001c39c574a0dda9bd2"
   },
   "Sources/DynamicIsland/App/DynamicIslandApp.swift": {
-    "mtime": 1790805004.2164392,
-    "seen": 1790805372.9615738,
-    "ast_hash": "8c120c81761c9e4913b366522a9a7e13",
+    "mtime": 1790795216.6952608,
+    "seen": 1790798548.739445,
+    "ast_hash": "a584948510ac479203eca3e9f71510f3",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/App/LaunchAtLoginController.swift": {
@@ -54,9 +54,9 @@
     "semantic_hash": "9deb2ada1cc834bbebf8bbad9c8978a1"
   },
   "Sources/DynamicIsland/Geometry/NotchGeometryService.swift": {
-    "mtime": 1790805140.6983988,
-    "seen": 1790805372.961581,
-    "ast_hash": "d375f73aa2c269a36b67d88aa77dbeac",
+    "mtime": 1790797289.6911469,
+    "seen": 1790798548.739451,
+    "ast_hash": "02e02781b8660af8ac9865e80143b135",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Modules/AirDropService.swift": {
@@ -162,9 +162,9 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Overlay/OverlayWindowController.swift": {
-    "mtime": 1790804772.9140253,
-    "seen": 1790805372.961629,
-    "ast_hash": "d3d3ac720bd88d692be750be045891a0",
+    "mtime": 1790797300.8038402,
+    "seen": 1790798548.7394948,
+    "ast_hash": "a663372c76c05edf9632ed479113172d",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/State/AppSettings.swift": {
@@ -204,9 +204,9 @@
     "semantic_hash": "e45da4c5467fe497679f227ded264dae"
   },
   "Sources/DynamicIsland/Views/IslandRootView.swift": {
-    "mtime": 1790804516.6850648,
-    "seen": 1790805372.9616451,
-    "ast_hash": "69049aae8a86797ffd0ffd239c83c9a8",
+    "mtime": 1790797296.9165041,
+    "seen": 1790798548.73951,
+    "ast_hash": "1616189fed8290648cda2df77f2e7c09",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/IslandThemeBackground.swift": {
@@ -222,9 +222,9 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/SettingsView.swift": {
-    "mtime": 1790804329.7407079,
-    "seen": 1790805372.96166,
-    "ast_hash": "a6efb56d5d877003fb60eb0f3a211669",
+    "mtime": 1790794550.3529282,
+    "seen": 1790798548.73953,
+    "ast_hash": "0a802fba83596904f0bf444da4a6ad02",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/AppSettingsTests.swift": {
@@ -432,9 +432,9 @@
     "semantic_hash": ""
   },
   "context.md": {
-    "mtime": 1790805356.8255506,
-    "seen": 1790805372.961792,
-    "ast_hash": "46f2e0df93bd1b2e8353f2e58a30312d",
+    "mtime": 1790789346.7169116,
+    "seen": 1790790212.570123,
+    "ast_hash": "76cad328c3f4e2dc8fefcc9818f49378",
     "semantic_hash": ""
   },
   "research/ARCHITECTURE_BASELINE.md": {
@@ -1314,9 +1314,9 @@
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/SystemHUDArbitrationTests.swift": {
-    "mtime": 1790805124.0241878,
-    "seen": 1790805372.961772,
-    "ast_hash": "0c314f5fd83388bf0994d0d1156c2500",
+    "mtime": 1790794455.216163,
+    "seen": 1790798548.739636,
+    "ast_hash": "8d5a67bf4fcf7e79bb9414ac2bb80d37",
     "semantic_hash": ""
   },
   "research/SYSTEM_PRESENCE_HUD_PHASE_2026-09-29.md": {
@@ -1362,9 +1362,9 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Modules/ProductivityModules.swift": {
-    "mtime": 1790804744.9305131,
-    "seen": 1790805372.961612,
-    "ast_hash": "9056240f8783dc04fd32e51e70d06628",
+    "mtime": 1790795212.388438,
+    "seen": 1790798548.73948,
+    "ast_hash": "8e786e5d286e502bdb97c8b33f576ed6",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/KeepAwakeControllerTests.swift": {
@@ -1782,9 +1782,9 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/ProductivityDeckView.swift": {
-    "mtime": 1790804744.9301393,
-    "seen": 1790805372.96165,
-    "ast_hash": "b09db9ed503c1f96610358d7bfc39f21",
+    "mtime": 1790797043.923951,
+    "seen": 1790798548.739516,
+    "ast_hash": "1575965cfb955b6ab15d6e3d50404535",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/RightWorkspaceSettingsView.swift": {
@@ -1836,9 +1836,9 @@
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/RightWorkspaceSnapshotTests.swift": {
-    "mtime": 1790804753.630707,
-    "seen": 1790805372.961766,
-    "ast_hash": "581e573a5ec12597a34fb2a45cf6f3e6",
+    "mtime": 1790797535.1696098,
+    "seen": 1790798548.7396312,
+    "ast_hash": "304734510dc750a2c30bad00bc660ff0",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/RightWorkspaceTests.swift": {
@@ -1980,45 +1980,27 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/ScreenRecordingViews.swift": {
-    "mtime": 1790804744.9298143,
-    "seen": 1790805372.961657,
-    "ast_hash": "3b5a7ca668b5ccf9eb200f1c472ed34f",
+    "mtime": 1790800366.6890352,
+    "seen": 1790800872.977199,
+    "ast_hash": "c4ec8da344b3ba46fb2b46e6c435e69f",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/IslandDisplayMetricsTests.swift": {
-    "mtime": 1790804056.0287263,
-    "seen": 1790805372.961739,
-    "ast_hash": "7992cb55c0ae9abcef09c8f3d5a4cb33",
+    "mtime": 1790800517.8701541,
+    "seen": 1790800872.977277,
+    "ast_hash": "44011283a6c4e9743110ad7447b1c3ae",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/ScreenRecordingTests.swift": {
-    "mtime": 1790804803.5287428,
-    "seen": 1790805372.961768,
-    "ast_hash": "b144fea349fa71a1960a4e54cabffb51",
+    "mtime": 1790797834.2671115,
+    "seen": 1790798548.7396328,
+    "ast_hash": "028e523b486f0a1cc591dafcbd2ffe84",
     "semantic_hash": ""
   },
   "research/SCREEN_RECORDING_PARITY_2026-09-30.md": {
     "mtime": 1790800699.3727586,
     "seen": 1790800872.977344,
     "ast_hash": "8b09b9d0517c615278b785c9f7a7f376",
-    "semantic_hash": ""
-  },
-  "Sources/DynamicIsland/Views/ScreenRecordingSetupPresenter.swift": {
-    "mtime": 1790805140.698604,
-    "seen": 1790805372.961656,
-    "ast_hash": "da328058d4c834d06a3a39a03aa34ee5",
-    "semantic_hash": ""
-  },
-  "Tests/DynamicIslandTests/SystemHUDShellSnapshotTests.swift": {
-    "mtime": 1790804443.6822102,
-    "seen": 1790805372.9617732,
-    "ast_hash": "c726cda31a895a8ddc508d8fcbdee626",
-    "semantic_hash": ""
-  },
-  "research/HUD_RECORDER_RUNTIME_2026-10-01.md": {
-    "mtime": 1790805356.5713649,
-    "seen": 1790805372.961805,
-    "ast_hash": "8b9942fa5edce47d0190460378c19945",
     "semantic_hash": ""
   }
 }
