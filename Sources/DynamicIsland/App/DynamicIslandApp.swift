@@ -213,6 +213,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             agentManagedControl: agentManagedControl,
             agentProjects: agentProjects,
             productivity: productivity,
+            systemHUD: systemHUDController,
             messaging: messaging,
             rightWorkspace: rightWorkspace,
             workspaceServices: workspaceServices

@@ -49,6 +49,7 @@ public struct IslandGeometry: Equatable {
 
 public enum CollapsedPresentationKind: String, Equatable, Sendable {
     case normal
+    case systemHUD
     case agentRoutine
     case agentAttention
 }
@@ -73,6 +74,19 @@ public struct CollapsedPresentationProfile: Equatable, Sendable {
         horizontalContentInset: 8,
         glowStrength: 0
     )
+
+    public static func systemHUD(value: Double) -> Self {
+        _ = value
+        return Self(
+            kind: .systemHUD,
+            contentProfile: .systemHUD,
+            widthDelta: 12,
+            heightDelta: 12,
+            bottomCornerRadius: 18,
+            horizontalContentInset: 10,
+            glowStrength: 0
+        )
+    }
 
     public static func agentRoutine(leftContentWidth: CGFloat, rightContentWidth: CGFloat) -> Self {
         Self(
@@ -505,7 +519,7 @@ public final class NotchGeometryService {
     }
 
     @MainActor
-    private static func preferredScreen() -> NSScreen? {
+    static func preferredScreen() -> NSScreen? {
         NSScreen.screens.first { screen in
             screen.safeAreaInsets.top > 0
         } ?? NSScreen.main ?? NSScreen.screens.first

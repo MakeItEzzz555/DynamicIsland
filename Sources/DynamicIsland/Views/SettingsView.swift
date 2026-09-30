@@ -1259,7 +1259,8 @@ private struct SystemHUDSettingsPreview: View {
             priority: 200,
             isActive: true,
             progress: descriptor.progress,
-            updatedAt: Date()
+            updatedAt: Date(),
+            systemHUDKind: descriptor.kind
         )
     }
 }

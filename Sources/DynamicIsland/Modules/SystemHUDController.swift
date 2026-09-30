@@ -18,6 +18,48 @@ enum SystemHUDKind: String, Equatable, Sendable, CaseIterable {
     case focus
 }
 
+struct SystemHUDAccentComponents: Equatable, Sendable {
+    let red: Double
+    let green: Double
+    let blue: Double
+    let opacity: Double
+
+    static func resolve(kind: SystemHUDKind, value: Double, isMuted: Bool = false) -> Self {
+        let t = min(max(value, 0), 1)
+        switch kind {
+        case .volume:
+            if isMuted {
+                return Self(red: 0.46, green: 0.62, blue: 0.74, opacity: 0.58)
+            }
+            // Stable light-blue hue; value controls luminance/saturation and glow energy.
+            return Self(
+                red: 0.38 - (0.08 * t),
+                green: 0.70 + (0.14 * t),
+                blue: 0.96 + (0.04 * t),
+                opacity: 0.55 + (0.45 * t)
+            )
+        case .brightness:
+            // Warm, readable light-yellow without turning orange at low values.
+            return Self(
+                red: 1.0,
+                green: 0.78 + (0.14 * t),
+                blue: 0.30 + (0.08 * t),
+                opacity: 0.54 + (0.46 * t)
+            )
+        case .capsLock, .battery, .audioDevice, .focus:
+            return Self(red: 1, green: 1, blue: 1, opacity: 0.82)
+        }
+    }
+
+    var glowStrength: Double { min(max(opacity * 0.92, 0), 1) }
+}
+
+enum SystemHUDFormatting {
+    static func percentage(_ value: Double) -> String {
+        "\(Int((min(max(value, 0), 1) * 100).rounded()))%"
+    }
+}
+
 struct SystemHUDDescriptor: Equatable, Sendable {
     let kind: SystemHUDKind
     let title: String
@@ -532,6 +574,32 @@ private final class SystemMediaControlBackend {
         default:
             return nil
         }
+    }
+
+    func setVolume(_ value: Double) -> SystemHUDSnapshot? {
+        let target = Float32(min(max(value, 0), 1))
+        guard writeVolumeScalar(target), let verified = readVolumeScalar() else { return nil }
+        if verified > 0.001 {
+            _ = setMute(false)
+            previousVolumeBeforeMute = verified
+        }
+        return SystemHUDSnapshot(
+            kind: .volume,
+            value: Double(verified),
+            isMuted: readMute() ?? (verified <= 0.001),
+            updatedAt: Date()
+        )
+    }
+
+    func setBrightness(_ value: Double) -> SystemHUDSnapshot? {
+        let target = Float(min(max(value, 0), 1))
+        guard writeBrightness(target), let verified = readBrightness() else { return nil }
+        return SystemHUDSnapshot(
+            kind: .brightness,
+            value: Double(verified),
+            isMuted: false,
+            updatedAt: Date()
+        )
     }
 
     private func changeVolume(by delta: Float32) -> SystemHUDSnapshot? {
@@ -1385,6 +1453,38 @@ final class SystemHUDController {
         }
     }
 
+    /// Interactive HUD slider authority. A successful return always reflects
+    /// system readback after the write; failures never publish optimistic state.
+    @discardableResult
+    func setInteractiveValue(kind: SystemHUDKind, value: Double) -> SystemHUDSnapshot? {
+        guard let settings, settings.systemHUDsEnabled else { return nil }
+        let snapshot: SystemHUDSnapshot?
+        switch kind {
+        case .volume:
+            guard settings.volumeHUDEnabled else { return nil }
+            snapshot = backend.setVolume(value)
+        case .brightness:
+            guard settings.brightnessHUDEnabled else { return nil }
+            snapshot = backend.setBrightness(value)
+        case .capsLock, .battery, .audioDevice, .focus:
+            return nil
+        }
+        guard let snapshot else { return nil }
+        present(snapshot.descriptor)
+        return snapshot
+    }
+
+    func currentInteractiveSnapshot(kind: SystemHUDKind) -> SystemHUDSnapshot? {
+        switch kind {
+        case .volume:
+            backend.currentSnapshot(for: SystemMediaKey.volumeUp)
+        case .brightness:
+            backend.currentSnapshot(for: SystemMediaKey.brightnessUp)
+        case .capsLock, .battery, .audioDevice, .focus:
+            nil
+        }
+    }
+
     private func present(_ descriptor: SystemHUDDescriptor) {
         guard let generation = arbiter.present(descriptor) else { return }
         let current = arbiter.current ?? descriptor
@@ -1398,7 +1498,8 @@ final class SystemHUDController {
                 priority: 200,
                 isActive: true,
                 progress: current.progress,
-                updatedAt: current.updatedAt
+                updatedAt: current.updatedAt,
+                systemHUDKind: current.kind
             )
         )
         scheduleDismiss(generation: generation, descriptor: current)

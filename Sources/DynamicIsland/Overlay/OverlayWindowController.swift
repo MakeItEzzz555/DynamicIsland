@@ -566,6 +566,8 @@ final class OverlayWindowController {
         force: Bool = false
     ) {
         guard canPresentOverlay else { return }
+        let targetScreen = islandPanel.screen ?? NotchGeometryService.preferredScreen()
+        layoutStore.setDisplayMetrics(IslandDisplayMetricsResolver.resolve(screen: targetScreen))
         let signature = currentGeometrySignature
         guard force || signature != lastAppliedGeometrySignature else {
             #if DEBUG
@@ -579,6 +581,7 @@ final class OverlayWindowController {
         }
 
         let geometry = geometryService.geometry(
+            for: targetScreen,
             collapsedSize: settings.collapsedSize,
             expandedSize: resolvedExpandedSize,
             collapsedActivityProfile: collapsedActivityLayoutProfile,
@@ -620,7 +623,10 @@ final class OverlayWindowController {
             guard force || correctedSignature != self.lastAppliedGeometrySignature else {
                 return
             }
+            let correctedScreen = self.islandPanel.screen ?? NotchGeometryService.preferredScreen()
+            self.layoutStore.setDisplayMetrics(IslandDisplayMetricsResolver.resolve(screen: correctedScreen))
             let correctedGeometry = self.geometryService.geometry(
+                for: correctedScreen,
                 collapsedSize: self.settings.collapsedSize,
                 expandedSize: self.resolvedExpandedSize,
                 collapsedActivityProfile: self.collapsedActivityLayoutProfile,
@@ -656,6 +662,13 @@ final class OverlayWindowController {
         }
     }
 
+    private var activeInteractiveSystemHUD: DynamicIslandLiveActivity? {
+        modules.liveActivities.activities.first {
+            guard $0.id == LiveActivityStore.systemHUDActivityID else { return false }
+            return $0.systemHUDKind == .volume || $0.systemHUDKind == .brightness
+        }
+    }
+
     private var collapsedContentMode: CollapsedIslandContentMode {
         collapsedContentMode(activities: modules.liveActivities.activities)
     }
@@ -668,6 +681,9 @@ final class OverlayWindowController {
         if let attention = modules.agentAttention.presentation {
             let session = attention.primary.flatMap { modules.agentEvents.session(for: $0.session) }
             return AgentCollapsedShellPresentation.attention(attention, session: session)
+        }
+        if let hud = activeInteractiveSystemHUD {
+            return .systemHUD(value: hud.progress ?? 0)
         }
         switch collapsedContentMode {
         case .inactive, .agent:
@@ -780,7 +796,9 @@ final class OverlayWindowController {
     }
 
     private var resolvedExpandedSize: CGSize {
-        expandedPresentationProfile.resolvedSize(from: settings.expandedSize)
+        let nominal = expandedPresentationProfile.resolvedSize(from: settings.expandedSize)
+        let scale = layoutStore.displayMetrics.expandedShellScale
+        return CGSize(width: nominal.width * scale, height: nominal.height * scale)
     }
 
     private var currentGeometrySignature: OverlayGeometrySignature {
@@ -1378,7 +1396,10 @@ final class OverlayWindowController {
         guard canPresentOverlay else { return }
         guard islandState.state == .collapsed else { return }
 
+        let targetScreen = islandPanel.screen ?? NotchGeometryService.preferredScreen()
+        layoutStore.setDisplayMetrics(IslandDisplayMetricsResolver.resolve(screen: targetScreen))
         let geometry = geometryService.geometry(
+            for: targetScreen,
             collapsedSize: settings.collapsedSize,
             expandedSize: resolvedExpandedSize,
             collapsedActivityProfile: collapsedActivityLayoutProfile,

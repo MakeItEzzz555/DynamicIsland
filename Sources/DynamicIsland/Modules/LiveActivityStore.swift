@@ -240,6 +240,7 @@ struct DynamicIslandLiveActivity: Identifiable, Equatable, Sendable {
     let isActive: Bool
     let progress: Double?
     let updatedAt: Date
+    let systemHUDKind: SystemHUDKind?
     let batteryState: BatteryLiveActivityState?
     let lifecycle: LiveActivityLifecycleMetadata
 
@@ -253,6 +254,7 @@ struct DynamicIslandLiveActivity: Identifiable, Equatable, Sendable {
         isActive: Bool,
         progress: Double?,
         updatedAt: Date,
+        systemHUDKind: SystemHUDKind? = nil,
         batteryState: BatteryLiveActivityState? = nil,
         lifecycle: LiveActivityLifecycleMetadata = .legacy
     ) {
@@ -265,6 +267,7 @@ struct DynamicIslandLiveActivity: Identifiable, Equatable, Sendable {
         self.isActive = isActive
         self.progress = progress
         self.updatedAt = updatedAt
+        self.systemHUDKind = systemHUDKind
         self.batteryState = batteryState
         self.lifecycle = lifecycle
     }

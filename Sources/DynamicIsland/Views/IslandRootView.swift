@@ -252,18 +252,31 @@ enum IslandShellMotion {
 struct ExpandedIslandLayoutMetrics {
     let containerSize: CGSize
     let horizontalPadding: CGFloat
-    let topPadding: CGFloat = IslandShellLayout.expandedTopPadding
-    let bottomPadding: CGFloat = IslandShellLayout.expandedBottomPadding
-    let tabSwitcherHeight: CGFloat = 34
-    let tabToPageSpacing: CGFloat = 10
-    let pageColumnSpacing: CGFloat = 10
-    let cardSpacing: CGFloat = 10
+    let displayMetrics: ResolvedIslandMetrics
+
+    init(
+        containerSize: CGSize,
+        horizontalPadding: CGFloat,
+        displayMetrics: ResolvedIslandMetrics = .fallback
+    ) {
+        self.containerSize = containerSize
+        self.horizontalPadding = horizontalPadding
+        self.displayMetrics = displayMetrics
+    }
+
+    var topPadding: CGFloat { 14 * displayMetrics.spacingScale }
+    var bottomPadding: CGFloat { 20 * displayMetrics.spacingScale }
+    var tabSwitcherHeight: CGFloat { 34 * displayMetrics.compactControlScale }
+    var tabToPageSpacing: CGFloat { 10 * displayMetrics.spacingScale }
+    var pageColumnSpacing: CGFloat { 10 * displayMetrics.spacingScale }
+    var cardSpacing: CGFloat { 10 * displayMetrics.spacingScale }
 
     var innerWidth: CGFloat { max(containerSize.width - (horizontalPadding * 2), 0) }
     var innerHeight: CGFloat { max(containerSize.height - topPadding - bottomPadding, 0) }
     var pageHeight: CGFloat { max(innerHeight - tabSwitcherHeight - tabToPageSpacing, 0) }
     var responsiveScale: CGFloat {
-        min(max(min(pageHeight / 178, innerWidth / 720), 0.78), 1)
+        let localFit = min(pageHeight / 178, innerWidth / 720)
+        return min(max(localFit * displayMetrics.uiScale, 0.76), 1.14)
     }
     var compactScale: CGFloat { responsiveScale }
 
@@ -271,48 +284,51 @@ struct ExpandedIslandLayoutMetrics {
         let spacingBudget = dividerWidth + (pageColumnSpacing * 2)
         let availableColumnWidth = max(innerWidth - spacingBudget, 0)
         let preferredWidth = floor(innerWidth * 0.44)
-        let minimumWidth = min(420, max(360, availableColumnWidth * 0.40))
-        let maximumWidth = min(520, max(availableColumnWidth - minimumMediaColumnWidth, 0))
+        let minBase = 360 * displayMetrics.expandedCardScale
+        let maxBase = 520 * displayMetrics.expandedCardScale
+        let minimumWidth = min(maxBase, max(minBase, availableColumnWidth * 0.40))
+        let maximumWidth = min(maxBase, max(availableColumnWidth - minimumMediaColumnWidth, 0))
         return min(max(preferredWidth, minimumWidth), maximumWidth)
     }
     var mediaColumnWidth: CGFloat {
         max(innerWidth - rightStackWidth - dividerWidth - (pageColumnSpacing * 2), 0)
     }
-    var minimumMediaColumnWidth: CGFloat { min(360, max(300, innerWidth * 0.46)) }
+    var minimumMediaColumnWidth: CGFloat {
+        min(360 * displayMetrics.expandedCardScale, max(300 * displayMetrics.expandedCardScale, innerWidth * 0.46))
+    }
     var shortcutsColumnWidth: CGFloat { rightStackWidth }
-    var dividerWidth: CGFloat { 1 }
-    var dividerHeight: CGFloat { min(max(pageHeight - 10, 100), pageHeight) }
-    var trayAirDropWidth: CGFloat { min(max(innerWidth * 0.29, 150), 188) }
-    var timerHeaderHeight: CGFloat { 24 }
-    var timerControlsHeight: CGFloat { pageHeight < 150 ? 24 : 28 }
-    var timerVerticalSpacingTotal: CGFloat { pageHeight < 150 ? 18 : 20 }
+    var dividerWidth: CGFloat { displayMetrics.dividerThickness }
+    var dividerHeight: CGFloat { min(max(pageHeight - (10 * displayMetrics.spacingScale), 100), pageHeight) }
+    var trayAirDropWidth: CGFloat {
+        min(max(innerWidth * 0.29, 150 * displayMetrics.expandedCardScale), 188 * displayMetrics.expandedCardScale)
+    }
+    var timerHeaderHeight: CGFloat { 24 * compactScale }
+    var timerControlsHeight: CGFloat { (pageHeight < 150 ? 24 : 28) * compactScale }
+    var timerVerticalSpacingTotal: CGFloat { (pageHeight < 150 ? 18 : 20) * displayMetrics.spacingScale }
     var timerReservedHeight: CGFloat { timerHeaderHeight + timerControlsHeight + timerVerticalSpacingTotal }
-    var timerRingSize: CGFloat { min(max(pageHeight - timerReservedHeight, 86), 118) }
+    var timerRingSize: CGFloat {
+        min(max(pageHeight - timerReservedHeight, 86 * compactScale), 118 * displayMetrics.expandedCardScale)
+    }
     var mediaMaxHeight: CGFloat { pageHeight }
     var shortcutsMaxHeight: CGFloat { pageHeight }
     var liveActivitiesMaxHeight: CGFloat { pageHeight }
-    var rightStackSpacing: CGFloat { min(max(14 * compactScale, 12), 16) }
-    var rightStackAvailableHeight: CGFloat {
-        max(pageHeight - rightStackSpacing, 0)
+    var rightStackSpacing: CGFloat {
+        min(max(14 * compactScale * displayMetrics.spacingScale, 11), 18)
     }
-    var liveActivitiesStackHeight: CGFloat {
-        floor(rightStackAvailableHeight * 0.45)
-    }
-    var shortcutsStackHeight: CGFloat {
-        max(rightStackAvailableHeight - liveActivitiesStackHeight, 0)
-    }
+    var rightStackAvailableHeight: CGFloat { max(pageHeight - rightStackSpacing, 0) }
+    var liveActivitiesStackHeight: CGFloat { floor(rightStackAvailableHeight * 0.45) }
+    var shortcutsStackHeight: CGFloat { max(rightStackAvailableHeight - liveActivitiesStackHeight, 0) }
     var statsCardWidth: CGFloat { max((innerWidth - (cardSpacing * 2)) / 3, 0) }
     var statsHeaderHeight: CGFloat { 25 * compactScale }
     var statsGridAvailableHeight: CGFloat { max(pageHeight - statsHeaderHeight - 8 - 4, 0) }
     var statsTwoRowCardHeight: CGFloat { max((statsGridAvailableHeight - cardSpacing) / 2, 0) }
     var statsUsesScroll: Bool { statsTwoRowCardHeight < (48 * compactScale) }
     var statsCardHeight: CGFloat {
-        if statsUsesScroll {
-            return 58 * compactScale
-        }
+        if statsUsesScroll { return 58 * compactScale }
         return min(statsTwoRowCardHeight, 74 * compactScale)
     }
 }
+
 
 struct IslandRootView: View {
     @ObservedObject var settings: AppSettings
@@ -396,6 +412,7 @@ struct IslandRootView: View {
 
     var body: some View {
         animatedIslandCanvas
+            .environment(\.islandDisplayMetrics, layoutStore.displayMetrics)
     }
 
     private var baseIslandCanvas: some View {
@@ -408,7 +425,8 @@ struct IslandRootView: View {
                     collapsedPresentationProfile: layoutStore.collapsedPresentationProfile,
                     collapsedGlowColor: collapsedAgentGlowColor,
                     collapsedBrightGlowColor: collapsedAgentBrightGlowColor,
-                    forcesCollapsedGlow: shouldShowCollapsedAgentGlow
+                    forcesCollapsedGlow: shouldShowCollapsedAgentGlow,
+                    systemHUDActivity: activeInteractiveSystemHUD
                 ) {
                     islandSurfaceContent
                 }
@@ -795,6 +813,13 @@ struct IslandRootView: View {
             batteryEnabled: settings.showBatteryLiveActivity,
             systemHUDEnabled: settings.systemHUDsEnabled
         )
+    }
+
+    private var activeInteractiveSystemHUD: DynamicIslandLiveActivity? {
+        liveActivities.activities.first {
+            guard $0.id == LiveActivityStore.systemHUDActivityID else { return false }
+            return $0.systemHUDKind == .volume || $0.systemHUDKind == .brightness
+        }
     }
 
     private var collapsedLayoutActivities: [DynamicIslandLiveActivity] {
@@ -1460,6 +1485,7 @@ struct IslandSurface<Content: View>: View {
     var collapsedGlowColor: Color = .cyan
     var collapsedBrightGlowColor: Color = .white
     var forcesCollapsedGlow = false
+    var systemHUDActivity: DynamicIslandLiveActivity? = nil
     @ViewBuilder var content: Content
     @Environment(\.isNotchIntegratedShell) private var isNotchIntegratedShell
     @Environment(\.isShellMorphing) private var isShellMorphing
@@ -1513,6 +1539,14 @@ struct IslandSurface<Content: View>: View {
                 }
                 .animation(.easeOut(duration: 0.5), value: forcesCollapsedGlow)
 
+            if !isExpanded,
+               collapsedPresentationProfile.kind == .systemHUD,
+               let systemHUDActivity {
+                SystemHUDBottomOuterGlow(activity: systemHUDActivity)
+                    .transition(.opacity)
+                    .zIndex(3)
+            }
+
             content
                 .padding(.horizontal, usesExpandedContentPadding ? 0 : collapsedHorizontalPadding)
                 .padding(.top, usesExpandedContentPadding ? 0 : IslandShellLayout.collapsedTopPadding)
@@ -1520,6 +1554,45 @@ struct IslandSurface<Content: View>: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .clipShape(shellShape)
         }
+    }
+}
+
+private struct SystemHUDBottomOuterGlow: View {
+    let activity: DynamicIslandLiveActivity
+
+    var body: some View {
+        GeometryReader { proxy in
+            let progress = LiveActivityStore.clampedProgress(activity.progress) ?? 0
+            let kind = activity.systemHUDKind ?? .volume
+            let components = SystemHUDAccentComponents.resolve(
+                kind: kind,
+                value: progress,
+                isMuted: kind == .volume && progress <= 0.0001
+            )
+            let color = Color(
+                red: components.red,
+                green: components.green,
+                blue: components.blue
+            )
+            let strength = 0.18 + (components.glowStrength * 0.82)
+
+            Capsule(style: .continuous)
+                .fill(color.opacity(0.12 * strength))
+                .frame(width: max(proxy.size.width - 34, 1), height: 1.2)
+                .position(x: proxy.size.width / 2, y: proxy.size.height + 0.6)
+                .shadow(
+                    color: color.opacity(0.62 * strength),
+                    radius: 4 + (8 * progress),
+                    y: 3 + (3 * progress)
+                )
+                .shadow(
+                    color: color.opacity(0.25 * strength),
+                    radius: 10 + (9 * progress),
+                    y: 7 + (4 * progress)
+                )
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 
@@ -1797,7 +1870,8 @@ struct CompactIslandView: View {
             if let overlay = layoutResolution.overlayTransient?.activity {
                 CollapsedSystemHUDCompactView(
                     activity: overlay,
-                    layout: sideSlotGeometry
+                    layout: sideSlotGeometry,
+                    controller: modules.systemHUD
                 )
                 .background(Color.black.opacity(0.97))
                 .transition(.compactMediaContent)
@@ -1846,7 +1920,8 @@ struct CompactIslandView: View {
         case .system(let activity):
             CollapsedSystemHUDCompactView(
                 activity: activity,
-                layout: sideSlotGeometry
+                layout: sideSlotGeometry,
+                controller: modules.systemHUD
             )
             .transition(.compactMediaContent)
 
@@ -2270,60 +2345,186 @@ struct CollapsedGenericActivityCompactView: View {
 struct CollapsedSystemHUDCompactView: View {
     let activity: DynamicIslandLiveActivity
     let layout: CompactCollapsedSideSlotGeometry
+    var controller: SystemHUDController? = nil
+
+    @Environment(\.islandDisplayMetrics) private var displayMetrics
+    @State private var confirmedProgress: Double = 0
+    @State private var interactionSupported: Bool? = nil
+    @State private var lastWriteUptime: TimeInterval = 0
 
     var body: some View {
-        CompactCollapsedSideSlotLayout(geometry: layout) {
-            SafeSystemImage(symbolName: activity.symbolName, fallbackSymbolName: "slider.horizontal.3")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(.white.opacity(0.92))
-                .frame(
-                    width: CollapsedActivityLayoutProfile.systemHUDLeftContentWidth,
-                    height: CollapsedActivityLayoutProfile.systemHUDLeftContentWidth
-                )
-        } right: {
-            if let progress {
-                HStack(spacing: 4) {
-                    GeometryReader { proxy in
-                        ZStack(alignment: .leading) {
-                            Capsule().fill(.white.opacity(0.14))
-                            Capsule()
-                                .fill(.white.opacity(0.88))
-                                .frame(width: proxy.size.width * CGFloat(progress))
-                        }
-                    }
-                    .frame(width: 25, height: 3.5)
-
-                    Text(percentText(for: progress))
-                        .font(.system(size: 7.4, weight: .bold, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(.white.opacity(0.82))
-                        .frame(width: 19, alignment: .trailing)
-                }
-                .frame(width: CollapsedActivityLayoutProfile.systemHUDRightContentWidth)
-            } else {
-                Text(activity.subtitle ?? activity.title)
-                    .font(.system(size: 7.2, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.84))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.55)
+        VStack(spacing: sliderKind == nil ? 0 : 3) {
+            CompactCollapsedSideSlotLayout(geometry: layout) {
+                SafeSystemImage(symbolName: activity.symbolName, fallbackSymbolName: "slider.horizontal.3")
+                    .font(.system(size: displayMetrics.icon(11), weight: .bold))
+                    .foregroundStyle(accentColor.opacity(0.96))
                     .frame(
-                        width: CollapsedActivityLayoutProfile.systemHUDRightContentWidth,
-                        alignment: .trailing
+                        width: max(CollapsedActivityLayoutProfile.systemHUDLeftContentWidth * displayMetrics.collapsedSideContentScale, 16),
+                        height: max(CollapsedActivityLayoutProfile.systemHUDLeftContentWidth * displayMetrics.collapsedSideContentScale, 16)
                     )
+                    .contentTransition(.symbolEffect(.replace.byLayer))
+            } right: {
+                if sliderKind != nil {
+                    Text(SystemHUDFormatting.percentage(confirmedProgress))
+                        .font(.system(size: displayMetrics.font(8.2, minimum: 7.4, maximum: 10), weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(accentColor.opacity(0.96))
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .frame(minWidth: 30 * displayMetrics.compactControlScale, alignment: .trailing)
+                } else {
+                    Text(activity.subtitle ?? activity.title)
+                        .font(.system(size: displayMetrics.font(7.4, minimum: 7.2, maximum: 9.4), weight: .bold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.84))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
+                        .frame(
+                            width: CollapsedActivityLayoutProfile.systemHUDRightContentWidth * displayMetrics.collapsedSideContentScale,
+                            alignment: .trailing
+                        )
+                }
+            }
+            .frame(height: sliderKind == nil ? nil : max(17 * displayMetrics.compactControlScale, 16))
+
+            if sliderKind != nil {
+                SystemHUDCompactSlider(
+                    value: confirmedProgress,
+                    accent: accentColor,
+                    isEnabled: interactionSupported == true,
+                    height: displayMetrics.hudSliderHeight,
+                    onChange: { requested, force in
+                        writeInteractiveValue(requested, force: force)
+                    }
+                )
+                .padding(.horizontal, max(8 * displayMetrics.spacingScale, 7))
+                .help(interactionSupported == false ? unsupportedHelp : "Adjust \(activity.title)")
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .contain)
         .accessibilityLabel(
             [activity.title, activity.subtitle].compactMap { $0 }.joined(separator: ", ")
         )
+        .accessibilityValue(sliderKind == nil ? (activity.subtitle ?? "") : SystemHUDFormatting.percentage(confirmedProgress))
+        .onAppear(perform: synchronizeFromAuthority)
+        .onChange(of: activity.progress) { _, _ in synchronizeFromActivity() }
+        .onChange(of: activity.systemHUDKind) { _, _ in synchronizeFromAuthority() }
     }
 
-    private var progress: Double? {
-        LiveActivityStore.clampedProgress(activity.progress)
+    private var sliderKind: SystemHUDKind? {
+        guard activity.progress != nil else { return nil }
+        switch resolvedKind {
+        case .volume, .brightness:
+            return resolvedKind
+        case .capsLock, .battery, .audioDevice, .focus, nil:
+            return nil
+        }
     }
 
-    private func percentText(for progress: Double) -> String {
-        "\(Int((progress * 100).rounded()))%"
+    private var resolvedKind: SystemHUDKind? {
+        if let exact = activity.systemHUDKind { return exact }
+        switch activity.title.lowercased() {
+        case let title where title.contains("volume") || title.contains("muted"):
+            return .volume
+        case let title where title.contains("brightness"):
+            return .brightness
+        default:
+            return nil
+        }
+    }
+
+    private var accentComponents: SystemHUDAccentComponents {
+        SystemHUDAccentComponents.resolve(
+            kind: resolvedKind ?? .volume,
+            value: confirmedProgress,
+            isMuted: resolvedKind == .volume && confirmedProgress <= 0.0001
+        )
+    }
+
+    private var accentColor: Color {
+        Color(
+            red: accentComponents.red,
+            green: accentComponents.green,
+            blue: accentComponents.blue,
+            opacity: accentComponents.opacity
+        )
+    }
+
+    private var unsupportedHelp: String {
+        resolvedKind == .brightness
+            ? "Brightness control is unavailable for this display"
+            : "Volume control is unavailable for this output device"
+    }
+
+    private func synchronizeFromActivity() {
+        guard let progress = activity.progress else { return }
+        confirmedProgress = min(max(progress, 0), 1)
+    }
+
+    private func synchronizeFromAuthority() {
+        synchronizeFromActivity()
+        guard let controller, let kind = sliderKind else {
+            interactionSupported = controller == nil ? nil : false
+            return
+        }
+        if let snapshot = controller.currentInteractiveSnapshot(kind: kind) {
+            confirmedProgress = min(max(snapshot.value, 0), 1)
+            interactionSupported = true
+        } else {
+            interactionSupported = false
+        }
+    }
+
+    private func writeInteractiveValue(_ requested: Double, force: Bool) {
+        guard let controller, let kind = sliderKind, interactionSupported == true else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        guard force || now - lastWriteUptime >= (1.0 / 30.0) else { return }
+        lastWriteUptime = now
+        guard let snapshot = controller.setInteractiveValue(kind: kind, value: requested) else {
+            interactionSupported = false
+            synchronizeFromActivity()
+            return
+        }
+        confirmedProgress = min(max(snapshot.value, 0), 1)
+    }
+}
+
+private struct SystemHUDCompactSlider: View {
+    let value: Double
+    let accent: Color
+    let isEnabled: Bool
+    let height: CGFloat
+    let onChange: (_ value: Double, _ force: Bool) -> Void
+
+    var body: some View {
+        GeometryReader { proxy in
+            let width = max(proxy.size.width, 1)
+            ZStack(alignment: .leading) {
+                Capsule(style: .continuous)
+                    .fill(.white.opacity(isEnabled ? 0.13 : 0.07))
+                Capsule(style: .continuous)
+                    .fill(accent)
+                    .frame(width: width * CGFloat(min(max(value, 0), 1)))
+            }
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0, coordinateSpace: .local)
+                    .onChanged { gesture in
+                        guard isEnabled else { return }
+                        onChange(min(max(gesture.location.x / width, 0), 1), false)
+                    }
+                    .onEnded { gesture in
+                        guard isEnabled else { return }
+                        onChange(min(max(gesture.location.x / width, 0), 1), true)
+                    }
+            )
+        }
+        .frame(height: height)
+        .opacity(isEnabled ? 1 : 0.48)
+        .animation(.smooth(duration: 0.10), value: value)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("System level")
+        .accessibilityValue(SystemHUDFormatting.percentage(value))
     }
 }
 
@@ -2663,7 +2864,8 @@ struct ExpandedIslandView: View {
                 containerSize: proxy.size,
                 horizontalPadding: IslandShellLayout.expandedHorizontalPadding(
                     isNotchIntegrated: isNotchIntegratedShell
-                )
+                ),
+                displayMetrics: layoutStore.displayMetrics
             )
 
             ZStack(alignment: .topLeading) {

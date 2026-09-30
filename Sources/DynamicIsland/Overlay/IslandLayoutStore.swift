@@ -37,6 +37,7 @@ final class IslandLayoutStore: ObservableObject {
     @Published private(set) var collapsedTrailingSidecarFrame: CGRect = .zero
     @Published private(set) var collapsedCompositeInteractionFrame: CGRect = .zero
     @Published var panelFrame: CGRect = .zero
+    @Published private(set) var displayMetrics: ResolvedIslandMetrics = .fallback
     @Published private(set) var isExpandedScrollGestureSuppressed = false
     @Published private(set) var expandedContentScrollRegion: CGRect = .zero
     @Published var isTransientInteractionActive = false
@@ -51,6 +52,11 @@ final class IslandLayoutStore: ObservableObject {
     /// right-workspace page. The overlay uses this to reject island-level
     /// vertical actions without consuming native vertical scrolling.
     @Published private(set) var isRightWorkspaceMirrorActive = false
+
+    func setDisplayMetrics(_ metrics: ResolvedIslandMetrics) {
+        guard displayMetrics != metrics else { return }
+        displayMetrics = metrics
+    }
 
     func setRightWorkspaceMirrorActive(_ active: Bool) {
         guard isRightWorkspaceMirrorActive != active else { return }

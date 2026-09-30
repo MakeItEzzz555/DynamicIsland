@@ -195,6 +195,43 @@ final class SystemHUDArbitrationTests: XCTestCase {
         XCTAssertEqual(AudioOutputDeviceKind.classify(name: "USB Audio DAC"), .generic)
     }
 
+    func testPercentageFormattingNeverTruncatesBoundaryValues() {
+        XCTAssertEqual(SystemHUDFormatting.percentage(0), "0%")
+        XCTAssertEqual(SystemHUDFormatting.percentage(0.09), "9%")
+        XCTAssertEqual(SystemHUDFormatting.percentage(0.10), "10%")
+        XCTAssertEqual(SystemHUDFormatting.percentage(0.99), "99%")
+        XCTAssertEqual(SystemHUDFormatting.percentage(1), "100%")
+        XCTAssertEqual(SystemHUDFormatting.percentage(1.5), "100%")
+    }
+
+    func testVolumeAccentStaysLightBlueAndStrengthTracksValue() {
+        let low = SystemHUDAccentComponents.resolve(kind: .volume, value: 0.1)
+        let high = SystemHUDAccentComponents.resolve(kind: .volume, value: 1.0)
+        XCTAssertGreaterThan(low.blue, low.red)
+        XCTAssertGreaterThan(low.green, low.red)
+        XCTAssertGreaterThan(high.blue, high.red)
+        XCTAssertGreaterThan(high.opacity, low.opacity)
+        XCTAssertGreaterThan(high.glowStrength, low.glowStrength)
+    }
+
+    func testBrightnessAccentStaysLightYellowAndStrengthTracksValue() {
+        let low = SystemHUDAccentComponents.resolve(kind: .brightness, value: 0.1)
+        let high = SystemHUDAccentComponents.resolve(kind: .brightness, value: 1.0)
+        XCTAssertGreaterThan(low.red, low.blue)
+        XCTAssertGreaterThan(low.green, low.blue)
+        XCTAssertGreaterThan(high.opacity, low.opacity)
+        XCTAssertGreaterThan(high.glowStrength, low.glowStrength)
+    }
+
+    func testInteractiveHUDPresentationIsTransientAndTallerThanNormalCollapsedShell() {
+        let normal = CollapsedPresentationProfile.normal
+        let hud = CollapsedPresentationProfile.systemHUD(value: 1)
+        XCTAssertEqual(hud.kind, .systemHUD)
+        XCTAssertGreaterThan(hud.heightDelta, normal.heightDelta)
+        XCTAssertGreaterThan(hud.bottomCornerRadius, normal.bottomCornerRadius)
+        XCTAssertEqual(hud.contentProfile, .systemHUD)
+    }
+
     private func snapshot(
         percentage: Int,
         plugged: Bool,
