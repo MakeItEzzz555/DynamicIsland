@@ -44,6 +44,15 @@ final class IslandLayoutStore: ObservableObject {
     /// AppKit coordinates). They own hover, hit-testing and passthrough
     /// exactly like the shell, and only their own area.
     @Published private(set) var expandedAccessoryFrames: [CGRect] = []
+    /// Panel-local region of the Island page's right workspace; horizontal
+    /// swipes that start inside it page the workspace.
+    @Published private(set) var rightWorkspaceRegion: CGRect = .zero
+
+    func setRightWorkspaceRegion(_ frame: CGRect) {
+        let next = frame.isEmpty || frame.isNull || frame.isInfinite ? .zero : frame.integral
+        guard next != rightWorkspaceRegion else { return }
+        rightWorkspaceRegion = next
+    }
 
     func setExpandedAccessoryFrames(_ frames: [CGRect]) {
         let valid = frames.filter { !$0.isNull && !$0.isInfinite && $0.width > 0 && $0.height > 0 }.map(\.integral)

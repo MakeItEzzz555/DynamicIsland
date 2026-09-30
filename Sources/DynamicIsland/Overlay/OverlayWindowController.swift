@@ -207,6 +207,7 @@ final class OverlayWindowController {
     private var collapsedScrollLastActionAt: CFTimeInterval?
     private var expandedScrollDelta: CGSize = .zero
     private var expandedScrollGestureHandled = false
+    private var rightWorkspaceSwipe = RightWorkspaceSwipeRecognizer()
     private var expandedScrollLastActionAt: CFTimeInterval?
     private var expandedScrollGestureResetWorkItem: DispatchWorkItem?
     private var expandedContentScrollOwnership = ExpandedContentScrollSequenceOwnership()
@@ -1510,6 +1511,10 @@ final class OverlayWindowController {
             return true
         }
 
+        if let handled = routeRightWorkspaceSwipe(event) {
+            return handled
+        }
+
         guard expandedScrollCooldownAllowsAction() else {
             return true
         }
@@ -1607,6 +1612,57 @@ final class OverlayWindowController {
             expandedScrollDelta = .zero
             return true
         case .expand, .none:
+            return true
+        }
+    }
+
+    /// Two-finger horizontal swipes that start over the Island page's right
+    /// workspace page it (Droppy semantics, one page per gesture). Returns
+    /// nil when the event is not a workspace swipe so the existing expanded
+    /// gestures (media, tabs, collapse) keep their behavior.
+    private func routeRightWorkspaceSwipe(_ event: NSEvent) -> Bool? {
+        let workspace = modules.rightWorkspace
+        let pages = workspace.configuration.visiblePages
+        guard modules.navigation.selectedPage == .island,
+              workspace.configuration.swipeEnabled,
+              pages.count > 1 else {
+            rightWorkspaceSwipe.reset()
+            return nil
+        }
+        if !rightWorkspaceSwipe.ownsSequence {
+            let region = screenRect(for: layoutStore.rightWorkspaceRegion)
+            guard !region.isEmpty, region.contains(NSEvent.mouseLocation) else {
+                return nil
+            }
+        }
+        let phase: RightWorkspaceSwipeRecognizer.Phase
+        if !event.momentumPhase.isEmpty {
+            phase = .momentum
+        } else if event.phase.contains(.began) || event.phase.contains(.mayBegin) {
+            phase = .began
+        } else if event.phase.contains(.ended) || event.phase.contains(.cancelled) {
+            phase = .ended
+        } else if event.phase.contains(.changed) {
+            phase = .changed
+        } else {
+            phase = .none
+        }
+        let outcome = rightWorkspaceSwipe.handle(
+            deltaX: event.scrollingDeltaX,
+            deltaY: event.scrollingDeltaY,
+            phase: phase,
+            at: event.timestamp
+        )
+        switch outcome {
+        case .ignored:
+            return nil
+        case .consumed:
+            resetExpandedScrollTracking()
+            return true
+        case .next, .previous:
+            resetExpandedScrollTracking()
+            let changed = outcome == .next ? workspace.showNext() : workspace.showPrevious()
+            debugGesture("right workspace swipe outcome=\(outcome) changed=\(changed) page=\(workspace.currentPage.rawValue)")
             return true
         }
     }

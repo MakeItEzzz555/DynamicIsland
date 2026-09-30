@@ -3048,6 +3048,7 @@ struct ExpandedIslandView: View {
             shortcutsEnabled: settings.shortcutsEnabled
         )
         let showsRightStack = visibility.showsRightStack
+            || modules.rightWorkspace.configuration.visiblePages.contains { $0 != .overview }
 
         return HStack(spacing: metrics.pageColumnSpacing) {
             if settings.mediaEnabled {
@@ -3086,35 +3087,75 @@ struct ExpandedIslandView: View {
             }
 
             if showsRightStack {
-                let liveActivitiesHeight = visibility.showsShortcuts
+                // The page indicator's band comes out of the overview stack
+                // proportionally so no card is covered.
+                let indicatorBand = RightWorkspaceView<EmptyView, EmptyView, EmptyView>
+                    .showsIndicator(modules.rightWorkspace.configuration)
+                    ? RightWorkspaceView<EmptyView, EmptyView, EmptyView>.indicatorBand
+                    : 0
+                let overviewScale = metrics.pageHeight > 0
+                    ? max(metrics.pageHeight - indicatorBand, 0) / metrics.pageHeight
+                    : 1
+                let liveActivitiesHeight = (visibility.showsShortcuts
                     ? metrics.liveActivitiesStackHeight
-                    : metrics.pageHeight
-                let shortcutsHeight = visibility.showsLiveActivities
+                    : metrics.pageHeight) * overviewScale
+                let shortcutsHeight = (visibility.showsLiveActivities
                     ? metrics.shortcutsStackHeight
-                    : metrics.pageHeight
+                    : metrics.pageHeight) * overviewScale
 
-                VStack(spacing: metrics.rightStackSpacing) {
-                    if visibility.showsLiveActivities {
-                        LiveActivitiesModuleView(
-                            liveActivities: liveActivities,
-                            navigation: navigation,
-                            settings: settings,
-                            availableHeight: liveActivitiesHeight,
-                            compactScale: metrics.compactScale
-                        )
-                        .frame(height: liveActivitiesHeight, alignment: .topLeading)
-                    }
+                RightWorkspaceView(
+                    store: modules.rightWorkspace,
+                    layoutStore: layoutStore,
+                    reduceMotion: reduceMotion || settings.reduceExtraMotion,
+                    overview: {
+                        if visibility.showsRightStack {
+                            VStack(spacing: metrics.rightStackSpacing) {
+                                if visibility.showsLiveActivities {
+                                    LiveActivitiesModuleView(
+                                        liveActivities: liveActivities,
+                                        navigation: navigation,
+                                        settings: settings,
+                                        availableHeight: liveActivitiesHeight,
+                                        compactScale: metrics.compactScale
+                                    )
+                                    .frame(height: liveActivitiesHeight, alignment: .topLeading)
+                                }
 
-                    if visibility.showsShortcuts {
-                        ShortcutsModuleView(
-                            shortcuts: modules.shortcuts,
-                            availableHeight: shortcutsHeight,
-                            compactScale: metrics.compactScale,
-                            onShortcutLaunched: onShortcutLaunched
+                                if visibility.showsShortcuts {
+                                    ShortcutsModuleView(
+                                        shortcuts: modules.shortcuts,
+                                        availableHeight: shortcutsHeight,
+                                        compactScale: metrics.compactScale,
+                                        onShortcutLaunched: onShortcutLaunched
+                                    )
+                                    .frame(height: shortcutsHeight, alignment: .topLeading)
+                                }
+                            }
+                        } else {
+                            Text("Live Activities and Shortcuts are turned off")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(.white.opacity(0.45))
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        }
+                    },
+                    productivity: {
+                        ProductivityDeckView(
+                            productivity: modules.productivity,
+                            fileShelf: modules.fileShelf,
+                            tools: modules.rightWorkspace.configuration.visibleTools,
+                            reduceMotion: reduceMotion || settings.reduceExtraMotion
                         )
-                        .frame(height: shortcutsHeight, alignment: .topLeading)
+                    },
+                    appsMedia: {
+                        AppsMediaDeckView(
+                            services: modules.workspaceServices,
+                            media: modules.media,
+                            sections: modules.rightWorkspace.configuration.visibleSections,
+                            layoutStore: layoutStore,
+                            onOpenSettings: onOpenSettings
+                        )
                     }
-                }
+                )
                 .frame(width: settings.mediaEnabled ? metrics.rightStackWidth : nil, height: metrics.pageHeight, alignment: .topLeading)
                 .clipped()
                 .innerBlurScaleClean(
@@ -3555,7 +3596,7 @@ struct ExpandedIslandRightStackVisibility: Equatable {
     }
 }
 
-private struct LiveActivitiesModuleView: View {
+struct LiveActivitiesModuleView: View {
     @ObservedObject var liveActivities: LiveActivityStore
     @ObservedObject var navigation: IslandNavigationStore
     @ObservedObject var settings: AppSettings

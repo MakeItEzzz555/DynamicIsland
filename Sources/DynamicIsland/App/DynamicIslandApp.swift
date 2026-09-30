@@ -109,6 +109,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         liveActivities: liveActivities,
         capabilities: capabilityRegistry
     )
+    private let rightWorkspace = RightWorkspaceStore()
+    private lazy var workspaceServices = WorkspaceServices(
+        appLibrary: AppLibraryStore(),
+        calendar: CalendarEventsController(),
+        spotify: SpotifyLibraryController()
+    )
     private lazy var backgroundRemoval = BackgroundRemovalController(
         liveActivities: liveActivities,
         capabilities: capabilityRegistry,
@@ -207,7 +213,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             agentManagedControl: agentManagedControl,
             agentProjects: agentProjects,
             productivity: productivity,
-            messaging: messaging
+            messaging: messaging,
+            rightWorkspace: rightWorkspace,
+            workspaceServices: workspaceServices
         )
         agentProjects.observe(agentEvents.$sessions)
         installMessagingObservers()

@@ -31,4 +31,13 @@ struct IslandModules {
     let agentProjects: AgentProjectProjectionStore
     let productivity: ProductivityModules
     let messaging: MessagingController
+    let rightWorkspace: RightWorkspaceStore
+    let workspaceServices: WorkspaceServices
+}
+
+/// Real data sources for the right workspace's Apps & Media page.
+struct WorkspaceServices {
+    let appLibrary: AppLibraryStore
+    let calendar: CalendarEventsController
+    let spotify: SpotifyLibraryController
 }
