@@ -78,6 +78,13 @@ final class AgentLiveEndToEndTests: XCTestCase {
         log(provider, "hello.txt=\(written.map { "\"\($0.trimmingCharacters(in: .whitespacesAndNewlines))\"" } ?? "missing")")
         XCTAssertEqual(written?.trimmingCharacters(in: .whitespacesAndNewlines), "hi from \(provider.stableName)")
         first.approvals.setAutoApprove(false, for: started.instance)
+        let afterTurn = try XCTUnwrap(first.store.session(for: started.instance))
+        let context = AgentUsageIndicatorPresentation.make(
+            provider: provider,
+            accountUsage: first.controller.accountUsageByProvider[provider] ?? AgentUsage(),
+            selectedSession: afterTurn
+        )
+        log(provider, "usage " + context.map { "\($0.label)=\($0.valueText)(\($0.authority.rawValue))" }.joined(separator: " "))
 
         // 3. Stop a running turn.
         let longTurn = await first.controller.submit(
