@@ -118,7 +118,7 @@ final class MessagesDatabaseStore: MessagesConversationStore, @unchecked Sendabl
 enum MessagesAttributedBodyDecoder {
     static func text(from data: Data) -> String? {
         guard !data.isEmpty else { return nil }
-        guard let object = try? NSUnarchiver.unarchiveObject(with: data) else { return nil }
+        guard let object = NSUnarchiver.unarchiveObject(with: data) else { return nil }
         if let attributed = object as? NSAttributedString { return attributed.string }
         return object as? String
     }

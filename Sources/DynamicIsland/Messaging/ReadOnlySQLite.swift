@@ -214,7 +214,8 @@ enum NotificationCenterDatabaseLocation {
     private static func darwinUserDirectory() -> String? {
         var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
         let length = confstr(_CS_DARWIN_USER_DIR, &buffer, buffer.count)
-        guard length > 0 else { return nil }
-        return String(cString: buffer)
+        guard length > 1, length <= buffer.count else { return nil }
+        let bytes = buffer.prefix(length - 1).map { UInt8(bitPattern: $0) }
+        return String(decoding: bytes, as: UTF8.self)
     }
 }

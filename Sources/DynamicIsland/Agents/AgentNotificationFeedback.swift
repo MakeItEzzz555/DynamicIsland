@@ -79,7 +79,7 @@ final class SystemAgentNotificationFeedback: AgentNotificationFeedbackPlaying {
     init(
         deduplicator: AgentNotificationSoundDeduplicator = AgentNotificationSoundDeduplicator(),
         soundForReason: @escaping (AgentAttentionReason) -> AgentNotificationSound? = AgentNotchSoundParity.sound(for:),
-        emit: @escaping @MainActor (AgentNotificationSound) -> Void = { sound in switch sound {} }
+        emit: @escaping @MainActor (AgentNotificationSound) -> Void = { _ in }
     ) {
         self.deduplicator = deduplicator
         self.soundForReason = soundForReason
