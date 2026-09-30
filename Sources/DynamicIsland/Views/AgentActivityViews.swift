@@ -264,7 +264,7 @@ struct AgentDashboardContentView: View {
     let presentationGeneration: Int
     let transcriptLoadDelay: TimeInterval
     private let initialSelectedSessionID: AgentSessionInstanceID?
-    @State private var showsSessionLauncher = false
+    @StateObject private var launchFlow = AgentNewSessionFlow()
     @State private var transcriptLoadGate = AgentTranscriptLoadGate()
     @Environment(\.agentProjectLocations) private var projectLocations
     @Environment(\.agentProjectSelection) private var projectSelection
@@ -305,33 +305,28 @@ struct AgentDashboardContentView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let providerSessions = (managedControl.selectedProvider ?? managedControl.managedProvider).map { provider in
-                sessions.filter { $0.id.sessionID.provider == provider }
-            } ?? sessions
+            let workspace = AgentWorkspaceProjection.make(
+                sessions: sessions,
+                controller: managedControl,
+                projectKey: projectSelection.key,
+                locations: projectLocations,
+                launcherOpen: launchFlow.isPresented
+            )
+            let providerSessions = workspace.providerSessions
             let projectOptions = AgentProjectFilter.options(
                 for: providerSessions,
                 locations: projectLocations,
                 activeManagedSessionIDs: managedControl.activeManagedSessionIDs
             )
-            let effectiveProjectKey = AgentProjectFilter.isEffective(
-                projectSelection.key,
-                in: providerSessions,
-                locations: projectLocations
-            ) ? projectSelection.key : nil
-            let controlSessions = AgentProjectFilter.filter(
-                providerSessions,
-                projectKey: effectiveProjectKey,
-                locations: projectLocations
-            )
+            let effectiveProjectKey = workspace.effectiveProjectKey
+            let controlSessions = workspace.controlSessions
             let layout = AgentDashboardLayoutProjection.make(width: proxy.size.width)
             let verticalLayout = AgentWorkspaceVerticalLayoutProjection.make(
                 availableHeight: proxy.size.height
             )
-            let selectedSession = AgentWorkspaceSelection.session(
-                current: managedControl.selectedSessionID,
-                sessions: controlSessions,
-                activeManagedSessionIDs: managedControl.activeManagedSessionIDs
-            )
+            let selectedSession = workspace.selectedSession
+            let newSessionFolder = projectOptions.first { $0.id == effectiveProjectKey }?.path
+                ?? selectedSession?.project.workingDirectory
             let usageProvider = managedControl.managedProvider
                 ?? selectedSession?.id.sessionID.provider
                 ?? .codex
@@ -367,64 +362,21 @@ struct AgentDashboardContentView: View {
                         selectProject(key, among: providerSessions)
                     },
                     trailingUsage: usageInHeader ? usageIndicators : [],
-                    launcherOpen: showsSessionLauncher,
+                    launcherOpen: launchFlow.isPresented,
                         onToggleLauncher: {
                             withAnimation(.easeOut(duration: 0.14)) {
-                                showsSessionLauncher.toggle()
+                                launchFlow.toggle(provider: managedControl.selectedProvider)
                             }
-                        }
+                        },
+                        onNewSession: { openNewSession(folder: newSessionFolder) }
                     )
                 }
 
-                if showsSessionLauncher {
-                    AgentSessionLauncherView(
-                        sessions: sessions,
-                        managedControl: managedControl,
-                        onSelectSession: { id in managedControl.selectSession(id) },
-                        onDismiss: {
-                            withAnimation(.easeOut(duration: 0.12)) {
-                                showsSessionLauncher = false
-                            }
-                        }
-                    )
-                    .padding(.horizontal, 8)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-                    .zIndex(20)
-                    .frame(maxHeight: .infinity, alignment: .top)
-                    .layoutPriority(2)
-                } else if controlSessions.isEmpty {
-                    stagedAgentContent(index: 3) {
-                        AgentEmptyConsoleState(managedControl: managedControl)
-                    }
-                } else {
-                    if let pending = approvalControl.nextPendingRequest(),
-                       pending.key.session != selectedSession?.id,
-                       let approvalSession = sessions.first(where: { $0.id == pending.key.session }) {
-                        stagedAgentContent(index: 3) {
-                            AgentConsoleApprovalRow(
-                                request: pending,
-                                session: approvalSession,
-                                approvalControl: approvalControl
-                            )
-                        }
-                    }
-
-                    if let selectedSession {
-                        stagedAgentContent(index: 4) {
-                            AgentSelectedSessionControlView(
-                                session: selectedSession,
-                                sessions: controlSessions,
-                                managedControl: managedControl,
-                                approvalControl: approvalControl,
-                                detailHeight: max(verticalLayout.selectedDetailHeight, 138),
-                                activityLimit: max(verticalLayout.selectedDetailActivityLimit, 6),
-                                layoutStore: layoutStore,
-                                transcriptReady: transcriptLoadGate.isReady(for: selectedSession.id)
-                            )
-                            .layoutPriority(2)
-                        }
-                    }
-                }
+                workspaceContent(
+                    workspace: workspace,
+                    newSessionFolder: newSessionFolder,
+                    verticalLayout: verticalLayout
+                )
             }
             .frame(maxWidth: .infinity, maxHeight: proxy.size.height, alignment: .topLeading)
             .task(
@@ -453,7 +405,7 @@ struct AgentDashboardContentView: View {
             }
             reconcileWorkspaceSelection()
         }
-        .onChange(of: showsSessionLauncher) { _, isOpen in
+        .onChange(of: launchFlow.isPresented) { _, isOpen in
             layoutStore?.isTransientInteractionActive = isOpen
             if isOpen {
                 layoutStore?.setExpandedScrollGestureSuppressed(true)
@@ -467,6 +419,99 @@ struct AgentDashboardContentView: View {
             layoutStore?.setExpandedScrollGestureSuppressed(false)
             layoutStore?.setExpandedContentScrollRegion(.zero)
         }
+    }
+
+    @ViewBuilder
+    private func workspaceContent(
+        workspace: AgentWorkspaceProjection,
+        newSessionFolder: String?,
+        verticalLayout: AgentWorkspaceVerticalLayoutProjection
+    ) -> some View {
+        let controlSessions = workspace.controlSessions
+        let selectedSession = workspace.selectedSession
+        if launchFlow.isPresented {
+            AgentSessionLauncherView(
+                sessions: sessions,
+                managedControl: managedControl,
+                flow: launchFlow,
+                onSelectSession: { id in managedControl.selectSession(id) },
+                onStarted: { started in
+                    didStartSession(started)
+                },
+                onDismiss: {
+                    withAnimation(.easeOut(duration: 0.12)) {
+                        launchFlow.dismiss()
+                    }
+                }
+            )
+            .padding(.horizontal, 8)
+            .transition(.opacity.combined(with: .move(edge: .top)))
+            .zIndex(20)
+            .frame(maxHeight: .infinity, alignment: .top)
+            .layoutPriority(2)
+        } else if controlSessions.isEmpty {
+            stagedAgentContent(index: 3) {
+                AgentEmptyConsoleState(managedControl: managedControl) {
+                    openNewSession(folder: newSessionFolder)
+                }
+            }
+        } else {
+            if let pending = approvalControl.nextPendingRequest(),
+               pending.key.session != selectedSession?.id,
+               let approvalSession = sessions.first(where: { $0.id == pending.key.session }) {
+                stagedAgentContent(index: 3) {
+                    AgentConsoleApprovalRow(
+                        request: pending,
+                        session: approvalSession,
+                        approvalControl: approvalControl
+                    )
+                }
+            }
+
+            if let selectedSession {
+                stagedAgentContent(index: 4) {
+                    AgentSelectedSessionControlView(
+                        session: selectedSession,
+                        surface: AgentWorkspaceProjection.controlSurface(
+                            for: selectedSession,
+                            controller: managedControl
+                        ),
+                        sessions: controlSessions,
+                        managedControl: managedControl,
+                        approvalControl: approvalControl,
+                        detailHeight: max(verticalLayout.selectedDetailHeight, 138),
+                        activityLimit: max(verticalLayout.selectedDetailActivityLimit, 6),
+                        layoutStore: layoutStore,
+                        transcriptReady: transcriptLoadGate.isReady(for: selectedSession.id)
+                    )
+                    .layoutPriority(2)
+                }
+            }
+        }
+    }
+
+    private func openNewSession(folder: String?) {
+        withAnimation(.easeOut(duration: 0.14)) {
+            launchFlow.present(
+                .newSession,
+                provider: managedControl.selectedProvider ?? managedControl.managedProvider,
+                folder: folder
+            )
+        }
+    }
+
+    /// The exact new session is already selected and managed; make sure
+    /// the project filter shows it.
+    private func didStartSession(_ started: AgentManagedStartedSession) {
+        guard let session = sessions.first(where: { $0.id == started.instance })
+            ?? managedControl.session(for: started.instance) else { return }
+        let key = AgentWorkspaceProjection.projectKey(
+            afterStarting: session,
+            currentKey: projectSelection.key,
+            locations: projectLocations
+        )
+        if key != projectSelection.key { projectSelection.set(key) }
+        managedControl.selectSession(started.instance)
     }
 
     /// Filter change only: cached lookups, no filesystem work, and the
@@ -567,6 +612,7 @@ private struct AgentCLIControlBar: View {
     var trailingUsage: [AgentUsageIndicator] = []
     let launcherOpen: Bool
     let onToggleLauncher: () -> Void
+    var onNewSession: () -> Void = {}
 
     private var selectedSession: AgentSession? {
         AgentWorkspaceSelection.session(
@@ -608,6 +654,7 @@ private struct AgentCLIControlBar: View {
     private func controls(compact: Bool) -> some View {
         HStack(spacing: compact ? 5 : 8) {
             launcherButton(compact: compact)
+            newSessionButton(compact: compact)
             projectMenu(compact: compact)
 
             if let session = selectedSession {
@@ -670,6 +717,26 @@ private struct AgentCLIControlBar: View {
         .buttonStyle(.plain)
         .help("Live sessions and local repositories")
         .accessibilityLabel("Open live sessions and repository launcher")
+    }
+
+    private func newSessionButton(compact: Bool) -> some View {
+        Button(action: onNewSession) {
+            HStack(spacing: 3) {
+                Image(systemName: "plus")
+                if !compact { Text("New") }
+            }
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(.white.opacity(0.74))
+            .padding(.horizontal, compact ? 5 : 7)
+            .frame(height: 25)
+            .background(Color.white.opacity(0.035), in: Capsule(style: .continuous))
+            .contentShape(Capsule(style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .disabled(managedControl.managedProviders.isEmpty)
+        .help("New Claude or Codex session in a folder")
+        .accessibilityLabel("New agent session")
     }
 
     @ViewBuilder
@@ -750,17 +817,12 @@ private struct AgentCLIControlBar: View {
                     }
                 }
             } label: {
-                HStack(spacing: 3) {
-                    if compact { Image(systemName: "cpu") }
-                    Text(modelLabel(for: session))
-                        .lineLimit(1)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 6.5, weight: .semibold))
-                }
-                .font(.system(size: 8, weight: .medium, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.48))
+                compactModelLabel(for: session, compact: compact)
             }
-            .menuStyle(.borderlessButton)
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .fixedSize()
             .help("This session keeps its model. Choose a model to start a new session.")
         } else if managedControl.capabilities(for: provider).contains(.selectModel),
            !models.isEmpty {
@@ -785,17 +847,12 @@ private struct AgentCLIControlBar: View {
                     }
                 }
             } label: {
-                HStack(spacing: 3) {
-                    if compact { Image(systemName: "cpu") }
-                    Text(modelLabel(for: session))
-                        .lineLimit(1)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 6.5, weight: .semibold))
-                }
-                .font(.system(size: 8, weight: .medium, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.48))
+                compactModelLabel(for: session, compact: compact)
             }
-            .menuStyle(.borderlessButton)
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .fixedSize()
             .disabled(!managedControl.canSelectModel(for: session))
             .help(
                 managedControl.canSelectModel(for: session)
@@ -810,13 +867,29 @@ private struct AgentCLIControlBar: View {
         }
     }
 
+    /// Preselects the model and opens the New Session launcher for this
+    /// session's folder, so the user sees where it will run before Start.
     private func startNewSession(for session: AgentSession, model: String) {
         let provider = session.id.sessionID.provider
         managedControl.selectProvider(provider)
         guard managedControl.selectNewSessionModel(model, for: provider) else { return }
-        Task { @MainActor in
-            _ = await managedControl.startNewSession(cwd: session.project.workingDirectory)
+        onNewSession()
+    }
+
+    private func compactModelLabel(for session: AgentSession, compact: Bool) -> some View {
+        HStack(spacing: 3) {
+            if compact { Image(systemName: "cpu") }
+            Text(modelLabel(for: session))
+                .lineLimit(1)
+            Image(systemName: "chevron.down")
+                .font(.system(size: 6.5, weight: .semibold))
         }
+        .font(.system(size: 8, weight: .medium, design: .monospaced))
+        .foregroundStyle(.white.opacity(0.48))
+        .padding(.horizontal, 6)
+        .frame(height: 22)
+        .background(Color.white.opacity(0.03), in: Capsule(style: .continuous))
+        .contentShape(Capsule(style: .continuous))
     }
 
     private func modelSelectionHelp(for session: AgentSession) -> String {
@@ -866,7 +939,10 @@ private struct AgentCLIControlBar: View {
                         : Color.white.opacity(0.48)
                 )
             }
-            .menuStyle(.borderlessButton)
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .fixedSize()
             .help(policy.isAutomatic ? "Auto-approval enabled: \(policy.displayName)" : "Approval policy")
             .accessibilityLabel("Approval policy: \(policy.displayName)")
         }
@@ -972,6 +1048,7 @@ private struct AgentCLIControlBar: View {
 
 private struct AgentSelectedSessionControlView: View {
     let session: AgentSession
+    let surface: AgentSessionControlSurface
     let sessions: [AgentSession]
     @ObservedObject var managedControl: AgentManagedSessionController
     @ObservedObject var approvalControl: AgentApprovalController
@@ -982,81 +1059,16 @@ private struct AgentSelectedSessionControlView: View {
 
     var body: some View {
         Group {
-            if !transcriptReady {
-                AgentTranscriptLoadingView(session: session)
-                    .frame(minHeight: 0, idealHeight: detailHeight, maxHeight: .infinity)
-                    .transition(.opacity)
-            } else if managedControl.isManaged(session), managedControl.mode(for: session).showsComposer {
-                AgentEmbeddedConsoleView(
-                session: session,
-                mode: managedControl.mode(for: session),
-                interactionState: managedControl.interactionState(for: session),
-                maximumActivityEntries: activityLimit,
-                transcriptEntries: managedControl.transcript(for: session),
-                workspaceSessions: AgentWorkspaceSelection.ordered(
-                    sessions: sessions,
-                    activeManagedSessionIDs: managedControl.activeManagedSessionIDs
-                ),
-                layoutStore: layoutStore,
-                approvalControl: approvalControl,
-                onSelectSession: managedControl.selectSession,
-                onSubmit: { await managedControl.submit($0, for: session) },
-                onInterrupt: { managedControl.interrupt(session) }
-            )
-            // Ideal, not minimum: under height pressure the transcript
-            // shrinks so the composer and Send stay inside the page clip.
-            .frame(minHeight: 0, idealHeight: detailHeight, maxHeight: .infinity)
-            .task(id: session.id) {
-                await managedControl.refreshTranscript(for: session)
-            }
-        } else {
-            VStack(spacing: 5) {
-                if managedControl.supportsManagedControl(for: session) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "link.badge.plus")
-                            .foregroundStyle(.white.opacity(0.50))
-                        Text(session.availability == .resumable
-                            ? "Resumable \(providerName(session)) session"
-                            : "Observed \(providerName(session)) session")
-                            .font(.system(size: 8.5, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.62))
-                        if let status = managedControl.statusMessage(for: session) {
-                            Text(status)
-                                .font(.system(size: 8, weight: .medium))
-                                .foregroundStyle(.orange.opacity(0.78))
-                                .lineLimit(1)
-                        }
-                        Spacer(minLength: 8)
-                        if managedControl.canConnect(session) ||
-                            managedControl.connecting.contains(session.id.sessionID) {
-                            Button {
-                                managedControl.connect(session)
-                            } label: {
-                                Label(
-                                    managedControl.connecting.contains(session.id.sessionID)
-                                        ? "Connecting…"
-                                        : (session.availability == .resumable ? "Resume" : "Control"),
-                                    systemImage: "terminal"
-                                )
-                            }
-                            .buttonStyle(.borderless)
-                            .font(.system(size: 8.5, weight: .semibold))
-                            .disabled(!managedControl.canConnect(session))
-                            .help("Resume this provider session through its managed control plane")
-                        }
-                    }
-                    .padding(.horizontal, 8)
-                    .frame(height: 26)
-                    .background(.white.opacity(0.022))
-                    .accessibilityElement(children: .contain)
-                }
-
+            if surface == .composer {
+                // A managed, input-ready session always gets its composer
+                // immediately; it never waits for a first provider event
+                // or the transcript reveal.
                 AgentEmbeddedConsoleView(
                     session: session,
-                    mode: .observed,
+                    mode: managedControl.mode(for: session),
                     interactionState: managedControl.interactionState(for: session),
                     maximumActivityEntries: activityLimit,
-                    transcriptEntries: managedControl.transcript(for: session),
+                    transcriptEntries: transcriptReady ? managedControl.transcript(for: session) : [],
                     workspaceSessions: AgentWorkspaceSelection.ordered(
                         sessions: sessions,
                         activeManagedSessionIDs: managedControl.activeManagedSessionIDs
@@ -1064,11 +1076,48 @@ private struct AgentSelectedSessionControlView: View {
                     layoutStore: layoutStore,
                     approvalControl: approvalControl,
                     onSelectSession: managedControl.selectSession,
-                    onSubmit: { _ in false },
-                    onInterrupt: {}
+                    onSubmit: { await managedControl.submit($0, for: session) },
+                    onInterrupt: { managedControl.interrupt(session) },
+                    loadDraft: managedControl.composerDraft(for:),
+                    saveDraft: managedControl.setComposerDraft(_:for:)
                 )
-                .frame(minHeight: 0, idealHeight: max(detailHeight - 31, 104), maxHeight: .infinity)
-            }
+                // Ideal, not minimum: under height pressure the transcript
+                // shrinks so the composer and Send stay inside the page clip.
+                .frame(minHeight: 0, idealHeight: detailHeight, maxHeight: .infinity)
+                .task(id: session.id) {
+                    await managedControl.refreshTranscript(for: session)
+                }
+            } else if !transcriptReady {
+                AgentTranscriptLoadingView(session: session)
+                    .frame(minHeight: 0, idealHeight: detailHeight, maxHeight: .infinity)
+                    .transition(.opacity)
+            } else {
+                VStack(spacing: 5) {
+                    AgentSessionControlBanner(
+                        session: session,
+                        surface: surface,
+                        status: managedControl.statusMessage(for: session),
+                        onConnect: { managedControl.connect(session) }
+                    )
+
+                    AgentEmbeddedConsoleView(
+                        session: session,
+                        mode: .observed,
+                        interactionState: managedControl.interactionState(for: session),
+                        maximumActivityEntries: activityLimit,
+                        transcriptEntries: managedControl.transcript(for: session),
+                        workspaceSessions: AgentWorkspaceSelection.ordered(
+                            sessions: sessions,
+                            activeManagedSessionIDs: managedControl.activeManagedSessionIDs
+                        ),
+                        layoutStore: layoutStore,
+                        approvalControl: approvalControl,
+                        onSelectSession: managedControl.selectSession,
+                        onSubmit: { _ in false },
+                        onInterrupt: {}
+                    )
+                    .frame(minHeight: 0, idealHeight: max(detailHeight - 31, 104), maxHeight: .infinity)
+                }
                 .task(id: session.id) {
                     await managedControl.reconcileObservedSession(session)
                 }
@@ -1076,9 +1125,81 @@ private struct AgentSelectedSessionControlView: View {
         }
         .animation(.easeOut(duration: 0.16), value: transcriptReady)
     }
+}
 
-    private func providerName(_ session: AgentSession) -> String {
-        session.id.sessionID.provider.stableName.capitalized
+/// Explicit state for a selected session that is not composer-ready.
+struct AgentSessionControlBanner: View {
+    let session: AgentSession
+    let surface: AgentSessionControlSurface
+    let status: String?
+    let onConnect: () -> Void
+
+    var body: some View {
+        let content = Self.content(for: surface, provider: session.id.sessionID.provider)
+        HStack(spacing: 8) {
+            Image(systemName: content.symbol)
+                .foregroundStyle(.white.opacity(0.50))
+            Text(content.title)
+                .font(.system(size: 8.5, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.66))
+                .lineLimit(1)
+            if let detail = content.detail ?? status {
+                Text(detail)
+                    .font(.system(size: 8, weight: .medium))
+                    .foregroundStyle(.orange.opacity(0.78))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            Spacer(minLength: 8)
+            if let action = content.action {
+                Button(action: onConnect) {
+                    Label(action, systemImage: "terminal")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.black.opacity(0.86))
+                        .padding(.horizontal, 9)
+                        .frame(height: 21)
+                        .background(.white.opacity(0.90), in: Capsule(style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .fixedSize()
+                .help(action == "Resume"
+                    ? "Resume this exact session with an embedded composer"
+                    : "Take managed control of this exact session")
+                .accessibilityLabel("\(action) \(content.providerName) session")
+            } else if surface == .attaching {
+                ProgressView().controlSize(.mini)
+            }
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 28)
+        .background(.white.opacity(0.03))
+        .accessibilityElement(children: .contain)
+    }
+
+    struct Content: Equatable {
+        let providerName: String
+        let symbol: String
+        let title: String
+        let detail: String?
+        let action: String?
+    }
+
+    static func content(for surface: AgentSessionControlSurface, provider: AgentProvider) -> Content {
+        let name = provider.stableName.capitalized
+        switch surface {
+        case .composer:
+            return Content(providerName: name, symbol: "link", title: "Managed \(name) session", detail: nil, action: nil)
+        case .resumable:
+            return Content(providerName: name, symbol: "arrow.clockwise.circle", title: "Resumable \(name) session", detail: nil, action: "Resume")
+        case .controllable:
+            return Content(providerName: name, symbol: "eye", title: "Observed \(name) session", detail: nil, action: "Take Control")
+        case .attaching:
+            return Content(providerName: name, symbol: "link.badge.plus", title: "Attaching \(name) session…", detail: nil, action: nil)
+        case .controlUnavailable(let reason):
+            return Content(providerName: name, symbol: "eye", title: "Observed \(name) session", detail: reason, action: nil)
+        case .readOnly:
+            return Content(providerName: name, symbol: "lock", title: "Read-only observed session", detail: nil, action: nil)
+        }
     }
 }
 
@@ -1119,21 +1240,18 @@ private struct AgentTranscriptLoadingView: View {
 
 private struct AgentEmptyConsoleState: View {
     @ObservedObject var managedControl: AgentManagedSessionController
-    @State private var starting = false
+    let onNewSession: () -> Void
 
     var body: some View {
-        let provider = managedControl.managedProvider ?? .other("agent")
-        let providerName = provider.stableName.capitalized
-        VStack(spacing: 10) {
-            Image(systemName: AgentVisualStyle.providerSymbol(provider))
+        let provider = managedControl.managedProvider
+        let providerName = provider?.stableName.capitalized ?? "agent"
+        VStack(spacing: 9) {
+            Image(systemName: AgentVisualStyle.providerSymbol(provider ?? .other("agent")))
                 .font(.system(size: 18, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.52))
-            Text("No \(providerName) session")
+            Text("No active \(providerName) session")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.88))
-            Text("Start a managed session to use the embedded agent console.")
-                .font(.system(size: 8.5, weight: .medium))
-                .foregroundStyle(.white.opacity(0.42))
 
             if let status = managedControl.lastTransportError {
                 Label(status, systemImage: "exclamationmark.circle")
@@ -1142,57 +1260,24 @@ private struct AgentEmptyConsoleState: View {
                     .lineLimit(2)
             }
 
-            if managedControl.interactiveCapabilities.contains(.startSession) {
-                if managedControl.interactiveCapabilities.contains(.selectModel),
-                   !managedControl.availableModels.isEmpty {
-                    Menu {
-                        Button("Provider default") {
-                            _ = managedControl.selectNewSessionModel(nil, for: provider)
-                        }
-                        Divider()
-                        ForEach(managedControl.availableModels) { option in
-                            Button {
-                                _ = managedControl.selectNewSessionModel(option.model, for: provider)
-                            } label: {
-                                HStack {
-                                    Text(option.displayName)
-                                    if managedControl.newSessionModel(for: provider) == option.model {
-                                        Image(systemName: "checkmark")
-                                    }
-                                }
-                            }
-                        }
-                    } label: {
-                        Label(
-                            managedControl.newSessionModel(for: provider).flatMap { selected in
-                                managedControl.availableModels.first(where: { $0.model == selected })?.displayName
-                            } ?? "Provider default model",
-                            systemImage: "cpu"
-                        )
-                    }
-                    .menuStyle(.borderlessButton)
-                    .font(.system(size: 8.5, weight: .medium))
+            if !managedControl.managedProviders.isEmpty {
+                Button(action: onNewSession) {
+                    Label("New Session", systemImage: "plus")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.black.opacity(0.86))
+                        .padding(.horizontal, 12)
+                        .frame(height: 26)
+                        .background(.white.opacity(0.92), in: Capsule(style: .continuous))
                 }
-
-                Button {
-                    guard !starting else { return }
-                    starting = true
-                    Task { @MainActor in
-                        _ = await managedControl.startNewSession(cwd: nil)
-                        starting = false
-                    }
-                } label: {
-                    Label(starting ? "Starting…" : "New session", systemImage: "plus")
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(starting)
+                .buttonStyle(.plain)
+                .fixedSize()
+                .help("Choose provider, folder and model, then start")
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.vertical, 18)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("No \(providerName) session")
+        .accessibilityLabel("No active \(providerName) session")
     }
 }
 

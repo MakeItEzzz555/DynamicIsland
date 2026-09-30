@@ -1,18 +1,20 @@
 import AppKit
 import SwiftUI
 
+/// The single Agents launcher. "Sessions" selects an existing session;
+/// "New Session" configures provider, folder, model and agent and starts
+/// only on Start. Repository and folder sources feed the New Session form.
 struct AgentSessionLauncherView: View {
     let sessions: [AgentSession]
     @ObservedObject var managedControl: AgentManagedSessionController
+    @ObservedObject var flow: AgentNewSessionFlow
     let onSelectSession: (AgentSessionInstanceID) -> Void
+    let onStarted: (AgentManagedStartedSession) -> Void
     let onDismiss: () -> Void
 
     @State private var query = ""
-    @State private var selectedRepositoryPath: String?
     @State private var repositoryPathDraft = ""
     @State private var showsRepositoryPathEntry = false
-    @State private var repositoryPathError: String?
-    @State private var starting = false
     @State private var projectedRepositories: [AgentLocalRepositoryChoice] = []
     @State private var recentFolders: [String] = []
     private let recentProjects = AgentRecentProjects(defaults: .standard)
@@ -43,41 +45,49 @@ struct AgentSessionLauncherView: View {
         AgentSessionLauncherProjection.repositoryProjectionKey(sessions)
     }
 
-    private var selectedProvider: AgentProvider {
-        managedControl.managedProvider ?? managedControl.managedProviders.first ?? .codex
+    private var launchProvider: AgentProvider {
+        flow.provider ?? managedControl.managedProvider ?? managedControl.managedProviders.first ?? .codex
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            header
+
+            if flow.mode == .newSession {
+                newSessionForm
+                Divider().overlay(.white.opacity(0.055))
+            }
+
             HStack(spacing: 7) {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(.white.opacity(0.38))
-                TextField("Search sessions or local repositories", text: $query)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 10.5, weight: .medium))
-                Button(action: onDismiss) {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.white.opacity(0.38))
-                }
-                .buttonStyle(.plain)
+                TextField(
+                    flow.mode == .newSession ? "Search local folders" : "Search sessions or local repositories",
+                    text: $query
+                )
+                .textFieldStyle(.plain)
+                .font(.system(size: 10.5, weight: .medium))
             }
             .padding(.horizontal, 9)
-            .frame(height: 30)
+            .frame(height: 28)
             .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
 
             ScrollView(.vertical, showsIndicators: true) {
                 LazyVStack(alignment: .leading, spacing: 4) {
-                    launcherSectionTitle("LIVE SESSIONS")
-                    if liveSessions.isEmpty {
-                        launcherEmpty("No matching live or resumable sessions")
-                    } else {
-                        ForEach(liveSessions, id: \.id) { session in
-                            liveSessionRow(session)
+                    if flow.mode == .sessions {
+                        launcherSectionTitle("LIVE SESSIONS")
+                        if liveSessions.isEmpty {
+                            launcherEmpty("No matching live or resumable sessions")
+                        } else {
+                            ForEach(liveSessions, id: \.id) { session in
+                                liveSessionRow(session)
+                            }
                         }
+                        launcherSectionTitle("START IN A REPOSITORY")
+                            .padding(.top, 6)
+                    } else {
+                        launcherSectionTitle("REPOSITORIES")
                     }
-
-                    launcherSectionTitle("OPEN REPOSITORY")
-                        .padding(.top, 6)
 
                     ForEach(repositories) { repo in
                         repositoryRow(repo)
@@ -99,25 +109,14 @@ struct AgentSessionLauncherView: View {
                         }
                     }
 
-                    Button(action: chooseFolder) {
-                        Label("Open Folder…", systemImage: "folder.badge.plus")
-                            .font(.system(size: 9.5, weight: .semibold))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 8)
-                            .frame(height: 30)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.white.opacity(0.78))
-
                     Button {
                         showsRepositoryPathEntry.toggle()
-                        repositoryPathError = nil
                     } label: {
                         Label("Enter folder path…", systemImage: "character.cursor.ibeam")
                             .font(.system(size: 9.5, weight: .semibold))
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, 8)
-                            .frame(height: 30)
+                            .frame(height: 28)
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.white.opacity(0.64))
@@ -128,12 +127,7 @@ struct AgentSessionLauncherView: View {
                 }
                 .padding(.vertical, 2)
             }
-            .frame(maxHeight: 205)
-
-            if let path = selectedRepositoryPath {
-                Divider().overlay(.white.opacity(0.055))
-                newSessionControls(path: path)
-            }
+            .frame(maxHeight: flow.mode == .newSession ? 150 : 205)
         }
         .padding(9)
         .background(Color.black.opacity(0.96), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
@@ -153,13 +147,217 @@ struct AgentSessionLauncherView: View {
         .onExitCommand(perform: onDismiss)
         .onAppear {
             recentFolders = recentProjects.load()
+            if flow.provider == nil { flow.provider = launchProvider }
         }
-        .task(id: selectedProvider) {
-            await managedControl.refreshAgents(for: selectedProvider)
+        .task(id: launchProvider) {
+            await managedControl.refreshAgents(for: launchProvider)
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Agent session and repository launcher")
+        .accessibilityLabel("Agent session launcher")
     }
+
+    // MARK: Header
+
+    private var header: some View {
+        HStack(spacing: 6) {
+            modeButton("Sessions", mode: .sessions, symbol: "list.bullet")
+            modeButton("New Session", mode: .newSession, symbol: "plus")
+            Spacer(minLength: 6)
+            Button(action: onDismiss) {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(.white.opacity(0.38))
+            }
+            .buttonStyle(.plain)
+            .disabled(flow.isStarting)
+            .accessibilityLabel("Close launcher")
+        }
+    }
+
+    private func modeButton(_ title: String, mode: AgentNewSessionFlow.Mode, symbol: String) -> some View {
+        let selected = flow.mode == mode
+        return Button {
+            flow.mode = mode
+        } label: {
+            Label(title, systemImage: symbol)
+                .font(.system(size: 9.5, weight: .semibold))
+                .foregroundStyle(.white.opacity(selected ? 0.9 : 0.5))
+                .padding(.horizontal, 8)
+                .frame(height: 24)
+                .background(.white.opacity(selected ? 0.11 : 0.03), in: Capsule(style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    // MARK: New session form
+
+    private var newSessionForm: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 6) {
+                providerMenu
+                modelMenu
+                agentMenu
+                Spacer(minLength: 0)
+            }
+
+            HStack(spacing: 6) {
+                Image(systemName: flow.folderPath == nil ? "folder.badge.questionmark" : "folder.fill")
+                    .foregroundStyle(flow.folderPath == nil ? .white.opacity(0.4) : .cyan.opacity(0.8))
+                Text(flow.folderPath.map(Self.abbreviated) ?? "Choose a project folder")
+                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.white.opacity(flow.folderPath == nil ? 0.42 : 0.82))
+                    .lineLimit(1)
+                    .truncationMode(.head)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .help(flow.folderPath ?? "The agent runs in this exact folder")
+                compactButton("Open Folder…", symbol: "folder", action: chooseFolder)
+                compactButton("New Folder…", symbol: "folder.badge.plus", action: createFolder)
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 30)
+            .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+
+            if let error = flow.errorMessage {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 8.5, weight: .semibold))
+                    .foregroundStyle(.orange.opacity(0.88))
+                    .lineLimit(2)
+                    .accessibilityLabel("Start failed: \(error)")
+            }
+
+            Button(action: startSession) {
+                Label(
+                    flow.isStarting ? "Starting…" : "Start \(launchProvider.stableName.capitalized) Session",
+                    systemImage: "terminal.fill"
+                )
+                .font(.system(size: 9.5, weight: .bold))
+                .frame(maxWidth: .infinity)
+                .frame(height: 28)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.black.opacity(0.88))
+            .background(.white.opacity(flow.canStart ? 0.92 : 0.4), in: RoundedRectangle(cornerRadius: 7))
+            .disabled(!flow.canStart)
+            .keyboardShortcut(.defaultAction)
+            .help(flow.folderPath == nil ? "Choose a folder first" : "Start in \(flow.folderPath ?? "")")
+        }
+    }
+
+    private var providerMenu: some View {
+        Menu {
+            ForEach(managedControl.managedProviders, id: \.self) { provider in
+                Button {
+                    flow.provider = provider
+                    managedControl.selectProvider(provider)
+                } label: {
+                    Label(provider.stableName.capitalized, systemImage: provider == launchProvider ? "checkmark" : AgentVisualStyle.providerSymbol(provider))
+                }
+            }
+        } label: {
+            compactMenuLabel(
+                launchProvider.stableName.capitalized,
+                symbol: AgentVisualStyle.providerSymbol(launchProvider),
+                tint: AgentVisualStyle.providerAccent(launchProvider)
+            )
+        }
+        .compactMenuStyle()
+        .accessibilityLabel("Provider: \(launchProvider.stableName.capitalized)")
+    }
+
+    @ViewBuilder
+    private var modelMenu: some View {
+        let models = managedControl.availableModels(for: launchProvider)
+        if !models.isEmpty {
+            let selected = managedControl.newSessionModel(for: launchProvider)
+            let title = selected.flatMap { model in models.first { $0.model == model }?.displayName } ?? "Default model"
+            Menu {
+                Button {
+                    _ = managedControl.selectNewSessionModel(nil, for: launchProvider)
+                } label: {
+                    Label("Provider default", systemImage: selected == nil ? "checkmark" : "cpu")
+                }
+                Divider()
+                ForEach(models) { option in
+                    Button {
+                        _ = managedControl.selectNewSessionModel(option.model, for: launchProvider)
+                    } label: {
+                        Label(option.displayName, systemImage: selected == option.model ? "checkmark" : "cpu")
+                    }
+                }
+            } label: {
+                compactMenuLabel(title, symbol: "cpu", tint: nil)
+            }
+            .compactMenuStyle()
+            .accessibilityLabel("Model: \(title)")
+        }
+    }
+
+    @ViewBuilder
+    private var agentMenu: some View {
+        let agents = managedControl.availableAgents(for: launchProvider)
+        if !agents.isEmpty {
+            let selected = managedControl.newSessionAgent(for: launchProvider)
+            Menu {
+                Button {
+                    _ = managedControl.selectNewSessionAgent(nil, for: launchProvider)
+                } label: {
+                    Label("Default agent", systemImage: selected == nil ? "checkmark" : "person.crop.circle")
+                }
+                Divider()
+                ForEach(agents) { option in
+                    Button {
+                        _ = managedControl.selectNewSessionAgent(option.name, for: launchProvider)
+                    } label: {
+                        Label(option.name, systemImage: selected == option.name ? "checkmark" : "person.crop.circle")
+                    }
+                }
+            } label: {
+                compactMenuLabel(selected ?? "Default agent", symbol: "person.crop.circle", tint: nil)
+            }
+            .compactMenuStyle()
+            .accessibilityLabel("Agent: \(selected ?? "Default agent")")
+        }
+    }
+
+    private func compactMenuLabel(_ title: String, symbol: String, tint: Color?) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: symbol)
+                .foregroundStyle(tint ?? .white.opacity(0.6))
+            Text(title)
+                .lineLimit(1)
+            Image(systemName: "chevron.down")
+                .font(.system(size: 6.5, weight: .bold))
+                .foregroundStyle(.white.opacity(0.5))
+        }
+        .font(.system(size: 9.5, weight: .semibold))
+        .foregroundStyle(.white.opacity(0.84))
+        .padding(.horizontal, 8)
+        .frame(height: 24)
+        .background(.white.opacity(0.07), in: Capsule(style: .continuous))
+        .contentShape(Capsule(style: .continuous))
+    }
+
+    private func compactButton(_ title: String, symbol: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: symbol)
+                .font(.system(size: 8.5, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.78))
+                .padding(.horizontal, 7)
+                .frame(height: 22)
+                .background(.white.opacity(0.07), in: Capsule(style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .disabled(flow.isStarting)
+    }
+
+    private static func abbreviated(_ path: String) -> String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
+    }
+
+    // MARK: Rows
 
     private func launcherSectionTitle(_ title: String) -> some View {
         Text(title)
@@ -232,6 +430,11 @@ struct AgentSessionLauncherView: View {
                     Image(systemName: "link.circle.fill")
                         .foregroundStyle(.green.opacity(0.68))
                         .help("Managed by DynamicIsland")
+                } else if managedControl.canConnect(session) {
+                    Text(session.availability == .resumable ? "Resume" : "Control")
+                        .font(.system(size: 7.5, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.6))
+                        .help("Select to resume or take control")
                 } else {
                     Image(systemName: "eye")
                         .foregroundStyle(.white.opacity(0.30))
@@ -247,12 +450,13 @@ struct AgentSessionLauncherView: View {
     }
 
     private func repositoryRow(_ repo: AgentLocalRepositoryChoice) -> some View {
-        Button {
-            selectedRepositoryPath = repo.path
+        let selected = flow.folderPath == repo.path
+        return Button {
+            flow.useFolder(repo.path)
         } label: {
             HStack(spacing: 8) {
-                Image(systemName: selectedRepositoryPath == repo.path ? "folder.fill" : "folder")
-                    .foregroundStyle(selectedRepositoryPath == repo.path ? .cyan.opacity(0.8) : .white.opacity(0.42))
+                Image(systemName: selected ? "folder.fill" : "folder")
+                    .foregroundStyle(selected ? .cyan.opacity(0.8) : .white.opacity(0.42))
                 VStack(alignment: .leading, spacing: 1) {
                     Text(repo.name)
                         .font(.system(size: 10, weight: .semibold))
@@ -269,155 +473,51 @@ struct AgentSessionLauncherView: View {
                     .lineLimit(1)
                 }
                 Spacer()
+                if !selected {
+                    Text("Use")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.45))
+                }
             }
             .padding(.horizontal, 8)
-            .frame(minHeight: 34)
+            .frame(minHeight: 32)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .background(
-            selectedRepositoryPath == repo.path ? Color.white.opacity(0.065) : .clear,
+            selected ? Color.white.opacity(0.065) : .clear,
             in: RoundedRectangle(cornerRadius: 7, style: .continuous)
         )
-    }
-
-    private func newSessionControls(path: String) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack {
-                Label(URL(fileURLWithPath: path).lastPathComponent, systemImage: "plus.circle.fill")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.82))
-                Spacer()
-                Text("New Agent Session")
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.34))
-            }
-
-            HStack(spacing: 5) {
-                ForEach(managedControl.managedProviders, id: \.self) { provider in
-                    Button {
-                        managedControl.selectProvider(provider)
-                    } label: {
-                        Label(provider.stableName.capitalized, systemImage: AgentVisualStyle.providerSymbol(provider))
-                            .font(.system(size: 8.5, weight: .semibold))
-                            .padding(.horizontal, 7)
-                            .frame(height: 24)
-                            .background(
-                                provider == selectedProvider ? Color.white.opacity(0.11) : Color.white.opacity(0.035),
-                                in: Capsule()
-                            )
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-
-            let models = managedControl.availableModels(for: selectedProvider)
-            if !models.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 5) {
-                        modelChoice("Default", model: nil)
-                        ForEach(models) { option in
-                            modelChoice(option.displayName, model: option.model)
-                        }
-                    }
-                }
-                .scrollBounceBehavior(.basedOnSize)
-            }
-
-            let agents = managedControl.availableAgents(for: selectedProvider)
-            if !agents.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 5) {
-                        agentChoice("Default agent", agent: nil)
-                        ForEach(agents) { option in
-                            agentChoice(option.name, agent: option.name)
-                        }
-                    }
-                }
-                .scrollBounceBehavior(.basedOnSize)
-            }
-
-            Button {
-                guard !starting else { return }
-                starting = true
-                Task { @MainActor in
-                    let descriptor = await managedControl.startNewSession(cwd: path)
-                    starting = false
-                    if descriptor != nil {
-                        recentProjects.record(path)
-                        onDismiss()
-                    }
-                }
-            } label: {
-                Label(starting ? "Starting…" : "Start in folder", systemImage: "terminal.fill")
-                    .font(.system(size: 9.5, weight: .bold))
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 29)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.black.opacity(0.88))
-            .background(.white.opacity(starting ? 0.55 : 0.92), in: RoundedRectangle(cornerRadius: 7))
-            .disabled(starting || !managedControl.interactiveCapabilities.contains(.startSession))
-        }
+        .help("Start a new session in \(repo.path)")
     }
 
     private var repositoryPathEntry: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 6) {
-                TextField("/path/to/repository", text: $repositoryPathDraft)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 9, weight: .medium, design: .monospaced))
-                    .onSubmit(useRepositoryPathDraft)
-                Button("Use") {
-                    useRepositoryPathDraft()
-                }
-                .buttonStyle(.plain)
-                .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(.white.opacity(0.82))
+        HStack(spacing: 6) {
+            TextField("/path/to/folder", text: $repositoryPathDraft)
+                .textFieldStyle(.plain)
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .onSubmit(useRepositoryPathDraft)
+            Button("Use") {
+                useRepositoryPathDraft()
             }
-            .padding(.horizontal, 8)
-            .frame(height: 28)
-            .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 7))
-
-            if let repositoryPathError {
-                Text(repositoryPathError)
-                    .font(.system(size: 8.5, weight: .medium))
-                    .foregroundStyle(.red.opacity(0.78))
-                    .padding(.horizontal, 3)
-            }
+            .buttonStyle(.plain)
+            .font(.system(size: 9, weight: .bold))
+            .foregroundStyle(.white.opacity(0.82))
         }
+        .padding(.horizontal, 8)
+        .frame(height: 28)
+        .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 7))
         .padding(.horizontal, 4)
     }
 
-    private func modelChoice(_ title: String, model: String?) -> some View {
-        let selected = managedControl.newSessionModel(for: selectedProvider) == model
-        return Button {
-            _ = managedControl.selectNewSessionModel(model, for: selectedProvider)
-        } label: {
-            Text(title)
-                .font(.system(size: 8, weight: .semibold, design: .monospaced))
-                .foregroundStyle(.white.opacity(selected ? 0.86 : 0.46))
-                .padding(.horizontal, 7)
-                .frame(height: 22)
-                .background(.white.opacity(selected ? 0.09 : 0.025), in: Capsule())
-        }
-        .buttonStyle(.plain)
-    }
+    // MARK: Actions
 
-    private func agentChoice(_ title: String, agent: String?) -> some View {
-        let selected = managedControl.newSessionAgent(for: selectedProvider) == agent
-        return Button {
-            _ = managedControl.selectNewSessionAgent(agent, for: selectedProvider)
-        } label: {
-            Label(title, systemImage: agent == nil ? "person.crop.circle" : "person.crop.circle.badge.checkmark")
-                .font(.system(size: 8, weight: .semibold))
-                .foregroundStyle(.white.opacity(selected ? 0.86 : 0.46))
-                .padding(.horizontal, 7)
-                .frame(height: 22)
-                .background(.white.opacity(selected ? 0.09 : 0.025), in: Capsule())
+    private func startSession() {
+        Task { @MainActor in
+            guard let started = await flow.start(using: managedControl) else { return }
+            if let cwd = started.descriptor.cwd { recentProjects.record(cwd) }
+            onStarted(started)
         }
-        .buttonStyle(.plain)
-        .help(agent == nil ? "Start without a named agent" : "Start with the \(title) agent")
     }
 
     /// Any accessible local folder; the chosen folder itself becomes the
@@ -427,29 +527,49 @@ struct AgentSessionLauncherView: View {
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
-        panel.canCreateDirectories = false
+        panel.canCreateDirectories = true
         panel.prompt = "Use Folder"
-        panel.message = "Choose a project folder for the agent session"
+        panel.message = "Choose the folder the agent session will run in"
         NSApp.activate(ignoringOtherApps: true)
-        guard panel.runModal() == .OK,
-              let url = panel.url,
-              let path = AgentSessionLauncherProjection.validRepositoryPath(url.path) else { return }
-        selectedRepositoryPath = path
-        repositoryPathError = nil
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        flow.useFolder(url.path)
+    }
+
+    /// Creates a new empty folder for a new project. No Git repository is
+    /// created; ask the agent to do that after launch if wanted.
+    private func createFolder() {
+        let panel = NSSavePanel()
+        panel.title = "New Project Folder"
+        panel.message = "Create an empty folder for the new agent session"
+        panel.nameFieldLabel = "Folder Name:"
+        panel.nameFieldStringValue = "New Project"
+        panel.prompt = "Create"
+        panel.canCreateDirectories = true
+        panel.isExtensionHidden = true
+        if let base = flow.folderPath {
+            panel.directoryURL = URL(fileURLWithPath: base).deletingLastPathComponent()
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        flow.createFolder(at: url)
     }
 
     private func useRepositoryPathDraft() {
-        guard let path = AgentSessionLauncherProjection.validRepositoryPath(repositoryPathDraft) else {
-            repositoryPathError = "Enter an existing local folder"
-            return
-        }
-        selectedRepositoryPath = path
-        repositoryPathDraft = path
-        repositoryPathError = nil
+        guard flow.useFolder(repositoryPathDraft) else { return }
         showsRepositoryPathEntry = false
     }
+}
 
-
+private extension View {
+    /// Intrinsic-width menu: the label keeps its own typography and never
+    /// stretches across the workspace.
+    func compactMenuStyle() -> some View {
+        self
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .fixedSize()
+    }
 }
 
 struct AgentLocalRepositoryChoice: Identifiable, Equatable, Sendable {

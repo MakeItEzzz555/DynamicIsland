@@ -104,6 +104,10 @@ struct AgentEmbeddedConsoleView: View {
     let onSelectSession: (AgentSessionInstanceID) -> Void
     let onSubmit: (String) async -> Bool
     let onInterrupt: () -> Void
+    /// Drafts belong to one exact session instance: switching session,
+    /// provider or project stores the draft and restores that session's own.
+    var loadDraft: ((AgentSessionInstanceID) -> String)? = nil
+    var saveDraft: ((String, AgentSessionInstanceID) -> Void)? = nil
 
     @State private var draft = ""
     @State private var submissionInFlight = false
@@ -130,12 +134,22 @@ struct AgentEmbeddedConsoleView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Selected session details for \(AgentSessionPresentation.primaryTitle(for: session))")
-        .onChange(of: session.id) { _, _ in
-            draft = ""
+        .onChange(of: session.id) { previous, current in
+            saveDraft?(draft, previous)
+            draft = loadDraft?(current) ?? ""
             follow.reset()
         }
         .onChange(of: mode.showsComposer) { _, isInteractive in
-            if !isInteractive { draft = "" }
+            if !isInteractive {
+                saveDraft?(draft, session.id)
+                draft = ""
+            }
+        }
+        .onAppear {
+            if draft.isEmpty, let stored = loadDraft?(session.id) { draft = stored }
+        }
+        .onDisappear {
+            saveDraft?(draft, session.id)
         }
     }
 
@@ -565,10 +579,15 @@ struct AgentEmbeddedConsoleView: View {
         submissionInFlight = true
         let submittedDraft = value
         let originalDraft = draft
+        let submittedSession = session.id
         Task { @MainActor in
             let accepted = await onSubmit(submittedDraft)
-            if accepted, draft == originalDraft {
-                draft = ""
+            if accepted {
+                // Clear only the draft of the session that was submitted.
+                if session.id == submittedSession, draft == originalDraft {
+                    draft = ""
+                }
+                saveDraft?("", submittedSession)
             }
             submissionInFlight = false
         }

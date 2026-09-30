@@ -202,7 +202,9 @@ final class AgentUISnapshotTests: XCTestCase {
         let view = AgentSessionLauncherView(
             sessions: sessions,
             managedControl: managed,
+            flow: AgentNewSessionFlow(),
             onSelectSession: { _ in },
+            onStarted: { _ in },
             onDismiss: {}
         )
         .frame(width: 520, height: 300, alignment: .top)
@@ -275,6 +277,70 @@ final class AgentUISnapshotTests: XCTestCase {
             .padding(12)
             .background(Color(red: 0.055, green: 0.06, blue: 0.12))
         try render(view, size: CGSize(width: 820, height: 440), to: output.appendingPathComponent(name + ".png"))
+    }
+
+    func testRenderNewSessionWorkflowSnapshots() async throws {
+        guard let outputPath = ProcessInfo.processInfo.environment["DYNAMIC_ISLAND_AGENT_SNAPSHOT_DIR"] else {
+            throw XCTSkip("Set DYNAMIC_ISLAND_AGENT_SNAPSHOT_DIR to render review screenshots.")
+        }
+        let output = URL(fileURLWithPath: outputPath, isDirectory: true)
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        let folder = output.appendingPathComponent("render-project", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+
+        let store = AgentEventStore()
+        let approvals = AgentApprovalController()
+        let claude = ClaudeInteractiveProvider(
+            client: try ClaudeCodeStreamingClient(executableURL: URL(fileURLWithPath: "/usr/bin/true")),
+            catalog: SnapshotEmptyClaudeCatalog()
+        )
+        let managed = AgentManagedSessionController(
+            providers: [claude],
+            coordinator: AgentIngestionCoordinator(eventStore: store),
+            eventStore: store,
+            approvals: approvals
+        )
+        await managed.refreshPersistentSnapshot()
+        _ = managed.selectNewSessionModel("opus", for: .claude)
+
+        func dashboard(_ sessions: [AgentSession]) -> some View {
+            AgentDashboardContentView(
+                sessions: sessions,
+                showsUsage: false,
+                approvalControl: approvals,
+                managedControl: managed,
+                availableHeight: 440
+            )
+            .padding(14)
+            .background(Color(red: 0.025, green: 0.027, blue: 0.055))
+        }
+
+        try renderHosted(dashboard([]), size: CGSize(width: 820, height: 440),
+                         to: output.appendingPathComponent("30-empty-new-session.png"))
+
+        let flow = AgentNewSessionFlow()
+        flow.present(.newSession, provider: .claude, folder: folder.path)
+        let launcher = AgentSessionLauncherView(
+            sessions: [],
+            managedControl: managed,
+            flow: flow,
+            onSelectSession: { _ in },
+            onStarted: { _ in },
+            onDismiss: {}
+        )
+        .frame(width: 780, alignment: .top)
+        .padding(18)
+        .background(Color(red: 0.025, green: 0.027, blue: 0.055))
+        try renderHosted(launcher, size: CGSize(width: 816, height: 400),
+                         to: output.appendingPathComponent("31-new-session-launcher.png"))
+
+        guard case .success(let started) = await managed.startManagedSession(provider: .claude, cwd: folder.path) else {
+            return XCTFail("start failed")
+        }
+        try renderHosted(dashboard(store.sessions), size: CGSize(width: 820, height: 440),
+                         to: output.appendingPathComponent("32-new-session-composer.png"))
+        XCTAssertEqual(managed.selectedSessionID, started.instance)
+        managed.stop()
     }
 
     private func renderStandbyDashboard(output: URL) throws {
@@ -560,4 +626,9 @@ final class AgentUISnapshotTests: XCTestCase {
         default: AgentSessionPresentation.stateLabel(state)
         }
     }
+}
+
+private struct SnapshotEmptyClaudeCatalog: ClaudeSessionCataloging {
+    func recentSessions(limit: Int) throws -> [ClaudeCatalogEntry] { [] }
+    func session(nativeSessionID: String) throws -> ClaudeCatalogEntry? { nil }
 }
