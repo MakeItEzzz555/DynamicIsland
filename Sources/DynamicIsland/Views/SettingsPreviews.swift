@@ -205,10 +205,30 @@ struct IslandShellSettingsPreview: View {
             content: { reduceMotion in
                 GeometryReader { proxy in
                     let expandedSize = settings.expandedSize
-                    let scale = min(1, (proxy.size.width - 8) / max(expandedSize.width, 1), proxy.size.height / max(expandedSize.height, 1))
-                    let size = expanded
-                        ? CGSize(width: expandedSize.width * scale, height: expandedSize.height * scale)
-                        : CGSize(width: settings.collapsedSize.width * scale, height: settings.collapsedSize.height * scale)
+                    // Use the production geometry resolver against a deterministic
+                    // notched-screen fixture so adaptive notch sizing has a real,
+                    // immediately visible Settings preview without touching hardware.
+                    let previewScreen = ScreenSnapshot(
+                        frame: CGRect(x: 0, y: 0, width: 1512, height: 982),
+                        visibleFrame: CGRect(x: 0, y: 0, width: 1512, height: 944),
+                        safeAreaInsets: NSEdgeInsets(top: 38, left: 0, bottom: 0, right: 0),
+                        auxiliaryTopLeftArea: CGRect(x: 0, y: 944, width: 635, height: 38),
+                        auxiliaryTopRightArea: CGRect(x: 877, y: 944, width: 635, height: 38)
+                    )
+                    let resolved = NotchGeometryService().geometry(
+                        for: previewScreen,
+                        collapsedSize: settings.collapsedSize,
+                        expandedSize: expandedSize,
+                        useAdaptiveNotchSizing: settings.useAdaptiveNotchSizing,
+                        respectHardwareNotch: settings.respectHardwareNotch
+                    )
+                    let rawSize = expanded ? expandedSize : resolved.collapsedFrame.size
+                    let scale = min(
+                        1,
+                        (proxy.size.width - 8) / max(expandedSize.width, 1),
+                        proxy.size.height / max(expandedSize.height, 1)
+                    )
+                    let size = CGSize(width: rawSize.width * scale, height: rawSize.height * scale)
                     IslandSurface(
                         settings: settings,
                         isExpanded: expanded,
@@ -237,6 +257,182 @@ struct IslandShellSettingsPreview: View {
     }
 }
 
+
+// MARK: - Content motion
+
+/// Replays the exact production staged-content modifier used by expanded pages,
+/// so blur/scale/stagger settings can be evaluated without operating the shell.
+struct ContentMotionSettingsPreview: View {
+    @ObservedObject var settings: AppSettings
+    @State private var visible = true
+    @State private var generation = 0
+
+    var body: some View {
+        SettingsPreviewSandbox(
+            title: "Content Motion Preview",
+            showsReduceMotionToggle: true,
+            height: 116,
+            controls: {
+                Button("Replay") { replay() }
+                    .controlSize(.small)
+            },
+            content: { reduceMotion in
+                HStack(spacing: 10) {
+                    ForEach(0..<3, id: \.self) { index in
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(.white.opacity(0.11))
+                            .overlay(alignment: .leading) {
+                                HStack(spacing: 7) {
+                                    Image(systemName: ["waveform", "folder", "sparkles"][index])
+                                        .foregroundStyle(.white.opacity(0.82))
+                                    Text(["Media", "Files", "Tools"][index])
+                                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                                        .foregroundStyle(.white.opacity(0.84))
+                                }
+                                .padding(.horizontal, 10)
+                            }
+                            .frame(height: 50)
+                            .innerBlurScaleClean(
+                                settings: settings,
+                                isVisible: visible,
+                                isRemoval: !visible,
+                                index: index,
+                                reduceMotion: reduceMotion
+                            )
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        )
+    }
+
+    private func replay() {
+        generation += 1
+        let token = generation
+        visible = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.10) {
+            guard token == generation else { return }
+            visible = true
+        }
+    }
+}
+
+// MARK: - Collapsed media + hover preview
+
+struct CollapsedMediaSettingsPreview: View {
+    @ObservedObject var settings: AppSettings
+    let media: MediaController
+
+    var body: some View {
+        SettingsPreviewSandbox(title: "Collapsed Media Preview", usesSampleContent: true, height: 86) { _ in
+            HStack(spacing: 0) {
+                if settings.showAlbumArtwork {
+                    CompactMediaView(media: media)
+                }
+                Spacer(minLength: 16)
+                if settings.showVisualizer && settings.showCollapsedVisualizer {
+                    AudioVisualizerView(
+                        isPlaying: media.isPlaying,
+                        isActive: media.hasActiveMediaSource,
+                        accentColor: .orange,
+                        variant: .compact,
+                        barCount: 7,
+                        pauseDuringShellMorph: settings.disableVisualizerDuringMorph
+                    )
+                }
+            }
+            .padding(.horizontal, 10)
+            .frame(width: max(CGFloat(settings.collapsedWidth), 190), height: max(CGFloat(settings.collapsedHeight), 44))
+            .background(Color.black, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+}
+
+struct CollapsedHoverSettingsPreview: View {
+    @ObservedObject var settings: AppSettings
+    let media: MediaController
+    @State private var revealed = true
+    @State private var replayGeneration = 0
+
+    var body: some View {
+        SettingsPreviewSandbox(
+            title: "Collapsed Hover Preview",
+            usesSampleContent: true,
+            height: 126,
+            controls: {
+                Button("Replay Delay") { replay() }
+                    .controlSize(.small)
+            },
+            content: { _ in
+                let base = settings.collapsedSize
+                let content = previewContent
+                let rowCount = content.rows.count
+                let liveHeight = base.height + CGFloat(max(rowCount, 1) * 20) + 8
+                let previewHeight = settings.collapsedHoverPreviewEnabled && revealed
+                    ? max(base.height, CGFloat(settings.collapsedHoverPreviewHeight), liveHeight)
+                    : base.height
+
+                IslandSurface(settings: settings, isExpanded: false, visualProgress: 0) {
+                    VStack(spacing: 0) {
+                        Spacer(minLength: max(base.height - 3, 0))
+                        if settings.collapsedHoverPreviewEnabled && revealed {
+                            CollapsedPreviewRow(content: content)
+                                .transition(.opacity)
+                        }
+                    }
+                }
+                .notchIntegrated(settings.respectHardwareNotch)
+                .frame(width: base.width, height: previewHeight)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .animation(.easeOut(duration: 0.16), value: revealed)
+            }
+        )
+    }
+
+    private var previewContent: CollapsedPreviewContent {
+        let title = settings.collapsedHoverPreviewShowTitle && settings.showMediaTitle
+            ? media.title
+            : "Media"
+        let subtitle: String? = if settings.collapsedHoverPreviewShowsArtist {
+            if !media.artist.isEmpty {
+                media.artist
+            } else if settings.collapsedHoverPreviewShowsSource {
+                media.sourceName
+            } else {
+                nil
+            }
+        } else {
+            nil
+        }
+        return CollapsedPreviewContent(rows: [
+            CollapsedPreviewRowContent(
+                id: "settings-preview-media",
+                title: title,
+                subtitle: settings.collapsedHoverPreviewMediaEnabled ? subtitle : nil,
+                trailingText: "2:41",
+                symbolName: settings.collapsedHoverPreviewTitleIconName,
+                fallbackSymbolName: "music.note",
+                kind: .media,
+                isPrimary: true
+            )
+        ])
+    }
+
+    private func replay() {
+        replayGeneration += 1
+        let token = replayGeneration
+        revealed = false
+        let delay = settings.collapsedHoverPreviewEnabled
+            ? max(settings.collapsedHoverPreviewDelay, 0)
+            : 0
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            guard token == replayGeneration else { return }
+            revealed = true
+        }
+    }
+}
+
 // MARK: - Media
 
 struct MediaSettingsPreview: View {
@@ -254,6 +450,31 @@ struct MediaSettingsPreview: View {
             )
             .frame(width: 380)
             .frame(maxWidth: .infinity)
+        }
+    }
+}
+
+
+struct MediaLauncherSettingsPreview: View {
+    @ObservedObject var settings: AppSettings
+    let media: MediaController
+
+    var body: some View {
+        SettingsPreviewSandbox(title: "No-source Launcher Preview", usesSampleContent: true, height: 142) { _ in
+            if settings.showMediaWhenNoSource && settings.mediaLauncherEnabled {
+                EmptyMediaLauncherView(settings: settings, media: media, onLauncherActivated: {})
+                    .scaleEffect(0.80)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                VStack(spacing: 6) {
+                    Image(systemName: "eye.slash")
+                        .font(.system(size: 20, weight: .semibold))
+                    Text("Launcher disabled by current settings")
+                        .font(.caption.weight(.semibold))
+                }
+                .foregroundStyle(.white.opacity(0.52))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
     }
 }
@@ -398,26 +619,37 @@ struct FileTraySettingsPreview: View {
     @StateObject private var layoutStore = IslandLayoutStore()
 
     var body: some View {
-        SettingsPreviewSandbox(title: "File Tray Preview", usesSampleContent: true, height: 150) { reduceMotion in
-            VStack(spacing: 10) {
-                HStack(spacing: 10) {
-                    ForEach(shelf.files, id: \.self) { url in
-                        ShelfFileTile(
-                            settings: settings,
-                            url: url,
-                            thumbnailCache: thumbnails,
-                            isSelected: shelf.selection.contains(url),
-                            onSelect: { _ in },
-                            onRemove: {}
-                        )
-                    }
+        SettingsPreviewSandbox(title: "File Tray Preview", usesSampleContent: true, height: 170) { reduceMotion in
+            HStack(spacing: 10) {
+                if settings.airDropZoneEnabled {
+                    AirDropDropZoneView(
+                        settings: settings,
+                        isTargeted: false,
+                        reduceMotion: reduceMotion
+                    )
+                    .frame(width: 116)
                 }
-                FileTrayQuickActionBar(
-                    fileShelf: shelf,
-                    backgroundRemoval: backgroundRemoval,
-                    layoutStore: layoutStore,
-                    reduceMotion: reduceMotion
-                )
+
+                VStack(spacing: 10) {
+                    HStack(spacing: 10) {
+                        ForEach(shelf.files, id: \.self) { url in
+                            ShelfFileTile(
+                                settings: settings,
+                                url: url,
+                                thumbnailCache: thumbnails,
+                                isSelected: shelf.selection.contains(url),
+                                onSelect: { _ in },
+                                onRemove: {}
+                            )
+                        }
+                    }
+                    FileTrayQuickActionBar(
+                        fileShelf: shelf,
+                        backgroundRemoval: backgroundRemoval,
+                        layoutStore: layoutStore,
+                        reduceMotion: reduceMotion
+                    )
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }

@@ -4,7 +4,11 @@ import Foundation
 /// components (see SettingsPreviews.swift).
 enum SettingsPreviewID: String, CaseIterable, Sendable {
     case islandShell = "Island Preview (Island, Appearance, Motion, Tabs)"
+    case contentMotion = "Content Motion Preview"
+    case collapsedMedia = "Collapsed Media Preview"
+    case collapsedHover = "Collapsed Hover Preview"
     case media = "Media Player Preview"
+    case mediaLauncher = "No-source Launcher Preview"
     case fileTray = "File Tray Preview"
     case timer = "Timer Preview"
     case stats = "Stats Preview"
@@ -59,8 +63,8 @@ enum SettingsAuditCatalog {
         visual(["collapsedWidth", "collapsedHeight", "expandedWidth", "expandedHeight", "respectHardwareNotch",
                 "islandThemeStyle", "shellOpacity", "shellStrokeEnabled"], .islandShell,
                "Width values are read through AppSettings.collapsedSize/expandedSize.")
-        + entries(["useAdaptiveNotchSizing"], .visualWithoutPreview,
-                  "Depends on the physical notch measured from the real screen; a sandbox cannot reproduce hardware geometry.")
+        + visual(["useAdaptiveNotchSizing"], .islandShell,
+                 "The Island preview uses the production NotchGeometryService against a deterministic notched-screen sandbox.")
         + entries(["overlayEnabled", "launchAtLoginEnabled", "expandOnClick", "collapseOnMouseLeave", "autoCollapseEnabled",
                    "autoCollapseDelayPreset", "autoCollapseGraceSeconds"], .behavioral,
                   "Pointer/launch behavior; auto-collapse values are read through AppSettings computed timing.")
@@ -68,17 +72,17 @@ enum SettingsAuditCatalog {
         // Motion
         + visual(["animationPreset", "reduceExtraMotion", "shellAnimationSpeed"], .islandShell,
                  "Replay shows the shared IslandShellMotion animation.")
-        + entries(["contentAnimationEnabled", "contentStaggerEnabled", "contentStaggerAmount", "useBlurTransitions",
-                   "useScaleTransitions"], .visualWithoutPreview,
-                  "Content entrance transitions run during a real expansion; the Island preview replays shell motion only.")
+        + visual(["contentAnimationEnabled", "contentStaggerEnabled", "contentStaggerAmount", "useBlurTransitions",
+                  "useScaleTransitions"], .contentMotion,
+                 "Replays the production innerBlurScaleClean modifier with three staggered content items.")
         // Visualizer / hover preview
         + visual(["useArtworkAccentColor", "visualizerAccentMode", "showExpandedVisualizer"], .media)
-        + entries(["showCollapsedVisualizer"], .visualWithoutPreview,
-                  "Collapsed compact media is shown in the island itself; the Live Activity layout preview shows its geometry.")
-        + entries(["collapsedHoverPreviewEnabled", "collapsedHoverPreviewMediaEnabled", "collapsedHoverPreviewHeight",
-                   "collapsedHoverPreviewDelay", "collapsedHoverPreviewShowTitle", "collapsedHoverPreviewShowsArtist",
-                   "collapsedHoverPreviewShowsSource", "collapsedHoverPreviewTitleIconName"], .visualWithoutPreview,
-                  "The hover preview appears only while the pointer rests on the collapsed island; not reproduced in Settings yet.")
+        + visual(["showCollapsedVisualizer"], .collapsedMedia,
+                 "Renders the production CompactMediaView and AudioVisualizerView with labeled sample media.")
+        + visual(["collapsedHoverPreviewEnabled", "collapsedHoverPreviewMediaEnabled", "collapsedHoverPreviewHeight",
+                  "collapsedHoverPreviewDelay", "collapsedHoverPreviewShowTitle", "collapsedHoverPreviewShowsArtist",
+                  "collapsedHoverPreviewShowsSource", "collapsedHoverPreviewTitleIconName"], .collapsedHover,
+                 "Renders the production IslandSurface and CollapsedPreviewRow; Replay Delay uses the configured delay.")
         + entries(["collapsedHoverPreviewArtistIconName"], .deprecatedHidden, deprecatedNote)
         // Tabs
         + visual(["showTrayTab", "showTimerTab", "showStatsTab", "showToolsTab", "showAgentsTab", "showIslandTab"], .islandShell,
@@ -92,17 +96,17 @@ enum SettingsAuditCatalog {
         // Media
         + visual(["mediaEnabled", "showMediaWhenPaused", "showAlbumArtwork", "showMediaTitle", "showMediaArtist",
                   "showMediaSourceName", "showPlaybackControls", "showProgressSlider", "showVolumeSlider", "showVisualizer"], .media)
-        + entries(["showMediaWhenNoSource", "mediaLauncherEnabled", "showAppleMusicLauncher", "showSpotifyLauncher",
-                   "showYouTubeLauncher"], .visualWithoutPreview,
-                  "The launcher appears only when no media source exists; the preview shows the active player.")
+        + visual(["showMediaWhenNoSource", "mediaLauncherEnabled", "showAppleMusicLauncher", "showSpotifyLauncher",
+                  "showYouTubeLauncher"], .mediaLauncher,
+                 "Renders the production EmptyMediaLauncherView; interactions are disabled by the Settings sandbox.")
         + entries(["openSourceOnArtworkClick", "collapseAfterOpeningMediaSource", "collapseAfterMediaLauncher"], .behavioral,
                   "Click behavior.")
         + entries(["preferSystemNowPlaying", "preferSpotifyAppleScript", "preferBrowserMedia", "browserMediaDetectionEnabled",
                    "youtubeMetadataEnrichmentEnabled"], .deprecatedHidden, deprecatedNote)
         // Tray
         + visual(["showFileThumbnails", "showFileExtensions", "showFileCountBadge"], .fileTray)
-        + entries(["airDropZoneEnabled"], .visualWithoutPreview,
-                  "The AirDrop drop zone is part of the Tray page layout; the preview shows tiles and quick actions.")
+        + visual(["airDropZoneEnabled"], .fileTray,
+                 "The File Tray preview renders the production AirDropDropZoneView when enabled.")
         + entries(["trayEnabled", "fileShelfEnabled", "allowFileDropsOnCollapsedIsland", "allowFileDropsOnExpandedTray",
                    "confirmBeforeClearShelf", "revealInFinderActionEnabled", "copyPathActionEnabled", "removeFileActionEnabled",
                    "openFileActionEnabled", "airDropFallbackRevealInFinder", "deferThumbnailsDuringMorph"], .behavioral,

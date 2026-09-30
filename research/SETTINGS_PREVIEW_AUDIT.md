@@ -5,8 +5,8 @@ A unit test keeps it in sync with every `@Published` property in `AppSettings`.
 
 | Classification | Count |
 |---|---|
-| VISUAL | 72 |
-| VISUAL (no preview, justified) | 21 |
+| VISUAL | 93 |
+| VISUAL (no preview, justified) | 0 |
 | BEHAVIORAL | 66 |
 | PERMISSION | 1 |
 | DATA/PERSISTENCE | 5 |
@@ -25,7 +25,7 @@ A unit test keeps it in sync with every `@Published` property in `AppSettings`.
 | `islandThemeStyle` | VISUAL | Island Preview (Island, Appearance, Motion, Tabs) | Width values are read through AppSettings.collapsedSize/expandedSize. |
 | `shellOpacity` | VISUAL | Island Preview (Island, Appearance, Motion, Tabs) | Width values are read through AppSettings.collapsedSize/expandedSize. |
 | `shellStrokeEnabled` | VISUAL | Island Preview (Island, Appearance, Motion, Tabs) | Width values are read through AppSettings.collapsedSize/expandedSize. |
-| `useAdaptiveNotchSizing` | VISUAL (no preview, justified) | — | Depends on the physical notch measured from the real screen; a sandbox cannot reproduce hardware geometry. |
+| `useAdaptiveNotchSizing` | VISUAL | Island Preview (Island, Appearance, Motion, Tabs) | The Island preview uses the production NotchGeometryService against a deterministic notched-screen sandbox. |
 | `overlayEnabled` | BEHAVIORAL | — | Pointer/launch behavior; auto-collapse values are read through AppSettings computed timing. |
 | `launchAtLoginEnabled` | BEHAVIORAL | — | Pointer/launch behavior; auto-collapse values are read through AppSettings computed timing. |
 | `expandOnClick` | BEHAVIORAL | — | Pointer/launch behavior; auto-collapse values are read through AppSettings computed timing. |
@@ -38,23 +38,23 @@ A unit test keeps it in sync with every `@Published` property in `AppSettings`.
 | `animationPreset` | VISUAL | Island Preview (Island, Appearance, Motion, Tabs) | Replay shows the shared IslandShellMotion animation. |
 | `reduceExtraMotion` | VISUAL | Island Preview (Island, Appearance, Motion, Tabs) | Replay shows the shared IslandShellMotion animation. |
 | `shellAnimationSpeed` | VISUAL | Island Preview (Island, Appearance, Motion, Tabs) | Replay shows the shared IslandShellMotion animation. |
-| `contentAnimationEnabled` | VISUAL (no preview, justified) | — | Content entrance transitions run during a real expansion; the Island preview replays shell motion only. |
-| `contentStaggerEnabled` | VISUAL (no preview, justified) | — | Content entrance transitions run during a real expansion; the Island preview replays shell motion only. |
-| `contentStaggerAmount` | VISUAL (no preview, justified) | — | Content entrance transitions run during a real expansion; the Island preview replays shell motion only. |
-| `useBlurTransitions` | VISUAL (no preview, justified) | — | Content entrance transitions run during a real expansion; the Island preview replays shell motion only. |
-| `useScaleTransitions` | VISUAL (no preview, justified) | — | Content entrance transitions run during a real expansion; the Island preview replays shell motion only. |
+| `contentAnimationEnabled` | VISUAL | Content Motion Preview | Replays the production innerBlurScaleClean modifier with three staggered content items. |
+| `contentStaggerEnabled` | VISUAL | Content Motion Preview | Replays the production innerBlurScaleClean modifier with three staggered content items. |
+| `contentStaggerAmount` | VISUAL | Content Motion Preview | Replays the production innerBlurScaleClean modifier with three staggered content items. |
+| `useBlurTransitions` | VISUAL | Content Motion Preview | Replays the production innerBlurScaleClean modifier with three staggered content items. |
+| `useScaleTransitions` | VISUAL | Content Motion Preview | Replays the production innerBlurScaleClean modifier with three staggered content items. |
 | `useArtworkAccentColor` | VISUAL | Media Player Preview |  |
 | `visualizerAccentMode` | VISUAL | Media Player Preview |  |
 | `showExpandedVisualizer` | VISUAL | Media Player Preview |  |
-| `showCollapsedVisualizer` | VISUAL (no preview, justified) | — | Collapsed compact media is shown in the island itself; the Live Activity layout preview shows its geometry. |
-| `collapsedHoverPreviewEnabled` | VISUAL (no preview, justified) | — | The hover preview appears only while the pointer rests on the collapsed island; not reproduced in Settings yet. |
-| `collapsedHoverPreviewMediaEnabled` | VISUAL (no preview, justified) | — | The hover preview appears only while the pointer rests on the collapsed island; not reproduced in Settings yet. |
-| `collapsedHoverPreviewHeight` | VISUAL (no preview, justified) | — | The hover preview appears only while the pointer rests on the collapsed island; not reproduced in Settings yet. |
-| `collapsedHoverPreviewDelay` | VISUAL (no preview, justified) | — | The hover preview appears only while the pointer rests on the collapsed island; not reproduced in Settings yet. |
-| `collapsedHoverPreviewShowTitle` | VISUAL (no preview, justified) | — | The hover preview appears only while the pointer rests on the collapsed island; not reproduced in Settings yet. |
-| `collapsedHoverPreviewShowsArtist` | VISUAL (no preview, justified) | — | The hover preview appears only while the pointer rests on the collapsed island; not reproduced in Settings yet. |
-| `collapsedHoverPreviewShowsSource` | VISUAL (no preview, justified) | — | The hover preview appears only while the pointer rests on the collapsed island; not reproduced in Settings yet. |
-| `collapsedHoverPreviewTitleIconName` | VISUAL (no preview, justified) | — | The hover preview appears only while the pointer rests on the collapsed island; not reproduced in Settings yet. |
+| `showCollapsedVisualizer` | VISUAL | Collapsed Media Preview | Renders the production CompactMediaView and AudioVisualizerView with labeled sample media. |
+| `collapsedHoverPreviewEnabled` | VISUAL | Collapsed Hover Preview | Renders the production IslandSurface and CollapsedPreviewRow; Replay Delay uses the configured delay. |
+| `collapsedHoverPreviewMediaEnabled` | VISUAL | Collapsed Hover Preview | Renders the production IslandSurface and CollapsedPreviewRow; Replay Delay uses the configured delay. |
+| `collapsedHoverPreviewHeight` | VISUAL | Collapsed Hover Preview | Renders the production IslandSurface and CollapsedPreviewRow; Replay Delay uses the configured delay. |
+| `collapsedHoverPreviewDelay` | VISUAL | Collapsed Hover Preview | Renders the production IslandSurface and CollapsedPreviewRow; Replay Delay uses the configured delay. |
+| `collapsedHoverPreviewShowTitle` | VISUAL | Collapsed Hover Preview | Renders the production IslandSurface and CollapsedPreviewRow; Replay Delay uses the configured delay. |
+| `collapsedHoverPreviewShowsArtist` | VISUAL | Collapsed Hover Preview | Renders the production IslandSurface and CollapsedPreviewRow; Replay Delay uses the configured delay. |
+| `collapsedHoverPreviewShowsSource` | VISUAL | Collapsed Hover Preview | Renders the production IslandSurface and CollapsedPreviewRow; Replay Delay uses the configured delay. |
+| `collapsedHoverPreviewTitleIconName` | VISUAL | Collapsed Hover Preview | Renders the production IslandSurface and CollapsedPreviewRow; Replay Delay uses the configured delay. |
 | `collapsedHoverPreviewArtistIconName` | DEPRECATED / HIDDEN | — | Legacy persisted value retained for migration compatibility; hidden from Settings until real production behavior exists. |
 | `showTrayTab` | VISUAL | Island Preview (Island, Appearance, Motion, Tabs) | The expanded preview renders the production page switcher. |
 | `showTimerTab` | VISUAL | Island Preview (Island, Appearance, Motion, Tabs) | The expanded preview renders the production page switcher. |
@@ -83,11 +83,11 @@ A unit test keeps it in sync with every `@Published` property in `AppSettings`.
 | `showProgressSlider` | VISUAL | Media Player Preview |  |
 | `showVolumeSlider` | VISUAL | Media Player Preview |  |
 | `showVisualizer` | VISUAL | Media Player Preview |  |
-| `showMediaWhenNoSource` | VISUAL (no preview, justified) | — | The launcher appears only when no media source exists; the preview shows the active player. |
-| `mediaLauncherEnabled` | VISUAL (no preview, justified) | — | The launcher appears only when no media source exists; the preview shows the active player. |
-| `showAppleMusicLauncher` | VISUAL (no preview, justified) | — | The launcher appears only when no media source exists; the preview shows the active player. |
-| `showSpotifyLauncher` | VISUAL (no preview, justified) | — | The launcher appears only when no media source exists; the preview shows the active player. |
-| `showYouTubeLauncher` | VISUAL (no preview, justified) | — | The launcher appears only when no media source exists; the preview shows the active player. |
+| `showMediaWhenNoSource` | VISUAL | No-source Launcher Preview | Renders the production EmptyMediaLauncherView; interactions are disabled by the Settings sandbox. |
+| `mediaLauncherEnabled` | VISUAL | No-source Launcher Preview | Renders the production EmptyMediaLauncherView; interactions are disabled by the Settings sandbox. |
+| `showAppleMusicLauncher` | VISUAL | No-source Launcher Preview | Renders the production EmptyMediaLauncherView; interactions are disabled by the Settings sandbox. |
+| `showSpotifyLauncher` | VISUAL | No-source Launcher Preview | Renders the production EmptyMediaLauncherView; interactions are disabled by the Settings sandbox. |
+| `showYouTubeLauncher` | VISUAL | No-source Launcher Preview | Renders the production EmptyMediaLauncherView; interactions are disabled by the Settings sandbox. |
 | `openSourceOnArtworkClick` | BEHAVIORAL | — | Click behavior. |
 | `collapseAfterOpeningMediaSource` | BEHAVIORAL | — | Click behavior. |
 | `collapseAfterMediaLauncher` | BEHAVIORAL | — | Click behavior. |
@@ -99,7 +99,7 @@ A unit test keeps it in sync with every `@Published` property in `AppSettings`.
 | `showFileThumbnails` | VISUAL | File Tray Preview |  |
 | `showFileExtensions` | VISUAL | File Tray Preview |  |
 | `showFileCountBadge` | VISUAL | File Tray Preview |  |
-| `airDropZoneEnabled` | VISUAL (no preview, justified) | — | The AirDrop drop zone is part of the Tray page layout; the preview shows tiles and quick actions. |
+| `airDropZoneEnabled` | VISUAL | File Tray Preview | The File Tray preview renders the production AirDropDropZoneView when enabled. |
 | `trayEnabled` | BEHAVIORAL | — | Drop, context-menu and performance behavior. |
 | `fileShelfEnabled` | BEHAVIORAL | — | Drop, context-menu and performance behavior. |
 | `allowFileDropsOnCollapsedIsland` | BEHAVIORAL | — | Drop, context-menu and performance behavior. |

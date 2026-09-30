@@ -164,7 +164,11 @@ final class SettingsPreviewSnapshotTests: XCTestCase {
             ("54-settings-tray", AnyView(FileTraySettingsPreview(settings: settings, shelf: deps.previewShelf, backgroundRemoval: deps.previewBackgroundRemoval))),
             ("55-settings-timer", AnyView(TimerSettingsPreview(timer: deps.timer))),
             ("56-settings-stats", AnyView(StatsSettingsPreview(settings: settings, stats: deps.stats))),
-            ("57-settings-productivity", AnyView(ProductivityDeckSettingsPreview(workspace: deps.rightWorkspace, productivity: deps.productivity, shelf: deps.previewShelf)))
+            ("57-settings-productivity", AnyView(ProductivityDeckSettingsPreview(workspace: deps.rightWorkspace, productivity: deps.productivity, shelf: deps.previewShelf))),
+            ("58-settings-content-motion", AnyView(ContentMotionSettingsPreview(settings: settings))),
+            ("59-settings-collapsed-media", AnyView(CollapsedMediaSettingsPreview(settings: settings, media: deps.previewMedia))),
+            ("60-settings-collapsed-hover", AnyView(CollapsedHoverSettingsPreview(settings: settings, media: deps.previewMedia))),
+            ("61-settings-media-launcher", AnyView(MediaLauncherSettingsPreview(settings: settings, media: deps.previewMedia)))
         ]
         for (name, view) in views {
             let size = CGSize(width: 700, height: name.contains("right-workspace") ? 900 : 320)

@@ -42,16 +42,13 @@ final class SettingsAuditTests: XCTestCase {
                        "missing: \(Set(published).subtracting(audited).sorted()) extra: \(Set(audited).subtracting(published).sorted())")
     }
 
-    func testVisualSettingsHaveAPreviewOrAJustification() {
-        for entry in SettingsAuditCatalog.entries {
-            switch entry.classification {
-            case .visual:
-                XCTAssertNotNil(entry.preview, "\(entry.key) is visual but has no preview")
-            case .visualWithoutPreview, .noProductionReader, .deprecatedHidden:
-                XCTAssertFalse(entry.note.isEmpty, "\(entry.key) needs a justification")
-            default:
-                break
-            }
+    func testEveryUserFacingVisualSettingHasALivePreview() {
+        XCTAssertFalse(
+            SettingsAuditCatalog.entries.contains { $0.classification == .visualWithoutPreview },
+            "Every user-facing visual setting must have a live production-component preview"
+        )
+        for entry in SettingsAuditCatalog.entries where entry.classification == .visual {
+            XCTAssertNotNil(entry.preview, "\(entry.key) is visual but has no preview")
         }
     }
 

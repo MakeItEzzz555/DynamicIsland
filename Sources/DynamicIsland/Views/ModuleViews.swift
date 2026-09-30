@@ -760,7 +760,7 @@ private struct ClickableAlbumArtworkButton: View {
     }
 }
 
-private struct EmptyMediaLauncherView: View {
+struct EmptyMediaLauncherView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var media: MediaController
     let onLauncherActivated: () -> Void

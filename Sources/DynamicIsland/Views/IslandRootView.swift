@@ -2487,7 +2487,7 @@ private struct CollapsedBatteryActivityCompactView: View {
     }
 }
 
-private struct CollapsedPreviewRow: View {
+struct CollapsedPreviewRow: View {
     let content: CollapsedPreviewContent
 
     var body: some View {
@@ -4176,7 +4176,7 @@ extension View {
     }
 }
 
-private struct AirDropDropZoneView: View {
+struct AirDropDropZoneView: View {
     @ObservedObject var settings: AppSettings
     let isTargeted: Bool
     let reduceMotion: Bool

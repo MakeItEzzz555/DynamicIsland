@@ -204,6 +204,10 @@ struct SettingsView: View {
     private var appearanceSection: some View {
         settingsForm("Appearance") {
             IslandShellSettingsPreview(settings: settings)
+            if let previews {
+                CollapsedMediaSettingsPreview(settings: settings, media: previews.previewMedia)
+                CollapsedHoverSettingsPreview(settings: settings, media: previews.previewMedia)
+            }
             SettingsGroup("Shell") {
                 Picker("Island Theme", selection: $settings.islandThemeStyle) {
                     ForEach(IslandThemeStyle.allCases) { theme in
@@ -258,6 +262,7 @@ struct SettingsView: View {
     private var motionSection: some View {
         settingsForm("Motion") {
             IslandShellSettingsPreview(settings: settings)
+            ContentMotionSettingsPreview(settings: settings)
             SettingsGroup("Animation") {
                 Picker("Preset", selection: $settings.animationPreset) {
                     ForEach(AnimationPreset.allCases) { preset in
@@ -303,6 +308,7 @@ struct SettingsView: View {
         settingsForm("Media") {
             if let previews {
                 MediaSettingsPreview(settings: settings, media: previews.previewMedia)
+                MediaLauncherSettingsPreview(settings: settings, media: previews.previewMedia)
             }
             SettingsGroup("Visibility") {
                 Toggle("Enable media", isOn: $settings.mediaEnabled)
