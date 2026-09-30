@@ -119,6 +119,55 @@ final class ClaudeInteractiveProviderTests: XCTestCase {
         XCTAssertEqual(final.text, "Hello world")
     }
 
+    /// Verified shape from Claude Code 2.1.285 with --include-partial-messages:
+    /// one `assistant` event per block, whose content holds only that block,
+    /// while stream deltas use the real block index (text after thinking = 1).
+    func testPerBlockAssistantEventsDoNotDuplicateStreamedText() async throws {
+        let provider = try ClaudeInteractiveProvider(
+            client: ClaudeCodeStreamingClient(executableURL: URL(fileURLWithPath: "/usr/bin/true"))
+        )
+        _ = await provider.project(envelope(type: "stream_event", event: .object([
+            "type": .string("message_start"),
+            "message": .object(["id": .string("msg-1")])
+        ])))
+        _ = await provider.project(envelope(type: "stream_event", event: .object([
+            "type": .string("content_block_start"), "index": .integer(0),
+            "content_block": .object(["type": .string("thinking")])
+        ])))
+        let thinking = await provider.project(assistant(messageID: "msg-1", block: .object([
+            "type": .string("thinking"), "thinking": .string("private")
+        ])))
+        XCTAssertTrue(thinking.isEmpty)
+        _ = await provider.project(envelope(type: "stream_event", event: .object([
+            "type": .string("content_block_start"), "index": .integer(1),
+            "content_block": .object(["type": .string("text")])
+        ])))
+        let delta = await provider.project(envelope(type: "stream_event", event: .object([
+            "type": .string("content_block_delta"), "index": .integer(1),
+            "delta": .object(["type": .string("text_delta"), "text": .string("DONE")])
+        ])))
+        let completed = await provider.project(assistant(messageID: "msg-1", block: .object([
+            "type": .string("text"), "text": .string("DONE")
+        ])))
+
+        guard case .transcriptDelta(_, _, let deltaID, _) = try XCTUnwrap(delta.first),
+              case .transcript(let final) = try XCTUnwrap(completed.first) else {
+            return XCTFail("Expected delta and completed transcript")
+        }
+        XCTAssertEqual(deltaID, final.id, "streamed and completed text must be one entry")
+    }
+
+    private func assistant(messageID: String, block: CodexJSONValue) -> ClaudeCodeStreamEnvelope {
+        ClaudeCodeStreamEnvelope(
+            nativeSessionID: "session-1",
+            turnID: "turn-1",
+            message: .object([
+                "type": .string("assistant"),
+                "message": .object(["id": .string(messageID), "content": .array([block])])
+            ])
+        )
+    }
+
     func testResultMapsToIdleTurnCompletionWithoutEndingThreadIdentity() async throws {
         let provider = try ClaudeInteractiveProvider(
             client: ClaudeCodeStreamingClient(executableURL: URL(fileURLWithPath: "/usr/bin/true"))

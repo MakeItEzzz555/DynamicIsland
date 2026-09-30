@@ -59,6 +59,10 @@ actor ClaudeInteractiveProvider: AgentInteractiveProvider {
     private var knownSessions: [String: AgentDiscoveredSessionDescriptor] = [:]
     private var launchSpecs: [String: ClaudeLaunchSpec] = [:]
     private var streamMessageIDs: [String: String] = [:]
+    /// Last `content_block_start` per session. With partial messages the
+    /// CLI sends one `assistant` event per block (content = that block
+    /// only), so the stream index is the block's true identity.
+    private var streamBlockStarts: [String: (messageID: String, index: Int)] = [:]
     private var pendingPermissions: [String: PendingPermission] = [:]
     private var lastAssistantContext: [String: Double] = [:]
     private var accountUsage = AgentUsage()
@@ -298,6 +302,7 @@ actor ClaudeInteractiveProvider: AgentInteractiveProvider {
         switch event {
         case .transportFailed(let nativeSessionID, _):
             streamMessageIDs.removeValue(forKey: nativeSessionID)
+            streamBlockStarts.removeValue(forKey: nativeSessionID)
             dropPermissions(for: nativeSessionID)
             markIdle(nativeSessionID)
             return [.providerFailure(nativeSessionID: nativeSessionID, summary: "Claude Code stopped unexpectedly")]
@@ -358,6 +363,7 @@ actor ClaudeInteractiveProvider: AgentInteractiveProvider {
         let state: AgentState = aborted ? .interrupted : (failed ? .failed : .completed)
         markIdle(envelope.nativeSessionID)
         streamMessageIDs.removeValue(forKey: envelope.nativeSessionID)
+        streamBlockStarts.removeValue(forKey: envelope.nativeSessionID)
         dropPermissions(for: envelope.nativeSessionID)
         var events: [AgentInteractiveProviderEvent] = []
         if let context = contextUsage(from: message, nativeSessionID: envelope.nativeSessionID) {
@@ -436,6 +442,13 @@ actor ClaudeInteractiveProvider: AgentInteractiveProvider {
         if eventType == "message_start",
            let messageID = event["message"]?["id"]?.stringValue {
             streamMessageIDs[envelope.nativeSessionID] = messageID
+            streamBlockStarts.removeValue(forKey: envelope.nativeSessionID)
+            return []
+        }
+        if eventType == "content_block_start",
+           let messageID = streamMessageIDs[envelope.nativeSessionID],
+           let index = event["index"]?.intValue {
+            streamBlockStarts[envelope.nativeSessionID] = (messageID, index)
             return []
         }
         guard eventType == "content_block_delta",
@@ -458,7 +471,11 @@ actor ClaudeInteractiveProvider: AgentInteractiveProvider {
               let messageID = payload["id"]?.stringValue,
               let blocks = payload["content"]?.arrayValue else { return [] }
         var mapped: [AgentInteractiveProviderEvent] = []
-        for (index, block) in blocks.enumerated() {
+        let streamedIndex: Int? = blocks.count == 1
+            ? streamBlockStarts[envelope.nativeSessionID].flatMap { $0.messageID == messageID ? $0.index : nil }
+            : nil
+        for (position, block) in blocks.enumerated() {
+            let index = streamedIndex ?? position
             switch block["type"]?.stringValue {
             case "text":
                 guard let text = AgentManagedTranscriptEntry.boundedText(block["text"]?.stringValue) else { continue }
@@ -526,6 +543,7 @@ actor ClaudeInteractiveProvider: AgentInteractiveProvider {
         )
         knownSessions = knownSessions.filter { keep.contains($0.key) }
         streamMessageIDs = streamMessageIDs.filter { keep.contains($0.key) }
+        streamBlockStarts = streamBlockStarts.filter { keep.contains($0.key) }
     }
 
     private nonisolated static func safeToolTitle(_ name: String) -> String {
