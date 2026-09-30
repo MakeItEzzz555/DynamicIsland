@@ -21,12 +21,39 @@ final class RightWorkspaceTests: XCTestCase {
         XCTAssertEqual(recognizer.handle(deltaX: 1, deltaY: 0, phase: .changed, at: 0.01), .previous)
     }
 
-    func testVerticalScrollIsIgnoredSoOtherHandlersKeepIt() {
+    func testVerticalScrollLocksToContentForWholeGesture() {
         var recognizer = RightWorkspaceSwipeRecognizer()
-        XCTAssertEqual(recognizer.handle(deltaX: 3, deltaY: -20, phase: .began, at: 0), .ignored)
-        XCTAssertEqual(recognizer.handle(deltaX: 10, deltaY: 7, phase: .changed, at: 0.01), .ignored,
-                       "10 is not > 7 × 1.5, so not horizontal")
-        XCTAssertEqual(recognizer.handle(deltaX: -40, deltaY: -30, phase: .changed, at: 0.02), .ignored)
+        XCTAssertEqual(recognizer.handle(deltaX: 3, deltaY: -20, phase: .began, at: 0), .passThrough)
+        XCTAssertEqual(recognizer.owner, .verticalContent)
+        XCTAssertEqual(
+            recognizer.handle(deltaX: 24, deltaY: 4, phase: .changed, at: 0.01),
+            .passThrough,
+            "Once vertical owns the gesture, later horizontal noise cannot retarget it"
+        )
+        XCTAssertEqual(
+            recognizer.handle(deltaX: -40, deltaY: -2, phase: .momentum, at: 0.02),
+            .passThrough,
+            "Momentum remains with the ScrollView"
+        )
+    }
+
+    func testStrongHorizontalLocksOutVerticalDrift() {
+        var recognizer = RightWorkspaceSwipeRecognizer()
+        XCTAssertEqual(recognizer.handle(deltaX: -18, deltaY: 5, phase: .began, at: 0), .consumed)
+        XCTAssertEqual(recognizer.owner, .horizontalPaging)
+        XCTAssertEqual(
+            recognizer.handle(deltaX: 1, deltaY: 40, phase: .changed, at: 0.01),
+            .consumed,
+            "Once horizontal owns the gesture, vertical drift cannot hand it to content"
+        )
+    }
+
+    func testTinyFirstFramePassesThroughWithoutLeakingToGlobalGestureRouter() {
+        var recognizer = RightWorkspaceSwipeRecognizer()
+        XCTAssertEqual(recognizer.handle(deltaX: 0.4, deltaY: 0.5, phase: .began, at: 0), .passThrough)
+        XCTAssertNil(recognizer.owner)
+        XCTAssertEqual(recognizer.handle(deltaX: -12, deltaY: 2, phase: .changed, at: 0.01), .consumed)
+        XCTAssertEqual(recognizer.owner, .horizontalPaging)
     }
 
     func testQuietGapStartsANewGestureThatCanPageAgain() {

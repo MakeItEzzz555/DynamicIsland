@@ -267,16 +267,17 @@ final class RightWorkspaceStore: ObservableObject {
     }
 }
 
-/// Horizontal paging intent, ported from Droppy's
-/// `NotchWindowController.handleScrollEvent(_:)`: a new sequence after
-/// 0.3 s of quiet, horizontal dominance of 1.5×, accumulated movement past
-/// 30 points on a trackpad. Divergence: Droppy toggles an idempotent state,
-/// so it may fire again within one gesture; paging is not idempotent, so a
-/// sequence fires at most once (latched until quiet or a new physical
-/// gesture) and momentum can never skip pages.
+/// Direction-locked paging intent, ported from Droppy's
+/// `NotchWindowController.handleScrollEvent(_:)`. A sequence is classified
+/// once from its initial meaningful movement: strong horizontal intent
+/// (1.5× dominance) belongs to workspace paging; everything predominantly
+/// vertical belongs to the page's ScrollView until the physical/momentum
+/// sequence ends. Paging accumulates to Droppy's 30pt threshold and can fire
+/// at most once per gesture, so momentum can never skip multiple pages.
 struct RightWorkspaceSwipeRecognizer: Equatable, Sendable {
     static let sequenceTimeout: TimeInterval = 0.3
     static let horizontalDominance: CGFloat = 1.5
+    static let minimumIntentDelta: CGFloat = 1.5
     static let trackpadThreshold: CGFloat = 30
 
     enum Phase: Equatable, Sendable {
@@ -287,10 +288,18 @@ struct RightWorkspaceSwipeRecognizer: Equatable, Sendable {
         case none
     }
 
+    enum Owner: Equatable, Sendable {
+        case horizontalPaging
+        case verticalContent
+    }
+
     enum Outcome: Equatable, Sendable {
-        /// Not a horizontal workspace gesture; let other handlers see it.
+        /// Event did not begin in the workspace; caller may use another router.
         case ignored
-        /// Horizontal intent owned by the workspace, below threshold or latched.
+        /// Vertical intent owns the whole sequence. Let AppKit/SwiftUI deliver
+        /// the event to the page's native ScrollView.
+        case passThrough
+        /// Horizontal paging owns the sequence, below threshold or already latched.
         case consumed
         /// Swipe left (content moves left): next page.
         case next
@@ -301,23 +310,51 @@ struct RightWorkspaceSwipeRecognizer: Equatable, Sendable {
     private(set) var accumulatedX: CGFloat = 0
     private(set) var lastEventAt: TimeInterval?
     private(set) var isLatched = false
-    private(set) var ownsSequence = false
+    private(set) var owner: Owner?
+
+    var ownsSequence: Bool { owner != nil }
 
     mutating func handle(deltaX: CGFloat, deltaY: CGFloat, phase: Phase, at time: TimeInterval) -> Outcome {
-        if phase == .began || lastEventAt.map({ time - $0 > Self.sequenceTimeout }) == true {
+        let quietReset = lastEventAt.map { time - $0 > Self.sequenceTimeout } ?? false
+        if phase == .began || quietReset {
             reset()
         }
         lastEventAt = time
 
-        let horizontal = abs(deltaX) > abs(deltaY) * Self.horizontalDominance
-        if !ownsSequence {
-            guard horizontal else { return .ignored }
-            ownsSequence = true
+        // Keep momentum with the owner chosen by the physical gesture.
+        if phase == .momentum {
+            switch owner {
+            case .verticalContent:
+                return .passThrough
+            case .horizontalPaging:
+                return .consumed
+            case nil:
+                // A momentum-only tail must never start a new page transition.
+                return .ignored
+            }
         }
-        if isLatched || phase == .momentum {
+
+        if owner == nil {
+            let x = abs(deltaX)
+            let y = abs(deltaY)
+            guard max(x, y) >= Self.minimumIntentDelta else {
+                // Do not let tiny undecided frames leak into the global island
+                // gesture router when they started over this workspace.
+                return .passThrough
+            }
+            owner = x > y * Self.horizontalDominance
+                ? .horizontalPaging
+                : .verticalContent
+        }
+
+        guard owner == .horizontalPaging else {
+            return .passThrough
+        }
+
+        if isLatched {
             return .consumed
         }
-        guard horizontal else { return .consumed }
+
         accumulatedX += deltaX
         if accumulatedX < -Self.trackpadThreshold {
             isLatched = true
@@ -335,6 +372,7 @@ struct RightWorkspaceSwipeRecognizer: Equatable, Sendable {
     mutating func reset() {
         accumulatedX = 0
         isLatched = false
-        ownsSequence = false
+        owner = nil
+        lastEventAt = nil
     }
 }

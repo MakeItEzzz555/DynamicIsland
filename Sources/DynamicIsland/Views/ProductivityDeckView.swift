@@ -30,18 +30,33 @@ struct ProductivityDeckView: View {
         GeometryReader { proxy in
             let showsCamera = tools.contains(.camera)
             let gridTools = tools.filter { $0 != .camera }
-            let usableHeight = max(proxy.size.height, 60)
-            let mirror = min(usableHeight, proxy.size.width * 0.40)
-            HStack(alignment: .top, spacing: 10) {
-                if showsCamera {
-                    CameraMirrorView(controller: productivity.camera, diameter: mirror)
-                        .frame(width: mirror, height: usableHeight, alignment: .center)
+            let availableWidth = max(proxy.size.width, 1)
+            let availableHeight = max(proxy.size.height, 60)
+            let mirror = min(max(availableWidth * 0.34, 104), 154)
+            let gridWidth = max(availableWidth - (showsCamera ? mirror + 10 : 0), 0)
+            let columns = gridWidth >= 200 ? 2 : 1
+            let rows = Int(ceil(Double(gridTools.count) / Double(max(columns, 1))))
+            let gridContentHeight = CGFloat(max(rows, 1)) * 48 + CGFloat(max(rows - 1, 0)) * 6
+            let contentHeight = max(availableHeight, gridContentHeight)
+
+            ScrollView(.vertical, showsIndicators: false) {
+                HStack(alignment: .top, spacing: 10) {
+                    if showsCamera {
+                        CameraMirrorView(controller: productivity.camera, diameter: mirror)
+                            .frame(width: mirror, height: min(contentHeight, max(mirror, availableHeight)), alignment: .top)
+                    }
+                    if !gridTools.isEmpty {
+                        toolGrid(
+                            gridTools,
+                            width: gridWidth,
+                            height: contentHeight
+                        )
+                    }
                 }
-                if !gridTools.isEmpty {
-                    toolGrid(gridTools, width: proxy.size.width - (showsCamera ? mirror + 10 : 0), height: usableHeight)
-                }
+                .frame(width: availableWidth, alignment: .topLeading)
+                .frame(minHeight: availableHeight, alignment: .topLeading)
             }
-            .frame(width: proxy.size.width, height: usableHeight, alignment: .topLeading)
+            .frame(width: availableWidth, height: availableHeight, alignment: .topLeading)
         }
         .environment(\.colorScheme, .dark)
     }

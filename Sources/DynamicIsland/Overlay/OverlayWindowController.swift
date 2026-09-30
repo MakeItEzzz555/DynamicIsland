@@ -1462,6 +1462,14 @@ final class OverlayWindowController {
 
     private func handleExpandedScrollWheelFromMonitor(_ event: NSEvent, source: String) -> Bool {
         guard acceptsOverlayScroll(event) else { return false }
+
+        // The right workspace owns its own two-axis gesture arbitration.
+        // Ask it first so vertical intent can be delivered to its nested
+        // ScrollViews without leaking into global expanded-island actions.
+        if let workspaceRoute = routeRightWorkspaceSwipe(event) {
+            return workspaceRoute
+        }
+
         guard !shouldPassExpandedScrollThroughToContent(event) else {
             return false
         }
@@ -1489,6 +1497,11 @@ final class OverlayWindowController {
 
     private func handleExpandedScrollWheel(_ event: NSEvent, source: String) -> Bool {
         guard acceptsOverlayScroll(event) else { return false }
+
+        if let workspaceRoute = routeRightWorkspaceSwipe(event) {
+            return workspaceRoute
+        }
+
         guard !shouldPassExpandedScrollThroughToContent(event) else {
             return false
         }
@@ -1509,10 +1522,6 @@ final class OverlayWindowController {
             resetExpandedScrollTracking()
             debugGesture("expanded scroll blocked reason=recent-expansion-tail source=\(source)")
             return true
-        }
-
-        if let handled = routeRightWorkspaceSwipe(event) {
-            return handled
         }
 
         guard expandedScrollCooldownAllowsAction() else {
@@ -1623,7 +1632,11 @@ final class OverlayWindowController {
     private func routeRightWorkspaceSwipe(_ event: NSEvent) -> Bool? {
         let workspace = modules.rightWorkspace
         let pages = workspace.configuration.visiblePages
-        guard modules.navigation.selectedPage == .island,
+        guard settings.gesturesEnabled,
+              settings.gestureInputSource == .trackpad,
+              islandState.state == .expanded,
+              event.hasPreciseScrollingDeltas,
+              modules.navigation.selectedPage == .island,
               workspace.configuration.swipeEnabled,
               pages.count > 1 else {
             rightWorkspaceSwipe.reset()
@@ -1653,9 +1666,21 @@ final class OverlayWindowController {
             phase: phase,
             at: event.timestamp
         )
+        let momentumEnded = event.momentumPhase.contains(.ended) || event.momentumPhase.contains(.cancelled)
+        defer {
+            if momentumEnded {
+                rightWorkspaceSwipe.reset()
+            }
+        }
+
         switch outcome {
         case .ignored:
             return nil
+        case .passThrough:
+            // Vertical ownership mutes every global expanded gesture for this
+            // sequence while still letting the native ScrollView receive it.
+            resetExpandedScrollTracking()
+            return false
         case .consumed:
             resetExpandedScrollTracking()
             return true
