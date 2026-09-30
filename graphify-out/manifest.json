@@ -12,9 +12,9 @@
     "semantic_hash": ""
   },
   "Scripts/package_app.sh": {
-    "mtime": 1790778248.386466,
-    "seen": 1790781027.368002,
-    "ast_hash": "d7aa0421c4dc9a26ea0c43158b8b95e0",
+    "mtime": 1790798439.4685318,
+    "seen": 1790798548.739396,
+    "ast_hash": "48abf4814560f8cc7bc7db7067b2c66e",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/App/AppLaunchService.swift": {
@@ -24,9 +24,9 @@
     "semantic_hash": "0b4b7c29df007001c39c574a0dda9bd2"
   },
   "Sources/DynamicIsland/App/DynamicIslandApp.swift": {
-    "mtime": 1790787017.2906878,
-    "seen": 1790787306.289557,
-    "ast_hash": "09b64389f64ca1274cc952d0bfd3030b",
+    "mtime": 1790795216.6952608,
+    "seen": 1790798548.739445,
+    "ast_hash": "a584948510ac479203eca3e9f71510f3",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/App/LaunchAtLoginController.swift": {
@@ -54,9 +54,9 @@
     "semantic_hash": "9deb2ada1cc834bbebf8bbad9c8978a1"
   },
   "Sources/DynamicIsland/Geometry/NotchGeometryService.swift": {
-    "mtime": 1790743305.8409963,
-    "seen": 1790743896.705354,
-    "ast_hash": "d22ad746a988aeadf6aabddf25542d98",
+    "mtime": 1790797289.6911469,
+    "seen": 1790798548.739451,
+    "ast_hash": "02e02781b8660af8ac9865e80143b135",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Modules/AirDropService.swift": {
@@ -102,15 +102,15 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Modules/IslandModule.swift": {
-    "mtime": 1790769983.400717,
-    "seen": 1790771900.0092852,
-    "ast_hash": "0b0c680ecbf3d7796f77e3eb9f56d368",
+    "mtime": 1790794059.8705661,
+    "seen": 1790798548.7394729,
+    "ast_hash": "8e13304464bc59e3916e6232eb771986",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Modules/LiveActivityStore.swift": {
-    "mtime": 1790738078.8487313,
-    "seen": 1790739126.040457,
-    "ast_hash": "79e4c3faaecaca0e89856f3bb5e606f1",
+    "mtime": 1790797291.909076,
+    "seen": 1790798548.739476,
+    "ast_hash": "5455e544507004bcdaa88bcad7a0ee24",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Modules/MediaController.swift": {
@@ -156,15 +156,15 @@
     "semantic_hash": "12fdbee362227841e2118a763380876a"
   },
   "Sources/DynamicIsland/Overlay/IslandLayoutStore.swift": {
-    "mtime": 1790778546.4816985,
-    "seen": 1790781027.3681018,
-    "ast_hash": "382f4d4d47c588d9007bae4c4b790bf6",
+    "mtime": 1790793442.9409316,
+    "seen": 1790798548.7394948,
+    "ast_hash": "4612773c98718a624af945677c869549",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Overlay/OverlayWindowController.swift": {
-    "mtime": 1790784277.5818434,
-    "seen": 1790784609.5808551,
-    "ast_hash": "eda03e4341e365204a2003ac98fff0cd",
+    "mtime": 1790797300.8038402,
+    "seen": 1790798548.7394948,
+    "ast_hash": "a663372c76c05edf9632ed479113172d",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/State/AppSettings.swift": {
@@ -204,9 +204,9 @@
     "semantic_hash": "e45da4c5467fe497679f227ded264dae"
   },
   "Sources/DynamicIsland/Views/IslandRootView.swift": {
-    "mtime": 1790787754.5461764,
-    "seen": 1790790212.569978,
-    "ast_hash": "5a8042da9de7be06954c46d693e552cc",
+    "mtime": 1790797296.9165041,
+    "seen": 1790798548.73951,
+    "ast_hash": "1616189fed8290648cda2df77f2e7c09",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/IslandThemeBackground.swift": {
@@ -222,9 +222,9 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/SettingsView.swift": {
-    "mtime": 1790787017.2901561,
-    "seen": 1790787306.289657,
-    "ast_hash": "381b473c90b26d7fe2cfa8eadd9cc054",
+    "mtime": 1790794550.3529282,
+    "seen": 1790798548.73953,
+    "ast_hash": "0a802fba83596904f0bf444da4a6ad02",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/AppSettingsTests.swift": {
@@ -918,9 +918,9 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/AgentConsoleViews.swift": {
-    "mtime": 1790767199.5897145,
-    "seen": 1790767897.673154,
-    "ast_hash": "4056c0b0928e38294fc6f840c7cc1046",
+    "mtime": 1790793791.1997933,
+    "seen": 1790798548.7395022,
+    "ast_hash": "c5876296d060adaf4a1521be051f97d1",
     "semantic_hash": ""
   },
   "Sources/DynamicIslandClaudeHookRelay/RelayMain.swift": {
@@ -1302,9 +1302,9 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Modules/SystemHUDController.swift": {
-    "mtime": 1790711305.4952502,
-    "seen": 1790711847.6290078,
-    "ast_hash": "708fb44500d3bb330120c4a059668cf5",
+    "mtime": 1790794029.3112843,
+    "seen": 1790798548.739486,
+    "ast_hash": "ddab45b4172dc50c918064307e3263ea",
     "semantic_hash": ""
   },
   "research/DROPPY_PARITY_MASTER_PLAN_2026-09-29.md": {
@@ -1314,9 +1314,9 @@
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/SystemHUDArbitrationTests.swift": {
-    "mtime": 1790711165.2301,
-    "seen": 1790711847.629098,
-    "ast_hash": "f782d1236e869a2a5ddfc358f3f42ff8",
+    "mtime": 1790794455.216163,
+    "seen": 1790798548.739636,
+    "ast_hash": "8d5a67bf4fcf7e79bb9414ac2bb80d37",
     "semantic_hash": ""
   },
   "research/SYSTEM_PRESENCE_HUD_PHASE_2026-09-29.md": {
@@ -1326,9 +1326,9 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Modules/LiveActivityLayoutResolver.swift": {
-    "mtime": 1790738078.849244,
-    "seen": 1790739126.0404558,
-    "ast_hash": "3cca5d6f122a25e817ee6b261b5bd98f",
+    "mtime": 1790795251.223283,
+    "seen": 1790798548.739475,
+    "ast_hash": "6fb9483428f4501f21325d36f5174421",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/LiveActivityLayoutResolverTests.swift": {
@@ -1338,15 +1338,15 @@
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/LiveActivitySidecarSnapshotTests.swift": {
-    "mtime": 1790738294.8632753,
-    "seen": 1790739126.040564,
-    "ast_hash": "905d766450a7b8f5df716910ad5bcd3e",
+    "mtime": 1790797498.7558074,
+    "seen": 1790798548.7396119,
+    "ast_hash": "1916540785d55d76980f731fd25c47c9",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Modules/IslandCapabilityRegistry.swift": {
-    "mtime": 1790719237.5588045,
-    "seen": 1790719582.383988,
-    "ast_hash": "33ca817fe8e705fe0fcb46113eb838cd",
+    "mtime": 1790795209.9088023,
+    "seen": 1790798548.7394729,
+    "ast_hash": "4d7200d200162d0b34378f4d8d78a454",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/IslandCapabilityRegistryTests.swift": {
@@ -1362,9 +1362,9 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Modules/ProductivityModules.swift": {
-    "mtime": 1790723708.03077,
-    "seen": 1790723795.3558369,
-    "ast_hash": "6a586b292ad24f2f110288e97ea9a7d4",
+    "mtime": 1790795212.388438,
+    "seen": 1790798548.73948,
+    "ast_hash": "8e786e5d286e502bdb97c8b33f576ed6",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/KeepAwakeControllerTests.swift": {
@@ -1770,9 +1770,9 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/State/RightWorkspace.swift": {
-    "mtime": 1790786886.4712255,
-    "seen": 1790787306.289624,
-    "ast_hash": "ef571ab0e5257dfc147c840e63a22f48",
+    "mtime": 1790795223.209802,
+    "seen": 1790798548.739501,
+    "ast_hash": "ee8b2e75ae5da24ec3570dcaa9800a1e",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/AppsMediaDeckView.swift": {
@@ -1782,9 +1782,9 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/ProductivityDeckView.swift": {
-    "mtime": 1790786886.4559228,
-    "seen": 1790787306.28965,
-    "ast_hash": "c2be63b1719d70fe5ddf83edc07c45d9",
+    "mtime": 1790797043.923951,
+    "seen": 1790798548.739516,
+    "ast_hash": "1575965cfb955b6ab15d6e3d50404535",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/RightWorkspaceSettingsView.swift": {
@@ -1806,9 +1806,9 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/SettingsPreviews.swift": {
-    "mtime": 1790787017.2909732,
-    "seen": 1790787306.2896562,
-    "ast_hash": "8c90cf87fd78a09f289eeaba1575a4ec",
+    "mtime": 1790797240.0553846,
+    "seen": 1790798548.73953,
+    "ast_hash": "4c035cdde260313c905781ef3efff63d",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/WorkspaceDesignSystem.swift": {
@@ -1836,9 +1836,9 @@
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/RightWorkspaceSnapshotTests.swift": {
-    "mtime": 1790787046.6062627,
-    "seen": 1790787306.289779,
-    "ast_hash": "1963797847fc1529b467915248763098",
+    "mtime": 1790797535.1696098,
+    "seen": 1790798548.7396312,
+    "ast_hash": "304734510dc750a2c30bad00bc660ff0",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/RightWorkspaceTests.swift": {
@@ -1866,9 +1866,9 @@
     "semantic_hash": ""
   },
   "research/SOURCE_PARITY_MANIFEST.md": {
-    "mtime": 1790789349.1278057,
-    "seen": 1790790212.570142,
-    "ast_hash": "5377314c0d2b910d7d16a3f68ac3a6f1",
+    "mtime": 1790798164.0456266,
+    "seen": 1790798548.7396731,
+    "ast_hash": "2a77d1fbf810160351d805612031c15a",
     "semantic_hash": ""
   },
   "research/Screen Recording 2026-01-12 at 11.21.36\u202fPM.mov": {
@@ -1914,9 +1914,9 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/ExpandedIslandMotion.swift": {
-    "mtime": 1790787754.5465665,
-    "seen": 1790790212.569977,
-    "ast_hash": "ecd4c77b925aeb3bcded30aebbff195f",
+    "mtime": 1790793237.240073,
+    "seen": 1790798548.739509,
+    "ast_hash": "5a1b0fcca0ae637f1a45740806cb044c",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/AgentLiveApprovalEndToEndTests.swift": {
@@ -1932,9 +1932,9 @@
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/ExpandedIslandMotionTests.swift": {
-    "mtime": 1790787795.472006,
-    "seen": 1790790212.5700622,
-    "ast_hash": "88757e1c59366d84fc9ea82e79d8e27b",
+    "mtime": 1790793237.240602,
+    "seen": 1790798548.7395961,
+    "ast_hash": "902725cef745daa89f91163d541a575c",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/MediaCapabilityParityTests.swift": {
@@ -1959,6 +1959,48 @@
     "mtime": 1790789333.0642643,
     "seen": 1790790212.570143,
     "ast_hash": "ebaa61c447a545977a583414fab27d46",
+    "semantic_hash": ""
+  },
+  "Sources/DynamicIsland/Geometry/IslandDisplayMetrics.swift": {
+    "mtime": 1790793431.2462676,
+    "seen": 1790798548.7394502,
+    "ast_hash": "93d16ebf5b31f86d3d320960c0eeb853",
+    "semantic_hash": ""
+  },
+  "Sources/DynamicIsland/Modules/ScreenRecordingController.swift": {
+    "mtime": 1790797902.0877101,
+    "seen": 1790798548.7394822,
+    "ast_hash": "e06d99d18cbc8b954ddf115bbb0eed6b",
+    "semantic_hash": ""
+  },
+  "Sources/DynamicIsland/Modules/ScreenRecordingEngine.swift": {
+    "mtime": 1790798111.283696,
+    "seen": 1790798548.7394829,
+    "ast_hash": "257d1615dad7c7e5ec72eea07fe2fa84",
+    "semantic_hash": ""
+  },
+  "Sources/DynamicIsland/Views/ScreenRecordingViews.swift": {
+    "mtime": 1790797454.6563542,
+    "seen": 1790798548.739528,
+    "ast_hash": "7c7f9ed36f70fa1d118de137a26b7475",
+    "semantic_hash": ""
+  },
+  "Tests/DynamicIslandTests/IslandDisplayMetricsTests.swift": {
+    "mtime": 1790793594.5690525,
+    "seen": 1790798548.739605,
+    "ast_hash": "2d431abfadb169181ea36a31570bf740",
+    "semantic_hash": ""
+  },
+  "Tests/DynamicIslandTests/ScreenRecordingTests.swift": {
+    "mtime": 1790797834.2671115,
+    "seen": 1790798548.7396328,
+    "ast_hash": "028e523b486f0a1cc591dafcbd2ffe84",
+    "semantic_hash": ""
+  },
+  "research/SCREEN_RECORDING_PARITY_2026-09-30.md": {
+    "mtime": 1790798248.3599942,
+    "seen": 1790798548.739671,
+    "ast_hash": "e658f310709f985ff48c1e36ab1d759b",
     "semantic_hash": ""
   }
 }
