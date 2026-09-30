@@ -208,6 +208,41 @@ final class CameraPreviewControllerTests: XCTestCase {
         XCTAssertEqual(fixture.activities.activities.count, 1)
     }
 
+    // MARK: Preview consumers
+
+    func testConsumerStartsOnlyWhenAuthorizedAndStopsWithLastConsumer() async {
+        let fixture = makeFixture(authorized: true)
+        await fixture.controller.attachPreviewConsumer()
+        XCTAssertEqual(fixture.session.startedDeviceIDs, ["builtin"])
+        XCTAssertTrue(fixture.controller.isRunning)
+
+        await fixture.controller.attachPreviewConsumer()
+        XCTAssertEqual(fixture.session.startedDeviceIDs.count, 1, "second consumer shares the session")
+        await fixture.controller.detachPreviewConsumer()
+        XCTAssertTrue(fixture.controller.isRunning)
+        await fixture.controller.detachPreviewConsumer()
+        XCTAssertFalse(fixture.controller.isRunning)
+        XCTAssertEqual(fixture.session.stopCount, 1)
+        XCTAssertTrue(fixture.activities.activities.isEmpty)
+    }
+
+    func testConsumerNeverPromptsForPermission() async {
+        let fixture = makeFixture()
+        await fixture.controller.attachPreviewConsumer()
+        XCTAssertEqual(fixture.devices.requestCount, 0)
+        XCTAssertTrue(fixture.session.startedDeviceIDs.isEmpty)
+        await fixture.controller.detachPreviewConsumer()
+        XCTAssertEqual(fixture.session.stopCount, 0)
+    }
+
+    func testConsumerLeavesExplicitlyOpenedPreviewRunning() async throws {
+        let fixture = makeFixture(authorized: true)
+        try await fixture.controller.open()
+        await fixture.controller.attachPreviewConsumer()
+        await fixture.controller.detachPreviewConsumer()
+        XCTAssertTrue(fixture.controller.isRunning)
+    }
+
     // MARK: Fixture
 
     private struct Fixture {

@@ -429,6 +429,39 @@ final class CameraPreviewController: ObservableObject, IslandCapabilityAdapter {
         publishState()
     }
 
+    // MARK: Preview consumers (Droppy CameraManager.previewDidAppear/Disappear)
+
+    private var previewConsumers = 0
+    private var consumerStartedSession = false
+
+    /// A visible preview surface appeared. Starts capture only when access
+    /// was already granted, so appearing never prompts for permission.
+    func attachPreviewConsumer() async {
+        previewConsumers += 1
+        guard previewConsumers == 1,
+              isEnabled,
+              deviceProvider.permissionState == .authorized,
+              !isRunning,
+              phase != .starting else { return }
+        consumerStartedSession = true
+        do {
+            try await open()
+        } catch {
+            consumerStartedSession = false
+        }
+    }
+
+    /// The last visible preview surface disappeared: stop capture that a
+    /// surface started. An explicit user-opened preview is left alone.
+    func detachPreviewConsumer() async {
+        previewConsumers = max(0, previewConsumers - 1)
+        guard previewConsumers == 0, consumerStartedSession else { return }
+        consumerStartedSession = false
+        await close()
+    }
+
+    var activePreviewConsumers: Int { previewConsumers }
+
     /// Switches camera; restarts the preview when it is running.
     func selectDevice(id: String) async throws {
         selectedDeviceID = id
