@@ -1812,9 +1812,9 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/WorkspaceDesignSystem.swift": {
-    "mtime": 1790769618.6836746,
-    "seen": 1790771900.009333,
-    "ast_hash": "d8dac45e77b231486c9efac7b239ff8c",
+    "mtime": 1790800334.1915588,
+    "seen": 1790800872.977203,
+    "ast_hash": "851131f5fc22ac3f52a40cdc56de2fff",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/WorkspaceMotion.swift": {
@@ -1968,27 +1968,27 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Modules/ScreenRecordingController.swift": {
-    "mtime": 1790797902.0877101,
-    "seen": 1790798548.7394822,
-    "ast_hash": "e06d99d18cbc8b954ddf115bbb0eed6b",
+    "mtime": 1790800410.0002155,
+    "seen": 1790800872.977159,
+    "ast_hash": "1ceed0b6305b8cb7c5bf9434b88a9ea8",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Modules/ScreenRecordingEngine.swift": {
-    "mtime": 1790798111.283696,
-    "seen": 1790798548.7394829,
-    "ast_hash": "257d1615dad7c7e5ec72eea07fe2fa84",
+    "mtime": 1790800409.9996738,
+    "seen": 1790800872.97716,
+    "ast_hash": "23472065cb19dea9e42d28b0b334ed24",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/ScreenRecordingViews.swift": {
-    "mtime": 1790797454.6563542,
-    "seen": 1790798548.739528,
-    "ast_hash": "7c7f9ed36f70fa1d118de137a26b7475",
+    "mtime": 1790800366.6890352,
+    "seen": 1790800872.977199,
+    "ast_hash": "c4ec8da344b3ba46fb2b46e6c435e69f",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/IslandDisplayMetricsTests.swift": {
-    "mtime": 1790793594.5690525,
-    "seen": 1790798548.739605,
-    "ast_hash": "2d431abfadb169181ea36a31570bf740",
+    "mtime": 1790800517.8701541,
+    "seen": 1790800872.977277,
+    "ast_hash": "44011283a6c4e9743110ad7447b1c3ae",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/ScreenRecordingTests.swift": {
@@ -1998,9 +1998,9 @@
     "semantic_hash": ""
   },
   "research/SCREEN_RECORDING_PARITY_2026-09-30.md": {
-    "mtime": 1790798248.3599942,
-    "seen": 1790798548.739671,
-    "ast_hash": "e658f310709f985ff48c1e36ab1d759b",
+    "mtime": 1790800699.3727586,
+    "seen": 1790800872.977344,
+    "ast_hash": "8b09b9d0517c615278b785c9f7a7f376",
     "semantic_hash": ""
   }
 }
