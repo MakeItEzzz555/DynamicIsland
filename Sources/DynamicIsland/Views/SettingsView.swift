@@ -43,6 +43,9 @@ struct SettingsView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var shortcuts: ShortcutsStore
     let productivity: ProductivityModules
+    let agentEvents: AgentEventStore
+    let agentManagedControl: AgentManagedSessionController?
+    let agentProjects: AgentProjectProjectionStore?
     @StateObject private var agentSetup = AgentIntegrationSetupController()
     @StateObject private var agentDiagnostics: AgentIntegrationDiagnosticsController
     @State private var selectedSection: SettingsSection = .island
@@ -53,11 +56,16 @@ struct SettingsView: View {
         shortcuts: ShortcutsStore,
         agentIngestion: AgentIngestionCoordinator,
         agentEvents: AgentEventStore,
-        productivity: ProductivityModules
+        productivity: ProductivityModules,
+        agentManagedControl: AgentManagedSessionController? = nil,
+        agentProjects: AgentProjectProjectionStore? = nil
     ) {
         self.settings = settings
         self.shortcuts = shortcuts
         self.productivity = productivity
+        self.agentEvents = agentEvents
+        self.agentManagedControl = agentManagedControl
+        self.agentProjects = agentProjects
         _agentDiagnostics = StateObject(
             wrappedValue: AgentIntegrationDiagnosticsController(
                 coordinator: agentIngestion,
@@ -393,6 +401,16 @@ struct SettingsView: View {
                     disabled: !settings.agentActivityEnabled
                 )
                 HelpText("Usage values are shown only when supported data is available.")
+            }
+
+            if let agentManagedControl, let agentProjects {
+                SettingsGroup("Provider & Project Diagnostics") {
+                    AgentDiagnosticsView(
+                        agentEvents: agentEvents,
+                        managedControl: agentManagedControl,
+                        projects: agentProjects
+                    )
+                }
             }
 
             SettingsGroup("Provider Setup") {

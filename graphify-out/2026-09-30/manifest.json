@@ -912,15 +912,15 @@
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/AgentActivityViews.swift": {
-    "mtime": 1790726422.6247363,
-    "seen": 1790726531.421741,
-    "ast_hash": "f88d9ecadb6f932b973a76b430685d16",
+    "mtime": 1790726628.2893496,
+    "seen": 1790726709.933002,
+    "ast_hash": "d6259c5b8f6271181aa2d5880d70a8e8",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Views/AgentConsoleViews.swift": {
-    "mtime": 1790726150.8050363,
-    "seen": 1790726263.2704582,
-    "ast_hash": "61a4f6bed5718356ee64390afed4971c",
+    "mtime": 1790726608.7836294,
+    "seen": 1790726709.9330041,
+    "ast_hash": "d37e0d4eda86fd75c431fbdacea8cee0",
     "semantic_hash": ""
   },
   "Sources/DynamicIslandClaudeHookRelay/RelayMain.swift": {
@@ -972,9 +972,9 @@
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/AgentUISnapshotTests.swift": {
-    "mtime": 1790704065.2344906,
-    "seen": 1790704172.108905,
-    "ast_hash": "ee96c57ebf9b6b338aaf058029bb86d6",
+    "mtime": 1790726674.564518,
+    "seen": 1790726709.9330509,
+    "ast_hash": "0776d119270238ccb69dc030f2a4bfa9",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/ClaudeHookNormalizerTests.swift": {

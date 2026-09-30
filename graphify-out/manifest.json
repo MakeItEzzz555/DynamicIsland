@@ -24,9 +24,9 @@
     "semantic_hash": "0b4b7c29df007001c39c574a0dda9bd2"
   },
   "Sources/DynamicIsland/App/DynamicIslandApp.swift": {
-    "mtime": 1790726178.8495023,
-    "seen": 1790726263.270412,
-    "ast_hash": "8a5752e3c45bc03321d3f0ea1caddd70",
+    "mtime": 1790726780.1857247,
+    "seen": 1790726828.710316,
+    "ast_hash": "8c64ec0744e7523a2ba07cf7d37e16d6",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/App/LaunchAtLoginController.swift": {
@@ -42,9 +42,9 @@
     "semantic_hash": "e69b62a8ddf63631ab4d3321e4067579"
   },
   "Sources/DynamicIsland/App/SettingsWindowController.swift": {
-    "mtime": 1790724101.3436987,
-    "seen": 1790724307.153187,
-    "ast_hash": "469ada17d538c4614e9a4c26003e2f44",
+    "mtime": 1790726780.1854322,
+    "seen": 1790726828.7103202,
+    "ast_hash": "0456a525ac92fbfca40bc8e9d616eb4a",
     "semantic_hash": ""
   },
   "Sources/DynamicIsland/Assets.xcassets/Contents.json": {
@@ -222,9 +222,9 @@
     "semantic_hash": "c76f150200af08b7611b8e7aceae26a4"
   },
   "Sources/DynamicIsland/Views/SettingsView.swift": {
-    "mtime": 1790724149.0285828,
-    "seen": 1790724307.153234,
-    "ast_hash": "75c9619c83791b8926276435843d0428",
+    "mtime": 1790726780.1852076,
+    "seen": 1790726828.7103732,
+    "ast_hash": "15b51d49fa1ef67aae44813bfbffd227",
     "semantic_hash": ""
   },
   "Tests/DynamicIslandTests/AppSettingsTests.swift": {
@@ -1551,6 +1551,24 @@
     "mtime": 1790726500.8462806,
     "seen": 1790726531.421797,
     "ast_hash": "0c122242d2c86b69bb8ec0dda1c7d65e",
+    "semantic_hash": ""
+  },
+  "Sources/DynamicIsland/Agents/AgentDiagnosticsReport.swift": {
+    "mtime": 1790726780.1592553,
+    "seen": 1790726828.710287,
+    "ast_hash": "99f4811dbde774f9c852e0fd89bed86b",
+    "semantic_hash": ""
+  },
+  "Sources/DynamicIsland/Views/AgentDiagnosticsView.swift": {
+    "mtime": 1790726780.164192,
+    "seen": 1790726828.7103622,
+    "ast_hash": "4ecf2710154060ac12741f158b1026b8",
+    "semantic_hash": ""
+  },
+  "Tests/DynamicIslandTests/AgentDiagnosticsReportTests.swift": {
+    "mtime": 1790726806.006842,
+    "seen": 1790726828.710392,
+    "ast_hash": "f2475e70a0a6760123a736164c581b12",
     "semantic_hash": ""
   }
 }
