@@ -160,6 +160,23 @@ protocol AgentInteractiveProvider: Sendable {
     func interrupt(nativeSessionID: String, turnID: String) async throws
     func resolveApproval(_ request: AgentManagedApprovalRequest, allow: Bool) async throws
     func stop() async
+    /// Configured agents/profiles the provider itself exposes. Empty when
+    /// the provider has no such concept.
+    func listAgents() async throws -> [AgentManagedAgentDescriptor]
+    func startSession(cwd: String?, model: String?, agent: String?) async throws -> AgentManagedSessionDescriptor
+}
+
+extension AgentInteractiveProvider {
+    func listAgents() async throws -> [AgentManagedAgentDescriptor] { [] }
+
+    func startSession(cwd: String?, model: String?, agent: String?) async throws -> AgentManagedSessionDescriptor {
+        guard agent == nil else { throw AgentManagedAgentSelectionError.unsupported }
+        return try await startSession(cwd: cwd, model: model)
+    }
+}
+
+enum AgentManagedAgentSelectionError: Error, Equatable {
+    case unsupported
 }
 
 enum AgentManagedInteractionState: Equatable, Sendable {

@@ -32,9 +32,7 @@ struct AgentUsageIndicatorCircle: View {
                         .padding(Self.lineWidth + 1)
                 }
                 VStack(spacing: 0) {
-                    Image(systemName: AgentVisualStyle.providerSymbol(indicator.provider))
-                        .font(.system(size: 7, weight: .bold))
-                        .foregroundStyle(.white.opacity(indicator.isAvailable ? 0.62 : 0.32))
+                    providerIcon
                     Text(indicator.valueText)
                         .font(.system(size: 8.5, weight: .bold, design: .rounded))
                         .monospacedDigit()
@@ -63,17 +61,45 @@ struct AgentUsageIndicatorCircle: View {
         .accessibilityLabel(indicator.accessibilityDescription)
     }
 
+    /// Provider-identity ring: Claude orange for Claude, the existing
+    /// neutral ring for Codex. Red marks critically low remaining quota or
+    /// nearly full context; Codex additionally shows orange as a warning.
     private var ringColor: Color {
-        guard let fraction = indicator.fraction else { return .white }
+        let base: Color = indicator.provider == .claude
+            ? AgentVisualStyle.claudeOrange
+            : .white.opacity(0.88)
+        guard let fraction = indicator.fraction else { return base }
+        let critical: Bool
+        let warning: Bool
         switch indicator.direction {
         case .remaining:
-            if fraction <= 0.1 { return .red }
-            if fraction <= 0.25 { return .orange }
-            return .white.opacity(0.88)
+            critical = fraction <= 0.1
+            warning = fraction <= 0.25
         case .used:
-            if fraction >= 0.9 { return .red }
-            if fraction >= 0.75 { return .orange }
-            return .white.opacity(0.88)
+            critical = fraction >= 0.9
+            warning = fraction >= 0.75
+        }
+        if critical { return .red }
+        if warning, indicator.provider != .claude { return .orange }
+        return base
+    }
+
+    @ViewBuilder
+    private var providerIcon: some View {
+        if let icon = AgentVisualStyle.installedProviderIcon(indicator.provider) {
+            Image(nsImage: icon)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: 9, height: 9)
+                .opacity(indicator.isAvailable ? 1 : 0.45)
+        } else {
+            Image(systemName: AgentVisualStyle.providerSymbol(indicator.provider))
+                .font(.system(size: 7, weight: .bold))
+                .foregroundStyle(
+                    indicator.provider == .claude
+                        ? AgentVisualStyle.claudeOrange.opacity(indicator.isAvailable ? 0.9 : 0.4)
+                        : Color.white.opacity(indicator.isAvailable ? 0.62 : 0.32)
+                )
         }
     }
 
@@ -101,6 +127,7 @@ struct AgentUsageIndicatorCircle: View {
         ]
         switch indicator.authority {
         case .providerAPI: parts.append("from the provider API")
+        case .providerCLI: parts.append("from the provider's usage command")
         case .providerEvent: parts.append("from provider session events")
         case .providerTranscript: parts.append("from the provider transcript")
         case .unavailable: break

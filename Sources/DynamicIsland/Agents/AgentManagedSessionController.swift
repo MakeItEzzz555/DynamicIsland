@@ -13,6 +13,8 @@ final class AgentManagedSessionController: ObservableObject {
     @Published private(set) var modelsByProvider: [AgentProvider: [AgentManagedModelDescriptor]] = [:]
     @Published private(set) var pendingModelOverrides: [AgentSessionID: String] = [:]
     @Published private(set) var newSessionModelByProvider: [AgentProvider: String] = [:]
+    @Published private(set) var agentsByProvider: [AgentProvider: [AgentManagedAgentDescriptor]] = [:]
+    @Published private(set) var newSessionAgentByProvider: [AgentProvider: String] = [:]
     @Published private(set) var selectedProvider: AgentProvider?
     @Published private(set) var selectedSessionIDs: [AgentProvider: AgentSessionInstanceID] = [:]
     @Published private(set) var verifiedAttachmentSessionIDs: Set<AgentSessionID> = []
@@ -704,7 +706,8 @@ final class AgentManagedSessionController: ObservableObject {
         do {
             let descriptor = try await provider.startSession(
                 cwd: cwd,
-                model: newSessionModelByProvider[selectedProvider]
+                model: newSessionModelByProvider[selectedProvider],
+                agent: newSessionAgentByProvider[selectedProvider]
             )
             guard let instance = await emitSessionAvailability(descriptor, type: .sessionStarted),
                   instance.sessionID == descriptor.sessionID,
@@ -721,6 +724,37 @@ final class AgentManagedSessionController: ObservableObject {
             setTransportError(Self.safeError(error, provider: selectedProvider), for: selectedProvider)
             return nil
         }
+    }
+
+    /// Configured agents/profiles the provider exposes (Claude: the
+    /// `agents` list from Claude Code itself). Loaded on demand.
+    func availableAgents(for provider: AgentProvider) -> [AgentManagedAgentDescriptor] {
+        agentsByProvider[provider] ?? []
+    }
+
+    func refreshAgents(for agentProvider: AgentProvider) async {
+        guard let provider = providers[agentProvider] else { return }
+        let agents = (try? await provider.listAgents()) ?? []
+        agentsByProvider[agentProvider] = agents
+        if let selected = newSessionAgentByProvider[agentProvider],
+           !agents.contains(where: { $0.name == selected }) {
+            newSessionAgentByProvider.removeValue(forKey: agentProvider)
+        }
+    }
+
+    func newSessionAgent(for provider: AgentProvider) -> String? {
+        newSessionAgentByProvider[provider]
+    }
+
+    @discardableResult
+    func selectNewSessionAgent(_ agent: String?, for provider: AgentProvider) -> Bool {
+        guard let agent else {
+            newSessionAgentByProvider.removeValue(forKey: provider)
+            return true
+        }
+        guard availableAgents(for: provider).contains(where: { $0.name == agent }) else { return false }
+        newSessionAgentByProvider[provider] = agent
+        return true
     }
 
     func selectedModel(for session: AgentSession) -> String? {
@@ -1554,8 +1588,9 @@ final class AgentManagedSessionController: ObservableObject {
             case .executableNotFound: value = "Claude CLI not installed"
             case .launchFailed: value = "Claude unavailable"
             case .turnAlreadyRunning: value = "Claude turn already running"
+            case .sessionNotRunning: value = "Claude session is not running"
             case .malformedMessage: value = "Claude returned an invalid response"
-            case .unsupported: value = "Claude control is unsupported"
+            case .unsupported: value = "Not supported by Claude for this session"
             }
         } else {
             value = "\(providerNameStatic(provider)) control request failed"

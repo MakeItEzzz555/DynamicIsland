@@ -10,11 +10,11 @@ final class ClaudeInteractiveProviderTests: XCTestCase {
 
         XCTAssertEqual(provider.provider, .claude)
         XCTAssertEqual(provider.interactiveCapabilities, [
-            .resumeSession, .submitPrompt, .streamMessages, .streamToolActivity
+            .startSession, .resumeSession, .submitPrompt, .interrupt, .selectModel,
+            .resolveApprovals, .accountUsage, .contextUsage, .streamMessages, .streamToolActivity
         ])
-        XCTAssertFalse(provider.interactiveCapabilities.contains(.interrupt))
-        XCTAssertFalse(provider.interactiveCapabilities.contains(.resolveApprovals))
-        XCTAssertFalse(provider.interactiveCapabilities.contains(.selectModel))
+        XCTAssertFalse(provider.interactiveCapabilities.contains(.loadHistory))
+        // Model is chosen at session start only; no in-place switching claimed.
         XCTAssertNil(provider.modelSelectionScope)
     }
 
@@ -135,10 +135,12 @@ final class ClaudeInteractiveProviderTests: XCTestCase {
         XCTAssertEqual(state, .completed)
     }
 
-    func testManagedPolicyCannotControlApprovals() {
-        XCTAssertFalse(AgentProducerPolicy.claudeManagedCLI.permitsApprovalControl)
-        XCTAssertFalse(AgentProducerPolicy.claudeManagedCLI.allowedCapabilities.contains(.approvalControl))
+    func testManagedPolicyPermitsExactApprovalControlForClaudeOnly() {
+        XCTAssertTrue(AgentProducerPolicy.claudeManagedCLI.permitsApprovalControl)
+        XCTAssertTrue(AgentProducerPolicy.claudeManagedCLI.allowedCapabilities.contains(.approvalControl))
+        XCTAssertTrue(AgentProducerPolicy.claudeManagedCLI.allowedEventTypes.contains(.approvalRequested))
         XCTAssertEqual(AgentProducerPolicy.claudeManagedCLI.allowedProviders, [.claude])
+        XCTAssertFalse(AgentProducerPolicy.claudeStructuredRecovery.permitsApprovalControl)
     }
 
     private func envelope(

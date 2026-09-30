@@ -159,8 +159,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var agentManagedControl: AgentManagedSessionController = {
         var providers: [any AgentInteractiveProvider] = []
         if let codex = try? CodexAppServerProvider.makeDefault() { providers.append(codex) }
-        // Claude managed control remains research/experimental until the official
-        // Agent SDK helper boundary is implemented and validated on-device.
+        // Claude Code managed sessions over the supported CLI stream-json
+        // control protocol (verified against Claude Code 2.1.285).
+        if let claude = try? ClaudeInteractiveProvider.makeDefault() { providers.append(claude) }
         return AgentManagedSessionController(
             providers: providers,
             coordinator: agentIngestion,

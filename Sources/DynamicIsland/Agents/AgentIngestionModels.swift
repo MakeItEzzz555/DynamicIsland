@@ -256,6 +256,10 @@ struct AgentProducerPolicy: Equatable, Sendable {
     /// Authority for the locally owned official Claude Code structured-stream
     /// control process. The current CLI surface supports resume, prompt input,
     /// visible output, and tool observation, but not typed approval decisions.
+    /// Managed Claude Code over the CLI stream-json control protocol.
+    /// Permission prompts arrive as exact `can_use_tool` control requests,
+    /// so approval control is permitted on the same fail-closed terms as
+    /// the Codex app-server (exact session + active turn + one-shot).
     static let claudeManagedCLI = AgentProducerPolicy(
         allowedProviders: [.claude],
         allowedSources: [.desktopApp],
@@ -264,7 +268,8 @@ struct AgentProducerPolicy: Equatable, Sendable {
             .sessionStarted, .sessionResumed, .sessionMetadataUpdated,
             .agentWorking, .toolStarted, .toolCompleted,
             .commandStarted, .commandCompleted,
-            .capabilitiesUpdated, .projectContextUpdated,
+            .approvalRequested, .approvalResolved,
+            .usageUpdated, .capabilitiesUpdated, .projectContextUpdated,
             .taskCompleted, .taskFailed, .interrupted, .heartbeat
         ],
         authorityCeilings: Dictionary(uniqueKeysWithValues: AgentAuthorityDomain.allCases.map {
@@ -272,9 +277,12 @@ struct AgentProducerPolicy: Equatable, Sendable {
         }),
         allowedCapabilities: [
             .sessionLifecycle, .toolLifecycle, .commandLifecycle,
-            .taskLifecycle, .modelMetadata, .projectContext
+            .approvalObservation, .approvalControl,
+            .taskLifecycle, .tokenUsage, .contextUsage, .quotaUsage,
+            .modelMetadata, .projectContext
         ],
         allowedSchemaVersions: [AgentEvent.normalizedSchemaVersion],
+        permitsApprovalControl: true,
         permitsLifecycleRecovery: true
     )
 

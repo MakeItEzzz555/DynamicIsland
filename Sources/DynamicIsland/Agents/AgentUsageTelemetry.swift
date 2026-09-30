@@ -23,6 +23,8 @@ struct AgentUsageIndicator: Identifiable, Equatable, Sendable {
 
     enum Authority: String, Equatable, Sendable {
         case providerAPI
+        /// Provider's own CLI command output (e.g. Claude `/usage`).
+        case providerCLI
         case providerEvent
         case providerTranscript
         case unavailable
@@ -114,7 +116,7 @@ enum AgentUsageIndicatorPresentation {
     static let threadStaleAfter: TimeInterval = 15 * 60
 
     static let claudeAccountUnavailableReason =
-        "Claude Code does not expose account rate-limit windows to DynamicIsland"
+        "No Claude usage reported yet. It updates after a Claude reply or the usage check runs"
 
     /// Indicators for one provider: 5h and Week from account usage for that
     /// provider only, Context from the selected exact session of that
@@ -189,11 +191,21 @@ enum AgentUsageIndicatorPresentation {
             direction: .remaining,
             fraction: 1 - usedFraction,
             absoluteValue: nil,
-            authority: .providerAPI,
+            authority: accountAuthority(source: used.source),
             freshness: freshness(observedAt: used.observedAt, scope: .account, now: now),
             updatedAt: used.observedAt,
             unavailableReason: nil
         )
+    }
+
+    /// Codex windows come from the app-server API; Claude windows come from
+    /// stream-json rate-limit events or the built-in `/usage` command.
+    static func accountAuthority(source: String) -> AgentUsageIndicator.Authority {
+        switch source {
+        case ClaudeUsageSource.rateLimitEvent: .providerEvent
+        case ClaudeUsageSource.usageCommand: .providerCLI
+        default: .providerAPI
+        }
     }
 
     private static func contextIndicator(

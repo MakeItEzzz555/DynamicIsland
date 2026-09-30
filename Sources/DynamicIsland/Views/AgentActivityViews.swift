@@ -1,4 +1,5 @@
 import AgentBridgeShared
+import AppKit
 import SwiftUI
 
 enum AgentVisualStyle {
@@ -14,12 +15,31 @@ enum AgentVisualStyle {
         }
     }
 
+    /// Claude brand orange (#D97757), defined once.
+    static let claudeOrange = Color(red: 0.851, green: 0.467, blue: 0.341)
+
     static func providerAccent(_ provider: AgentProvider) -> Color {
         switch provider {
         case .codex: .cyan
-        case .claude: .orange
+        case .claude: claudeOrange
         case .other: .purple
         }
+    }
+
+    /// The installed provider app's own icon, when that app is installed.
+    /// DynamicIsland bundles no third-party logos.
+    @MainActor
+    static func installedProviderIcon(_ provider: AgentProvider) -> NSImage? {
+        let bundleID: String? = switch provider {
+        case .claude: "com.anthropic.claudefordesktop"
+        case .codex, .other: nil
+        }
+        guard let bundleID else { return nil }
+        if let cached = ProviderIconCache.icons[bundleID] { return cached }
+        let icon = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+            .map { NSWorkspace.shared.icon(forFile: $0.path) }
+        ProviderIconCache.icons[bundleID] = .some(icon)
+        return icon
     }
 
     static func providerSymbol(_ provider: AgentProvider) -> String {
@@ -717,6 +737,32 @@ private struct AgentCLIControlBar: View {
         let provider = session.id.sessionID.provider
         let models = managedControl.availableModels(for: session)
         if managedControl.capabilities(for: provider).contains(.selectModel),
+           !models.isEmpty,
+           managedControl.modelSelectionScope(for: provider) == nil {
+            // The provider cannot switch a running session's model: show the
+            // actual model and offer a new session instead of pretending.
+            Menu {
+                Section("Start a new session in this folder with") {
+                    ForEach(models) { option in
+                        Button(option.displayName) {
+                            startNewSession(for: session, model: option.model)
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 3) {
+                    if compact { Image(systemName: "cpu") }
+                    Text(modelLabel(for: session))
+                        .lineLimit(1)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 6.5, weight: .semibold))
+                }
+                .font(.system(size: 8, weight: .medium, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.48))
+            }
+            .menuStyle(.borderlessButton)
+            .help("This session keeps its model. Choose a model to start a new session.")
+        } else if managedControl.capabilities(for: provider).contains(.selectModel),
            !models.isEmpty {
             Menu {
                 Button("Use thread model") {
@@ -761,6 +807,15 @@ private struct AgentCLIControlBar: View {
                 .font(.system(size: 8, weight: .medium, design: .monospaced))
                 .foregroundStyle(.white.opacity(0.40))
                 .lineLimit(1)
+        }
+    }
+
+    private func startNewSession(for session: AgentSession, model: String) {
+        let provider = session.id.sessionID.provider
+        managedControl.selectProvider(provider)
+        guard managedControl.selectNewSessionModel(model, for: provider) else { return }
+        Task { @MainActor in
+            _ = await managedControl.startNewSession(cwd: session.project.workingDirectory)
         }
     }
 
@@ -1936,4 +1991,10 @@ enum AgentWorkspaceHeaderLayout {
     /// the controls; at or above it they sit at the trailing edge of the
     /// control row so the transcript keeps the vertical space.
     static let inlineUsageMinimumWidth: CGFloat = 820
+}
+
+/// Looked up once per launch so view rendering never queries LaunchServices.
+@MainActor
+private enum ProviderIconCache {
+    static var icons: [String: NSImage?] = [:]
 }
