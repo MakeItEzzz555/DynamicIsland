@@ -91,8 +91,10 @@ enum SettingsAuditCatalog {
         + entries(["showActivitiesTab", "showLiveActivitiesTab", "showGesturesTab"], .deprecatedHidden, deprecatedNote)
         // Agents
         + visual(["agentUsageMetricsEnabled"], .agents)
-        + entries(["agentActivityEnabled", "agentCompletionAlertsEnabled", "agentApprovalAlertsEnabled", "agentSoundsEnabled",
+        + entries(["agentActivityEnabled", "agentCompletionAlertsEnabled", "agentApprovalAlertsEnabled",
                    "agentPeekDurationSeconds"], .behavioral, "Agent monitoring and alert behavior.")
+        + entries(["agentSoundsEnabled"], .behavioral,
+                  "Gates agent sound intents. AgentNotch 1.1 plays no notification sound, so parity feedback is silent.")
         // Media
         + visual(["mediaEnabled", "showMediaWhenPaused", "showAlbumArtwork", "showMediaTitle", "showMediaArtist",
                   "showMediaSourceName", "showPlaybackControls", "showProgressSlider", "showVolumeSlider", "showVisualizer"], .media)
