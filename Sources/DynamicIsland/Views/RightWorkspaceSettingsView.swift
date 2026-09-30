@@ -182,7 +182,7 @@ struct SpotifyConnectionSettingsView: View {
                         .foregroundStyle(.secondary)
                 }
             case .needsClientID:
-                Text("Spotify is unavailable in this build. The app must be packaged with its Spotify OAuth configuration.")
+                Text(SpotifySectionCopy.settingsNotConfigured)
                     .font(.caption)
                     .foregroundStyle(.orange)
             }
@@ -258,7 +258,7 @@ struct SpotifyConnectionSettingsView: View {
         case .disconnected:
             Text("Disconnected").foregroundStyle(.secondary)
         case .needsClientID:
-            Text("Unavailable").foregroundStyle(.orange)
+            Text("Not configured").foregroundStyle(.orange)
         }
     }
 }

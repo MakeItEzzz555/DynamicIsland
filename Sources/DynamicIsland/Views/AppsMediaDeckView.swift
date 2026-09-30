@@ -218,6 +218,17 @@ private struct AppLibraryIcon: View {
 
 // MARK: - Spotify
 
+/// User-facing copy for the Spotify section. The Web API library (queue,
+/// playlists, liked songs) needs an app Client ID shipped with the build;
+/// local Spotify playback controls use the Spotify app directly and never
+/// depend on it, so the unconfigured message must not imply otherwise.
+enum SpotifySectionCopy {
+    static let notConfigured =
+        "Spotify library (queue, playlists, liked songs) is not available in this build. Now Playing controls for the Spotify app still work."
+    static let settingsNotConfigured =
+        "Spotify library access is not configured in this build (no Spotify app Client ID is packaged). Now Playing detection and playback controls for the Spotify app work without it."
+}
+
 struct SpotifySectionView: View {
     @ObservedObject var controller: SpotifyLibraryController
     let media: MediaController?
@@ -238,7 +249,7 @@ struct SpotifySectionView: View {
         switch controller.connectionState {
         case .needsClientID:
             setupMessage(
-                "Spotify isn't configured in this build yet. Release users never need to enter a Client ID.",
+                SpotifySectionCopy.notConfigured,
                 action: "Open Settings",
                 perform: onOpenSettings
             )
@@ -479,7 +490,7 @@ struct SpotifySectionView: View {
             }
             .buttonStyle(.plain)
             .help("Add to queue")
-            .accessibilityLabel("Add (item.title) to queue")
+            .accessibilityLabel("Add \(item.title) to queue")
 
             Button {
                 Task { await controller.setSaved(item, saved: !isLikedTab) }
@@ -489,7 +500,7 @@ struct SpotifySectionView: View {
             .buttonStyle(.plain)
             .foregroundStyle(isLikedTab ? .green : .white.opacity(0.55))
             .help(isLikedTab ? "Remove from Liked Songs" : "Save to Liked Songs")
-            .accessibilityLabel(isLikedTab ? "Remove (item.title) from Liked Songs" : "Save (item.title) to Liked Songs")
+            .accessibilityLabel(isLikedTab ? "Remove \(item.title) from Liked Songs" : "Save \(item.title) to Liked Songs")
         }
     }
 
