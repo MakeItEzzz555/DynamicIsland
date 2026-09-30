@@ -50,6 +50,93 @@ final class ShellMorphSnapshotTests: XCTestCase {
         }
     }
 
+    /// Content choreography grids: the shell morphs top-pinned on the panel
+    /// curve while the outgoing page shrinks/blurs/fades and the incoming page
+    /// mounts at the handoff and springs open from the top. Each cell is one
+    /// sampled time (ExpandedIslandMotion.sample); red = screen top, cyan =
+    /// page-area top (inner content scale anchor).
+    func testRenderContentChoreographyGrids() throws {
+        guard let path = ProcessInfo.processInfo.environment["DYNAMIC_ISLAND_MORPH_SNAPSHOT_DIR"] else {
+            throw XCTSkip("Set DYNAMIC_ISLAND_MORPH_SNAPSHOT_DIR to render choreography grids.")
+        }
+        let output = URL(fileURLWithPath: path, isDirectory: true)
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        let settings = AppSettings(defaults: UserDefaults(suiteName: "Choreography-\(UUID().uuidString)")!)
+        let standard = CGSize(width: 860, height: 286)
+        let agents = ExpandedPresentationProfile.agentsWorkspace.resolvedSize(from: standard)
+        let cases: [(String, ExpandedIslandPage, CGSize, ExpandedIslandPage, CGSize)] = [
+            ("island-to-agents", .island, standard, .agents, agents),
+            ("agents-to-island", .agents, agents, .island, standard),
+            ("tray-to-agents", .tray, standard, .agents, agents),
+            ("agents-to-tray", .agents, agents, .tray, standard),
+            ("tools-to-agents", .tools, standard, .agents, agents),
+            ("agents-to-tools", .agents, agents, .tools, standard)
+        ]
+        let plans: [(String, ExpandedIslandMotion.Plan)] = [
+            ("full", ExpandedIslandMotion.plan(.init(
+                shellDuration: 0.40, isInstant: false, reduceMotion: false,
+                useBlurTransitions: true, useScaleTransitions: true,
+                prefersLightweightEffects: false, refreshRate: 120
+            ))),
+            ("reduced", ExpandedIslandMotion.plan(.init(
+                shellDuration: 0.24, isInstant: false, reduceMotion: true,
+                useBlurTransitions: true, useScaleTransitions: true,
+                prefersLightweightEffects: false, refreshRate: 120
+            )))
+        ]
+        for (planName, plan) in plans {
+            let times: [TimeInterval] = planName == "full"
+                ? [0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.40, 0.55]
+                : [0, 0.03, 0.06, 0.09, 0.12, 0.16, 0.20, 0.24, 0.30]
+            for (name, fromPage, from, toPage, to) in cases {
+                var cells: [NSImage] = []
+                for time in times {
+                    let view = ChoreographyFrame(
+                        settings: settings,
+                        sample: ExpandedIslandMotion.sample(plan, at: time),
+                        time: time,
+                        fromPage: fromPage,
+                        from: from,
+                        toPage: toPage,
+                        to: to
+                    )
+                    let renderer = ImageRenderer(content: view)
+                    renderer.scale = 1
+                    cells.append(try XCTUnwrap(renderer.nsImage))
+                }
+                try write(
+                    grid(cells, columns: 3, scale: 0.5),
+                    to: output.appendingPathComponent("70-choreo-\(planName)-\(name).png")
+                )
+            }
+        }
+    }
+
+    private func grid(_ images: [NSImage], columns: Int, scale: CGFloat) -> NSImage {
+        let cell = CGSize(width: images[0].size.width * scale, height: images[0].size.height * scale)
+        let rows = Int((Double(images.count) / Double(columns)).rounded(.up))
+        let gap: CGFloat = 6
+        let size = CGSize(
+            width: cell.width * CGFloat(columns) + gap * CGFloat(columns - 1),
+            height: cell.height * CGFloat(rows) + gap * CGFloat(rows - 1)
+        )
+        let result = NSImage(size: size)
+        result.lockFocus()
+        NSColor.white.setFill()
+        NSRect(origin: .zero, size: size).fill()
+        for (index, image) in images.enumerated() {
+            let column = index % columns
+            let row = index / columns
+            let origin = CGPoint(
+                x: CGFloat(column) * (cell.width + gap),
+                y: size.height - CGFloat(row + 1) * cell.height - CGFloat(row) * gap
+            )
+            image.draw(in: CGRect(origin: origin, size: cell))
+        }
+        result.unlockFocus()
+        return result
+    }
+
     /// (shell size, panel size) at progress.
     private func lerp(_ a: CGSize, _ aAcc: CGFloat, _ b: CGSize, _ bAcc: CGFloat, _ t: CGFloat) -> (shell: CGSize, panel: CGSize) {
         let shell = CGSize(width: a.width + (b.width - a.width) * t, height: a.height + (b.height - a.height) * t)
@@ -133,5 +220,142 @@ final class ShellMorphSnapshotTests: XCTestCase {
         let tiff = try XCTUnwrap(image.tiffRepresentation)
         let png = try XCTUnwrap(NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]))
         try png.write(to: url)
+    }
+}
+
+/// One sampled frame: the production IslandSurface at the eased shell size,
+/// top-pinned, hosting placeholder pages driven by the production
+/// ExpandedPageMorphModifier with the sampled values.
+private struct ChoreographyFrame: View {
+    let settings: AppSettings
+    let sample: ExpandedIslandMotion.FrameSample
+    let time: TimeInterval
+    let fromPage: ExpandedIslandPage
+    let from: CGSize
+    let toPage: ExpandedIslandPage
+    let to: CGSize
+
+    private let outer = CGSize(width: 980, height: 520)
+    private let padding = IslandShellLayout.expandedHorizontalPadding(isNotchIntegrated: true)
+    private let header: CGFloat = 34
+    private let headerGap: CGFloat = 10
+
+    private func pageSize(_ shell: CGSize) -> CGSize {
+        CGSize(
+            width: shell.width - padding * 2,
+            height: shell.height - IslandShellLayout.expandedTopPadding
+                - IslandShellLayout.expandedBottomPadding - header - headerGap
+        )
+    }
+
+    var body: some View {
+        let p = CGFloat(sample.shellProgress)
+        let shell = CGSize(
+            width: from.width + (to.width - from.width) * p,
+            height: from.height + (to.height - from.height) * p
+        )
+        let pageTop = IslandShellLayout.expandedTopPadding + header + headerGap
+        ZStack(alignment: .top) {
+            Color(white: 0.55)
+            IslandSurface(settings: settings, isExpanded: true, visualProgress: 1) {
+                VStack(alignment: .leading, spacing: headerGap) {
+                    Capsule().fill(.white.opacity(0.12)).frame(width: 230, height: header)
+                    ZStack(alignment: .top) {
+                        if let outgoing = sample.outgoing {
+                            PlaceholderPage(page: fromPage, size: pageSize(from))
+                                .modifier(ExpandedPageMorphModifier(
+                                    opacity: outgoing.opacity, blur: outgoing.blur, scale: outgoing.scale
+                                ))
+                        }
+                        if let incoming = sample.incoming {
+                            PlaceholderPage(page: toPage, size: pageSize(to))
+                                .modifier(ExpandedPageMorphModifier(
+                                    opacity: incoming.opacity, blur: incoming.blur, scale: incoming.scale
+                                ))
+                        }
+                    }
+                    .frame(width: pageSize(shell).width, height: pageSize(shell).height, alignment: .top)
+                    .clipped()
+                }
+                .padding(.horizontal, padding)
+                .padding(.top, IslandShellLayout.expandedTopPadding)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            }
+            .notchIntegrated(true)
+            .frame(width: shell.width, height: shell.height)
+            Rectangle().fill(Color.cyan.opacity(0.8)).frame(height: 1).offset(y: pageTop)
+            Rectangle().fill(Color.red).frame(height: 2)
+            Text(label)
+                .font(.system(size: 18, weight: .bold, design: .monospaced))
+                .foregroundStyle(.black)
+                .padding(6)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+        }
+        .frame(width: outer.width, height: outer.height, alignment: .top)
+    }
+
+    private var label: String {
+        func format(_ content: ExpandedIslandMotion.ContentSample?) -> String {
+            guard let content else { return "-" }
+            return String(format: "o%.2f b%.1f s%.3f", content.opacity, content.blur, content.scale)
+        }
+        return String(
+            format: "t=%.2fs shell=%.2f out[%@] in[%@]",
+            time, sample.shellProgress, format(sample.outgoing), format(sample.incoming)
+        )
+    }
+}
+
+private struct PlaceholderPage: View {
+    let page: ExpandedIslandPage
+    let size: CGSize
+
+    var body: some View {
+        content
+            .frame(width: size.width, height: size.height, alignment: .topLeading)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch page {
+        case .agents:
+            VStack(spacing: 8) {
+                ForEach(0..<7, id: \.self) { index in
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color.orange.opacity(index == 0 ? 0.85 : 0.45))
+                        .frame(height: 40)
+                }
+            }
+        case .tray:
+            HStack(alignment: .top, spacing: 10) {
+                ForEach(0..<5, id: \.self) { _ in
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color.green.opacity(0.6))
+                        .frame(height: size.height * 0.8)
+                }
+            }
+        case .tools:
+            VStack(spacing: 10) {
+                ForEach(0..<2, id: \.self) { _ in
+                    HStack(spacing: 10) {
+                        ForEach(0..<4, id: \.self) { _ in
+                            RoundedRectangle(cornerRadius: 12).fill(Color.purple.opacity(0.6))
+                        }
+                    }
+                }
+            }
+        default:
+            HStack(alignment: .top, spacing: 12) {
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(Color.blue.opacity(0.7))
+                    .frame(width: size.width * 0.5, height: size.height)
+                VStack(spacing: 10) {
+                    ForEach(0..<3, id: \.self) { _ in
+                        RoundedRectangle(cornerRadius: 12).fill(Color.teal.opacity(0.6))
+                    }
+                }
+                .frame(height: size.height)
+            }
+        }
     }
 }

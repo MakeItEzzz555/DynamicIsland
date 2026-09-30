@@ -1446,19 +1446,6 @@ extension View {
     }
 }
 
-private struct ExpandedPageMorphModifier: ViewModifier {
-    let opacity: Double
-    let blur: CGFloat
-    let offsetY: CGFloat
-
-    func body(content: Content) -> some View {
-        content
-            .opacity(opacity)
-            .blur(radius: blur)
-            .offset(y: offsetY)
-    }
-}
-
 struct IslandSurface<Content: View>: View {
     @ObservedObject var settings: AppSettings
     let isExpanded: Bool
@@ -2624,6 +2611,7 @@ struct ExpandedIslandView: View {
     @State private var isAirDropTargeted = false
     @State private var isFilesTargeted = false
     @State private var clipboardPresentation = ClipboardHistoryPresentationState()
+    @State private var pagePresentation: ExpandedPageTransitionState
 
     init(
         settings: AppSettings,
@@ -2660,6 +2648,7 @@ struct ExpandedIslandView: View {
         navigation = modules.navigation
         liveActivities = modules.liveActivities
         agentEvents = modules.agentEvents
+        _pagePresentation = State(initialValue: ExpandedPageTransitionState(page: modules.navigation.selectedPage))
     }
 
     var body: some View {
@@ -2702,7 +2691,8 @@ struct ExpandedIslandView: View {
             synchronizeClipboardEscapeRegistration()
             synchronizeStatsPolling()
         }
-        .onChange(of: navigation.selectedPage) { _, _ in
+        .onChange(of: navigation.selectedPage) { _, page in
+            handleSelectedPageChange(page)
             closeClipboardHistoryImmediately()
             synchronizeExpandedScrollSuppression()
             synchronizeStatsPolling()
@@ -2711,17 +2701,22 @@ struct ExpandedIslandView: View {
             if !isVisible {
                 closeClipboardHistoryImmediately()
             }
+            // Expansion/collapse owns content visibility; never leave a tab
+            // handoff pending across it.
+            pagePresentation.snap(to: navigation.selectedPage)
             synchronizeStatsPolling()
         }
         .onChange(of: shouldRenderContent) { _, shouldRender in
             if !shouldRender {
                 closeClipboardHistoryImmediately()
+                pagePresentation.snap(to: navigation.selectedPage)
             }
             synchronizeStatsPolling()
         }
         .onChange(of: isCollapseShellOnly) { _, collapseOnly in
             if collapseOnly {
                 closeClipboardHistoryImmediately()
+                pagePresentation.snap(to: navigation.selectedPage)
             }
             synchronizeStatsPolling()
         }
@@ -2794,17 +2789,26 @@ struct ExpandedIslandView: View {
             }
             .frame(height: metrics.tabSwitcherHeight)
 
-            ZStack(alignment: .topLeading) {
+            // Top-centered: pages are laid out at the target metrics while the
+            // shell still morphs around its horizontal center, so an incoming
+            // page overflows (or insets) symmetrically instead of detaching
+            // toward the leading edge. Identical once the morph settles.
+            ZStack(alignment: .top) {
                 if !rendersExpandedVisualContent || !shouldRenderContent {
                     Color.clear
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    pageView(navigation.selectedPage, metrics: metrics)
-                        .id(navigation.selectedPage)
-                        .transition(pageSwitchTransition)
+                    if let page = pagePresentation.mountedPage {
+                        pageView(page, metrics: metrics)
+                            .expandedPageMotion(
+                                pageMotionPlan,
+                                animatesEntrance: pagePresentation.animatesEntrance,
+                                mountID: ExpandedPageMountID(page: page, generation: pagePresentation.mountGeneration)
+                            )
+                    }
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: metrics.pageHeight, alignment: .topLeading)
+            .frame(maxWidth: .infinity, maxHeight: metrics.pageHeight, alignment: .top)
             .clipped()
         }
         .padding(.horizontal, metrics.horizontalPadding)
@@ -2833,43 +2837,26 @@ struct ExpandedIslandView: View {
         }
     }
 
-    private var pageSwitchTransition: AnyTransition {
-        guard !reduceMotion,
-              settings.contentAnimationEnabled,
-              settings.animationPreset != .instant else {
-            return .opacity
+    private var pageMotionPlan: ExpandedIslandMotion.Plan {
+        ExpandedIslandMotion.plan(settings: settings, reduceMotion: reduceMotion)
+    }
+
+    /// Routes a committed page selection through the shared choreography:
+    /// the outgoing page leaves now, the incoming page mounts on handoff.
+    private func handleSelectedPageChange(_ page: ExpandedIslandPage) {
+        guard rendersExpandedVisualContent, shouldRenderContent, contentVisible, !isCollapseShellOnly else {
+            pagePresentation.snap(to: page)
+            return
         }
-
-        let shellDuration = IslandContentTransitionTiming.shellDuration(
-            settings: settings,
-            reduceMotion: reduceMotion
-        )
-        let insertion = AnyTransition.modifier(
-            active: ExpandedPageMorphModifier(
-                opacity: 0,
-                blur: WorkspaceMotion.prefersLightweightEffects ? 0 : WorkspaceMotion.transitionBlurRadius,
-                offsetY: -4
-            ),
-            identity: ExpandedPageMorphModifier(opacity: 1, blur: 0, offsetY: 0)
-        )
-        .animation(
-            .smooth(duration: max(shellDuration * 0.56, 0.16))
-                .delay(shellDuration * 0.08)
-        )
-        let removal = AnyTransition.modifier(
-            active: ExpandedPageMorphModifier(
-                opacity: 0,
-                blur: WorkspaceMotion.prefersLightweightEffects ? 0 : WorkspaceMotion.transitionBlurRadius,
-                offsetY: 3
-            ),
-            identity: ExpandedPageMorphModifier(opacity: 1, blur: 0, offsetY: 0)
-        )
-        .animation(.easeOut(duration: max(shellDuration * 0.34, 0.12)))
-
-        return .asymmetric(
-            insertion: insertion,
-            removal: removal
-        )
+        var presentation = pagePresentation
+        let effect = presentation.select(page, plan: pageMotionPlan)
+        pagePresentation = presentation
+        guard case let .scheduleHandoff(generation, delay) = effect else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            var presentation = pagePresentation
+            guard presentation.completeHandoff(generation: generation) else { return }
+            pagePresentation = presentation
+        }
     }
 
     private var contentVisibilityAnimation: Animation {
