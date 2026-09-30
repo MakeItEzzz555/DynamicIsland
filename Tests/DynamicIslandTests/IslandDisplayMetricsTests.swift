@@ -132,6 +132,61 @@ final class IslandDisplayMetricsTests: XCTestCase {
         }
     }
 
+    func testInteractiveHUDGeometryMatrixGrowsDownwardAndStaysOnTheTargetDisplay() {
+        let fixtures: [(CGSize, CGFloat)] = [
+            (.init(width: 1512, height: 982), 32),   // 14-inch notched class
+            (.init(width: 1512, height: 982), 38),   // 14-inch, taller safe area
+            (.init(width: 1728, height: 1117), 32),  // 16-inch notched class
+            (.init(width: 1728, height: 1117), 38),
+            (.init(width: 1280, height: 720), 0),
+            (.init(width: 1440, height: 900), 0),
+            (.init(width: 1920, height: 1080), 0),
+            (.init(width: 2560, height: 1440), 0),
+            (.init(width: 3440, height: 1440), 0),
+            (.init(width: 3840, height: 2160), 0),
+            (.init(width: 5120, height: 2880), 0)
+        ]
+        let service = NotchGeometryService()
+        for (size, notchHeight) in fixtures {
+            let notched = notchHeight > 0
+            let screen = ScreenSnapshot(
+                frame: CGRect(origin: .zero, size: size),
+                visibleFrame: CGRect(x: 0, y: 0, width: size.width, height: size.height - max(notchHeight, 26)),
+                safeAreaInsets: NSEdgeInsets(top: notchHeight, left: 0, bottom: 0, right: 0),
+                auxiliaryTopLeftArea: notched
+                    ? CGRect(x: 0, y: size.height - notchHeight, width: (size.width - 180) / 2, height: notchHeight)
+                    : nil,
+                auxiliaryTopRightArea: notched
+                    ? CGRect(x: (size.width + 180) / 2, y: size.height - notchHeight, width: (size.width - 180) / 2, height: notchHeight)
+                    : nil
+            )
+            for collapsedHeight in [CGFloat(29.87), 34, 44] {
+                let collapsedSize = CGSize(width: 216, height: collapsedHeight)
+                let expandedSize = CGSize(width: 760, height: 260)
+                let normal = service.geometry(for: screen, collapsedSize: collapsedSize, expandedSize: expandedSize)
+                let hud = service.geometry(
+                    for: screen,
+                    collapsedSize: collapsedSize,
+                    expandedSize: expandedSize,
+                    collapsedPresentationProfile: .systemHUD(value: 0.5)
+                )
+                let frame = hud.collapsedFrame
+                let label = "\(size) notch=\(notchHeight) collapsed=\(collapsedHeight)"
+                XCTAssertTrue(frame.minX.isFinite && frame.minY.isFinite && frame.width.isFinite && frame.height.isFinite, label)
+                XCTAssertGreaterThanOrEqual(frame.minX, screen.frame.minX - 1, label)
+                XCTAssertLessThanOrEqual(frame.maxX, screen.frame.maxX + 1, label)
+                XCTAssertLessThanOrEqual(frame.maxY, screen.frame.maxY + 1, label)
+                XCTAssertEqual(frame.maxY, normal.collapsedFrame.maxY, accuracy: 0.5, "top edge invariant: \(label)")
+                XCTAssertLessThan(frame.minY, normal.collapsedFrame.minY - CollapsedPresentationProfile.systemHUDSliderBandHeight + 1, "grows downward: \(label)")
+                XCTAssertGreaterThanOrEqual(
+                    CollapsedPresentationProfile.systemHUDRowBandHeight(shellHeight: frame.height),
+                    notchHeight - 0.5,
+                    "slider clears physical notch: \(label)"
+                )
+            }
+        }
+    }
+
     func testRepresentativeGeometryMatrixNeverEscapesTargetDisplayAndRemainsTopAnchored() {
         let fixtures: [(CGSize, Bool)] = [
             (.init(width: 1280, height: 720), false),

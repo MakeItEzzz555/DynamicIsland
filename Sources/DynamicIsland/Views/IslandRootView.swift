@@ -2367,7 +2367,7 @@ struct CollapsedSystemHUDCompactView: View {
     @State private var lastWriteUptime: TimeInterval = 0
 
     var body: some View {
-        VStack(spacing: sliderKind == nil ? 0 : 3) {
+        VStack(spacing: 0) {
             CompactCollapsedSideSlotLayout(geometry: layout) {
                 SafeSystemImage(symbolName: activity.symbolName, fallbackSymbolName: "slider.horizontal.3")
                     .font(.system(size: displayMetrics.icon(11), weight: .bold))
@@ -2398,14 +2398,23 @@ struct CollapsedSystemHUDCompactView: View {
                         )
                 }
             }
-            .frame(height: sliderKind == nil ? nil : max(17 * displayMetrics.compactControlScale, 16))
+            // Row band: the physical top band (notch height or collapsed
+            // height), so the icon and percentage stay beside the notch.
+            .frame(maxHeight: .infinity)
 
             if sliderKind != nil {
+                // Slider band hanging below the top band. The shell's bottom
+                // padding is part of the band, so the slider is centered
+                // between the notch edge and the shell's bottom edge.
+                let sliderHeight = displayMetrics.hudSliderHeight
+                let band = CollapsedPresentationProfile.systemHUDSliderBandHeight
                 SystemHUDCompactSlider(
                     value: confirmedProgress,
                     accent: accentColor,
                     isEnabled: interactionSupported == true,
-                    height: displayMetrics.hudSliderHeight,
+                    height: sliderHeight,
+                    trackTopInset: max((band - sliderHeight) / 2, 0),
+                    hitHeight: band - IslandShellLayout.collapsedBottomPadding,
                     onChange: { requested, force in
                         writeInteractiveValue(requested, force: force)
                     }
@@ -2503,23 +2512,92 @@ struct CollapsedSystemHUDCompactView: View {
     }
 }
 
+/// The production collapsed HUD shell (IslandSurface, shape, bottom glow and
+/// CollapsedSystemHUDCompactView) at the geometry NotchGeometryService
+/// resolves for a reference notched display. Settings previews use this so
+/// they can never drift from the island's own HUD geometry.
+struct SystemHUDShellPreview: View {
+    @ObservedObject var settings: AppSettings
+    let activity: DynamicIslandLiveActivity
+
+    /// 14-inch-class notched display (1512×982 pt, 32 pt safe-area top).
+    static let referenceScreen: ScreenSnapshot = {
+        let size = CGSize(width: 1512, height: 982)
+        let notchHeight: CGFloat = 32
+        return ScreenSnapshot(
+            frame: CGRect(origin: .zero, size: size),
+            visibleFrame: CGRect(x: 0, y: 0, width: size.width, height: size.height - notchHeight),
+            safeAreaInsets: NSEdgeInsets(top: notchHeight, left: 0, bottom: 0, right: 0),
+            auxiliaryTopLeftArea: CGRect(x: 0, y: size.height - notchHeight, width: (size.width - 180) / 2, height: notchHeight),
+            auxiliaryTopRightArea: CGRect(x: (size.width + 180) / 2, y: size.height - notchHeight, width: (size.width - 180) / 2, height: notchHeight)
+        )
+    }()
+
+    static func geometry(settings: AppSettings, activity: DynamicIslandLiveActivity) -> IslandGeometry {
+        let isInteractive = activity.systemHUDKind == .volume || activity.systemHUDKind == .brightness
+        return NotchGeometryService().geometry(
+            for: referenceScreen,
+            collapsedSize: settings.collapsedSize,
+            expandedSize: settings.expandedSize,
+            collapsedActivityProfile: .systemHUD,
+            collapsedPresentationProfile: isInteractive ? .systemHUD(value: activity.progress ?? 0) : .normal,
+            useAdaptiveNotchSizing: true,
+            respectHardwareNotch: true
+        )
+    }
+
+    var body: some View {
+        let geometry = Self.geometry(settings: settings, activity: activity)
+        let isInteractive = geometry.collapsedPresentationProfile.kind == .systemHUD
+        IslandSurface(
+            settings: settings,
+            isExpanded: false,
+            visualProgress: 0,
+            collapsedPresentationProfile: geometry.collapsedPresentationProfile,
+            systemHUDActivity: isInteractive ? activity : nil
+        ) {
+            CollapsedSystemHUDCompactView(
+                activity: activity,
+                layout: CompactCollapsedSideSlotGeometry(
+                    isNotchIntegrated: true,
+                    leftRegionWidth: geometry.collapsedLeftRegionWidth,
+                    notchCoreWidth: geometry.collapsedNotchCoreWidth,
+                    rightRegionWidth: geometry.collapsedRightRegionWidth
+                )
+            )
+        }
+        .notchIntegrated(true)
+        .frame(width: geometry.collapsedFrame.width, height: geometry.collapsedFrame.height)
+    }
+}
+
 private struct SystemHUDCompactSlider: View {
     let value: Double
     let accent: Color
     let isEnabled: Bool
     let height: CGFloat
+    /// Distance from the top of the hit area to the visual track.
+    var trackTopInset: CGFloat = 0
+    /// Interactive height; the drag target spans the whole slider band
+    /// instead of only the thin visual track.
+    var hitHeight: CGFloat? = nil
     let onChange: (_ value: Double, _ force: Bool) -> Void
 
     var body: some View {
         GeometryReader { proxy in
             let width = max(proxy.size.width, 1)
-            ZStack(alignment: .leading) {
-                Capsule(style: .continuous)
-                    .fill(.white.opacity(isEnabled ? 0.13 : 0.07))
-                Capsule(style: .continuous)
-                    .fill(accent)
-                    .frame(width: width * CGFloat(min(max(value, 0), 1)))
+            ZStack(alignment: .topLeading) {
+                ZStack(alignment: .leading) {
+                    Capsule(style: .continuous)
+                        .fill(.white.opacity(isEnabled ? 0.13 : 0.07))
+                    Capsule(style: .continuous)
+                        .fill(accent)
+                        .frame(width: width * CGFloat(min(max(value, 0), 1)))
+                }
+                .frame(height: height)
+                .padding(.top, trackTopInset)
             }
+            .frame(width: width, height: proxy.size.height, alignment: .topLeading)
             .contentShape(Rectangle())
             .gesture(
                 DragGesture(minimumDistance: 0, coordinateSpace: .local)
@@ -2533,7 +2611,7 @@ private struct SystemHUDCompactSlider: View {
                     }
             )
         }
-        .frame(height: height)
+        .frame(height: max(hitHeight ?? height, height + trackTopInset))
         .opacity(isEnabled ? 1 : 0.48)
         .animation(.smooth(duration: 0.10), value: value)
         .accessibilityElement(children: .ignore)

@@ -76,13 +76,24 @@ public struct CollapsedPresentationProfile: Equatable, Sendable {
         glowStrength: 0
     )
 
+    /// Interactive volume/brightness HUD: the icon + percentage row occupies
+    /// the physical top band (max of the collapsed height and the hardware
+    /// notch, Droppy `HUDLayoutCalculator.notchHeight` parity) and the
+    /// slider gets its own band hanging below it. The shell stays top-pinned
+    /// and grows downward only by this band.
+    public static let systemHUDSliderBandHeight: CGFloat = 24
+
+    public static func systemHUDRowBandHeight(shellHeight: CGFloat) -> CGFloat {
+        max(shellHeight - systemHUDSliderBandHeight, 0)
+    }
+
     public static func systemHUD(value: Double) -> Self {
         _ = value
         return Self(
             kind: .systemHUD,
             contentProfile: .systemHUD,
             widthDelta: 12,
-            heightDelta: 12,
+            heightDelta: systemHUDSliderBandHeight,
             bottomCornerRadius: 18,
             horizontalContentInset: 10,
             glowStrength: 0
@@ -395,7 +406,9 @@ public final class NotchGeometryService {
                 collapsedSize.width + collapsedPresentationProfile.widthDelta,
                 collapsedPresentationProfile.minimumFloatingWidth
             ),
-            height: collapsedSize.height + collapsedPresentationProfile.heightDelta
+            height: collapsedPresentationProfile.kind == .systemHUD
+                ? max(collapsedSize.height, notchRect?.height ?? 0) + collapsedPresentationProfile.heightDelta
+                : collapsedSize.height + collapsedPresentationProfile.heightDelta
         )
         let collapsedGeometry: CollapsedActivityResolvedGeometry
         if let notchRect, useAdaptiveNotchSizing {

@@ -1165,18 +1165,8 @@ private struct SystemHUDSettingsPreview: View {
                 .frame(width: 145)
             }
 
-            CollapsedSystemHUDCompactView(
-                activity: previewActivity,
-                layout: CompactCollapsedSideSlotGeometry(
-                    isNotchIntegrated: false,
-                    leftRegionWidth: 0,
-                    notchCoreWidth: 0,
-                    rightRegionWidth: 0
-                )
-            )
-            .frame(width: 190, height: 32)
-            .padding(.horizontal, 14)
-            .background(Color.black, in: Capsule(style: .continuous))
+            SystemHUDShellPreview(settings: settings, activity: previewActivity)
+                .frame(maxWidth: .infinity, alignment: .top)
 
             if previewActivity.progress != nil {
                 Slider(value: $previewValue, in: 0...1)
@@ -1273,6 +1263,14 @@ struct LiveActivityLayoutSettingsPreview: View {
     private let canvasSize = CGSize(width: 320, height: 68)
     private let primaryFrame = CGRect(x: 52, y: 19, width: 216, height: 34)
 
+    /// Grows downward only while a production HUD shell is shown, so the
+    /// taller HUD is never clipped and other scenarios keep their layout.
+    private var previewCanvasHeight: CGFloat {
+        guard let overlay = resolution.overlayTransient?.activity else { return canvasSize.height }
+        let hudHeight = SystemHUDShellPreview.geometry(settings: settings, activity: overlay).collapsedFrame.height
+        return max(canvasSize.height, (canvasSize.height - primaryFrame.maxY) + hudHeight + 8)
+    }
+
     var body: some View {
         VStack(spacing: 8) {
             HStack {
@@ -1308,25 +1306,17 @@ struct LiveActivityLayoutSettingsPreview: View {
                 )
 
                 if let overlay = resolution.overlayTransient?.activity {
-                    CollapsedSystemHUDCompactView(
-                        activity: overlay,
-                        layout: CompactCollapsedSideSlotGeometry(
-                            isNotchIntegrated: false,
-                            leftRegionWidth: 0,
-                            notchCoreWidth: 0,
-                            rightRegionWidth: 0
+                    // Production HUD shell, top-aligned with the primary
+                    // shell and growing downward exactly as on the island.
+                    let hudSize = SystemHUDShellPreview.geometry(settings: settings, activity: overlay).collapsedFrame.size
+                    SystemHUDShellPreview(settings: settings, activity: overlay)
+                        .position(
+                            x: primaryFrame.midX,
+                            y: (canvasSize.height - primaryFrame.maxY) + hudSize.height / 2
                         )
-                    )
-                    .padding(.horizontal, 14)
-                    .frame(width: primaryFrame.width, height: primaryFrame.height)
-                    .background(Color.black.opacity(0.985), in: Capsule())
-                    .position(
-                        x: primaryFrame.midX,
-                        y: canvasSize.height - primaryFrame.midY
-                    )
                 }
             }
-            .frame(width: canvasSize.width, height: canvasSize.height)
+            .frame(width: canvasSize.width, height: previewCanvasHeight, alignment: .top)
             .background(.white.opacity(0.02), in: RoundedRectangle(cornerRadius: 10))
             .overlay {
                 RoundedRectangle(cornerRadius: 10)
