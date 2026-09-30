@@ -1500,7 +1500,8 @@ The execution order is the **Phase dependency correction** list above (items 1�
 |---|---|---|
 | Phase 13 (13A–13F) | 13 — Terminal / Keep Awake / Window Snap / Reminders / Voice / Camera / Background Removal | Done |
 | Phase 13G | Agents stabilization (not a Droppy item; Agents parity/beyond-Droppy section) | Done |
-| **Phase 14 (next)** | **14 — Actionable messaging** | **Next; not started** |
+| Phase 14 | 14 — Actionable messaging | Done (provider authority limited; see Phase 14 results) |
+| **Phase 15 (next)** | **15 — Media source-specific parity completion** | **Next; not started** |
 | Later phases | 3, 5, 8, 9, 10, 12 (remaining), 15, 16, 17 | Pending (see gap table) |
 
 No new phases are created. Every video-derived gap below is attached to an existing dependency-order item, and all of them are re-checked in item 17 (final source/video parity audit).
@@ -1540,7 +1541,7 @@ Status values follow the Definition of complete parity: **Pending** (tracked, no
 | G16 | Pomodoro-style Focus/Break timer widget | Rec 2 1:05 | 16 (widget) using existing TimerController | Pending |
 | G17 | AirPods "Connected" live activity with battery ring | Rec 2 0:13 | 12 — Rich live activities (AirPods section) | Pending |
 | G18 | Many compact live activities: update available, charging, full battery, VPN connected + timer, backup drive capacity, caps lock, focus, message | Rec 2 0:25–0:29 | 12 — Rich live activities | Partial (battery, caps lock, focus, agents exist) |
-| G19 | Message notification with inline reply field in the notch (iMessage/WhatsApp/Telegram) | Rec 2 0:14–0:21 | **14 — Actionable messaging (execution Phase 14, next)** | Pending — next phase |
+| G19 | Message notification with inline reply field in the notch (iMessage/WhatsApp/Telegram) | Rec 2 0:14–0:21 | 14 — Actionable messaging (execution Phase 14, done) | **Blocked by macOS/API constraints** for incoming observation and inline reply on all three providers; **Open-App fallback** for Messages. Pipeline and UI implemented provider-neutrally (see Phase 14 results) |
 | G20 | Notchless Mac: island floats as a Dynamic Island with the same activities | Rec 2 0:21–0:24 | Existing floating island; verify parity in 17 | Implemented (verify in final audit) |
 | G21 | Screenshot capture ("Element Capture": any window/region/screen) and annotation editor | Rec 2 0:48–0:57 | 5 — Capture suite (Phase 2 section) | Pending |
 | G22 | Screen-recording video editor with cursor tracking | Rec 2 0:58–1:00 | 5 — Capture suite | Pending; may be Candidate — evaluate (large scope) |
@@ -1557,3 +1558,25 @@ Status values follow the Definition of complete parity: **Pending** (tracked, no
 ## Acceptance
 
 Item 17 (final source/video parity audit) must replay both recordings as acceptance scripts and close every row above as Implemented, Intentionally Not Supported (with reason), Blocked by macOS/API constraints (with reason), or Requires Approval.
+
+---
+
+# Phase 14 results — Actionable Messaging (2026-09-30)
+
+Evidence: `research/MESSAGING_PROVIDER_AUTHORITY_AUDIT_2026-09-30.md`.
+
+| Provider | Incoming authority | Exact conversation identity | Reply authority | Send confirmation | Fallback | Classification |
+|---|---|---|---|---|---|---|
+| Apple Messages | None public (no message class/event handlers in the scripting dictionary; notifications and chat.db are private) | Not derivable from any incoming source | Not offered (AppleScript `send` exists but cannot be targeted from an incoming event) | None (`send` has no result) | Open Messages (NSWorkspace, no Automation permission) | Incoming and reply: **Blocked by macOS/API constraints**; **Open-App fallback** |
+| WhatsApp | None | No | No (documented links only pre-fill a compose window) | No | Open app, if installed | **Not installed**; no adapter shipped |
+| Telegram | None | No | No (documented links only pre-fill) | No | Open app, if installed | **Not installed**; no adapter shipped |
+
+Implemented provider-neutrally and covered by deterministic fakes: normalized provider/conversation/
+message identity, explicit capabilities, per-conversation draft book (clears only on confirmed sends;
+kept on failed, uncertain, timeout), bounded deduplicating queue, `.message` live activity through
+LiveActivityStore with deterministic arbitration and HUD preservation, the expanded Messages page with
+reply / Open-App / read-only modes, and Messaging settings with privacy-safe diagnostics.
+
+Would change the classification only with explicit approval (stop boundaries): Accessibility reading of
+Notification Center banners (still no exact reply target), Full Disk Access to `chat.db`, or UI-scripted
+sends.
