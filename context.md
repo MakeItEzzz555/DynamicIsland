@@ -4747,3 +4747,10 @@ For every requested feature phase:
 - Details, Droppy references and acceptance evidence: `research/HUD_RECORDER_RUNTIME_2026-10-01.md`.
 - Validation: `git diff --check`, `swift build`, `swift test` (1366 tests, 16 skipped, 0 failures), `swift build -c release`, `Scripts/package_app.sh`, `plutil -lint`, strict helper and deep app signature verification, clean-copy ad-hoc signature.
 - Known: `ScreenRecordingLiveTests` duration check fails while the Mac is locked (static screen → idle frames dropped); recorder backend unchanged.
+
+### 2026-10-01 - Recorder Static Timeline And Collapse Choreography
+
+- Recorder: session timeline now follows the host clock at pause/resume/Stop (ScreenCaptureKit PTS is host-clock); the writer session ends at the active recording end, so static screens keep their real duration without retained buffers or duplicate frames. Live: static 3 s → 3.04 s, static 1.2+pause+1.2 → 2.51 s, Area crop exact, system audio track present.
+- Collapse mirrors expansion: children exit first, then the shell contracts top-pinned (`ExpandedIslandMotion.collapsePlan`, `IslandCollapseRequest`); shrinking page changes defer the shell until the outgoing page has left.
+- Details: `research/RECORDER_TIMELINE_AND_COLLAPSE_2026-10-01.md`. Physical UI acceptance still pending (keychain prompt, then lock).
+- Validation: `swift test` 1388 tests / 20 skipped / 0 failures; live recording 5/5; release build; package; `plutil -lint`; clean-copy strict signatures.
