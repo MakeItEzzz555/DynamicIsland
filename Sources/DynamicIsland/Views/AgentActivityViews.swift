@@ -312,18 +312,25 @@ struct AgentDashboardContentView: View {
                 sessions: controlSessions,
                 activeManagedSessionIDs: managedControl.activeManagedSessionIDs
             )
-            let metrics = showsUsage
-                ? AgentGlobalUsagePresentation.makeForSelectedSession(
-                    provider: managedControl.managedProvider ?? .codex,
+            let usageProvider = managedControl.managedProvider
+                ?? selectedSession?.id.sessionID.provider
+                ?? .codex
+            let usageIndicators = showsUsage
+                ? Array(AgentUsageIndicatorPresentation.make(
+                    provider: usageProvider,
                     accountUsage: accountUsage,
-                    selectedSession: selectedSession,
-                    limit: layout.maximumGaugeCount
-                )
+                    selectedSession: selectedSession
+                ).prefix(layout.maximumGaugeCount + 1))
                 : []
             VStack(alignment: .leading, spacing: 7) {
-                if showsUsage, !metrics.isEmpty {
+                if showsUsage, !usageIndicators.isEmpty {
                     stagedAgentContent(index: 1) {
-                        AgentGlobalSummaryStrip(metrics: metrics, layout: layout)
+                        AgentUsageIndicatorRow(
+                            indicators: usageIndicators,
+                            spacing: layout.isNarrow ? 10 : 18
+                        )
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.vertical, 3)
                     }
                 }
 

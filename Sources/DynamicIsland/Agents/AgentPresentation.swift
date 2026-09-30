@@ -1211,7 +1211,7 @@ struct AgentUsagePresentation: Identifiable, Equatable, Sendable {
         return values
     }
 
-    private static func quotaScopeLabel(_ raw: String) -> String? {
+    static func quotaScopeLabel(_ raw: String) -> String? {
         let value = raw.lowercased().replacingOccurrences(of: "_", with: "-")
         if value.contains("5h") || value.contains("five-hour") || value.contains("5-hour") { return "5h" }
         if value.contains("week") || value == "7d" { return "Week" }
