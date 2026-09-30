@@ -137,7 +137,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let agentEvents = AgentEventStore()
     private let agentProjects = AgentProjectProjectionStore()
     private lazy var messaging = MessagingController(
-        adapters: [],
+        adapters: [MessagesAppAdapter()],
         liveActivities: liveActivities
     )
     private let agentAttention = AgentAttentionCoordinator()
