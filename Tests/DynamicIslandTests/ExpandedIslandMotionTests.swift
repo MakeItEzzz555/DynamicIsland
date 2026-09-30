@@ -24,19 +24,16 @@ final class ExpandedIslandMotionTests: XCTestCase {
 
     // MARK: - Plan
 
-    func testFullPlanOrdersOutgoingHandoffIncomingInsideShellMorph() {
+    func testFullPlanMountsIncomingOnlyAfterTheShellHasLanded() {
         let plan = ExpandedIslandMotion.plan(inputs())
 
         XCTAssertEqual(plan.kind, .full)
         XCTAssertEqual(plan.shellDuration, 0.40, accuracy: 0.0001, "shell timing is never retuned")
         XCTAssertEqual(plan.outgoingDuration, 0.136, accuracy: 0.0001)
-        // The incoming page mounts before the outgoing page has fully left
-        // (no empty-shell gap) but only after the geometry has been committed.
-        XCTAssertGreaterThan(plan.handoffDelay, 0)
-        XCTAssertLessThan(plan.handoffDelay, plan.outgoingDuration)
-        XCTAssertLessThan(plan.handoffDelay, plan.shellDuration / 2)
-        // Opacity resolves before the shell lands.
-        XCTAssertLessThanOrEqual(plan.handoffDelay + plan.incomingFadeDuration, plan.shellDuration)
+        // Outgoing leaves immediately; incoming children appear only once the
+        // shell has fully reached its target size.
+        XCTAssertLessThan(plan.outgoingDuration, plan.shellDuration)
+        XCTAssertEqual(plan.handoffDelay, plan.shellDuration, accuracy: 0.0001)
     }
 
     func testFullPlanCompressesIncomingAndShrinksOutgoingFromTheTop() {
@@ -48,14 +45,14 @@ final class ExpandedIslandMotionTests: XCTestCase {
         XCTAssertEqual(plan.incomingBlur, 6)
     }
 
-    func testIncomingSpringBouncesAndPeaksAsTheShellLands() throws {
+    func testIncomingSpringBouncesAfterTheShellLands() throws {
         let plan = ExpandedIslandMotion.plan(inputs())
         let spring = try XCTUnwrap(plan.incomingSpring)
 
         XCTAssertGreaterThan(spring.dampingRatio, 0.5, "premium, not wobbly")
         XCTAssertLessThan(spring.dampingRatio, 1, "must be underdamped to bounce")
         let peak = plan.handoffDelay + spring.peakTime
-        XCTAssertEqual(peak, plan.shellDuration, accuracy: 0.06, "bounce peak coincides with the shell landing, not late")
+        XCTAssertGreaterThan(peak, plan.shellDuration, "children bounce only inside the landed shell")
         XCTAssertLessThan(spring.overshoot, 0.05)
     }
 
@@ -70,7 +67,7 @@ final class ExpandedIslandMotionTests: XCTestCase {
         XCTAssertLessThan(normal.handoffDelay, slow.handoffDelay)
         XCTAssertLessThan(normal.incomingFadeDuration, slow.incomingFadeDuration)
         for plan in [subtle, normal, slow] {
-            XCTAssertLessThan(plan.handoffDelay, plan.outgoingDuration)
+            XCTAssertEqual(plan.handoffDelay, plan.shellDuration, accuracy: 0.0001)
         }
     }
 
@@ -98,7 +95,7 @@ final class ExpandedIslandMotionTests: XCTestCase {
         XCTAssertNil(plan.incomingSpring)
         XCTAssertLessThanOrEqual(plan.outgoingDuration, 0.14)
         XCTAssertLessThanOrEqual(plan.incomingFadeDuration, 0.16)
-        XCTAssertLessThan(plan.handoffDelay, plan.outgoingDuration)
+        XCTAssertEqual(plan.handoffDelay, plan.shellDuration, accuracy: 0.0001)
     }
 
     func testInstantPresetSwapsWithoutAnimation() {
@@ -143,13 +140,17 @@ final class ExpandedIslandMotionTests: XCTestCase {
         XCTAssertEqual(incomingAtMount.opacity, 0, accuracy: 0.0001, "no opacity pop on mount")
         XCTAssertEqual(incomingAtMount.scale, plan.incomingScale, accuracy: 0.0001)
         XCTAssertEqual(incomingAtMount.blur, plan.incomingBlur, accuracy: 0.0001)
-        XCTAssertGreaterThan(try XCTUnwrap(mount.outgoing).opacity, 0, "outgoing still visible at handoff: no empty-shell gap")
+        XCTAssertEqual(mount.shellProgress, 1, accuracy: 0.0001, "incoming mounts only after the shell landed")
+        for step in 0..<100 {
+            let beforeHandoff = ExpandedIslandMotion.sample(plan, at: plan.handoffDelay * Double(step) / 100)
+            XCTAssertNil(beforeHandoff.incoming, "no child content while the shell is still morphing")
+        }
 
         var previousOutgoing = 1.0
         var previousShell = 0.0
         var maxScale: CGFloat = 0
         for step in 0...300 {
-            let time = Double(step) / 300 * 0.8
+            let time = Double(step) / 300 * 1.2
             let frame = ExpandedIslandMotion.sample(plan, at: time)
             XCTAssertGreaterThanOrEqual(frame.shellProgress + 1e-9, previousShell)
             previousShell = frame.shellProgress
@@ -167,7 +168,8 @@ final class ExpandedIslandMotionTests: XCTestCase {
         XCTAssertGreaterThan(maxScale, 1, "incoming expansion has a visible spring overshoot")
         XCTAssertLessThan(maxScale, 1.006, "overshoot stays subtle")
 
-        let landed = ExpandedIslandMotion.sample(plan, at: plan.shellDuration)
+        let settledAt = plan.handoffDelay + max(plan.incomingFadeDuration, 0.4)
+        let landed = ExpandedIslandMotion.sample(plan, at: settledAt)
         XCTAssertEqual(landed.shellProgress, 1, accuracy: 0.0001)
         XCTAssertNil(landed.outgoing)
         let incoming = try XCTUnwrap(landed.incoming)

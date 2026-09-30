@@ -159,7 +159,8 @@ enum ExpandedIslandMotion {
                 outgoingDuration: reducedOutgoingDuration,
                 outgoingScale: 1,
                 outgoingBlur: 0,
-                handoffDelay: reducedOutgoingDuration * 0.5,
+                // Incoming content waits for the shell to reach its target.
+                handoffDelay: max(reducedOutgoingDuration * 0.5, inputs.shellDuration),
                 incomingFadeDuration: reducedIncomingDuration,
                 incomingScale: 1,
                 incomingBlur: 0,
@@ -186,7 +187,9 @@ enum ExpandedIslandMotion {
             outgoingDuration: outgoing,
             outgoingScale: scales ? outgoingScale : 1,
             outgoingBlur: blur,
-            handoffDelay: outgoing * handoffFractionOfOutgoing,
+            // Incoming content mounts only once the shell has reached its
+            // target size; the outgoing page still leaves immediately.
+            handoffDelay: max(outgoing * handoffFractionOfOutgoing, inputs.shellDuration),
             incomingFadeDuration: fade,
             incomingScale: scales ? incomingScale : 1,
             incomingBlur: blur,

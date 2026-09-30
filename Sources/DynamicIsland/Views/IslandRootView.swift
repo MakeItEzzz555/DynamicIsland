@@ -20,9 +20,10 @@ extension View {
 }
 
 enum IslandContentTransitionTiming {
-    // Content timing is derived from the active shell animation duration. With the default
-    // `.normal` shell timing of 0.40s, expansion content runs from about 0.16s to 0.32s.
-    static let expansionContentDelayRatio: TimeInterval = 0.40
+    // Content timing is derived from the active shell animation duration. Child content
+    // starts only once the shell has fully expanded (ratio 1.0): with the default
+    // `.normal` shell timing of 0.40s, expansion content runs from 0.40s to 0.56s.
+    static let expansionContentDelayRatio: TimeInterval = 1.0
     static let expansionContentDurationRatio: TimeInterval = 0.40
     static let collapseContentDurationRatio: TimeInterval = 0.40
 
@@ -1182,7 +1183,9 @@ struct IslandRootView: View {
             settings: settings,
             reduceMotion: reduceMotion
         )
-        let revealDelay = reduceMotion || settings.reduceExtraMotion || !settings.contentAnimationEnabled || settings.animationPreset == .instant
+        // Children appear only after the shell has fully expanded, including
+        // under Reduce Motion (where the shell duration is already short).
+        let revealDelay = !settings.contentAnimationEnabled || settings.animationPreset == .instant
             ? 0
             : IslandContentTransitionTiming.expansionContentDelay(shellDuration: shellDuration)
         DispatchQueue.main.asyncAfter(deadline: .now() + revealDelay) {
