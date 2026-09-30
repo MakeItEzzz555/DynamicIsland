@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 @testable import DynamicIsland
 
@@ -335,5 +336,187 @@ final class ExpandedIslandMotionTests: XCTestCase {
         state.snap(to: .island)
 
         XCTAssertEqual(state, before, "snapping to the settled page must not remount it")
+    }
+}
+
+// MARK: - Contraction: collapse and shrinking page changes mirror expansion
+//
+// Runtime regression: collapse flipped the island state in the same turn the
+// child exit started, so the shell contracted around still-visible children
+// (squeeze/clip) and page bodies vanished. Expansion waits for the shell
+// before children appear; contraction must wait for children before the shell.
+
+final class IslandContractionMotionTests: XCTestCase {
+    private let step: TimeInterval = 1.0 / 120.0
+
+    private func inputs(
+        shell: TimeInterval = 0.40,
+        instant: Bool = false,
+        reduceMotion: Bool = false
+    ) -> ExpandedIslandMotion.Inputs {
+        ExpandedIslandMotion.Inputs(
+            shellDuration: shell,
+            isInstant: instant,
+            reduceMotion: reduceMotion,
+            useBlurTransitions: true,
+            useScaleTransitions: true,
+            prefersLightweightEffects: false,
+            refreshRate: 120
+        )
+    }
+
+    private func frames(for page: ExpandedIslandPage) -> (expanded: CGRect, collapsed: CGRect) {
+        let size = CGSize(width: 1512, height: 982)
+        let screen = ScreenSnapshot(
+            frame: CGRect(origin: .zero, size: size),
+            visibleFrame: CGRect(x: 0, y: 0, width: size.width, height: size.height - 32),
+            safeAreaInsets: NSEdgeInsets(top: 32, left: 0, bottom: 0, right: 0),
+            auxiliaryTopLeftArea: CGRect(x: 0, y: size.height - 32, width: 666, height: 32),
+            auxiliaryTopRightArea: CGRect(x: 846, y: size.height - 32, width: 666, height: 32)
+        )
+        let expandedSize = ExpandedPresentationProfile.resolve(for: page).resolvedSize(from: CGSize(width: 860, height: 286))
+        let geometry = NotchGeometryService().geometry(
+            for: screen,
+            collapsedSize: CGSize(width: 190, height: 34),
+            expandedSize: expandedSize
+        )
+        return (geometry.expandedFrame, geometry.collapsedFrame)
+    }
+
+    /// Samples every frame of a contraction and checks the mirror contract.
+    private func assertContraction(
+        _ plan: ExpandedIslandMotion.ContractionPlan,
+        from source: CGRect,
+        to target: CGRect,
+        label: String
+    ) {
+        var sawChildExit = false
+        var previous = source
+        var t: TimeInterval = 0
+        while t <= plan.totalDuration + step {
+            let sample = ExpandedIslandMotion.sampleContraction(plan, at: t, from: source, to: target)
+            let frame = sample.shellFrame
+            if let child = sample.outgoing, child.opacity < 0.999 { sawChildExit = true }
+            if frame != source {
+                // The shell has started contracting: children are already gone.
+                XCTAssertNil(sample.outgoing, "\(label): child visible while shell contracts at t=\(t)")
+            }
+            XCTAssertEqual(frame.maxY, source.maxY, accuracy: 0.001, "\(label): top edge moved at t=\(t)")
+            XCTAssertEqual(frame.midX, source.midX, accuracy: 0.001, "\(label): center moved at t=\(t)")
+            XCTAssertLessThanOrEqual(frame.width, previous.width + 0.001, "\(label): shell width bounced at t=\(t)")
+            XCTAssertLessThanOrEqual(frame.height, previous.height + 0.001, "\(label): shell height bounced at t=\(t)")
+            XCTAssertGreaterThanOrEqual(frame.height, target.height - 0.001, "\(label): shell overshot at t=\(t)")
+            previous = frame
+            t += step
+        }
+        XCTAssertTrue(sawChildExit || plan.childExitDuration == 0, "\(label): child exit must be visible")
+        let end = ExpandedIslandMotion.sampleContraction(plan, at: plan.totalDuration + step, from: source, to: target)
+        XCTAssertEqual(end.shellFrame, target, "\(label): shell lands exactly on the collapsed frame")
+    }
+
+    func testEveryPrimaryPageCollapsesChildrenFirstThenShellTopPinned() {
+        let plan = ExpandedIslandMotion.collapsePlan(inputs())
+        for page in [ExpandedIslandPage.island, .agents, .tray, .timer, .stats, .tools, .messages] {
+            let f = frames(for: page)
+            assertContraction(plan, from: f.expanded, to: f.collapsed, label: "\(page) -> collapsed")
+        }
+    }
+
+    func testCollapseChildExitStartsImmediatelyAndMatchesTheRunningExitAnimation() {
+        let plan = ExpandedIslandMotion.collapsePlan(inputs())
+        // Same duration InnerBlurScaleCleanModifier runs, plus its max stagger.
+        XCTAssertEqual(
+            plan.childExitDuration,
+            IslandContentTransitionTiming.collapseContentDuration(shellDuration: 0.40)
+                + IslandContentTransitionTiming.collapseExitStaggerAllowance,
+            accuracy: 0.0001
+        )
+        XCTAssertEqual(plan.shellCommitDelay, plan.childExitDuration, accuracy: 0.0001)
+        XCTAssertEqual(plan.shellDuration, 0.40, accuracy: 0.0001, "shell timing is the shared SSOT")
+        let early = ExpandedIslandMotion.sampleContraction(plan, at: 0.03, from: .init(x: 0, y: 0, width: 800, height: 300), to: .init(x: 300, y: 256, width: 200, height: 44))
+        XCTAssertLessThan(try XCTUnwrap(early.outgoing).opacity, 1)
+        XCTAssertEqual(plan.childExitScale, IslandContentTransitionTiming.collapseExitScale)
+        XCTAssertEqual(plan.childExitBlur, IslandContentTransitionTiming.collapseExitBlur)
+    }
+
+    func testSlowMotionLengthensAndFastShortensTheChildExit() {
+        let normal = ExpandedIslandMotion.collapsePlan(inputs(shell: 0.40))
+        let slow = ExpandedIslandMotion.collapsePlan(inputs(shell: 0.80))
+        let fast = ExpandedIslandMotion.collapsePlan(inputs(shell: 0.25))
+        XCTAssertGreaterThan(slow.childExitDuration, normal.childExitDuration * 1.8)
+        XCTAssertLessThan(fast.childExitDuration, normal.childExitDuration)
+        XCTAssertEqual(slow.shellCommitDelay, slow.childExitDuration, accuracy: 0.0001)
+        XCTAssertEqual(slow.shellDuration, 0.80, accuracy: 0.0001)
+    }
+
+    func testReduceMotionKeepsTheSequenceButDropsScaleAndBlur() {
+        let plan = ExpandedIslandMotion.collapsePlan(inputs(shell: 0.24, reduceMotion: true))
+        XCTAssertEqual(plan.childExitScale, 1)
+        XCTAssertEqual(plan.childExitBlur, 0)
+        XCTAssertEqual(plan.childExitDuration, IslandContentTransitionTiming.reducedCollapseExitDuration, accuracy: 0.0001)
+        XCTAssertGreaterThan(plan.shellCommitDelay, 0, "children still leave before the shell contracts")
+        let f = frames(for: .agents)
+        assertContraction(plan, from: f.expanded, to: f.collapsed, label: "reduce motion agents -> collapsed")
+        var t: TimeInterval = 0
+        while t < plan.childExitDuration {
+            let child = ExpandedIslandMotion.sampleContraction(plan, at: t, from: f.expanded, to: f.collapsed).outgoing
+            XCTAssertEqual(child?.scale ?? 1, 1)
+            XCTAssertEqual(child?.blur ?? 0, 0)
+            t += step
+        }
+    }
+
+    func testInstantCollapseCommitsTheShellImmediately() {
+        let plan = ExpandedIslandMotion.collapsePlan(inputs(shell: 0.01, instant: true))
+        XCTAssertEqual(plan.shellCommitDelay, 0)
+        XCTAssertEqual(plan.childExitDuration, 0)
+    }
+
+    func testShrinkingPageChangeExitsOutgoingBeforeShellAndMountsIncomingAfterIt() {
+        let page = ExpandedIslandMotion.plan(inputs())
+        let from = frames(for: .agents).expanded
+        let to = frames(for: .island).expanded
+        XCTAssertTrue(ExpandedIslandMotion.shellShrinks(from: from.size, to: to.size))
+        let plan = ExpandedIslandMotion.shrinkingPagePlan(page)
+        XCTAssertEqual(plan.childExitDuration, page.outgoingDuration, accuracy: 0.0001)
+        XCTAssertEqual(plan.shellCommitDelay, page.outgoingDuration, accuracy: 0.0001)
+        XCTAssertEqual(try XCTUnwrap(plan.incomingHandoffDelay), page.outgoingDuration + page.shellDuration, accuracy: 0.0001)
+        assertContraction(plan, from: from, to: to, label: "agents -> island")
+    }
+
+    func testGrowingPageChangeKeepsTheExistingExpansionChoreography() {
+        let from = frames(for: .island).expanded
+        let to = frames(for: .agents).expanded
+        XCTAssertFalse(ExpandedIslandMotion.shellShrinks(from: from.size, to: to.size))
+    }
+
+    // MARK: Generation-safe reversal
+
+    func testCollapseInterruptedByExpansionNeverCommits() {
+        var request = IslandCollapseRequest()
+        let generation = request.begin()
+        XCTAssertTrue(request.cancel(), "expansion during the child exit cancels the collapse")
+        XCTAssertFalse(request.commit(generation), "stale collapse completion must not hide newer content")
+    }
+
+    func testOnlyTheNewestCollapseRequestCommits() {
+        var request = IslandCollapseRequest()
+        let first = request.begin()
+        _ = request.cancel()
+        let second = request.begin()
+        XCTAssertFalse(request.commit(first))
+        XCTAssertTrue(request.commit(second))
+        XCTAssertFalse(request.commit(second), "a collapse commits once")
+        XCTAssertFalse(request.cancel(), "nothing pending after commit")
+    }
+
+    func testExpansionInterruptedByCollapseKeepsChildrenHidden() {
+        // Expansion reveal is guarded by `isExpandedContentExiting`; a collapse
+        // requested mid-expansion begins the exit and owns the next commit.
+        var request = IslandCollapseRequest()
+        let generation = request.begin()
+        XCTAssertTrue(request.isPending)
+        XCTAssertTrue(request.commit(generation))
+        XCTAssertFalse(request.isPending)
     }
 }

@@ -49,6 +49,15 @@ enum IslandContentTransitionTiming {
     static func collapseContentDuration(shellDuration: TimeInterval) -> TimeInterval {
         shellDuration * collapseContentDurationRatio
     }
+
+    // Collapse child exit (InnerBlurScaleCleanModifier removal): the values
+    // the modifier animates and the contraction plan sequences against.
+    static let collapseExitScale: CGFloat = 0.97
+    static let collapseExitBlur: CGFloat = 6
+    /// Largest stagger delay the modifier applies before the exit starts.
+    static let collapseExitStaggerAllowance: TimeInterval = 0.015
+    /// Reduce Motion exit: a short fade only.
+    static let reducedCollapseExitDuration: TimeInterval = 0.10
 }
 
 private enum IslandContentPhase {
@@ -508,6 +517,10 @@ struct IslandRootView: View {
             .onChange(of: layoutStore.isExpandedContentExiting) { _, newValue in
                 if newValue {
                     beginContentExitSequence()
+                } else if islandState.state == .expanded, contentPhase == .contentCollapsing {
+                    // The pending collapse was cancelled by an expansion before
+                    // the shell contracted: bring the children back.
+                    cancelContentExitSequence()
                 }
             }
             .onChange(of: layoutStore.isCollapseShellOnly) { _, newValue in
@@ -1239,6 +1252,15 @@ struct IslandRootView: View {
         contentPhase = .contentCollapsing
     }
 
+    private func cancelContentExitSequence() {
+        sequenceGeneration += 1
+        renderedContentMode = .expanded
+        expandedContentMounted = true
+        isContentRemoving = false
+        contentVisible = true
+        contentPhase = .expandedContentVisible
+    }
+
     private func beginShellCollapseSequence() {
         sequenceGeneration += 1
         renderedContentMode = .expanded
@@ -1345,13 +1367,13 @@ struct InnerBlurScaleCleanModifier: ViewModifier {
     private var scale: CGFloat {
         if reduceMotion || !animationsEnabled || !useScaleTransitions { return 1.0 }
         if isVisible { return 1.0 }
-        return isRemoval ? 0.97 : 0.955
+        return isRemoval ? IslandContentTransitionTiming.collapseExitScale : 0.955
     }
 
     private var blur: CGFloat {
         if reduceMotion || !animationsEnabled || !useBlurTransitions { return 0 }
         if isVisible { return 0 }
-        return isRemoval ? 6 : 8
+        return isRemoval ? IslandContentTransitionTiming.collapseExitBlur : 8
     }
 
     private var opacity: Double {
@@ -1375,8 +1397,8 @@ struct InnerBlurScaleCleanModifier: ViewModifier {
                 .delay(reduceMotion ? 0 : delay)
         }
 
-        return .easeIn(duration: reduceMotion ? 0.10 : exitDuration)
-            .delay(reduceMotion ? 0 : min(max(0, delay * 0.35), 0.015))
+        return .easeIn(duration: reduceMotion ? IslandContentTransitionTiming.reducedCollapseExitDuration : exitDuration)
+            .delay(reduceMotion ? 0 : min(max(0, delay * 0.35), IslandContentTransitionTiming.collapseExitStaggerAllowance))
     }
 }
 
@@ -3149,7 +3171,19 @@ struct ExpandedIslandView: View {
             return
         }
         var presentation = pagePresentation
-        let effect = presentation.select(page, plan: pageMotionPlan)
+        let plan = pageMotionPlan
+        // Toward a smaller shell the outgoing page leaves first, the shell
+        // contracts, and only then does the incoming page mount.
+        let shrinks = ExpandedIslandMotion.pageChangeShrinksShell(
+            from: presentation.targetPage,
+            to: page,
+            expandedSize: settings.expandedSize
+        )
+        let effect = presentation.select(
+            page,
+            plan: plan,
+            handoffDelay: shrinks ? ExpandedIslandMotion.shrinkingPagePlan(plan).incomingHandoffDelay : nil
+        )
         pagePresentation = presentation
         guard case let .scheduleHandoff(generation, delay) = effect else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {

@@ -220,6 +220,12 @@ final class OverlayWindowController {
     private var presentationSession = OverlayPresentationSession()
     private var visibilityGeneration: Int = 0
     private var morphGeneration: Int = 0
+    /// Pending collapse while expanded children play their exit.
+    private var collapseRequest = IslandCollapseRequest()
+    /// Newest expanded page-geometry commit (shrinking changes are deferred).
+    private var pageGeometryCommitGeneration = 0
+    /// Page whose expanded geometry the shell currently has.
+    private var committedExpandedPage: ExpandedIslandPage?
     private var expandedAt: CFTimeInterval = 0
     private var nativeMenuTrackingDepth = 0
     private var collapsedScrollDelta: CGSize = .zero
@@ -415,12 +421,7 @@ final class OverlayWindowController {
                         self.layoutStore.setExpandedContentScrollRegion(.zero)
                     }
                     guard self.islandState.state == .expanded else { return }
-                    self.beginExpandedPageMorph()
-                    self.reposition(
-                        animated: true,
-                        reason: "expandedPageChanged",
-                        force: true
-                    )
+                    self.commitExpandedPageGeometry(for: page)
                 }
             }
             .store(in: &cancellables)
@@ -553,6 +554,7 @@ final class OverlayWindowController {
             layoutStore.setExpandedScrollGestureSuppressed(false)
             escapeRouter.setTopmostPresentation(nil)
             modules.navigation.setFileDropTargeted(false)
+            collapseRequest.cancel()
             islandState.collapse()
             islandPanel.ignoresMouseEvents = true
             islandPanel.orderOut(nil)
@@ -1418,7 +1420,9 @@ final class OverlayWindowController {
 
     private func expandFromCollapsedPreparingGeometry() {
         guard canPresentOverlay else { return }
+        if cancelPendingCollapseForExpansion() { return }
         guard islandState.state == .collapsed else { return }
+        committedExpandedPage = modules.navigation.selectedPage
 
         let targetScreen = islandPanel.screen ?? NotchGeometryService.preferredScreen()
         layoutStore.setDisplayMetrics(IslandDisplayMetricsResolver.resolve(screen: targetScreen))
@@ -1461,6 +1465,9 @@ final class OverlayWindowController {
         islandState.expand()
     }
 
+    /// Collapse mirrors expansion: expanded children exit first (shrink, blur,
+    /// fade) while the shell keeps its expanded geometry; only once they are
+    /// hidden does the island state collapse and the shell contract top-pinned.
     private func requestCollapseWithSequencing() {
         guard canPresentOverlay else { return }
         guard islandState.state == .expanded else { return }
@@ -1472,7 +1479,69 @@ final class OverlayWindowController {
         resetExpandedContentScrollTracking()
         layoutStore.setExpandedContentScrollRegion(.zero)
         updateMousePassthrough()
+
+        let plan = ExpandedIslandMotion.collapsePlan(settings: settings, reduceMotion: overlayReducesMotion)
+        let generation = collapseRequest.begin()
+        guard plan.shellCommitDelay > 0 else {
+            commitCollapse(generation: generation)
+            return
+        }
+        let sessionGeneration = presentationSession.generation
+        DispatchQueue.main.asyncAfter(deadline: .now() + plan.shellCommitDelay) { [weak self] in
+            guard let self, self.allowsOverlayWork(generation: sessionGeneration) else { return }
+            self.commitCollapse(generation: generation)
+        }
+    }
+
+    private func commitCollapse(generation: Int) {
+        // A stale or cancelled collapse never hides newer expanded content.
+        guard collapseRequest.commit(generation), islandState.state == .expanded else { return }
         islandState.collapse()
+    }
+
+    /// An expansion request that arrives while children are exiting keeps the
+    /// island expanded and brings the children back.
+    private func cancelPendingCollapseForExpansion() -> Bool {
+        guard collapseRequest.cancel() else { return false }
+        debugLog("pending collapse cancelled by expansion request")
+        layoutStore.isExpandedContentExiting = false
+        expandedAt = CACurrentMediaTime()
+        updateMousePassthrough()
+        updateMouseContainmentTimer()
+        return true
+    }
+
+    private var overlayReducesMotion: Bool {
+        settings.reduceExtraMotion || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    }
+
+    /// Commits the shell geometry for a new expanded page. Toward a smaller
+    /// shell, the outgoing page finishes its exit first so it is never
+    /// squeezed by the contracting shell; growing changes commit at once.
+    private func commitExpandedPageGeometry(for page: ExpandedIslandPage) {
+        pageGeometryCommitGeneration += 1
+        let generation = pageGeometryCommitGeneration
+        let source = committedExpandedPage ?? page
+        let shrinks = ExpandedIslandMotion.pageChangeShrinksShell(from: source, to: page, expandedSize: settings.expandedSize)
+        let plan = ExpandedIslandMotion.plan(settings: settings, reduceMotion: overlayReducesMotion)
+        let delay = shrinks ? ExpandedIslandMotion.shrinkingPagePlan(plan).shellCommitDelay : 0
+        let sessionGeneration = presentationSession.generation
+        let commit = { [weak self] in
+            guard let self,
+                  self.allowsOverlayWork(generation: sessionGeneration),
+                  generation == self.pageGeometryCommitGeneration,
+                  self.modules.navigation.selectedPage == page,
+                  self.islandState.state == .expanded,
+                  !self.layoutStore.isExpandedContentExiting else { return }
+            self.committedExpandedPage = page
+            self.beginExpandedPageMorph()
+            self.reposition(animated: true, reason: "expandedPageChanged", force: true)
+        }
+        if delay > 0 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: commit)
+        } else {
+            commit()
+        }
     }
 
     /// Panel-local regions for attached accessories, including the bridge

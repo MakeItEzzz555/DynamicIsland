@@ -215,8 +215,19 @@ enum ExpandedIslandMotion {
 
     @MainActor
     static func plan(settings: AppSettings, reduceMotion: Bool) -> Plan {
+        plan(inputs(settings: settings, reduceMotion: reduceMotion))
+    }
+
+    /// Collapse choreography from the same settings and shell SSOT.
+    @MainActor
+    static func collapsePlan(settings: AppSettings, reduceMotion: Bool) -> ContractionPlan {
+        collapsePlan(inputs(settings: settings, reduceMotion: reduceMotion))
+    }
+
+    @MainActor
+    static func inputs(settings: AppSettings, reduceMotion: Bool) -> Inputs {
         let reduces = reduceMotion || settings.reduceExtraMotion
-        return plan(Inputs(
+        return Inputs(
             shellDuration: IslandContentTransitionTiming.shellDuration(settings: settings, reduceMotion: reduces),
             isInstant: settings.animationPreset == .instant || !settings.contentAnimationEnabled,
             reduceMotion: reduces,
@@ -224,7 +235,7 @@ enum ExpandedIslandMotion {
             useScaleTransitions: settings.useScaleTransitions,
             prefersLightweightEffects: WorkspaceMotion.prefersLightweightEffects,
             refreshRate: WorkspaceMotion.currentRefreshRate
-        ))
+        )
     }
 
     /// Removal transition for the outgoing page.
@@ -365,7 +376,13 @@ struct ExpandedPageTransitionState: Equatable {
 
     var isHandoffPending: Bool { mountedPage == nil }
 
-    mutating func select(_ page: ExpandedIslandPage, plan: ExpandedIslandMotion.Plan) -> SelectionEffect {
+    /// `handoffDelay` overrides the plan's handoff (shrinking page changes
+    /// mount the incoming page only after the shell has contracted).
+    mutating func select(
+        _ page: ExpandedIslandPage,
+        plan: ExpandedIslandMotion.Plan,
+        handoffDelay: TimeInterval? = nil
+    ) -> SelectionEffect {
         guard page != targetPage else { return .none }
         generation += 1
         targetPage = page
@@ -376,7 +393,7 @@ struct ExpandedPageTransitionState: Equatable {
             return .swapImmediately
         }
         mountedPage = nil
-        return .scheduleHandoff(generation: generation, delay: plan.handoffDelay)
+        return .scheduleHandoff(generation: generation, delay: handoffDelay ?? plan.handoffDelay)
     }
 
     @discardableResult
@@ -459,4 +476,162 @@ extension View {
 struct ExpandedPageMountID: Hashable {
     let page: ExpandedIslandPage
     let generation: Int
+}
+
+// MARK: - Contraction (collapse and shrinking page changes)
+
+extension ExpandedIslandMotion {
+    /// Mirror of expansion. Expansion: shell grows, then children materialize.
+    /// Contraction: children exit (shrink, blur, fade), and only once they are
+    /// hidden does the shell commit its smaller geometry, top-pinned. The
+    /// shell itself is never scaled.
+    struct ContractionPlan: Equatable {
+        enum ExitCurve: Equatable {
+            /// InnerBlurScaleCleanModifier removal (collapse).
+            case easeIn
+            /// Droppy close curve (outgoing page).
+            case close
+        }
+
+        var childExitDuration: TimeInterval
+        var childExitScale: CGFloat
+        var childExitBlur: CGFloat
+        var exitCurve: ExitCurve
+        /// Delay between the contraction request and the shell's geometry commit.
+        var shellCommitDelay: TimeInterval
+        var shellDuration: TimeInterval
+        /// Page changes only: when the incoming page mounts.
+        var incomingHandoffDelay: TimeInterval?
+
+        var totalDuration: TimeInterval { shellCommitDelay + shellDuration }
+    }
+
+    struct ContractionSample: Equatable {
+        var shellFrame: CGRect
+        /// Nil once the outgoing children are hidden.
+        var outgoing: ContentSample?
+    }
+
+    static func collapsePlan(_ inputs: Inputs) -> ContractionPlan {
+        if inputs.isInstant {
+            return ContractionPlan(
+                childExitDuration: 0, childExitScale: 1, childExitBlur: 0, exitCurve: .easeIn,
+                shellCommitDelay: 0, shellDuration: inputs.shellDuration, incomingHandoffDelay: nil
+            )
+        }
+        let exit = inputs.reduceMotion
+            ? IslandContentTransitionTiming.reducedCollapseExitDuration
+            : IslandContentTransitionTiming.collapseContentDuration(shellDuration: inputs.shellDuration)
+                + IslandContentTransitionTiming.collapseExitStaggerAllowance
+        let decorative = !inputs.reduceMotion
+        return ContractionPlan(
+            childExitDuration: exit,
+            childExitScale: decorative && inputs.useScaleTransitions ? IslandContentTransitionTiming.collapseExitScale : 1,
+            childExitBlur: decorative && inputs.useBlurTransitions && !inputs.prefersLightweightEffects
+                ? IslandContentTransitionTiming.collapseExitBlur : 0,
+            exitCurve: .easeIn,
+            // Children are hidden before the shell contracts around them.
+            shellCommitDelay: exit,
+            shellDuration: inputs.shellDuration,
+            incomingHandoffDelay: nil
+        )
+    }
+
+    /// Expanded page change whose target shell is smaller.
+    static func shrinkingPagePlan(_ plan: Plan) -> ContractionPlan {
+        ContractionPlan(
+            childExitDuration: plan.outgoingDuration,
+            childExitScale: plan.outgoingScale,
+            childExitBlur: plan.outgoingBlur,
+            exitCurve: .close,
+            shellCommitDelay: plan.outgoingDuration,
+            shellDuration: plan.shellDuration,
+            // The incoming page waits for the shell to land at the smaller size.
+            incomingHandoffDelay: plan.kind == .instant ? 0 : plan.outgoingDuration + plan.shellDuration
+        )
+    }
+
+    /// Whether switching pages contracts the expanded shell (per-page
+    /// presentation profiles applied to the user's expanded size).
+    static func pageChangeShrinksShell(
+        from source: ExpandedIslandPage,
+        to target: ExpandedIslandPage,
+        expandedSize: CGSize
+    ) -> Bool {
+        shellShrinks(
+            from: ExpandedPresentationProfile.resolve(for: source).resolvedSize(from: expandedSize),
+            to: ExpandedPresentationProfile.resolve(for: target).resolvedSize(from: expandedSize)
+        )
+    }
+
+    /// True when the target shell is smaller in either dimension, so the
+    /// outgoing content must leave before the shell contracts around it.
+    static func shellShrinks(from source: CGSize, to target: CGSize) -> Bool {
+        target.width < source.width - 0.5 || target.height < source.height - 0.5
+    }
+
+    static func sampleContraction(
+        _ plan: ContractionPlan,
+        at time: TimeInterval,
+        from source: CGRect,
+        to target: CGRect
+    ) -> ContractionSample {
+        var outgoing: ContentSample?
+        if time < plan.childExitDuration {
+            let x = time / max(plan.childExitDuration, 0.0001)
+            let p: Double
+            switch plan.exitCurve {
+            case .easeIn: p = bezier(x, 0.42, 0, 1, 1)
+            case .close: p = bezier(x, closeCurve.c0x, closeCurve.c0y, closeCurve.c1x, closeCurve.c1y)
+            }
+            outgoing = ContentSample(
+                opacity: 1 - p,
+                blur: plan.childExitBlur * CGFloat(p),
+                scale: 1 + (plan.childExitScale - 1) * CGFloat(p)
+            )
+        }
+
+        let shellTime = time - plan.shellCommitDelay
+        guard shellTime > 0 else { return ContractionSample(shellFrame: source, outgoing: outgoing) }
+        let shell = ExpandedShellMorph.controlPoints
+        let progress = shellTime >= plan.shellDuration
+            ? 1
+            : bezier(shellTime / max(plan.shellDuration, 0.0001), shell.c0x, shell.c0y, shell.c1x, shell.c1y)
+        let frame = progress >= 1
+            ? target
+            : ExpandedShellMorph.interpolatedFrame(from: source, to: target, progress: CGFloat(progress))
+        return ContractionSample(shellFrame: frame, outgoing: outgoing)
+    }
+}
+
+/// Generation-guarded pending collapse. The island stays expanded while its
+/// children exit; the collapse commits only if it is still the newest request
+/// and was not cancelled by an expansion in the meantime.
+struct IslandCollapseRequest: Equatable {
+    private(set) var generation = 0
+    private var pending: Int?
+
+    var isPending: Bool { pending != nil }
+
+    mutating func begin() -> Int {
+        generation += 1
+        pending = generation
+        return generation
+    }
+
+    /// Cancels a pending collapse (an expansion arrived). Returns true when one was pending.
+    @discardableResult
+    mutating func cancel() -> Bool {
+        guard pending != nil else { return false }
+        pending = nil
+        generation += 1
+        return true
+    }
+
+    /// Consumes the pending collapse if `expected` is still current.
+    mutating func commit(_ expected: Int) -> Bool {
+        guard pending == expected else { return false }
+        pending = nil
+        return true
+    }
 }
