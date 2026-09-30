@@ -54,6 +54,10 @@ final class WorkspaceRenderHarness {
     let shortcuts = ShortcutsStore()
     let store = RightWorkspaceStore(defaults: UserDefaults(suiteName: "WorkspaceRenderStore-\(UUID().uuidString)")!)
     lazy var fileShelf = FileShelfStore(settings: settings, defaults: UserDefaults(suiteName: "WorkspaceRenderShelf-\(UUID().uuidString)")!)
+    lazy var screenRecording = ScreenRecordingController(
+        liveActivities: liveActivities,
+        capabilities: registry
+    )
     lazy var productivity = ProductivityModules(
         capabilities: registry,
         keepAwake: KeepAwakeController(liveActivities: liveActivities, capabilities: registry),
@@ -62,7 +66,8 @@ final class WorkspaceRenderHarness {
         reminders: RemindersController(liveActivities: liveActivities, capabilities: registry),
         voice: VoiceTranscriptionController(liveActivities: liveActivities, capabilities: registry, addToShelf: { _ in }),
         camera: CameraPreviewController(liveActivities: liveActivities, capabilities: registry),
-        backgroundRemoval: BackgroundRemovalController(liveActivities: liveActivities, capabilities: registry, addToShelf: { _ in })
+        backgroundRemoval: BackgroundRemovalController(liveActivities: liveActivities, capabilities: registry, addToShelf: { _ in }),
+        screenRecording: screenRecording
     )
     let services = WorkspaceServices(
         appLibrary: AppLibraryStore(defaults: UserDefaults(suiteName: "WorkspaceRenderApps-\(UUID().uuidString)")!),
@@ -83,6 +88,7 @@ final class WorkspaceRenderHarness {
                     LiveActivitiesModuleView(
                         liveActivities: self.liveActivities,
                         navigation: self.navigation,
+                        rightWorkspace: self.store,
                         settings: self.settings,
                         availableHeight: 85,
                         compactScale: 1

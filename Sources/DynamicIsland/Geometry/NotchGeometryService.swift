@@ -50,6 +50,7 @@ public struct IslandGeometry: Equatable {
 public enum CollapsedPresentationKind: String, Equatable, Sendable {
     case normal
     case systemHUD
+    case screenRecording
     case agentRoutine
     case agentAttention
 }
@@ -87,6 +88,16 @@ public struct CollapsedPresentationProfile: Equatable, Sendable {
             glowStrength: 0
         )
     }
+
+    public static let screenRecording = Self(
+        kind: .screenRecording,
+        contentProfile: .screenRecording,
+        widthDelta: 20,
+        heightDelta: 28,
+        bottomCornerRadius: 20,
+        horizontalContentInset: 10,
+        glowStrength: 0
+    )
 
     public static func agentRoutine(leftContentWidth: CGFloat, rightContentWidth: CGFloat) -> Self {
         Self(
@@ -143,6 +154,8 @@ public struct CollapsedActivityLayoutProfile: Equatable, Sendable {
     public static let systemHUDRightContentWidth: CGFloat = 48
     public static let genericActivityLeftContentWidth: CGFloat = 16
     public static let genericActivityRightContentWidth: CGFloat = 52
+    public static let screenRecordingLeftContentWidth: CGFloat = 62
+    public static let screenRecordingRightContentWidth: CGFloat = 96
 
     public let leftContentWidth: CGFloat
     public let rightContentWidth: CGFloat
@@ -176,6 +189,10 @@ public struct CollapsedActivityLayoutProfile: Equatable, Sendable {
     static let genericActivity = Self(
         leftContentWidth: genericActivityLeftContentWidth,
         rightContentWidth: genericActivityRightContentWidth
+    )
+    static let screenRecording = Self(
+        leftContentWidth: screenRecordingLeftContentWidth,
+        rightContentWidth: screenRecordingRightContentWidth
     )
 }
 

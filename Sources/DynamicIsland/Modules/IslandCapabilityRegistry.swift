@@ -8,6 +8,7 @@ enum IslandCapabilityID: String, CaseIterable, Codable, Hashable, Sendable {
     case voiceTranscribe
     case camera
     case backgroundRemoval
+    case screenRecording
 }
 
 enum IslandCapabilityPermissionState: Equatable, Sendable {

@@ -15,12 +15,14 @@ enum DynamicIslandLiveActivityKind: String, Equatable, Sendable {
     case voiceTranscription
     case camera
     case backgroundRemoval
+    case screenRecording
     case message
 
     var usesDirectLayoutProjection: Bool {
         switch self {
         case .keepAwake, .terminalTask, .windowSnapPreview, .reminder,
-             .voiceRecording, .voiceTranscription, .camera, .backgroundRemoval, .message:
+             .voiceRecording, .voiceTranscription, .camera, .backgroundRemoval,
+             .screenRecording, .message:
             true
         case .media, .timer, .fileTray, .battery, .system, .agent:
             false
@@ -171,6 +173,7 @@ enum CollapsedIslandContentMode: Equatable {
     case timer(DynamicIslandLiveActivity)
     case fileTray(DynamicIslandLiveActivity)
     case battery(DynamicIslandLiveActivity)
+    case screenRecording(DynamicIslandLiveActivity)
     case generic(DynamicIslandLiveActivity)
 }
 
@@ -367,7 +370,8 @@ enum CollapsedLiveActivitySelector {
         case .system:
             return .systemHUD
         case .agent, .keepAwake, .terminalTask, .windowSnapPreview, .reminder,
-             .voiceRecording, .voiceTranscription, .camera, .backgroundRemoval, .message:
+             .voiceRecording, .voiceTranscription, .camera, .backgroundRemoval,
+             .screenRecording, .message:
             return nil
         }
     }

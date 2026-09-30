@@ -86,7 +86,9 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <key>NSFocusStatusUsageDescription</key>
   <string>DynamicIsland can show a brief notch HUD when your Focus status changes.</string>
   <key>NSMicrophoneUsageDescription</key>
-  <string>DynamicIsland records from your microphone only while you are using Voice Transcribe, to create a transcript.</string>
+  <string>DynamicIsland uses your microphone only when you explicitly start Voice Transcribe or enable microphone audio for a screen recording.</string>
+  <key>NSScreenCaptureUsageDescription</key>
+  <string>DynamicIsland records the display, window, or area you explicitly choose when you start Screen Record. Recordings stay on this Mac unless you share them.</string>
   <key>NSSpeechRecognitionUsageDescription</key>
   <string>DynamicIsland transcribes your Voice Transcribe recordings on this Mac when on-device recognition is available. Apple's speech service is used only if you explicitly allow it.</string>
   <key>NSRemindersUsageDescription</key>
@@ -98,6 +100,11 @@ PLIST
 if [[ -n "$SPOTIFY_CLIENT_ID" ]]; then
   /usr/libexec/PlistBuddy -c "Add :DynamicIslandSpotifyClientID string $SPOTIFY_CLIENT_ID" "$CONTENTS_DIR/Info.plist"
 fi
+
+# Synced folders can attach resource-fork/Finder metadata while Info.plist is
+# being written. Clear it again immediately before signing so package output is
+# deterministic both inside and outside iCloud-backed worktrees.
+xattr -cr "$APP_DIR"
 
 if [[ -n "${DEVELOPER_ID_APP:-}" ]]; then
   codesign --force --options runtime --timestamp --sign "$DEVELOPER_ID_APP" "$HELPERS_DIR/$RELAY_NAME"

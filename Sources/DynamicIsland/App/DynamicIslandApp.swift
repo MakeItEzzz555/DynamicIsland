@@ -122,6 +122,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.fileShelf.add(urls)
         }
     )
+    private lazy var screenRecording = ScreenRecordingController(
+        liveActivities: liveActivities,
+        capabilities: capabilityRegistry
+    )
     private lazy var productivity = ProductivityModules(
         capabilities: capabilityRegistry,
         keepAwake: keepAwakeController,
@@ -130,7 +134,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         reminders: remindersController,
         voice: voiceTranscription,
         camera: cameraPreview,
-        backgroundRemoval: backgroundRemoval
+        backgroundRemoval: backgroundRemoval,
+        screenRecording: screenRecording
     )
     private lazy var systemHUDController = SystemHUDController(
         settings: settings,

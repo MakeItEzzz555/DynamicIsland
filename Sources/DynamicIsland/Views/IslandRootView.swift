@@ -866,6 +866,8 @@ struct IslandRootView: View {
             return .battery(primary)
         case .system:
             return .inactive
+        case .screenRecording:
+            return .screenRecording(primary)
         case .keepAwake, .terminalTask, .windowSnapPreview, .reminder,
              .voiceRecording, .voiceTranscription, .camera, .backgroundRemoval, .message:
             return .generic(primary)
@@ -899,6 +901,10 @@ struct IslandRootView: View {
         case .battery, .system, .keepAwake, .terminalTask, .windowSnapPreview,
              .reminder, .voiceRecording, .voiceTranscription, .camera, .backgroundRemoval:
             break
+        case .screenRecording:
+            navigation.showIsland()
+            modules.rightWorkspace.show(.productivity)
+            onRequestExpand()
         case .message:
             navigation.showMessages()
             onRequestExpand()
@@ -1091,7 +1097,8 @@ struct IslandRootView: View {
         case .system:
             return nil
         case .keepAwake, .terminalTask, .windowSnapPreview, .reminder,
-             .voiceRecording, .voiceTranscription, .camera, .backgroundRemoval, .message:
+             .voiceRecording, .voiceTranscription, .camera, .backgroundRemoval,
+             .screenRecording, .message:
             return CollapsedPreviewRowContent(
                 id: activity.id,
                 title: activity.title,
@@ -1942,6 +1949,13 @@ struct CompactIslandView: View {
         case .battery(let activity):
             CollapsedBatteryActivityCompactView(
                 activity: activity,
+                layout: sideSlotGeometry
+            )
+            .transition(.compactMediaContent)
+
+        case .screenRecording:
+            CollapsedScreenRecordingActivityView(
+                controller: modules.productivity.screenRecording,
                 layout: sideSlotGeometry
             )
             .transition(.compactMediaContent)
@@ -3327,6 +3341,7 @@ struct ExpandedIslandView: View {
                                     LiveActivitiesModuleView(
                                         liveActivities: liveActivities,
                                         navigation: navigation,
+                                        rightWorkspace: modules.rightWorkspace,
                                         settings: settings,
                                         availableHeight: liveActivitiesHeight,
                                         compactScale: metrics.compactScale
@@ -3813,6 +3828,7 @@ struct ExpandedIslandRightStackVisibility: Equatable {
 struct LiveActivitiesModuleView: View {
     @ObservedObject var liveActivities: LiveActivityStore
     @ObservedObject var navigation: IslandNavigationStore
+    @ObservedObject var rightWorkspace: RightWorkspaceStore
     @ObservedObject var settings: AppSettings
     var availableHeight: CGFloat? = nil
     var compactScale: CGFloat = 1
@@ -3935,6 +3951,9 @@ struct LiveActivitiesModuleView: View {
         case .keepAwake, .terminalTask, .windowSnapPreview, .reminder,
              .voiceRecording, .voiceTranscription, .camera, .backgroundRemoval:
             break
+        case .screenRecording:
+            navigation.showIsland()
+            rightWorkspace.show(.productivity)
         }
     }
 }

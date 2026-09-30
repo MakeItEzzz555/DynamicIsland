@@ -685,6 +685,9 @@ final class OverlayWindowController {
         if let hud = activeInteractiveSystemHUD {
             return .systemHUD(value: hud.progress ?? 0)
         }
+        if case .screenRecording = collapsedContentMode {
+            return .screenRecording
+        }
         switch collapsedContentMode {
         case .inactive, .agent:
             return AgentCollapsedShellPresentation.routine(
@@ -721,6 +724,8 @@ final class OverlayWindowController {
             return .battery
         case .system:
             return .systemHUD
+        case .screenRecording:
+            return .screenRecording
         case .keepAwake, .terminalTask, .reminder, .voiceRecording,
              .voiceTranscription, .camera, .backgroundRemoval, .message:
             return .genericActivity
@@ -746,6 +751,8 @@ final class OverlayWindowController {
             return .battery(primary)
         case .system:
             return .inactive
+        case .screenRecording:
+            return .screenRecording(primary)
         case .keepAwake, .terminalTask, .windowSnapPreview, .reminder,
              .voiceRecording, .voiceTranscription, .camera, .backgroundRemoval, .message:
             return .generic(primary)

@@ -9,4 +9,5 @@ struct ProductivityModules {
     let voice: VoiceTranscriptionController
     let camera: CameraPreviewController
     let backgroundRemoval: BackgroundRemovalController
+    let screenRecording: ScreenRecordingController
 }

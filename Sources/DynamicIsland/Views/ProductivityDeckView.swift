@@ -111,6 +111,7 @@ struct ProductivityDeckView: View {
         case .voice: .voiceTranscribe
         case .backgroundRemoval, .convert: .backgroundRemoval
         case .reminders: .reminders
+        case .screenRecording: .screenRecording
         }
     }
 }
@@ -338,6 +339,8 @@ private struct ProductivityToolTile: View {
             }
             .buttonStyle(WorkspaceTileButtonStyle(isOn: controllerIsCameraActive, accent: .cyan))
             .accessibilityLabel("Open Camera Mirror")
+        case .screenRecording:
+            ScreenRecordingTile(controller: productivity.screenRecording, status: snapshot?.statusText)
         }
     }
 

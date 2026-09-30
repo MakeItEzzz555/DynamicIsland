@@ -36,6 +36,7 @@ enum RightWorkspaceTool: String, CaseIterable, Codable, Identifiable, Sendable {
     case backgroundRemoval
     case convert
     case reminders
+    case screenRecording
 
     var id: String { rawValue }
 
@@ -49,6 +50,7 @@ enum RightWorkspaceTool: String, CaseIterable, Codable, Identifiable, Sendable {
         case .backgroundRemoval: "Remove BG"
         case .convert: "Convert"
         case .reminders: "Reminders"
+        case .screenRecording: "Screen Record"
         }
     }
 
@@ -62,6 +64,7 @@ enum RightWorkspaceTool: String, CaseIterable, Codable, Identifiable, Sendable {
         case .backgroundRemoval: "person.crop.rectangle"
         case .convert: "arrow.triangle.2.circlepath"
         case .reminders: "checklist"
+        case .screenRecording: "record.circle"
         }
     }
 }

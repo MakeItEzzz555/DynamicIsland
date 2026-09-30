@@ -281,6 +281,13 @@ enum LiveActivityPresentationPolicy {
                 priority: max(activity.priority, 84)
             )
 
+        case .screenRecording:
+            return primaryDescriptor(
+                activity,
+                shape: .progressPill,
+                priority: max(activity.priority, 146)
+            )
+
         case .message:
             // Persistent (not a transient overlay): a message awaiting the
             // user's action survives volume/brightness HUDs. Priority comes

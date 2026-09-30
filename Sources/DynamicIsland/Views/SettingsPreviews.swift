@@ -519,6 +519,7 @@ struct RightWorkspaceSettingsPreview: View {
                             LiveActivitiesModuleView(
                                 liveActivities: previewActivities,
                                 navigation: previewNavigation,
+                                rightWorkspace: previewStore,
                                 settings: settings,
                                 availableHeight: 84,
                                 compactScale: 0.9
