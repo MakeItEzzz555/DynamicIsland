@@ -49,11 +49,12 @@ final class ExpandedIslandMotionTests: XCTestCase {
         let plan = ExpandedIslandMotion.plan(inputs())
         let spring = try XCTUnwrap(plan.incomingSpring)
 
-        XCTAssertGreaterThan(spring.dampingRatio, 0.5, "premium, not wobbly")
-        XCTAssertLessThan(spring.dampingRatio, 1, "must be underdamped to bounce")
+        XCTAssertGreaterThan(spring.dampingRatio, 0.40, "premium, not wobbly")
+        XCTAssertLessThan(spring.dampingRatio, 0.60, "must be visibly underdamped to bounce")
         let peak = plan.handoffDelay + spring.peakTime
         XCTAssertGreaterThan(peak, plan.shellDuration, "children bounce only inside the landed shell")
-        XCTAssertLessThan(spring.overshoot, 0.05)
+        XCTAssertGreaterThan(spring.overshoot, 0.18, "the child entrance must be visibly bouncy")
+        XCTAssertLessThan(spring.overshoot, 0.24, "one premium bounce, not cartoon wobble")
     }
 
     func testPresetChangesScaleContentTimingWithTheShell() {
@@ -66,6 +67,11 @@ final class ExpandedIslandMotionTests: XCTestCase {
         XCTAssertLessThan(subtle.handoffDelay, normal.handoffDelay)
         XCTAssertLessThan(normal.handoffDelay, slow.handoffDelay)
         XCTAssertLessThan(normal.incomingFadeDuration, slow.incomingFadeDuration)
+        let subtleSpring = try! XCTUnwrap(subtle.incomingSpring)
+        let normalSpring = try! XCTUnwrap(normal.incomingSpring)
+        let slowSpring = try! XCTUnwrap(slow.incomingSpring)
+        XCTAssertLessThan(subtleSpring.peakTime, normalSpring.peakTime)
+        XCTAssertLessThan(normalSpring.peakTime, slowSpring.peakTime, "slow preset must slow the bounce itself")
         for plan in [subtle, normal, slow] {
             XCTAssertEqual(plan.handoffDelay, plan.shellDuration, accuracy: 0.0001)
         }
@@ -82,6 +88,17 @@ final class ExpandedIslandMotionTests: XCTestCase {
         let slowSpring = try XCTUnwrap(slow.incomingSpring)
         XCTAssertEqual(slowSpring.dampingRatio, fastSpring.dampingRatio, accuracy: 0.0001)
         XCTAssertEqual(slowSpring.peakTime, fastSpring.peakTime * 1.18, accuracy: 0.0001)
+    }
+
+    func testUserSlowMotionLengthensBounceWithoutChangingOvershoot() throws {
+        let normal = ExpandedIslandMotion.plan(inputs(shell: 0.40))
+        let slowest = ExpandedIslandMotion.plan(inputs(shell: 1.60))
+        let normalSpring = try XCTUnwrap(normal.incomingSpring)
+        let slowSpring = try XCTUnwrap(slowest.incomingSpring)
+
+        XCTAssertGreaterThan(slowSpring.peakTime, normalSpring.peakTime * 3.9)
+        XCTAssertEqual(slowSpring.dampingRatio, normalSpring.dampingRatio, accuracy: 0.0001)
+        XCTAssertEqual(slowSpring.overshoot, normalSpring.overshoot, accuracy: 0.0001)
     }
 
     func testReduceMotionIsShortOpacityOnly() {
@@ -165,8 +182,8 @@ final class ExpandedIslandMotionTests: XCTestCase {
                 XCTAssertGreaterThanOrEqual(incoming.blur, -1e-9)
             }
         }
-        XCTAssertGreaterThan(maxScale, 1, "incoming expansion has a visible spring overshoot")
-        XCTAssertLessThan(maxScale, 1.006, "overshoot stays subtle")
+        XCTAssertGreaterThan(maxScale, 1.018, "incoming expansion has a perceptible spring overshoot")
+        XCTAssertLessThan(maxScale, 1.03, "overshoot stays premium rather than cartoonish")
 
         let settledAt = plan.handoffDelay + max(plan.incomingFadeDuration, 0.4)
         let landed = ExpandedIslandMotion.sample(plan, at: settledAt)

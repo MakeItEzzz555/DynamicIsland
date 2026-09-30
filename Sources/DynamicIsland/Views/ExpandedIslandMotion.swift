@@ -116,8 +116,16 @@ enum ExpandedIslandMotion {
     static let outgoingScale: CGFloat = 0.96
     /// Droppy notch view transition blur.
     static let blurRadius: CGFloat = 6
-    /// Droppy AppKitMotion.animateIn CASpringAnimation.
-    static let incomingSpring = Spring(mass: 1, stiffness: 260, damping: 24)
+    /// Droppy starts from AppKitMotion's k=260/c=24 spring. DynamicIsland keeps
+    /// the same stiffness but deliberately lowers damping so a 0.90 -> 1.00
+    /// entrance produces one clearly visible ~2% overshoot instead of reading
+    /// as a monotonic scale. The physical shell never uses this spring.
+    static let incomingSpring = Spring(mass: 1, stiffness: 260, damping: 14.5)
+    /// Reference shell duration used to scale the child spring with the user's
+    /// motion-speed/preset choice. `shellDuration` already contains both.
+    static let referenceShellDuration: TimeInterval = 0.40
+    static let minimumChildTimeScale: Double = 0.65
+    static let maximumChildTimeScale: Double = 4.0
     /// Droppy AppKitMotion reduced-motion caps.
     static let reducedOutgoingDuration: TimeInterval = 0.14
     static let reducedIncomingDuration: TimeInterval = 0.16
@@ -168,17 +176,25 @@ enum ExpandedIslandMotion {
             )
         }
 
-        let tuning = WorkspaceMotion.motionScale(refreshRate: inputs.refreshRate)
-        let outgoing = max(inputs.shellDuration * outgoingDurationRatio, outgoingMinimumDuration) * tuning
-        let fade = max(inputs.shellDuration * incomingFadeRatio, incomingFadeMinimumDuration) * tuning
+        let displayTuning = WorkspaceMotion.motionScale(refreshRate: inputs.refreshRate)
+        // The user's preset/speed is already represented by shellDuration.
+        // Apply the same temporal intent to child materialization so a slow
+        // shell cannot be followed by an imperceptibly fast fixed spring.
+        let userTimeScale = min(
+            max(inputs.shellDuration / referenceShellDuration, minimumChildTimeScale),
+            maximumChildTimeScale
+        )
+        let springTimeScale = displayTuning * userTimeScale
+        let outgoing = max(inputs.shellDuration * outgoingDurationRatio, outgoingMinimumDuration) * displayTuning
+        let fade = max(inputs.shellDuration * incomingFadeRatio, incomingFadeMinimumDuration) * displayTuning
         let blur = inputs.useBlurTransitions && !inputs.prefersLightweightEffects ? blurRadius : 0
         let scales = inputs.useScaleTransitions
-        // Lengthen the spring period by the same display factor while keeping
-        // its damping ratio (and so its overshoot) unchanged.
+        // Lengthen the spring period for both display refresh and user-selected
+        // motion speed while preserving damping ratio/overshoot.
         let spring = Spring(
             mass: incomingSpring.mass,
-            stiffness: incomingSpring.stiffness / (tuning * tuning),
-            damping: incomingSpring.damping / tuning
+            stiffness: incomingSpring.stiffness / (springTimeScale * springTimeScale),
+            damping: incomingSpring.damping / springTimeScale
         )
 
         return Plan(
