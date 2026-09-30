@@ -92,7 +92,54 @@ enum AgentPromptDraftPolicy {
     }
 }
 
+
+@MainActor
+enum AgentConsoleTimelineProjectionCache {
+    private static var cache: [String: [AgentConsoleEntry]] = [:]
+    private static var order: [String] = []
+    private static let maximumRevisions = 64
+
+    static func entries(
+        session: AgentSession,
+        transcript: [AgentManagedTranscriptEntry],
+        limit: Int,
+        includePendingApprovals: Bool
+    ) -> [AgentConsoleEntry] {
+        let tail = transcript.last.map { "\($0.id):\($0.text.count)" } ?? "none"
+        let key = [
+            String(describing: session.id),
+            String(session.lastUpdatedAt.timeIntervalSince1970),
+            tail,
+            String(transcript.count),
+            String(limit),
+            includePendingApprovals ? "pending" : "no-pending"
+        ].joined(separator: "|")
+        if let cached = cache[key] { return cached }
+
+        let operations = AgentOperationAggregation.make(
+            for: session,
+            limit: limit,
+            includePendingApprovals: includePendingApprovals
+        )
+        let value = AgentConsoleEntry.make(
+            transcript: transcript,
+            operations: operations,
+            provider: session.id.sessionID.provider
+        )
+        cache[key] = value
+        order.append(key)
+        if order.count > maximumRevisions {
+            for stale in order.prefix(order.count - maximumRevisions) {
+                cache.removeValue(forKey: stale)
+            }
+            order.removeFirst(order.count - maximumRevisions)
+        }
+        return value
+    }
+}
+
 struct AgentEmbeddedConsoleView: View {
+    @Environment(\.islandDisplayMetrics) private var displayMetrics
     let session: AgentSession
     var mode: AgentConsoleMode = .observed
     var interactionState: AgentManagedInteractionState = .observed
@@ -138,6 +185,7 @@ struct AgentEmbeddedConsoleView: View {
             saveDraft?(draft, previous)
             draft = loadDraft?(current) ?? ""
             follow.reset()
+            scrollToLatestRequest &+= 1
         }
         .onChange(of: mode.showsComposer) { _, isInteractive in
             if !isInteractive {
@@ -177,6 +225,7 @@ struct AgentEmbeddedConsoleView: View {
                             }
                     }
                     .coordinateSpace(name: AgentConsoleCoordinateSpace.transcript)
+                    .defaultScrollAnchor(.bottom)
                     .scrollBounceBehavior(.basedOnSize)
                     .onPreferenceChange(AgentConsoleBottomPositionPreferenceKey.self) { bottomY in
                         follow.observeViewport(
@@ -186,9 +235,7 @@ struct AgentEmbeddedConsoleView: View {
                     }
                     .onChange(of: transcriptFollowToken) { _, token in
                         guard follow.contentDidChange(to: token) else { return }
-                        DispatchQueue.main.async {
-                            proxy.scrollTo(AgentConsoleScrollAnchor.bottom, anchor: .bottom)
-                        }
+                        settleAtLatest(proxy, animated: false)
                     }
                     .onChange(of: scrollToLatestRequest) { _, _ in
                         withAnimation(.easeOut(duration: 0.16)) {
@@ -197,9 +244,8 @@ struct AgentEmbeddedConsoleView: View {
                         follow.jumpToLatest()
                     }
                     .onAppear {
-                        DispatchQueue.main.async {
-                            proxy.scrollTo(AgentConsoleScrollAnchor.bottom, anchor: .bottom)
-                        }
+                        follow.jumpToLatest()
+                        settleAtLatest(proxy, animated: false)
                     }
                 }
             }
@@ -228,40 +274,56 @@ struct AgentEmbeddedConsoleView: View {
         }
     }
 
+    private func settleAtLatest(_ proxy: ScrollViewProxy, animated: Bool) {
+        Task { @MainActor in
+            // The first yield lets LazyVStack publish its current extent; the
+            // second catches transcript recovery/layout that lands one pass
+            // later. This complements defaultScrollAnchor instead of relying
+            // on a single fragile run-loop dispatch.
+            await Task.yield()
+            if animated {
+                withAnimation(.easeOut(duration: 0.16)) {
+                    proxy.scrollTo(AgentConsoleScrollAnchor.bottom, anchor: .bottom)
+                }
+            } else {
+                proxy.scrollTo(AgentConsoleScrollAnchor.bottom, anchor: .bottom)
+            }
+            await Task.yield()
+            proxy.scrollTo(AgentConsoleScrollAnchor.bottom, anchor: .bottom)
+        }
+    }
+
     private var transcriptFollowToken: String {
         let transcriptToken = transcriptEntries.last.map {
             "\($0.id):\($0.text.count)"
         } ?? "none"
-        return "\(transcriptToken):\(session.lastUpdatedAt.timeIntervalSince1970)"
+        let managedApprovalToken: String = {
+            guard let request = actionableApproval else { return "managed:none" }
+            let delivery = approvalControl.deliveryState(for: request.key)
+                .map { String(describing: $0) } ?? "none"
+            return "managed:\(request.key.requestID.rawValue):\(delivery)"
+        }()
+        let externalApprovalToken = externalPendingApproval.map {
+            "external:\($0.requestID.rawValue):\($0.state)"
+        } ?? "external:none"
+        return [
+            transcriptToken,
+            String(session.lastUpdatedAt.timeIntervalSince1970),
+            managedApprovalToken,
+            externalApprovalToken
+        ].joined(separator: "|")
     }
 
     private var transcriptContent: some View {
-        let operations = AgentOperationAggregation.make(
-            for: session,
+        let timeline = AgentConsoleTimelineProjectionCache.entries(
+            session: session,
+            transcript: transcriptEntries,
             limit: maximumActivityEntries,
             includePendingApprovals: actionableApproval == nil && externalPendingApproval == nil
-        )
-        let timeline = AgentConsoleEntry.make(
-            transcript: transcriptEntries,
-            operations: operations,
-            provider: session.id.sessionID.provider
         )
 
         return LazyVStack(alignment: .leading, spacing: 7) {
             AgentCurrentWorkSummary(session: session, mode: mode)
-
-            if let approval = actionableApproval {
-                AgentConsoleApprovalRow(
-                    request: approval,
-                    session: session,
-                    approvalControl: approvalControl
-                )
-            } else if let approval = externalPendingApproval {
-                AgentConsoleExternalApprovalRow(
-                    approval: approval,
-                    sourceTarget: AgentSourceAssociationResolver.openTarget(for: session)
-                )
-            }
 
             if workspaceSessions.count > 1 {
                 AgentWorkspaceActivityGroups(
@@ -284,8 +346,24 @@ struct AgentEmbeddedConsoleView: View {
                 }
             }
 
+            // A pending permission is the newest authoritative event, so it
+            // lives at the chronological bottom of the console. Resolved
+            // approvals remain in `timeline` through normalized provider data.
+            if let approval = actionableApproval {
+                AgentConsoleApprovalRow(
+                    request: approval,
+                    session: session,
+                    approvalControl: approvalControl
+                )
+            } else if let approval = externalPendingApproval {
+                AgentConsoleExternalApprovalRow(
+                    approval: approval,
+                    sourceTarget: AgentSourceAssociationResolver.openTarget(for: session)
+                )
+            }
+
         }
-        .font(.system(size: 9.5, weight: .medium))
+        .font(.system(size: displayMetrics.transcriptFontSize, weight: .medium))
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
