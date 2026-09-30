@@ -66,6 +66,9 @@ final class ScreenRecordingController: ObservableObject {
     private var stream: SCStream?
     private var streamOutput: ScreenRecordingStreamOutput?
     private var lifecycleGeneration = 0
+    /// Live Activity text only changes at whole-second boundaries. Publishing
+    /// at display refresh rate needlessly invalidates the whole island tree.
+    private var lastPublishedLiveActivitySecond: Int?
 
     init(
         liveActivities: LiveActivityStore,
@@ -239,7 +242,7 @@ final class ScreenRecordingController: ObservableObject {
             publishCapability(permission: .granted)
         } catch {
             guard generation == lifecycleGeneration else { return }
-            fail(error)
+            await failAndCleanup(error, generation: generation)
         }
     }
 
@@ -287,6 +290,7 @@ final class ScreenRecordingController: ObservableObject {
         recordedDuration = 0
         previewImage = nil
         lastSavedURL = nil
+        lastPublishedLiveActivitySecond = nil
         publishCapability()
 
         do {
@@ -382,7 +386,7 @@ final class ScreenRecordingController: ObservableObject {
             publishCapability(permission: .granted)
         } catch {
             guard generation == lifecycleGeneration else { return }
-            fail(error)
+            await failAndCleanup(error, generation: generation)
         }
     }
 
@@ -405,7 +409,11 @@ final class ScreenRecordingController: ObservableObject {
                 guard let self, generation == self.lifecycleGeneration else { return }
                 self.recordedDuration = max(seconds, 0)
                 if self.phase == .recording || self.phase == .paused {
-                    self.publishLiveActivity()
+                    let second = Int(self.recordedDuration.rounded(.down))
+                    if second != self.lastPublishedLiveActivitySecond {
+                        self.lastPublishedLiveActivitySecond = second
+                        self.publishLiveActivity()
+                    }
                 }
             }
         }
@@ -421,7 +429,7 @@ final class ScreenRecordingController: ObservableObject {
         output.onFailure = { [weak self] error in
             Task { @MainActor in
                 guard let self, generation == self.lifecycleGeneration else { return }
-                self.fail(error)
+                await self.failAndCleanup(error, generation: generation)
             }
         }
     }
@@ -517,7 +525,25 @@ final class ScreenRecordingController: ObservableObject {
         }
     }
 
-    private func fail(_ error: Error) {
+    private func failAndCleanup(_ error: Error, generation: Int) async {
+        guard generation == lifecycleGeneration else { return }
+        let activeStream = stream
+        let activeOutput = streamOutput
+        // An intentional cleanup stop can itself produce SCStream delegate
+        // termination callbacks. Detach failure delivery before stopping.
+        activeOutput?.onFailure = nil
+        stream = nil
+        streamOutput = nil
+
+        if let activeStream {
+            try? await activeStream.stopCapture()
+        }
+        await activeOutput?.cancel()
+        guard generation == lifecycleGeneration else { return }
+        transitionToFailure(error)
+    }
+
+    private func transitionToFailure(_ error: Error) {
         lifecycleGeneration &+= 1
         machine.fail()
         phase = machine.phase
@@ -525,9 +551,8 @@ final class ScreenRecordingController: ObservableObject {
         let reason = nsError.localizedFailureReason.map { " · \($0)" } ?? ""
         statusText = "\(nsError.localizedDescription) [\(nsError.domain) \(nsError.code)]\(reason)"
         liveActivities.remove(id: Self.liveActivityID)
-        stream = nil
-        streamOutput = nil
         previewImage = nil
+        lastPublishedLiveActivitySecond = nil
         publishCapability(
             permission: error as? ScreenRecordingError == .permissionDenied
                 ? .required : nil,

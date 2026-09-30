@@ -262,6 +262,25 @@ final class ScreenRecordingStreamOutput: NSObject, SCStreamOutput, SCStreamDeleg
         queue.async { [weak self] in self?.clock.resume() }
     }
 
+    /// Stops accepting samples and cancels an unfinished writer without deleting
+    /// its temporary output. Runtime failures must release ScreenCaptureKit /
+    /// AVAssetWriter resources even when there is no valid movie to finalize.
+    func cancel() async {
+        await withCheckedContinuation { continuation in
+            queue.async { [weak self] in
+                guard let self else {
+                    continuation.resume()
+                    return
+                }
+                if !self.finished {
+                    self.finished = true
+                    self.writer.cancelWriting()
+                }
+                continuation.resume()
+            }
+        }
+    }
+
     func finish() async throws -> URL {
         try await withCheckedThrowingContinuation { continuation in
             queue.async { [weak self] in
