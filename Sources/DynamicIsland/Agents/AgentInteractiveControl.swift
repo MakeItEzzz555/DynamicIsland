@@ -100,6 +100,9 @@ enum AgentInteractiveProviderEvent: Equatable, Sendable {
     case accountUsageChanged
     case normalized(AgentManagedNormalizedEvent)
     case approvalRequested(AgentManagedApprovalRequest)
+    /// The provider withdrew one exact pending approval request (for example
+    /// Claude Code `control_cancel_request`). It must never be answered.
+    case approvalCancelled(nativeSessionID: String, requestID: String)
     case transportClosed(String?)
 }
 

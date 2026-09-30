@@ -1435,6 +1435,214 @@ final class AgentManagedSessionControllerTests: XCTestCase {
         controller.stop()
     }
 
+    // MARK: Approval authority audit
+
+    @MainActor
+    private func makeApprovalHarness(
+        _ nativeID: String
+    ) async throws -> (
+        provider: PersistentSnapshotFakeProvider,
+        store: AgentEventStore,
+        approvals: AgentApprovalController,
+        controller: AgentManagedSessionController
+    ) {
+        let provider = PersistentSnapshotFakeProvider(
+            sessions: [Self.descriptor(id: nativeID, state: .notLoaded)],
+            usage: AgentUsage()
+        )
+        let store = AgentEventStore()
+        let approvals = AgentApprovalController()
+        let controller = AgentManagedSessionController(
+            provider: provider,
+            coordinator: AgentIngestionCoordinator(eventStore: store),
+            eventStore: store,
+            approvals: approvals
+        )
+        controller.startObserving()
+        await controller.refreshPersistentSnapshot()
+        controller.connect(try XCTUnwrap(store.sessions.first))
+        try await Task.sleep(for: .milliseconds(30))
+        return (provider, store, approvals, controller)
+    }
+
+    @MainActor
+    private func yieldApproval(
+        _ provider: PersistentSnapshotFakeProvider,
+        _ approvals: AgentApprovalController,
+        nativeID: String,
+        turnID: String,
+        requestID: String
+    ) async throws {
+        let before = approvals.pendingRequests.count
+        await provider.yield(.approvalRequested(.init(
+            requestToken: .string(requestID),
+            requestID: requestID,
+            kind: .fileChange,
+            threadID: nativeID,
+            turnID: turnID,
+            itemID: "item-\(requestID)",
+            summary: "Write file"
+        )))
+        for _ in 0..<60 where approvals.pendingRequests.count <= before {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+    }
+
+    @MainActor
+    func testPendingApprovalIsWithdrawnWhenTurnEndsBeforeDecision() async throws {
+        let nativeID = "approval-turn-end"
+        let harness = try await makeApprovalHarness(nativeID)
+        await harness.provider.yield(.turnStarted(.init(nativeSessionID: nativeID, turnID: "turn-1")))
+        try await Task.sleep(for: .milliseconds(20))
+        try await yieldApproval(harness.provider, harness.approvals, nativeID: nativeID, turnID: "turn-1", requestID: "stale")
+        let session = try XCTUnwrap(harness.store.sessions.first)
+        let pending = try XCTUnwrap(harness.approvals.pendingRequest(for: session.id))
+
+        await harness.provider.yield(.turnCompleted(
+            .init(nativeSessionID: nativeID, turnID: "turn-1"),
+            state: .interrupted,
+            summary: nil
+        ))
+        try await Task.sleep(for: .milliseconds(40))
+
+        XCTAssertNil(harness.approvals.pendingRequest(for: session.id), "A finished turn must not keep an actionable approval")
+        XCTAssertNil(harness.approvals.presentedRequest(for: session.id))
+        XCTAssertEqual(
+            harness.approvals.resolve(session: session.id, requestID: pending.key.requestID, decision: .allow),
+            .missing
+        )
+        try await Task.sleep(for: .milliseconds(20))
+        let decisions = await harness.provider.approvalDecisions()
+        XCTAssertFalse(decisions.contains("stale:allow"))
+        harness.controller.stop()
+    }
+
+    @MainActor
+    func testPendingApprovalIsWithdrawnOnProviderFailureForExactSession() async throws {
+        let nativeID = "approval-provider-failure"
+        let harness = try await makeApprovalHarness(nativeID)
+        await harness.provider.yield(.turnStarted(.init(nativeSessionID: nativeID, turnID: "turn-1")))
+        try await Task.sleep(for: .milliseconds(20))
+        try await yieldApproval(harness.provider, harness.approvals, nativeID: nativeID, turnID: "turn-1", requestID: "crashed")
+        let session = try XCTUnwrap(harness.store.sessions.first)
+        XCTAssertNotNil(harness.approvals.pendingRequest(for: session.id))
+
+        await harness.provider.yield(.providerFailure(nativeSessionID: nativeID, summary: nil))
+        try await Task.sleep(for: .milliseconds(40))
+
+        XCTAssertNil(harness.approvals.presentedRequest(for: session.id))
+        let decisions = await harness.provider.approvalDecisions()
+        XCTAssertFalse(decisions.contains("crashed:allow"))
+        harness.controller.stop()
+    }
+
+    @MainActor
+    func testTransportCloseWithdrawsApprovalWithoutRecordingUserDecision() async throws {
+        let nativeID = "approval-transport"
+        let harness = try await makeApprovalHarness(nativeID)
+        await harness.provider.yield(.turnStarted(.init(nativeSessionID: nativeID, turnID: "turn-1")))
+        try await Task.sleep(for: .milliseconds(20))
+        try await yieldApproval(harness.provider, harness.approvals, nativeID: nativeID, turnID: "turn-1", requestID: "closed")
+        let session = try XCTUnwrap(harness.store.sessions.first)
+        let pending = try XCTUnwrap(harness.approvals.pendingRequest(for: session.id))
+
+        await harness.provider.yield(.transportClosed(nil))
+        for _ in 0..<60 where harness.approvals.pendingRequest(for: session.id) != nil {
+            try await Task.sleep(for: .milliseconds(2))
+        }
+        // Never presented as a submitted "Deny" the user did not choose.
+        XCTAssertNil(harness.approvals.deliveryState(for: pending.key))
+        XCTAssertNil(harness.approvals.presentedRequest(for: session.id))
+        let decisions = await harness.provider.approvalDecisions()
+        XCTAssertFalse(decisions.contains("closed:allow"))
+        harness.controller.stop()
+    }
+
+    @MainActor
+    func testProviderCancelledApprovalIsWithdrawnWithoutAnyWireDecision() async throws {
+        let nativeID = "approval-cancelled"
+        let harness = try await makeApprovalHarness(nativeID)
+        await harness.provider.yield(.turnStarted(.init(nativeSessionID: nativeID, turnID: "turn-1")))
+        try await Task.sleep(for: .milliseconds(20))
+        try await yieldApproval(harness.provider, harness.approvals, nativeID: nativeID, turnID: "turn-1", requestID: "keep")
+        try await yieldApproval(harness.provider, harness.approvals, nativeID: nativeID, turnID: "turn-1", requestID: "cancelled")
+        let session = try XCTUnwrap(harness.store.sessions.first)
+        XCTAssertEqual(harness.approvals.pendingRequests.count, 2)
+
+        // A cancel naming a different session is ignored.
+        await harness.provider.yield(.approvalCancelled(nativeSessionID: "someone-else", requestID: "cancelled"))
+        await harness.provider.yield(.approvalCancelled(nativeSessionID: nativeID, requestID: "cancelled"))
+        try await Task.sleep(for: .milliseconds(40))
+
+        let remaining = harness.approvals.pendingRequests.values.map(\.key.requestID.rawValue)
+        XCTAssertEqual(remaining, ["keep"])
+        XCTAssertEqual(
+            harness.approvals.resolve(
+                session: session.id,
+                requestID: AgentCorrelationID(rawValue: "cancelled"),
+                decision: .allow
+            ),
+            .missing
+        )
+        try await Task.sleep(for: .milliseconds(20))
+        let decisions = await harness.provider.approvalDecisions()
+        XCTAssertTrue(decisions.isEmpty, "Provider-cancelled requests get no wire response: \(decisions)")
+        harness.controller.stop()
+    }
+
+    @MainActor
+    func testReusedProviderRequestIDInLaterTurnIsSurfacedNotSilentlyDropped() async throws {
+        let nativeID = "approval-reused-id"
+        let harness = try await makeApprovalHarness(nativeID)
+        await harness.provider.yield(.turnStarted(.init(nativeSessionID: nativeID, turnID: "turn-1")))
+        try await Task.sleep(for: .milliseconds(20))
+        try await yieldApproval(harness.provider, harness.approvals, nativeID: nativeID, turnID: "turn-1", requestID: "0")
+        let session = try XCTUnwrap(harness.store.sessions.first)
+        let first = try XCTUnwrap(harness.approvals.pendingRequest(for: session.id))
+        XCTAssertEqual(harness.approvals.resolve(session: session.id, requestID: first.key.requestID, decision: .allow), .accepted)
+        try await Task.sleep(for: .milliseconds(20))
+        await harness.provider.yield(.turnCompleted(.init(nativeSessionID: nativeID, turnID: "turn-1"), state: .completed, summary: nil))
+        try await Task.sleep(for: .milliseconds(30))
+
+        await harness.provider.yield(.turnStarted(.init(nativeSessionID: nativeID, turnID: "turn-2")))
+        try await Task.sleep(for: .milliseconds(20))
+        // A restarted app-server reuses JSON-RPC id 0 for a new request in a new turn.
+        try await yieldApproval(harness.provider, harness.approvals, nativeID: nativeID, turnID: "turn-2", requestID: "0")
+        let second = try XCTUnwrap(
+            harness.approvals.pendingRequest(for: session.id),
+            "A new provider request in a new turn must be surfaced, not dropped unanswered"
+        )
+        XCTAssertEqual(harness.approvals.resolve(session: session.id, requestID: second.key.requestID, decision: .deny), .accepted)
+        try await Task.sleep(for: .milliseconds(20))
+        let decisions = await harness.provider.approvalDecisions()
+        XCTAssertEqual(decisions, ["0:allow", "0:deny"])
+        harness.controller.stop()
+    }
+
+    @MainActor
+    func testReplayOfAnsweredRequestInSameTurnIsNotAnsweredTwice() async throws {
+        let nativeID = "approval-replay"
+        let harness = try await makeApprovalHarness(nativeID)
+        await harness.provider.yield(.turnStarted(.init(nativeSessionID: nativeID, turnID: "turn-1")))
+        try await Task.sleep(for: .milliseconds(20))
+        try await yieldApproval(harness.provider, harness.approvals, nativeID: nativeID, turnID: "turn-1", requestID: "once")
+        let session = try XCTUnwrap(harness.store.sessions.first)
+        let pending = try XCTUnwrap(harness.approvals.pendingRequest(for: session.id))
+        XCTAssertEqual(harness.approvals.resolve(session: session.id, requestID: pending.key.requestID, decision: .deny), .accepted)
+        try await Task.sleep(for: .milliseconds(30))
+        // The same turn is re-announced (e.g. Codex turn/started after submit).
+        await harness.provider.yield(.turnStarted(.init(nativeSessionID: nativeID, turnID: "turn-1")))
+        try await Task.sleep(for: .milliseconds(20))
+        await harness.provider.yield(.approvalRequested(.init(
+            requestToken: .string("once"), requestID: "once", kind: .fileChange,
+            threadID: nativeID, turnID: "turn-1", itemID: "item-once", summary: "Write file"
+        )))
+        try await Task.sleep(for: .milliseconds(40))
+        XCTAssertNil(harness.approvals.pendingRequest(for: session.id))
+        let decisions = await harness.provider.approvalDecisions()
+        XCTAssertEqual(decisions, ["once:deny"])
+        harness.controller.stop()
+    }
 
     @MainActor
     func testInterruptStaysStoppingUntilAuthoritativeTurnCompletionAndDeduplicates() async throws {

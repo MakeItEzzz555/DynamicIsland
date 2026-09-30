@@ -125,6 +125,31 @@ final class AgentApprovalControllerTests: XCTestCase {
         XCTAssertNil(controller.presentedRequest(for: request.key.session))
     }
 
+    func testWithdrawReturnsNoDecisionAndStaysOneShot() async {
+        let current = now
+        let controller = AgentApprovalController(now: { current })
+        let request = makeRequest(id: "withdrawn")
+        let waiter = Task { await controller.request(request, maximumWait: .seconds(1)) }
+        await Task.yield()
+
+        XCTAssertEqual(controller.withdraw(session: request.key.session, requestID: request.key.requestID), .accepted)
+        let decision = await waiter.value
+        XCTAssertNil(decision, "Withdrawal is never a decision")
+        XCTAssertNil(controller.deliveryState(for: request.key))
+        XCTAssertNil(controller.presentedRequest(for: request.key.session))
+        XCTAssertEqual(
+            controller.resolve(session: request.key.session, requestID: request.key.requestID, decision: .allow),
+            .missing
+        )
+        XCTAssertEqual(controller.withdraw(session: request.key.session, requestID: request.key.requestID), .missing)
+        XCTAssertTrue(controller.hasHandled(request.key))
+        let replay = await controller.request(request, maximumWait: .seconds(1))
+        XCTAssertNil(replay)
+
+        controller.forgetHandledRequests(for: request.key.session.sessionID)
+        XCTAssertFalse(controller.hasHandled(request.key))
+    }
+
     private func makeRequest(
         id: String,
         expiresAt: Date? = nil

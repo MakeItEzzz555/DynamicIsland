@@ -241,7 +241,9 @@ actor ClaudeInteractiveProvider: AgentInteractiveProvider {
     }
 
     func resolveApproval(_ request: AgentManagedApprovalRequest, allow: Bool) async throws {
-        guard let pending = pendingPermissions.removeValue(forKey: request.requestID),
+        guard let pending = pendingPermissions.removeValue(
+            forKey: Self.permissionKey(request.threadID, request.requestID)
+        ),
               pending.request.threadID == request.threadID,
               pending.request.turnID == request.turnID else {
             // Unknown or already-answered request: one-shot, never reused.
@@ -343,6 +345,15 @@ actor ClaudeInteractiveProvider: AgentInteractiveProvider {
         case "control_request":
             return mapControlRequest(envelope)
 
+        case "control_cancel_request":
+            // The CLI withdrew one exact pending permission (for example after
+            // an interrupt). It must never be answered afterwards.
+            guard let requestID = message["request_id"]?.stringValue,
+                  pendingPermissions.removeValue(
+                      forKey: Self.permissionKey(envelope.nativeSessionID, requestID)
+                  ) != nil else { return [] }
+            return [.approvalCancelled(nativeSessionID: envelope.nativeSessionID, requestID: requestID)]
+
         case "rate_limit_event":
             guard let windows = ClaudeRateLimitParser.parse(message["rate_limit_info"]) else { return [] }
             applyUsage(windows, source: ClaudeUsageSource.rateLimitEvent)
@@ -427,11 +438,13 @@ actor ClaudeInteractiveProvider: AgentInteractiveProvider {
             itemID: request["tool_use_id"]?.stringValue ?? requestID,
             summary: isCommand ? "Run a command" : Self.safeToolTitle(toolName)
         )
-        pendingPermissions[requestID] = PendingPermission(request: approval, input: input)
-        if pendingPermissions.count > Self.maximumPendingPermissions,
-           let oldest = pendingPermissions.keys.sorted().first {
-            pendingPermissions.removeValue(forKey: oldest)
+        let key = Self.permissionKey(envelope.nativeSessionID, requestID)
+        guard pendingPermissions[key] != nil || pendingPermissions.count < Self.maximumPendingPermissions else {
+            // Bounded: beyond capacity a request is not projected (and so can
+            // never be approved); the CLI keeps its request pending.
+            return []
         }
+        pendingPermissions[key] = PendingPermission(request: approval, input: input)
         return [.approvalRequested(approval)]
     }
 
@@ -544,6 +557,12 @@ actor ClaudeInteractiveProvider: AgentInteractiveProvider {
         knownSessions = knownSessions.filter { keep.contains($0.key) }
         streamMessageIDs = streamMessageIDs.filter { keep.contains($0.key) }
         streamBlockStarts = streamBlockStarts.filter { keep.contains($0.key) }
+    }
+
+    /// Claude request ids are only unique per process; bind them to the
+    /// exact session so two sessions can never answer each other's request.
+    private nonisolated static func permissionKey(_ nativeSessionID: String, _ requestID: String) -> String {
+        "\(nativeSessionID)\u{0}\(requestID)"
     }
 
     private nonisolated static func safeToolTitle(_ name: String) -> String {

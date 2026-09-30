@@ -93,6 +93,31 @@ final class AgentApprovalController: ObservableObject {
         return .accepted
     }
 
+    /// Withdraws one exact request that is still awaiting a decision with
+    /// **no decision** (the waiting caller receives `nil`). Used when the
+    /// provider cancels the request, its turn ends, or its transport dies —
+    /// never presented as a user Allow/Deny. Stays one-shot: the key is
+    /// recorded as handled.
+    @discardableResult
+    func withdraw(
+        session: AgentSessionInstanceID,
+        requestID: AgentCorrelationID
+    ) -> AgentApprovalControlResult {
+        let key = AgentApprovalControlKey(session: session, requestID: requestID)
+        guard pendingRequests[key] != nil else { return .missing }
+        finish(key, decision: nil)
+        return .accepted
+    }
+
+    /// Forgets one-shot history for a session once a *different* provider
+    /// turn becomes authoritative. Provider request ids are only unique per
+    /// transport (Codex JSON-RPC ids restart at 0 after a reconnect), so a
+    /// reused id in a new turn is a new request. Replays from the previous
+    /// turn are still refused by the managed turn binding.
+    func forgetHandledRequests(for sessionID: AgentSessionID) {
+        completedRequests = completedRequests.filter { $0.key.session.sessionID != sessionID }
+    }
+
     func pendingRequest(for session: AgentSessionInstanceID) -> AgentApprovalControlRequest? {
         pendingRequests.values
             .filter { $0.key.session == session && $0.expiresAt > now() }

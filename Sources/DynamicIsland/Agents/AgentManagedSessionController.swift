@@ -33,6 +33,12 @@ final class AgentManagedSessionController: ObservableObject {
     private var inFlightSnapshotRefresh: Task<Void, Never>?
     private var approvalTasks: [String: Task<Void, Never>] = [:]
     private var managedApprovalKeys: Set<AgentApprovalControlKey> = []
+    /// Requests withdrawn because the provider cancelled them, their turn
+    /// ended, or their transport died. They get no wire reply at all.
+    private var withdrawnApprovalKeys: Set<AgentApprovalControlKey> = []
+    /// Provider cancels that arrived before the request reached the approval
+    /// controller (`provider:thread:request`).
+    private var providerCancelledApprovals: Set<String> = []
     private var pendingApprovalConfirmations: [String: PendingApprovalConfirmation] = [:]
     private var approvalConfirmationTasks: [String: Task<Void, Never>] = [:]
     private var knownDiscoveredSessionIDs: Set<AgentSessionID> = []
@@ -243,6 +249,8 @@ final class AgentManagedSessionController: ObservableObject {
         for task in approvalTasks.values { task.cancel() }
         approvalTasks.removeAll()
         managedApprovalKeys.removeAll()
+        withdrawnApprovalKeys.removeAll()
+        providerCancelledApprovals.removeAll()
         pendingApprovalConfirmations.removeAll()
         for task in approvalConfirmationTasks.values { task.cancel() }
         approvalConfirmationTasks.removeAll()
@@ -939,6 +947,7 @@ final class AgentManagedSessionController: ObservableObject {
                 nativeSessionID: nativeID,
                 model: pendingModelOverrides[session.id.sessionID]
             )
+            beginAuthoritativeTurn(turn.turnID, for: sessionID)
             updateControl(sessionID) {
                 $0.isSubmitting = false
                 $0.activeTurnID = turn.turnID
@@ -1009,6 +1018,7 @@ final class AgentManagedSessionController: ObservableObject {
 
         case .turnStarted(let turn):
             let sessionID = AgentSessionID(provider: agentProvider, nativeID: turn.nativeSessionID)
+            beginAuthoritativeTurn(turn.turnID, for: sessionID)
             updateControl(sessionID) {
                 $0.activeTurnID = turn.turnID
                 $0.isSubmitting = false
@@ -1042,6 +1052,8 @@ final class AgentManagedSessionController: ObservableObject {
                 turnID: turn.turnID
             )
             let sessionID = AgentSessionID(provider: agentProvider, nativeID: turn.nativeSessionID)
+            // A request still awaiting a decision cannot outlive its turn.
+            withdrawPendingApprovals(for: sessionID)
             updateControl(sessionID) {
                 if $0.activeTurnID == turn.turnID {
                     $0.activeTurnID = nil
@@ -1082,6 +1094,7 @@ final class AgentManagedSessionController: ObservableObject {
                 }
             }
             for target in targets {
+                withdrawPendingApprovals(for: target)
                 updateControl(target) {
                     $0.activeTurnID = nil
                     $0.isSubmitting = false
@@ -1155,6 +1168,30 @@ final class AgentManagedSessionController: ObservableObject {
                 await self?.handleApproval(request, provider: agentProvider)
             }
 
+        case .approvalCancelled(let nativeSessionID, let requestID):
+            let sessionID = AgentSessionID(provider: agentProvider, nativeID: nativeSessionID)
+            let registered = managedApprovalKeys.filter {
+                $0.session.sessionID == sessionID &&
+                    ($0.requestID.rawValue == requestID || $0.requestID.rawValue.hasSuffix("/\(requestID)"))
+            }
+            if registered.isEmpty {
+                // Not registered yet: refuse it when it gets there.
+                let inFlight = approvalTasks.keys.contains {
+                    $0.hasPrefix("\(agentProvider.stableName):\(nativeSessionID):") &&
+                        $0.hasSuffix(":\(requestID)")
+                }
+                if inFlight {
+                    providerCancelledApprovals.insert(
+                        "\(agentProvider.stableName):\(nativeSessionID):\(requestID)"
+                    )
+                }
+            }
+            for key in registered {
+                if approvals.withdraw(session: key.session, requestID: key.requestID) == .accepted {
+                    withdrawnApprovalKeys.insert(key)
+                }
+            }
+
         case .transportClosed:
             approvals.clearPolicies(for: agentProvider)
             let transportMessage = agentProvider == .codex
@@ -1177,12 +1214,12 @@ final class AgentManagedSessionController: ObservableObject {
                     ))
                 }
             }
+            // The transport is gone: withdraw with no decision. Never record
+            // or display a Deny the user did not choose.
             for key in managedApprovalKeys where key.session.sessionID.provider == agentProvider {
-                _ = approvals.resolve(
-                    session: key.session,
-                    requestID: key.requestID,
-                    decision: .deny
-                )
+                if approvals.withdraw(session: key.session, requestID: key.requestID) == .accepted {
+                    withdrawnApprovalKeys.insert(key)
+                }
             }
             let managedIDs = managed.keys.filter { $0.provider == agentProvider }
             for key in managedIDs {
@@ -1218,8 +1255,34 @@ final class AgentManagedSessionController: ObservableObject {
         }
         let approvalKey = "\(agentProvider.stableName):\(request.threadID):\(request.turnID):\(request.requestID)"
         defer { approvalTasks.removeValue(forKey: approvalKey) }
-        let correlation = AgentCorrelationID(rawValue: request.requestID)
         let sessionID = AgentSessionID(provider: agentProvider, nativeID: request.threadID)
+        let cancelIdentity = "\(agentProvider.stableName):\(request.threadID):\(request.requestID)"
+        let nativeCorrelation = AgentCorrelationID(rawValue: request.requestID)
+        // Provider request ids are unique per transport, not per session
+        // (Codex JSON-RPC ids restart after reconnect). A reused id in a new
+        // turn is bound to that turn so it never merges with the old record.
+        let turnCorrelation = AgentCorrelationID(rawValue: "\(request.turnID)/\(request.requestID)")
+        let current = eventStore.sessions.first(where: {
+            $0.id.sessionID == sessionID && $0.endedAt == nil
+        })
+        if let current,
+           approvals.hasHandled(AgentApprovalControlKey(session: current.id, requestID: nativeCorrelation)) ||
+           approvals.hasHandled(AgentApprovalControlKey(session: current.id, requestID: turnCorrelation)) ||
+           current.approvals[turnCorrelation] != nil {
+            // One-shot: a replay of an already-answered or withdrawn request
+            // never gets a second wire response.
+            return
+        }
+        let correlation: AgentCorrelationID
+        if current?.approvals[nativeCorrelation] != nil {
+            guard turnCorrelation.rawValue.utf8.count <= AgentDomainLimits.identifierLength else {
+                try? await provider.resolveApproval(request, allow: false)
+                return
+            }
+            correlation = turnCorrelation
+        } else {
+            correlation = nativeCorrelation
+        }
         guard managed[sessionID]?.activeTurnID == request.turnID,
               let existing = eventStore.sessions.first(where: {
                   $0.id.sessionID == sessionID && $0.endedAt == nil
@@ -1260,10 +1323,34 @@ final class AgentManagedSessionController: ObservableObject {
             expiresAt: Date().addingTimeInterval(75)
         )
         guard !approvals.hasHandled(controlRequest.key) else { return }
+        if providerCancelledApprovals.remove(cancelIdentity) != nil {
+            // The provider withdrew it before it reached the controller.
+            _ = await emit(
+                provider: agentProvider,
+                nativeSessionID: request.threadID,
+                type: .approvalResolved,
+                correlationID: correlation,
+                payload: .approvalResolution(AgentApprovalResolution(state: .cancelled))
+            )
+            return
+        }
         let wasAutomatic = approvals.automaticallyApproves(controlRequest)
         managedApprovalKeys.insert(controlRequest.key)
         defer { managedApprovalKeys.remove(controlRequest.key) }
         guard let decision = await approvals.request(controlRequest) else {
+            if withdrawnApprovalKeys.remove(controlRequest.key) != nil {
+                // Withdrawn (provider cancel, turn end, transport loss): the
+                // provider no longer waits for it, so nothing is written.
+                _ = await emit(
+                    provider: agentProvider,
+                    nativeSessionID: request.threadID,
+                    type: .approvalResolved,
+                    correlationID: correlation,
+                    payload: .approvalResolution(AgentApprovalResolution(state: .cancelled))
+                )
+                return
+            }
+            // Expiry/cancellation while the provider still waits: fail closed.
             try? await provider.resolveApproval(request, allow: false)
             return
         }
@@ -1306,6 +1393,28 @@ final class AgentManagedSessionController: ObservableObject {
         }
     }
 
+
+    /// Withdraws (no decision, no wire reply) every request of this exact
+    /// session that is still awaiting the user. Delivered decisions are left
+    /// to the confirmation flow.
+    private func withdrawPendingApprovals(for sessionID: AgentSessionID) {
+        for key in managedApprovalKeys where key.session.sessionID == sessionID {
+            guard approvals.deliveryState(for: key) == .awaitingDecision else { continue }
+            if approvals.withdraw(session: key.session, requestID: key.requestID) == .accepted {
+                withdrawnApprovalKeys.insert(key)
+            }
+        }
+    }
+
+    /// Called when a provider turn becomes authoritative for a session. Only
+    /// a *different* turn resets one-shot history, so a re-announced turn
+    /// cannot replay an answered request.
+    private func beginAuthoritativeTurn(_ turnID: String, for sessionID: AgentSessionID) {
+        guard managed[sessionID]?.activeTurnID != turnID else { return }
+        approvals.forgetHandledRequests(for: sessionID)
+        let prefix = "\(sessionID.provider.stableName):\(sessionID.nativeID):"
+        providerCancelledApprovals = providerCancelledApprovals.filter { !$0.hasPrefix(prefix) }
+    }
 
     private func confirmApprovalProgress(
         provider: AgentProvider,

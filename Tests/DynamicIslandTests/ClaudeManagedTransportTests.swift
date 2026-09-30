@@ -166,6 +166,38 @@ final class ClaudeProviderProtocolTests: XCTestCase {
         } catch {}
     }
 
+    func testSameRequestIDInTwoSessionsStaysBoundToEachExactSession() async throws {
+        let provider = try makeProvider()
+        let line = #"{"type":"control_request","request_id":"req-shared","request":{"subtype":"can_use_tool","tool_name":"Write","input":{"file_path":"a.txt"},"tool_use_id":"tool-1"}}"#
+        let first = await provider.project(ClaudeCodeStreamEnvelope(nativeSessionID: "s1", turnID: "t1", message: json(line)))
+        _ = await provider.project(ClaudeCodeStreamEnvelope(nativeSessionID: "s2", turnID: "t2", message: json(line)))
+        guard case .approvalRequested(let request) = try XCTUnwrap(first.first) else { return XCTFail() }
+        // s2's request must not overwrite s1's: answering s1 reaches the
+        // transport (no process here) instead of being refused as unknown.
+        do {
+            try await provider.resolveApproval(request, allow: false)
+            XCTFail("No process is running")
+        } catch let error as ClaudeCodeStreamingError {
+            XCTAssertEqual(error, .sessionNotRunning)
+        }
+    }
+
+    func testControlCancelRequestWithdrawsExactPendingPermission() async throws {
+        let provider = try makeProvider()
+        let events = await provider.project(envelope(#"{"type":"control_request","request_id":"req-c","request":{"subtype":"can_use_tool","tool_name":"Write","input":{},"tool_use_id":"tool-c"}}"#))
+        guard case .approvalRequested(let request) = try XCTUnwrap(events.first) else { return XCTFail() }
+        let unknown = await provider.project(envelope(#"{"type":"control_cancel_request","request_id":"nope"}"#))
+        XCTAssertTrue(unknown.isEmpty)
+        let cancelled = await provider.project(envelope(#"{"type":"control_cancel_request","request_id":"req-c"}"#))
+        XCTAssertEqual(cancelled, [.approvalCancelled(nativeSessionID: "s1", requestID: "req-c")])
+        do {
+            try await provider.resolveApproval(request, allow: true)
+            XCTFail("A cancelled request can never be answered")
+        } catch let error as ClaudeCodeStreamingError {
+            XCTAssertEqual(error, .malformedMessage)
+        }
+    }
+
     func testRateLimitEventUpdatesAccountUsage() async throws {
         let provider = try makeProvider()
         let events = await provider.project(envelope(#"{"type":"rate_limit_event","rate_limit_info":{"unifiedWindows":{"five_hour":{"utilization":0.25,"resetsAt":1},"seven_day":{"utilization":0.5,"resetsAt":2}}}}"#))
