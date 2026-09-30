@@ -52,6 +52,37 @@ private final class FakeCaptureSession: CameraCaptureSessionControlling {
     }
 }
 
+/// Capture session whose start suspends until the test releases it, to model
+/// the real AVCaptureSession startup window.
+@MainActor
+private final class GatedCaptureSession: CameraCaptureSessionControlling {
+    var previewSession: AVCaptureSession? { nil }
+    var onUnexpectedStop: ((String) -> Void)?
+    private(set) var isRunning = false
+    private var pendingStart: CheckedContinuation<Void, Never>?
+
+    var hasPendingStart: Bool { pendingStart != nil }
+
+    func releasePendingStart() {
+        let continuation = pendingStart
+        pendingStart = nil
+        continuation?.resume()
+    }
+
+    func start(deviceID: String) async throws {
+        await withCheckedContinuation { pendingStart = $0 }
+        isRunning = true
+    }
+
+    func stop() async {
+        isRunning = false
+    }
+
+    func stopImmediately() {
+        isRunning = false
+    }
+}
+
 @MainActor
 final class CameraPreviewControllerTests: XCTestCase {
     func testPermissionMapping() {
@@ -264,6 +295,144 @@ final class CameraPreviewControllerTests: XCTestCase {
         XCTAssertEqual(fixture.session.stopCount, 2)
     }
 
+    // MARK: Mirror lease lifecycle (Close Mirror / reopen / independent owner)
+
+    func testCloseMirrorReleasesConsumerAndStopsOwnedCapture() async {
+        let fixture = makeFixture(authorized: true)
+        let lease = CameraMirrorConsumerLease(controller: fixture.controller)
+        await lease.acquire()
+        XCTAssertTrue(fixture.controller.isRunning)
+        XCTAssertEqual(fixture.controller.activePreviewConsumers, 1)
+
+        await lease.release()
+        XCTAssertFalse(fixture.controller.isRunning)
+        XCTAssertEqual(fixture.controller.activePreviewConsumers, 0)
+        XCTAssertEqual(fixture.session.stopCount, 1)
+        XCTAssertTrue(fixture.activities.activities.isEmpty)
+
+        // Close Mirror followed by onDisappear releases only once.
+        await lease.release()
+        XCTAssertEqual(fixture.controller.activePreviewConsumers, 0)
+        XCTAssertEqual(fixture.session.stopCount, 1)
+    }
+
+    func testReopenedMirrorRestartsCaptureWithoutPrompt() async {
+        let fixture = makeFixture(authorized: true)
+        let first = CameraMirrorConsumerLease(controller: fixture.controller)
+        await first.acquire()
+        await first.release()
+        XCTAssertFalse(fixture.controller.isRunning)
+
+        let reopened = CameraMirrorConsumerLease(controller: fixture.controller)
+        await reopened.acquire()
+        XCTAssertTrue(fixture.controller.isRunning)
+        XCTAssertEqual(fixture.devices.requestCount, 0, "reopening never prompts")
+        XCTAssertEqual(fixture.session.startedDeviceIDs, ["builtin", "builtin"])
+        await reopened.release()
+        XCTAssertFalse(fixture.controller.isRunning)
+    }
+
+    func testConcurrentAcquiresCountOneConsumer() async {
+        let fixture = makeFixture(authorized: true)
+        let lease = CameraMirrorConsumerLease(controller: fixture.controller)
+        async let a: Void = lease.acquire()
+        async let b: Void = lease.acquire()
+        _ = await (a, b)
+        XCTAssertEqual(fixture.controller.activePreviewConsumers, 1)
+        await lease.release()
+        XCTAssertEqual(fixture.controller.activePreviewConsumers, 0)
+        XCTAssertFalse(fixture.controller.isRunning)
+    }
+
+    /// Regression: Close Mirror while the mirror's attach is still starting
+    /// capture used to be a no-op (ownership was only recorded after the
+    /// attach finished), leaking a consumer and leaving the camera running.
+    func testCloseRacingInFlightAttachStopsCaptureAndLeaksNoConsumer() async {
+        let devices = FakeCameraDevices()
+        devices.permissionState = .authorized
+        let session = GatedCaptureSession()
+        let controller = CameraPreviewController(
+            liveActivities: LiveActivityStore(),
+            capabilities: IslandCapabilityRegistry(),
+            deviceProvider: devices,
+            session: session
+        )
+        let lease = CameraMirrorConsumerLease(controller: controller)
+        let attach = Task { await lease.acquire() }
+        while !session.hasPendingStart { await Task.yield() }
+        XCTAssertEqual(controller.phase, .starting)
+
+        let close = Task { await lease.release() }
+        await Task.yield()
+        session.releasePendingStart()
+        await attach.value
+        await close.value
+
+        XCTAssertFalse(controller.isRunning)
+        XCTAssertEqual(controller.phase, .idle)
+        XCTAssertEqual(controller.activePreviewConsumers, 0)
+        XCTAssertFalse(session.isRunning, "capture started late must be stopped")
+    }
+
+    func testMirrorCloseNeverStopsIndependentOwnerThatStartedFirst() async throws {
+        let fixture = makeFixture(authorized: true)
+        try await fixture.controller.open()
+        let lease = CameraMirrorConsumerLease(controller: fixture.controller)
+        await lease.acquire()
+        try await lease.startExplicitly()
+        await lease.release()
+        XCTAssertTrue(fixture.controller.isRunning)
+        XCTAssertEqual(fixture.session.stopCount, 0)
+    }
+
+    func testMirrorCloseNeverStopsIndependentOwnerThatJoinedLater() async throws {
+        let fixture = makeFixture(authorized: true)
+        let lease = CameraMirrorConsumerLease(controller: fixture.controller)
+        await lease.acquire()
+        XCTAssertTrue(fixture.controller.isRunning)
+        try await fixture.controller.open()
+        XCTAssertTrue(fixture.controller.hasExplicitOwner)
+
+        await lease.release()
+        XCTAssertTrue(fixture.controller.isRunning, "explicit owner keeps the shared session")
+        XCTAssertEqual(fixture.session.stopCount, 0)
+
+        await fixture.controller.close()
+        XCTAssertFalse(fixture.controller.isRunning)
+        XCTAssertFalse(fixture.controller.hasExplicitOwner)
+    }
+
+    func testSwitchingCameraKeepsMirrorOwnershipSoCloseStillStops() async throws {
+        let fixture = makeFixture(authorized: true)
+        let lease = CameraMirrorConsumerLease(controller: fixture.controller)
+        await lease.acquire()
+        try await fixture.controller.selectDevice(id: "ext")
+        XCTAssertEqual(fixture.controller.phase, .running(deviceID: "ext"))
+        XCTAssertFalse(fixture.controller.hasExplicitOwner)
+        await lease.release()
+        XCTAssertFalse(fixture.controller.isRunning)
+    }
+
+    func testMirrorRetryAfterUnexpectedStopOfExplicitSessionIsReleasedOnClose() async throws {
+        let fixture = makeFixture(authorized: true)
+        try await fixture.controller.open()
+        let lease = CameraMirrorConsumerLease(controller: fixture.controller)
+        await lease.acquire()
+        fixture.session.onUnexpectedStop?("The camera was disconnected.")
+        for _ in 0..<20 where fixture.controller.isRunning || fixture.controller.phase == .stopping {
+            await Task.yield()
+        }
+        guard case .failed = fixture.controller.phase else {
+            return XCTFail("expected failed phase, got \(fixture.controller.phase)")
+        }
+        XCTAssertFalse(fixture.controller.hasExplicitOwner)
+
+        try await lease.startExplicitly()
+        XCTAssertTrue(fixture.controller.isRunning)
+        await lease.release()
+        XCTAssertFalse(fixture.controller.isRunning, "mirror-owned retry is released on close")
+    }
+
     // MARK: Fixture
 
     private struct Fixture {
@@ -344,5 +513,51 @@ final class CameraMirrorLiveTests: XCTestCase {
         await controller.detachPreviewConsumer()
         XCTAssertFalse(controller.isRunning)
         XCTAssertFalse(session.isRunning)
+    }
+
+    /// Close Mirror stops real capture, reopening restarts it without a
+    /// prompt, and closing the mirror never terminates an independent
+    /// explicit camera owner.
+    func testRealCameraMirrorCloseReopenAndIndependentOwner() async throws {
+        guard ProcessInfo.processInfo.environment["DYNAMIC_ISLAND_LIVE_CAMERA"] == "1" else {
+            throw XCTSkip("Set DYNAMIC_ISLAND_LIVE_CAMERA=1 to use the real camera.")
+        }
+        let controller = CameraPreviewController(
+            liveActivities: LiveActivityStore(),
+            capabilities: IslandCapabilityRegistry()
+        )
+        guard controller.permissionState == .authorized else {
+            throw XCTSkip("Camera access is \(controller.permissionState) for this process")
+        }
+
+        // Open mirror -> Close Mirror.
+        let first = CameraMirrorConsumerLease(controller: controller)
+        await first.acquire()
+        XCTAssertTrue(controller.isRunning, controller.statusText)
+        let firstSession = try XCTUnwrap(controller.previewSession)
+        XCTAssertTrue(firstSession.isRunning)
+        await first.release()
+        XCTAssertFalse(controller.isRunning)
+        XCTAssertFalse(firstSession.isRunning, "Close Mirror stops mirror-owned capture")
+        XCTAssertEqual(controller.activePreviewConsumers, 0)
+
+        // Reopen -> capture restarts, still authorized (no prompt path).
+        let reopened = CameraMirrorConsumerLease(controller: controller)
+        await reopened.acquire()
+        XCTAssertEqual(controller.permissionState, .authorized)
+        XCTAssertTrue(controller.isRunning, controller.statusText)
+        let reopenedSession = try XCTUnwrap(controller.previewSession)
+        XCTAssertTrue(reopenedSession.isRunning)
+
+        // An independent explicit owner joins; closing the mirror keeps it.
+        try await controller.open()
+        await reopened.release()
+        XCTAssertTrue(controller.isRunning, "independent owner is not terminated")
+        XCTAssertTrue(reopenedSession.isRunning)
+        print("LIVE camera close/reopen: device=\(controller.activeDeviceName ?? "-") explicitOwnerKeptCapture=\(reopenedSession.isRunning)")
+
+        await controller.close()
+        XCTAssertFalse(controller.isRunning)
+        XCTAssertFalse(reopenedSession.isRunning)
     }
 }

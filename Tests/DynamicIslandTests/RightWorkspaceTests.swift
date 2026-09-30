@@ -64,6 +64,53 @@ final class RightWorkspaceTests: XCTestCase {
                        "more than 0.3 s of quiet is a new gesture")
     }
 
+    /// A vertical scroll that reaches the ScrollView edge keeps producing
+    /// deltas (overscroll, diagonal drift, momentum). None of it may turn
+    /// into a page swipe, however large the horizontal component becomes.
+    func testScrollEdgeOvershootNeverBecomesPageSwipe() {
+        var recognizer = RightWorkspaceSwipeRecognizer()
+        var outcomes: [RightWorkspaceSwipeRecognizer.Outcome] = []
+        outcomes.append(recognizer.handle(deltaX: 0, deltaY: -14, phase: .began, at: 0))
+        var time = 0.0
+        for step in 0..<40 {
+            time += 0.016
+            // Edge reached: user drifts sideways hard while still dragging.
+            let dx: CGFloat = step < 10 ? -1 : -45
+            outcomes.append(recognizer.handle(deltaX: dx, deltaY: -2, phase: .changed, at: time))
+        }
+        outcomes.append(recognizer.handle(deltaX: -60, deltaY: 0, phase: .ended, at: time + 0.016))
+        for step in 0..<20 {
+            outcomes.append(recognizer.handle(deltaX: -80, deltaY: -1, phase: .momentum, at: time + 0.032 + Double(step) * 0.016))
+        }
+        XCTAssertTrue(outcomes.allSatisfy { $0 == .passThrough }, "\(outcomes)")
+        XCTAssertEqual(recognizer.owner, .verticalContent)
+    }
+
+    /// Horizontal paging over the Productivity page with the Camera Mirror
+    /// active: the recognizer is consulted before the mirror scroll policy,
+    /// and one physical swipe pages exactly once.
+    func testHorizontalSwipeOverMirrorPagesExactlyOnce() {
+        var recognizer = RightWorkspaceSwipeRecognizer()
+        var pageChanges = 0
+        var time = 0.0
+        let first = recognizer.handle(deltaX: -8, deltaY: 1, phase: .began, at: time)
+        if first == .next || first == .previous { pageChanges += 1 }
+        for _ in 0..<30 {
+            time += 0.016
+            let outcome = recognizer.handle(deltaX: -9, deltaY: 0.5, phase: .changed, at: time)
+            if outcome == .next || outcome == .previous { pageChanges += 1 }
+        }
+        for _ in 0..<30 {
+            time += 0.016
+            let outcome = recognizer.handle(deltaX: -20, deltaY: 0, phase: .momentum, at: time)
+            if outcome == .next || outcome == .previous { pageChanges += 1 }
+        }
+        XCTAssertEqual(pageChanges, 1)
+        XCTAssertFalse(CameraMirrorScrollRoutingPolicy.shouldPassThroughToContent(
+            mirrorActive: true, pointerInsideRightWorkspace: true, deltaX: -9, deltaY: 0.5
+        ), "strong horizontal input is never swallowed by the mirror vertical policy")
+    }
+
     func testMomentumAloneNeverPages() {
         var recognizer = RightWorkspaceSwipeRecognizer()
         XCTAssertEqual(recognizer.handle(deltaX: -10, deltaY: 0, phase: .began, at: 0), .consumed)

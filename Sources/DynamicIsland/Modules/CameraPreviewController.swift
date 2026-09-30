@@ -226,6 +226,46 @@ private final class SessionBox: @unchecked Sendable {
     init(_ session: AVCaptureSession) { self.session = session }
 }
 
+// MARK: - Mirror consumer lease
+
+/// One visible Camera Mirror's claim on the preview consumer count. The claim
+/// is taken synchronously before any await, so a Close Mirror / page change /
+/// disappear that races an in-flight attach always detaches exactly once and
+/// can never leak a consumer (which would keep capture running after close).
+/// A reference type so SwiftUI view identity changes cannot lose the claim.
+@MainActor
+final class CameraMirrorConsumerLease {
+    private let controller: CameraPreviewController
+    private(set) var isHeld = false
+
+    init(controller: CameraPreviewController) {
+        self.controller = controller
+    }
+
+    /// Mirror appeared / page became active. Never prompts for permission.
+    func acquire() async {
+        guard !isHeld else { return }
+        isHeld = true
+        await controller.attachPreviewConsumer()
+    }
+
+    /// Explicit Allow / Start / Retry from the mirror UI; may prompt.
+    func startExplicitly() async throws {
+        if !isHeld {
+            isHeld = true
+            await controller.attachPreviewConsumer()
+        }
+        try await controller.startPreviewConsumer()
+    }
+
+    /// Close Mirror, page deactivation or disappearance.
+    func release() async {
+        guard isHeld else { return }
+        isHeld = false
+        await controller.detachPreviewConsumer()
+    }
+}
+
 // MARK: - Controller
 
 @MainActor
@@ -364,7 +404,20 @@ final class CameraPreviewController: ObservableObject, IslandCapabilityAdapter {
     // MARK: Lifecycle
 
     /// Explicit user action. Requests camera access only if undetermined.
+    /// The caller becomes an explicit owner: closing the Camera Mirror (a
+    /// preview consumer) never stops capture an explicit owner relies on,
+    /// even when the mirror started the session first.
     func open() async throws {
+        explicitOwnerActive = true
+        do {
+            try await startCapture()
+        } catch {
+            explicitOwnerActive = false
+            throw error
+        }
+    }
+
+    private func startCapture() async throws {
         guard isEnabled else { throw CameraPreviewError.disabled }
         if case .running = phase { return }
         if phase == .starting { return }
@@ -415,7 +468,14 @@ final class CameraPreviewController: ObservableObject, IslandCapabilityAdapter {
     }
 
     /// Idempotent. The activity is removed only after the session stopped.
+    /// Stops capture for every owner and clears all ownership claims.
     func close() async {
+        explicitOwnerActive = false
+        consumerStartedSession = false
+        await stopCapture()
+    }
+
+    private func stopCapture() async {
         generation += 1
         guard phase != .idle else {
             await session.stop()
@@ -433,6 +493,7 @@ final class CameraPreviewController: ObservableObject, IslandCapabilityAdapter {
 
     private var previewConsumers = 0
     private var consumerStartedSession = false
+    private var explicitOwnerActive = false
 
     /// A visible preview surface appeared. Starts capture only when access
     /// was already granted, so appearing never prompts for permission.
@@ -445,7 +506,7 @@ final class CameraPreviewController: ObservableObject, IslandCapabilityAdapter {
               phase != .starting else { return }
         consumerStartedSession = true
         do {
-            try await open()
+            try await startCapture()
         } catch {
             consumerStartedSession = false
         }
@@ -467,7 +528,7 @@ final class CameraPreviewController: ObservableObject, IslandCapabilityAdapter {
         }
         consumerStartedSession = true
         do {
-            try await open()
+            try await startCapture()
         } catch {
             consumerStartedSession = false
             throw error
@@ -480,17 +541,22 @@ final class CameraPreviewController: ObservableObject, IslandCapabilityAdapter {
         previewConsumers = max(0, previewConsumers - 1)
         guard previewConsumers == 0, consumerStartedSession else { return }
         consumerStartedSession = false
-        await close()
+        // An explicit owner that joined the mirror's session keeps it.
+        guard !explicitOwnerActive else { return }
+        await stopCapture()
     }
 
     var activePreviewConsumers: Int { previewConsumers }
+    /// True while capture was requested by an explicit owner (`open()`).
+    var hasExplicitOwner: Bool { explicitOwnerActive }
 
     /// Switches camera; restarts the preview when it is running.
     func selectDevice(id: String) async throws {
         selectedDeviceID = id
         guard isRunning else { return }
-        await close()
-        try await open()
+        // Restart keeps the existing ownership (mirror consumer vs explicit).
+        await stopCapture()
+        try await startCapture()
     }
 
     func setEnabled(_ enabled: Bool) async {
@@ -504,6 +570,8 @@ final class CameraPreviewController: ObservableObject, IslandCapabilityAdapter {
     /// Synchronous teardown for application termination.
     func terminate() {
         generation += 1
+        explicitOwnerActive = false
+        consumerStartedSession = false
         session.stopImmediately()
         liveActivities.remove(id: Self.activityID)
         phase = .idle
@@ -552,6 +620,9 @@ final class CameraPreviewController: ObservableObject, IslandCapabilityAdapter {
     private func handleUnexpectedStop(_ message: String) {
         guard isRunning else { return }
         generation += 1
+        // The explicit owner's session is gone; a later mirror retry must be
+        // able to own (and on close, release) the capture it restarts.
+        explicitOwnerActive = false
         Task { @MainActor [weak self] in
             guard let self else { return }
             await self.session.stop()

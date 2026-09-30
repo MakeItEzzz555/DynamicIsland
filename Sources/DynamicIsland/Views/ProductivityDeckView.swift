@@ -128,7 +128,22 @@ struct CameraMirrorView: View {
     let onClose: () -> Void
     @Environment(\.isSettingsPreview) private var isSettingsPreview
     @Environment(\.rightWorkspacePageIsActive) private var isWorkspacePageActive
-    @State private var ownsPreviewConsumer = false
+    /// Claimed synchronously so a close that races an in-flight attach can
+    /// never leak a preview consumer (see CameraMirrorConsumerLease).
+    @State private var lease: CameraMirrorConsumerLease
+
+    init(
+        controller: CameraPreviewController,
+        diameter: CGFloat,
+        layoutStore: IslandLayoutStore?,
+        onClose: @escaping () -> Void
+    ) {
+        self.controller = controller
+        self.diameter = diameter
+        self.layoutStore = layoutStore
+        self.onClose = onClose
+        _lease = State(initialValue: CameraMirrorConsumerLease(controller: controller))
+    }
 
     var body: some View {
         VStack(spacing: 6) {
@@ -162,23 +177,25 @@ struct CameraMirrorView: View {
         .task {
             guard !isSettingsPreview, isWorkspacePageActive else { return }
             layoutStore?.setRightWorkspaceMirrorActive(true)
-            await attachIfNeeded()
+            await lease.acquire()
         }
         .onChange(of: isWorkspacePageActive) { _, active in
             guard !isSettingsPreview else { return }
             layoutStore?.setRightWorkspaceMirrorActive(active)
+            let lease = lease
             Task {
                 if active {
-                    await attachIfNeeded()
+                    await lease.acquire()
                 } else {
-                    await detachIfNeeded()
+                    await lease.release()
                 }
             }
         }
         .onDisappear {
             guard !isSettingsPreview else { return }
             layoutStore?.setRightWorkspaceMirrorActive(false)
-            Task { await detachIfNeeded() }
+            let lease = lease
+            Task { await lease.release() }
         }
     }
 
@@ -196,7 +213,7 @@ struct CameraMirrorView: View {
                 .frame(maxWidth: diameter * 0.7)
             switch controller.permissionState {
             case .notDetermined:
-                Button { Task { try? await controller.startPreviewConsumer() } } label: { mirrorButtonLabel("Allow") }
+                Button { Task { try? await lease.startExplicitly() } } label: { mirrorButtonLabel("Allow") }
                     .buttonStyle(WorkspaceTileButtonStyle(isOn: true, accent: .cyan, cornerRadius: 8))
                     .font(.system(size: 9, weight: .semibold))
                     .accessibilityLabel("Allow camera access")
@@ -212,7 +229,7 @@ struct CameraMirrorView: View {
                 if controller.phase != .starting {
                     // Capture normally starts on appear; this covers a
                     // failed or externally stopped session.
-                    Button { Task { try? await controller.startPreviewConsumer() } } label: { mirrorButtonLabel(controller.phase == .idle ? "Start" : "Retry") }
+                    Button { Task { try? await lease.startExplicitly() } } label: { mirrorButtonLabel(controller.phase == .idle ? "Start" : "Retry") }
                         .buttonStyle(WorkspaceTileButtonStyle(cornerRadius: 8))
                         .font(.system(size: 9, weight: .semibold))
                         .accessibilityLabel("Start camera mirror")
@@ -222,24 +239,11 @@ struct CameraMirrorView: View {
         .padding(8)
     }
 
-    @MainActor
-    private func attachIfNeeded() async {
-        guard !ownsPreviewConsumer else { return }
-        await controller.attachPreviewConsumer()
-        ownsPreviewConsumer = true
-    }
-
-    @MainActor
-    private func detachIfNeeded() async {
-        guard ownsPreviewConsumer else { return }
-        ownsPreviewConsumer = false
-        await controller.detachPreviewConsumer()
-    }
-
     private func closeMirror() {
         layoutStore?.setRightWorkspaceMirrorActive(false)
+        let lease = lease
         Task { @MainActor in
-            await detachIfNeeded()
+            await lease.release()
             onClose()
         }
     }
