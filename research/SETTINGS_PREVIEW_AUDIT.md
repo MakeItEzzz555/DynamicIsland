@@ -5,14 +5,14 @@ A unit test keeps it in sync with every `@Published` property in `AppSettings`.
 
 | Classification | Count |
 |---|---|
-| VISUAL | 87 |
-| VISUAL (no preview, justified) | 6 |
-| BEHAVIORAL | 69 |
+| VISUAL | 93 |
+| VISUAL (no preview, justified) | 0 |
+| BEHAVIORAL | 68 |
 | PERMISSION | 2 |
 | DATA/PERSISTENCE | 5 |
 | EXTERNAL INTEGRATION | 1 |
 | NO PRODUCTION READER | 0 |
-| DEPRECATED / HIDDEN | 33 |
+| DEPRECATED / HIDDEN | 34 |
 | **Total** | **203** |
 
 | Setting | Classification | Live preview | Note |
@@ -71,8 +71,8 @@ A unit test keeps it in sync with every `@Published` property in `AppSettings`.
 | `agentActivityEnabled` | BEHAVIORAL | — | Agent monitoring and alert behavior. |
 | `agentCompletionAlertsEnabled` | BEHAVIORAL | — | Agent monitoring and alert behavior. |
 | `agentApprovalAlertsEnabled` | BEHAVIORAL | — | Agent monitoring and alert behavior. |
-| `agentSoundsEnabled` | BEHAVIORAL | — | Agent monitoring and alert behavior. |
 | `agentPeekDurationSeconds` | BEHAVIORAL | — | Agent monitoring and alert behavior. |
+| `agentSoundsEnabled` | DEPRECATED / HIDDEN | — | Hidden: AgentNotch 1.1 plays no notification sound (bundle and full upstream history audited), so no parity sound exists and the toggle had no audible effect. Value kept for migration. |
 | `mediaEnabled` | VISUAL | Media Player Preview |  |
 | `showMediaWhenPaused` | VISUAL | Media Player Preview |  |
 | `showAlbumArtwork` | VISUAL | Media Player Preview |  |
@@ -113,12 +113,12 @@ A unit test keeps it in sync with every `@Published` property in `AppSettings`.
 | `deferThumbnailsDuringMorph` | BEHAVIORAL | — | Drop, context-menu and performance behavior. |
 | `maxShelfFiles` | DATA/PERSISTENCE | — | Shelf capacity and persistence. |
 | `persistFileShelfAcrossLaunches` | DATA/PERSISTENCE | — | Shelf capacity and persistence. |
-| `timerPresetsEnabled` | VISUAL (no preview, justified) | — | Read by the production Timer page (DedicatedTimerPageView). No preview: that view is private to IslandRootView.swift and lookalikes are not allowed; needs the IslandRootView owner to make it internal. |
-| `timerPreset1Minutes` | VISUAL (no preview, justified) | — | Read by the production Timer page (DedicatedTimerPageView). No preview: that view is private to IslandRootView.swift and lookalikes are not allowed; needs the IslandRootView owner to make it internal. |
-| `timerPreset2Minutes` | VISUAL (no preview, justified) | — | Read by the production Timer page (DedicatedTimerPageView). No preview: that view is private to IslandRootView.swift and lookalikes are not allowed; needs the IslandRootView owner to make it internal. |
-| `timerPreset3Minutes` | VISUAL (no preview, justified) | — | Read by the production Timer page (DedicatedTimerPageView). No preview: that view is private to IslandRootView.swift and lookalikes are not allowed; needs the IslandRootView owner to make it internal. |
-| `showTimerProgressRing` | VISUAL (no preview, justified) | — | Read by the production Timer page (DedicatedTimerPageView). No preview: that view is private to IslandRootView.swift and lookalikes are not allowed; needs the IslandRootView owner to make it internal. |
-| `timerRingAnimationEnabled` | VISUAL (no preview, justified) | — | Read by the production Timer page (DedicatedTimerPageView). No preview: that view is private to IslandRootView.swift and lookalikes are not allowed; needs the IslandRootView owner to make it internal. |
+| `timerPresetsEnabled` | VISUAL | Timer Page Preview | Previewed with the production DedicatedTimerPageView and the app's real timer (read-only). |
+| `timerPreset1Minutes` | VISUAL | Timer Page Preview | Previewed with the production DedicatedTimerPageView and the app's real timer (read-only). |
+| `timerPreset2Minutes` | VISUAL | Timer Page Preview | Previewed with the production DedicatedTimerPageView and the app's real timer (read-only). |
+| `timerPreset3Minutes` | VISUAL | Timer Page Preview | Previewed with the production DedicatedTimerPageView and the app's real timer (read-only). |
+| `showTimerProgressRing` | VISUAL | Timer Page Preview | Previewed with the production DedicatedTimerPageView and the app's real timer (read-only). |
+| `timerRingAnimationEnabled` | VISUAL | Timer Page Preview | Previewed with the production DedicatedTimerPageView and the app's real timer (read-only). |
 | `timerEnabled` | BEHAVIORAL | — | Timer behavior and alerts. |
 | `timerSoundEnabled` | BEHAVIORAL | — | Timer behavior and alerts. |
 | `timerNotificationEnabled` | BEHAVIORAL | — | Timer behavior and alerts. |

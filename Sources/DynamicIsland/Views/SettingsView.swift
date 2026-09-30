@@ -380,9 +380,9 @@ struct SettingsView: View {
 
     private var timerSection: some View {
         settingsForm("Timer") {
-            // No Timer page preview yet: the production DedicatedTimerPageView
-            // is private to IslandRootView.swift, and a lookalike is not
-            // allowed (see SettingsAuditCatalog.knownPreviewGaps).
+            if let previews {
+                TimerPageSettingsPreview(settings: settings, timer: previews.timer)
+            }
             SettingsGroup("Timer") {
                 Toggle("Enable timer", isOn: $settings.timerEnabled)
                 Toggle("Preset buttons", isOn: $settings.timerPresetsEnabled)
@@ -419,8 +419,6 @@ struct SettingsView: View {
                 Toggle("Completion alerts", isOn: $settings.agentCompletionAlertsEnabled)
                     .disabled(!settings.agentActivityEnabled)
                 Toggle("Input alerts", isOn: $settings.agentApprovalAlertsEnabled)
-                    .disabled(!settings.agentActivityEnabled)
-                Toggle("Alert sounds", isOn: $settings.agentSoundsEnabled)
                     .disabled(!settings.agentActivityEnabled)
                 Toggle("Usage metrics", isOn: $settings.agentUsageMetricsEnabled)
                     .disabled(!settings.agentActivityEnabled)

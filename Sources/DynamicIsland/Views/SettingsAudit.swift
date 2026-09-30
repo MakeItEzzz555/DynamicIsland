@@ -10,6 +10,7 @@ enum SettingsPreviewID: String, CaseIterable, Sendable {
     case media = "Media Player Preview"
     case mediaLauncher = "No-source Launcher Preview"
     case fileTray = "File Tray Preview"
+    case timer = "Timer Page Preview"
     case stats = "Stats Preview"
     case agents = "Agents Preview"
     case clipboard = "Clipboard Preview"
@@ -92,8 +93,8 @@ enum SettingsAuditCatalog {
         + visual(["agentUsageMetricsEnabled"], .agents)
         + entries(["agentActivityEnabled", "agentCompletionAlertsEnabled", "agentApprovalAlertsEnabled",
                    "agentPeekDurationSeconds"], .behavioral, "Agent monitoring and alert behavior.")
-        + entries(["agentSoundsEnabled"], .behavioral,
-                  "Gates agent sound intents. AgentNotch 1.1 plays no notification sound, so parity feedback is silent.")
+        + entries(["agentSoundsEnabled"], .deprecatedHidden,
+                  "Hidden: AgentNotch 1.1 plays no notification sound (bundle and full upstream history audited), so no parity sound exists and the toggle had no audible effect. Value kept for migration.")
         // Media
         + visual(["mediaEnabled", "showMediaWhenPaused", "showAlbumArtwork", "showMediaTitle", "showMediaArtist",
                   "showMediaSourceName", "showPlaybackControls", "showProgressSlider", "showVolumeSlider", "showVisualizer"], .media)
@@ -114,8 +115,9 @@ enum SettingsAuditCatalog {
                   "Drop, context-menu and performance behavior.")
         + entries(["maxShelfFiles", "persistFileShelfAcrossLaunches"], .dataPersistence, "Shelf capacity and persistence.")
         // Timer
-        + entries(["timerPresetsEnabled", "timerPreset1Minutes", "timerPreset2Minutes", "timerPreset3Minutes",
-                   "showTimerProgressRing", "timerRingAnimationEnabled"], .visualWithoutPreview, timerPreviewGapNote)
+        + visual(["timerPresetsEnabled", "timerPreset1Minutes", "timerPreset2Minutes", "timerPreset3Minutes",
+                  "showTimerProgressRing", "timerRingAnimationEnabled"], .timer,
+                 "Previewed with the production DedicatedTimerPageView and the app's real timer (read-only).")
         + entries(["timerEnabled", "timerSoundEnabled", "timerNotificationEnabled", "collapseAfterStartingTimer"], .behavioral,
                   "Timer behavior and alerts.")
         + entries(["keepIslandExpandedWhenTimerRunning", "showTimerInCollapsedIsland"], .deprecatedHidden, deprecatedNote)
@@ -178,11 +180,7 @@ enum SettingsAuditCatalog {
     /// (`DedicatedTimerPageView`) is private to IslandRootView.swift; the
     /// previous Timer preview rendered a lookalike and was removed. A test
     /// pins this set so it can only shrink.
-    static let knownPreviewGaps: Set<String> = [
-        "timerPresetsEnabled", "timerPreset1Minutes", "timerPreset2Minutes", "timerPreset3Minutes",
-        "showTimerProgressRing", "timerRingAnimationEnabled"
-    ]
-    static let timerPreviewGapNote = "Read by the production Timer page (DedicatedTimerPageView). No preview: that view is private to IslandRootView.swift and lookalikes are not allowed; needs the IslandRootView owner to make it internal."
+    static let knownPreviewGaps: Set<String> = []
 
     static var appSettingsKeys: [String] {
         entries.map(\.key).filter { !$0.contains(".") }

@@ -1167,6 +1167,9 @@ struct IslandRootView: View {
                 modules.navigation.ensureValidSelection(using: settings)
             } else {
                 modules.navigation.applyDefaultSelectionIfNeeded(using: settings)
+                // Same convention for the right workspace: without "remember
+                // last tab", each expansion starts on the default page.
+                modules.rightWorkspace.resetToDefaultPage()
             }
         }
         renderedContentMode = .expanded
@@ -4232,7 +4235,7 @@ private struct FileDropHighlightView: View {
     }
 }
 
-private struct DedicatedTimerPageView: View {
+struct DedicatedTimerPageView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var timer: TimerController
     let ringSize: CGFloat

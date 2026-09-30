@@ -720,3 +720,25 @@ struct ProductivityDeckSettingsPreview: View {
         }
     }
 }
+
+// MARK: - Timer page
+
+/// The production Timer page with the app's real timer, read-only.
+struct TimerPageSettingsPreview: View {
+    @ObservedObject var settings: AppSettings
+    let timer: TimerController
+
+    var body: some View {
+        SettingsPreviewSandbox(title: "Timer Page Preview (live timer)", height: 190) { _ in
+            DedicatedTimerPageView(
+                settings: settings,
+                timer: timer,
+                ringSize: 110,
+                pageHeight: 180,
+                onTimerStarted: {}
+            )
+            .frame(width: 420)
+            .frame(maxWidth: .infinity)
+        }
+    }
+}

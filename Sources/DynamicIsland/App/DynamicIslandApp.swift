@@ -460,7 +460,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             peekDuration: settings.agentPeekDurationSeconds,
             completionAlertsEnabled: settings.agentCompletionAlertsEnabled,
             approvalAlertsEnabled: settings.agentApprovalAlertsEnabled,
-            soundsEnabled: settings.agentSoundsEnabled
+            // AgentNotch plays no notification sound (see
+            // AgentNotificationFeedback.swift), so sound intents stay off.
+            soundsEnabled: false
         )
         agentAttention.setEnabled(settings.overlayEnabled && settings.agentActivityEnabled)
     }

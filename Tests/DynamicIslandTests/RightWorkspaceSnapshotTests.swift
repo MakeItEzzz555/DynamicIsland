@@ -164,6 +164,7 @@ final class SettingsPreviewSnapshotTests: XCTestCase {
             ("54-settings-tray", AnyView(FileTraySettingsPreview(settings: settings, shelf: deps.previewShelf, backgroundRemoval: deps.previewBackgroundRemoval))),
             ("55-settings-live-activity-layout", AnyView(LiveActivityLayoutSettingsPreview(settings: settings))),
             ("56-settings-stats", AnyView(StatsSettingsPreview(settings: settings, stats: deps.stats))),
+            ("58-settings-timer-page", AnyView(TimerPageSettingsPreview(settings: settings, timer: deps.timer))),
             ("57-settings-productivity", AnyView(ProductivityDeckSettingsPreview(workspace: deps.rightWorkspace, productivity: deps.productivity, shelf: deps.previewShelf))),
             ("58-settings-content-motion", AnyView(ContentMotionSettingsPreview(settings: settings))),
             ("59-settings-collapsed-media", AnyView(CollapsedMediaSettingsPreview(settings: settings, media: deps.previewMedia))),
