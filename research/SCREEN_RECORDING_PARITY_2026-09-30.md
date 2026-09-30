@@ -114,3 +114,11 @@ Deterministic tests cover:
 The opt-in real test is gated by DYNAMIC_ISLAND_LIVE_SCREEN_RECORDING=1.
 
 It must either produce and validate a real video or skip with the exact TCC/ScreenCaptureKit environment reason. A skip is not counted as real E2E success.
+
+### Current real acceptance — 2026-09-30
+
+On the development Mac, `DYNAMIC_ISLAND_LIVE_SCREEN_RECORDING=1 swift test --filter ScreenRecordingLiveTests` completed against real ScreenCaptureKit authority: capture reached `.recording` only after a video frame, paused, resumed, finalized an MP4, reopened it through AVFoundation, verified a non-empty video track and non-zero duration, then deleted only the test-owned output. Result: **1 test, 0 failures** in about 2.43 seconds.
+
+This is real E2E evidence for the display-recording / pause-resume / finalize path. It does not by itself certify every window, area, system-audio, microphone or multi-display combination.
+
+The production controller now limits recording Live Activity invalidation to whole-second timer changes instead of publishing at capture-frame rate, while the recorder timeline remains sample-timestamp authoritative. Runtime capture failures explicitly stop the active `SCStream` and cancel an unfinished `AVAssetWriter` so failed sessions do not leak capture/writer resources.
