@@ -4739,3 +4739,11 @@ For every requested feature phase:
 - Current non-blocking warning:
   - `FileThumbnailCache` still emits the Swift concurrency non-Sendable capture warning in `ModuleViews.swift`.
   - This warning is known and did not block build/test/package.
+
+### 2026-10-01 - Interactive HUD Geometry And Recorder Presentation Repair
+
+- Interactive volume/brightness HUD: shell height is now the physical top band (`max(collapsedHeight, notchHeight)` for notch-integrated islands) plus a 24 pt slider band (`CollapsedPresentationProfile.systemHUDSliderBandHeight`). Top edge unchanged; the shell only grows downward. The slider is centered below the notch edge; its drag target spans the band. Settings HUD previews render the production shell (`SystemHUDShellPreview`).
+- Screen Record tile: the SwiftUI `.sheet` inside `IslandOverlayPanel` was rejected as a presentation path (runtime evidence: attached over the island, pushed the top-pinned panel 35 pt down, dismissed on island collapse). Setup now opens in a dedicated reused panel owned by `ScreenRecordingSetupPresenter`, anchored under the island.
+- Details, Droppy references and acceptance evidence: `research/HUD_RECORDER_RUNTIME_2026-10-01.md`.
+- Validation: `git diff --check`, `swift build`, `swift test` (1366 tests, 16 skipped, 0 failures), `swift build -c release`, `Scripts/package_app.sh`, `plutil -lint`, strict helper and deep app signature verification, clean-copy ad-hoc signature.
+- Known: `ScreenRecordingLiveTests` duration check fails while the Mac is locked (static screen → idle frames dropped); recorder backend unchanged.
