@@ -112,6 +112,75 @@ final class ShellMorphSnapshotTests: XCTestCase {
         }
     }
 
+
+    /// Reverse choreography: expanded child exits completely while the shell
+    /// remains full-size, then the physical shell contracts top-pinned.
+    func testRenderCollapseChoreographyGrids() throws {
+        guard let path = ProcessInfo.processInfo.environment["DYNAMIC_ISLAND_MORPH_SNAPSHOT_DIR"] else {
+            throw XCTSkip("Set DYNAMIC_ISLAND_MORPH_SNAPSHOT_DIR to render collapse choreography grids.")
+        }
+        let output = URL(fileURLWithPath: path, isDirectory: true)
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        let settings = AppSettings(defaults: UserDefaults(suiteName: "CollapseChoreography-\(UUID().uuidString)")!)
+        let standard = CGSize(width: 860, height: 286)
+        let agents = ExpandedPresentationProfile.agentsWorkspace.resolvedSize(from: standard)
+        let target = CGSize(width: 226, height: 58)
+        let cases: [(String, ExpandedIslandPage, CGSize)] = [
+            ("agents-to-collapsed", .agents, agents),
+            ("island-to-collapsed", .island, standard),
+            ("tray-to-collapsed", .tray, standard),
+            ("tools-to-collapsed", .tools, standard)
+        ]
+        let plans: [(String, ExpandedIslandMotion.ContractionPlan)] = [
+            ("full", ExpandedIslandMotion.collapsePlan(.init(
+                shellDuration: 0.40, isInstant: false, reduceMotion: false,
+                useBlurTransitions: true, useScaleTransitions: true,
+                prefersLightweightEffects: false, refreshRate: 120
+            ))),
+            ("reduced", ExpandedIslandMotion.collapsePlan(.init(
+                shellDuration: 0.24, isInstant: false, reduceMotion: true,
+                useBlurTransitions: true, useScaleTransitions: true,
+                prefersLightweightEffects: false, refreshRate: 120
+            )))
+        ]
+        for (planName, plan) in plans {
+            let times: [TimeInterval] = planName == "full"
+                ? [0, 0.04, 0.08, 0.12, 0.16, 0.18, 0.24, 0.36, 0.56]
+                : [0, 0.03, 0.06, 0.09, 0.11, 0.14, 0.20, 0.28, 0.36]
+            for (name, page, sourceSize) in cases {
+                let outer = CGSize(width: 980, height: 520)
+                let source = CGRect(
+                    x: (outer.width - sourceSize.width) / 2,
+                    y: outer.height - sourceSize.height,
+                    width: sourceSize.width,
+                    height: sourceSize.height
+                )
+                let collapsed = CGRect(
+                    x: (outer.width - target.width) / 2,
+                    y: outer.height - target.height,
+                    width: target.width,
+                    height: target.height
+                )
+                let cells = try times.map { time -> NSImage in
+                    let sample = ExpandedIslandMotion.sampleContraction(plan, at: time, from: source, to: collapsed)
+                    let renderer = ImageRenderer(content: ContractionChoreographyFrame(
+                        settings: settings,
+                        sample: sample,
+                        time: time,
+                        page: page,
+                        sourceSize: sourceSize
+                    ))
+                    renderer.scale = 1
+                    return try XCTUnwrap(renderer.nsImage)
+                }
+                try write(
+                    grid(cells, columns: 3, scale: 0.5),
+                    to: output.appendingPathComponent("80-collapse-\(planName)-\(name).png")
+                )
+            }
+        }
+    }
+
     private func grid(_ images: [NSImage], columns: Int, scale: CGFloat) -> NSImage {
         let cell = CGSize(width: images[0].size.width * scale, height: images[0].size.height * scale)
         let rows = Int((Double(images.count) / Double(columns)).rounded(.up))
@@ -302,6 +371,83 @@ private struct ChoreographyFrame: View {
         return String(
             format: "t=%.2fs shell=%.2f out[%@] in[%@]",
             time, sample.shellProgress, format(sample.outgoing), format(sample.incoming)
+        )
+    }
+}
+
+
+private struct ContractionChoreographyFrame: View {
+    let settings: AppSettings
+    let sample: ExpandedIslandMotion.ContractionSample
+    let time: TimeInterval
+    let page: ExpandedIslandPage
+    let sourceSize: CGSize
+
+    private let outer = CGSize(width: 980, height: 520)
+    private let padding = IslandShellLayout.expandedHorizontalPadding(isNotchIntegrated: true)
+    private let header: CGFloat = 34
+    private let headerGap: CGFloat = 10
+
+    private var sourcePageSize: CGSize {
+        CGSize(
+            width: sourceSize.width - padding * 2,
+            height: sourceSize.height - IslandShellLayout.expandedTopPadding
+                - IslandShellLayout.expandedBottomPadding - header - headerGap
+        )
+    }
+
+    var body: some View {
+        let shell = sample.shellFrame.size
+        let pageTop = IslandShellLayout.expandedTopPadding + header + headerGap
+        ZStack(alignment: .top) {
+            Color(white: 0.55)
+            IslandSurface(settings: settings, isExpanded: shell.width > 300, visualProgress: 1) {
+                VStack(alignment: .leading, spacing: headerGap) {
+                    Capsule().fill(.white.opacity(0.12)).frame(width: min(230, max(shell.width - padding * 2, 0)), height: min(header, max(shell.height / 4, 0)))
+                    ZStack(alignment: .top) {
+                        if let outgoing = sample.outgoing {
+                            PlaceholderPage(page: page, size: sourcePageSize)
+                                .modifier(ExpandedPageMorphModifier(
+                                    opacity: outgoing.opacity,
+                                    blur: outgoing.blur,
+                                    scale: outgoing.scale
+                                ))
+                        }
+                    }
+                    .frame(
+                        width: max(shell.width - padding * 2, 0),
+                        height: max(shell.height - pageTop - IslandShellLayout.expandedBottomPadding, 0),
+                        alignment: .top
+                    )
+                    .clipped()
+                }
+                .padding(.horizontal, padding)
+                .padding(.top, IslandShellLayout.expandedTopPadding)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            }
+            .notchIntegrated(true)
+            .frame(width: shell.width, height: shell.height)
+            Rectangle().fill(Color.cyan.opacity(0.8)).frame(height: 1).offset(y: pageTop)
+            Rectangle().fill(Color.red).frame(height: 2)
+            Text(label)
+                .font(.system(size: 18, weight: .bold, design: .monospaced))
+                .foregroundStyle(.black)
+                .padding(6)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+        }
+        .frame(width: outer.width, height: outer.height, alignment: .top)
+    }
+
+    private var label: String {
+        let outgoing: String
+        if let content = sample.outgoing {
+            outgoing = String(format: "o%.2f b%.1f s%.3f", content.opacity, content.blur, content.scale)
+        } else {
+            outgoing = "hidden"
+        }
+        return String(
+            format: "t=%.2fs shell=%.0fx%.0f out[%@]",
+            time, sample.shellFrame.width, sample.shellFrame.height, outgoing
         )
     }
 }
