@@ -59,7 +59,7 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <key>LSUIElement</key>
   <true/>
   <key>NSAppleEventsUsageDescription</key>
-  <string>DynamicIsland can read and control Spotify or Music playback when you use the media module.</string>
+  <string>DynamicIsland can read and control Spotify or Music playback when you use the media module, and send the Messages replies you write in the island to the exact conversation they answer.</string>
   <key>NSCameraUsageDescription</key>
   <string>DynamicIsland shows a live camera preview in the island only while you have the camera preview open. Frames are not recorded or saved.</string>
   <key>NSFocusStatusUsageDescription</key>
