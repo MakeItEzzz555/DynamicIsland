@@ -10,4 +10,5 @@ struct ProductivityModules {
     let camera: CameraPreviewController
     let backgroundRemoval: BackgroundRemovalController
     let screenRecording: ScreenRecordingController
+    let screenRecordingSetup: ScreenRecordingSetupPresenter
 }

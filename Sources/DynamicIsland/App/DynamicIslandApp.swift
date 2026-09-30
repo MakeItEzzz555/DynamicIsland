@@ -135,8 +135,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         voice: voiceTranscription,
         camera: cameraPreview,
         backgroundRemoval: backgroundRemoval,
-        screenRecording: screenRecording
+        screenRecording: screenRecording,
+        screenRecordingSetup: screenRecordingSetup
     )
+    /// Recorder setup surface, anchored under the island on its current
+    /// screen once the overlay exists.
+    private lazy var screenRecordingSetup = ScreenRecordingSetupPresenter.production(controller: screenRecording)
     private lazy var systemHUDController = SystemHUDController(
         settings: settings,
         liveActivities: liveActivities
@@ -242,6 +246,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         )
         self.overlayController = overlayController
+        screenRecordingSetup.anchorProvider = { [weak overlayController] in
+            overlayController?.screenRecordingSetupAnchor()
+        }
         overlayController.setVisible(settings.overlayEnabled)
         LaunchAtLoginController.setEnabled(settings.launchAtLoginEnabled)
 

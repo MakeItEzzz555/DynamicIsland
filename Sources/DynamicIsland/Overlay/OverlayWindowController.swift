@@ -1115,6 +1115,11 @@ final class OverlayWindowController {
             guard self.islandState.state == .expanded else {
                 return event
             }
+            // Esc aimed at another window (recorder setup, Settings) belongs
+            // to that window, not to the island.
+            guard event.window == nil || event.window === self.islandPanel else {
+                return event
+            }
             switch IslandEscapeRoutingPolicy.route(
                 islandState: self.islandState.state,
                 topmostPresentation: self.escapeRouter.topmostPresentation
@@ -1197,6 +1202,18 @@ final class OverlayWindowController {
     private func visibleExpandedAccessoryScreenFrames() -> [NSRect] {
         guard islandState.state == .expanded else { return [] }
         return layoutStore.expandedAccessoryFrames.map(screenRect(for:)).filter { !$0.isEmpty }
+    }
+
+    /// Anchor for the recorder setup surface: the island's current screen
+    /// and its visible shell, so the setup opens directly under the island.
+    func screenRecordingSetupAnchor() -> ScreenRecordingSetupAnchor? {
+        guard let screen = islandPanel.screen ?? NotchGeometryService.preferredScreen() ?? NSScreen.main else {
+            return nil
+        }
+        let islandFrame = islandState.state == .expanded
+            ? visibleExpandedShellScreenFrame()
+            : (targetCollapsedFrame ?? islandPanel.frame)
+        return ScreenRecordingSetupAnchor(screenVisibleFrame: screen.visibleFrame, islandFrame: islandFrame)
     }
 
     private func visibleExpandedShellScreenFrame() -> NSRect {

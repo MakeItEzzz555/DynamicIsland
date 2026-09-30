@@ -3,12 +3,18 @@ import SwiftUI
 
 struct ScreenRecordingTile: View {
     @ObservedObject var controller: ScreenRecordingController
+    /// Owns the setup surface outside the island tree (see
+    /// ScreenRecordingSetupPresenter); a tile @State sheet did not survive
+    /// the island's panel topology or collapse.
+    @ObservedObject var setup: ScreenRecordingSetupPresenter
     let status: String?
-    @State private var showsSetup = false
+    @Environment(\.isSettingsPreview) private var isSettingsPreview
 
     var body: some View {
         Button {
-            showsSetup = true
+            // Settings fixtures are inert: they never open the real recorder.
+            guard !isSettingsPreview else { return }
+            setup.present()
         } label: {
             WorkspaceTileLabel(
                 symbol: controller.isActuallyCapturing ? "record.circle.fill" : RightWorkspaceTool.screenRecording.symbolName,
@@ -22,9 +28,7 @@ struct ScreenRecordingTile: View {
         .buttonStyle(WorkspaceTileButtonStyle(isOn: controller.isActuallyCapturing, accent: .red))
         .accessibilityLabel(controller.isActuallyCapturing ? "Screen recording controls" : "Start screen recording")
         .accessibilityValue(controller.statusText)
-        .sheet(isPresented: $showsSetup) {
-            ScreenRecordingSetupView(controller: controller)
-        }
+        .help(isSettingsPreview ? "Preview only" : "Open screen recording setup")
     }
 }
 
@@ -135,7 +139,7 @@ struct CollapsedScreenRecordingActivityView: View {
 
 struct ScreenRecordingSetupView: View {
     @ObservedObject var controller: ScreenRecordingController
-    @Environment(\.dismiss) private var dismiss
+    var onClose: () -> Void = {}
     @Environment(\.islandDisplayMetrics) private var displayMetrics
     @State private var targetKind: ScreenRecordingTargetKind = .display
     @State private var displayID: CGDirectDisplayID?
@@ -149,7 +153,7 @@ struct ScreenRecordingSetupView: View {
                     .font(.system(size: displayMetrics.font(16, minimum: 14, maximum: 18), weight: .bold, design: .rounded))
                 Spacer()
                 Button {
-                    dismiss()
+                    onClose()
                 } label: {
                     Image(systemName: "xmark")
                 }
@@ -181,7 +185,11 @@ struct ScreenRecordingSetupView: View {
         }
         .padding(displayMetrics.spacing(18, minimum: 16, maximum: 22))
         .frame(width: 440 * displayMetrics.expandedCardScale)
-        .background(.black.opacity(0.96))
+        .background(.black.opacity(0.96), in: RoundedRectangle(cornerRadius: 18 * displayMetrics.cornerRadiusScale, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18 * displayMetrics.cornerRadiusScale, style: .continuous)
+                .stroke(.white.opacity(0.10), lineWidth: 1)
+        }
         .preferredColorScheme(.dark)
         .task {
             await controller.prepareTargets(requestPermission: false)

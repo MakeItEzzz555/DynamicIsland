@@ -340,7 +340,11 @@ private struct ProductivityToolTile: View {
             .buttonStyle(WorkspaceTileButtonStyle(isOn: controllerIsCameraActive, accent: .cyan))
             .accessibilityLabel("Open Camera Mirror")
         case .screenRecording:
-            ScreenRecordingTile(controller: productivity.screenRecording, status: snapshot?.statusText)
+            ScreenRecordingTile(
+                controller: productivity.screenRecording,
+                setup: productivity.screenRecordingSetup,
+                status: snapshot?.statusText
+            )
         }
     }
 

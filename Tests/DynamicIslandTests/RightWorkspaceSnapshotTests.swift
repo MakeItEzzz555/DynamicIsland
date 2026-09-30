@@ -67,7 +67,8 @@ final class WorkspaceRenderHarness {
         voice: VoiceTranscriptionController(liveActivities: liveActivities, capabilities: registry, addToShelf: { _ in }),
         camera: CameraPreviewController(liveActivities: liveActivities, capabilities: registry),
         backgroundRemoval: BackgroundRemovalController(liveActivities: liveActivities, capabilities: registry, addToShelf: { _ in }),
-        screenRecording: screenRecording
+        screenRecording: screenRecording,
+        screenRecordingSetup: .production(controller: screenRecording)
     )
     let services = WorkspaceServices(
         appLibrary: AppLibraryStore(defaults: UserDefaults(suiteName: "WorkspaceRenderApps-\(UUID().uuidString)")!),
