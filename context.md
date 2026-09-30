@@ -49,7 +49,7 @@ The app targets macOS 14.6+ and uses Swift Package Manager, SwiftUI views hosted
 - Album artwork flips must wait for the real new artwork image/revision before midpoint swap.
 - Visualizer accent color must be keyed from the actual displayed artwork image key/revision, not the early selected artwork key.
 - Expanded tray shell/background keeps its bouncy/elastic shell behavior.
-- Inner expanded components use clean blur/scale/opacity animation without spring bounce.
+- The physical island shell must not scale or bounce during tab geometry transitions: it stays top-pinned and morphs width/height independently. Internal expanded-tab content may use the deliberate source-backed spring/materialization choreography defined by `ExpandedIslandMotion` (subtle shrink/blur/fade out, compressed spring/blur/fade in). Reduce Motion removes that internal scale/spring/blur.
 - `IslandStateStore` must remain limited to `.collapsed` and `.expanded`.
 - Do not rewrite `OverlayWindowController` unless a specific feature requires it; it is the most fragile file.
 - Do not remove or bypass the artwork-image/revision guards that prevent stale covers and stale visualizer colors.
