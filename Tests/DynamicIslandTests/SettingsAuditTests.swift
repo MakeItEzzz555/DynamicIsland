@@ -47,7 +47,7 @@ final class SettingsAuditTests: XCTestCase {
             switch entry.classification {
             case .visual:
                 XCTAssertNotNil(entry.preview, "\(entry.key) is visual but has no preview")
-            case .visualWithoutPreview, .noProductionReader:
+            case .visualWithoutPreview, .noProductionReader, .deprecatedHidden:
                 XCTAssertFalse(entry.note.isEmpty, "\(entry.key) needs a justification")
             default:
                 break
@@ -72,12 +72,27 @@ final class SettingsAuditTests: XCTestCase {
             "collapsedPriorityRunningTimer", "collapsedPriorityPlayingMedia", "collapsedPriorityPausedTimer",
             "collapsedPriorityRecentFiles", "collapsedPriorityPausedMedia"
         ]
+        let settingsView = try source("Views/SettingsView.swift")
+        XCTAssertFalse(
+            SettingsAuditCatalog.entries.contains { $0.classification == .noProductionReader },
+            "User-facing settings with no production reader are forbidden"
+        )
+
         for entry in SettingsAuditCatalog.entries where !entry.key.contains(".") {
             let external = hasExternalReader(entry.key)
-            if entry.classification == .noProductionReader {
-                XCTAssertFalse(external, "\(entry.key) is read in production; reclassify it")
-            } else if !external {
-                XCTAssertTrue(indirect.contains(entry.key), "\(entry.key) has no production reader but is classified \(entry.classification)")
+            switch entry.classification {
+            case .noProductionReader:
+                XCTFail("\(entry.key) is a forbidden user-facing dead setting")
+            case .deprecatedHidden:
+                XCTAssertFalse(external, "\(entry.key) gained a production reader; reclassify it")
+                XCTAssertFalse(
+                    settingsView.contains(entry.key),
+                    "\(entry.key) is deprecated/hidden but is still exposed in SettingsView"
+                )
+            default:
+                if !external {
+                    XCTAssertTrue(indirect.contains(entry.key), "\(entry.key) has no production reader but is classified \(entry.classification)")
+                }
             }
         }
     }

@@ -170,13 +170,9 @@ struct SettingsView: View {
             SettingsGroup("General") {
                 Toggle("Enable overlay", isOn: $settings.overlayEnabled)
                 Toggle("Launch at login", isOn: $settings.launchAtLoginEnabled)
-                Toggle("Start collapsed on launch", isOn: $settings.startCollapsedOnLaunch)
                 Toggle("Expand on click", isOn: $settings.expandOnClick)
                 Toggle("Collapse on mouse leave", isOn: $settings.collapseOnMouseLeave)
                 Toggle("Auto collapse", isOn: $settings.autoCollapseEnabled)
-                Toggle("Expand on hover", isOn: $settings.expandOnHover)
-                    .disabled(true)
-                HelpText("Expand on hover is stored now and left unwired until a dedicated hover-expansion pass.")
             }
 
             SettingsGroup("Auto Collapse") {
@@ -290,13 +286,6 @@ struct SettingsView: View {
                 Toggle("Timer tab", isOn: $settings.showTimerTab)
                 Toggle("Stats tab", isOn: $settings.showStatsTab)
                 Toggle("Tools tab", isOn: $settings.showToolsTab)
-                Toggle("Activities tab", isOn: $settings.showActivitiesTab)
-                    .disabled(true)
-                Toggle("Live Activities tab", isOn: $settings.showLiveActivitiesTab)
-                    .disabled(true)
-                Toggle("Gestures tab", isOn: $settings.showGesturesTab)
-                    .disabled(true)
-                HelpText("Only Island, Tray, Timer, and Stats are implemented as live tabs in this phase.")
             }
 
             SettingsGroup("Selection") {
@@ -342,19 +331,6 @@ struct SettingsView: View {
                 Toggle("Show YouTube launcher", isOn: $settings.showYouTubeLauncher)
             }
 
-            SettingsGroup("Providers") {
-                Toggle("Prefer System Now Playing", isOn: $settings.preferSystemNowPlaying)
-                    .disabled(true)
-                Toggle("Prefer Spotify AppleScript", isOn: $settings.preferSpotifyAppleScript)
-                    .disabled(true)
-                Toggle("Prefer browser media", isOn: $settings.preferBrowserMedia)
-                    .disabled(true)
-                Toggle("Browser media detection", isOn: $settings.browserMediaDetectionEnabled)
-                    .disabled(true)
-                Toggle("YouTube metadata enrichment", isOn: $settings.youtubeMetadataEnrichmentEnabled)
-                    .disabled(true)
-                HelpText("Provider preference fields are persisted now and left for a dedicated media-provider wiring pass.")
-            }
         }
     }
 
@@ -407,9 +383,6 @@ struct SettingsView: View {
                 Toggle("Show progress ring", isOn: $settings.showTimerProgressRing)
                 Toggle("Ring animation", isOn: $settings.timerRingAnimationEnabled)
                 Toggle("Collapse after starting timer", isOn: $settings.collapseAfterStartingTimer)
-                Toggle("Keep expanded while timer runs", isOn: $settings.keepIslandExpandedWhenTimerRunning)
-                    .disabled(true)
-                HelpText("Keeping the island pinned while the timer runs is stored now and left for a later interaction pass.")
             }
 
             SettingsGroup("Presets") {
@@ -425,11 +398,6 @@ struct SettingsView: View {
                 HelpText("Timer completion notifications use the native macOS alert and system sound.")
             }
 
-            SettingsGroup("Future Options") {
-                Toggle("Show timer in collapsed island", isOn: $settings.showTimerInCollapsedIsland)
-                    .disabled(true)
-                HelpText("Collapsed-timer presentation is stored now and not implemented yet.")
-            }
         }
     }
 
@@ -663,24 +631,6 @@ struct SettingsView: View {
                 Toggle("Uptime", isOn: $settings.showUptime)
             }
 
-            SettingsGroup("Activities") {
-                Toggle("Animate stats charts", isOn: $settings.animateStatsCharts)
-                    .disabled(true)
-                Toggle("Pause stats during shell morph", isOn: $settings.pauseStatsDuringShellMorph)
-                    .disabled(true)
-                Toggle("Enable activities", isOn: $settings.activitiesEnabled)
-                    .disabled(true)
-                SliderRow(title: "Activities refresh", value: $settings.activitiesRefreshIntervalSeconds, range: 0.5...30.0, format: "%.1fs", disabled: true)
-                Toggle("Running apps", isOn: $settings.showRunningAppsActivity)
-                    .disabled(true)
-                Toggle("Downloads", isOn: $settings.showDownloadsActivity)
-                    .disabled(true)
-                Toggle("Calendar", isOn: $settings.showCalendarActivity)
-                    .disabled(true)
-                Toggle("Now Playing", isOn: $settings.showNowPlayingActivity)
-                    .disabled(true)
-                HelpText("Only the existing Stats tab is live in this phase. Activities fields are future-facing.")
-            }
         }
     }
 
@@ -699,26 +649,10 @@ struct SettingsView: View {
             }
             SettingsGroup("Sources") {
                 Toggle("Enable live activities", isOn: $settings.liveActivitiesEnabled)
-                Picker("Style", selection: $settings.liveActivityStyle) {
-                    ForEach(LiveActivityStyle.allCases) { style in
-                        Text(style.rawValue.capitalized).tag(style)
-                    }
-                }
-                .disabled(true)
                 Toggle("Music live activity", isOn: $settings.showMusicLiveActivity)
                 Toggle("Timer live activity", isOn: $settings.showTimerLiveActivity)
                 Toggle("File drop live activity", isOn: $settings.showFileDropLiveActivity)
                 Toggle("Battery live activity", isOn: $settings.showBatteryLiveActivity)
-                Toggle("Calendar live activity", isOn: $settings.showCalendarLiveActivity)
-                    .disabled(true)
-                Toggle("Downloads live activity", isOn: $settings.showDownloadsLiveActivity)
-                    .disabled(true)
-                Toggle("Auto dismiss", isOn: $settings.liveActivityAutoDismissEnabled)
-                    .disabled(true)
-                SliderRow(title: "Dismiss delay", value: $settings.liveActivityAutoDismissSeconds, range: 1...60, format: "%.0fs", disabled: true)
-                Toggle("Animation", isOn: $settings.liveActivityAnimationEnabled)
-                    .disabled(true)
-                HelpText("Music, Timer, File Tray, and Battery activities appear in the Island tab. Calendar, Downloads, and auto-dismiss controls are reserved for later phases.")
             }
             SettingsGroup("System HUDs") {
                 Toggle("Enable system HUDs", isOn: $settings.systemHUDsEnabled)
@@ -911,8 +845,6 @@ struct SettingsView: View {
                     format: "%.2fs",
                     disabled: !settings.gesturesEnabled
                 )
-                Toggle("Show gesture hints", isOn: $settings.showGestureHints)
-                    .disabled(!settings.gesturesEnabled)
                 Toggle("Require confirmation", isOn: $settings.requireGestureConfirmation)
                     .disabled(!settings.gesturesEnabled)
                 HelpText("Pointer gestures use the mappings below. Camera gestures remain unavailable.")
@@ -936,14 +868,6 @@ struct SettingsView: View {
                 gestureActionPicker("Long Press", selection: $settings.expandedLongPressAction)
             }
 
-            SettingsGroup("Coming Soon") {
-                Text("Camera gestures")
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.74))
-                Toggle("Privacy mode", isOn: $settings.gesturePrivacyMode)
-                    .disabled(true)
-                HelpText("Camera-based gestures are not implemented. No camera permission, capture session, or hand recognition is used.")
-            }
         }
     }
 
@@ -971,16 +895,8 @@ struct SettingsView: View {
     private var advancedSection: some View {
         settingsForm("Advanced") {
             SettingsGroup("Debug") {
-                Toggle("Verbose UI logs", isOn: $settings.verboseUILogsEnabled)
-                    .disabled(true)
-                Toggle("Show debug frames", isOn: $settings.showDebugFrames)
-                    .disabled(true)
-                Toggle("Show hit-test region debug", isOn: $settings.showHitTestRegionDebug)
-                    .disabled(true)
                 Toggle("Disable visualizer during morph", isOn: $settings.disableVisualizerDuringMorph)
-                    .disabled(true)
-                Toggle("Disable thumbnails during morph", isOn: $settings.disableThumbnailsDuringMorph)
-                HelpText("Verbose logging and debug overlays remain launch/debug-only in this phase.")
+                HelpText("Performance controls shown here are wired to the production renderer.")
             }
 
             SettingsGroup("Reset") {

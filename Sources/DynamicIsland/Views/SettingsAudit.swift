@@ -25,8 +25,12 @@ enum SettingsAuditClass: String, CaseIterable, Sendable {
     case permission = "PERMISSION"
     case dataPersistence = "DATA/PERSISTENCE"
     case externalIntegration = "EXTERNAL INTEGRATION"
-    /// Shown in Settings but no production code reads it (audit finding).
+    /// Audit finding: a user-facing setting has no production reader. The
+    /// catalog must contain zero of these at release checkpoints.
     case noProductionReader = "NO PRODUCTION READER"
+    /// Persisted only for compatibility with older settings files. It is not
+    /// exposed in Settings until a real production reader exists.
+    case deprecatedHidden = "DEPRECATED / HIDDEN"
 }
 
 struct SettingsAuditEntry: Sendable {
@@ -47,7 +51,8 @@ enum SettingsAuditCatalog {
         keys.map { SettingsAuditEntry(key: $0, classification: classification, preview: nil, note: note) }
     }
 
-    static let noReaderNote = "Shown in Settings, but no production code reads it; it has no effect today."
+    static let noReaderNote = "User-facing setting has no production reader; this classification must remain empty."
+    static let deprecatedNote = "Legacy persisted value retained for migration compatibility; hidden from Settings until real production behavior exists."
 
     static let entries: [SettingsAuditEntry] =
         // Island
@@ -59,7 +64,7 @@ enum SettingsAuditCatalog {
         + entries(["overlayEnabled", "launchAtLoginEnabled", "expandOnClick", "collapseOnMouseLeave", "autoCollapseEnabled",
                    "autoCollapseDelayPreset", "autoCollapseGraceSeconds"], .behavioral,
                   "Pointer/launch behavior; auto-collapse values are read through AppSettings computed timing.")
-        + entries(["startCollapsedOnLaunch", "expandOnHover"], .noProductionReader, noReaderNote)
+        + entries(["startCollapsedOnLaunch", "expandOnHover"], .deprecatedHidden, deprecatedNote)
         // Motion
         + visual(["animationPreset", "reduceExtraMotion", "shellAnimationSpeed"], .islandShell,
                  "Replay shows the shared IslandShellMotion animation.")
@@ -74,12 +79,12 @@ enum SettingsAuditCatalog {
                    "collapsedHoverPreviewDelay", "collapsedHoverPreviewShowTitle", "collapsedHoverPreviewShowsArtist",
                    "collapsedHoverPreviewShowsSource", "collapsedHoverPreviewTitleIconName"], .visualWithoutPreview,
                   "The hover preview appears only while the pointer rests on the collapsed island; not reproduced in Settings yet.")
-        + entries(["collapsedHoverPreviewArtistIconName"], .noProductionReader, noReaderNote)
+        + entries(["collapsedHoverPreviewArtistIconName"], .deprecatedHidden, deprecatedNote)
         // Tabs
         + visual(["showTrayTab", "showTimerTab", "showStatsTab", "showToolsTab", "showAgentsTab", "showIslandTab"], .islandShell,
                  "The expanded preview renders the production page switcher.")
         + entries(["rememberLastSelectedTab", "defaultExpandedTab"], .behavioral, "Which tab opens on expansion.")
-        + entries(["showActivitiesTab", "showLiveActivitiesTab", "showGesturesTab"], .noProductionReader, noReaderNote)
+        + entries(["showActivitiesTab", "showLiveActivitiesTab", "showGesturesTab"], .deprecatedHidden, deprecatedNote)
         // Agents
         + visual(["agentUsageMetricsEnabled"], .agents)
         + entries(["agentActivityEnabled", "agentCompletionAlertsEnabled", "agentApprovalAlertsEnabled", "agentSoundsEnabled",
@@ -93,7 +98,7 @@ enum SettingsAuditCatalog {
         + entries(["openSourceOnArtworkClick", "collapseAfterOpeningMediaSource", "collapseAfterMediaLauncher"], .behavioral,
                   "Click behavior.")
         + entries(["preferSystemNowPlaying", "preferSpotifyAppleScript", "preferBrowserMedia", "browserMediaDetectionEnabled",
-                   "youtubeMetadataEnrichmentEnabled"], .noProductionReader, noReaderNote)
+                   "youtubeMetadataEnrichmentEnabled"], .deprecatedHidden, deprecatedNote)
         // Tray
         + visual(["showFileThumbnails", "showFileExtensions", "showFileCountBadge"], .fileTray)
         + entries(["airDropZoneEnabled"], .visualWithoutPreview,
@@ -108,15 +113,15 @@ enum SettingsAuditCatalog {
         + visual(["showTimerProgressRing", "timerRingAnimationEnabled"], .liveActivityLayout)
         + entries(["timerEnabled", "timerSoundEnabled", "timerNotificationEnabled", "collapseAfterStartingTimer"], .behavioral,
                   "Timer behavior and alerts.")
-        + entries(["keepIslandExpandedWhenTimerRunning", "showTimerInCollapsedIsland"], .noProductionReader, noReaderNote)
+        + entries(["keepIslandExpandedWhenTimerRunning", "showTimerInCollapsedIsland"], .deprecatedHidden, deprecatedNote)
         // Stats
         + visual(["showCPU", "showMemory", "showGPU", "showNetwork", "showDisk", "showBattery", "showUptime",
                   "showActivityIndicator"], .stats, "Rendered with live values.")
         + entries(["statsEnabled", "statsRefreshIntervalSeconds"], .behavioral, "Sampling behavior.")
-        + entries(["animateStatsCharts", "pauseStatsDuringShellMorph"], .noProductionReader, noReaderNote)
+        + entries(["animateStatsCharts", "pauseStatsDuringShellMorph"], .deprecatedHidden, deprecatedNote)
         // Activities (legacy)
         + entries(["activitiesEnabled", "activitiesRefreshIntervalSeconds", "showRunningAppsActivity", "showDownloadsActivity",
-                   "showCalendarActivity", "showNowPlayingActivity"], .noProductionReader, noReaderNote)
+                   "showCalendarActivity", "showNowPlayingActivity"], .deprecatedHidden, deprecatedNote)
         // Clipboard
         + entries(["clipboardHistoryEnabled"], .behavioral, "Starts or stops pasteboard monitoring.")
         + entries(["clipboardHistoryMaximumItems", "clipboardHistoryPersistenceEnabled", "clipboardHistoryCaptureImagesEnabled"],
@@ -126,7 +131,7 @@ enum SettingsAuditCatalog {
         + visual(["showMusicLiveActivity", "showTimerLiveActivity", "showFileDropLiveActivity", "showBatteryLiveActivity",
                   "allowSimultaneousLiveActivitySidecars", "timerSidecarPreference"], .liveActivityLayout)
         + entries(["liveActivityStyle", "showCalendarLiveActivity", "showDownloadsLiveActivity", "liveActivityAutoDismissEnabled",
-                   "liveActivityAutoDismissSeconds", "liveActivityAnimationEnabled"], .noProductionReader, noReaderNote)
+                   "liveActivityAutoDismissSeconds", "liveActivityAnimationEnabled"], .deprecatedHidden, deprecatedNote)
         // HUDs
         + visual(["systemHUDsEnabled", "volumeHUDEnabled", "brightnessHUDEnabled", "capsLockHUDEnabled",
                   "batteryStatusHUDEnabled", "lowBatteryHUDEnabled", "audioDeviceHUDEnabled", "focusHUDEnabled"], .systemHUD)
@@ -143,11 +148,11 @@ enum SettingsAuditCatalog {
                    "expandedDoubleClickAction", "expandedSwipeDownAction", "expandedSwipeUpAction", "expandedSwipeLeftAction",
                    "expandedSwipeRightAction", "expandedLongPressAction", "gestureSensitivity", "gestureCooldownSeconds",
                    "requireGestureConfirmation"], .behavioral, "Gesture recognition and actions.")
-        + entries(["showGestureHints", "gesturePrivacyMode"], .noProductionReader, noReaderNote)
+        + entries(["showGestureHints", "gesturePrivacyMode"], .deprecatedHidden, deprecatedNote)
         // Advanced
         + entries(["disableVisualizerDuringMorph"], .behavioral, "Performance behavior during shell morph.")
         + entries(["verboseUILogsEnabled", "showDebugFrames", "showHitTestRegionDebug", "disableThumbnailsDuringMorph"],
-                  .noProductionReader, noReaderNote)
+                  .deprecatedHidden, deprecatedNote)
         // Right workspace (RightWorkspaceConfiguration)
         + visual(["rightWorkspace.pageOrder", "rightWorkspace.hiddenPages", "rightWorkspace.defaultPage",
                   "rightWorkspace.indicatorStyle", "rightWorkspace.toolOrder", "rightWorkspace.hiddenTools",

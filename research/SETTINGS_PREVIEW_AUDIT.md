@@ -11,7 +11,8 @@ A unit test keeps it in sync with every `@Published` property in `AppSettings`.
 | PERMISSION | 1 |
 | DATA/PERSISTENCE | 5 |
 | EXTERNAL INTEGRATION | 1 |
-| NO PRODUCTION READER | 33 |
+| NO PRODUCTION READER | 0 |
+| DEPRECATED / HIDDEN | 33 |
 | **Total** | **199** |
 
 | Setting | Classification | Live preview | Note |
@@ -32,8 +33,8 @@ A unit test keeps it in sync with every `@Published` property in `AppSettings`.
 | `autoCollapseEnabled` | BEHAVIORAL | — | Pointer/launch behavior; auto-collapse values are read through AppSettings computed timing. |
 | `autoCollapseDelayPreset` | BEHAVIORAL | — | Pointer/launch behavior; auto-collapse values are read through AppSettings computed timing. |
 | `autoCollapseGraceSeconds` | BEHAVIORAL | — | Pointer/launch behavior; auto-collapse values are read through AppSettings computed timing. |
-| `startCollapsedOnLaunch` | NO PRODUCTION READER | — | Shown in Settings, but no production code reads it; it has no effect today. |
-| `expandOnHover` | NO PRODUCTION READER | — | Shown in Settings, but no production code reads it; it has no effect today. |
+| `startCollapsedOnLaunch` | DEPRECATED / HIDDEN | — | Legacy persisted value retained for migration compatibility; hidden from Settings until real production behavior exists. |
+| `expandOnHover` | DEPRECATED / HIDDEN | — | Legacy persisted value retained for migration compatibility; hidden from Settings until real production behavior exists. |
 | `animationPreset` | VISUAL | Island Preview (Island, Appearance, Motion, Tabs) | Replay shows the shared IslandShellMotion animation. |
 | `reduceExtraMotion` | VISUAL | Island Preview (Island, Appearance, Motion, Tabs) | Replay shows the shared IslandShellMotion animation. |
 | `shellAnimationSpeed` | VISUAL | Island Preview (Island, Appearance, Motion, Tabs) | Replay shows the shared IslandShellMotion animation. |
@@ -54,7 +55,7 @@ A unit test keeps it in sync with every `@Published` property in `AppSettings`.
 | `collapsedHoverPreviewShowsArtist` | VISUAL (no preview, justified) | — | The hover preview appears only while the pointer rests on the collapsed island; not reproduced in Settings yet. |
 | `collapsedHoverPreviewShowsSource` | VISUAL (no preview, justified) | — | The hover preview appears only while the pointer rests on the collapsed island; not reproduced in Settings yet. |
 | `collapsedHoverPreviewTitleIconName` | VISUAL (no preview, justified) | — | The hover preview appears only while the pointer rests on the collapsed island; not reproduced in Settings yet. |
-| `collapsedHoverPreviewArtistIconName` | NO PRODUCTION READER | — | Shown in Settings, but no production code reads it; it has no effect today. |
+| `collapsedHoverPreviewArtistIconName` | DEPRECATED / HIDDEN | — | Legacy persisted value retained for migration compatibility; hidden from Settings until real production behavior exists. |
 | `showTrayTab` | VISUAL | Island Preview (Island, Appearance, Motion, Tabs) | The expanded preview renders the production page switcher. |
 | `showTimerTab` | VISUAL | Island Preview (Island, Appearance, Motion, Tabs) | The expanded preview renders the production page switcher. |
 | `showStatsTab` | VISUAL | Island Preview (Island, Appearance, Motion, Tabs) | The expanded preview renders the production page switcher. |
@@ -63,9 +64,9 @@ A unit test keeps it in sync with every `@Published` property in `AppSettings`.
 | `showIslandTab` | VISUAL | Island Preview (Island, Appearance, Motion, Tabs) | The expanded preview renders the production page switcher. |
 | `rememberLastSelectedTab` | BEHAVIORAL | — | Which tab opens on expansion. |
 | `defaultExpandedTab` | BEHAVIORAL | — | Which tab opens on expansion. |
-| `showActivitiesTab` | NO PRODUCTION READER | — | Shown in Settings, but no production code reads it; it has no effect today. |
-| `showLiveActivitiesTab` | NO PRODUCTION READER | — | Shown in Settings, but no production code reads it; it has no effect today. |
-| `showGesturesTab` | NO PRODUCTION READER | — | Shown in Settings, but no production code reads it; it has no effect today. |
+| `showActivitiesTab` | DEPRECATED / HIDDEN | — | Legacy persisted value retained for migration compatibility; hidden from Settings until real production behavior exists. |
+| `showLiveActivitiesTab` | DEPRECATED / HIDDEN | — | Legacy persisted value retained for migration compatibility; hidden from Settings until real production behavior exists. |
+| `showGesturesTab` | DEPRECATED / HIDDEN | — | Legacy persisted value retained for migration compatibility; hidden from Settings until real production behavior exists. |
 | `agentUsageMetricsEnabled` | VISUAL | Agents Preview |  |
 | `agentActivityEnabled` | BEHAVIORAL | — | Agent monitoring and alert behavior. |
 | `agentCompletionAlertsEnabled` | BEHAVIORAL | — | Agent monitoring and alert behavior. |
@@ -90,11 +91,11 @@ A unit test keeps it in sync with every `@Published` property in `AppSettings`.
 | `openSourceOnArtworkClick` | BEHAVIORAL | — | Click behavior. |
 | `collapseAfterOpeningMediaSource` | BEHAVIORAL | — | Click behavior. |
 | `collapseAfterMediaLauncher` | BEHAVIORAL | — | Click behavior. |
-| `preferSystemNowPlaying` | NO PRODUCTION READER | — | Shown in Settings, but no production code reads it; it has no effect today. |
-| `preferSpotifyAppleScript` | NO PRODUCTION READER | — | Shown in Settings, but no production code reads it; it has no effect today. |
-| `preferBrowserMedia` | NO PRODUCTION READER | — | Shown in Settings, but no production code reads it; it has no effect today. |
-| `browserMediaDetectionEnabled` | NO PRODUCTION READER | — | Shown in Settings, but no production code reads it; it has no effect today. |
-| `youtubeMetadataEnrichmentEnabled` | NO PRODUCTION READER | — | Shown in Settings, but no production code reads it; it has no effect today. |
+| `preferSystemNowPlaying` | DEPRECATED / HIDDEN | — | Legacy persisted value retained for migration compatibility; hidden from Settings until real production behavior exists. |
+| `preferSpotifyAppleScript` | DEPRECATED / HIDDEN | — | Legacy persisted value retained for migration compatibility; hidden from Settings until real production behavior exists. |
+| `preferBrowserMedia` | DEPRECATED / HIDDEN | — | Legacy persisted value retained for migration compatibility; hidden from Settings until real production behavior exists. |
+| `browserMediaDetectionEnabled` | DEPRECATED / HIDDEN | — | Legacy persisted value retained for migration compatibility; hidden from Settings until real production behavior exists. |
+| `youtubeMetadataEnrichmentEnabled` | DEPRECATED / HIDDEN | — | Legacy persisted value retained for migration compatibility; hidden from Settings until real production behavior exists. |
 | `showFileThumbnails` | VISUAL | File Tray Preview |  |
 | `showFileExtensions` | VISUAL | File Tray Preview |  |
 | `showFileCountBadge` | VISUAL | File Tray Preview |  |
@@ -122,8 +123,8 @@ A unit test keeps it in sync with every `@Published` property in `AppSettings`.
 | `timerSoundEnabled` | BEHAVIORAL | — | Timer behavior and alerts. |
 | `timerNotificationEnabled` | BEHAVIORAL | — | Timer behavior and alerts. |
 | `collapseAfterStartingTimer` | BEHAVIORAL | — | Timer behavior and alerts. |
-| `keepIslandExpandedWhenTimerRunning` | NO PRODUCTION READER | — | Shown in Settings, but no production code reads it; it has no effect today. |
-| `showTimerInCollapsedIsland` | NO PRODUCTION READER | — | Shown in Settings, but no production code reads it; it has no effect today. |
+| `keepIslandExpandedWhenTimerRunning` | DEPRECATED / HIDDEN | — | Legacy persisted value retained for migration compatibility; hidden from Settings until real production behavior exists. |
+| `showTimerInCollapsedIsland` | DEPRECATED / HIDDEN | — | Legacy persisted value retained for migration compatibility; hidden from Settings until real production behavior exists. |
 | `showCPU` | VISUAL | Stats Preview | Rendered with live values. |
 | `showMemory` | VISUAL | Stats Preview | Rendered with live values. |
 | `showGPU` | VISUAL | Stats Preview | Rendered with live values. |
@@ -134,14 +135,14 @@ A unit test keeps it in sync with every `@Published` property in `AppSettings`.
 | `showActivityIndicator` | VISUAL | Stats Preview | Rendered with live values. |
 | `statsEnabled` | BEHAVIORAL | — | Sampling behavior. |
 | `statsRefreshIntervalSeconds` | BEHAVIORAL | — | Sampling behavior. |
-| `animateStatsCharts` | NO PRODUCTION READER | — | Shown in Settings, but no production code reads it; it has no effect today. |
-| `pauseStatsDuringShellMorph` | NO PRODUCTION READER | — | Shown in Settings, but no production code reads it; it has no effect today. |
-| `activitiesEnabled` | NO PRODUCTION READER | — | Shown in Settings, but no production code reads it; it has no effect today. |
-| `activitiesRefreshIntervalSeconds` | NO PRODUCTION READER | — | Shown in Settings, but no production code reads it; it has no effect today. |
-| `showRunningAppsActivity` | NO PRODUCTION READER | — | Shown in Settings, but no production code reads it; it has no effect today. |
-| `showDownloadsActivity` | NO PRODUCTION READER | — | Shown in Settings, but no production code reads it; it has no effect today. |
-| `showCalendarActivity` | NO PRODUCTION READER | — | Shown in Settings, but no production code reads it; it has no effect today. |
-| `showNowPlayingActivity` | NO PRODUCTION READER | — | Shown in Settings, but no production code reads it; it has no effect today. |
+| `animateStatsCharts` | DEPRECATED / HIDDEN | — | Legacy persisted value retained for migration compatibility; hidden from Settings until real production behavior exists. |
+| `pauseStatsDuringShellMorph` | DEPRECATED / HIDDEN | — | Legacy persisted value retained for migration compatibility; hidden from Settings until real production behavior exists. |
+| `activitiesEnabled` | DEPRECATED / HIDDEN | — | Legacy persisted value retained for migration compatibility; hidden from Settings until real production behavior exists. |
+| `activitiesRefreshIntervalSeconds` | DEPRECATED / HIDDEN | — | Legacy persisted value retained for migration compatibility; hidden from Settings until real production behavior exists. |
+| `showRunningAppsActivity` | DEPRECATED / HIDDEN | — | Legacy persisted value retained for migration compatibility; hidden from Settings until real production behavior exists. |
+| `showDownloadsActivity` | DEPRECATED / HIDDEN | — | Legacy persisted value retained for migration compatibility; hidden from Settings until real production behavior exists. |
+| `showCalendarActivity` | DEPRECATED / HIDDEN | — | Legacy persisted value retained for migration compatibility; hidden from Settings until real production behavior exists. |
+| `showNowPlayingActivity` | DEPRECATED / HIDDEN | — | Legacy persisted value retained for migration compatibility; hidden from Settings until real production behavior exists. |
 | `clipboardHistoryEnabled` | BEHAVIORAL | — | Starts or stops pasteboard monitoring. |
 | `clipboardHistoryMaximumItems` | DATA/PERSISTENCE | — | History size, persistence and image capture. The Clipboard preview shows the real history. |
 | `clipboardHistoryPersistenceEnabled` | DATA/PERSISTENCE | — | History size, persistence and image capture. The Clipboard preview shows the real history. |
@@ -154,12 +155,12 @@ A unit test keeps it in sync with every `@Published` property in `AppSettings`.
 | `showBatteryLiveActivity` | VISUAL | Live Activity Layout Preview |  |
 | `allowSimultaneousLiveActivitySidecars` | VISUAL | Live Activity Layout Preview |  |
 | `timerSidecarPreference` | VISUAL | Live Activity Layout Preview |  |
-| `liveActivityStyle` | NO PRODUCTION READER | — | Shown in Settings, but no production code reads it; it has no effect today. |
-| `showCalendarLiveActivity` | NO PRODUCTION READER | — | Shown in Settings, but no production code reads it; it has no effect today. |
-| `showDownloadsLiveActivity` | NO PRODUCTION READER | — | Shown in Settings, but no production code reads it; it has no effect today. |
-| `liveActivityAutoDismissEnabled` | NO PRODUCTION READER | — | Shown in Settings, but no production code reads it; it has no effect today. |
-| `liveActivityAutoDismissSeconds` | NO PRODUCTION READER | — | Shown in Settings, but no production code reads it; it has no effect today. |
-| `liveActivityAnimationEnabled` | NO PRODUCTION READER | — | Shown in Settings, but no production code reads it; it has no effect today. |
+| `liveActivityStyle` | DEPRECATED / HIDDEN | — | Legacy persisted value retained for migration compatibility; hidden from Settings until real production behavior exists. |
+| `showCalendarLiveActivity` | DEPRECATED / HIDDEN | — | Legacy persisted value retained for migration compatibility; hidden from Settings until real production behavior exists. |
+| `showDownloadsLiveActivity` | DEPRECATED / HIDDEN | — | Legacy persisted value retained for migration compatibility; hidden from Settings until real production behavior exists. |
+| `liveActivityAutoDismissEnabled` | DEPRECATED / HIDDEN | — | Legacy persisted value retained for migration compatibility; hidden from Settings until real production behavior exists. |
+| `liveActivityAutoDismissSeconds` | DEPRECATED / HIDDEN | — | Legacy persisted value retained for migration compatibility; hidden from Settings until real production behavior exists. |
+| `liveActivityAnimationEnabled` | DEPRECATED / HIDDEN | — | Legacy persisted value retained for migration compatibility; hidden from Settings until real production behavior exists. |
 | `systemHUDsEnabled` | VISUAL | System HUD Preview |  |
 | `volumeHUDEnabled` | VISUAL | System HUD Preview |  |
 | `brightnessHUDEnabled` | VISUAL | System HUD Preview |  |
@@ -198,13 +199,13 @@ A unit test keeps it in sync with every `@Published` property in `AppSettings`.
 | `gestureSensitivity` | BEHAVIORAL | — | Gesture recognition and actions. |
 | `gestureCooldownSeconds` | BEHAVIORAL | — | Gesture recognition and actions. |
 | `requireGestureConfirmation` | BEHAVIORAL | — | Gesture recognition and actions. |
-| `showGestureHints` | NO PRODUCTION READER | — | Shown in Settings, but no production code reads it; it has no effect today. |
-| `gesturePrivacyMode` | NO PRODUCTION READER | — | Shown in Settings, but no production code reads it; it has no effect today. |
+| `showGestureHints` | DEPRECATED / HIDDEN | — | Legacy persisted value retained for migration compatibility; hidden from Settings until real production behavior exists. |
+| `gesturePrivacyMode` | DEPRECATED / HIDDEN | — | Legacy persisted value retained for migration compatibility; hidden from Settings until real production behavior exists. |
 | `disableVisualizerDuringMorph` | BEHAVIORAL | — | Performance behavior during shell morph. |
-| `verboseUILogsEnabled` | NO PRODUCTION READER | — | Shown in Settings, but no production code reads it; it has no effect today. |
-| `showDebugFrames` | NO PRODUCTION READER | — | Shown in Settings, but no production code reads it; it has no effect today. |
-| `showHitTestRegionDebug` | NO PRODUCTION READER | — | Shown in Settings, but no production code reads it; it has no effect today. |
-| `disableThumbnailsDuringMorph` | NO PRODUCTION READER | — | Shown in Settings, but no production code reads it; it has no effect today. |
+| `verboseUILogsEnabled` | DEPRECATED / HIDDEN | — | Legacy persisted value retained for migration compatibility; hidden from Settings until real production behavior exists. |
+| `showDebugFrames` | DEPRECATED / HIDDEN | — | Legacy persisted value retained for migration compatibility; hidden from Settings until real production behavior exists. |
+| `showHitTestRegionDebug` | DEPRECATED / HIDDEN | — | Legacy persisted value retained for migration compatibility; hidden from Settings until real production behavior exists. |
+| `disableThumbnailsDuringMorph` | DEPRECATED / HIDDEN | — | Legacy persisted value retained for migration compatibility; hidden from Settings until real production behavior exists. |
 | `rightWorkspace.pageOrder` | VISUAL | Right Workspace Preview |  |
 | `rightWorkspace.hiddenPages` | VISUAL | Right Workspace Preview |  |
 | `rightWorkspace.defaultPage` | VISUAL | Right Workspace Preview |  |
