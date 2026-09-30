@@ -48,11 +48,11 @@ final class ScreenRecordingTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(clock.adjustedTime(sourceTime: 10, establishesOrigin: true)), 0, accuracy: 0.0001)
         XCTAssertEqual(try XCTUnwrap(clock.adjustedTime(sourceTime: 11, establishesOrigin: true)), 1, accuracy: 0.0001)
 
-        clock.pause()
+        clock.pause(at: 11)
         XCTAssertNil(clock.adjustedTime(sourceTime: 12, establishesOrigin: true))
         XCTAssertNil(clock.adjustedTime(sourceTime: 14, establishesOrigin: true))
 
-        clock.resume()
+        clock.resume(at: 15)
         let resumed = try XCTUnwrap(clock.adjustedTime(sourceTime: 15, establishesOrigin: true))
         XCTAssertEqual(resumed, 1, accuracy: 0.0001, "four paused source seconds are removed")
 
@@ -68,6 +68,91 @@ final class ScreenRecordingTests: XCTestCase {
 
         XCTAssertEqual(try! XCTUnwrap(clock.adjustedTime(sourceTime: 4, establishesOrigin: true)), 0, accuracy: 0.0001)
         XCTAssertEqual(clock.sourceOrigin, 4)
+    }
+
+    // MARK: - Static-screen timeline (runtime regression: 3.5 s -> 0.017 s movie)
+    //
+    // ScreenCaptureKit only delivers complete frames when the screen changes,
+    // and its PTS is on the host clock. The recording session timeline must
+    // follow the host clock at pause/resume/stop, not the last changed frame.
+
+    func testStaticRecordingSessionEndsAtTheStopTimeNotTheLastFrame() throws {
+        var clock = ScreenRecordingTimelineClock()
+        XCTAssertEqual(try XCTUnwrap(clock.adjustedTime(sourceTime: 100, establishesOrigin: true)), 0, accuracy: 0.0001)
+        // No further complete frames: the screen is static until stop.
+        let end = try XCTUnwrap(clock.sessionEndTime(at: 103.5, lastVideoEnd: 1.0 / 60.0))
+        XCTAssertEqual(end, 3.5, accuracy: 0.0001)
+        XCTAssertEqual(clock.activeDuration(at: 103.5), 3.5, accuracy: 0.0001)
+    }
+
+    func testPauseDuringStaticPeriodIsMeasuredAtTheControlTimes() throws {
+        var clock = ScreenRecordingTimelineClock()
+        _ = clock.adjustedTime(sourceTime: 100, establishesOrigin: true)
+        clock.pause(at: 102)          // 2 s static recorded
+        XCTAssertEqual(clock.activeDuration(at: 103.5), 2, accuracy: 0.0001, "frozen while paused")
+        clock.resume(at: 104)         // 2 s paused
+        let end = try XCTUnwrap(clock.sessionEndTime(at: 106, lastVideoEnd: 1.0 / 60.0))  // 2 s static
+        XCTAssertEqual(end, 4, accuracy: 0.0001, "record 2 + pause 2 + record 2 = 4 s, not 6 and not 0")
+        XCTAssertEqual(clock.pausedDuration, 2, accuracy: 0.0001)
+    }
+
+    func testRecordPauseResumeWithChangingFramesExcludesOnlyThePause() throws {
+        var clock = ScreenRecordingTimelineClock()
+        _ = clock.adjustedTime(sourceTime: 50, establishesOrigin: true)
+        _ = clock.adjustedTime(sourceTime: 51.9, establishesOrigin: true)
+        clock.pause(at: 52)
+        clock.resume(at: 55)
+        let resumed = try XCTUnwrap(clock.adjustedTime(sourceTime: 55.5, establishesOrigin: true))
+        XCTAssertEqual(resumed, 2.5, accuracy: 0.0001)
+        let end = try XCTUnwrap(clock.sessionEndTime(at: 57, lastVideoEnd: resumed + 1.0 / 60.0))
+        XCTAssertEqual(end, 4, accuracy: 0.0001, "record 2 + pause 3 + record 2 = 4 s")
+    }
+
+    func testFramesCapturedDuringThePauseAreDroppedEvenWhenDeliveredLate() throws {
+        var clock = ScreenRecordingTimelineClock()
+        _ = clock.adjustedTime(sourceTime: 10, establishesOrigin: true)
+        clock.pause(at: 12)
+        // Captured before the pause but delivered after it: kept.
+        XCTAssertEqual(try XCTUnwrap(clock.adjustedTime(sourceTime: 11.99, establishesOrigin: true)), 1.99, accuracy: 0.0001)
+        XCTAssertNil(clock.adjustedTime(sourceTime: 12.5, establishesOrigin: true))
+        clock.resume(at: 14)
+        // Captured during the pause, delivered after resume: dropped.
+        XCTAssertNil(clock.adjustedTime(sourceTime: 13.9, establishesOrigin: true))
+        XCTAssertEqual(try XCTUnwrap(clock.adjustedTime(sourceTime: 14, establishesOrigin: true)), 2, accuracy: 0.0001)
+    }
+
+    func testSessionEndNeverPrecedesTheLastAppendedVideoFrame() throws {
+        var clock = ScreenRecordingTimelineClock()
+        _ = clock.adjustedTime(sourceTime: 0, establishesOrigin: true)
+        let lastVideoEnd = 2.0 + 1.0 / 60.0
+        let end = try XCTUnwrap(clock.sessionEndTime(at: 2.0, lastVideoEnd: lastVideoEnd))
+        XCTAssertGreaterThanOrEqual(end, lastVideoEnd, "stop racing the last frame must not trim it")
+    }
+
+    func testNoVideoFrameMeansNoSessionEnd() {
+        var clock = ScreenRecordingTimelineClock()
+        XCTAssertNil(clock.adjustedTime(sourceTime: 5, establishesOrigin: false))
+        XCTAssertNil(clock.sessionEndTime(at: 9, lastVideoEnd: 0), "no video must still fail truthfully")
+        XCTAssertEqual(clock.activeDuration(at: 9), 0)
+    }
+
+    func testStoppingWhilePausedEndsAtThePauseBoundary() throws {
+        var clock = ScreenRecordingTimelineClock()
+        _ = clock.adjustedTime(sourceTime: 20, establishesOrigin: true)
+        clock.pause(at: 23)
+        let end = try XCTUnwrap(clock.sessionEndTime(at: 30, lastVideoEnd: 1.0 / 60.0))
+        XCTAssertEqual(end, 3, accuracy: 0.0001)
+    }
+
+    func testSamplesCapturedAfterTheStopRequestAreNotRecorded() throws {
+        var clock = ScreenRecordingTimelineClock()
+        _ = clock.adjustedTime(sourceTime: 0, establishesOrigin: true)
+        clock.stop(at: 3)
+        // In flight from before Stop: kept.
+        XCTAssertNotNil(clock.adjustedTime(sourceTime: 2.99, establishesOrigin: true))
+        // Captured during stopCapture's round trip: not part of the movie.
+        XCTAssertNil(clock.adjustedTime(sourceTime: 3.1, establishesOrigin: true))
+        XCTAssertEqual(try XCTUnwrap(clock.sessionEndTime(at: 3.4, lastVideoEnd: 2.99 + 1.0 / 60.0)), 3.0067, accuracy: 0.001)
     }
 
     func testFormattingUsesRecordedTimelineDuration() {
@@ -351,6 +436,169 @@ final class ScreenRecordingLiveTests: XCTestCase {
         XCTAssertGreaterThan(seconds, 0.5)
         XCTAssertLessThan(seconds, 3.0, "paused wall-clock time should not be recorded")
         XCTAssertFalse(liveActivities.activities.contains { $0.kind == .screenRecording })
+    }
+
+    // MARK: - Static timeline, Window and Area (real ScreenCaptureKit)
+    //
+    // A test-owned, never-changing window is the static source. The movie must
+    // last as long as the active recording (pauses excluded), not end at the
+    // last changed frame (the 3.5 s -> 0.017 s runtime regression).
+
+    /// Allowed deviation between asset duration and active recorded time:
+    /// first-frame latency plus the Stop round trip.
+    private let durationTolerance: TimeInterval = 0.35
+
+    @MainActor
+    func testRealStaticWindowRecordingKeepsItsActiveDuration() async throws {
+        let (controller, window) = try await makeLiveControllerWithStaticWindow()
+        defer { window.orderOut(nil) }
+
+        await controller.startWindow(CGWindowID(window.windowNumber))
+        try await waitUntil(timeout: 4) { controller.phase == .recording }
+        try await Task.sleep(for: .seconds(3))
+        XCTAssertGreaterThan(controller.recordedDuration, 2.4, "UI timeline keeps advancing on a static screen")
+        await controller.stopAndSave()
+
+        let movie = try await validatedMovie(controller)
+        XCTAssertEqual(movie.duration, 3.0, accuracy: durationTolerance, "static 3 s must not collapse to one frame")
+        XCTAssertEqual(movie.videoTrackDuration, movie.duration, accuracy: 0.05)
+    }
+
+    @MainActor
+    func testRealStaticWindowPauseResumeExcludesOnlyThePause() async throws {
+        let (controller, window) = try await makeLiveControllerWithStaticWindow()
+        defer { window.orderOut(nil) }
+
+        await controller.startWindow(CGWindowID(window.windowNumber))
+        try await waitUntil(timeout: 4) { controller.phase == .recording }
+        try await Task.sleep(for: .seconds(1.2))
+        controller.pause()
+        try await Task.sleep(for: .seconds(1.2))
+        controller.resume()
+        try await Task.sleep(for: .seconds(1.2))
+        await controller.stopAndSave()
+
+        let movie = try await validatedMovie(controller)
+        XCTAssertEqual(movie.duration, 2.4, accuracy: durationTolerance, "record 1.2 + pause 1.2 + record 1.2 = 2.4 s, not 3.6 and not ~0")
+    }
+
+    @MainActor
+    func testRealAreaRecordingCropsToTheSelectedRegion() async throws {
+        let (controller, window) = try await makeLiveControllerWithStaticWindow()
+        defer { window.orderOut(nil) }
+        let screen = try XCTUnwrap(window.screen)
+        let displayID = try XCTUnwrap(ScreenRecordingController.displayID(for: screen))
+        let area = CGRect(
+            x: window.frame.minX - screen.frame.minX,
+            y: screen.frame.maxY - window.frame.maxY,
+            width: window.frame.width,
+            height: window.frame.height
+        )
+
+        await controller.startArea(displayID: displayID, sourceRect: area)
+        try await waitUntil(timeout: 4) { controller.phase == .recording }
+        try await Task.sleep(for: .seconds(2))
+        await controller.stopAndSave()
+
+        let movie = try await validatedMovie(controller)
+        XCTAssertEqual(movie.duration, 2.0, accuracy: durationTolerance)
+        XCTAssertEqual(movie.size.width, area.width * screen.backingScaleFactor, accuracy: 2)
+        XCTAssertEqual(movie.size.height, area.height * screen.backingScaleFactor, accuracy: 2)
+    }
+
+    @MainActor
+    func testRealDisplayRecordingWithSystemAudioProducesAnAudioTrack() async throws {
+        guard ProcessInfo.processInfo.environment["DYNAMIC_ISLAND_LIVE_SCREEN_RECORDING"] == "1" else {
+            throw XCTSkip("Set DYNAMIC_ISLAND_LIVE_SCREEN_RECORDING=1 for real ScreenCaptureKit acceptance")
+        }
+        guard CGPreflightScreenCaptureAccess() else { throw XCTSkip("Screen Recording permission not granted") }
+        let controller = ScreenRecordingController(liveActivities: LiveActivityStore(), capabilities: IslandCapabilityRegistry())
+        controller.options.capturesSystemAudio = true
+        controller.options.capturesMicrophone = false
+        await controller.prepareTargets(requestPermission: false)
+        let display = try XCTUnwrap(controller.displays.first)
+
+        await controller.startDisplay(display.id)
+        try await waitUntil(timeout: 4) { controller.phase == .recording }
+        // Real system output while recording (a bundled system sound).
+        let player = Process()
+        player.executableURL = URL(fileURLWithPath: "/usr/bin/afplay")
+        player.arguments = ["-v", "0.15", "/System/Library/Sounds/Glass.aiff"]
+        try player.run()
+        try await Task.sleep(for: .seconds(2))
+        await controller.stopAndSave()
+
+        let movie = try await validatedMovie(controller)
+        XCTAssertGreaterThanOrEqual(movie.audioTracks, 1, "system audio track")
+        XCTAssertGreaterThan(movie.audioSamples, 0, "system audio samples were written")
+        XCTAssertEqual(movie.duration, 2.0, accuracy: 0.6)
+    }
+
+    @MainActor
+    private func makeLiveControllerWithStaticWindow() async throws -> (ScreenRecordingController, NSWindow) {
+        guard ProcessInfo.processInfo.environment["DYNAMIC_ISLAND_LIVE_SCREEN_RECORDING"] == "1" else {
+            throw XCTSkip("Set DYNAMIC_ISLAND_LIVE_SCREEN_RECORDING=1 for real ScreenCaptureKit acceptance")
+        }
+        guard CGPreflightScreenCaptureAccess() else { throw XCTSkip("Screen Recording permission not granted") }
+        _ = NSApplication.shared
+        let window = NSWindow(
+            contentRect: CGRect(x: 120, y: 160, width: 480, height: 320),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.level = .floating
+        window.backgroundColor = NSColor(calibratedRed: 0.10, green: 0.45, blue: 0.80, alpha: 1)
+        window.orderFrontRegardless()
+        try await Task.sleep(for: .milliseconds(600))
+
+        let controller = ScreenRecordingController(liveActivities: LiveActivityStore(), capabilities: IslandCapabilityRegistry())
+        controller.options.capturesSystemAudio = false
+        controller.options.capturesMicrophone = false
+        controller.options.showsCursor = false
+        controller.options.excludesDynamicIsland = false
+        await controller.prepareTargets(requestPermission: false)
+        return (controller, window)
+    }
+
+    private struct ValidatedMovie {
+        let duration: TimeInterval
+        let videoTrackDuration: TimeInterval
+        let size: CGSize
+        let audioTracks: Int
+        let audioSamples: Int
+    }
+
+    @MainActor
+    private func validatedMovie(
+        _ controller: ScreenRecordingController,
+        name: String = #function
+    ) async throws -> ValidatedMovie {
+        XCTAssertEqual(controller.phase, .saved, "Recorder status: \(controller.statusText)")
+        let url = try XCTUnwrap(controller.lastSavedURL, "Recorder status: \(controller.statusText)")
+        defer { try? FileManager.default.removeItem(at: url) }   // test-owned output only
+        let asset = AVURLAsset(url: url)
+        let videoTracks = try await asset.loadTracks(withMediaType: .video)
+        let video = try XCTUnwrap(videoTracks.first, "video track")
+        let audio = try await asset.loadTracks(withMediaType: .audio)
+        var audioSamples = 0
+        if let track = audio.first {
+            let reader = try AVAssetReader(asset: asset)
+            let output = AVAssetReaderTrackOutput(track: track, outputSettings: nil)
+            reader.add(output)
+            reader.startReading()
+            while let buffer = output.copyNextSampleBuffer() { audioSamples += CMSampleBufferGetNumSamples(buffer) }
+        }
+        let movie = ValidatedMovie(
+            duration: CMTimeGetSeconds(try await asset.load(.duration)),
+            videoTrackDuration: CMTimeGetSeconds(try await video.load(.timeRange).duration),
+            size: try await video.load(.naturalSize),
+            audioTracks: audio.count,
+            audioSamples: audioSamples
+        )
+        print("[ScreenRecordingLive] \(name): duration=\(movie.duration) video=\(movie.videoTrackDuration) size=\(movie.size) audioTracks=\(movie.audioTracks) audioSamples=\(movie.audioSamples)")
+        return movie
     }
 
     @MainActor
