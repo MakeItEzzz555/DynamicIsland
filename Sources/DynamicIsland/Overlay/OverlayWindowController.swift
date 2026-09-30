@@ -247,7 +247,7 @@ final class OverlayWindowController {
     private var didLogAtollParityConfiguration = false
     private var didLogExpandedScrollPassThrough = false
     #endif
-    private weak var hostingView: IslandHostingView<IslandRootView>?
+    private weak var hostingView: IslandHostingView<TopPinnedHostRoot<IslandRootView>>?
 
     init(
         settings: AppSettings,
@@ -290,7 +290,12 @@ final class OverlayWindowController {
             },
             onOpenSettings: onOpenSettings
         )
-        let hostingView = IslandHostingView(rootView: rootView)
+        // NSHostingView centers a root whose size differs from its bounds.
+        // While the panel's frame animates, the canvas and the window can
+        // differ for a frame or more; top-pinning the root keeps the shell's
+        // top edge on the notch in every frame instead of drifting by half
+        // the size difference (the Agents <-> tab "detach" bug).
+        let hostingView = IslandHostingView(rootView: TopPinnedHostRoot(content: rootView))
         hostingView.autoresizingMask = [.width, .height]
         hostingView.wantsLayer = true
         hostingView.layer?.backgroundColor = NSColor.clear.cgColor
@@ -414,12 +419,7 @@ final class OverlayWindowController {
                     self.reposition(
                         animated: true,
                         reason: "expandedPageChanged",
-                        force: true,
-                        // The NSPanel owns the physical width/height morph.
-                        // Committing the target local geometry without a second
-                        // SwiftUI frame animation prevents two timing curves
-                        // from pulling the shell away from its top anchor.
-                        animateLayoutStore: false
+                        force: true
                     )
                 }
             }
@@ -563,8 +563,7 @@ final class OverlayWindowController {
     func reposition(
         animated: Bool = false,
         reason: String = "unspecified",
-        force: Bool = false,
-        animateLayoutStore: Bool? = nil
+        force: Bool = false
     ) {
         guard canPresentOverlay else { return }
         let signature = currentGeometrySignature
@@ -600,7 +599,7 @@ final class OverlayWindowController {
             collapsedNotchCoreWidth: geometry.collapsedNotchCoreWidth,
             collapsedRightRegionWidth: geometry.collapsedRightRegionWidth,
             collapsedPresentationProfile: geometry.collapsedPresentationProfile,
-            animated: animateLayoutStore ?? animated
+            animated: animated
         )
         applyCanonicalPanelFrame(
             expandedPresentationProfile.panelFrame(forExpandedFrame: geometry.expandedFrame),
@@ -903,7 +902,7 @@ final class OverlayWindowController {
         #endif
         NSAnimationContext.runAnimationGroup { context in
             context.duration = duration
-            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            context.timingFunction = ExpandedShellMorph.panelTimingFunction
             context.allowsImplicitAnimation = true
             islandPanel.animator().setFrame(frame, display: true)
         }
@@ -955,7 +954,10 @@ final class OverlayWindowController {
             let duration = reduceMotion || settings.animationPreset == .instant
                 ? 0.01
                 : expandedPageMorphDuration
-            withAnimation(.smooth(duration: duration)) {
+            // Same curve and duration as the NSPanel frame animation in
+            // applyCanonicalPanelFrame, so the SwiftUI canvas tracks the
+            // physical window on every frame.
+            withAnimation(ExpandedShellMorph.canvasAnimation(duration: duration)) {
                 updates()
             }
         } else {

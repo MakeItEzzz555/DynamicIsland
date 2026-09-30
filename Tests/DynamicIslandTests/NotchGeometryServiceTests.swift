@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import XCTest
 @testable import DynamicIsland
 
@@ -360,20 +361,54 @@ final class NotchGeometryServiceTests: XCTestCase {
         XCTAssertEqual(standard.maxY, agents.maxY, accuracy: 0.001)
         XCTAssertEqual(standard.midX, agents.midX, accuracy: 0.001)
 
-        for progress: CGFloat in [0, 0.1, 0.25, 0.5, 0.75, 0.9, 1] {
-            let width = standard.width + (agents.width - standard.width) * progress
-            let height = standard.height + (agents.height - standard.height) * progress
-            let centerX = standard.midX + (agents.midX - standard.midX) * progress
-            let topY = standard.maxY + (agents.maxY - standard.maxY) * progress
-            let frame = CGRect(
-                x: centerX - width / 2,
-                y: topY - height,
-                width: width,
-                height: height
-            )
-            XCTAssertEqual(frame.maxY, standard.maxY, accuracy: 0.001)
-            XCTAssertEqual(frame.midX, standard.midX, accuracy: 0.001)
+        // Every tab pair, in both directions, interpolated exactly the way
+        // AppKit animates a window frame (origin and size component-wise).
+        let tray = ExpandedPresentationProfile.trayQuickActions.panelFrame(forExpandedFrame: standard)
+        let pairs: [(CGRect, CGRect)] = [(standard, agents), (agents, standard), (tray, agents), (agents, tray)]
+        for (source, target) in pairs {
+            XCTAssertEqual(source.maxY, target.maxY, accuracy: 0.001, "endpoints must share the top edge")
+            for progress: CGFloat in [0, 0.1, 0.25, 0.5, 0.75, 0.9, 1] {
+                let frame = ExpandedShellMorph.interpolatedFrame(from: source, to: target, progress: progress)
+                XCTAssertEqual(frame.maxY, source.maxY, accuracy: 0.001, "top drift at \(progress)")
+                XCTAssertEqual(frame.midX, source.midX, accuracy: 0.001, "center drift at \(progress)")
+            }
         }
+    }
+
+    /// The detach bug: NSHostingView centers a root whose size differs
+    /// from its bounds, so while the panel animates the shell's top moved by
+    /// half the size difference. The island root must be top-pinned.
+    @MainActor
+    func testIslandRootIsTopPinnedInsideTheHostingViewWhileSizesDiffer() {
+        for (bounds, content) in [(CGFloat(446), CGFloat(286)), (286, 446)] {
+            let probe = HostPlacementProbe()
+            let host = NSHostingView(rootView: TopPinnedHostRoot(content:
+                Color.red
+                    .frame(width: 400, height: content)
+                    .background(GeometryReader { proxy in
+                        Color.clear.onAppear { probe.top = proxy.frame(in: .global).minY; probe.midX = proxy.frame(in: .global).midX }
+                    })
+            ))
+            host.frame = CGRect(x: 0, y: 0, width: 500, height: bounds)
+            let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+            window.contentView = host
+            host.layoutSubtreeIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+            XCTAssertEqual(probe.top, 0, accuracy: 0.5, "content \(content) in bounds \(bounds) must stay at the top")
+            XCTAssertEqual(probe.midX, 250, accuracy: 0.5, "horizontal center preserved")
+        }
+    }
+
+    func testCanvasAnimationUsesThePanelCurve() {
+        XCTAssertEqual(ExpandedShellMorph.panelTimingFunction, CAMediaTimingFunction(name: .easeInEaseOut))
+        var points = [Float](repeating: 0, count: 2)
+        var c0 = [Float](repeating: 0, count: 2)
+        ExpandedShellMorph.panelTimingFunction.getControlPoint(at: 1, values: &c0)
+        ExpandedShellMorph.panelTimingFunction.getControlPoint(at: 2, values: &points)
+        XCTAssertEqual(Double(c0[0]), ExpandedShellMorph.controlPoints.c0x, accuracy: 0.001)
+        XCTAssertEqual(Double(c0[1]), ExpandedShellMorph.controlPoints.c0y, accuracy: 0.001)
+        XCTAssertEqual(Double(points[0]), ExpandedShellMorph.controlPoints.c1x, accuracy: 0.001)
+        XCTAssertEqual(Double(points[1]), ExpandedShellMorph.controlPoints.c1y, accuracy: 0.001)
     }
 
     func testAgentsGeometryUsesCanonicalNarrowScreenClamp() {
@@ -505,4 +540,9 @@ final class NotchGeometryServiceTests: XCTestCase {
         XCTAssertEqual(store.collapsedSize, CGSize(width: 190, height: 44))
         XCTAssertEqual(store.collapsedPresentationProfile, .normal)
     }
+}
+
+private final class HostPlacementProbe {
+    var top: CGFloat = .nan
+    var midX: CGFloat = .nan
 }
