@@ -136,9 +136,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let geometryService = NotchGeometryService()
     private let agentEvents = AgentEventStore()
     private let agentProjects = AgentProjectProjectionStore()
+    private let messagingPreferences = MessagingPreferencesPersistence(defaults: .standard)
     private lazy var messaging = MessagingController(
         adapters: [MessagesAppAdapter()],
-        liveActivities: liveActivities
+        liveActivities: liveActivities,
+        preferences: messagingPreferences.load()
     )
     private let agentAttention = AgentAttentionCoordinator()
     private let agentApprovalControl = AgentApprovalController()
@@ -273,6 +275,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// The Messages page exists only while a visible message is queued.
     private func installMessagingObservers() {
+        messaging.$preferences
+            .dropFirst()
+            .removeDuplicates()
+            .sink { [messagingPreferences] preferences in
+                messagingPreferences.save(preferences)
+            }
+            .store(in: &cancellables)
+
         messaging.$queue
             .combineLatest(messaging.$preferences)
             .map { [weak self] _, _ in !(self?.messaging.visibleEntries.isEmpty ?? true) }
@@ -322,7 +332,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 agentEvents: agentEvents,
                 productivity: productivity,
                 agentManagedControl: agentManagedControl,
-                agentProjects: agentProjects
+                agentProjects: agentProjects,
+                messaging: messaging
             )
         }
         settingsController?.show()

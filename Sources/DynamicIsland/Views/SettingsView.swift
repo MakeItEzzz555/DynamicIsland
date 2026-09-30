@@ -13,6 +13,7 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
     case agents = "AI Agents"
     case clipboard = "Clipboard"
     case productivity = "Productivity"
+    case messaging = "Messaging"
     case liveActivities = "Live Activities"
     case gestures = "Gestures"
     case advanced = "Advanced"
@@ -32,6 +33,7 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
         case .agents: "cpu"
         case .clipboard: "doc.on.clipboard"
         case .productivity: "wand.and.stars"
+        case .messaging: "message"
         case .liveActivities: "waveform.path.ecg"
         case .gestures: "hand.raised"
         case .advanced: "gearshape.2"
@@ -46,6 +48,7 @@ struct SettingsView: View {
     let agentEvents: AgentEventStore
     let agentManagedControl: AgentManagedSessionController?
     let agentProjects: AgentProjectProjectionStore?
+    let messaging: MessagingController?
     @StateObject private var agentSetup = AgentIntegrationSetupController()
     @StateObject private var agentDiagnostics: AgentIntegrationDiagnosticsController
     @State private var selectedSection: SettingsSection = .island
@@ -58,8 +61,10 @@ struct SettingsView: View {
         agentEvents: AgentEventStore,
         productivity: ProductivityModules,
         agentManagedControl: AgentManagedSessionController? = nil,
-        agentProjects: AgentProjectProjectionStore? = nil
+        agentProjects: AgentProjectProjectionStore? = nil,
+        messaging: MessagingController? = nil
     ) {
+        self.messaging = messaging
         self.settings = settings
         self.shortcuts = shortcuts
         self.productivity = productivity
@@ -108,6 +113,14 @@ struct SettingsView: View {
                     case .productivity:
                         settingsForm("Productivity") {
                             ProductivitySettingsView(productivity: productivity)
+                        }
+                    case .messaging:
+                        settingsForm("Messaging") {
+                            if let messaging {
+                                MessagingSettingsView(controller: messaging)
+                            } else {
+                                HelpText("Messaging is unavailable.")
+                            }
                         }
                     case .liveActivities:
                         liveActivitiesSection
