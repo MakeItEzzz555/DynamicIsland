@@ -1645,6 +1645,70 @@ final class AgentManagedSessionControllerTests: XCTestCase {
     }
 
     @MainActor
+    func testHookObservedClaudeApprovalIsNeverActionableOrTakenOver() async throws {
+        let provider = PersistentSnapshotFakeProvider(provider: .claude, sessions: [], usage: AgentUsage())
+        let store = AgentEventStore()
+        let approvals = AgentApprovalController()
+        let coordinator = AgentIngestionCoordinator(eventStore: store)
+        let controller = AgentManagedSessionController(
+            provider: provider,
+            coordinator: coordinator,
+            eventStore: store,
+            approvals: approvals
+        )
+        controller.startObserving()
+        let hook = try await coordinator.registerProducer(
+            descriptor: AgentProducerDescriptor(
+                sourceInstanceID: AgentSourceInstanceID(rawValue: "test-claude-hook"),
+                sourceKind: .officialHook,
+                runtimeVersion: "test"
+            ),
+            policy: .claudeOfficialHook,
+            authenticatedProducerID: "test-hook"
+        ).get()
+        func event(_ id: String, _ type: AgentEventType, correlation: String? = nil, payload: AgentEventPayload) -> AgentIngestionEvent {
+            AgentIngestionEvent(
+                schemaVersion: AgentEvent.normalizedSchemaVersion,
+                eventID: AgentEventID(rawValue: id),
+                provider: .claude,
+                source: .unknown,
+                nativeSessionID: "observed-claude",
+                assertedGeneration: nil,
+                type: type,
+                providerTimestamp: nil,
+                receivedTimestamp: Date(),
+                correlationID: correlation.map { AgentCorrelationID(rawValue: $0) },
+                sequence: nil,
+                authority: .lifecycle,
+                payload: payload,
+                continuity: AgentSessionContinuity(immutableIdentity: "observed-claude")
+            )
+        }
+        _ = await coordinator.ingest(event("s", .sessionStarted, payload: .sessionMetadata(AgentSessionMetadata(project: nil))), from: hook)
+        let approvalResult = await coordinator.ingest(event(
+            "p", .approvalRequested, correlation: "hook-permission",
+            payload: .approvalRequest(AgentApprovalRequest(
+                summary: "Use Write", operationCorrelationID: nil, expiresAt: Date().addingTimeInterval(60)
+            ))
+        ), from: hook)
+        guard case .success = approvalResult else { return XCTFail("hook approval not observed: \(approvalResult)") }
+
+        let session = try XCTUnwrap(store.sessions.first { $0.id.sessionID.nativeID == "observed-claude" })
+        XCTAssertEqual(session.state, .waitingForApproval)
+        XCTAssertFalse(session.capabilities.contains(.approvalControl))
+        XCTAssertTrue(approvals.pendingRequests.isEmpty, "observation-only producers never register a decision")
+        XCTAssertFalse(AgentApprovalPresentation.isActionable(session: session, pending: approvals.presentedRequest(for: session.id)))
+        XCTAssertFalse(controller.isManaged(session))
+        XCTAssertFalse(controller.canConnect(session), "no take-over while the source app owns a prompt")
+        XCTAssertEqual(controller.statusMessage(for: session), "External approval · respond in source app")
+        XCTAssertEqual(
+            approvals.resolve(session: session.id, requestID: AgentCorrelationID(rawValue: "hook-permission"), decision: .allow),
+            .missing
+        )
+        controller.stop()
+    }
+
+    @MainActor
     func testInterruptStaysStoppingUntilAuthoritativeTurnCompletionAndDeduplicates() async throws {
         let provider = PersistentSnapshotFakeProvider(
             sessions: [Self.descriptor(id: "interrupt-session", state: .notLoaded)],
