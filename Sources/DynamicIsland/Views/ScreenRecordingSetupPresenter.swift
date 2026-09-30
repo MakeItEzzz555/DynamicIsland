@@ -143,8 +143,15 @@ final class ScreenRecordingSetupPanelSurface: ScreenRecordingSetupSurface {
     func show(frame: CGRect) {
         let screen = NSScreen.screens.first { $0.frame.intersects(frame) } ?? NSScreen.main
         updateRootView(metrics: IslandDisplayMetricsResolver.resolve(screen: screen))
+        // Target-screen metrics can change the fitting size; keep the
+        // placement's top edge and centre, clamped to that screen.
         let size = hostingView.fittingSize
-        let sized = CGRect(x: frame.midX - size.width / 2, y: frame.maxY - size.height, width: size.width, height: size.height)
+        let bounds = (screen?.visibleFrame ?? frame).insetBy(
+            dx: ScreenRecordingSetupPlacement.screenMargin,
+            dy: ScreenRecordingSetupPlacement.screenMargin
+        )
+        let x = min(max(frame.midX - size.width / 2, bounds.minX), max(bounds.maxX - size.width, bounds.minX))
+        let sized = CGRect(x: x.rounded(), y: frame.maxY - size.height, width: size.width, height: size.height)
         panel.pinnedTopY = frame.maxY
         panel.setFrame(sized, display: true)
         panel.orderFrontRegardless()
