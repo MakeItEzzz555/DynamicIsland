@@ -1603,3 +1603,24 @@ only — Remove Background, Convert, Share (NSSharingServicePicker anchored to t
 explicit tile selection or the single Tray file. The circles are part of hover containment, hit-testing
 and mouse passthrough. The drag-time orbit of G3 (AirDrop/Messages/Mail/Quickshare during a drag) is
 still Pending.
+
+---
+
+# Expanded Workspace 2.0 checkpoint (2026-09-30)
+
+Spans part of Phase 15 (media) and the foundation of Phase 16 (personalization). Neither phase is complete.
+Source provenance and divergences: `research/SOURCE_PARITY_MANIFEST.md`. Settings audit:
+`research/SETTINGS_PREVIEW_AUDIT.md`.
+
+| Item | Status |
+|---|---|
+| Right workspace (Overview / Productivity / Apps & Media), Droppy swipe semantics, one page per gesture | Implemented; real-trackpad acceptance pending on device |
+| Productivity deck bound to production controllers | Implemented; Keep Awake, Snap, Terminal, Voice, Remove BG, Convert, Reminders call the real controllers |
+| Circular mirrored camera | Implemented + real E2E verified (FaceTime HD capture, mirrored connection, stop on detach) |
+| Flashlight | Reference implementation not available (absent from Droppy upstream `dd2d16c`) |
+| App Library | Implemented + real E2E verified (92 real apps discovered, real cold launch) |
+| Spotify queue / playlists / liked | Implemented; real validation blocked until a Spotify app Client ID is configured |
+| Calendar | Implemented; real validation blocked until Calendar access is granted to the app |
+| Claude / Codex provider buttons (AgentNotch colors) | Implemented; Claude real E2E re-verified; Codex streaming quota-blocked |
+| Settings production-component previews + workspace customization | Implemented (G27 partial: previews), 33 settings found to have no production reader |
+| G14 widget strip / Customize Shelf editor, G15 island context menu, G16 Focus timer widget | Pending (Phase 16) |
