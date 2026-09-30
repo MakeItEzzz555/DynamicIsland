@@ -267,6 +267,11 @@ final class RightWorkspaceStore: ObservableObject {
     }
 }
 
+// Behavioral provenance (private/personal build): the paging thresholds and
+// sequence timing below are ported from Droppy
+// `NotchWindowController.handleScrollEvent(_:)` at dd2d16c. DynamicIsland
+// adds direction locking and nested-scroll ownership; no Droppy assets are used.
+///
 /// Direction-locked paging intent, ported from Droppy's
 /// `NotchWindowController.handleScrollEvent(_:)`. A sequence is classified
 /// once from its initial meaningful movement: strong horizontal intent
