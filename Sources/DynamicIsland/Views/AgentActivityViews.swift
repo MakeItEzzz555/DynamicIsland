@@ -16,13 +16,17 @@ enum AgentVisualStyle {
     }
 
     /// Claude brand orange (#D97757), defined once.
-    static let claudeOrange = Color(red: 0.851, green: 0.467, blue: 0.341)
+    /// AgentNotch source colors (AgentNotch/Views/Notch/ToolCallListView.swift,
+    /// TelemetryStatusIndicatorView.swift, AgentNotchContentView.swift at
+    /// commit 4139d6fd): Claude Code orange and Codex blue.
+    static let claudeOrange = Color(red: 1.0, green: 0.55, blue: 0.2)
+    static let codexBlue = Color(red: 0.2, green: 0.45, blue: 0.9)
 
     static func providerAccent(_ provider: AgentProvider) -> Color {
         switch provider {
-        case .codex: .cyan
+        case .codex: codexBlue
         case .claude: claudeOrange
-        case .other: .purple
+        case .other: Color(red: 0.6, green: 0.8, blue: 1.0) // AgentNotch "unknown" source.
         }
     }
 
@@ -653,6 +657,7 @@ private struct AgentCLIControlBar: View {
 
     private func controls(compact: Bool) -> some View {
         HStack(spacing: compact ? 5 : 8) {
+            AgentProviderButtons(managedControl: managedControl, compact: compact)
             launcherButton(compact: compact)
             newSessionButton(compact: compact)
             projectMenu(compact: compact)
@@ -697,7 +702,7 @@ private struct AgentCLIControlBar: View {
         let title = project ?? provider.stableName.capitalized
         return Button(action: onToggleLauncher) {
             HStack(spacing: 4) {
-                Image(systemName: AgentVisualStyle.providerSymbol(provider))
+                Image(systemName: "rectangle.stack")
                 if !compact {
                     Text(title)
                         .lineLimit(1)
@@ -1043,6 +1048,63 @@ private struct AgentCLIControlBar: View {
             return "circle.fill"
         }
         return AgentSessionPresentation.displayedStateSymbol(for: session, at: Date())
+    }
+}
+
+/// Claude and Codex as individual provider controls. Selecting one scopes
+/// sessions, usage rings and model/agent controls to that provider and
+/// restores its own exact selected session; the other provider's session
+/// and drafts are untouched. Visual treatment follows AgentNotch's source
+/// dot and source badge.
+struct AgentProviderButtons: View {
+    @ObservedObject var managedControl: AgentManagedSessionController
+    var compact = false
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(managedControl.managedProviders, id: \.self) { provider in
+                let selected = managedControl.selectedProvider == provider
+                let active = managedControl.activeManagedSessionIDs.contains { $0.provider == provider }
+                let color = AgentVisualStyle.providerAccent(provider)
+                Button {
+                    withAnimation(.interactiveSpring(response: 0.38, dampingFraction: 0.8, blendDuration: 0)) {
+                        managedControl.selectProvider(provider)
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(color)
+                            .frame(width: 8, height: 8)
+                            .shadow(color: color.opacity(active ? 0.6 : 0.3), radius: active ? 3 : 1)
+                        Image(systemName: AgentVisualStyle.providerSymbol(provider))
+                            .font(.system(size: 9.5, weight: .semibold))
+                        if !compact {
+                            Text(AgentProviderVisualIdentity.resolve(provider).accessibilityName)
+                        }
+                    }
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(selected ? color : .white.opacity(0.55))
+                    .padding(.horizontal, compact ? 6 : 8)
+                    .frame(height: 25)
+                    .background(
+                        selected ? color.opacity(0.15) : Color.white.opacity(0.035),
+                        in: Capsule(style: .continuous)
+                    )
+                    .overlay {
+                        Capsule(style: .continuous)
+                            .strokeBorder(selected ? color.opacity(0.45) : .clear, lineWidth: 1)
+                    }
+                    .contentShape(Capsule(style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .fixedSize()
+                .help("Show \(AgentProviderVisualIdentity.resolve(provider).accessibilityName) sessions and usage")
+                .accessibilityLabel(AgentProviderVisualIdentity.resolve(provider).accessibilityName)
+                .accessibilityAddTraits(selected ? [.isSelected, .isButton] : .isButton)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Agent provider")
     }
 }
 

@@ -1,4 +1,6 @@
+import AppKit
 import Foundation
+import SwiftUI
 import XCTest
 @testable import DynamicIsland
 
@@ -304,6 +306,19 @@ final class AgentWorkspaceWorkflowTests: XCTestCase {
         XCTAssertFalse(flow.createFolder(at: target))
         XCTAssertEqual(flow.errorMessage, "A file or folder with that name already exists")
         XCTAssertEqual(try Data(contentsOf: target.appendingPathComponent("keep.txt")), Data("keep".utf8))
+    }
+
+    // MARK: Provider visuals
+
+    func testProviderColorsAreAgentNotchSourceConstants() {
+        func rgb(_ color: Color) -> [Double] {
+            let ns = NSColor(color).usingColorSpace(.sRGB)!
+            return [ns.redComponent, ns.greenComponent, ns.blueComponent].map { (Double($0) * 100).rounded() / 100 }
+        }
+        XCTAssertEqual(rgb(AgentVisualStyle.providerAccent(.claude)), [1.0, 0.55, 0.2])
+        XCTAssertEqual(rgb(AgentVisualStyle.providerAccent(.codex)), [0.2, 0.45, 0.9])
+        XCTAssertNotEqual(AgentVisualStyle.providerSymbol(.codex), "terminal")
+        XCTAssertNotEqual(AgentVisualStyle.providerSymbol(.claude), "terminal")
     }
 
     // MARK: Helpers

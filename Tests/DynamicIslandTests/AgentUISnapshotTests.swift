@@ -341,6 +341,24 @@ final class AgentUISnapshotTests: XCTestCase {
                          to: output.appendingPathComponent("32-new-session-composer.png"))
         XCTAssertEqual(managed.selectedSessionID, started.instance)
         managed.stop()
+
+        // Provider buttons with each provider selected (no refresh, so no
+        // provider process is launched).
+        let codex = CodexAppServerProvider(client: try CodexAppServerClient())
+        let twoProviders = AgentManagedSessionController(
+            providers: [claude, codex],
+            coordinator: AgentIngestionCoordinator(eventStore: AgentEventStore()),
+            eventStore: AgentEventStore(),
+            approvals: approvals
+        )
+        for provider in [AgentProvider.claude, .codex] {
+            twoProviders.selectProvider(provider)
+            let header = AgentProviderButtons(managedControl: twoProviders)
+                .padding(14)
+                .background(Color(red: 0.025, green: 0.027, blue: 0.055))
+            try renderHosted(header, size: CGSize(width: 260, height: 56),
+                             to: output.appendingPathComponent("33-provider-\(provider.stableName)-selected.png"))
+        }
     }
 
     private func renderStandbyDashboard(output: URL) throws {
