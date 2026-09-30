@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Personalization of the Island page's right workspace. Every change is
@@ -123,54 +124,141 @@ struct RightWorkspaceSettingsView: View {
     }
 }
 
-/// Spotify Web API setup: the user's own Spotify app Client ID, the exact
-/// redirect URI to register, the exact scopes, and connect/disconnect.
+/// Normal-user Spotify setup. The release app owns its OAuth Client ID;
+/// implementation details and developer overrides are hidden from release UX.
 struct SpotifyConnectionSettingsView: View {
     @ObservedObject var controller: SpotifyLibraryController
+    #if DEBUG
     @State private var clientIDDraft = ""
+    #endif
 
     var body: some View {
-        SettingsGroup("Spotify Library (Web API)") {
-            HelpText("Queue, playlists and liked songs come from the Spotify Web API. Create an app at developer.spotify.com, add the redirect URI below, and paste its Client ID. Playback of a chosen item uses the Spotify app.")
-            LabeledContent("Redirect URI") {
-                Text(SpotifyWebAPI.redirectURI).textSelection(.enabled).font(.system(.body, design: .monospaced))
-            }
-            LabeledContent("Scopes (read-only)") {
-                Text(SpotifyWebAPI.scopes.joined(separator: ", ")).textSelection(.enabled)
-            }
-            HStack {
-                TextField("Client ID", text: $clientIDDraft)
-                    .textFieldStyle(.roundedBorder)
-                Button("Save") { controller.setClientID(clientIDDraft) }
-                    .disabled(clientIDDraft.trimmingCharacters(in: .whitespaces) == controller.clientID)
-            }
-            HStack {
-                Text(statusText).foregroundStyle(.secondary)
-                Spacer()
-                switch controller.connectionState {
-                case .connected:
-                    Button("Disconnect", role: .destructive) { controller.disconnect() }
-                case .disconnected:
-                    Button("Connect Spotify") { Task { await controller.connect() } }
-                case .connecting:
-                    ProgressView().controlSize(.small)
-                case .needsClientID:
-                    EmptyView()
+        SettingsGroup("Spotify") {
+            HStack(spacing: 10) {
+                spotifyIcon
+                    .frame(width: 34, height: 34)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Spotify")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text("Queue, playlists, liked songs and supported playback actions.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
                 }
+                Spacer()
+                statusBadge
             }
-            if let error = controller.lastError {
-                Text(error).foregroundStyle(.orange)
+
+            switch controller.connectionState {
+            case .connected:
+                HStack {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Label("Connected", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                        Text("Library and queue access are ready.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Disconnect Spotify", role: .destructive) {
+                        controller.disconnect()
+                    }
+                }
+            case .disconnected:
+                HStack {
+                    Text(controller.lastError ?? "Connect your Spotify account to enable the library workspace.")
+                        .font(.caption)
+                        .foregroundStyle(controller.lastError == nil ? Color.secondary : Color.orange)
+                    Spacer()
+                    Button("Connect Spotify") {
+                        Task { await controller.connect() }
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            case .connecting:
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Waiting for Spotify sign-in…")
+                        .foregroundStyle(.secondary)
+                }
+            case .needsClientID:
+                Text("Spotify is unavailable in this build. The app must be packaged with its Spotify OAuth configuration.")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+
+            #if DEBUG
+            DisclosureGroup("Developer OAuth Override") {
+                VStack(alignment: .leading, spacing: 8) {
+                    HelpText("Debug only. Release users never see or enter a Client ID.")
+                    HStack {
+                        TextField("Client ID", text: $clientIDDraft)
+                            .textFieldStyle(.roundedBorder)
+                        Button("Apply") {
+                            controller.setDeveloperClientID(clientIDDraft)
+                            clientIDDraft = controller.clientID
+                        }
+                        .disabled(
+                            SpotifyAuthConfiguration.normalizedClientID(clientIDDraft) == nil
+                            || clientIDDraft.trimmingCharacters(in: .whitespacesAndNewlines) == controller.clientID
+                        )
+                        Button("Clear") {
+                            clientIDDraft = ""
+                            controller.setDeveloperClientID("")
+                            clientIDDraft = controller.clientID
+                        }
+                    }
+                    LabeledContent("Redirect URI") {
+                        Text(SpotifyWebAPI.redirectURI)
+                            .textSelection(.enabled)
+                            .font(.system(.caption, design: .monospaced))
+                    }
+                    LabeledContent("Scopes") {
+                        Text(SpotifyWebAPI.scopes.joined(separator: ", "))
+                            .font(.caption)
+                            .textSelection(.enabled)
+                    }
+                }
+                .padding(.top, 6)
+            }
+            .onAppear { clientIDDraft = controller.clientID }
+            #endif
+
+            if let error = controller.lastError, controller.connectionState == .connected {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
             }
         }
-        .onAppear { clientIDDraft = controller.clientID }
     }
 
-    private var statusText: String {
+    @ViewBuilder
+    private var spotifyIcon: some View {
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.spotify.client") {
+            Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                .resizable()
+                .interpolation(.high)
+        } else {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.green.opacity(0.18))
+                Image(systemName: "music.note")
+                    .foregroundStyle(.green)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var statusBadge: some View {
         switch controller.connectionState {
-        case .needsClientID: "Not configured"
-        case .disconnected: "Not connected"
-        case .connecting: "Waiting for Spotify sign-in…"
-        case .connected: "Connected"
+        case .connected:
+            Text("Connected").foregroundStyle(.green)
+        case .connecting:
+            Text("Connecting…").foregroundStyle(.secondary)
+        case .disconnected:
+            Text("Disconnected").foregroundStyle(.secondary)
+        case .needsClientID:
+            Text("Unavailable").foregroundStyle(.orange)
         }
     }
 }

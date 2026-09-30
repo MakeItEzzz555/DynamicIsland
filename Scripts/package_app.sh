@@ -14,6 +14,12 @@ MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 HELPERS_DIR="$CONTENTS_DIR/Helpers"
 ENTITLEMENTS_FILE="$ROOT_DIR/Scripts/DynamicIsland.entitlements.plist"
+SPOTIFY_CLIENT_ID="${DYNAMICISLAND_SPOTIFY_CLIENT_ID:-}"
+
+if [[ -n "$SPOTIFY_CLIENT_ID" && ! "$SPOTIFY_CLIENT_ID" =~ ^[A-Za-z0-9]{8,128}$ ]]; then
+  echo "DYNAMICISLAND_SPOTIFY_CLIENT_ID must be an 8-128 character alphanumeric Spotify Client ID." >&2
+  exit 64
+fi
 
 swift build -c release --package-path "$ROOT_DIR"
 
@@ -58,6 +64,17 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <string>14.6</string>
   <key>LSUIElement</key>
   <true/>
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>com.local.dynamicisland.spotify</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>dynamicisland</string>
+      </array>
+    </dict>
+  </array>
   <key>NSAppleEventsUsageDescription</key>
   <string>DynamicIsland can read and control Spotify or Music playback when you use the media module, and send the Messages replies you write in the island to the exact conversation they answer.</string>
   <key>NSCalendarsFullAccessUsageDescription</key>
@@ -77,6 +94,10 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
+
+if [[ -n "$SPOTIFY_CLIENT_ID" ]]; then
+  /usr/libexec/PlistBuddy -c "Add :DynamicIslandSpotifyClientID string $SPOTIFY_CLIENT_ID" "$CONTENTS_DIR/Info.plist"
+fi
 
 if [[ -n "${DEVELOPER_ID_APP:-}" ]]; then
   codesign --force --options runtime --timestamp --sign "$DEVELOPER_ID_APP" "$HELPERS_DIR/$RELAY_NAME"

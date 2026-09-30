@@ -238,13 +238,13 @@ struct SpotifySectionView: View {
         switch controller.connectionState {
         case .needsClientID:
             setupMessage(
-                "Spotify queue, playlists and liked songs use the Spotify Web API and need your own Spotify app Client ID.",
-                action: "Set Up in Settings",
+                "Spotify isn't configured in this build yet. Release users never need to enter a Client ID.",
+                action: "Open Settings",
                 perform: onOpenSettings
             )
         case .disconnected:
             setupMessage(
-                controller.lastError ?? "Connect Spotify to read your queue, playlists and liked songs.",
+                controller.lastError ?? "Connect Spotify to use your queue, playlists and liked songs.",
                 action: "Connect Spotify",
                 perform: { Task { await controller.connect() } }
             )
@@ -260,71 +260,11 @@ struct SpotifySectionView: View {
 
     private var connected: some View {
         VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 4) {
-                ForEach(Tab.allCases) { option in
-                    Button(option.rawValue) { tab = option }
-                        .buttonStyle(.plain)
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(.white.opacity(option == tab ? 0.9 : 0.45))
-                        .padding(.horizontal, 6)
-                        .frame(height: 18)
-                        .background(.white.opacity(option == tab ? 0.1 : 0), in: Capsule())
-                }
-                Spacer(minLength: 0)
-                if let error = controller.lastError {
-                    Text(error)
-                        .font(.system(size: 8.5, weight: .medium))
-                        .foregroundStyle(.orange.opacity(0.85))
-                        .lineLimit(1)
-                }
-                Button {
-                    Task { await controller.refresh() }
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 9, weight: .semibold))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.white.opacity(0.6))
-                .disabled(controller.isLoading)
-                .accessibilityLabel("Refresh Spotify")
-            }
-            let items = items(for: tab)
-            if controller.snapshot == nil {
-                ProgressView().controlSize(.small).frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if items.isEmpty {
-                Text(emptyText)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.5))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            toolbar
+            if tab == .playlists, controller.selectedPlaylist != nil {
+                playlistDetail
             } else {
-                ScrollView(.vertical, showsIndicators: true) {
-                    LazyVStack(alignment: .leading, spacing: 2) {
-                        ForEach(items) { item in
-                            Button {
-                                media?.playSpotifyURI(item.uri)
-                            } label: {
-                                HStack(spacing: 7) {
-                                    Image(systemName: tab == .playlists ? "music.note.list" : "music.note")
-                                        .foregroundStyle(.green.opacity(0.8))
-                                        .frame(width: 14)
-                                    VStack(alignment: .leading, spacing: 0) {
-                                        Text(item.title).font(.system(size: 10, weight: .semibold)).lineLimit(1)
-                                        Text(item.subtitle).font(.system(size: 8.5)).foregroundStyle(.white.opacity(0.5)).lineLimit(1)
-                                    }
-                                    Spacer(minLength: 0)
-                                }
-                                .padding(.horizontal, 6)
-                                .frame(height: 28)
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .foregroundStyle(.white.opacity(0.9))
-                            .help("Play in Spotify")
-                            .accessibilityLabel("Play \(item.title)")
-                        }
-                    }
-                }
-                .modifier(WorkspaceScrollRegion(layoutStore: layoutStore))
+                libraryList
             }
         }
         .task {
@@ -337,6 +277,224 @@ struct SpotifySectionView: View {
                 Task { await controller.refresh() }
             }
         }
+        .onChange(of: tab) { _, _ in
+            if tab != .playlists { controller.closePlaylist() }
+        }
+    }
+
+    private var toolbar: some View {
+        HStack(spacing: 4) {
+            ForEach(Tab.allCases) { option in
+                Button(option.rawValue) {
+                    tab = option
+                    if option != .playlists { controller.closePlaylist() }
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.white.opacity(option == tab ? 0.9 : 0.45))
+                .padding(.horizontal, 6)
+                .frame(height: 18)
+                .background(.white.opacity(option == tab ? 0.1 : 0), in: Capsule())
+            }
+            Spacer(minLength: 0)
+            if let error = controller.lastError {
+                Text(error)
+                    .font(.system(size: 8.5, weight: .medium))
+                    .foregroundStyle(.orange.opacity(0.85))
+                    .lineLimit(1)
+            }
+            Button {
+                Task { await controller.refresh() }
+            } label: {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 9, weight: .semibold))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.white.opacity(0.6))
+            .disabled(controller.isLoading)
+            .accessibilityLabel("Refresh Spotify")
+        }
+    }
+
+    @ViewBuilder
+    private var libraryList: some View {
+        let items = items(for: tab)
+        if controller.snapshot == nil {
+            ProgressView().controlSize(.small).frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if items.isEmpty {
+            Text(emptyText)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.white.opacity(0.5))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ScrollView(.vertical, showsIndicators: true) {
+                LazyVStack(alignment: .leading, spacing: 2) {
+                    ForEach(items) { item in
+                        spotifyRow(item, tab: tab)
+                            .onAppear {
+                                if item.id == items.last?.id {
+                                    loadMoreIfNeeded(for: tab)
+                                }
+                            }
+                    }
+                    if isLoadingMore(for: tab) {
+                        ProgressView()
+                            .controlSize(.mini)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 3)
+                    }
+                }
+            }
+            .modifier(WorkspaceScrollRegion(layoutStore: layoutStore))
+        }
+    }
+
+    @ViewBuilder
+    private var playlistDetail: some View {
+        if let playlist = controller.selectedPlaylist {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 5) {
+                    Button {
+                        controller.closePlaylist()
+                    } label: {
+                        Image(systemName: "chevron.left")
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Back to playlists")
+                    Text(playlist.title)
+                        .font(.system(size: 10, weight: .semibold))
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    Button {
+                        _ = media?.playSpotifyURI(playlist.uri)
+                    } label: {
+                        Image(systemName: "play.fill")
+                    }
+                    .buttonStyle(.plain)
+                    .help("Play playlist in Spotify")
+                }
+                if controller.isLoadingPlaylist, controller.playlistItems.isEmpty {
+                    ProgressView().controlSize(.small).frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if controller.playlistItems.isEmpty {
+                    Text("No playable items in this playlist")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.5))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ScrollView(.vertical, showsIndicators: true) {
+                        LazyVStack(alignment: .leading, spacing: 2) {
+                            ForEach(controller.playlistItems) { item in
+                                spotifyTrackRow(item)
+                                    .onAppear {
+                                        if item.id == controller.playlistItems.last?.id {
+                                            Task { await controller.loadMorePlaylistItems() }
+                                        }
+                                    }
+                            }
+                            if controller.isLoadingPlaylist {
+                                ProgressView().controlSize(.mini).frame(maxWidth: .infinity)
+                            }
+                        }
+                    }
+                    .modifier(WorkspaceScrollRegion(layoutStore: layoutStore))
+                }
+            }
+        }
+    }
+
+    private func spotifyRow(_ item: SpotifyMediaItem, tab: Tab) -> some View {
+        HStack(spacing: 5) {
+            Button {
+                if tab == .playlists {
+                    Task { await controller.loadPlaylist(item) }
+                } else {
+                    _ = media?.playSpotifyURI(item.uri)
+                }
+            } label: {
+                rowLabel(item, symbol: tab == .playlists ? "music.note.list" : "music.note")
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.white.opacity(0.9))
+            .help(tab == .playlists ? "Browse playlist" : "Play in Spotify")
+
+            if tab == .playlists {
+                Button {
+                    _ = media?.playSpotifyURI(item.uri)
+                } label: {
+                    Image(systemName: "play.fill")
+                }
+                .buttonStyle(.plain)
+                .help("Play playlist in Spotify")
+            } else {
+                itemActions(item, isLikedTab: tab == .liked)
+            }
+        }
+        .frame(height: 28)
+    }
+
+    private func spotifyTrackRow(_ item: SpotifyMediaItem) -> some View {
+        HStack(spacing: 5) {
+            Button {
+                _ = media?.playSpotifyURI(item.uri)
+            } label: {
+                rowLabel(item, symbol: "music.note")
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.white.opacity(0.9))
+            itemActions(item, isLikedTab: isLiked(item))
+        }
+        .frame(height: 28)
+    }
+
+    private func rowLabel(_ item: SpotifyMediaItem, symbol: String) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: symbol)
+                .foregroundStyle(.green.opacity(0.8))
+                .frame(width: 14)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(item.title)
+                    .font(.system(size: 10, weight: .semibold))
+                    .lineLimit(1)
+                Text(item.subtitle)
+                    .font(.system(size: 8.5))
+                    .foregroundStyle(.white.opacity(0.5))
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 6)
+        .contentShape(Rectangle())
+    }
+
+    @ViewBuilder
+    private func itemActions(_ item: SpotifyMediaItem, isLikedTab: Bool) -> some View {
+        let pending = controller.pendingItemURIs.contains(item.uri)
+        if pending {
+            ProgressView().controlSize(.mini).frame(width: 18)
+        } else {
+            Button {
+                Task { await controller.addToQueue(item) }
+            } label: {
+                Image(systemName: "text.badge.plus")
+            }
+            .buttonStyle(.plain)
+            .help("Add to queue")
+            .accessibilityLabel("Add (item.title) to queue")
+
+            Button {
+                Task { await controller.setSaved(item, saved: !isLikedTab) }
+            } label: {
+                Image(systemName: isLikedTab ? "heart.fill" : "heart")
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(isLikedTab ? .green : .white.opacity(0.55))
+            .help(isLikedTab ? "Remove from Liked Songs" : "Save to Liked Songs")
+            .accessibilityLabel(isLikedTab ? "Remove (item.title) from Liked Songs" : "Save (item.title) to Liked Songs")
+        }
+    }
+
+    private func isLiked(_ item: SpotifyMediaItem) -> Bool {
+        controller.snapshot?.likedSongs.contains(where: { $0.id == item.id }) ?? false
     }
 
     private func items(for tab: Tab) -> [SpotifyMediaItem] {
@@ -345,6 +503,27 @@ struct SpotifySectionView: View {
         case .queue: return snapshot.queue
         case .playlists: return snapshot.playlists
         case .liked: return snapshot.likedSongs
+        }
+    }
+
+    private func loadMoreIfNeeded(for tab: Tab) {
+        switch tab {
+        case .queue:
+            break
+        case .playlists:
+            guard controller.hasMorePlaylists else { return }
+            Task { await controller.loadMorePlaylists() }
+        case .liked:
+            guard controller.hasMoreLikedSongs else { return }
+            Task { await controller.loadMoreLikedSongs() }
+        }
+    }
+
+    private func isLoadingMore(for tab: Tab) -> Bool {
+        switch tab {
+        case .queue: false
+        case .playlists: controller.isLoadingMorePlaylists
+        case .liked: controller.isLoadingMoreLikedSongs
         }
     }
 
@@ -358,9 +537,7 @@ struct SpotifySectionView: View {
 
     private func setupMessage(_ text: String, action: String, perform: @escaping () -> Void) -> some View {
         VStack(spacing: 7) {
-            Image(systemName: "music.note.list")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(.green.opacity(0.75))
+            spotifySourceIcon
             Text(text)
                 .font(.system(size: 9.5, weight: .medium))
                 .foregroundStyle(.white.opacity(0.62))
@@ -376,6 +553,20 @@ struct SpotifySectionView: View {
         }
         .padding(.horizontal, 12)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    @ViewBuilder
+    private var spotifySourceIcon: some View {
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.spotify.client") {
+            Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                .resizable()
+                .interpolation(.high)
+                .frame(width: 28, height: 28)
+        } else {
+            Image(systemName: "music.note")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(.green.opacity(0.75))
+        }
     }
 }
 
