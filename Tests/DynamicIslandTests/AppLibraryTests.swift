@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 @testable import DynamicIsland
 
@@ -90,4 +91,37 @@ private final class ScanCounter: @unchecked Sendable {
     private var count = 0
     var value: Int { lock.withLock { count } }
     func increment() { lock.withLock { count += 1 } }
+}
+
+/// Opt-in real launch through the production store
+/// (DYNAMIC_ISLAND_LIVE_APP_LAUNCH=1). Quits the app afterwards only if it
+/// was not already running.
+final class AppLibraryLiveLaunchTests: XCTestCase {
+    @MainActor
+    func testLaunchesARealInstalledApplication() async throws {
+        guard ProcessInfo.processInfo.environment["DYNAMIC_ISLAND_LIVE_APP_LAUNCH"] == "1" else {
+            throw XCTSkip("Set DYNAMIC_ISLAND_LIVE_APP_LAUNCH=1 to launch Calculator for real.")
+        }
+        let suite = "AppLibraryLive-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = AppLibraryStore(defaults: defaults)
+        store.reload()
+        await store.waitForLoad()
+        let calculator = try XCTUnwrap(store.apps.first { $0.bundleIdentifier == (ProcessInfo.processInfo.environment["DYNAMIC_ISLAND_LIVE_APP_BUNDLE"] ?? "com.apple.calculator") })
+        XCTAssertGreaterThan(store.icon(for: calculator).size.width, 0)
+        let wasRunning = !NSRunningApplication.runningApplications(withBundleIdentifier: calculator.bundleIdentifier).isEmpty
+
+        let launched = await store.launch(calculator)
+        XCTAssertTrue(launched)
+        var running: NSRunningApplication?
+        for _ in 0..<40 where running == nil {
+            running = NSRunningApplication.runningApplications(withBundleIdentifier: calculator.bundleIdentifier).first
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        XCTAssertNotNil(running, "Calculator process should be running")
+        XCTAssertEqual(store.recents.first?.bundleIdentifier, calculator.bundleIdentifier)
+        print("LIVE app launch: \(calculator.name) wasRunning=\(wasRunning) pid=\(running?.processIdentifier ?? -1) apps=\(store.apps.count)")
+        if !wasRunning { running?.terminate() }
+    }
 }

@@ -167,7 +167,11 @@ final class CalendarEventsController: ObservableObject {
         )
     }
 
+    private var observingSurfaces = 0
+
+    /// Reference-counted: each visible surface starts and stops once.
     func startObserving() {
+        observingSurfaces += 1
         guard observer == nil, let name = provider.changeNotificationName else { return }
         observer = NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.refresh() }
@@ -175,6 +179,8 @@ final class CalendarEventsController: ObservableObject {
     }
 
     func stopObserving() {
+        observingSurfaces = max(0, observingSurfaces - 1)
+        guard observingSurfaces == 0 else { return }
         if let observer { NotificationCenter.default.removeObserver(observer) }
         observer = nil
     }

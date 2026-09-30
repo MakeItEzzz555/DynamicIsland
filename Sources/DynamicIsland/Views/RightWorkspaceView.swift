@@ -7,7 +7,7 @@ import SwiftUI
 /// accessibility increment/decrement.
 struct RightWorkspaceView<Overview: View, Productivity: View, AppsMedia: View>: View {
     /// Height reserved below the pages for the page indicator.
-    static var indicatorBand: CGFloat { 14 }
+    static var indicatorBand: CGFloat { 16 }
 
     static func showsIndicator(_ configuration: RightWorkspaceConfiguration) -> Bool {
         configuration.visiblePages.count > 1 && configuration.indicatorStyle == .dots
@@ -120,7 +120,7 @@ struct RightWorkspacePageIndicator: View {
     let onSelect: (RightWorkspacePage) -> Void
 
     var body: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 0) {
             ForEach(pages) { page in
                 let selected = page == current
                 Button {
@@ -129,7 +129,7 @@ struct RightWorkspacePageIndicator: View {
                     Capsule(style: .continuous)
                         .fill(.white.opacity(selected ? 0.72 : 0.22))
                         .frame(width: selected ? 12 : 5, height: 5)
-                        .frame(width: 16, height: 14)
+                        .frame(width: 22, height: 16)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)

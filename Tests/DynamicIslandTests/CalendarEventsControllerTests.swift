@@ -76,6 +76,22 @@ final class CalendarEventsControllerTests: XCTestCase {
         XCTAssertEqual(controller.events.map(\.id), ["new"])
     }
 
+    func testObservationIsReferenceCounted() {
+        let provider = FakeCalendarProvider()
+        provider.accessState = .fullAccess
+        let controller = CalendarEventsController(provider: provider, now: { self.now })
+        controller.startObserving()
+        controller.startObserving()
+        controller.stopObserving()
+        provider.events = [event(id: "still-observed", start: 60)]
+        NotificationCenter.default.post(name: provider.changeNotificationName!, object: nil)
+        XCTAssertEqual(controller.events.map(\.id), ["still-observed"])
+        controller.stopObserving()
+        provider.events = []
+        NotificationCenter.default.post(name: provider.changeNotificationName!, object: nil)
+        XCTAssertEqual(controller.events.map(\.id), ["still-observed"], "no refresh after the last surface stopped")
+    }
+
     func testMeetingLinkIsOnlyTakenFromTheEvent() {
         XCTAssertEqual(
             CalendarMeetingLink.find(url: nil, location: "Room 4", notes: "Join https://meet.example.com/abc now"),

@@ -84,17 +84,17 @@ final class WorkspaceRenderHarness {
                         liveActivities: self.liveActivities,
                         navigation: self.navigation,
                         settings: self.settings,
-                        availableHeight: 86,
+                        availableHeight: 85,
                         compactScale: 1
                     )
-                    .frame(height: 86, alignment: .topLeading)
+                    .frame(height: 85, alignment: .topLeading)
                     ShortcutsModuleView(
                         shortcuts: self.shortcuts,
-                        availableHeight: 86,
+                        availableHeight: 85,
                         compactScale: 1,
                         onShortcutLaunched: {}
                     )
-                    .frame(height: 86, alignment: .topLeading)
+                    .frame(height: 85, alignment: .topLeading)
                 }
             },
             productivity: {

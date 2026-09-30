@@ -284,3 +284,44 @@ final class CameraPreviewControllerTests: XCTestCase {
         }
     }
 }
+
+/// Opt-in real camera acceptance (DYNAMIC_ISLAND_LIVE_CAMERA=1): the
+/// production controller and AVFoundation session, attached as the mirror
+/// consumer, must run capture, mirror the preview connection, and stop
+/// when the last consumer detaches.
+@MainActor
+final class CameraMirrorLiveTests: XCTestCase {
+    func testRealCameraMirrorStartsMirrorsAndStops() async throws {
+        guard ProcessInfo.processInfo.environment["DYNAMIC_ISLAND_LIVE_CAMERA"] == "1" else {
+            throw XCTSkip("Set DYNAMIC_ISLAND_LIVE_CAMERA=1 to use the real camera.")
+        }
+        let controller = CameraPreviewController(
+            liveActivities: LiveActivityStore(),
+            capabilities: IslandCapabilityRegistry()
+        )
+        guard controller.permissionState == .authorized else {
+            throw XCTSkip("Camera access is \(controller.permissionState) for this process")
+        }
+        await controller.attachPreviewConsumer()
+        XCTAssertTrue(controller.isRunning, controller.statusText)
+        let session = try XCTUnwrap(controller.previewSession)
+        for _ in 0..<30 where !session.isRunning { try await Task.sleep(for: .milliseconds(100)) }
+        XCTAssertTrue(session.isRunning)
+
+        let view = CameraPreviewLayerView(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
+        view.isMirrored = true
+        view.session = session
+        view.layout()
+        let layer = try XCTUnwrap(view.layer?.sublayers?.compactMap { $0 as? AVCaptureVideoPreviewLayer }.first)
+        let connection = try XCTUnwrap(layer.connection)
+        print("LIVE camera: device=\(controller.activeDeviceName ?? "-") mirroringSupported=\(connection.isVideoMirroringSupported) mirrored=\(connection.isVideoMirrored)")
+        if connection.isVideoMirroringSupported {
+            XCTAssertTrue(connection.isVideoMirrored)
+        }
+        view.session = nil
+
+        await controller.detachPreviewConsumer()
+        XCTAssertFalse(controller.isRunning)
+        XCTAssertFalse(session.isRunning)
+    }
+}
