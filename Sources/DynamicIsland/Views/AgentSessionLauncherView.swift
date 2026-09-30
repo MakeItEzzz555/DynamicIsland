@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct AgentSessionLauncherView: View {
@@ -13,6 +14,8 @@ struct AgentSessionLauncherView: View {
     @State private var repositoryPathError: String?
     @State private var starting = false
     @State private var projectedRepositories: [AgentLocalRepositoryChoice] = []
+    @State private var recentFolders: [String] = []
+    private let recentProjects = AgentRecentProjects(defaults: .standard)
     @Environment(\.agentProjectLocations) private var projectLocations
 
     private var liveSessions: [AgentSession] {
@@ -80,11 +83,37 @@ struct AgentSessionLauncherView: View {
                         repositoryRow(repo)
                     }
 
+                    let recents = recentFolders.filter { path in
+                        !repositories.contains { $0.path == path } &&
+                            (query.isEmpty || path.localizedCaseInsensitiveContains(query))
+                    }
+                    if !recents.isEmpty {
+                        launcherSectionTitle("RECENT FOLDERS")
+                            .padding(.top, 4)
+                        ForEach(recents, id: \.self) { path in
+                            repositoryRow(AgentLocalRepositoryChoice(
+                                path: path,
+                                name: URL(fileURLWithPath: path).lastPathComponent,
+                                branch: nil
+                            ))
+                        }
+                    }
+
+                    Button(action: chooseFolder) {
+                        Label("Open Folder…", systemImage: "folder.badge.plus")
+                            .font(.system(size: 9.5, weight: .semibold))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 8)
+                            .frame(height: 30)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.white.opacity(0.78))
+
                     Button {
                         showsRepositoryPathEntry.toggle()
                         repositoryPathError = nil
                     } label: {
-                        Label("Enter local repository path…", systemImage: "folder.badge.plus")
+                        Label("Enter folder path…", systemImage: "character.cursor.ibeam")
                             .font(.system(size: 9.5, weight: .semibold))
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, 8)
@@ -122,6 +151,12 @@ struct AgentSessionLauncherView: View {
             projectedRepositories = projected
         }
         .onExitCommand(perform: onDismiss)
+        .onAppear {
+            recentFolders = recentProjects.load()
+        }
+        .task(id: selectedProvider) {
+            await managedControl.refreshAgents(for: selectedProvider)
+        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Agent session and repository launcher")
     }
@@ -289,16 +324,32 @@ struct AgentSessionLauncherView: View {
                 .scrollBounceBehavior(.basedOnSize)
             }
 
+            let agents = managedControl.availableAgents(for: selectedProvider)
+            if !agents.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 5) {
+                        agentChoice("Default agent", agent: nil)
+                        ForEach(agents) { option in
+                            agentChoice(option.name, agent: option.name)
+                        }
+                    }
+                }
+                .scrollBounceBehavior(.basedOnSize)
+            }
+
             Button {
                 guard !starting else { return }
                 starting = true
                 Task { @MainActor in
                     let descriptor = await managedControl.startNewSession(cwd: path)
                     starting = false
-                    if descriptor != nil { onDismiss() }
+                    if descriptor != nil {
+                        recentProjects.record(path)
+                        onDismiss()
+                    }
                 }
             } label: {
-                Label(starting ? "Starting…" : "Start in repository", systemImage: "terminal.fill")
+                Label(starting ? "Starting…" : "Start in folder", systemImage: "terminal.fill")
                     .font(.system(size: 9.5, weight: .bold))
                     .frame(maxWidth: .infinity)
                     .frame(height: 29)
@@ -351,6 +402,40 @@ struct AgentSessionLauncherView: View {
                 .background(.white.opacity(selected ? 0.09 : 0.025), in: Capsule())
         }
         .buttonStyle(.plain)
+    }
+
+    private func agentChoice(_ title: String, agent: String?) -> some View {
+        let selected = managedControl.newSessionAgent(for: selectedProvider) == agent
+        return Button {
+            _ = managedControl.selectNewSessionAgent(agent, for: selectedProvider)
+        } label: {
+            Label(title, systemImage: agent == nil ? "person.crop.circle" : "person.crop.circle.badge.checkmark")
+                .font(.system(size: 8, weight: .semibold))
+                .foregroundStyle(.white.opacity(selected ? 0.86 : 0.46))
+                .padding(.horizontal, 7)
+                .frame(height: 22)
+                .background(.white.opacity(selected ? 0.09 : 0.025), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .help(agent == nil ? "Start without a named agent" : "Start with the \(title) agent")
+    }
+
+    /// Any accessible local folder; the chosen folder itself becomes the
+    /// session working directory (never rewritten to a repository root).
+    private func chooseFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = false
+        panel.prompt = "Use Folder"
+        panel.message = "Choose a project folder for the agent session"
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK,
+              let url = panel.url,
+              let path = AgentSessionLauncherProjection.validRepositoryPath(url.path) else { return }
+        selectedRepositoryPath = path
+        repositoryPathError = nil
     }
 
     private func useRepositoryPathDraft() {
