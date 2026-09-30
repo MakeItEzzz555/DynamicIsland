@@ -33,9 +33,9 @@ final class MessagesAppAdapter: MessagingProviderAdapter {
         applicationURL: @escaping () -> URL? = {
             NSWorkspace.shared.urlForApplication(withBundleIdentifier: MessagesAppAdapter.bundleIdentifier)
         },
+        // Synchronous launch result, so success is never assumed.
         openApplication: @escaping (URL) -> Bool = { url in
-            NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
-            return true
+            NSWorkspace.shared.open(url)
         }
     ) {
         self.applicationURL = applicationURL

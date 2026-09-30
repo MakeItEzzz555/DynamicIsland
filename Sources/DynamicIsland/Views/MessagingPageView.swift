@@ -106,8 +106,16 @@ struct MessagingPageView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .onAppear { controller.acknowledge(entry) }
-        .onChange(of: entry.key) { _, _ in controller.acknowledge(entry) }
+        .onAppear {
+            // Pin the shown conversation so re-sorting by new messages
+            // never swaps the composer to another conversation.
+            if selectedKey == nil { selectedKey = entry.key }
+            controller.acknowledge(entry)
+        }
+        .onChange(of: entry.key) { _, key in
+            selectedKey = key
+            controller.acknowledge(entry)
+        }
     }
 
     private func header(for entry: MessagingQueueEntry) -> some View {
@@ -183,6 +191,7 @@ struct MessagingPageView: View {
                 .font(.system(size: 12))
                 .focused($composerFocused)
                 .disabled(sending)
+                .id(entry.key)
                 .onSubmit { send(entry) }
 
                 Button {

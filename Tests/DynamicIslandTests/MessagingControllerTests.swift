@@ -45,7 +45,10 @@ final class FakeMessagingAdapter: MessagingProviderAdapter {
 
 @MainActor
 final class FakeFocus: MessagingFocusProviding {
-    var isFocused: Bool?
+    var isFocused: Bool? {
+        didSet { onChange?() }
+    }
+    var onChange: (() -> Void)?
 }
 
 enum MessagingFixtures {

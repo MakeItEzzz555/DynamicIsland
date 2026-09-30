@@ -28,12 +28,27 @@ protocol MessagingFocusProviding: AnyObject {
     /// Authoritative Focus state, or nil when unknown/unauthorized.
     /// Absence of notifications is never treated as Focus.
     var isFocused: Bool? { get }
+    /// Called when the authoritative Focus state may have changed.
+    var onChange: (() -> Void)? { get set }
 }
 
 /// Reads Focus status only when the user already authorized it (the Focus
 /// HUD owns the permission request). Never prompts.
 @MainActor
 final class SystemMessagingFocusProvider: MessagingFocusProviding {
+    var onChange: (() -> Void)?
+    private var observation: NSKeyValueObservation?
+
+    init() {
+        observation = INFocusStatusCenter.default.observe(\.focusStatus, options: [.new]) { [weak self] _, _ in
+            Task { @MainActor [weak self] in self?.onChange?() }
+        }
+    }
+
+    deinit {
+        observation?.invalidate()
+    }
+
     var isFocused: Bool? {
         guard INFocusStatusCenter.default.authorizationStatus == .authorized else { return nil }
         return INFocusStatusCenter.default.focusStatus.isFocused
@@ -80,8 +95,14 @@ struct MessagingQueue: Equatable, Sendable {
         return "event:\(message.conversation.provider.stableName):\(fallbackSequence)"
     }
 
+    /// `protectedKeys`: conversations the user is replying in (draft text
+    /// or a send in flight); they are never evicted by trimming.
     @discardableResult
-    mutating func insert(_ message: MessagingMessage, heldByFocus: Bool) -> InsertResult {
+    mutating func insert(
+        _ message: MessagingMessage,
+        heldByFocus: Bool,
+        protectedKeys: Set<String> = []
+    ) -> InsertResult {
         sequence += 1
         let key = Self.key(for: message, fallbackSequence: sequence)
         if let index = entries.firstIndex(where: { $0.key == key }) {
@@ -90,10 +111,13 @@ struct MessagingQueue: Equatable, Sendable {
                 return .duplicate
             }
             guard message.receivedAt >= entry.latest.receivedAt else {
-                // Older message for the same conversation: remember it, keep latest.
+                // Older but distinct message (delivered out of order): count
+                // it as unseen, keep the newer message as latest.
                 if let messageID = message.id { entry.remember(messageID) }
+                entry.unseenCount += 1
+                entry.acknowledged = false
                 entries[index] = entry
-                return .duplicate
+                return .updated
             }
             entry.latest = message
             entry.unseenCount += 1
@@ -116,7 +140,7 @@ struct MessagingQueue: Equatable, Sendable {
         if let messageID = message.id { entry.remember(messageID) }
         entries.append(entry)
         sortEntries()
-        trim()
+        trim(protectedKeys: protectedKeys.union([key]))
         return .inserted
     }
 
@@ -142,13 +166,17 @@ struct MessagingQueue: Equatable, Sendable {
         }
     }
 
-    /// Drops the oldest acknowledged entries first, then the oldest.
-    private mutating func trim() {
+    /// Drops the oldest acknowledged entries first, then the oldest, never
+    /// a protected conversation. May exceed the bound only when every
+    /// entry is protected.
+    private mutating func trim(protectedKeys: Set<String>) {
         while entries.count > Self.maximumEntries {
-            if let index = entries.lastIndex(where: \.acknowledged) {
+            if let index = entries.lastIndex(where: { $0.acknowledged && !protectedKeys.contains($0.key) }) {
+                entries.remove(at: index)
+            } else if let index = entries.lastIndex(where: { !protectedKeys.contains($0.key) }) {
                 entries.remove(at: index)
             } else {
-                entries.removeLast()
+                return
             }
         }
     }
@@ -175,6 +203,10 @@ final class MessagingController: ObservableObject {
     static let acknowledgedPriority = 112
     static let sentSettleDelay: TimeInterval = 2.5
     static let compactPreviewLength = 80
+    /// A provider that does not answer within this time yields an
+    /// uncertain outcome (draft kept). The send itself is not cancelled,
+    /// because a hand-off cannot be taken back.
+    static let defaultSendTimeout: TimeInterval = 20
 
     struct Preferences: Equatable, Sendable {
         var enabled = true
@@ -193,6 +225,8 @@ final class MessagingController: ObservableObject {
     private let liveActivities: LiveActivityStore
     private let focus: MessagingFocusProviding
     private let now: () -> Date
+    private let sendTimeout: TimeInterval
+    private let presentationEnabled: () -> Bool
     private var settleTasks: [MessagingConversationID: Task<Void, Never>] = [:]
 
     init(
@@ -200,8 +234,12 @@ final class MessagingController: ObservableObject {
         liveActivities: LiveActivityStore,
         focus: MessagingFocusProviding = SystemMessagingFocusProvider(),
         preferences: Preferences = Preferences(),
+        sendTimeout: TimeInterval = MessagingController.defaultSendTimeout,
+        presentationEnabled: @escaping () -> Bool = { true },
         now: @escaping () -> Date = Date.init
     ) {
+        self.sendTimeout = sendTimeout
+        self.presentationEnabled = presentationEnabled
         self.adapters = Dictionary(adapters.map { ($0.provider, $0) }, uniquingKeysWith: { first, _ in first })
         self.liveActivities = liveActivities
         self.focus = focus
@@ -211,6 +249,9 @@ final class MessagingController: ObservableObject {
             adapter.onIncoming = { [weak self] message in
                 self?.receive(message)
             }
+        }
+        focus.onChange = { [weak self] in
+            self?.focusDidChange()
         }
         publishActivity()
     }
@@ -257,7 +298,21 @@ final class MessagingController: ObservableObject {
               !preferences.mutedProviders.contains(message.conversation.provider),
               adapters[message.conversation.provider] != nil else { return }
         let held = focus.isFocused == true
-        queue.insert(message, heldByFocus: held)
+        queue.insert(message, heldByFocus: held, protectedKeys: replyingKeys)
+        publishActivity()
+    }
+
+    /// Queue keys of conversations with draft text or a send in flight.
+    private var replyingKeys: Set<String> {
+        Set(queue.entries.compactMap { entry in
+            guard let id = entry.conversation.id else { return nil }
+            let draft = drafts.draft(for: id)
+            return draft.state.isSending || !draft.text.isEmpty ? entry.key : nil
+        })
+    }
+
+    /// Re-publishes after the global Live Activities setting changes.
+    func republishActivity() {
         publishActivity()
     }
 
@@ -300,12 +355,14 @@ final class MessagingController: ObservableObject {
         }
         queue.acknowledge(entry.key)
         publishActivity()
+        // Captured before awaiting: a message that arrives during the send
+        // must keep the conversation visible.
+        let latestAtSend = queue.entries.first { $0.key == entry.key }?.latest.receivedAt
 
-        let outcome = await adapter.send(text, to: target)
+        let outcome = await Self.send(text, to: target, via: adapter, timeout: sendTimeout)
         drafts.apply(outcome, for: target)
         if case .confirmed = outcome {
-            let latestAt = queue.entries.first { $0.key == entry.key }?.latest.receivedAt
-            scheduleSettle(entryKey: entry.key, conversation: target, latestAt: latestAt)
+            scheduleSettle(entryKey: entry.key, conversation: target, latestAt: latestAtSend)
         }
         publishActivity()
     }
@@ -331,6 +388,25 @@ final class MessagingController: ObservableObject {
             queue.releaseFocusHolds()
         }
         publishActivity()
+    }
+
+    /// First result wins: the provider's outcome, or `.uncertain` on timeout.
+    private static func send(
+        _ text: String,
+        to target: MessagingConversationID,
+        via adapter: MessagingProviderAdapter,
+        timeout: TimeInterval
+    ) async -> MessagingSendOutcome {
+        await withCheckedContinuation { (continuation: CheckedContinuation<MessagingSendOutcome, Never>) in
+            let once = OnceOutcome(continuation)
+            Task { @MainActor in
+                once.resume(await adapter.send(text, to: target))
+            }
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: UInt64(max(timeout, 0) * 1_000_000_000))
+                once.resume(.uncertain(reason: "No response from \(adapter.provider.displayName)"))
+            }
+        }
     }
 
     // MARK: Live activity
@@ -375,7 +451,13 @@ final class MessagingController: ObservableObject {
     }
 
     private func publishActivity() {
-        let presentable = visibleEntries.filter { !$0.heldByFocus }
+        guard presentationEnabled() else {
+            liveActivities.remove(id: Self.activityID)
+            objectWillChange.send()
+            return
+        }
+        let focused = focus.isFocused == true
+        let presentable = visibleEntries.filter { !($0.heldByFocus && focused) }
         guard let entry = presentable.first else {
             liveActivities.remove(id: Self.activityID)
             objectWillChange.send()
@@ -407,12 +489,26 @@ final class MessagingController: ObservableObject {
             guard !Task.isCancelled, let self else { return }
             guard self.drafts.draft(for: conversation).state == .sent else { return }
             let current = self.queue.entries.first { $0.key == entryKey }
-            if let current, current.latest.receivedAt == latestAt {
+            if let current, current.latest.receivedAt == latestAt, current.unseenCount == 0 {
                 self.queue.remove(entryKey)
             }
             self.drafts.discard(conversation)
             self.settleTasks[conversation] = nil
             self.publishActivity()
         }
+    }
+}
+
+@MainActor
+private final class OnceOutcome {
+    private var continuation: CheckedContinuation<MessagingSendOutcome, Never>?
+
+    init(_ continuation: CheckedContinuation<MessagingSendOutcome, Never>) {
+        self.continuation = continuation
+    }
+
+    func resume(_ outcome: MessagingSendOutcome) {
+        continuation?.resume(returning: outcome)
+        continuation = nil
     }
 }

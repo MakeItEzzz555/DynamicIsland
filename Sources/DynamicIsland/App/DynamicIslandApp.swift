@@ -140,7 +140,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var messaging = MessagingController(
         adapters: [MessagesAppAdapter()],
         liveActivities: liveActivities,
-        preferences: messagingPreferences.load()
+        preferences: messagingPreferences.load(),
+        presentationEnabled: { [weak self] in self?.settings.liveActivitiesEnabled ?? true }
     )
     private let agentAttention = AgentAttentionCoordinator()
     private let agentApprovalControl = AgentApprovalController()
@@ -504,6 +505,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateMediaLiveActivity(settings: settings)
         updateFileTrayLiveActivity(files: fileShelf.files, settings: settings)
         updateBatteryLiveActivity(settings: settings)
+        messaging.republishActivity()
     }
 
     private func updateTimerLiveActivity(
