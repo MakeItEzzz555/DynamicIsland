@@ -832,8 +832,11 @@ struct IslandRootView: View {
             navigation.showTray()
             onRequestExpand()
         case .battery, .system, .keepAwake, .terminalTask, .windowSnapPreview,
-             .reminder, .voiceRecording, .voiceTranscription, .camera, .backgroundRemoval, .message:
+             .reminder, .voiceRecording, .voiceTranscription, .camera, .backgroundRemoval:
             break
+        case .message:
+            navigation.showMessages()
+            onRequestExpand()
         }
     }
 
@@ -2786,6 +2789,8 @@ struct ExpandedIslandView: View {
             statsPage(metrics: metrics)
         case .tools:
             toolsPage(metrics: metrics)
+        case .messages:
+            messagesPage(metrics: metrics)
         }
     }
 
@@ -3165,6 +3170,22 @@ struct ExpandedIslandView: View {
             ringSize: metrics.timerRingSize,
             pageHeight: metrics.pageHeight,
             onTimerStarted: onTimerStarted
+        )
+            .innerBlurScaleClean(
+                settings: settings,
+                isVisible: contentVisible,
+                isRemoval: isContentRemoving,
+                index: 1,
+                reduceMotion: reduceMotion
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private func messagesPage(metrics: ExpandedIslandLayoutMetrics) -> some View {
+        MessagingPageView(
+            controller: modules.messaging,
+            layoutStore: layoutStore,
+            pageHeight: metrics.pageHeight
         )
             .innerBlurScaleClean(
                 settings: settings,
@@ -3625,8 +3646,10 @@ private struct LiveActivitiesModuleView: View {
             }
         case .system:
             break
+        case .message:
+            navigation.showMessages()
         case .keepAwake, .terminalTask, .windowSnapPreview, .reminder,
-             .voiceRecording, .voiceTranscription, .camera, .backgroundRemoval, .message:
+             .voiceRecording, .voiceTranscription, .camera, .backgroundRemoval:
             break
         }
     }

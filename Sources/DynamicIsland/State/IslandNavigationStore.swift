@@ -7,6 +7,7 @@ enum ExpandedIslandPage: CaseIterable {
     case timer
     case stats
     case tools
+    case messages
 
     var title: String {
         switch self {
@@ -22,6 +23,8 @@ enum ExpandedIslandPage: CaseIterable {
             "Stats"
         case .tools:
             "Tools"
+        case .messages:
+            "Messages"
         }
     }
 
@@ -39,6 +42,8 @@ enum ExpandedIslandPage: CaseIterable {
             "chart.xyaxis.line"
         case .tools:
             "wand.and.stars"
+        case .messages:
+            "message.fill"
         }
     }
 
@@ -51,9 +56,15 @@ enum ExpandedIslandPage: CaseIterable {
 final class IslandNavigationStore: ObservableObject {
     @Published private(set) var selectedPage: ExpandedIslandPage = .island
     @Published private(set) var isFileDropTargeted = false
+    /// Runtime availability of the Messages page: true only while a
+    /// visible incoming message is queued.
+    @Published var hasActionableMessages = false
 
     func availablePages(using settings: AppSettings) -> [ExpandedIslandPage] {
         var pages: [ExpandedIslandPage] = [.island]
+        if hasActionableMessages {
+            pages.append(.messages)
+        }
         if settings.agentActivityEnabled && settings.showAgentsTab {
             pages.append(.agents)
         }
@@ -102,6 +113,11 @@ final class IslandNavigationStore: ObservableObject {
 
     func showStats() {
         select(.stats)
+    }
+
+    func showMessages() {
+        guard hasActionableMessages else { return }
+        select(.messages)
     }
 
     func select(_ page: ExpandedIslandPage) {

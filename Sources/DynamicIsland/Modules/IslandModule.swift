@@ -30,4 +30,5 @@ struct IslandModules {
     let agentManagedControl: AgentManagedSessionController
     let agentProjects: AgentProjectProjectionStore
     let productivity: ProductivityModules
+    let messaging: MessagingController
 }

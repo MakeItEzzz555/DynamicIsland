@@ -136,6 +136,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let geometryService = NotchGeometryService()
     private let agentEvents = AgentEventStore()
     private let agentProjects = AgentProjectProjectionStore()
+    private lazy var messaging = MessagingController(
+        adapters: [],
+        liveActivities: liveActivities
+    )
     private let agentAttention = AgentAttentionCoordinator()
     private let agentApprovalControl = AgentApprovalController()
     private lazy var agentIngestion = AgentIngestionCoordinator(eventStore: agentEvents)
@@ -198,9 +202,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             agentApprovalControl: agentApprovalControl,
             agentManagedControl: agentManagedControl,
             agentProjects: agentProjects,
-            productivity: productivity
+            productivity: productivity,
+            messaging: messaging
         )
         agentProjects.observe(agentEvents.$sessions)
+        installMessagingObservers()
         #if DEBUG
         debugPrint(
             "DynamicIsland AppDelegate modules",
@@ -263,6 +269,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil
         )
 
+    }
+
+    /// The Messages page exists only while a visible message is queued.
+    private func installMessagingObservers() {
+        messaging.$queue
+            .combineLatest(messaging.$preferences)
+            .map { [weak self] _, _ in !(self?.messaging.visibleEntries.isEmpty ?? true) }
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] hasMessages in
+                guard let self else { return }
+                navigation.hasActionableMessages = hasMessages
+                navigation.ensureValidSelection(using: settings)
+            }
+            .store(in: &cancellables)
     }
 
     func applicationWillTerminate(_ notification: Notification) {
