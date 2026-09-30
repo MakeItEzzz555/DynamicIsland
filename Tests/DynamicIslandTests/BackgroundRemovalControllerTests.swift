@@ -235,6 +235,20 @@ final class BackgroundRemovalControllerTests: XCTestCase {
         XCTAssertTrue(shelfURL.lastPathComponent.hasSuffix("photo (background removed).png"))
     }
 
+    func testTrayStartedJobAddsResultToShelfOnlyWhenRequested() async throws {
+        let fixture = makeFixture()
+        let source = try writeFixtureImage(named: "tray.png")
+
+        try fixture.controller.process(imageURL: source)
+        await fixture.controller.waitForCompletion()
+        XCTAssertTrue(fixture.shelf.urls.isEmpty)
+
+        try fixture.controller.process(imageURL: source, addResultToShelfWhenFinished: true)
+        await fixture.controller.waitForCompletion()
+        XCTAssertEqual(fixture.shelf.urls.count, 1)
+        XCTAssertTrue(fixture.shelf.urls[0].lastPathComponent.hasSuffix("tray (background removed).png"))
+    }
+
     func testOutputsRequireResult() {
         let fixture = makeFixture()
         XCTAssertThrowsError(try fixture.controller.export())

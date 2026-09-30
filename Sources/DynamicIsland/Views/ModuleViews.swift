@@ -912,6 +912,8 @@ struct FileShelfModuleView: View {
                                 settings: settings,
                                 url: url,
                                 thumbnailCache: thumbnailCache,
+                                isSelected: fileShelf.selection.contains(url.standardizedFileURL),
+                                onSelect: { extend in fileShelf.select(url, extend: extend) },
                                 onRemove: { fileShelf.remove(url) }
                             )
                         }
@@ -1088,6 +1090,9 @@ struct ShelfFileTile: View {
     @ObservedObject var settings: AppSettings
     let url: URL
     @ObservedObject var thumbnailCache: FileThumbnailCache
+    var isSelected = false
+    /// Click selects; `true` when Command is held (toggle, multi-select).
+    var onSelect: ((Bool) -> Void)?
     let onRemove: () -> Void
 
     @State private var isHovering = false
@@ -1101,7 +1106,10 @@ struct ShelfFileTile: View {
                     .background(.white.opacity(0.075), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                     .overlay {
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(.white.opacity(isHovering ? 0.16 : 0.05), lineWidth: 1)
+                            .stroke(
+                                isSelected ? Color.accentColor : .white.opacity(isHovering ? 0.16 : 0.05),
+                                lineWidth: isSelected ? 2 : 1
+                            )
                     }
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
 
@@ -1131,10 +1139,16 @@ struct ShelfFileTile: View {
         .padding(.horizontal, 5)
         .padding(.vertical, 7)
         .frame(width: 84, alignment: .top)
-        .background(.white.opacity(isHovering ? 0.12 : 0.045), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(
+            isSelected ? Color.accentColor.opacity(0.22) : .white.opacity(isHovering ? 0.12 : 0.045),
+            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+        )
         .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .onTapGesture(count: 2) {
             FileShelfActions.quickLook(url)
+        }
+        .onTapGesture {
+            onSelect?(NSEvent.modifierFlags.contains(.command))
         }
         .onHover { hovering in
             if isHovering != hovering {
@@ -1189,7 +1203,8 @@ struct ShelfFileTile: View {
             }
         }
         .accessibilityLabel("File \(url.lastPathComponent)")
-        .accessibilityHint("Right-click for file actions")
+        .accessibilityHint("Click to select for quick actions. Right-click for file actions")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
         .onDrag {
             NSItemProvider(object: url as NSURL)
         }

@@ -40,6 +40,17 @@ final class IslandLayoutStore: ObservableObject {
     @Published private(set) var isExpandedScrollGestureSuppressed = false
     @Published private(set) var expandedContentScrollRegion: CGRect = .zero
     @Published var isTransientInteractionActive = false
+    /// Visible accessories attached below the expanded shell (panel-local,
+    /// AppKit coordinates). They own hover, hit-testing and passthrough
+    /// exactly like the shell, and only their own area.
+    @Published private(set) var expandedAccessoryFrames: [CGRect] = []
+
+    func setExpandedAccessoryFrames(_ frames: [CGRect]) {
+        let valid = frames.filter { !$0.isNull && !$0.isInfinite && $0.width > 0 && $0.height > 0 }.map(\.integral)
+        guard expandedAccessoryFrames != valid else { return }
+        expandedAccessoryFrames = valid
+    }
+
     /// An in-island text editor (Agents composer) is first responder.
     @Published private(set) var isTextInputFocused = false
 

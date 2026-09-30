@@ -412,6 +412,7 @@ struct IslandRootView: View {
                 .id(layoutStore.overlayPresentationGeneration)
 
                 collapsedSidecarOverlay
+                trayQuickActionOverlay
             }
         }
         .shellMorphing(layoutStore.isShellMorphing)
@@ -586,6 +587,34 @@ struct IslandRootView: View {
                 swipeSensitivity: settings.gestureSensitivity
             )
         )
+    }
+
+    /// Quick actions attached below the expanded shell, Tray page only.
+    /// Positioned from the shell frame so they follow it; their frame is
+    /// reported to the layout store for hover, hit-test and passthrough.
+    @ViewBuilder
+    private var trayQuickActionOverlay: some View {
+        if showsExpandedContent,
+           isExpanded,
+           !layoutStore.isExpandedContentExiting,
+           navigation.selectedPage == .tray,
+           settings.trayEnabled,
+           settings.fileShelfEnabled {
+            let shell = layoutStore.expandedSurfaceFrame
+            FileTrayQuickActionBar(
+                fileShelf: modules.fileShelf,
+                backgroundRemoval: modules.productivity.backgroundRemoval,
+                layoutStore: layoutStore,
+                reduceMotion: reduceMotion || settings.reduceExtraMotion
+            )
+            .position(
+                x: shell.midX,
+                y: layoutStore.canvasSize.height - shell.minY
+                    + FileTrayQuickActionMetrics.gap
+                    + FileTrayQuickActionMetrics.diameter / 2
+            )
+            .transition(.opacity.combined(with: .offset(y: reduceMotion ? 0 : -6)))
+        }
     }
 
     @ViewBuilder

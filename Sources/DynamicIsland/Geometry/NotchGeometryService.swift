@@ -233,17 +233,28 @@ public struct IslandCanvasGeometry: Equatable {
 enum ExpandedPresentationKind: String, Equatable, Sendable {
     case standard
     case agentsWorkspace
+    case trayQuickActions
 }
 
 struct ExpandedPresentationProfile: Equatable, Sendable {
     let kind: ExpandedPresentationKind
     let widthScale: CGFloat
     let additionalHeight: CGFloat
+    /// Transparent panel space below the shell for attached accessories
+    /// (File Tray quick actions). The shell itself is unchanged.
+    var accessoryHeight: CGFloat = 0
 
     static let standard = ExpandedPresentationProfile(
         kind: .standard,
         widthScale: 1,
         additionalHeight: 0
+    )
+
+    static let trayQuickActions = ExpandedPresentationProfile(
+        kind: .trayQuickActions,
+        widthScale: 1,
+        additionalHeight: 0,
+        accessoryHeight: FileTrayQuickActionMetrics.accessoryHeight
     )
     // The managed console needs a fixed control/composer budget. Width keeps the
     // established breathing room while added height flows to the transcript.
@@ -254,7 +265,23 @@ struct ExpandedPresentationProfile: Equatable, Sendable {
     )
 
     static func resolve(for page: ExpandedIslandPage) -> Self {
-        page == .agents ? .agentsWorkspace : .standard
+        switch page {
+        case .agents: .agentsWorkspace
+        case .tray: .trayQuickActions
+        default: .standard
+        }
+    }
+
+    /// Panel frame: the expanded shell frame extended downward by the
+    /// accessory height (screen coordinates, origin bottom-left).
+    func panelFrame(forExpandedFrame expanded: CGRect) -> CGRect {
+        guard accessoryHeight > 0 else { return expanded }
+        return CGRect(
+            x: expanded.minX,
+            y: expanded.minY - accessoryHeight,
+            width: expanded.width,
+            height: expanded.height + accessoryHeight
+        )
     }
 
     func resolvedSize(from base: CGSize) -> CGSize {

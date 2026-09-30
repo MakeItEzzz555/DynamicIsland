@@ -277,11 +277,29 @@ final class NotchGeometryServiceTests: XCTestCase {
             CGSize(width: 946, height: 446)
         )
 
-        for page in ExpandedIslandPage.allCases where page != .agents {
+        // Tray keeps the standard shell size; only transparent accessory
+        // space below it is added for the quick-action circles.
+        let tray = ExpandedPresentationProfile.resolve(for: .tray)
+        XCTAssertEqual(tray, .trayQuickActions)
+        XCTAssertEqual(tray.resolvedSize(from: base), base)
+        XCTAssertGreaterThan(tray.accessoryHeight, 0)
+
+        for page in ExpandedIslandPage.allCases where page != .agents && page != .tray {
             let profile = ExpandedPresentationProfile.resolve(for: page)
             XCTAssertEqual(profile, .standard)
             XCTAssertEqual(profile.resolvedSize(from: base), base)
+            XCTAssertEqual(profile.accessoryHeight, 0)
         }
+    }
+
+    func testTrayPanelFrameExtendsDownwardWithoutMovingShell() {
+        let expanded = CGRect(x: 326, y: 696, width: 860, height: 286)
+        let panel = ExpandedPresentationProfile.trayQuickActions.panelFrame(forExpandedFrame: expanded)
+        XCTAssertEqual(panel.maxY, expanded.maxY)
+        XCTAssertEqual(panel.minX, expanded.minX)
+        XCTAssertEqual(panel.width, expanded.width)
+        XCTAssertEqual(panel.minY, expanded.minY - FileTrayQuickActionMetrics.accessoryHeight)
+        XCTAssertEqual(ExpandedPresentationProfile.standard.panelFrame(forExpandedFrame: expanded), expanded)
     }
 
     func testAgentsGeometryMorphPreservesCanonicalCollapsedFrameAndRestoresStandardExactly() {

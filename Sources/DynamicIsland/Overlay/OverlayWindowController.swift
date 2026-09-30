@@ -279,6 +279,9 @@ final class OverlayWindowController {
         hostingView.interactiveRegionProvider = { [weak self] in
             self?.currentInteractiveRegion() ?? .zero
         }
+        hostingView.accessoryRegionsProvider = { [weak self] in
+            self?.currentAccessoryInteractiveRegions() ?? []
+        }
         hostingView.collapsedScrollGestureRegionProvider = { [weak self] in
             self?.currentCollapsedGestureRegion() ?? .zero
         }
@@ -556,7 +559,7 @@ final class OverlayWindowController {
         targetCollapsedFrame = geometry.collapsedFrame
         targetExpandedFrame = geometry.expandedFrame
         updateLayout(
-            panelFrame: geometry.expandedFrame,
+            panelFrame: expandedPresentationProfile.panelFrame(forExpandedFrame: geometry.expandedFrame),
             collapsedFrame: geometry.collapsedFrame,
             expandedFrame: geometry.expandedFrame,
             hasHardwareNotch: geometry.hasHardwareNotch,
@@ -568,7 +571,7 @@ final class OverlayWindowController {
             animated: animated
         )
         applyCanonicalPanelFrame(
-            geometry.expandedFrame,
+            expandedPresentationProfile.panelFrame(forExpandedFrame: geometry.expandedFrame),
             reason: "\(reason) initial animated=\(animated)",
             animated: animated
         )
@@ -599,7 +602,7 @@ final class OverlayWindowController {
                 self.targetCollapsedFrame = correctedGeometry.collapsedFrame
                 self.targetExpandedFrame = correctedGeometry.expandedFrame
                 self.updateLayout(
-                    panelFrame: correctedGeometry.expandedFrame,
+                    panelFrame: self.expandedPresentationProfile.panelFrame(forExpandedFrame: correctedGeometry.expandedFrame),
                     collapsedFrame: correctedGeometry.collapsedFrame,
                     expandedFrame: correctedGeometry.expandedFrame,
                     hasHardwareNotch: correctedGeometry.hasHardwareNotch,
@@ -611,7 +614,7 @@ final class OverlayWindowController {
                     animated: false
                 )
                 self.applyCanonicalPanelFrame(
-                    correctedGeometry.expandedFrame,
+                    self.expandedPresentationProfile.panelFrame(forExpandedFrame: correctedGeometry.expandedFrame),
                     reason: "\(reason) corrected animated=\(animated)"
                 )
                 self.lastAppliedGeometrySignature = correctedSignature
@@ -1095,6 +1098,7 @@ final class OverlayWindowController {
         let decision = ExpandedHoverContainment.decide(
             pointer: mouseLocation,
             shellFrame: canonicalFrame,
+            accessoryFrames: visibleExpandedAccessoryScreenFrames(),
             holds: currentExpandedHoverHolds
         )
         logCollapseBoundaryCheck(
@@ -1119,6 +1123,12 @@ final class OverlayWindowController {
         if layoutStore.isTransientInteractionActive { holds.insert(.transientInteraction) }
         if layoutStore.isTextInputFocused, islandPanel.isKeyWindow { holds.insert(.textInput) }
         return holds
+    }
+
+    /// Attached accessories (File Tray quick actions) in screen space.
+    private func visibleExpandedAccessoryScreenFrames() -> [NSRect] {
+        guard islandState.state == .expanded else { return [] }
+        return layoutStore.expandedAccessoryFrames.map(screenRect(for:)).filter { !$0.isEmpty }
     }
 
     private func visibleExpandedShellScreenFrame() -> NSRect {
@@ -1170,7 +1180,12 @@ final class OverlayWindowController {
         let shouldReceiveMouse: Bool
         if islandState.state == .expanded || layoutStore.isCollapseShellOnly {
             let interactiveRect = currentVisibleIslandScreenRect
-            shouldReceiveMouse = !interactiveRect.isEmpty && interactiveRect.contains(screenPoint)
+            let shellFrame = visibleExpandedShellScreenFrame()
+            let overAccessory = ExpandedHoverContainment.accessoryRegions(
+                shellFrame: shellFrame,
+                accessoryFrames: visibleExpandedAccessoryScreenFrames()
+            ).contains { $0.contains(screenPoint) }
+            shouldReceiveMouse = (!interactiveRect.isEmpty && interactiveRect.contains(screenPoint)) || overAccessory
         } else {
             shouldReceiveMouse = collapsedVisibleLocalFrames.contains { frame in
                 let screenFrame = screenRect(for: frame)
@@ -1310,7 +1325,7 @@ final class OverlayWindowController {
         targetExpandedFrame = geometry.expandedFrame
 
         updateLayout(
-            panelFrame: geometry.expandedFrame,
+            panelFrame: expandedPresentationProfile.panelFrame(forExpandedFrame: geometry.expandedFrame),
             collapsedFrame: geometry.collapsedFrame,
             expandedFrame: geometry.expandedFrame,
             hasHardwareNotch: geometry.hasHardwareNotch,
@@ -1322,7 +1337,10 @@ final class OverlayWindowController {
             animated: false
         )
 
-        applyCanonicalPanelFrame(geometry.expandedFrame, reason: "expandFromCollapsedPreparingGeometry")
+        applyCanonicalPanelFrame(
+            expandedPresentationProfile.panelFrame(forExpandedFrame: geometry.expandedFrame),
+            reason: "expandFromCollapsedPreparingGeometry"
+        )
         lastAppliedGeometrySignature = currentGeometrySignature
         updateWindowVisibility()
         hostingView?.needsLayout = true
@@ -1343,6 +1361,17 @@ final class OverlayWindowController {
         layoutStore.setExpandedContentScrollRegion(.zero)
         updateMousePassthrough()
         islandState.collapse()
+    }
+
+    /// Panel-local regions for attached accessories, including the bridge
+    /// to the shell, so clicks there reach SwiftUI.
+    private func currentAccessoryInteractiveRegions() -> [NSRect] {
+        guard islandState.state == .expanded else { return [] }
+        return ExpandedHoverContainment.accessoryRegions(
+            shellFrame: layoutStore.expandedSurfaceFrame,
+            accessoryFrames: layoutStore.expandedAccessoryFrames,
+            tolerance: 2
+        )
     }
 
     private func currentInteractiveRegion() -> NSRect {
@@ -2275,6 +2304,7 @@ private final class IslandOverlayPanel: NSPanel {
 private final class IslandHostingView<Content: View>: NSHostingView<Content> {
     var onMouseExited: (() -> Void)?
     var interactiveRegionProvider: (() -> NSRect)?
+    var accessoryRegionsProvider: (() -> [NSRect])?
     var collapsedScrollGestureRegionProvider: (() -> NSRect)?
     var onCollapsedScrollWheel: ((NSEvent, NSPoint) -> Bool)?
     private var trackingAreaReference: NSTrackingArea?
@@ -2306,7 +2336,8 @@ private final class IslandHostingView<Content: View>: NSHostingView<Content> {
     override func hitTest(_ point: NSPoint) -> NSView? {
         if let interactiveRegion = interactiveRegionProvider?(),
            !interactiveRegion.isEmpty,
-           !interactiveRegion.contains(point) {
+           !interactiveRegion.contains(point),
+           !(accessoryRegionsProvider?() ?? []).contains(where: { $0.contains(point) }) {
             return nil
         }
 

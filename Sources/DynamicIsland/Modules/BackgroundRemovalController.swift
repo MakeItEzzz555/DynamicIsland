@@ -182,6 +182,7 @@ final class BackgroundRemovalController: ObservableObject, IslandCapabilityAdapt
     private let now: () -> Date
     private var task: Task<Void, Never>?
     private var generation = 0
+    private var addToShelfWhenFinished = false
 
     init(
         liveActivities: LiveActivityStore,
@@ -246,13 +247,15 @@ final class BackgroundRemovalController: ObservableObject, IslandCapabilityAdapt
 
     // MARK: Workflow
 
-    /// Starts local processing. The source file is only read.
-    func process(imageURL: URL) throws {
+    /// Starts local processing. The source file is only read. When started
+    /// from the File Tray, the result is added back to the Tray on success.
+    func process(imageURL: URL, addResultToShelfWhenFinished: Bool = false) throws {
         guard isEnabled else { throw BackgroundRemovalError.disabled }
         guard !isProcessing else { throw BackgroundRemovalError.busy }
 
         discardPreview()
         generation += 1
+        addToShelfWhenFinished = addResultToShelfWhenFinished
         let token = generation
         let source = imageURL.standardizedFileURL
         phase = .processing(sourceURL: source)
@@ -404,6 +407,10 @@ final class BackgroundRemovalController: ObservableObject, IslandCapabilityAdapt
                 pixelHeight: output.pixelHeight
             ))
             publishState()
+            if addToShelfWhenFinished {
+                addToShelfWhenFinished = false
+                _ = try? addResultToShelf()
+            }
         } catch {
             fail(token: token, error: error)
         }

@@ -32,15 +32,47 @@ enum ExpandedHoverContainment {
         return shellFrame.insetBy(dx: -tolerance, dy: -tolerance)
     }
 
+    /// `accessoryFrames`: visible controls attached to the shell (File Tray
+    /// quick actions). Each owns its own padded area; the gap between the
+    /// shell and the accessories is bridged so moving between them never
+    /// collapses, without claiming space beside them.
     static func decide(
         pointer: CGPoint,
         shellFrame: CGRect,
+        accessoryFrames: [CGRect] = [],
         holds: Holds,
         tolerance: CGFloat = tolerance
     ) -> Decision {
         if !holds.isEmpty { return .held(holds) }
         let region = safeRegion(shellFrame: shellFrame, tolerance: tolerance)
         guard !region.isEmpty else { return .keepExpanded }
-        return region.contains(pointer) ? .keepExpanded : .collapse
+        if region.contains(pointer) { return .keepExpanded }
+        for accessory in accessoryRegions(shellFrame: shellFrame, accessoryFrames: accessoryFrames, tolerance: tolerance)
+            where accessory.contains(pointer) {
+            return .keepExpanded
+        }
+        return .collapse
+    }
+
+    /// Padded accessory frames plus a bridge spanning their horizontal
+    /// extent up to the shell's bottom edge.
+    static func accessoryRegions(
+        shellFrame: CGRect,
+        accessoryFrames: [CGRect],
+        tolerance: CGFloat = tolerance
+    ) -> [CGRect] {
+        let accessories = accessoryFrames.filter { !$0.isEmpty }
+        guard !accessories.isEmpty, !shellFrame.isEmpty else { return [] }
+        var regions = accessories.map { $0.insetBy(dx: -tolerance, dy: -tolerance) }
+        let union = accessories.dropFirst().reduce(accessories[0]) { $0.union($1) }
+        if union.maxY <= shellFrame.minY {
+            regions.append(CGRect(
+                x: union.minX - tolerance,
+                y: union.maxY,
+                width: union.width + tolerance * 2,
+                height: shellFrame.minY - union.maxY + tolerance
+            ))
+        }
+        return regions
     }
 }

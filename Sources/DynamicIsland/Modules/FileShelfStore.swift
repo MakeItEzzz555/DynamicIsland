@@ -8,7 +8,30 @@ final class FileShelfStore: ObservableObject {
     private var cancellables: Set<AnyCancellable> = []
     private static let persistedBookmarksKey = "fileShelfPersistedBookmarks"
 
-    @Published private(set) var files: [URL] = []
+    @Published private(set) var files: [URL] = [] {
+        didSet { selection.formIntersection(files) }
+    }
+    /// Explicit Tray selection used as the quick-action target.
+    @Published private(set) var selection: Set<URL> = []
+
+    /// Plain click selects one file; `extend` (Command-click) toggles.
+    func select(_ url: URL, extend: Bool = false) {
+        let url = url.standardizedFileURL
+        guard files.contains(url) else { return }
+        if extend {
+            if selection.contains(url) { selection.remove(url) } else { selection.insert(url) }
+        } else {
+            selection = selection == [url] ? [] : [url]
+        }
+    }
+
+    func clearSelection() {
+        selection = []
+    }
+
+    var quickActionTargets: FileTrayActionTargets {
+        FileTrayActionTargets.resolve(files: files, selection: selection)
+    }
 
     init(settings: AppSettings, defaults: UserDefaults = .standard) {
         self.settings = settings
