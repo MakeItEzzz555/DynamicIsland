@@ -111,7 +111,21 @@ if [[ -n "${DEVELOPER_ID_APP:-}" ]]; then
   codesign --force --options runtime --timestamp --sign "$DEVELOPER_ID_APP" "$HELPERS_DIR/$CODEX_RELAY_NAME"
   codesign --force --options runtime --timestamp --sign "$DEVELOPER_ID_APP" "$HELPERS_DIR/$CLAUDE_RELAY_NAME"
   codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS_FILE" --sign "$DEVELOPER_ID_APP" "$APP_DIR"
+elif [[ -n "${LOCAL_SIGN_IDENTITY:-}" ]]; then
+  # Stable local identity (e.g. a self-signed "Code Signing" certificate in
+  # the login keychain). Unlike ad-hoc signing, its designated requirement
+  # survives rebuilds, so macOS privacy grants (Screen Recording, Microphone,
+  # Camera, Calendar...) keep matching the rebuilt app.
+  codesign --force --sign "$LOCAL_SIGN_IDENTITY" "$HELPERS_DIR/$RELAY_NAME"
+  codesign --force --sign "$LOCAL_SIGN_IDENTITY" "$HELPERS_DIR/$CODEX_RELAY_NAME"
+  codesign --force --sign "$LOCAL_SIGN_IDENTITY" "$HELPERS_DIR/$CLAUDE_RELAY_NAME"
+  codesign --force --sign "$LOCAL_SIGN_IDENTITY" "$APP_DIR"
 else
+  # Ad-hoc: the designated requirement is the cdhash, which changes on every
+  # build. Existing privacy grants then stop matching (tccd: "Failed to match
+  # existing code requirement"); Screen Recording silently stays denied until
+  # the entry is removed and re-added. Prefer LOCAL_SIGN_IDENTITY for daily use.
+  echo "warning: ad-hoc signing; privacy permissions must be re-granted after each rebuild" >&2
   codesign --force --sign - "$HELPERS_DIR/$RELAY_NAME"
   codesign --force --sign - "$HELPERS_DIR/$CODEX_RELAY_NAME"
   codesign --force --sign - "$HELPERS_DIR/$CLAUDE_RELAY_NAME"
