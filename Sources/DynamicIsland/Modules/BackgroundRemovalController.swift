@@ -183,6 +183,9 @@ final class BackgroundRemovalController: ObservableObject, IslandCapabilityAdapt
     private var task: Task<Void, Never>?
     private var generation = 0
     private var addToShelfWhenFinished = false
+    /// Requester-owned delivery (e.g. a Floating Basket). Receives a
+    /// DynamicIsland-owned temp copy instead of the Shelf.
+    private var resultDelivery: (([URL]) -> Void)?
 
     init(
         liveActivities: LiveActivityStore,
@@ -249,13 +252,18 @@ final class BackgroundRemovalController: ObservableObject, IslandCapabilityAdapt
 
     /// Starts local processing. The source file is only read. When started
     /// from the File Tray, the result is added back to the Tray on success.
-    func process(imageURL: URL, addResultToShelfWhenFinished: Bool = false) throws {
+    func process(
+        imageURL: URL,
+        addResultToShelfWhenFinished: Bool = false,
+        deliverResult: (([URL]) -> Void)? = nil
+    ) throws {
         guard isEnabled else { throw BackgroundRemovalError.disabled }
         guard !isProcessing else { throw BackgroundRemovalError.busy }
 
         discardPreview()
         generation += 1
-        addToShelfWhenFinished = addResultToShelfWhenFinished
+        addToShelfWhenFinished = addResultToShelfWhenFinished && deliverResult == nil
+        resultDelivery = deliverResult
         let token = generation
         let source = imageURL.standardizedFileURL
         phase = .processing(sourceURL: source)
@@ -283,6 +291,7 @@ final class BackgroundRemovalController: ObservableObject, IslandCapabilityAdapt
     func cancel() {
         guard isProcessing else { return }
         generation += 1
+        resultDelivery = nil
         task?.cancel()
         task = nil
         liveActivities.remove(id: Self.activityID)
@@ -407,7 +416,15 @@ final class BackgroundRemovalController: ObservableObject, IslandCapabilityAdapt
                 pixelHeight: output.pixelHeight
             ))
             publishState()
-            if addToShelfWhenFinished {
+            if let deliver = resultDelivery {
+                resultDelivery = nil
+                if let copy = try? shelfStorage.copyIntoShelf(
+                    previewURL,
+                    suggestedName: Self.outputFilename(for: source, index: 1)
+                ) {
+                    deliver([copy])
+                }
+            } else if addToShelfWhenFinished {
                 addToShelfWhenFinished = false
                 _ = try? addResultToShelf()
             }

@@ -18,6 +18,7 @@ enum SettingsPreviewID: String, CaseIterable, Sendable {
     case systemHUD = "System HUD Preview"
     case rightWorkspace = "Right Workspace Preview"
     case productivity = "Productivity Page Preview"
+    case floatingBasket = "Floating Basket Preview"
 }
 
 enum SettingsAuditClass: String, CaseIterable, Sendable {
@@ -116,6 +117,10 @@ enum SettingsAuditCatalog {
                    "openFileActionEnabled", "airDropFallbackRevealInFinder", "deferThumbnailsDuringMorph"], .behavioral,
                   "Drop, context-menu and performance behavior.")
         + entries(["maxShelfFiles", "persistFileShelfAcrossLaunches"], .dataPersistence, "Shelf capacity and persistence.")
+        // Floating Basket
+        + entries(["floatingBasketEnabled", "basketJiggleSensitivity", "basketMultipleEnabled",
+                   "basketAutoHideEnabled", "basketAutoHideDelay"], .behavioral,
+                  "Read by BasketPresenter/BasketDragMonitor/BasketManager; the Basket settings card shows the production FloatingBasketView sandbox.")
         // Timer
         + visual(["timerPresetsEnabled", "timerPreset1Minutes", "timerPreset2Minutes", "timerPreset3Minutes",
                   "showTimerProgressRing", "timerRingAnimationEnabled"], .timer,

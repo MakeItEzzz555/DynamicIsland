@@ -35,7 +35,7 @@ final class SettingsAuditTests: XCTestCase {
 
     func testEveryAppSettingIsAuditedExactlyOnce() throws {
         let published = try publishedSettings()
-        XCTAssertEqual(published.count, 190)
+        XCTAssertEqual(published.count, 195)
         let audited = SettingsAuditCatalog.appSettingsKeys
         XCTAssertEqual(audited.count, Set(audited).count, "duplicate audit entries")
         XCTAssertEqual(Set(audited), Set(published),

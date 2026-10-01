@@ -21,6 +21,9 @@ enum FileShelfMutationError: LocalizedError, Equatable {
 final class FileShelfStore: ObservableObject {
     private let settings: AppSettings
     private let defaults: UserDefaults
+    /// Temp-file cleanup authority shared with Floating Baskets, so a file
+    /// that moved between surfaces is never deleted while another owns it.
+    private let ownership: TemporaryFileOwnershipLedger
     private var cancellables: Set<AnyCancellable> = []
     private static let persistedBookmarksKey = "fileShelfPersistedBookmarks"
 
@@ -72,16 +75,21 @@ final class FileShelfStore: ObservableObject {
         FileTrayActionTargets.resolve(files: files, selection: selection)
     }
 
-    init(settings: AppSettings, defaults: UserDefaults = .standard) {
+    init(
+        settings: AppSettings,
+        defaults: UserDefaults = .standard,
+        ownership: TemporaryFileOwnershipLedger = .shared
+    ) {
         self.settings = settings
         self.defaults = defaults
+        self.ownership = ownership
         loadPersistedFiles()
         installSettingsObservers()
     }
 
     func add(_ urls: [URL]) {
         guard settings.fileShelfEnabled else {
-            FileShelfTemporaryStorage.shared.removeIfOwned(urls)
+            ownership.discardIfUnowned(urls)
             return
         }
         var seen = Set(files.map(\.standardizedFileURL))
@@ -102,9 +110,43 @@ final class FileShelfStore: ObservableObject {
         }
         let combinedFiles = files + newFiles
         files = Array(combinedFiles.prefix(settings.maxShelfFiles))
+        ownership.retain(newFiles.filter(files.contains), by: .shelf)
         rejectedOwnedURLs.append(contentsOf: combinedFiles.dropFirst(settings.maxShelfFiles))
-        FileShelfTemporaryStorage.shared.removeIfOwned(rejectedOwnedURLs)
+        ownership.discardIfUnowned(rejectedOwnedURLs)
         persistFilesIfNeeded()
+    }
+
+    /// Accepts files handed over by another app surface (Basket → Shelf).
+    /// Unlike `add`, rejected files are left untouched: the caller still owns
+    /// them. Returns exactly the standardized URLs the Shelf accepted.
+    @discardableResult
+    func adopt(_ urls: [URL]) -> [URL] {
+        guard settings.fileShelfEnabled else { return [] }
+        var seen = Set(files)
+        var accepted: [URL] = []
+        for url in urls.map(\.standardizedFileURL) where url.isFileURL {
+            guard files.count + accepted.count < settings.maxShelfFiles else { break }
+            guard !seen.contains(url), FileManager.default.fileExists(atPath: url.path) else { continue }
+            seen.insert(url)
+            accepted.append(url)
+        }
+        guard !accepted.isEmpty else { return [] }
+        ownership.retain(accepted, by: .shelf)
+        files += accepted
+        persistFilesIfNeeded()
+        return accepted
+    }
+
+    /// Removes files that are being handed to another surface (Shelf →
+    /// Basket). Ownership is NOT released here; the caller transfers it.
+    @discardableResult
+    func removeForTransfer(_ urls: [URL]) -> [URL] {
+        let targets = Set(urls.map(\.standardizedFileURL))
+        let removed = files.filter(targets.contains)
+        guard !removed.isEmpty else { return [] }
+        files.removeAll(where: targets.contains)
+        persistFilesIfNeeded()
+        return removed
     }
 
     @discardableResult
@@ -130,6 +172,9 @@ final class FileShelfStore: ObservableObject {
         let wasSelected = selection.contains(source)
         let wasAnchor = selectionAnchor == source
         files[index] = destination
+        // The file already moved on disk, so releasing the old path deletes nothing.
+        ownership.release([source], by: .shelf)
+        ownership.retain([destination], by: .shelf)
         if wasSelected { selection.insert(destination) }
         if wasAnchor { selectionAnchor = destination }
         persistFilesIfNeeded()
@@ -145,20 +190,25 @@ final class FileShelfStore: ObservableObject {
         let wasSelected = selection.contains(old)
         let wasAnchor = selectionAnchor == old
         files[index] = new
+        ownership.release([old], by: .shelf)
+        ownership.retain([new], by: .shelf)
         if wasSelected { selection.insert(new) }
         if wasAnchor { selectionAnchor = new }
         persistFilesIfNeeded()
     }
 
     func remove(_ url: URL) {
-        files.removeAll { $0.standardizedFileURL == url.standardizedFileURL }
-        FileShelfTemporaryStorage.shared.removeIfOwned(url)
+        let target = url.standardizedFileURL
+        guard files.contains(target) else { return }
+        files.removeAll { $0 == target }
+        ownership.release([target], by: .shelf)
         persistFilesIfNeeded()
     }
 
     func clear() {
-        FileShelfTemporaryStorage.shared.removeIfOwned(files)
+        let removed = files
         files.removeAll()
+        ownership.release(removed, by: .shelf)
         persistFilesIfNeeded()
     }
 
@@ -200,6 +250,7 @@ final class FileShelfStore: ObservableObject {
         }
 
         files = Array(restoredFiles.prefix(settings.maxShelfFiles))
+        ownership.retain(files, by: .shelf)
         persistFilesIfNeeded()
     }
 
@@ -246,7 +297,7 @@ final class FileShelfStore: ObservableObject {
                 if self.files.count > maxFiles {
                     let removedFiles = Array(self.files.dropFirst(maxFiles))
                     self.files = Array(self.files.prefix(maxFiles))
-                    FileShelfTemporaryStorage.shared.removeIfOwned(removedFiles)
+                    self.ownership.release(removedFiles, by: .shelf)
                     self.persistFilesIfNeeded()
                 }
             }

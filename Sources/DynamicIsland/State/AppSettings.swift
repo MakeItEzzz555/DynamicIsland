@@ -264,6 +264,17 @@ public final class AppSettings: ObservableObject {
     @Published public var deferThumbnailsDuringMorph: Bool { didSet { save(deferThumbnailsDuringMorph, for: Key.deferThumbnailsDuringMorph) } }
     @Published public var showFileExtensions: Bool { didSet { save(showFileExtensions, for: Key.showFileExtensions) } }
     @Published public var showFileCountBadge: Bool { didSet { save(showFileCountBadge, for: Key.showFileCountBadge) } }
+    /// Floating Basket (Droppy parity). Shake a real file drag to summon it.
+    @Published public var floatingBasketEnabled: Bool { didSet { save(floatingBasketEnabled, for: Key.floatingBasketEnabled) } }
+    /// 1...5, higher = fewer direction reversals needed (Droppy default 3).
+    @Published public var basketJiggleSensitivity: Int {
+        didSet { normalizeAndSaveInt(\.basketJiggleSensitivity, oldValue: oldValue, fallback: 3, range: 1...5, key: Key.basketJiggleSensitivity) }
+    }
+    @Published public var basketMultipleEnabled: Bool { didSet { save(basketMultipleEnabled, for: Key.basketMultipleEnabled) } }
+    @Published public var basketAutoHideEnabled: Bool { didSet { save(basketAutoHideEnabled, for: Key.basketAutoHideEnabled) } }
+    @Published public var basketAutoHideDelay: Double {
+        didSet { normalizeAndSaveDouble(\.basketAutoHideDelay, oldValue: oldValue, fallback: 2.0, range: 0.5...10.0, key: Key.basketAutoHideDelay) }
+    }
     @Published public var confirmBeforeClearShelf: Bool { didSet { save(confirmBeforeClearShelf, for: Key.confirmBeforeClearShelf) } }
     @Published public var revealInFinderActionEnabled: Bool { didSet { save(revealInFinderActionEnabled, for: Key.revealInFinderActionEnabled) } }
     @Published public var copyPathActionEnabled: Bool { didSet { save(copyPathActionEnabled, for: Key.copyPathActionEnabled) } }
@@ -509,6 +520,11 @@ public final class AppSettings: ObservableObject {
         deferThumbnailsDuringMorph = Self.bool(defaults, Key.deferThumbnailsDuringMorph, true)
         showFileExtensions = Self.bool(defaults, Key.showFileExtensions, true)
         showFileCountBadge = Self.bool(defaults, Key.showFileCountBadge, true)
+        floatingBasketEnabled = Self.bool(defaults, Key.floatingBasketEnabled, true)
+        basketJiggleSensitivity = Self.int(defaults, Key.basketJiggleSensitivity, 3)
+        basketMultipleEnabled = Self.bool(defaults, Key.basketMultipleEnabled, true)
+        basketAutoHideEnabled = Self.bool(defaults, Key.basketAutoHideEnabled, false)
+        basketAutoHideDelay = Self.double(defaults, Key.basketAutoHideDelay, 2.0)
         confirmBeforeClearShelf = Self.bool(defaults, Key.confirmBeforeClearShelf, false)
         revealInFinderActionEnabled = Self.bool(defaults, Key.revealInFinderActionEnabled, true)
         copyPathActionEnabled = Self.bool(defaults, Key.copyPathActionEnabled, true)
@@ -696,6 +712,8 @@ public final class AppSettings: ObservableObject {
             Key.collapsedHoverPreviewMediaEnabled, Key.collapsedHoverPreviewShowTitle,
             Key.collapsedHoverPreviewShowsArtist, Key.collapsedHoverPreviewShowsSource,
             Key.trayEnabled, Key.fileShelfEnabled, Key.airDropZoneEnabled,
+            Key.floatingBasketEnabled, Key.basketJiggleSensitivity, Key.basketMultipleEnabled,
+            Key.basketAutoHideEnabled, Key.basketAutoHideDelay,
             Key.timerEnabled, Key.timerPresetsEnabled, Key.timerPreset1Minutes, Key.timerPreset2Minutes, Key.timerPreset3Minutes,
             Key.statsEnabled, Key.showCPU, Key.showMemory, Key.showGPU, Key.showNetwork, Key.showDisk, Key.showBattery, Key.showUptime,
             Key.clipboardHistoryEnabled, Key.clipboardHistoryMaximumItems,
@@ -821,6 +839,11 @@ public final class AppSettings: ObservableObject {
         deferThumbnailsDuringMorph = Self.bool(defaults, Key.deferThumbnailsDuringMorph, true)
         showFileExtensions = Self.bool(defaults, Key.showFileExtensions, true)
         showFileCountBadge = Self.bool(defaults, Key.showFileCountBadge, true)
+        floatingBasketEnabled = Self.bool(defaults, Key.floatingBasketEnabled, true)
+        basketJiggleSensitivity = Self.int(defaults, Key.basketJiggleSensitivity, 3)
+        basketMultipleEnabled = Self.bool(defaults, Key.basketMultipleEnabled, true)
+        basketAutoHideEnabled = Self.bool(defaults, Key.basketAutoHideEnabled, false)
+        basketAutoHideDelay = Self.double(defaults, Key.basketAutoHideDelay, 2.0)
         confirmBeforeClearShelf = Self.bool(defaults, Key.confirmBeforeClearShelf, false)
         revealInFinderActionEnabled = Self.bool(defaults, Key.revealInFinderActionEnabled, true)
         copyPathActionEnabled = Self.bool(defaults, Key.copyPathActionEnabled, true)
@@ -946,6 +969,8 @@ public final class AppSettings: ObservableObject {
         shellAnimationSpeed = normalizedDouble(shellAnimationSpeed, fallback: 1.0, range: 0.25...2.0)
         contentStaggerAmount = normalizedDouble(contentStaggerAmount, fallback: 1.0, range: 0...2.0)
         maxShelfFiles = normalizedInt(maxShelfFiles, fallback: 12, range: 1...48)
+        basketJiggleSensitivity = normalizedInt(basketJiggleSensitivity, fallback: 3, range: 1...5)
+        basketAutoHideDelay = normalizedDouble(basketAutoHideDelay, fallback: 2.0, range: 0.5...10.0)
         timerPreset1Minutes = normalizedInt(timerPreset1Minutes, fallback: 5, range: 1...180)
         timerPreset2Minutes = normalizedInt(timerPreset2Minutes, fallback: 10, range: 1...180)
         timerPreset3Minutes = normalizedInt(timerPreset3Minutes, fallback: 15, range: 1...180)
@@ -1187,6 +1212,8 @@ public final class AppSettings: ObservableObject {
         save(shellAnimationSpeed, for: Key.shellAnimationSpeed)
         save(contentStaggerAmount, for: Key.contentStaggerAmount)
         save(maxShelfFiles, for: Key.maxShelfFiles)
+        save(basketJiggleSensitivity, for: Key.basketJiggleSensitivity)
+        save(basketAutoHideDelay, for: Key.basketAutoHideDelay)
         save(timerPreset1Minutes, for: Key.timerPreset1Minutes)
         save(timerPreset2Minutes, for: Key.timerPreset2Minutes)
         save(timerPreset3Minutes, for: Key.timerPreset3Minutes)
@@ -1357,6 +1384,11 @@ private enum Key {
     static let deferThumbnailsDuringMorph = "deferThumbnailsDuringMorph"
     static let showFileExtensions = "showFileExtensions"
     static let showFileCountBadge = "showFileCountBadge"
+    static let floatingBasketEnabled = "floatingBasketEnabled"
+    static let basketJiggleSensitivity = "basketJiggleSensitivity"
+    static let basketMultipleEnabled = "basketMultipleEnabled"
+    static let basketAutoHideEnabled = "basketAutoHideEnabled"
+    static let basketAutoHideDelay = "basketAutoHideDelay"
     static let confirmBeforeClearShelf = "confirmBeforeClearShelf"
     static let revealInFinderActionEnabled = "revealInFinderActionEnabled"
     static let copyPathActionEnabled = "copyPathActionEnabled"
@@ -1482,7 +1514,9 @@ private enum Key {
         browserMediaDetectionEnabled, youtubeMetadataEnrichmentEnabled, trayEnabled, fileShelfEnabled,
         airDropZoneEnabled, allowFileDropsOnCollapsedIsland, allowFileDropsOnExpandedTray, maxShelfFiles,
         persistFileShelfAcrossLaunches, showFileThumbnails, deferThumbnailsDuringMorph,
-        showFileExtensions, showFileCountBadge, confirmBeforeClearShelf, revealInFinderActionEnabled,
+        showFileExtensions, showFileCountBadge, floatingBasketEnabled, basketJiggleSensitivity,
+        basketMultipleEnabled, basketAutoHideEnabled, basketAutoHideDelay,
+        confirmBeforeClearShelf, revealInFinderActionEnabled,
         copyPathActionEnabled, removeFileActionEnabled, openFileActionEnabled,
         airDropFallbackRevealInFinder, timerEnabled, timerPresetsEnabled, timerPreset1Minutes,
         timerPreset2Minutes, timerPreset3Minutes, timerSoundEnabled, timerNotificationEnabled,

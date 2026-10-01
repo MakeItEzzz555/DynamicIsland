@@ -249,6 +249,20 @@ final class BackgroundRemovalControllerTests: XCTestCase {
         XCTAssertTrue(fixture.shelf.urls[0].lastPathComponent.hasSuffix("tray (background removed).png"))
     }
 
+    func testBasketStartedJobDeliversOwnedCopyToRequesterNotShelf() async throws {
+        let fixture = makeFixture()
+        let source = try writeFixtureImage(named: "basket.png")
+        var delivered: [URL] = []
+
+        try fixture.controller.process(imageURL: source, deliverResult: { delivered = $0 })
+        await fixture.controller.waitForCompletion()
+
+        XCTAssertTrue(fixture.shelf.urls.isEmpty, "a Basket request never lands on the Shelf")
+        XCTAssertEqual(delivered.count, 1)
+        XCTAssertTrue(fixture.shelfStorage.isOwned(delivered[0]), "delivered result is a DynamicIsland-owned temp copy")
+        XCTAssertTrue(delivered[0].lastPathComponent.hasSuffix("basket (background removed).png"))
+    }
+
     func testOutputsRequireResult() {
         let fixture = makeFixture()
         XCTAssertThrowsError(try fixture.controller.export())
