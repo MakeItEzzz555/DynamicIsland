@@ -175,4 +175,25 @@ final class BasketDragMonitorTests: XCTestCase {
         shake(monitor, probe, samples: 30)
         XCTAssertEqual(jiggles(), [])
     }
+
+    func testStopTearsDownTimerAndEndsActiveDragExactlyOnce() {
+        let probe = Probe()
+        let (monitor, _, ends) = makeMonitor(probe)
+        monitor.start()
+        XCTAssertTrue(monitor.isRunning)
+
+        probe.isPrimaryButtonDown = true
+        probe.dragPasteboardChangeCount = 1
+        monitor.tick()
+        XCTAssertTrue(monitor.isDragging)
+        let generation = monitor.generation
+
+        monitor.stop()
+        XCTAssertFalse(monitor.isRunning)
+        XCTAssertFalse(monitor.isDragging)
+        XCTAssertEqual(ends(), [generation])
+
+        monitor.stop()
+        XCTAssertEqual(ends(), [generation], "teardown must be idempotent and never double-end a drag")
+    }
 }

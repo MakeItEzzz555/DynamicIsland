@@ -1,3 +1,4 @@
+import SwiftUI
 import XCTest
 @testable import DynamicIsland
 
@@ -409,5 +410,42 @@ final class BasketAutoHidePolicyTests: XCTestCase {
         state.setHold(.nativeMenu, false)
         state.setHold(.nativeMenu, false)
         XCTAssertTrue(state.holds.isEmpty)
+    }
+}
+
+@MainActor
+final class BasketPresenterLifecycleTests: XCTestCase {
+    func testDismissOrdersOutPanelEvenIfControllerIsReleasedDuringAnimation() async throws {
+        let state = BasketState(accent: .teal)
+        var controller: FloatingBasketWindowController? = FloatingBasketWindowController(state: state) { _ in
+            AnyView(Color.clear)
+        }
+        let panel = try XCTUnwrap(controller?.panel)
+        controller?.present(near: CGPoint(x: 400, y: 400))
+        XCTAssertTrue(panel.isVisible)
+
+        let dismissed = expectation(description: "dismissed")
+        controller?.dismiss { dismissed.fulfill() }
+        weak let weakController = controller
+        controller = nil
+        XCTAssertNil(weakController, "the panel dismissal must not depend on its controller staying alive")
+
+        await fulfillment(of: [dismissed], timeout: 1)
+        XCTAssertFalse(panel.isVisible, "an asynchronously dismissed basket must never leave an orphaned visible panel")
+        panel.orderOut(nil)
+    }
+
+    func testSwitcherClaimsReleaseOnlyTheirExactBasket() {
+        var claims = BasketSwitcherClaimRegistry()
+        let first = UUID()
+        let second = UUID()
+        claims.insert(101, target: first)
+        claims.insert(102, target: second)
+
+        XCTAssertEqual(claims.remove(101), first)
+        XCTAssertFalse(claims.isEmpty, "finishing one promise drop must not clear another basket's in-flight claim")
+        XCTAssertEqual(claims.remove(102), second)
+        XCTAssertTrue(claims.isEmpty)
+        XCTAssertNil(claims.remove(102), "a claim resolves at most once")
     }
 }

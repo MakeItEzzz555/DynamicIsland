@@ -2,6 +2,23 @@ import AppKit
 import Combine
 import SwiftUI
 
+/// Exact ownership for asynchronous drops started from the multi-Basket
+/// switcher. Multiple file promises may materialize concurrently, so resolving
+/// one claim must never release another Basket's `.dropInFlight` hold.
+struct BasketSwitcherClaimRegistry {
+    private var targets: [Int: UUID] = [:]
+
+    var isEmpty: Bool { targets.isEmpty }
+
+    mutating func insert(_ claim: Int, target: UUID) {
+        targets[claim] = target
+    }
+
+    mutating func remove(_ claim: Int) -> UUID? {
+        targets.removeValue(forKey: claim)
+    }
+}
+
 /// Composition of the Floating Basket feature: drag monitor → jiggle
 /// decision → basket windows, plus menus, quick actions, drag-out
 /// retention and auto-hide timing. All content mutations go through
@@ -21,7 +38,7 @@ final class BasketPresenter: ObservableObject {
     private var activeDragOuts: [UUID: (basket: UUID, urls: [URL])] = [:]
     private var pendingQuickDrops: Set<Int> = []
     private var nextQuickDrop = 0
-    private var switcherClaims: Set<Int> = []
+    private var switcherClaims = BasketSwitcherClaimRegistry()
     private var cancellables: Set<AnyCancellable> = []
 
     init(
@@ -257,25 +274,20 @@ final class BasketPresenter: ObservableObject {
                 guard let target = basketID.flatMap(self.manager.basket) ?? self.manager.createBasket() else { return nil }
                 guard let claim = self.manager.claimDrop(into: target.id) else { return nil }
                 target.setHold(.dropInFlight, true)
-                self.switcherClaims.insert(claim)
+                self.switcherClaims.insert(claim, target: target.id)
                 self.switcher.hide()
                 self.present(target, near: pointer, atLastPosition: target.isVisible || target.lastOrigin != nil)
                 return claim
             },
             dropFinished: { [weak self] claim, urls in
-                guard let self else { return }
-                self.switcherClaims.remove(claim)
-                let accepted = self.manager.completeDrop(claim, urls: urls)
-                if let url = accepted.first, let basket = self.manager.baskets.first(where: { $0.urls.contains(url) }) {
-                    basket.setHold(.dropInFlight, false)
-                } else {
-                    self.manager.baskets.forEach { $0.setHold(.dropInFlight, false) }
-                }
+                guard let self, let targetID = self.switcherClaims.remove(claim) else { return }
+                _ = self.manager.completeDrop(claim, urls: urls)
+                self.manager.basket(targetID)?.setHold(.dropInFlight, false)
             },
             dropFailed: { [weak self] claim, _ in
-                self?.switcherClaims.remove(claim)
-                self?.manager.failDrop(claim)
-                self?.manager.baskets.forEach { $0.setHold(.dropInFlight, false) }
+                guard let self, let targetID = self.switcherClaims.remove(claim) else { return }
+                self.manager.failDrop(claim)
+                self.manager.basket(targetID)?.setHold(.dropInFlight, false)
             },
             dismiss: { [weak self] in self?.switcher.hide() },
             isInteractive: true

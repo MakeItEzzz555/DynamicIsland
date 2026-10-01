@@ -143,8 +143,12 @@ final class FloatingBasketWindowController {
     func dismiss(completion: @escaping () -> Void) {
         guard panel.isVisible else { completion(); return }
         presentation.isShown = false
-        let work = DispatchWorkItem { [weak self] in
-            self?.panel.orderOut(nil)
+        // Capture the panel, not the controller. BasketManager can remove a
+        // Basket identity while this exit animation is pending; the NSPanel
+        // still must order out even if its controller is released meanwhile.
+        let panel = self.panel
+        let work = DispatchWorkItem {
+            panel.orderOut(nil)
             completion()
         }
         dismissWork = work
