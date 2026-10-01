@@ -105,25 +105,111 @@ enum CalendarMeetingLink {
     }
 }
 
-/// Upcoming events from EventKit. Access is requested only from an explicit
-/// user action; refreshes on store changes while observed.
+/// EventKit events for the Right Workspace. Publishes two views of the same
+/// store: `events` (upcoming summary, next seven days) and `dayEvents` (the
+/// whole local day the user selected). Access is requested only from an
+/// explicit user action; both refresh on store changes while observed.
 @MainActor
 final class CalendarEventsController: ObservableObject {
     static let lookahead: TimeInterval = 7 * 24 * 60 * 60
     static let maximumEvents = 8
+    static let maximumDayEvents = 40
 
     @Published private(set) var accessState: CalendarAccessState
     @Published private(set) var events: [CalendarEventDescriptor] = []
+    /// Start of the selected local day.
+    @Published private(set) var selectedDay: Date
+    @Published private(set) var dayEvents: [CalendarEventDescriptor] = []
     @Published private(set) var lastError: String?
 
     private let provider: CalendarEventsProviding
     private let now: () -> Date
+    private let calendar: Calendar
     private var observer: NSObjectProtocol?
+    private var dayObservers: [NSObjectProtocol] = []
+    private var lastObservedToday: Date
 
-    init(provider: CalendarEventsProviding = EventKitCalendarProvider(), now: @escaping () -> Date = Date.init) {
+    init(
+        provider: CalendarEventsProviding = EventKitCalendarProvider(),
+        now: @escaping () -> Date = Date.init,
+        calendar: Calendar = .autoupdatingCurrent
+    ) {
         self.provider = provider
         self.now = now
+        self.calendar = calendar
         accessState = provider.accessState
+        let today = calendar.startOfDay(for: now())
+        selectedDay = today
+        lastObservedToday = today
+    }
+
+    /// The local day containing `date`, from midnight to the next midnight
+    /// (23 or 25 hours on DST transition days).
+    nonisolated static func dayInterval(containing date: Date, calendar: Calendar) -> DateInterval {
+        calendar.dateInterval(of: .day, for: date)
+            ?? DateInterval(start: calendar.startOfDay(for: date), duration: 24 * 60 * 60)
+    }
+
+    /// Events overlapping the interval (all-day, in-progress and events that
+    /// cross midnight included; an event ending exactly at its start is not),
+    /// all-day first, then chronological.
+    nonisolated static func events(
+        _ events: [CalendarEventDescriptor],
+        overlapping interval: DateInterval
+    ) -> [CalendarEventDescriptor] {
+        events
+            .filter { $0.endDate > interval.start && $0.startDate < interval.end }
+            .sorted {
+                if $0.isAllDay != $1.isAllDay { return $0.isAllDay }
+                if $0.startDate != $1.startDate { return $0.startDate < $1.startDate }
+                return $0.id < $1.id
+            }
+    }
+
+    var isSelectedDayToday: Bool {
+        calendar.isDate(selectedDay, inSameDayAs: now())
+    }
+
+    var dayStatusText: String {
+        dayEvents.isEmpty ? "No events on this date" : "\(dayEvents.count) event\(dayEvents.count == 1 ? "" : "s")"
+    }
+
+    /// Never requests permission; reads only with full access.
+    func selectDay(containing date: Date) {
+        let day = calendar.startOfDay(for: date)
+        if day != selectedDay { selectedDay = day }
+        refreshSelectedDay()
+    }
+
+    func shiftSelectedDay(by days: Int) {
+        guard let day = calendar.date(byAdding: .day, value: days, to: selectedDay) else { return }
+        selectDay(containing: day)
+    }
+
+    func selectToday() {
+        selectDay(containing: now())
+    }
+
+    /// Midnight or time-zone change: a "today" selection follows the clock;
+    /// an explicitly chosen other day is kept.
+    func handleDayChange() {
+        let today = calendar.startOfDay(for: now())
+        if selectedDay == lastObservedToday { selectedDay = today }
+        lastObservedToday = today
+        refresh()
+    }
+
+    private func refreshSelectedDay() {
+        guard accessState == .fullAccess else {
+            if !dayEvents.isEmpty { dayEvents = [] }
+            return
+        }
+        let interval = Self.dayInterval(containing: selectedDay, calendar: calendar)
+        let next = Array(
+            Self.events(provider.upcomingEvents(from: interval.start, through: interval.end), overlapping: interval)
+                .prefix(Self.maximumDayEvents)
+        )
+        if next != dayEvents { dayEvents = next }
     }
 
     var statusText: String {
@@ -153,8 +239,10 @@ final class CalendarEventsController: ObservableObject {
         accessState = provider.accessState
         guard accessState == .fullAccess else {
             events = []
+            dayEvents = []
             return
         }
+        refreshSelectedDay()
         let start = now()
         events = Array(
             provider.upcomingEvents(from: start, through: start.addingTimeInterval(Self.lookahead))
@@ -172,6 +260,13 @@ final class CalendarEventsController: ObservableObject {
     /// Reference-counted: each visible surface starts and stops once.
     func startObserving() {
         observingSurfaces += 1
+        if dayObservers.isEmpty {
+            dayObservers = [Notification.Name.NSCalendarDayChanged, .NSSystemTimeZoneDidChange].map { name in
+                NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.handleDayChange() }
+                }
+            }
+        }
         guard observer == nil, let name = provider.changeNotificationName else { return }
         observer = NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.refresh() }
@@ -183,6 +278,8 @@ final class CalendarEventsController: ObservableObject {
         guard observingSurfaces == 0 else { return }
         if let observer { NotificationCenter.default.removeObserver(observer) }
         observer = nil
+        dayObservers.forEach(NotificationCenter.default.removeObserver)
+        dayObservers = []
     }
 
     /// Opens the event's own link when present, otherwise Calendar.
