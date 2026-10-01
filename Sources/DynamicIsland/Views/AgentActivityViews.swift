@@ -41,9 +41,35 @@ enum AgentVisualStyle {
         guard let bundleID else { return nil }
         if let cached = ProviderIconCache.icons[bundleID] { return cached }
         let icon = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
-            .map { NSWorkspace.shared.icon(forFile: $0.path) }
+            .map { rasterized(NSWorkspace.shared.icon(forFile: $0.path)) }
         ProviderIconCache.icons[bundleID] = .some(icon)
         return icon
+    }
+
+    /// App icons are large multi-resolution images; the Agents chrome draws
+    /// them at 9-13 pt on every render, so keep one small bitmap instead.
+    private static func rasterized(_ image: NSImage, side: CGFloat = 32) -> NSImage {
+        let pixels = Int(side * 2)
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: pixels,
+            pixelsHigh: pixels,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ), let context = NSGraphicsContext(bitmapImageRep: rep) else { return image }
+        rep.size = NSSize(width: side, height: side)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        image.draw(in: NSRect(x: 0, y: 0, width: side, height: side))
+        NSGraphicsContext.restoreGraphicsState()
+        let result = NSImage(size: rep.size)
+        result.addRepresentation(rep)
+        return result
     }
 
     static func providerSymbol(_ provider: AgentProvider) -> String {
@@ -355,12 +381,14 @@ struct AgentDashboardContentView: View {
                 : []
             let usageInHeader = !usageIndicators.isEmpty &&
                 proxy.size.width >= AgentWorkspaceHeaderLayout.inlineUsageMinimumWidth
+            let usageMetrics = AgentUsageIndicatorMetrics.make(width: proxy.size.width)
             VStack(alignment: .leading, spacing: 7) {
                 if showsUsage, !usageIndicators.isEmpty, !usageInHeader {
                     stagedAgentContent(index: 1) {
                         AgentUsageIndicatorRow(
                             indicators: usageIndicators,
-                            spacing: layout.isNarrow ? 10 : 18
+                            spacing: layout.isNarrow ? 10 : 18,
+                            metrics: usageMetrics
                         )
                         .frame(maxWidth: .infinity, alignment: .center)
                         .padding(.vertical, 3)
@@ -672,7 +700,14 @@ private struct AgentCLIControlBar: View {
 
     private func controls(compact: Bool) -> some View {
         HStack(spacing: compact ? 5 : 8) {
-            AgentProviderButtons(managedControl: managedControl, compact: compact)
+            // Provider names stay visible in the compact row; the buttons
+            // fall back to icons only when they themselves cannot fit.
+            ViewThatFits(in: .horizontal) {
+                AgentProviderButtons(managedControl: managedControl)
+                    .fixedSize()
+                AgentProviderButtons(managedControl: managedControl, compact: true)
+            }
+            .layoutPriority(3)
             launcherButton(compact: compact)
             newSessionButton(compact: compact)
             projectMenu(compact: compact)
@@ -1070,8 +1105,13 @@ private struct AgentCLIControlBar: View {
 /// sessions, usage rings and model/agent controls to that provider and
 /// restores its own exact selected session; the other provider's session
 /// and drafts are untouched. Visual treatment follows AgentNotch's source
-/// dot and source badge.
+/// badge; a small dot marks a running managed turn. Normal widths show
+/// `[provider icon] Name`; `compact` (icon-only) is reserved for genuine
+/// width pressure.
 struct AgentProviderButtons: View {
+    static let minimumHitHeight: CGFloat = 26
+    static let minimumNamedWidth: CGFloat = 74
+
     @ObservedObject var managedControl: AgentManagedSessionController
     var compact = false
 
@@ -1088,20 +1128,24 @@ struct AgentProviderButtons: View {
                     }
                 } label: {
                     HStack(spacing: 5) {
-                        Circle()
-                            .fill(color)
-                            .frame(width: 8, height: 8)
-                            .shadow(color: color.opacity(active ? 0.6 : 0.3), radius: active ? 3 : 1)
-                        Image(systemName: AgentVisualStyle.providerSymbol(provider))
-                            .font(.system(size: 9.5, weight: .semibold))
+                        providerIcon(provider, selected: selected, color: color)
                         if !compact {
                             Text(AgentProviderVisualIdentity.resolve(provider).accessibilityName)
+                                .lineLimit(1)
+                        }
+                        if active {
+                            // A managed turn is running for this provider.
+                            Circle()
+                                .fill(color)
+                                .frame(width: 5, height: 5)
+                                .shadow(color: color.opacity(0.6), radius: 3)
                         }
                     }
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.system(size: 10.5, weight: .semibold))
                     .foregroundStyle(selected ? color : .white.opacity(0.55))
-                    .padding(.horizontal, compact ? 6 : 8)
-                    .frame(height: 25)
+                    .padding(.horizontal, compact ? 7 : 10)
+                    .frame(minWidth: compact ? Self.minimumHitHeight : Self.minimumNamedWidth)
+                    .frame(height: Self.minimumHitHeight)
                     .background(
                         selected ? color.opacity(0.15) : Color.white.opacity(0.035),
                         in: Capsule(style: .continuous)
@@ -1121,6 +1165,20 @@ struct AgentProviderButtons: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Agent provider")
+    }
+
+    @ViewBuilder
+    private func providerIcon(_ provider: AgentProvider, selected: Bool, color: Color) -> some View {
+        if let icon = AgentVisualStyle.installedProviderIcon(provider) {
+            Image(nsImage: icon)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: 13, height: 13)
+                .opacity(selected ? 1 : 0.7)
+        } else {
+            Image(systemName: AgentVisualStyle.providerSymbol(provider))
+                .font(.system(size: 10, weight: .semibold))
+        }
     }
 }
 
