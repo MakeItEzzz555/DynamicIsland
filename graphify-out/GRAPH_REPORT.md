@@ -1,36 +1,36 @@
 # Graph Report - DynamicIsland  (2026-10-01)
 
 ## Corpus Check
-- 316 files · ~669,379 words
+- 338 files · ~694,804 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 3 file(s) not represented in the graph (top: (none) 2, .plist 1)
 
 ## Summary
-- 10318 nodes · 30033 edges · 329 communities (314 shown, 15 thin omitted)
-- Extraction: 86% EXTRACTED · 14% INFERRED · 0% AMBIGUOUS · INFERRED: 4215 edges (avg confidence: 0.84)
+- 10872 nodes · 31978 edges · 341 communities (326 shown, 15 thin omitted)
+- Extraction: 86% EXTRACTED · 14% INFERRED · 0% AMBIGUOUS · INFERRED: 4611 edges (avg confidence: 0.84)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `7fc9d45c`
+- Built from commit: `259afad5`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
 ## Community Hubs (Navigation)
 - AppSettings
 - IslandGestureAction
-- .session
+- AgentProjectLocationIndex
 - ArtworkFlipPresentationState
 - SettingsView
 - IslandRootView
 - CameraPreviewController
-- ClipboardHistoryStore
-- .testRenderSettingsPreviews
+- ClipboardHistoryEntry
+- AgentEmbeddedConsoleView
 - SystemClipboardPasteboardClient
 - TimerCompletionNotificationCoordinator
-- AppsMediaDeckView
-- CGRect
+- ExpandedIslandView
+- CollapsedPresentationProfile
 - ClipboardHistoryStoreTests
-- .normalizeAndSaveDouble
+- Double
 - CollapsedLiveActivitySelectorTests
 - IslandNavigationStore
 - .start
@@ -41,7 +41,7 @@
 - SystemMediaControlBackend
 - TerminalSessionController
 - DynamicIsland
-- ClipboardHistoryView
+- AgentIngestionCoordinator
 - MediaAutomationExecutor
 - Int
 - DynamicIslandLiveActivity
@@ -52,9 +52,9 @@
 - VoiceTranscriptionControllerTests
 - AgentBridgeAuthenticator
 - Foundation
-- UInt64
+- AppendOnlyRecordTailer
 - MediaModuleView
-- ManualMediaRemoteDeadlineScheduler
+- Sendable
 - IslandCapabilityRegistry
 - AppLibraryStore
 - What You Must Do When Invoked
@@ -67,16 +67,16 @@
 - AgentIntegrationProvider
 - SystemHUDDescriptor
 - MessagingProviderCapabilities
-- AgentSessionLauncherView
-- AgentIntegrationRouter
+- String
+- CGRect
 - .resolve
-- AgentMCPObservationKind
+- AgentIntegrationRouter
 - RecordSink
 - ClipboardPasteboardReadResult
 - OverlayPresentationSessionTests
 - .event
 - .sessionID
-- ProductivityTool
+- AgentCapabilities
 - AgentBridgeClient
 - AgentEventType
 - String
@@ -86,7 +86,7 @@
 - .plan
 - FileConversionFormat
 - ArtworkAccentColorCache
-- ExpandedIslandView
+- ExpandedIslandLayoutMetrics
 - SystemNotificationMonitor
 - RemindersControllerTests
 - AppendOnlyRecordTailerNotice
@@ -95,7 +95,7 @@
 - AgentEventStore
 - ClaudeCodeStreamingClient
 - Meaningful regression history
-- LiveActivityStore
+- MessagingController
 - AgentAttentionEvent
 - Package.swift
 - package_app.sh
@@ -103,8 +103,8 @@
 - .apply
 - AgentBridgeDiscoveryReader
 - Complete Droppy parity checklist
-- AgentIngestionEvent
-- Phase Workflow For Future Work
+- CodexRolloutRecoveryParser
+- CalendarAccessState
 - .decide
 - FakeTerminalProcessRunner
 - CalendarEventsController
@@ -112,7 +112,7 @@
 - ScreenRecordingStreamOutput
 - graphify reference: add a URL and watch a folder
 - graphify reference: commit hook and native CLAUDE.md integration
-- graphify reference: incremental update and cluster-only
+- AgentActivityRecorder
 - .normalize
 - graphify reference: GitHub clone and cross-repo merge
 - BackgroundRemovalController
@@ -129,13 +129,13 @@
 - AgentState
 - ServerFactorySpy
 - LiveActivityLayoutPreviewScenario
-- FileDropProviderLoaderTests
+- Codable
 - CodexRolloutSessionMonitor
 - MessagesAppAdapter
-- IslandModules
-- .resolve
+- IslandRootView.swift
+- ResolvedIslandMetrics
 - AgentSession
-- .install
+- AgentProducerPolicy
 - .parse
 - MessagingConversationID
 - MessagesDatabaseMessage
@@ -153,36 +153,36 @@
 - ClaudeUsageWindows
 - CameraPreviewLayerView
 - ClipboardHistoryPayload
-- AgentBridgeIngress
+- AgentBridge
 - XCTestCase
 - AgentBridgeEnvelopeBuildError
 - AgentProjectResolverTests
 - Phase 9 — Productivity extensions
-- String
+- SpotifyLibraryController
 - ClipboardHistoryPresentationState
 - AgentRelayExitCode
-- SystemStatsController
+- UInt64
 - .normalize
-- Bool
+- SystemMediaKeyInterceptor
 - AgentProducerHandle
 - Productivity extensions parity
-- Value
+- NowPlayingMediaProvider
+- AgentSessionID
+- RightWorkspaceView
 - AgentSessionInstanceID
-- RightWorkspaceStore
-- AgentApprovalController
 - LiveActivityLayoutResolution
 - ExpandedIslandMotion
-- MediaAutomationExecutorTests
+- MediaSnapshot
 - FakeMessagesAutomation
 - AgentManagedSessionController
 - .assertFailure
 - Supplemental visual acceptance references — 2026-09-29
 - BatteryActivitySnapshot
 - Claude Managed Control Review — 2026-09-27
-- AgentIngestionCoordinator
+- PersistentSnapshotFakeProvider
 - ScreenRecordingAreaSelectionView
 - Reference evidence
-- WorkspaceMotion
+- Source-first UI workflow (permanent, from Phase 6)
 - IslandEscapeRouter
 - RemindersController
 - ProductivityIntegrationTests
@@ -201,161 +201,173 @@
 - CameraMirrorConsumerLease
 - Reminders / calendar / clock parity
 - SystemHUDController
-- ExpandedIslandPage
-- CameraPreviewController.swift
+- AgentSessionLauncherView
+- CameraPermissionState
 - BackgroundRemovalControllerTests
-- ReminderAccessState
+- AgentBridgeShared
 - 3. Phase gates
 - Claude Managed Control Review — 2026-09-28
 - Codex Managed Model Control Review — 2026-09-28
 - SpotifyAuthConfiguration
-- .scan
+- AgentUsage
 - AgentBridgeNetworkServer
 - ExpandedScrollEventRoutingPolicyTests
 - AppKit
 - .makeSession
-- IslandThemeStyle
-- AgentIngestionError
-- summary.md
+- .reload
+- FakeWindowSnapSystem
+- .testMeasureAgentsPage
 - ShortcutsStore
 - ScreenRecordingSetupPanelSurface
 - AgentIntegrationOperationalState
 - AgentCLIScrollAndFocusTests.swift
-- AgentBridge
-- SettingsSection
-- .startCapture
+- .cancel
+- Identifiable
+- CameraPreviewController.swift
 - IslandSurfaceBackground
 - MessagesAutomationPermission
 - RightWorkspaceTool
 - .make
-- MessagingSendOutcome
-- .updateHealth
-- SupportedApp
+- LiveActivityStore
+- AgentCompactPresentation
+- Phase Workflow For Future Work
 - SpotifyLibraryError
 - AgentBridgeEnvelopeError
 - RightWorkspaceSwipeRecognizer
 - FileDragQuickActionOrbit
-- Sendable
+- Error
 - Data
 - String
 - ShelfFileTile
-- IslandRootView.swift
-- IslandHostingView
+- .opacity
+- MediaRefreshCoordinator
 - System Presence HUD Phase — 2026-09-29
-- .runTurn
+- .runLive
 - Agent Event Schema Draft
 - AgentConsoleEntryKind
-- Identifiable
+- AgentPresentationPriority
 - VoicePermissionState
 - ScreenRecordingController
-- AgentSessionControlSurface
+- WorkflowFakeProvider
 - CodexAppServerProvider
 - Agent Workspace Execution Plan — 2026-09-27
 - ClaudeInteractiveProvider
-- CalendarAccessState
-- Combine
+- .timeText
+- AgentActivityGlowCoordinator
 - .makeProvider
 - AgentBridgeHTTPStatus
 - IslandCollapseRequest
 - VoiceRecognizerAvailability
-- SpotifyMediaItem
+- object
 - AgentBridgeSecurity.swift
 - Int
-- MessagingQueueEntry
-- AgentInteractiveCapability
+- RightWorkspacePage
+- RightWorkspaceStore
 - .message
 - SpotifySectionView
-- .resolve
+- .render
 - AgentIntegrationSetupError
-- CountingFileSystem
-- Phase 17 stabilization / release-readiness status — 2026-09-30
+- Duration
+- FakeScreenCaptureAuthorization
 - LocalizedError
-- .connect
+- BackgroundOperationController
 - LaunchAtLoginController.swift
-- AgentManagedSessionDescriptor
+- AgentInteractiveProviderEvent
 - WindowSnapController
-- SystemHUDKind
-- NullRemindersProvider
+- AgentBridgeClientProfile
+- AgentSessionControlSurface
 - MediaController.swift
-- Fresh critical audit instructions
-- .decode
+- FileDragActionExecutor
+- Agent monitoring pipeline
 - AgentBridgeDiscoveryReadError
 - AgentProjectProjectionStore
-- AgentProducerPolicy
+- BackgroundOperationCenter.swift
 - AgentProjectProjection.swift
-- AgentBridgeClientProfile
-- .init
+- Phase 17 stabilization / release-readiness status — 2026-09-30
+- ZipCompressionExecutor
 - VoiceTranscriptionError
-- AgentNotch Reference Review
-- AgentBridgeAuthenticationError
-- VoiceTranscriptionPhase
-- Error
-- AudioOutputDeviceKind
+- URL
+- DynamicIslandLiveActivityKind
+- AgentActivityKind
+- FakeTranscriber
+- SystemHUDController.swift
 - FocusStatusObserver
-- VoiceTranscriptionController.swift
+- IslandHostingView
 - Video re-review and gap mapping — 2026-09-30 (after Phase 13G)
 - AgentRecentProjects
-- SystemHUDController.swift
-- WorkspaceRenderHarness
-- .collapsePlan
-- AgentProjectLocationIndex
-- AgentCapabilities
-- AgentUsageIndicator
-- .orderedList
-- FileClipboardHistoryPersistence
+- Bool
+- ZipCompressionError
+- IslandContractionMotionTests
+- Phase 6 — Right Workspace Calendar 2.0 (2026-10-01)
+- .session
+- .collapsedPresentationProfile
+- SettingsPreviewDependencies
+- ClipboardHistoryStore
 - .frame
-- AnimationPreset
-- .body
-- AgentUsageIndicatorCircle
-- ScreenRecordingError
-- AgentEmbeddedConsoleView
+- AgentUsageIndicator
+- BackgroundOperationCompressionTests
+- AppLibraryTests
+- Phase 4 — Background Operation Center
+- AgentConsoleViews.swift
 - Spotify distributor setup
-- AutoCollapseDelayPreset
-- 2. Settings / personalization audit (Phase 16)
+- RecordingFileShelfDefaults
+- Phase 15 (media parity) + Phase 16 (personalization/settings QA) status — 2026-09-30
 - SystemHUDShellPreview
-- FileShelfMutationError
+- CameraUserIntent
 - Phase 3 — File Shelf 2.0 + Drag Quick-Action Orbit
-- CountdownLifecycleEvent
-- AgentBridgeClientTransportError
+- TimerProgressColorStage
+- ClaudeCodeStreamingError
 - ScreenRecordingSetupView
 - SpotifyMockURLProtocol
 - AgentAttentionReason
-- ExpandedIslandMotion.swift
-- ScreenRecordingStateMachine
+- Plan
+- ScreenRecordingError
 - .controlFrame
-- AppendOnlyRecordTailerStatus
+- VoiceTranscriptionController.swift
 - Gap matrix against current DynamicIsland
-- ReminderListDescriptor
+- AppendOnlyRecordTailerStatus
 - CameraPreviewError
-- .allowsCollapsedDrop
-- 3. Session identity
-- ExitCurve
-- 5. Local bridge decision
+- ConnectionState
+- Outcome
+- .startCompression
+- .share
 - ScreenRecordingSetupPresenter
-- .inputs
-- .store
-- SpotifyLibraryController
+- AlbumArtworkView
+- FileDragPromiseStorage
+- ControlledClipboardPersistence
+- BackgroundOperationState
+- String
+- AgentUsageIndicatorCircle
 - SPOTIFY_OAUTH_CONFIGURATION.md
 - Screen Recording parity audit — 2026-09-30
 - ExpandedShellMorph
-- AgentSourceRegistryTests.swift
-- State
+- ScreenRecordingStateMachine
+- Owner
+- BackgroundOperationCenterView
+- LiveActivitySourceAuthority
+- AgentBridgeAuthenticationError
+- SharingAnchorView
 - Recorder timeline + collapse choreography — 2026-10-01
 - AgentProjectLocation
-- Codable
+- .resolve
+- Equatable
+- CameraPreviewPhase
+- Phase
 - graphify reference: query, path, explain
+- FileDragSourceRegion
+- Source
 
 ## God Nodes (most connected - your core abstractions)
-1. `AppSettings` - 398 edges
-2. `AgentSession` - 222 edges
-3. `OverlayWindowController` - 167 edges
-4. `AgentManagedSessionController` - 151 edges
-5. `XCTestCase` - 149 edges
-6. `AgentProvider` - 130 edges
-7. `CGRect` - 128 edges
-8. `AgentIngestionCoordinator` - 125 edges
-9. `XCTest` - 122 edges
-10. `AgentEventStore` - 121 edges
+1. `AppSettings` - 401 edges
+2. `AgentSession` - 234 edges
+3. `OverlayWindowController` - 171 edges
+4. `XCTestCase` - 168 edges
+5. `AgentManagedSessionController` - 165 edges
+6. `AgentProvider` - 140 edges
+7. `XCTest` - 136 edges
+8. `CGRect` - 135 edges
+9. `DynamicIsland` - 132 edges
+10. `AgentEventStore` - 131 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `A1 — Normalized domain, `AgentEventStore`, replay harness` --references--> `AgentEventStore`  [INFERRED]
@@ -366,105 +378,105 @@
   research/CLAUDE_MANAGED_CONTROL_REVIEW_2026-09-27.md → Sources/DynamicIsland/Agents/ClaudeInteractiveProvider.swift
 - `A4.1 Claude recovery authority` --references--> `ClaudeTranscriptRecoveryAdapter`  [INFERRED]
   research/AGENT_INTEGRATION_ARCHITECTURE_2026-09-24.md → Sources/DynamicIsland/Agents/ClaudeTranscriptRecovery.swift
-- `2026-07-03 - Common App Launch Resolver` --references--> `AppLaunchService`  [INFERRED]
-  context.md → Sources/DynamicIsland/App/AppLaunchService.swift
+- `A10 — Source app/editor association and Open action` --references--> `AppLaunchService`  [INFERRED]
+  research/AGENT_FEATURE_PHASE_PLAN_2026-09-24.md → Sources/DynamicIsland/App/AppLaunchService.swift
 
 ## Import Cycles
 - None detected.
 
-## Communities (329 total, 15 thin omitted)
+## Communities (341 total, 15 thin omitted)
 
 ### Community 0 - "AppSettings"
 Cohesion: 0.02
-Nodes (175): AnyPublisher, Never, AppSettings, .activitiesEnabled, .agentActivityEnabled, .agentApprovalAlertsEnabled, .agentCompletionAlertsEnabled, .agentPeekDurationSeconds (+167 more)
+Nodes (176): AnyPublisher, Never, AppSettings, .activitiesEnabled, .agentActivityEnabled, .agentActivityRecordingEnabled, .agentApprovalAlertsEnabled, .agentCompletionAlertsEnabled (+168 more)
 
 ### Community 1 - "IslandGestureAction"
 Cohesion: 0.08
-Nodes (38): 2026-07-05 - Phase 8C Gesture Infrastructure Foundation, Gesture, IslandGestureAction, collapse, .displayName, expand, .id, mediaNextTrack (+30 more)
+Nodes (37): 2026-07-05 - Phase 8C Gesture Infrastructure Foundation, Gesture, IslandGestureAction, collapse, .displayName, expand, .id, mediaNextTrack (+29 more)
 
-### Community 2 - ".session"
-Cohesion: 0.15
-Nodes (8): AgentProjectFilter, String, .nilIfEmpty, Bool, AgentProjectFilterTests, .index, String, TimeInterval
+### Community 2 - "AgentProjectLocationIndex"
+Cohesion: 0.13
+Nodes (10): AgentProjectFilter, AgentProjectLocationIndex, Bool, AgentWorkspaceProjection, String, AgentProjectFilterTests, .index, String (+2 more)
 
 ### Community 3 - "ArtworkFlipPresentationState"
-Cohesion: 0.12
-Nodes (20): ArtworkFlipPresentationEffect, displayedDirectly, firstHalfStarted, midpointCommitted, none, queued, staleTransitionDiscarded, transitionCompleted (+12 more)
+Cohesion: 0.20
+Nodes (7): ArtworkFlipPresentationState, .queuedSnapshot, ArtworkPresentationSnapshot, QueuedTransition, ArtworkFlipPresentationStateTests, Bool, String
 
 ### Community 4 - "SettingsView"
-Cohesion: 0.12
-Nodes (32): IslandShellSettingsPreview, HelpText, .body, PriorityStepperRow, .body, SettingsGroup, .body, SettingsView (+24 more)
+Cohesion: 0.07
+Nodes (50): Controls, TopPinnedHostRoot, .body, Content, RadialActivityProgressView, ContentMotionSettingsPreview, .body, IslandShellSettingsPreview (+42 more)
 
 ### Community 5 - "IslandRootView"
 Cohesion: 0.04
-Nodes (51): 2026-07-05 - Phase 8A Collapsed Hover Preview Foundation, 2026-07-12 - Phase 10C - Collapsed Live Activity Stability Lock, CollapsedPreviewContent, CollapsedPreviewKind, battery, fileDrop, liveActivity, media (+43 more)
+Nodes (49): 2026-07-03 - Phase 2.3 Media UI Observation Diagnostic Fix, 2026-07-04 - Phase 5J Single Visual Surface Morph, 2026-07-04 - Phase 6B Stable Host Panel And Shape-Aware Hit Testing, Phase 11C.9 - Predictive Space Motion Resampling, Phase 13A - Expanded Visibility Controls, LiveActivityCompositeGeometry, CollapsedPreviewContent, CollapsedPreviewRow (+41 more)
 
 ### Community 6 - "CameraPreviewController"
-Cohesion: 0.12
-Nodes (14): CameraDeviceDescriptor, CameraPreviewController, .activeDeviceName, .activePreviewConsumers, .hasExplicitOwner, .isRunning, .previewSession, .statusText (+6 more)
+Cohesion: 0.10
+Nodes (16): 1. Camera Mirror self-reactivation, CameraDeviceDescriptor, CameraPreviewController, .activeDeviceName, .activePreviewConsumers, .hasExplicitOwner, .isMirrorDismissed, .isRunning (+8 more)
 
-### Community 7 - "ClipboardHistoryStore"
-Cohesion: 0.08
-Nodes (27): ClipboardHistoryPersistence, ClipboardHistoryFinalPersistenceOperation, delete, save, ClipboardHistoryPersistenceFinalizationCompletion, ClipboardHistoryPersistenceFinalizationResult, completed, failed (+19 more)
+### Community 7 - "ClipboardHistoryEntry"
+Cohesion: 0.10
+Nodes (20): ClipboardHistoryEntry, Date, UUID, ClipboardHistoryRowPresentation, ClipboardHistoryView, .body, .emptyState, .header (+12 more)
 
-### Community 8 - ".testRenderSettingsPreviews"
-Cohesion: 0.09
-Nodes (33): Controls, RightWorkspaceSettingsView, AgentsSettingsPreview, .body, ClipboardSettingsPreview, .body, CollapsedHoverSettingsPreview, .body (+25 more)
+### Community 8 - "AgentEmbeddedConsoleView"
+Cohesion: 0.10
+Nodes (18): ScrollViewProxy, AgentProviderButtons, .body, .deliveryState, AgentEmbeddedConsoleView, .actionableApproval, .body, .externalPendingApproval (+10 more)
 
 ### Community 9 - "SystemClipboardPasteboardClient"
-Cohesion: 0.13
-Nodes (8): NSPasteboardItem, ClipboardHistoryLimits, Bool, Int, NSPasteboard, SystemClipboardPasteboardClient, .changeCount, ClipboardPasteboardClientTests
+Cohesion: 0.12
+Nodes (9): NSPasteboardItem, ClipboardHistoryLimits, ClipboardPasteboardWriteResult, Bool, Int, NSPasteboard, SystemClipboardPasteboardClient, .changeCount (+1 more)
 
 ### Community 10 - "TimerCompletionNotificationCoordinator"
 Cohesion: 0.10
-Nodes (21): Bool, Duration, Never, String, Task, TimeInterval, Void, SystemTimerNotificationCenterClient (+13 more)
+Nodes (19): Bool, Never, String, Task, TimeInterval, Void, SystemTimerNotificationCenterClient, TimerCompletionNotificationCoordinator (+11 more)
 
-### Community 11 - "AppsMediaDeckView"
-Cohesion: 0.18
-Nodes (12): AppsMediaDeckView, .body, CalendarEventRow, .body, .color, .timeText, CalendarSectionView, .body (+4 more)
+### Community 11 - "ExpandedIslandView"
+Cohesion: 0.10
+Nodes (24): 2026-07-04 - Phase 5J.1 Visual Surface Layout Refactor, 2026-07-04 - Phase 5J.7 Ghost Border Removal And Staged Motion Fix, 2026-07-04 - Phase 6A.2 Single-Panel Native Morph Correction, 2026-07-04 - Phase 6A Single Adaptive Island Panel, 2026-07-04 - Phase 6B.2 Window-Level Click-Through And Expanded Padding Ownership, 2026-07-04 - Phase 6B.3 Remove Expansion Fade Perception, 2026-07-04 - Phase 6B.4 Strict Shell/Content Sequencing, Phase 12B.1 - Shell Shadow Removal (+16 more)
 
-### Community 12 - "CGRect"
-Cohesion: 0.04
-Nodes (54): Phase 12C.5 - Content-Aware Physical-Notch Activity Wings, CustomStringConvertible, PreferenceKey, 1. Interactive volume / brightness HUD sat too high, Change, Droppy reference (local source, `~/Downloads/Droppy-main/Droppy`), Fix, Root cause (+46 more)
+### Community 12 - "CollapsedPresentationProfile"
+Cohesion: 0.07
+Nodes (34): 2026-07-03 - Phase 2.2 Media Session Vs Playback State Fix, 2026-07-03 - Phase 2.4 Browser/YouTube Detection Fix, Phase 11C.4 - WindowServer Space-Transition Counter-Translation, Phase 12C.5 - Content-Aware Physical-Notch Activity Wings, CustomStringConvertible, 1. Interactive volume / brightness HUD sat too high, Change, Droppy reference (local source, `~/Downloads/Droppy-main/Droppy`) (+26 more)
 
 ### Community 13 - "ClipboardHistoryStoreTests"
-Cohesion: 0.13
-Nodes (15): ClipboardHistoryArchive, ClipboardHistoryStoreTests, ControlledClipboardPersistence, .data, .deleteCount, .saveCount, FakeClipboardPasteboardClient, MemoryClipboardPersistence (+7 more)
+Cohesion: 0.15
+Nodes (8): ClipboardHistoryArchive, ClipboardHistoryStoreTests, FakeClipboardPasteboardClient, MemoryClipboardPersistence, .data, Date, String, UserDefaults
 
-### Community 14 - ".normalizeAndSaveDouble"
+### Community 14 - "Double"
 Cohesion: 0.08
-Nodes (18): .activitiesRefreshIntervalSeconds, .autoCollapseGraceSeconds, .collapsedHeight, .collapsedHoverPreviewDelay, .collapsedHoverPreviewHeight, .collapsedSize, .collapsedWidth, .contentStaggerAmount (+10 more)
+Nodes (19): .activitiesRefreshIntervalSeconds, .autoCollapseGraceSeconds, .collapsedHeight, .collapsedHoverPreviewDelay, .collapsedHoverPreviewHeight, .collapsedSize, .collapsedWidth, .contentStaggerAmount (+11 more)
 
 ### Community 15 - "CollapsedLiveActivitySelectorTests"
-Cohesion: 0.10
-Nodes (7): LiveActivityTimeFormatting, .compactIslandContent, CollapsedLiveActivitySelectorTests, Bool, Date, Int, String
+Cohesion: 0.12
+Nodes (5): CollapsedLiveActivitySelectorTests, Bool, Date, Int, String
 
 ### Community 16 - "IslandNavigationStore"
-Cohesion: 0.17
-Nodes (6): 2026-07-04 - Phase 4B Island Rename And Drag-Hover Tray Drop, IslandNavigationStore, Bool, Int, ExpandedIslandPageSwitcher, .body
+Cohesion: 0.09
+Nodes (22): 2026-07-04 - Phase 4B Island Rename And Drag-Hover Tray Drop, 2026-07-05 - Phase 8C.1 Exact Gesture Actions, ExpandedIslandPage, .accessibilityLabel, agents, island, messages, stats (+14 more)
 
 ### Community 17 - ".start"
-Cohesion: 0.21
-Nodes (7): MockTimerNotificationCenterClient, Bool, String, Void, TestError, schedulingFailed, TimerCompletionNotificationTests
+Cohesion: 0.23
+Nodes (6): TimerCompletionNotificationPreferences, MockTimerNotificationCenterClient, Bool, String, Void, TimerCompletionNotificationTests
 
 ### Community 18 - "FileShelfStore"
-Cohesion: 0.10
-Nodes (17): 2026-07-04 - Phase 4A Island/Tray Page Navigation, FileShelfStore, .files, AnyCancellable, Bool, Set, URL, UserDefaults (+9 more)
+Cohesion: 0.11
+Nodes (17): 2026-07-04 - Phase 4A Island/Tray Page Navigation, 2026-07-04 - Phase 5A Scalable Tabs And Dedicated Timer Tab, 2026-07-04 - Phase 5C Tray Split AirDrop And Files Layout, FileShelfStore, .files, AnyCancellable, Bool, Set (+9 more)
 
 ### Community 19 - "OverlayWindowController"
-Cohesion: 0.07
-Nodes (24): CFTimeInterval, OverlayWindowController, .collapsedGestureCandidateRegion, .collapsedGestureCandidateScreenRegion, .collapsedInteractiveSurfaceFrame, .collapsedScrollThreshold, .collapsedVisibleLocalFrames, .currentExpandedHoverHolds (+16 more)
+Cohesion: 0.06
+Nodes (39): CFTimeInterval, 2026-07-04 - Phase 5I.1 Expansion Collapse Motion Polish, 2026-07-04 - Phase 5I.5 Collapse Handoff Debug And Isolation, 2026-07-04 - Phase 5J.4 Final Media Fit And Mouse Leave Rect Fix, 2026-07-04 - Phase 5J.5 Final Expanded Hover Tolerance Tightening, 2026-07-04 - Phase 6A.3 Pre-Expansion Geometry And Shell Style Continuity, 2026-07-11 - Phase 9C Liquid Glass Visual Repair, Phase 11C.3 - Diagnostic WindowServer Transition Trace (+31 more)
 
 ### Community 20 - "AgentEventValidationError"
 Cohesion: 0.06
 Nodes (32): AgentEventValidationError, invalidApprovalResolution, invalidCorrelationID, invalidEventID, invalidGeneration, invalidProvider, invalidSessionID, invalidSubagentID (+24 more)
 
 ### Community 21 - "Change Log"
-Cohesion: 0.04
-Nodes (75): 2026-07-04 - Phase 4D Finder-Style Tray Tiles And UI Performance Cleanup, 2026-07-04 - Phase 5C Tray Split AirDrop And Files Layout, 2026-07-04 - Phase 5E Stats Visual Redesign And Memory Fix, 2026-07-04 - Phase 5H.1 Collapsed Outward Ellipse Shoulder Tuning, 2026-07-04 - Phase 5H.2 Shoulder Tuning And Expanded Ellipse Blend, 2026-07-04 - Phase 5H Asset-Backed Shoulder Blend, 2026-07-04 - Phase 5H Correction Remove Inward Cut, 2026-07-04 - Phase 5H Paused For Later Visual Polish (+67 more)
+Cohesion: 0.06
+Nodes (56): 2026-07-04 - Phase 4D Finder-Style Tray Tiles And UI Performance Cleanup, 2026-07-04 - Phase 5E Stats Visual Redesign And Memory Fix, 2026-07-04 - Phase 5H.1 Collapsed Outward Ellipse Shoulder Tuning, 2026-07-04 - Phase 5H.2 Shoulder Tuning And Expanded Ellipse Blend, 2026-07-04 - Phase 5H Asset-Backed Shoulder Blend, 2026-07-04 - Phase 5H Correction Remove Inward Cut, 2026-07-04 - Phase 5H Paused For Later Visual Polish, 2026-07-04 - Phase 5I.4 Symmetric Reverse Morph (+48 more)
 
 ### Community 22 - "SystemMediaControlBackend"
-Cohesion: 0.14
-Nodes (15): AudioObjectID, AudioObjectPropertyAddress, CFBundle, convention, Float, Float32, CGDirectDisplayID, Double (+7 more)
+Cohesion: 0.12
+Nodes (14): AudioObjectID, AudioObjectPropertyAddress, CFBundle, convention, Float, Float32, CGDirectDisplayID, Int32 (+6 more)
 
 ### Community 23 - "TerminalSessionController"
 Cohesion: 0.07
@@ -474,25 +486,25 @@ Nodes (34): FoundationTerminalProcessHandle, .isRunning, FoundationTerminalProce
 Cohesion: 0.05
 Nodes (36): Adaptive notch-aware island, App integration, Architecture, Build, Collapsed, Collapsed hover preview, Content-aware collapsed geometry, Current development status (+28 more)
 
-### Community 25 - "ClipboardHistoryView"
-Cohesion: 0.12
-Nodes (15): ClipboardHistoryRowPresentation, ClipboardHistoryView, .body, .emptyState, .header, ClipboardThumbnailCache, Bool, Calendar (+7 more)
+### Community 25 - "AgentIngestionCoordinator"
+Cohesion: 0.08
+Nodes (30): State ownership, AgentIngestionCoordinator, Bool, CheckedContinuation, Date, Never, Result, String (+22 more)
 
 ### Community 26 - "MediaAutomationExecutor"
 Cohesion: 0.08
-Nodes (41): Clock, ScriptRunner, Entry, MediaAutomationBackoff, MediaAutomationBrowserOperation, .operation, MediaAutomationBrowserResult, MediaAutomationCancellation (+33 more)
+Nodes (40): Clock, ScriptRunner, Entry, MediaAutomationBackoff, MediaAutomationBrowserOperation, .operation, MediaAutomationBrowserResult, MediaAutomationCancellation (+32 more)
 
 ### Community 27 - "Int"
-Cohesion: 0.12
-Nodes (13): ReferenceWritableKeyPath, .clipboardHistoryMaximumItems, .collapsedPriorityPausedMedia, .collapsedPriorityPausedTimer, .collapsedPriorityPlayingMedia, .collapsedPriorityRecentFiles, .collapsedPriorityRunningTimer, .maxShelfFiles (+5 more)
+Cohesion: 0.11
+Nodes (12): ReferenceWritableKeyPath, .clipboardHistoryMaximumItems, .collapsedPriorityPausedMedia, .collapsedPriorityPausedTimer, .collapsedPriorityPlayingMedia, .collapsedPriorityRecentFiles, .collapsedPriorityRunningTimer, .maxShelfFiles (+4 more)
 
 ### Community 28 - "DynamicIslandLiveActivity"
-Cohesion: 0.05
-Nodes (56): 2026-07-11 - Phase 10A Mac-Style Live Activities Foundation, Candidate, CollapsedIslandContentMode, agent, battery, fileTray, generic, inactive (+48 more)
+Cohesion: 0.09
+Nodes (28): Candidate, CollapsedIslandContentMode, agent, battery, fileTray, generic, inactive, media (+20 more)
 
 ### Community 29 - "WorkspaceTileButtonStyle"
-Cohesion: 0.08
-Nodes (38): ButtonStyle, ButtonStyleConfiguration, Configuration, BackgroundRemovalTile, .body, KeepAwakeTile, .body, ProductivityFilePicker (+30 more)
+Cohesion: 0.07
+Nodes (41): ButtonStyle, ButtonStyleConfiguration, Configuration, BackgroundRemovalTile, .body, .placeholder, KeepAwakeTile, .body (+33 more)
 
 ### Community 30 - "ClipboardImageNormalizerTests"
 Cohesion: 0.09
@@ -503,60 +515,56 @@ Cohesion: 0.18
 Nodes (4): MediaArbitratorTests, Bool, NSImage, String
 
 ### Community 32 - "VoiceTranscriptionController"
-Cohesion: 0.13
-Nodes (12): Date, DateFormatter, URL, Void, VoiceSpeechTranscribing, VoiceTranscriptionController, .isBusy, .statusText (+4 more)
+Cohesion: 0.10
+Nodes (20): Date, DateFormatter, URL, Void, VoiceSpeechTranscribing, VoiceTranscript, VoiceTranscriptionController, .isBusy (+12 more)
 
 ### Community 33 - "VoiceTranscriptionControllerTests"
-Cohesion: 0.11
-Nodes (16): FakeTranscriber, FakeVoiceRecorder, Fixture, PasteboardSink, ShelfSink, Bool, CheckedContinuation, Error (+8 more)
+Cohesion: 0.15
+Nodes (7): Fixture, PasteboardSink, ShelfSink, StaticString, UInt, VoiceTranscriptionControllerTests, XCTAssertThrowsVoiceError()
 
 ### Community 34 - "AgentBridgeAuthenticator"
-Cohesion: 0.12
-Nodes (16): OSStatus, AgentBridgeAuthenticator, .rememberedNonceCount, AgentBridgeCredentialError, invalidStoredSecret, keychain, randomGeneration, AgentBridgeCrypto (+8 more)
+Cohesion: 0.11
+Nodes (17): OSStatus, AgentBridgePermissionRequestProcessor, AgentBridgeAuthenticator, .rememberedNonceCount, AgentBridgeCredentialError, invalidStoredSecret, keychain, randomGeneration (+9 more)
 
 ### Community 35 - "Foundation"
-Cohesion: 0.05
-Nodes (9): AgentBridgeShared, ClaudeHookShared, CodexHookShared, CoreGraphics, Darwin, DynamicIsland, Foundation, IOKit.ps (+1 more)
+Cohesion: 0.06
+Nodes (8): Combine, CoreGraphics, DynamicIsland, Foundation, Array, .single, Element, XCTest
 
-### Community 36 - "UInt64"
+### Community 36 - "AppendOnlyRecordTailer"
 Cohesion: 0.08
-Nodes (27): Dispatch, NoticeHandler, RecordHandler, A2.1 ingress boundary and A2.2 handoff, AppendOnlyFileIdentity, AppendOnlyRecordLimits, AppendOnlyRecordStartPolicy, boundedCatchUp (+19 more)
+Nodes (26): Dispatch, NoticeHandler, RecordHandler, A2.1 ingress boundary and A2.2 handoff, AppendOnlyFileIdentity, AppendOnlyRecordLimits, AppendOnlyRecordStartPolicy, boundedCatchUp (+18 more)
 
 ### Community 37 - "MediaModuleView"
-Cohesion: 0.05
-Nodes (52): 2026-07-03 - Phase 2 Empty Media Launcher State, 2026-07-04 - Phase 5J.2 Expanded Page Fit And Internal Component Scaling, 2026-07-04 - Phase 5J.3 Center Constrained Expanded Media Layout, 2026-07-05 - Phase 8B.1 Visualizer Smoothness Fix, AudioVisualizerVariant, .barWidth, compact, expanded (+44 more)
+Cohesion: 0.04
+Nodes (62): 2026-07-04 - Phase 5J.2 Expanded Page Fit And Internal Component Scaling, 2026-07-04 - Phase 5J.3 Center Constrained Expanded Media Layout, 2026-07-05 - Phase 8B.1 Visualizer Smoothness Fix, 2026-07-05 - Phase 8C.12 Final Gesture And Artwork Repair, Phase 13A.1 - Deterministic Artwork Flip Midpoint Handoff, AudioVisualizerVariant, .barWidth, compact (+54 more)
 
-### Community 38 - "ManualMediaRemoteDeadlineScheduler"
-Cohesion: 0.13
-Nodes (16): ControlledMediaRemoteCallback, ControlledMediaRemoteProvider, Entry, ManualMediaRemoteDeadlineScheduler, .count, .scheduler, MediaRemoteCallbackBridgeTests, MediaRemoteRefreshRecoveryTests (+8 more)
+### Community 38 - "Sendable"
+Cohesion: 0.07
+Nodes (38): Sendable, Int64, Value, blob, .data, .double, .int64, integer (+30 more)
 
 ### Community 39 - "IslandCapabilityRegistry"
-Cohesion: 0.06
-Nodes (39): IslandCapabilityAction, configureShortcut, openSettings, start, stop, test, IslandCapabilityAvailability, available (+31 more)
+Cohesion: 0.05
+Nodes (44): IslandCapabilityAction, configureShortcut, openSettings, start, stop, test, IslandCapabilityAdapter, IslandCapabilityAvailability (+36 more)
 
 ### Community 40 - "AppLibraryStore"
-Cohesion: 0.11
-Nodes (22): AppLibraryStore, .favorites, .recents, InstalledApp, .id, Date, Never, NSImage (+14 more)
+Cohesion: 0.07
+Nodes (35): Targets (Package.swift), AppLibraryStore, .favorites, .recents, InstalledApp, .id, InstalledAppScanner, .standardDirectories (+27 more)
 
 ### Community 41 - "What You Must Do When Invoked"
-Cohesion: 0.08
-Nodes (23): For /graphify add and --watch, For /graphify query, For the commit hook and native CLAUDE.md integration, For --update and --cluster-only, /graphify, Honesty Rules, Part A - Structural extraction for code files, Part B - Semantic extraction (parallel subagents) (+15 more)
+Cohesion: 0.06
+Nodes (31): For /graphify add and --watch, For /graphify query, For the commit hook and native CLAUDE.md integration, For --update and --cluster-only, /graphify, Honesty Rules, Interpreter guard for subcommands, Part A - Structural extraction for code files (+23 more)
 
 ### Community 42 - "AgentMCPObservationAdapter"
-Cohesion: 0.09
-Nodes (28): AgentMCPAdapterLimits, AgentMCPAdapterRefreshResult, AgentMCPObservationAdapter, AgentMCPObservationDecoder, AgentMCPSourceConnecting, AgentMCPSourceConnection, AgentMCPSourceDescriptor, AgentMCPSourceDiscovering (+20 more)
+Cohesion: 0.07
+Nodes (33): AgentMCPAdapterLimits, AgentMCPAdapterRefreshResult, AgentMCPObservationAdapter, AgentMCPObservationDecoder, AgentMCPSourceConnecting, AgentMCPSourceConnection, AgentMCPSourceDescriptor, AgentMCPSourceDiscovering (+25 more)
 
 ### Community 43 - "String"
-Cohesion: 0.07
-Nodes (27): 2026-07-04 - Phase 3.1 Paused Media Arbitration Stability, 2026-07-06 - Phase 8C.15 Visualizer Artwork Color Sync And Universal Album Flip, 1. Media capability matrix, BrowserScriptTarget, Decision, MediaArbitrator, MediaArtworkFlipRequest, .isExpired (+19 more)
-
-### Community 44 - ".refresh"
-Cohesion: 0.29
-Nodes (5): ManualCountdownClock, .now, Duration, MainActor, TimerControllerTests
+Cohesion: 0.09
+Nodes (21): 2026-07-04 - Phase 3.1 Paused Media Arbitration Stability, BrowserScriptTarget, Decision, MediaArbitrator, MediaCandidate, .sourceKey, MediaController, .currentArtworkPresentationIdentity (+13 more)
 
 ### Community 45 - "AgentPresentationTests"
-Cohesion: 0.08
-Nodes (7): AgentOperationAggregation, .progressMetric, AgentPresentationTests, Date, Double, Set, String
+Cohesion: 0.05
+Nodes (24): AgentApprovalPresentation, AgentDashboardPresentation, AgentOperationAggregation, AgentProjectGroupPresentation, .primarySessions, .recentSessions, .showsRecentSection, .subagentCount (+16 more)
 
 ### Community 46 - "AppSettingsTests"
 Cohesion: 0.09
@@ -564,35 +572,35 @@ Nodes (3): AppSettingsTests, String, UserDefaults
 
 ### Community 47 - "IslandStateStore"
 Cohesion: 0.05
-Nodes (32): Behavior that must be preserved (from context.md), Commands, graphify knowledge graph (from AGENTS.md), Project history docs, 2026-07-04 - Corrected Phase 5B Last Active Tab And Top-Aligned Layout, 2026-07-04 - Phase 5H Notch-Integrated Island Shape, 2026-07-04 - Phase 5I.2 Animation Performance Polish, 2026-07-04 - Phase 5I.3 Collapse Shell-Only Performance Fix (+24 more)
+Nodes (41): 2026-07-04 - Corrected Phase 5B Last Active Tab And Top-Aligned Layout, 2026-07-04 - Phase 5H Notch-Integrated Island Shape, 2026-07-04 - Phase 5I.2 Animation Performance Polish, 2026-07-04 - Phase 5I.3 Collapse Shell-Only Performance Fix, App Entry, Collapsed, Current Architecture, Current Stable Baseline (+33 more)
 
 ### Community 48 - "AgentIntegrationProvider"
-Cohesion: 0.10
-Nodes (26): AgentIntegrationBackupEnvelope, AgentIntegrationConfigurationExpectation, absent, digest, AgentIntegrationProvider, claude, codex, .desiredEvents (+18 more)
+Cohesion: 0.06
+Nodes (36): AgentHookConfigurationPlanner, AgentIntegrationBackupEnvelope, AgentIntegrationConfigurationExpectation, absent, digest, AgentIntegrationProvider, claude, codex (+28 more)
 
 ### Community 49 - "SystemHUDDescriptor"
-Cohesion: 0.33
-Nodes (5): Date, Int, TimeInterval, SystemHUDArbiter, SystemHUDDescriptor
+Cohesion: 0.21
+Nodes (11): Int, TimeInterval, SystemHUDArbiter, SystemHUDDescriptor, SystemHUDKind, audioDevice, battery, brightness (+3 more)
 
 ### Community 50 - "MessagingProviderCapabilities"
-Cohesion: 0.06
-Nodes (34): MessagingCapability, composeDraft, confirmSend, exactConversationTarget, observeIncoming, openApp, openConversation, preserveDraft (+26 more)
+Cohesion: 0.07
+Nodes (31): MessagingCapability, composeDraft, confirmSend, exactConversationTarget, observeIncoming, openApp, openConversation, preserveDraft (+23 more)
 
-### Community 51 - "AgentSessionLauncherView"
+### Community 51 - "String"
+Cohesion: 0.14
+Nodes (13): AgentLocalRepositoryChoice, .id, AgentProjectSessionSummary, AgentSessionLauncherProjection, .body, .repositories, .repositoryProjectionKey, Bool (+5 more)
+
+### Community 52 - "CGRect"
 Cohesion: 0.08
-Nodes (20): AgentManagedStartedSession, AgentNewSessionFlow, .canStart, Mode, newSession, sessions, Bool, FileManager (+12 more)
-
-### Community 52 - "AgentIntegrationRouter"
-Cohesion: 0.19
-Nodes (8): AgentIngestionResult, AgentIntegrationRouter, DeduplicationKey, RoutedObservation, Bool, Date, Result, TimeInterval
+Nodes (22): PreferenceKey, ExpandedPresentationProfile, NotchGeometryService, ScreenSnapshot, CGSize, NSEdgeInsets, NSScreen, CGRect (+14 more)
 
 ### Community 53 - ".resolve"
 Cohesion: 0.14
-Nodes (7): LiveActivityLayoutResolverTests, .fullSet, Bool, CGFloat, Double, Int, String
+Nodes (6): LiveActivityLayoutResolverTests, .fullSet, Bool, CGFloat, Int, String
 
-### Community 54 - "AgentMCPObservationKind"
-Cohesion: 0.10
-Nodes (20): AgentMCPObservation, AgentMCPObservationError, invalidCorrelation, invalidIdentity, invalidPayload, unauthoritativeUsage, AgentMCPObservationKind, activity (+12 more)
+### Community 54 - "AgentIntegrationRouter"
+Cohesion: 0.09
+Nodes (28): Comparable, AgentIngestionResult, AgentIntegrationPrecedence, mcpFallback, providerNative, secondaryObservation, AgentIntegrationRouter, AgentMCPObservation (+20 more)
 
 ### Community 55 - "RecordSink"
 Cohesion: 0.17
@@ -611,32 +619,32 @@ Cohesion: 0.19
 Nodes (12): Success, AgentIngestionCoordinatorTests, Array, .single, Element, Result, Set, StaticString (+4 more)
 
 ### Community 59 - ".sessionID"
-Cohesion: 0.08
-Nodes (43): AgentBridgeWirePayload, .populatedFieldCount, AgentActivityDescriptor, AgentApprovalRequest, AgentApprovalResolution, AgentCommandEvent, AgentEventPayload, activity (+35 more)
-
-### Community 60 - "ProductivityTool"
 Cohesion: 0.14
-Nodes (14): ProductivityTool, backgroundRemoval, camera, .capabilityID, .id, keepAwake, reminders, .symbolName (+6 more)
+Nodes (11): AgentReductionResult, AgentEventReducerTests, Set, String, TimeInterval, AgentTestFixture, Date, Int (+3 more)
+
+### Community 60 - "AgentCapabilities"
+Cohesion: 0.06
+Nodes (33): AgentCapabilities, .all, AgentCapability, approvalControl, approvalObservation, commandLifecycle, contextUsage, costUsage (+25 more)
 
 ### Community 61 - "AgentBridgeClient"
-Cohesion: 0.13
-Nodes (15): Network, AgentBridgeClient, AgentBridgeClientResult, accepted, rejected, AgentBridgeClientTransport, Date, Int (+7 more)
+Cohesion: 0.10
+Nodes (19): Network, AgentBridgeClient, AgentBridgeClientResult, accepted, rejected, AgentBridgeClientTransport, Bool, Date (+11 more)
 
 ### Community 62 - "AgentEventType"
-Cohesion: 0.06
-Nodes (34): AgentEventType, agentWorking, approvalRequested, approvalResolved, capabilitiesUpdated, commandCompleted, commandStarted, heartbeat (+26 more)
+Cohesion: 0.07
+Nodes (30): AgentEventType, agentWorking, approvalRequested, approvalResolved, capabilitiesUpdated, commandCompleted, commandStarted, heartbeat (+22 more)
 
 ### Community 63 - "String"
-Cohesion: 0.16
-Nodes (11): usage, AgentOTLPJSONDecoder, AgentTelemetryFusion, AgentTelemetryObservation, .isEmpty, Any, Date, Double (+3 more)
+Cohesion: 0.15
+Nodes (9): AgentOTLPJSONDecoder, AgentTelemetryFusion, AgentTelemetryObservation, .isEmpty, Any, Date, Result, String (+1 more)
 
 ### Community 64 - "CaseIterable"
 Cohesion: 0.04
-Nodes (49): CaseIterable, AgentApprovalPolicyChoice, askEveryTime, autoApprove, ScreenRecordingTargetKind, area, display, .id (+41 more)
+Nodes (53): CaseIterable, AgentApprovalPolicyChoice, askEveryTime, autoApprove, ScreenRecordingTargetKind, area, display, .id (+45 more)
 
 ### Community 65 - "FileDragSessionController"
-Cohesion: 0.09
-Nodes (26): DropClaim, FileDragActionExecutor, FileDragActionOutcome, failed, handedOff, unavailable, FileDragSessionController, .explanatoryAction (+18 more)
+Cohesion: 0.14
+Nodes (15): DropClaim, FileDragSessionController, .explanatoryAction, .hasTargetOwnership, .isActive, .isDropInFlight, .outcomeMessage, Bool (+7 more)
 
 ### Community 66 - ".makeProcessor"
 Cohesion: 0.26
@@ -652,15 +660,15 @@ Nodes (24): .quickActionTargets, Availability, available, .isAvailable, unavaila
 
 ### Community 69 - "ArtworkAccentColorCache"
 Cohesion: 0.13
-Nodes (17): 2026-07-04 - Phase 5G Native Visualizer And Artwork Color, ArtworkAccentColorCache, ArtworkAccentColorExtractor, ArtworkColorSample, Bool, Color, Double, Int (+9 more)
+Nodes (16): 2026-07-04 - Phase 5G Native Visualizer And Artwork Color, ArtworkAccentColorCache, ArtworkAccentColorExtractor, ArtworkColorSample, Bool, Color, Int, NSColor (+8 more)
 
-### Community 70 - "ExpandedIslandView"
-Cohesion: 0.04
-Nodes (60): 2026-07-04 - Phase 5I.5 Collapse Handoff Debug And Isolation, 2026-07-04 - Phase 5J Single Visual Surface Morph, Phase 12C.1 - Integrated Notch Content Safe Areas, AirDropURLAccumulator, .urls, DedicatedTimerPageView, .controlsFontSize, .controlsSpacing (+52 more)
+### Community 70 - "ExpandedIslandLayoutMetrics"
+Cohesion: 0.05
+Nodes (41): Phase 12C.1 - Integrated Notch Content Safe Areas, ExpandedIslandLayoutMetrics, .bottomPadding, .cardSpacing, .compactScale, .dividerHeight, .dividerWidth, .innerHeight (+33 more)
 
 ### Community 71 - "SystemNotificationMonitor"
 Cohesion: 0.06
-Nodes (39): FullDiskAccessState, denied, granted, unknown, .string, NotificationCenterDatabaseSource, .watchedPaths, NotificationPayloadParser (+31 more)
+Nodes (40): FullDiskAccessState, denied, granted, unknown, .string, NotificationCenterDatabaseSource, .watchedPaths, NotificationPayloadParser (+32 more)
 
 ### Community 72 - "RemindersControllerTests"
 Cohesion: 0.12
@@ -671,68 +679,68 @@ Cohesion: 0.14
 Nodes (14): AppendOnlyRecordTailerFailure, identityRace, ioFailure, notRegularFile, parentUnavailable, permissionDenied, symlinkRejected, AppendOnlyRecordTailerNotice (+6 more)
 
 ### Community 74 - "DelimitedRecordFramer"
-Cohesion: 0.29
+Cohesion: 0.33
 Nodes (3): DelimitedRecordFramer, Output, DelimitedRecordFramerTests
 
 ### Community 75 - "FilePromiseDropNSView"
-Cohesion: 0.09
-Nodes (21): NSDraggingInfo, NSDragOperation, NSView, NSViewRepresentable, OperationQueue, FileDragBridgeNSView, FileDragBridgeView, FileDragPromiseStorage (+13 more)
+Cohesion: 0.12
+Nodes (17): NSDraggingInfo, NSDragOperation, NSView, NSViewRepresentable, OperationQueue, FileDragBridgeNSView, FileDragBridgeView, FilePromiseDropNSView (+9 more)
 
 ### Community 76 - "AgentEventStore"
 Cohesion: 0.15
-Nodes (7): AgentEventStore, .activeSessions, .sessionsRequiringAttention, Bool, AgentEventStoreTests, Int, TimeInterval
+Nodes (8): AgentEventStore, .activeSessions, .sessionsRequiringAttention, Bool, AgentEventStoreTests, Int, String, TimeInterval
 
 ### Community 77 - "ClaudeCodeStreamingClient"
-Cohesion: 0.08
-Nodes (21): ClaudeCodeStreamEvent, sessionExited, transportFailed, ClaudeCodeStreamingClient, .executablePath, ClaudeLaunchSpec, Run, AsyncStream (+13 more)
+Cohesion: 0.09
+Nodes (22): ClaudeCodeStreamEvent, sessionExited, transportFailed, ClaudeCodeStreamingClient, .executablePath, ClaudeLaunchSpec, .arguments, Mode (+14 more)
 
 ### Community 78 - "Meaningful regression history"
 Cohesion: 0.12
 Nodes (15): AppSettings normalization recursion — 7A.1, Artwork early handoff / independent state — 8C.15, 13A.1, Clipboard duplicate tick / approximate transition — 13B.2, Clipboard Escape swallowed before SwiftUI — 13C.1, Clipboard scrolling blocked by Island input — 13B.2, Double media command / expansion tail — 8C.3–15, Hidden mounted secondary preview — 10B.2, 10C, Long scheme-less text misclassified as URL — 13C.1 (+7 more)
 
-### Community 79 - "LiveActivityStore"
-Cohesion: 0.06
-Nodes (39): Architecture, Composition root, Messaging, Overlay: single stable panel, Productivity capabilities, ObservableObject, MessagingController, .orderedProviders (+31 more)
+### Community 79 - "MessagingController"
+Cohesion: 0.08
+Nodes (32): Messaging, InsertResult, duplicate, inserted, updated, MessagingController, .current, .orderedProviders (+24 more)
 
 ### Community 80 - "AgentAttentionEvent"
-Cohesion: 0.06
-Nodes (38): 7. Attention presentation contract, AgentAttentionCoordinator, Date, Never, Task, TimeInterval, Void, AgentAttentionEvent (+30 more)
+Cohesion: 0.07
+Nodes (38): 7. Attention presentation contract, AgentAttentionCoordinator, Date, Never, Task, Void, AgentAttentionEvent, .id (+30 more)
 
 ### Community 83 - "SequenceClientTransport"
-Cohesion: 0.23
-Nodes (10): AgentBridgeClientRequest, AgentBridgeSharedClientTests, Outcome, failure, response, SequenceClientTransport, SequenceProfileProvider, Duration (+2 more)
+Cohesion: 0.17
+Nodes (11): AgentBridgeEnvelopeBuilder, Any, String, AgentBridgeSharedClientTests, Outcome, failure, response, SequenceClientTransport (+3 more)
 
 ### Community 84 - ".apply"
-Cohesion: 0.10
-Nodes (14): AgentEventReducer, AgentEventStoreLimits, .normalized, SemanticResult, applied, rejected, Bool, Date (+6 more)
+Cohesion: 0.08
+Nodes (20): AgentEventReducer, AgentEventStoreLimits, .normalized, SemanticResult, applied, rejected, Bool, Date (+12 more)
 
 ### Community 85 - "AgentBridgeDiscoveryReader"
-Cohesion: 0.07
-Nodes (29): dev_t, ino_t, AgentBridgeClientProfileProviding, AgentBridgeDiscoveryFileReading, AgentBridgeDiscoveryFileSnapshot, AgentBridgeDiscoveryReader, Bool, Date (+21 more)
+Cohesion: 0.08
+Nodes (26): dev_t, ino_t, AgentBridgeDiscoveryFileReading, AgentBridgeDiscoveryFileSnapshot, AgentBridgeDiscoveryReader, Bool, Date, Int (+18 more)
 
 ### Community 86 - "Complete Droppy parity checklist"
 Cohesion: 0.13
 Nodes (15): Agents parity / beyond Droppy, Capture parity, Clipboard parity, Complete Droppy parity checklist, Conversion / smart export parity, Core notch / shell behavior, Extension / integration parity, File Shelf parity (+7 more)
 
-### Community 87 - "AgentIngestionEvent"
-Cohesion: 0.15
-Nodes (11): AgentIngestionEvent, .sessionID, AgentSessionContinuity, CodexRolloutRecoveryParser, Any, Date, Double, Int (+3 more)
+### Community 87 - "CodexRolloutRecoveryParser"
+Cohesion: 0.14
+Nodes (10): CodexRolloutRecoveryAdapter, CodexRolloutRecoveryParser, Any, Bool, Date, Int, Set, String (+2 more)
 
-### Community 88 - "Phase Workflow For Future Work"
-Cohesion: 0.04
-Nodes (46): 2026-07-03 - Common App Launch Resolver, 2026-07-03 - Context File Added, 2026-07-03 - Current Uncommitted Overlay/Animation Work, 2026-07-03 - Phase 1 Volume Slider And Shortcut Collapse, 2026-07-03 - Phase 2.1 Collapsed Inactive Media And Browser Detection, 2026-07-03 - Phase 2.2 Media Session Vs Playback State Fix, 2026-07-03 - Phase 2.4 Browser/YouTube Detection Fix, 2026-07-03 - Phase 2.5 Now Playing Provider Architecture (+38 more)
+### Community 88 - "CalendarAccessState"
+Cohesion: 0.07
+Nodes (28): CalendarAccessState, denied, fullAccess, notDetermined, restricted, writeOnly, CalendarEventsProviding, CalendarMeetingLink (+20 more)
 
 ### Community 89 - ".decide"
-Cohesion: 0.14
-Nodes (11): OptionSet, Decision, collapse, held, keepExpanded, ExpandedHoverContainment, Holds, CGFloat (+3 more)
+Cohesion: 0.10
+Nodes (16): OptionSet, Decision, collapse, held, keepExpanded, ExpandedHoverContainment, Holds, NativeMenuTrackingLifecycle (+8 more)
 
 ### Community 90 - "FakeTerminalProcessRunner"
 Cohesion: 0.18
 Nodes (10): TerminalProcessHandle, FakeTerminalProcessHandle, FakeTerminalProcessRunner, Error, Int32, Sendable, String, URL (+2 more)
 
 ### Community 91 - "CalendarEventsController"
-Cohesion: 0.11
-Nodes (19): CalendarEventDescriptor, CalendarEventsController, .statusText, CalendarEventsProviding, CalendarMeetingLink, Bool, Date, NSObjectProtocol (+11 more)
+Cohesion: 0.09
+Nodes (23): DateInterval, EventKit, CalendarEventDescriptor, CalendarEventsController, .dayStatusText, .isSelectedDayToday, .statusText, Bool (+15 more)
 
 ### Community 92 - "Evidence-supported pre-audit risks"
 Cohesion: 0.33
@@ -740,7 +748,7 @@ Nodes (5): A. Carried-forward candidates confirmed in current source, B. Structu
 
 ### Community 93 - "ScreenRecordingStreamOutput"
 Cohesion: 0.12
-Nodes (16): AVAssetWriter, AVAssetWriterInput, AVAssetWriterInputPixelBufferAdaptor, CMSampleBuffer, DispatchSourceTimer, SCStreamDelegate, SCStreamOutput, SCStreamOutputType (+8 more)
+Nodes (17): AVAssetWriter, AVAssetWriterInput, AVAssetWriterInputPixelBufferAdaptor, CMSampleBuffer, DispatchSourceTimer, SCStreamDelegate, SCStreamOutput, SCStreamOutputType (+9 more)
 
 ### Community 94 - "graphify reference: add a URL and watch a folder"
 Cohesion: 0.50
@@ -750,28 +758,28 @@ Nodes (3): For /graphify add, For --watch, graphify reference: add a URL and wat
 Cohesion: 0.50
 Nodes (3): For git commit hook, For native CLAUDE.md integration, graphify reference: commit hook and native CLAUDE.md integration
 
-### Community 96 - "graphify reference: incremental update and cluster-only"
-Cohesion: 0.50
-Nodes (3): For --cluster-only, For --update (incremental re-extraction), graphify reference: incremental update and cluster-only
+### Community 96 - "AgentActivityRecorder"
+Cohesion: 0.08
+Nodes (24): For --cluster-only, For --update (incremental re-extraction), graphify reference: incremental update and cluster-only, JSONEncoder, AgentActivityLog, .defaultDirectory, AgentActivityRecord, AgentActivityRecorder (+16 more)
 
 ### Community 97 - ".normalize"
-Cohesion: 0.14
-Nodes (8): CodexHookNormalizer, Any, Bool, Date, Int, String, CodexHookNormalizerTests, String
+Cohesion: 0.11
+Nodes (11): CodexHookNormalizer, CodexHookStandardInput, CodexPermissionHookOutput, Any, Bool, Date, FileHandle, Int (+3 more)
 
 ### Community 99 - "BackgroundRemovalController"
-Cohesion: 0.07
-Nodes (42): graphify reference: transcribe video and audio, Step 2.5 - Transcribe video / audio files (only if video files detected), BackgroundRemovalController, .isProcessing, .result, .snapshot, .statusText, BackgroundRemovalError (+34 more)
+Cohesion: 0.06
+Nodes (40): BackgroundRemovalController, .isProcessing, .result, .snapshot, .statusText, BackgroundRemovalError, busy, cancelled (+32 more)
 
 ### Community 103 - "TimerController"
-Cohesion: 0.12
-Nodes (16): 2026-07-04 - Phase 5F Timer Ring And Stats Layout Polish, ContinuousClock, CountdownClock, Duration, MainActor, Never, String, Task (+8 more)
+Cohesion: 0.10
+Nodes (19): 2026-07-04 - Phase 5F Timer Ring And Stats Layout Polish, CountdownClock, CountdownLifecycleEvent, cancelled, completed, scheduled, ContinuousClock, MainActor (+11 more)
 
 ### Community 104 - "YouTubeMetadataProvider"
 Cohesion: 0.30
 Nodes (9): CodingKeys, authorName, thumbnailURL, title, OEmbedResponse, String, URL, YouTubeMetadata (+1 more)
 
 ### Community 105 - "CameraPreviewControllerTests"
-Cohesion: 0.19
+Cohesion: 0.16
 Nodes (4): CameraPreviewControllerTests, Fixture, StaticString, UInt
 
 ### Community 106 - "DROPPY_PARITY_MASTER_PLAN_2026-09-29.md"
@@ -784,79 +792,79 @@ Nodes (3): LiveActivitySettingsSubscriberTests, String, UserDefaults
 
 ### Community 108 - "Bool"
 Cohesion: 0.06
-Nodes (41): 2026-07-11 - Phase 10B.5 Regular Collapsed Timer Pill Final Repair, 2026-07-11 - Phase 10B.6 Regular Collapsed Timer Pill Source-of-Truth Layout Fix, Left, Right, CollapsedFileActivityCompactView, .accessibilityLabel, .body, .fileText (+33 more)
+Nodes (43): Phase 12C.3 - Hardware Notch Center Exclusion, Left, Right, SystemHUDFormatting, CollapsedFileActivityCompactView, .accessibilityLabel, .body, .fileText (+35 more)
 
 ### Community 109 - "FileDropProviderLoader"
-Cohesion: 0.16
-Nodes (13): NSSecureCoding, Source-first parity, completion, FileDropProviderLoader, FileDropURLAccumulator, FileShelfTemporaryStorage, SendableItemProvider, Bool (+5 more)
+Cohesion: 0.07
+Nodes (30): NSSecureCoding, Source-first parity, completion, FileDropPolicy, FileDropProviderLoader, FileDropURLAccumulator, FileShelfTemporaryStorage, SendableItemProvider (+22 more)
 
 ### Community 110 - "AgentState"
-Cohesion: 0.05
-Nodes (40): AgentState, completed, failed, idle, interrupted, .isTerminal, planning, planReady (+32 more)
+Cohesion: 0.06
+Nodes (38): AgentState, completed, failed, idle, interrupted, .isTerminal, planning, planReady (+30 more)
 
 ### Community 111 - "ServerFactorySpy"
-Cohesion: 0.11
-Nodes (27): AgentBridgeNetworkError, listenerCancelled, listenerFailed, missingPort, AgentBridgeLifecycleTests, DeferredServerSpy, .startCount, DiscoverySpy (+19 more)
+Cohesion: 0.10
+Nodes (28): AgentBridgeNetworkError, listenerCancelled, listenerFailed, missingPort, AgentBridgeServing, AgentBridgeLifecycleTests, DeferredServerSpy, .startCount (+20 more)
 
 ### Community 112 - "LiveActivityLayoutPreviewScenario"
-Cohesion: 0.09
-Nodes (21): LiveActivityLayoutPreviewScenario, agentTerminal, agentTimer, backgroundRemoval, camera, constrained, .id, keepAwakeVolume (+13 more)
+Cohesion: 0.07
+Nodes (26): LiveActivityLayoutPreviewScenario, agentTerminal, agentTimer, backgroundRemoval, camera, constrained, .id, keepAwakeVolume (+18 more)
 
-### Community 113 - "FileDropProviderLoaderTests"
-Cohesion: 0.16
-Nodes (10): 2026-07-04 - Phase 5A Scalable Tabs And Dedicated Timer Tab, .fileDropTargetBinding, .filesTargetBinding, ControlledDataRepresentation, FileDropProviderLoaderTests, NSItemProvider, String, URL (+2 more)
+### Community 113 - "Codable"
+Cohesion: 0.13
+Nodes (35): Codable, AgentBridgeWirePayload, .populatedFieldCount, AgentActivityDescriptor, AgentApprovalRequest, AgentApprovalResolution, AgentCommandEvent, AgentEventPayload (+27 more)
 
 ### Community 114 - "CodexRolloutSessionMonitor"
-Cohesion: 0.15
-Nodes (15): CodexRolloutCandidate, CodexRolloutSessionDiscovery, CodexRolloutSessionMonitor, Date, Duration, FileManager, Int, Never (+7 more)
+Cohesion: 0.18
+Nodes (13): CodexRolloutCandidate, CodexRolloutSessionDiscovery, CodexRolloutSessionMonitor, Date, FileManager, Int, Never, Set (+5 more)
 
 ### Community 115 - "MessagesAppAdapter"
 Cohesion: 0.08
 Nodes (27): AnyObject, Apple Messages, Capability matrix, Classification (implemented in Phase 14), Evidence, Messaging provider authority audit — 2026-09-30, Update after approval (2026-09-30, Phase 14 continuation), WhatsApp / Telegram (+19 more)
 
-### Community 116 - "IslandModules"
-Cohesion: 0.10
-Nodes (18): 2026-07-03 - Phase 2.3 Media UI Observation Diagnostic Fix, 2. Existing DynamicIsland invariants, Activities and utility modules, Build and tests, Clipboard engine and persistence, Composition, state and settings, Current architecture baseline, Evidence and graph limits (+10 more)
+### Community 116 - "IslandRootView.swift"
+Cohesion: 0.05
+Nodes (51): AnimatablePair, Phase 12C - Integrated Atoll-Style Notch Shell Geometry, Activities and utility modules, Build and tests, Clipboard engine and persistence, Composition, state and settings, Current architecture baseline, Evidence and graph limits (+43 more)
 
-### Community 117 - ".resolve"
-Cohesion: 0.13
-Nodes (16): EnvironmentValues, .islandDisplayMetrics, IslandDisplayMetricsResolver, IslandDisplaySnapshot, .hasHardwareNotch, .notchRect, ResolvedIslandMetrics, Bool (+8 more)
+### Community 117 - "ResolvedIslandMetrics"
+Cohesion: 0.11
+Nodes (18): EnvironmentValues, .islandDisplayMetrics, IslandDisplayMetricsResolver, IslandDisplaySnapshot, .hasHardwareNotch, .notchRect, ResolvedIslandMetrics, Bool (+10 more)
 
 ### Community 118 - "AgentSession"
-Cohesion: 0.07
-Nodes (60): .modelSelectionScope, AgentSession, .isActive, .isOpen, AgentCompactPresentation, AgentDashboardLayoutProjection, AgentAttentionSessionRow, .body (+52 more)
+Cohesion: 0.06
+Nodes (64): .availableModels, .modelSelectionScope, AgentSession, .isActive, .isOpen, AgentDashboardLayoutProjection, AgentActivityDashboardView, AgentAttentionSessionRow (+56 more)
 
-### Community 119 - ".install"
-Cohesion: 0.14
-Nodes (9): AgentHookConfigurationPlanner, AgentIntegrationSetupState, blocked, configured, helperUnavailable, .label, needsSetup, repairRequired (+1 more)
+### Community 119 - "AgentProducerPolicy"
+Cohesion: 0.07
+Nodes (29): AgentAuthorityDomain, activity, capability, interaction, lifecycle, liveness, metadata, operation (+21 more)
 
 ### Community 120 - ".parse"
 Cohesion: 0.12
-Nodes (13): ClaudeTranscriptRecoveryAdapter, ClaudeTranscriptRecoveryParser, OperationKind, command, tool, Any, Bool, Date (+5 more)
+Nodes (12): ClaudeTranscriptRecoveryAdapter, ClaudeTranscriptRecoveryParser, OperationKind, command, tool, Any, Bool, Date (+4 more)
 
 ### Community 121 - "MessagingConversationID"
-Cohesion: 0.11
-Nodes (27): MessagingAuthority, fixture, providerEvent, systemNotification, MessagingConversation, .hasExactTarget, MessagingConversationID, MessagingDirection (+19 more)
+Cohesion: 0.08
+Nodes (35): MessagingAuthority, fixture, providerEvent, systemNotification, MessagingConversation, .hasExactTarget, MessagingConversationID, MessagingDirection (+27 more)
 
 ### Community 122 - "MessagesDatabaseMessage"
 Cohesion: 0.08
 Nodes (33): Row, MessagesAttributedBodyDecoder, MessagesConversationResolver, MessagesDatabaseMessage, MessagesDatabaseStore, MessagesResolution, ambiguous, exact (+25 more)
 
 ### Community 123 - "Agent Activity Integration Architecture"
-Cohesion: 0.12
-Nodes (17): 10. Performance budgets, 11. Failure model, 12. Adversarial conclusions and deferred risks, 1. Decision summary, 3. Component boundaries, 4. Per-event authority, 6. Privacy and security boundaries, 8. Expanded Agent Activity contract (+9 more)
+Cohesion: 0.11
+Nodes (18): 10. Performance budgets, 11. Failure model, 12. Adversarial conclusions and deferred risks, 1. Decision summary, 4. Per-event authority, 5. Local bridge decision, 6. Privacy and security boundaries, 8. Expanded Agent Activity contract (+10 more)
 
 ### Community 124 - "CodexAppServerClient"
 Cohesion: 0.05
-Nodes (53): .result, PendingPermission, CodexAppServerClient, CodexAppServerError, executableNotFound, invalidResponse, launchFailed, malformedMessage (+45 more)
+Nodes (50): .result, CodexAppServerClient, CodexAppServerError, executableNotFound, invalidResponse, launchFailed, malformedMessage, notRunning (+42 more)
 
 ### Community 125 - "ProductivityModules"
-Cohesion: 0.09
-Nodes (25): Validation, IslandCapabilityAdapter, ProductivityModules, BackgroundRemovalPanel, .body, CameraPanel, .body, KeepAwakePanel (+17 more)
+Cohesion: 0.05
+Nodes (40): graphify reference: transcribe video and audio, Step 2.5 - Transcribe video / audio files (only if video files detected), Validation, Selector, ProductivityModules, AgentPromptEditingShortcut, BackgroundRemovalPanel, .body (+32 more)
 
 ### Community 126 - "IslandLayoutStore"
-Cohesion: 0.09
-Nodes (16): Phase 12C.3 - Hardware Notch Center Exclusion, Phase 13A - Expanded Visibility Controls, 7. UI and lifecycle weaknesses, ExpandedAccessoryOwner, fileDragOrbit, trayQuickActions, ExpandedAccessoryOwnerOrder, fileDragOrbit (+8 more)
+Cohesion: 0.07
+Nodes (28): 2026-07-05 - Phase 8A.1 Collapsed Hover Preview Layout Polish, 2026-07-05 - Phase 8A Collapsed Hover Preview Foundation, ExpandedAccessoryOwner, fileDragOrbit, trayQuickActions, ExpandedAccessoryOwnerOrder, fileDragOrbit, .owner (+20 more)
 
 ### Community 127 - "Agent Capability Matrix"
 Cohesion: 0.12
@@ -875,104 +883,108 @@ Cohesion: 0.18
 Nodes (11): Agents, AirPods, Calendar / Meetings, Camera/microphone indicators, Clock, Downloads, File operations, Phase 10 — Rich live activities (+3 more)
 
 ### Community 131 - ".signedRequest"
-Cohesion: 0.31
-Nodes (4): AgentBridgeHTTPRequest, AgentBridgeAuthenticationTests, AgentBridgeTestSupport, Int64
+Cohesion: 0.35
+Nodes (3): AgentBridgeAuthenticationTests, AgentBridgeTestSupport, Int64
 
 ### Community 132 - "MenuBarController"
 Cohesion: 0.31
 Nodes (3): NSStatusItem, MenuBarController, Void
 
 ### Community 133 - "FileDragQuickAction"
-Cohesion: 0.07
-Nodes (28): FileDragQuickAction, airDrop, .explanation, .id, mail, messages, share, .symbolName (+20 more)
+Cohesion: 0.08
+Nodes (27): FileDragQuickAction, airDrop, .explanation, .id, mail, messages, .symbolName, .title (+19 more)
 
 ### Community 134 - "ClaudeUsageWindows"
 Cohesion: 0.11
-Nodes (15): ClaudeRateLimitParser, ClaudeUsageCommandProbe, ClaudeUsageProbeResult, ClaudeUsageSource, ClaudeUsageTextParser, ClaudeUsageWindows, .isEmpty, Bool (+7 more)
+Nodes (15): ClaudeRateLimitParser, ClaudeUsageCommandProbe, ClaudeUsageProbeResult, ClaudeUsageProbing, ClaudeUsageSource, ClaudeUsageTextParser, ClaudeUsageWindows, .isEmpty (+7 more)
 
 ### Community 135 - "CameraPreviewLayerView"
-Cohesion: 0.16
-Nodes (10): CameraPreviewLayerView, .isMirrored, .session, CameraPreviewView, AVCaptureSession, Context, NSCoder, NSPoint (+2 more)
+Cohesion: 0.18
+Nodes (9): CameraPreviewLayerView, .isMirrored, .session, CameraPreviewView, AVCaptureSession, Context, NSCoder, NSPoint (+1 more)
 
 ### Community 136 - "ClipboardHistoryPayload"
 Cohesion: 0.07
-Nodes (32): ClipboardHistoryEntryKind, files, image, text, url, ClipboardHistoryFingerprint, ClipboardHistoryPayload, .byteCount (+24 more)
+Nodes (31): ClipboardHistoryEntryKind, files, image, text, url, ClipboardHistoryFingerprint, ClipboardHistoryPayload, .byteCount (+23 more)
 
-### Community 137 - "AgentBridgeIngress"
-Cohesion: 0.20
-Nodes (11): AgentBridgeIngress, AgentBridgePermissionRequestProcessor, AgentBridgeRequestProcessor, Bool, Date, Result, String, AgentIntegrationPrecedence (+3 more)
+### Community 137 - "AgentBridge"
+Cohesion: 0.11
+Nodes (19): HTTPURLResponse, Runtime, AgentBridge, AgentBridgeIngress, AgentBridgeRequestProcessor, LaunchMaterial, ProducerRuntime, Runtime (+11 more)
 
 ### Community 138 - "XCTestCase"
-Cohesion: 0.11
-Nodes (17): E, AgentIntegrationRouterTests, Collection, .single, EventCapture, Element, Result, StaticString (+9 more)
+Cohesion: 0.15
+Nodes (13): E, AgentIntegrationRouterTests, Collection, .single, EventCapture, Element, Result, StaticString (+5 more)
 
 ### Community 139 - "AgentBridgeEnvelopeBuildError"
-Cohesion: 0.06
-Nodes (29): CoreFoundation, AgentBridgeClientError, authenticationFailed, discoveryUnavailable, invalidInput, malformedResponse, timedOut, transportUnavailable (+21 more)
+Cohesion: 0.08
+Nodes (24): AgentBridgeClientError, authenticationFailed, discoveryUnavailable, invalidInput, malformedResponse, timedOut, transportUnavailable, AttemptError (+16 more)
+
+### Community 140 - "AgentProjectResolverTests"
+Cohesion: 0.12
+Nodes (12): AgentProjectFileType, directory, file, missing, AgentProjectResolver, SystemAgentProjectFileSystem, AgentProjectResolverTests, CountingFileSystem (+4 more)
 
 ### Community 141 - "Phase 9 — Productivity extensions"
 Cohesion: 0.22
 Nodes (9): Background Removal, Camera / Notchface, Finder + Alfred, High Alert / Keep Awake, Menu Bar Manager, Phase 9 — Productivity extensions, Terminal, Voice Transcribe (+1 more)
 
-### Community 142 - "String"
-Cohesion: 0.23
-Nodes (4): SpotifyStoredCredentials, SpotifyTokenStore, Date, String
+### Community 142 - "SpotifyLibraryController"
+Cohesion: 0.11
+Nodes (21): ASPresentationAnchor, ASWebAuthenticationPresentationContextProviding, ASWebAuthenticationSession, AuthenticationServices, SpotifyLibraryController, .hasMoreLikedSongs, .hasMorePlaylists, .isConfigured (+13 more)
 
 ### Community 143 - "ClipboardHistoryPresentationState"
-Cohesion: 0.18
-Nodes (8): ClipboardHistoryPresentationState, .topmostOverlayPresentation, .clipboardBackdropAnimation, .contentVisibilityAnimation, IslandContentTransitionTiming, Int, TimeInterval, ClipboardHistoryPresentationStateTests
+Cohesion: 0.34
+Nodes (4): ClipboardHistoryPresentationState, .topmostOverlayPresentation, Int, ClipboardHistoryPresentationStateTests
 
 ### Community 144 - "AgentRelayExitCode"
-Cohesion: 0.06
-Nodes (32): graphify reference: extra exports and benchmark, Step 6b - Wiki (only if --wiki flag), Step 7 - Neo4j export (only if --neo4j or --neo4j-push flag), Step 7a - FalkorDB export (only if --falkordb or --falkordb-push flag), Step 7b - SVG export (only if --svg flag), Step 7c - GraphML export (only if --graphml flag), Step 7d - MCP server (only if --mcp flag), Step 8 - Token reduction benchmark (only if total_words > 5000) (+24 more)
+Cohesion: 0.10
+Nodes (19): Int32, AgentRelayCommand, AgentRelayCommandResult, AgentRelayExitCode, accepted, authenticationFailed, bridgeUnavailable, discoveryUnavailable (+11 more)
 
-### Community 145 - "SystemStatsController"
-Cohesion: 0.11
-Nodes (13): 2026-07-04 - Phase 5D Stats Tab, 2026-07-04 - Phase 7A Comprehensive Settings Foundation, CPUCounters, Bool, Date, Double, Int, Timer (+5 more)
+### Community 145 - "UInt64"
+Cohesion: 0.10
+Nodes (14): 2026-07-04 - Phase 5D Stats Tab, 2026-07-04 - Phase 7A Comprehensive Settings Foundation, UInt64, CPUCounters, Bool, Date, Int, TimeInterval (+6 more)
 
 ### Community 146 - ".normalize"
 Cohesion: 0.11
 Nodes (11): ClaudeHookNormalizer, ClaudeHookStandardInput, Any, Bool, Date, FileHandle, Int, String (+3 more)
 
-### Community 147 - "Bool"
-Cohesion: 0.12
-Nodes (15): CFMachPort, CGEvent, CGEventTapProxy, CGEventType, Bool, Set, UInt32, UnsafeMutableRawPointer (+7 more)
+### Community 147 - "SystemMediaKeyInterceptor"
+Cohesion: 0.09
+Nodes (18): AudioObjectPropertyListenerBlock, CFMachPort, CFRunLoopSource, CGEvent, CGEventTapProxy, CGEventType, CallbackBox, DefaultAudioOutputObserver (+10 more)
 
 ### Community 148 - "AgentProducerHandle"
-Cohesion: 0.10
-Nodes (19): Result, String, Void, AgentProducerDescriptor, AgentProducerHandle, AgentSourceHealthSnapshot, AgentSourceInstanceID, Result (+11 more)
+Cohesion: 0.07
+Nodes (44): Hashable, RawRepresentable, AgentEventProvenance, AgentIngestionLimits, AgentProducerDescriptor, AgentProducerEpoch, AgentProducerHandle, AgentSessionContinuity (+36 more)
 
 ### Community 149 - "Productivity extensions parity"
 Cohesion: 0.22
 Nodes (9): Background Removal, Camera / Notchface, Finder / Alfred / Shortcuts, Keep Awake / High Alert, Menu Bar Manager, Productivity extensions parity, Terminal, Voice Transcribe (+1 more)
 
-### Community 150 - "Value"
-Cohesion: 0.07
-Nodes (30): CopyAppDisplayNameFunction, GetNowPlayingInfoFunction, Double, Int64, Value, blob, .data, .double (+22 more)
+### Community 150 - "NowPlayingMediaProvider"
+Cohesion: 0.13
+Nodes (15): 2026-07-04 - Phase 3.4 Album Artwork Stability, CopyAppDisplayNameFunction, GetNowPlayingInfoFunction, MediaRemoteCallbackBridge, MediaRemoteClient, .isAvailable, MediaRemoteDictionary, MediaRemoteProviding (+7 more)
 
-### Community 151 - "AgentSessionInstanceID"
-Cohesion: 0.18
-Nodes (8): Set, Bool, Date, AgentIdentityConflict, AgentSessionLease, .activeManagedSessionIDs, AgentSessionID, AgentSessionInstanceID
+### Community 151 - "AgentSessionID"
+Cohesion: 0.10
+Nodes (14): ObservableObject, 2. Managed approvals, 3. Agents performance, 4. Usage and provider controls, 5. Record Activities, Phase 5 — Camera lifecycle, Agents performance, usage UX, Record Activities, approval authority, .activeManagedSessionIDs, AgentSessionID (+6 more)
 
-### Community 152 - "RightWorkspaceStore"
-Cohesion: 0.08
-Nodes (33): AppsMedia, Overview, Productivity, Source parity manifest — Expanded Workspace 2.0 (2026-09-30), .visiblePages, RightWorkspacePage, appsMedia, .id (+25 more)
+### Community 152 - "RightWorkspaceView"
+Cohesion: 0.13
+Nodes (15): AppsMedia, Overview, Productivity, EnvironmentValues, .rightWorkspacePageIsActive, RightWorkspacePageActiveKey, RightWorkspacePageIndicator, .body (+7 more)
 
-### Community 153 - "AgentApprovalController"
-Cohesion: 0.09
-Nodes (28): AgentBridgePermissionDecision, allow, deny, AgentApprovalControlKey, AgentApprovalController, AgentApprovalControlRequest, .id, AgentApprovalControlResult (+20 more)
+### Community 153 - "AgentSessionInstanceID"
+Cohesion: 0.05
+Nodes (50): AgentBridgePermissionDecision, allow, deny, AgentApprovalControlKey, AgentApprovalController, AgentApprovalControlRequest, .id, AgentApprovalControlResult (+42 more)
 
 ### Community 154 - "LiveActivityLayoutResolution"
-Cohesion: 0.04
-Nodes (62): LiveActivityCoexistencePolicy, exclusive, primaryOnly, sidecarAllowed, sidecarPreferred, unrestrictedCompact, LiveActivityCompactShape, capsule (+54 more)
+Cohesion: 0.06
+Nodes (48): LiveActivityCoexistencePolicy, exclusive, primaryOnly, sidecarAllowed, sidecarPreferred, unrestrictedCompact, LiveActivityCompactShape, capsule (+40 more)
 
 ### Community 155 - "ExpandedIslandMotion"
 Cohesion: 0.13
-Nodes (25): Fix (same SSOT: `ExpandedIslandMotion` / `IslandContentTransitionTiming`), ContentSample, ContractionPlan, .totalDuration, ContractionSample, ExpandedIslandMotion, FrameSample, Kind (+17 more)
+Nodes (20): Fix (same SSOT: `ExpandedIslandMotion` / `IslandContentTransitionTiming`), ContentSample, ContractionPlan, .totalDuration, ContractionSample, ExitCurve, close, easeIn (+12 more)
 
-### Community 156 - "MediaAutomationExecutorTests"
-Cohesion: 0.18
-Nodes (7): EmptyMediaDetectionProvider, LockedValues, MediaAutomationExecutorTests, MediaControllerAutomationIntegrationTests, CGFloat, Result, String
+### Community 156 - "MediaSnapshot"
+Cohesion: 0.06
+Nodes (32): 2026-07-03 - Phase 2.5 Now Playing Provider Architecture, 2026-07-04 - Phase 2.7 Media Source Arbitration, 2026-07-06 - Phase 8C.15 Visualizer Artwork Color Sync And Universal Album Flip, 1. Media capability matrix, Fixes in this phase, MediaDetectionProvider, MediaSnapshot, MediaSourceKind (+24 more)
 
 ### Community 157 - "FakeMessagesAutomation"
 Cohesion: 0.17
@@ -980,123 +992,119 @@ Nodes (11): FakeMessagesAutomation, FakeMessagesStore, MessagesAppAdapterAuthori
 
 ### Community 158 - "AgentManagedSessionController"
 Cohesion: 0.06
-Nodes (32): Agent monitoring pipeline, S, AgentManagedTranscriptEntry, AgentManagedSessionController, .accountUsage, .availableModels, .interactiveCapabilities, .isAvailable (+24 more)
+Nodes (31): S, AgentManagedSessionController, .accountUsage, .interactiveCapabilities, .isAvailable, .managedProvider, .managedProviders, .selectedSessionID (+23 more)
 
 ### Community 159 - ".assertFailure"
-Cohesion: 0.11
-Nodes (13): AgentBridgeHTTPParseResult, failure, needMore, request, AgentBridgeHTTPRequestParser, ParsedHeaders, ParseFailure, Bool (+5 more)
+Cohesion: 0.10
+Nodes (14): AgentBridgeHTTPParseResult, failure, needMore, request, AgentBridgeHTTPRequest, AgentBridgeHTTPRequestParser, ParsedHeaders, ParseFailure (+6 more)
 
 ### Community 160 - "Supplemental visual acceptance references — 2026-09-29"
 Cohesion: 0.22
 Nodes (9): Expanded Media — Playing Next, Live Activity layout architecture update, Media layout acceptance update, Queue-expanded, Settings preview additions, Side-by-side compact Live Activities, Standard, Supplemental recording observations (+1 more)
 
 ### Community 161 - "BatteryActivitySnapshot"
-Cohesion: 0.11
-Nodes (18): Phase 11A - Battery Live Activity, BatteryActivityProvider, BatteryActivitySnapshot, .activityState, .isEligible, .isLowPower, Any, Bool (+10 more)
+Cohesion: 0.07
+Nodes (33): Phase 11A - Battery Live Activity, IOKit.ps, BatteryActivityProvider, BatteryActivitySnapshot, .activityState, .isEligible, .isLowPower, Any (+25 more)
 
 ### Community 162 - "Claude Managed Control Review — 2026-09-27"
 Cohesion: 0.15
 Nodes (12): 10. Phase 6 recommendation, 1. Supported official mechanism, 2. Transport and API, 3. Lifecycle and session semantics, 4. Streaming visible responses and tool events, 5. Approvals and user input, 6. Model control, 7. Usage and context (+4 more)
 
-### Community 163 - "AgentIngestionCoordinator"
-Cohesion: 0.10
-Nodes (11): AgentIngestionCoordinator, CheckedContinuation, Never, StoreSink, AgentManagedSessionControllerTests, PersistentSnapshotFakeProvider, AsyncStream, Bool (+3 more)
+### Community 163 - "PersistentSnapshotFakeProvider"
+Cohesion: 0.08
+Nodes (7): AgentManagedSessionControllerTests, PersistentSnapshotFakeProvider, Bool, Int, Set, String, AgentsPerformanceArchitectureTests
 
 ### Community 164 - "ScreenRecordingAreaSelectionView"
-Cohesion: 0.12
-Nodes (15): NSWindow, CollapsedScreenRecordingActivityView, .preview, ScreenRecordingAreaSelectionView, .acceptsFirstResponder, .selectionRect, ScreenRecordingAreaSelector, ScreenRecordingAreaWindow (+7 more)
+Cohesion: 0.11
+Nodes (15): NSWindow, ScreenRecordingAreaGeometry, CGFloat, ScreenRecordingAreaSelectionView, .acceptsFirstResponder, .selectionRect, ScreenRecordingAreaSelector, ScreenRecordingAreaWindow (+7 more)
 
 ### Community 165 - "Reference evidence"
 Cohesion: 0.29
 Nodes (7): DynamicIsland — Droppy-Parity Master Plan, Public source supports, Purpose, Reference evidence, Screen recording 1 observations, Screen recording 2 observations, User-requested parity beyond what is currently present in the public source
 
-### Community 166 - "WorkspaceMotion"
-Cohesion: 0.25
-Nodes (9): Bool, CGFloat, Double, Int, View, WorkspaceMotion, .currentRefreshRate, .prefersLightweightEffects (+1 more)
+### Community 166 - "Source-first UI workflow (permanent, from Phase 6)"
+Cohesion: 0.18
+Nodes (11): Source-first UI workflow (permanent, from Phase 6), Source parity manifest — Expanded Workspace 2.0 (2026-09-30), Animation, Bool, CGFloat, Int, View, WorkspaceMotion (+3 more)
 
 ### Community 167 - "IslandEscapeRouter"
-Cohesion: 0.16
+Cohesion: 0.17
 Nodes (11): Phase 13C.1 - Clipboard Escape And Long-Text Correctness Hotfix, IslandEscapeRoute, collapseIsland, dismissPresentation, passThrough, IslandEscapeRouter, IslandEscapeRoutingPolicy, IslandOverlayPresentation (+3 more)
 
 ### Community 168 - "RemindersController"
-Cohesion: 0.11
-Nodes (20): DateComponents, EKCalendar, EKReminder, ReminderDescriptor, RemindersController, .statusText, unsupportedAction, RemindersProviding (+12 more)
+Cohesion: 0.05
+Nodes (48): DateComponents, EKCalendar, EKReminder, EventKitRemindersProvider, .accessState, .changeNotificationName, ReminderAccessState, denied (+40 more)
 
 ### Community 170 - "Agent Activity Feature Phase Plan"
 Cohesion: 0.20
 Nodes (10): 1. Rules for every implementation phase, 2. Dependency map, 4. A11 measurable release gates, 5. Known non-blocking research gaps, A3.1 implementation refinement — Codex structured recovery, A3 implementation refinement — Codex authoritative hooks, A4.1 implementation refinement — Claude transcript recovery, A4.5 implementation refinement — bounded OTLP JSON enrichment (+2 more)
 
 ### Community 171 - "NetworkCounters"
-Cohesion: 0.16
-Nodes (8): ifaddrs, NetworkCounters, Self, TimeInterval, UnsafeMutablePointer, Interface, NetworkCounterSamplingTests, UInt32
+Cohesion: 0.17
+Nodes (7): ifaddrs, NetworkCounters, Self, UnsafeMutablePointer, Interface, NetworkCounterSamplingTests, UInt32
 
 ### Community 172 - "AgentUISnapshotTests"
 Cohesion: 0.20
-Nodes (9): AgentUISnapshotTests, AnyView, Bool, CGFloat, CGSize, Color, String, URL (+1 more)
+Nodes (11): AgentCompactAttentionTrailingView, .body, AgentUISnapshotTests, AnyView, Bool, CGFloat, CGSize, Color (+3 more)
 
 ### Community 173 - "SettingsPreviewID"
-Cohesion: 0.07
-Nodes (30): Settings preview audit, SettingsAuditCatalog, .appSettingsKeys, SettingsAuditClass, behavioral, dataPersistence, deprecatedHidden, externalIntegration (+22 more)
+Cohesion: 0.06
+Nodes (34): Settings preview audit, SettingsAuditCatalog, .appSettingsKeys, SettingsAuditClass, behavioral, dataPersistence, deprecatedHidden, externalIntegration (+26 more)
 
 ### Community 174 - "MessagingSettingsView"
-Cohesion: 0.13
-Nodes (19): MessagingDiagnosticsReport, ProviderRow, .fallbackSummary, .observationSummary, .replySummary, Bool, Date, Int (+11 more)
+Cohesion: 0.10
+Nodes (22): .preferences, MessagingDiagnosticsReport, MessagingPreferencesPersistence, ProviderRow, .fallbackSummary, .observationSummary, .replySummary, Bool (+14 more)
 
 ### Community 175 - "AgentEvent"
-Cohesion: 0.06
-Nodes (36): AgentEvent, .effectiveTimestamp, .fingerprint, .instanceID, .payloadIsCompatible, AgentEventOrigin, live, localRecovery (+28 more)
+Cohesion: 0.08
+Nodes (23): AgentEvent, .effectiveTimestamp, .fingerprint, .instanceID, .payloadIsCompatible, AgentEventOrigin, live, localRecovery (+15 more)
 
 ### Community 176 - "AppDelegate"
-Cohesion: 0.07
-Nodes (23): 2026-07-04 - Phase 7A.2 Expanded Island Settings Entry, 2026-07-05 - Settings Window Activation Fix, Phase 13B.1 - Clipboard History Engine, NSApplicationDelegate, NSWindowDelegate, AppDelegate, .liveActivitySettingsPublisher, DynamicIslandApp (+15 more)
+Cohesion: 0.06
+Nodes (25): 2026-07-04 - Phase 7A.2 Expanded Island Settings Entry, 2026-07-05 - Settings Window Activation Fix, Phase 13B.1 - Clipboard History Engine, NSApplicationDelegate, NSWindowDelegate, TimeInterval, AppDelegate, .liveActivitySettingsPublisher (+17 more)
 
 ### Community 177 - "KeepAwakeController"
 Cohesion: 0.07
-Nodes (32): IOKit.pwr_mgt, KeepAwakeAssertionLease, KeepAwakeAssertionProviding, KeepAwakeController, .snapshot, KeepAwakeControllerError, assertionCreationFailed, .errorDescription (+24 more)
+Nodes (31): IOKit.pwr_mgt, KeepAwakeAssertionLease, KeepAwakeAssertionProviding, KeepAwakeController, .snapshot, KeepAwakeControllerError, assertionCreationFailed, .errorDescription (+23 more)
 
 ### Community 178 - "Architecture additions"
 Cohesion: 0.40
 Nodes (5): A. Island Feature Registry, Architecture additions, B. Integration Capability Registry, C. Unified Live Activity model, D. Background task/operation center
 
 ### Community 179 - "GatedCaptureSession"
-Cohesion: 0.13
+Cohesion: 0.14
 Nodes (12): FakeCaptureSession, .previewSession, GatedCaptureSession, .hasPendingStart, .previewSession, AVCaptureSession, Bool, CheckedContinuation (+4 more)
 
 ### Community 180 - "FileTrayQuickActionBar"
-Cohesion: 0.14
-Nodes (18): FileTrayQuickAction, convert, .id, removeBackground, share, .symbolName, .title, FileTrayQuickActionBar (+10 more)
+Cohesion: 0.15
+Nodes (17): FileTrayQuickAction, compress, convert, .id, removeBackground, share, .symbolName, .title (+9 more)
 
 ### Community 181 - "RightWorkspaceConfiguration"
-Cohesion: 0.11
-Nodes (20): RightWorkspaceConfiguration, .normalized, .visibleSections, .visibleTools, RightWorkspaceIndicatorStyle, dots, hidden, .id (+12 more)
-
-### Community 182 - "CameraMirrorConsumerLease"
-Cohesion: 0.21
-Nodes (6): CameraMirrorConsumerLease, CameraMirrorView, .body, .placeholder, CGFloat, Void
+Cohesion: 0.12
+Nodes (19): RightWorkspaceConfiguration, .normalized, .visibleSections, .visibleTools, RightWorkspaceIndicatorStyle, dots, hidden, .id (+11 more)
 
 ### Community 183 - "Reminders / calendar / clock parity"
 Cohesion: 0.50
 Nodes (4): Calendar, Clock, Reminders, Reminders / calendar / clock parity
 
 ### Community 184 - "SystemHUDController"
-Cohesion: 0.11
-Nodes (13): AudioObjectPropertyListenerBlock, CFRunLoopSource, CallbackBox, DefaultAudioOutputObserver, FocusHUDStateTracker, PowerSourceChangeObserver, Any, AnyCancellable (+5 more)
+Cohesion: 0.16
+Nodes (6): Any, AnyCancellable, Never, NSEvent, Task, SystemHUDController
 
-### Community 185 - "ExpandedIslandPage"
-Cohesion: 0.14
-Nodes (12): ExpandedIslandPage, .accessibilityLabel, agents, island, messages, stats, .symbolName, timer (+4 more)
-
-### Community 186 - "CameraPreviewController.swift"
+### Community 185 - "AgentSessionLauncherView"
 Cohesion: 0.11
-Nodes (16): CameraDeviceProviding, CameraPermissionState, authorized, denied, notDetermined, restricted, .snapshot, CameraPreviewPhase (+8 more)
+Nodes (16): AgentNewSessionFlow, .canStart, Mode, newSession, sessions, Bool, FileManager, URL (+8 more)
+
+### Community 186 - "CameraPermissionState"
+Cohesion: 0.17
+Nodes (10): CameraDeviceProviding, CameraPermissionState, authorized, denied, notDetermined, restricted, AVAuthorizationStatus, SystemCameraDeviceProvider (+2 more)
 
 ### Community 187 - "BackgroundRemovalControllerTests"
 Cohesion: 0.10
-Nodes (17): BackgroundRemovalControllerTests, FakeBackgroundProcessor, .calls, .mode, .observedCancellation, Fixture, makePNG(), Mode (+9 more)
+Nodes (18): CGImage, BackgroundRemovalControllerTests, FakeBackgroundProcessor, .calls, .mode, .observedCancellation, Fixture, makePNG() (+10 more)
 
-### Community 188 - "ReminderAccessState"
-Cohesion: 0.11
-Nodes (14): EventKitRemindersProvider, .accessState, .changeNotificationName, ReminderAccessState, denied, fullAccess, notDetermined, restricted (+6 more)
+### Community 188 - "AgentBridgeShared"
+Cohesion: 0.09
+Nodes (5): AgentBridgeShared, ClaudeHookShared, CodexHookShared, CoreFoundation, Darwin
 
 ### Community 189 - "3. Phase gates"
 Cohesion: 0.11
@@ -1111,68 +1119,72 @@ Cohesion: 0.33
 Nodes (5): Codex Managed Model Control Review — 2026-09-28, Context, Inventory, Selection semantics, Verified sources
 
 ### Community 192 - "SpotifyAuthConfiguration"
-Cohesion: 0.24
-Nodes (6): SpotifyAuthConfiguration, SpotifyLibraryTests, SpotifyRequestCounter, .value, SpotifyTestCredentialStore, Int
+Cohesion: 0.19
+Nodes (8): SpotifyAuthConfiguration, SpotifyLibraryTests, SpotifyRequestCounter, .value, SpotifyTestCredentialStore, Date, Int, String
 
-### Community 193 - ".scan"
-Cohesion: 0.17
-Nodes (11): InstalledAppScanner, .standardDirectories, Any, Bool, FileManager, Int, URL, AppLibraryTests (+3 more)
+### Community 193 - "AgentUsage"
+Cohesion: 0.10
+Nodes (26): CodingKey, AgentUsage, .allSamples, .isEmpty, .samples, .scopedEntries, AgentUsageKey, AgentUsageMetric (+18 more)
 
 ### Community 194 - "AgentBridgeNetworkServer"
-Cohesion: 0.19
-Nodes (11): NWListener, ObjectIdentifier, RequestHandler, AgentBridgeNetworkConnection, AgentBridgeNetworkServer, AgentBridgeServing, DispatchQueue, NWConnection (+3 more)
+Cohesion: 0.20
+Nodes (10): NWListener, ObjectIdentifier, RequestHandler, AgentBridgeNetworkConnection, AgentBridgeNetworkServer, DispatchQueue, NWConnection, Result (+2 more)
 
 ### Community 195 - "ExpandedScrollEventRoutingPolicyTests"
 Cohesion: 0.05
-Nodes (26): QuartzCore, CameraMirrorScrollRoutingPolicy, ExpandedContentScrollSequenceOwnership, ExpandedContentScrollSequencePhase, momentumBegan, momentumCancelled, momentumChanged, momentumEnded (+18 more)
+Nodes (24): QuartzCore, CGFloat, CameraMirrorScrollRoutingPolicy, ExpandedContentScrollSequenceOwnership, ExpandedContentScrollSequencePhase, momentumBegan, momentumCancelled, momentumChanged (+16 more)
 
 ### Community 196 - "AppKit"
 Cohesion: 0.05
-Nodes (14): AppKit, AVFoundation, Carbon, EventKit, ImageIO, QuickLookUI, FileTrayQuickActionMetrics, CGFloat (+6 more)
+Nodes (13): AppKit, Carbon, CoreImage, ImageIO, QuickLookUI, FileTrayQuickActionMetrics, CGFloat, View (+5 more)
 
 ### Community 197 - ".makeSession"
-Cohesion: 0.08
-Nodes (17): AgentLocalRepositoryChoice, .id, AgentProjectSessionSummary, AgentSessionLauncherProjection, .repositories, .repositoryProjectionKey, Bool, Date (+9 more)
+Cohesion: 0.13
+Nodes (6): .currentSessionIDs, .liveSessions, TimeInterval, AgentSessionLauncherTests, Date, String
 
-### Community 198 - "IslandThemeStyle"
-Cohesion: 0.16
-Nodes (10): 2026-07-04 - Phase 7A.1 AppSettings Normalization Crash Fix, 2026-07-11 - Phase 9D Theme Simplification, IslandThemeStyle, classicBlack, .displayName, .id, liquidGlass, Bool (+2 more)
+### Community 198 - ".reload"
+Cohesion: 0.29
+Nodes (4): 2026-07-04 - Phase 7A.1 AppSettings Normalization Crash Fix, Bool, T, UserDefaults
 
-### Community 199 - "AgentIngestionError"
-Cohesion: 0.07
-Nodes (28): AgentIngestionError, capabilityCapacity, generationConflict, identityConflict, invalidDescriptor, invalidEvent, invalidProducer, leaseCapacity (+20 more)
+### Community 199 - "FakeWindowSnapSystem"
+Cohesion: 0.18
+Nodes (7): CGFloat, CGPoint, WindowSnapScreen, WindowSnapScreenResolver, FakeWindowSnapSystem, Error, WindowSnapControllerTests
+
+### Community 200 - ".testMeasureAgentsPage"
+Cohesion: 0.09
+Nodes (19): Agent Interaction Phase Summary (Phase 5), AgentsPerformanceHarnessTests, Measurement, PerfFakeProvider, PerfHost, progress(), Any, AnyView (+11 more)
 
 ### Community 201 - "ShortcutsStore"
-Cohesion: 0.12
-Nodes (16): LauncherShortcut, ShortcutsStore, .shortcuts, String, UUID, ShortcutsModuleView, .body, .displayedShortcuts (+8 more)
+Cohesion: 0.15
+Nodes (10): LauncherShortcut, ShortcutsStore, .shortcuts, String, UUID, ShortcutEditorRow, .body, Binding (+2 more)
 
 ### Community 202 - "ScreenRecordingSetupPanelSurface"
-Cohesion: 0.15
-Nodes (14): Phase 11C.4 - WindowServer Space-Transition Counter-Translation, NSPanel, ScreenRecordingSetupPanel, .canBecomeKey, .canBecomeMain, ScreenRecordingSetupPanelSurface, .fittingSize, .isVisible (+6 more)
+Cohesion: 0.11
+Nodes (19): NSPanel, 3. Acceptance evidence, 4. Intermittent HUD height under persistent compact media — 2026-10-01 follow-up, 5. Collapse choreography follow-up, HUD geometry and recorder presentation — runtime repair, 2026-10-01, Root cause, User evidence, ScreenRecordingSetupPanel (+11 more)
 
 ### Community 203 - "AgentIntegrationOperationalState"
 Cohesion: 0.09
-Nodes (19): AgentCollapsedShellPresentation, AgentIntegrationDiagnostics, AgentIntegrationOperationalState, active, awaitingFirstEvent, blocked, degraded, failed (+11 more)
+Nodes (17): AgentIntegrationDiagnostics, AgentIntegrationOperationalState, active, awaitingFirstEvent, blocked, degraded, failed, .label (+9 more)
 
 ### Community 204 - "AgentCLIScrollAndFocusTests.swift"
 Cohesion: 0.24
 Nodes (4): NSApplication, NSMenu, EditMenuInstaller, EditMenuInstallerTests
 
-### Community 205 - "AgentBridge"
-Cohesion: 0.17
-Nodes (13): HTTPURLResponse, Runtime, AgentBridge, LaunchMaterial, ProducerRuntime, Runtime, AgentBridgeServerFactory, Error (+5 more)
+### Community 205 - ".cancel"
+Cohesion: 0.20
+Nodes (6): AVAudioRecorder, AVFoundationVoiceRecorder, .hasInputDevice, VoiceAudioRecording, transcriptionFailed, VoiceRecordingLiveTests
 
-### Community 206 - "SettingsSection"
-Cohesion: 0.11
-Nodes (19): SettingsSection, advanced, agents, appearance, clipboard, gestures, .id, island (+11 more)
+### Community 206 - "Identifiable"
+Cohesion: 0.06
+Nodes (34): Identifiable, AgentProjectOption, Int, SettingsSection, advanced, agents, appearance, clipboard (+26 more)
 
-### Community 207 - ".startCapture"
-Cohesion: 0.18
-Nodes (9): AVCaptureDevice, AVFoundationCameraSession, CameraCaptureSessionControlling, sessionFailed, SessionBox, AVCaptureSession, DispatchQueue, NSObjectProtocol (+1 more)
+### Community 207 - "CameraPreviewController.swift"
+Cohesion: 0.26
+Nodes (8): AVCaptureDevice, AVFoundationCameraSession, CameraCaptureSessionControlling, SessionBox, AVCaptureSession, DispatchQueue, NSObjectProtocol, Void
 
 ### Community 208 - "IslandSurfaceBackground"
-Cohesion: 0.11
-Nodes (17): 2026-07-11 - Phase 9A/9B Island Theme System And Hybrid Glass Shell, LinearGradient, ShellShape, IslandSurfaceBackground, .body, .bottomDepth, .classicBlack, .classicBlackColor (+9 more)
+Cohesion: 0.09
+Nodes (22): 2026-07-11 - Phase 9A/9B Island Theme System And Hybrid Glass Shell, 2026-07-11 - Phase 9D Theme Simplification, LinearGradient, ShellShape, IslandThemeStyle, classicBlack, .displayName, .id (+14 more)
 
 ### Community 209 - "MessagesAutomationPermission"
 Cohesion: 0.15
@@ -1180,259 +1192,263 @@ Nodes (15): NSAppleEventDescriptor, NSAppleScript, AppleScriptMessagesAutomation
 
 ### Community 210 - "RightWorkspaceTool"
 Cohesion: 0.12
-Nodes (18): RightWorkspaceTool, backgroundRemoval, camera, convert, .id, keepAwake, reminders, screenRecording (+10 more)
+Nodes (19): RightWorkspaceTool, backgroundRemoval, camera, convert, .id, keepAwake, reminders, screenRecording (+11 more)
 
 ### Community 211 - ".make"
-Cohesion: 0.18
-Nodes (14): AgentDiagnosticsReport, ProjectRow, ProviderRow, .detected, Bool, Date, Int, Self (+6 more)
-
-### Community 212 - "MessagingSendOutcome"
 Cohesion: 0.13
-Nodes (13): OnceOutcome, CheckedContinuation, Never, MessagingSendOutcome, confirmed, failed, uncertain, GatedAdapter (+5 more)
+Nodes (16): AgentDiagnosticsReport, ProjectRow, ProviderRow, .detected, Bool, Date, Int, Self (+8 more)
 
-### Community 213 - ".updateHealth"
-Cohesion: 0.20
-Nodes (10): AgentSourceHealthState, degraded, failed, healthy, stale, starting, stopped, CodexRolloutRecoveryAdapter (+2 more)
+### Community 212 - "LiveActivityStore"
+Cohesion: 0.08
+Nodes (28): Self, MessagingSendOutcome, confirmed, failed, uncertain, LiveActivityStore, .primaryActivity, FakeFocus (+20 more)
 
-### Community 214 - "SupportedApp"
-Cohesion: 0.09
-Nodes (25): 2026-07-04 - Phase 3 Album Artwork Source Open, AppLaunchService, SupportedApp, arc, brave, .bundleIdentifier, chrome, .displayName (+17 more)
+### Community 213 - "AgentCompactPresentation"
+Cohesion: 0.38
+Nodes (7): AgentCompactPresentation, AgentCompactMarkerCluster, .body, AgentCompactOverviewView, .body, AgentCompactSummaryLabel, .body
+
+### Community 214 - "Phase Workflow For Future Work"
+Cohesion: 0.06
+Nodes (38): 2026-07-03 - Common App Launch Resolver, 2026-07-03 - Context File Added, 2026-07-03 - Current Uncommitted Overlay/Animation Work, 2026-07-03 - Phase 1 Volume Slider And Shortcut Collapse, 2026-07-03 - Phase 2.1 Collapsed Inactive Media And Browser Detection, 2026-07-03 - Phase 2 Empty Media Launcher State, 2026-07-04 - Atoll Reference-Guided Morph Cleanup, 2026-07-04 - Phase 2.6 YouTube Metadata Enrichment (+30 more)
 
 ### Community 215 - "SpotifyLibraryError"
-Cohesion: 0.15
-Nodes (15): SpotifyLibraryError, appNotConfigured, authorizationCancelled, authorizationFailed, .errorDescription, forbidden, invalidCallback, invalidResponse (+7 more)
+Cohesion: 0.14
+Nodes (14): SpotifyLibraryError, appNotConfigured, authorizationCancelled, authorizationFailed, .errorDescription, forbidden, invalidCallback, invalidResponse (+6 more)
 
 ### Community 216 - "AgentBridgeEnvelopeError"
 Cohesion: 0.11
 Nodes (19): AgentBridgeEnvelopeError, emptyBatch, eventTooLarge, generationConflict, invalidAuthority, invalidCapability, invalidEventType, invalidPayload (+11 more)
 
 ### Community 217 - "RightWorkspaceSwipeRecognizer"
-Cohesion: 0.12
-Nodes (18): 3. Gesture / Camera Mirror acceptance, Outcome, consumed, ignored, next, passThrough, previous, Phase (+10 more)
+Cohesion: 0.23
+Nodes (6): 3. Gesture / Camera Mirror acceptance, RightWorkspaceSwipeRecognizer, .ownsSequence, CGFloat, TimeInterval, RightWorkspaceTests
 
 ### Community 218 - "FileDragQuickActionOrbit"
 Cohesion: 0.19
-Nodes (12): FileDragQuickActionButton, .body, .targetingBinding, FileDragQuickActionOrbit, .appKitBridgeBinding, .body, .swiftUIBridgeBinding, Binding (+4 more)
+Nodes (11): FileDragQuickActionButton, .body, .targetingBinding, FileDragQuickActionOrbit, .appKitBridgeBinding, .body, .swiftUIBridgeBinding, Binding (+3 more)
 
-### Community 219 - "Sendable"
-Cohesion: 0.02
-Nodes (168): Decodable, Equatable, Sendable, AgentBridgeSharedError, invalidNonce, randomUnavailable, ClaudeHookNormalizationError, emptyInput (+160 more)
+### Community 219 - "Error"
+Cohesion: 0.04
+Nodes (59): Error, AgentBridgeClientTransportError, connectTimedOut, malformedResponse, requestTimedOut, responseTooLarge, unavailable, AgentBridgeNetworkExchange (+51 more)
 
 ### Community 220 - "Data"
-Cohesion: 0.10
-Nodes (12): AgentBridgeRequestAuthentication, Data, Bool, Int, Int64, String, CodexHookStandardInput, CodexPermissionHookOutput (+4 more)
+Cohesion: 0.15
+Nodes (11): AgentBridgeRequestAuthentication, Data, Bool, Int, Int64, String, FileClipboardHistoryPersistence, FileManager (+3 more)
 
 ### Community 221 - "String"
-Cohesion: 0.16
-Nodes (14): String, SystemStatsFormatting, SystemStatsSnapshot, LiveStatusIndicator, .body, StatsLineChart, .body, StatsMetricCard (+6 more)
+Cohesion: 0.19
+Nodes (10): String, SystemStatsFormatting, SystemStatsSnapshot, LiveStatusIndicator, .body, StatsMetricCard, StatsPageView, .body (+2 more)
 
 ### Community 222 - "ShelfFileTile"
-Cohesion: 0.07
-Nodes (26): 2026-07-04 - Phase 4C Tray File Actions Context Menu, NSObject, QLPreviewItem, QLPreviewPanel, QLPreviewPanelDataSource, .urls, operationFailed, FileShelfDiskOperations (+18 more)
+Cohesion: 0.15
+Nodes (12): 2026-07-04 - Phase 4C Tray File Actions Context Menu, FileShelfActions, ShelfFileTile, .body, .contextTargets, .displayName, .fileImage, .operationErrorBinding (+4 more)
 
-### Community 223 - "IslandRootView.swift"
-Cohesion: 0.03
-Nodes (91): AnimatablePair, Phase 12C - Integrated Atoll-Style Notch Shell Geometry, Phase 13B.2 - Native In-Island Clipboard Interface, SwiftUI rendering and presentation, Shape, TopPinnedHostRoot, .body, Content (+83 more)
+### Community 223 - ".opacity"
+Cohesion: 0.05
+Nodes (60): 2026-07-04 - Phase 6B.5 Stable Inner Content Staging, AirDropDropZoneView, .body, .subtitle, CircleSidecarView, .body, CollapsedBatteryActivityCompactView, .accessibilityLabel (+52 more)
 
-### Community 224 - "IslandHostingView"
-Cohesion: 0.14
-Nodes (12): 2026-07-04 - Phase 6B Stable Host Panel And Shape-Aware Hit Testing, 2026-07-05 - Phase 8C.2 Collapsed Media Pill Gestures, 2026-07-05 - Phase 8C.3 Trackpad Scroll Gesture Capture, 2026-07-05 - Phase 8C.4 Trackpad Gesture Diagnostics And Fix, 2026-07-05 - Phase 8C.6 Scroll Gesture Resolution Fix, NSHostingView, NSSize, NSTrackingArea (+4 more)
+### Community 224 - "MediaRefreshCoordinator"
+Cohesion: 0.33
+Nodes (4): MediaRefreshCoordinator, Start, Int, MediaRefreshCoordinatorTests
 
 ### Community 225 - "System Presence HUD Phase — 2026-09-29"
 Cohesion: 0.40
 Nodes (4): Focus / Do Not Disturb, Implemented scope, Manual validation still required, System Presence HUD Phase — 2026-09-29
 
-### Community 226 - ".runTurn"
-Cohesion: 0.20
-Nodes (6): AgentLiveApprovalEndToEndTests, String, AgentLiveEndToEndTests, Bool, String, TimeInterval
+### Community 226 - ".runLive"
+Cohesion: 0.30
+Nodes (4): AgentLiveEndToEndTests, Bool, String, TimeInterval
 
 ### Community 227 - "Agent Event Schema Draft"
-Cohesion: 0.18
-Nodes (11): 2. State vocabulary, 4. Normalized event types, 5. Versioned transport envelope, 6. Capability model, 7. Privacy projection, 8. Replay fixture contract, 9. Deferred decisions, Agent Event Schema Draft (+3 more)
+Cohesion: 0.12
+Nodes (16): 2. State vocabulary, 3. Session identity, 4. Normalized event types, 5. Versioned transport envelope, 6. Capability model, 7. Privacy projection, 8. Replay fixture contract, 9. Deferred decisions (+8 more)
 
 ### Community 228 - "AgentConsoleEntryKind"
-Cohesion: 0.20
-Nodes (10): AgentConsoleEntry, AgentConsoleEntryKind, agent, approval, command, error, plan, status (+2 more)
+Cohesion: 0.05
+Nodes (41): AgentManagedTranscriptRole, agent, command, error, plan, status, tool, user (+33 more)
 
-### Community 229 - "Identifiable"
-Cohesion: 0.07
-Nodes (30): Identifiable, AgentApprovalPresentation, AgentDashboardPresentation, AgentProjectGroupPresentation, .primarySessions, .recentSessions, .showsRecentSection, .subagentCount (+22 more)
+### Community 229 - "AgentPresentationPriority"
+Cohesion: 0.14
+Nodes (13): AgentPresentationPriority, actionRequired, failure, idle, recent, thinking, working, AgentSessionRowEmphasis (+5 more)
 
 ### Community 230 - "VoicePermissionState"
-Cohesion: 0.12
-Nodes (15): SFSpeechRecognizerAuthorizationStatus, AVAuthorizationStatus, SystemVoicePermissionProvider, .microphoneState, .speechState, VoicePermissionProviding, VoicePermissionState, authorized (+7 more)
+Cohesion: 0.11
+Nodes (18): 2026-10-01 - Voice crash, Screen Recording grants, Phase 6 Calendar, SFSpeechRecognizerAuthorizationStatus, AVAuthorizationStatus, SystemVoicePermissionProvider, .microphoneState, .speechState, VoicePermissionProviding, VoicePermissionState (+10 more)
 
 ### Community 231 - "ScreenRecordingController"
 Cohesion: 0.07
-Nodes (36): SCContentFilter, SCDisplay, SCShareableContent, SCStreamConfiguration, SCWindow, ResolvedTarget, ScreenRecordingController, .formattedDuration (+28 more)
+Nodes (36): SCContentFilter, SCDisplay, SCStreamConfiguration, SCWindow, ResolvedTarget, ScreenRecordingController, .accessMessage, .formattedDuration (+28 more)
 
-### Community 232 - "AgentSessionControlSurface"
-Cohesion: 0.17
-Nodes (13): AgentSessionControlSurface, attaching, composer, controllable, controlUnavailable, readOnly, resumable, AgentWorkspaceProjection (+5 more)
+### Community 232 - "WorkflowFakeProvider"
+Cohesion: 0.09
+Nodes (12): AgentDiscoveredSessionDescriptor, Date, AgentWorkspaceWorkflowTests, Harness, AsyncStream, Bool, Int, Set (+4 more)
 
 ### Community 233 - "CodexAppServerProvider"
-Cohesion: 0.07
-Nodes (18): AgentInteractiveRequestToken, integer, string, Int64, CodexListedThread, Date, CodexAppServerProvider, Any (+10 more)
+Cohesion: 0.08
+Nodes (13): CodexListedThread, Date, CodexAppServerProvider, Any, AsyncStream, Bool, Date, Int (+5 more)
 
 ### Community 234 - "Agent Workspace Execution Plan — 2026-09-27"
 Cohesion: 0.14
 Nodes (13): Agent Workspace Execution Plan — 2026-09-27, Frozen invariants, Iteration rule, Phase 1 — Gesture-safe session scrolling, Phase 2 — Agents-specific expanded geometry, Phase 3.5 — Real-device workspace stabilization, Phase 3 — Enclosed workspace + session selection, Phase 4 — Embedded agent console UI (+5 more)
 
 ### Community 235 - "ClaudeInteractiveProvider"
-Cohesion: 0.06
-Nodes (31): AgentInteractiveProviderEvent, accountUsageChanged, approvalCancelled, approvalRequested, normalized, providerFailure, threadAvailable, transcript (+23 more)
+Cohesion: 0.07
+Nodes (20): ClaudeCodeStreamEnvelope, message, AgentManagedAgentDescriptor, ClaudeCatalogEntry, ClaudeInteractiveProvider, ClaudeSessionCatalog, ClaudeSessionCataloging, PendingPermission (+12 more)
 
-### Community 236 - "CalendarAccessState"
-Cohesion: 0.12
-Nodes (14): CalendarAccessState, denied, fullAccess, notDetermined, restricted, writeOnly, EventKitCalendarProvider, .accessState (+6 more)
+### Community 236 - ".timeText"
+Cohesion: 0.21
+Nodes (10): CalendarEventPresentation, CalendarEventRow, .body, .color, Calendar, Color, Date, CalendarEventPresentationTests (+2 more)
 
-### Community 237 - "Combine"
-Cohesion: 0.11
-Nodes (8): Combine, AgentActivityGlowCoordinator, Never, Task, TimeInterval, Void, .interactionObservedCanvas, AgentActivityGlowCoordinatorTests
+### Community 237 - "AgentActivityGlowCoordinator"
+Cohesion: 0.26
+Nodes (7): AgentActivityGlowCoordinator, Never, Task, TimeInterval, Void, .interactionObservedCanvas, AgentActivityGlowCoordinatorTests
 
 ### Community 238 - ".makeProvider"
-Cohesion: 0.20
-Nodes (6): ClaudeProviderProtocolTests, ClaudeSessionCatalogTests, EmptyCatalog, json(), Int, String
+Cohesion: 0.18
+Nodes (7): ClaudeProviderProtocolTests, ClaudeSessionCatalogTests, ClaudeStreamingClientProcessTests, EmptyCatalog, json(), Int, String
 
 ### Community 239 - "AgentBridgeHTTPStatus"
-Cohesion: 0.14
-Nodes (14): AgentBridgeHTTPStatus, accepted, badRequest, conflict, internalServerError, methodNotAllowed, notFound, ok (+6 more)
+Cohesion: 0.07
+Nodes (35): Decodable, AgentBridgeEnvelopeDecoder, Any, Int, AgentBridgeHealth, AgentBridgeHTTPStatus, accepted, badRequest (+27 more)
 
 ### Community 240 - "IslandCollapseRequest"
-Cohesion: 0.24
-Nodes (9): Inputs, IslandCollapseRequest, .isPending, SelectionEffect, none, scheduleHandoff, swapImmediately, Bool (+1 more)
+Cohesion: 0.28
+Nodes (7): IslandCollapseRequest, .isPending, SelectionEffect, none, scheduleHandoff, swapImmediately, Int
 
 ### Community 241 - "VoiceRecognizerAvailability"
 Cohesion: 0.17
 Nodes (13): Locale, SFSpeechRecognitionTask, SFSpeechRecognizer, SFSpeechURLRecognitionRequest, RecognitionContinuation, SpeechFrameworkTranscriber, .availability, Bool (+5 more)
 
-### Community 242 - "SpotifyMediaItem"
-Cohesion: 0.14
-Nodes (18): AuthenticationServices, .data, object, SpotifyLibrarySnapshot, SpotifyMediaItem, .id, .spotifyID, SpotifyMediaKind (+10 more)
+### Community 242 - "object"
+Cohesion: 0.11
+Nodes (12): object, quotaExceeded, SpotifyMediaKind, album, artist, episode, playlist, show (+4 more)
 
 ### Community 244 - "Int"
-Cohesion: 0.06
-Nodes (34): Int, AgentGlobalUsagePresentation, AgentOperationSummary, .displayTitle, AgentPresentationPriority, actionRequired, failure, idle (+26 more)
+Cohesion: 0.10
+Nodes (17): Int, AgentGlobalUsagePresentation, AgentOperationSummary, .displayTitle, Self, .body, AgentsPagePresentationPhase, chromeVisible (+9 more)
 
-### Community 245 - "MessagingQueueEntry"
-Cohesion: 0.09
-Nodes (21): InsertResult, duplicate, inserted, updated, .visibleEntries, MessagingQueue, MessagingQueueEntry, .conversation (+13 more)
+### Community 245 - "RightWorkspacePage"
+Cohesion: 0.20
+Nodes (10): .visiblePages, RightWorkspacePage, appsMedia, .id, overview, productivity, .symbolName, .title (+2 more)
 
-### Community 246 - "AgentInteractiveCapability"
-Cohesion: 0.15
-Nodes (12): AgentInteractiveCapability, accountUsage, contextUsage, interrupt, loadHistory, resolveApprovals, resumeSession, selectModel (+4 more)
+### Community 246 - "RightWorkspaceStore"
+Cohesion: 0.25
+Nodes (8): RightWorkspaceStore, .canGoNext, .canGoPrevious, Bool, Int, UserDefaults, Void, .body
 
 ### Community 248 - "SpotifySectionView"
-Cohesion: 0.18
-Nodes (12): SpotifySectionView, .emptyText, .libraryList, .playlistDetail, .spotifySourceIcon, Bool, Tab, .id (+4 more)
+Cohesion: 0.07
+Nodes (31): WorkspaceServices, AppsMediaDeckView, .body, CalendarDatePickerPopover, CalendarDayNavigator, .body, CalendarSectionView, .body (+23 more)
 
-### Community 249 - ".resolve"
-Cohesion: 0.21
-Nodes (7): .accentComponents, ExpandedIslandRightStackVisibility, .showsRightStack, .collapsedCompositeGeometry, .collapsedLayoutResolution, Self, ExpandedIslandRightStackVisibilityTests
+### Community 249 - ".render"
+Cohesion: 0.24
+Nodes (8): LiveActivitySidecarSnapshotTests, Bool, CGFloat, CGSize, String, URL, V, View
 
 ### Community 250 - "AgentIntegrationSetupError"
 Cohesion: 0.17
 Nodes (12): AgentIntegrationSetupError, backupInvalid, backupUnavailable, changedExternally, fileTooLarge, helperUnavailable, invalidHooks, invalidJSON (+4 more)
 
-### Community 251 - "CountingFileSystem"
-Cohesion: 0.24
-Nodes (8): AgentProjectFileType, directory, file, missing, CountingFileSystem, .calls, Int, String
+### Community 251 - "Duration"
+Cohesion: 0.15
+Nodes (14): os, AgentPerformanceProbe, Duration, .average, Snapshot, Swift.Duration, .seconds, Int (+6 more)
 
-### Community 252 - "Phase 17 stabilization / release-readiness status — 2026-09-30"
-Cohesion: 0.18
-Nodes (10): Agents, Calendar, Camera / gestures, Motion contract, Phase 17 release audit, Phase 17 stabilization / release-readiness status — 2026-09-30, Remaining external/manual blockers, Settings / personalization (+2 more)
+### Community 252 - "FakeScreenCaptureAuthorization"
+Cohesion: 0.25
+Nodes (5): FakeScreenCaptureAuthorization, ScreenRecordingAccessTests, Bool, Error, SCShareableContent
 
 ### Community 253 - "LocalizedError"
+Cohesion: 0.11
+Nodes (19): LocalizedError, FileShelfDiskOperationError, .errorDescription, invalidDestination, missingSource, String, FileShelfMutationError, destinationExists (+11 more)
+
+### Community 255 - "BackgroundOperationController"
 Cohesion: 0.18
-Nodes (11): LocalizedError, FileShelfDiskOperationError, .errorDescription, invalidDestination, missingSource, FileConversionError, decodeFailed, encodeFailed (+3 more)
+Nodes (12): BackgroundOperation, .statusText, BackgroundOperationController, .activeCount, .completedCount, .primaryOperation, Date, Error (+4 more)
 
 ### Community 256 - "LaunchAtLoginController.swift"
 Cohesion: 0.40
 Nodes (3): ServiceManagement, LaunchAtLoginController, Bool
 
-### Community 257 - "AgentManagedSessionDescriptor"
-Cohesion: 0.07
-Nodes (18): AgentDiscoveredSessionDescriptor, AgentInteractiveProvider, AgentManagedModelDescriptor, AgentManagedSessionDescriptor, .sessionID, Bool, Date, .body (+10 more)
+### Community 257 - "AgentInteractiveProviderEvent"
+Cohesion: 0.03
+Nodes (80): AgentDiscoveredSessionRuntimeState, active, idle, notLoaded, systemError, AgentInteractiveCapability, accountUsage, contextUsage (+72 more)
 
 ### Community 258 - "WindowSnapController"
-Cohesion: 0.05
-Nodes (41): AXError, AXUIElement, Bool, CGFloat, CGPoint, Date, DispatchWorkItem, SystemWindowSnapProvider (+33 more)
+Cohesion: 0.06
+Nodes (34): AXError, AXUIElement, Bool, Date, DispatchWorkItem, SystemWindowSnapProvider, .accessibilityGranted, WindowSnapController (+26 more)
 
-### Community 259 - "SystemHUDKind"
+### Community 259 - "AgentBridgeClientProfile"
+Cohesion: 0.09
+Nodes (22): graphify reference: extra exports and benchmark, Step 6b - Wiki (only if --wiki flag), Step 7 - Neo4j export (only if --neo4j or --neo4j-push flag), Step 7a - FalkorDB export (only if --falkordb or --falkordb-push flag), Step 7b - SVG export (only if --svg flag), Step 7c - GraphML export (only if --graphml flag), Step 7d - MCP server (only if --mcp flag), Step 8 - Token reduction benchmark (only if total_words > 5000) (+14 more)
+
+### Community 260 - "AgentSessionControlSurface"
 Cohesion: 0.18
-Nodes (8): Self, SystemHUDKind, audioDevice, battery, brightness, capsLock, focus, volume
-
-### Community 260 - "NullRemindersProvider"
-Cohesion: 0.22
-Nodes (6): NullRemindersProvider, .accessState, .changeNotificationName, Date, Notification, String
+Nodes (11): AgentSessionControlSurface, attaching, composer, controllable, controlUnavailable, readOnly, resumable, AgentWorkspaceSurface (+3 more)
 
 ### Community 261 - "MediaController.swift"
 Cohesion: 0.07
-Nodes (29): 2026-07-04 - Phase 3.2 Atomic Media Publishing And Async Guard, 2026-07-04 - Phase 3.3 Paused Switch Debounce And Native Playback Priority, 2026-07-05 - Phase 8C.12 Final Gesture And Artwork Repair, Phase 13A.1 - Deterministic Artwork Flip Midpoint Handoff, Index, Media and artwork, Array, ArtworkFlipPhase (+21 more)
+Nodes (33): 2026-07-04 - Phase 3.2 Atomic Media Publishing And Async Guard, 2026-07-04 - Phase 3.3 Paused Switch Debounce And Native Playback Priority, Index, Media and artwork, Array, ArtworkFlipPhase, firstHalf, idle (+25 more)
 
-### Community 262 - "Fresh critical audit instructions"
-Cohesion: 0.20
-Nodes (8): Interpreter guard for subcommands, Path, Exact next prompt, Finding format (required for each), Fresh critical audit instructions, Scope, Start and evidence order, Validation and limits
+### Community 262 - "FileDragActionExecutor"
+Cohesion: 0.18
+Nodes (9): FileDragActionExecutor, FileDragActionOutcome, failed, handedOff, unavailable, share, Handler, NSView (+1 more)
 
-### Community 263 - ".decode"
-Cohesion: 0.50
-Nodes (3): AgentBridgeEnvelopeDecoder, Any, Int
+### Community 263 - "Agent monitoring pipeline"
+Cohesion: 0.18
+Nodes (9): Agent monitoring pipeline, Architecture, Behavior that must be preserved (from context.md), Commands, Composition root, graphify knowledge graph (from AGENTS.md), Overlay: single stable panel, Productivity capabilities (+1 more)
 
 ### Community 264 - "AgentBridgeDiscoveryReadError"
 Cohesion: 0.12
 Nodes (16): AgentBridgeDiscoveryReadError, changedDuringRead, invalidAuthentication, invalidHost, invalidIdentifier, invalidPort, invalidProcess, invalidTimestamp (+8 more)
 
 ### Community 265 - "AgentProjectProjectionStore"
-Cohesion: 0.23
-Nodes (8): Publisher, AgentProjectProjectionStore, AnyCancellable, Date, Never, Set, Task, AgentProjectProjectionStoreTests
+Cohesion: 0.22
+Nodes (9): Publisher, AgentProjectFileSystem, AgentProjectProjectionStore, AnyCancellable, Date, Never, Set, Task (+1 more)
 
-### Community 266 - "AgentProducerPolicy"
-Cohesion: 0.08
-Nodes (24): AgentAuthorityDomain, activity, capability, interaction, lifecycle, liveness, metadata, operation (+16 more)
+### Community 266 - "BackgroundOperationCenter.swift"
+Cohesion: 0.13
+Nodes (16): BackgroundOperationFailure, BackgroundOperationFailureCode, collisionResolutionFailed, destinationUnavailable, operationFailed, permissionDenied, sourceUnavailable, unsupported (+8 more)
 
 ### Community 267 - "AgentProjectProjection.swift"
-Cohesion: 0.14
-Nodes (16): EnvironmentKey, AgentProjectFileSystem, AgentProjectLocationsKey, AgentProjectResolver, AgentProjectSelectionBinding, AgentProjectSelectionKey, EnvironmentValues, .agentProjectLocations (+8 more)
+Cohesion: 0.11
+Nodes (20): EnvironmentKey, AgentProjectGrouping, AgentProjectGroupKey, AgentProjectLocationsKey, AgentProjectSelectionBinding, AgentProjectSelectionKey, EnvironmentValues, .agentProjectLocations (+12 more)
 
-### Community 268 - "AgentBridgeClientProfile"
-Cohesion: 0.12
-Nodes (17): AgentBridgeNetworkExchange, AgentBridgeNetworkTransport, Duration, NWConnection, Result, UInt16, Void, AgentBridgeClientProfile (+9 more)
+### Community 268 - "Phase 17 stabilization / release-readiness status — 2026-09-30"
+Cohesion: 0.18
+Nodes (10): Agents, Calendar, Camera / gestures, Motion contract, Phase 17 release audit, Phase 17 stabilization / release-readiness status — 2026-09-30, Remaining external/manual blockers, Settings / personalization (+2 more)
 
-### Community 269 - ".init"
+### Community 269 - "ZipCompressionExecutor"
 Cohesion: 0.22
-Nodes (6): Authenticator, Bundle, SpotifyCredentialStoring, UserDefaults, ParityNoCredentialStore, URLSession
+Nodes (10): Bool, Process, Set, URL, UUID, processFailed, ZipCompressionExecutor, BackgroundOperationRealWorldTests (+2 more)
 
 ### Community 270 - "VoiceTranscriptionError"
-Cohesion: 0.13
-Nodes (13): VoiceTranscriptionError, busy, disabled, emptyTranscript, .errorDescription, microphonePermissionRequired, noTranscript, notRecording (+5 more)
-
-### Community 271 - "AgentNotch Reference Review"
-Cohesion: 0.20
-Nodes (10): 10. Strongest ideas retained, 1. Architecture observed, 2. Mechanism classification, 3. Discovery and identity weaknesses, 4. Completion and permission weaknesses, 5. JSONL robustness weaknesses, 6. OTLP/server weaknesses, 8. Usage and configuration weaknesses (+2 more)
-
-### Community 272 - "AgentBridgeAuthenticationError"
-Cohesion: 0.22
-Nodes (9): AgentBridgeAuthenticationError, invalidNonce, invalidSignature, invalidTimestamp, missingHeaders, replay, replayCacheFull, timestampOutsideWindow (+1 more)
-
-### Community 273 - "VoiceTranscriptionPhase"
-Cohesion: 0.25
-Nodes (8): VoiceTranscriptionPhase, completed, failed, idle, preparing, recording, stopping, transcribing
-
-### Community 274 - "Error"
 Cohesion: 0.10
-Nodes (20): Error, AgentBridgeDiscoveryError, insecurePermissions, invalidRecord, unavailableDirectory, ClaudeCodeStreamingError, executableNotFound, launchFailed (+12 more)
+Nodes (17): VoiceTranscriptionError, busy, disabled, emptyTranscript, .errorDescription, microphonePermissionRequired, noMicrophone, noTranscript (+9 more)
 
-### Community 275 - "AudioOutputDeviceKind"
+### Community 271 - "URL"
+Cohesion: 0.12
+Nodes (13): NSObject, QLPreviewItem, QLPreviewPanel, QLPreviewPanelDataSource, .urls, operationFailed, FileShelfDiskOperations, FileShelfQuickLookController (+5 more)
+
+### Community 272 - "DynamicIslandLiveActivityKind"
+Cohesion: 0.11
+Nodes (19): DynamicIslandLiveActivityKind, agent, backgroundOperation, backgroundRemoval, battery, camera, fileTray, keepAwake (+11 more)
+
+### Community 273 - "AgentActivityKind"
 Cohesion: 0.18
-Nodes (9): AudioOutputDeviceKind, airPods, airPodsMax, airPodsPro, beats, earbuds, generic, headphones (+1 more)
+Nodes (11): AgentActivityKind, approval, command, failure, interruption, plan, session, subagent (+3 more)
+
+### Community 274 - "FakeTranscriber"
+Cohesion: 0.25
+Nodes (8): FakeTranscriber, FakeVoiceRecorder, Bool, CheckedContinuation, Error, Result, String, URL
+
+### Community 275 - "SystemHUDController.swift"
+Cohesion: 0.09
+Nodes (21): ApplicationServices, AudioToolbox, CoreAudio, Intents, IOKit, IOKit.graphics, AudioOutputDeviceKind, airPods (+13 more)
 
 ### Community 276 - "FocusStatusObserver"
 Cohesion: 0.25
 Nodes (5): INFocusStatusAuthorizationStatus, FocusStatusObserver, .authorizationStatus, .currentState, NSKeyValueObservation
 
-### Community 277 - "VoiceTranscriptionController.swift"
-Cohesion: 0.43
-Nodes (4): AVAudioRecorder, AVFoundationVoiceRecorder, VoiceAudioRecording, Speech
+### Community 277 - "IslandHostingView"
+Cohesion: 0.20
+Nodes (8): Phase 13B.2 - Native In-Island Clipboard Interface, NSHostingView, NSSize, NSTrackingArea, IslandHostingView, .intrinsicContentSize, NSView, Void
 
 ### Community 278 - "Video re-review and gap mapping — 2026-09-30 (after Phase 13G)"
 Cohesion: 0.33
@@ -1442,97 +1458,93 @@ Nodes (6): Acceptance, Current DynamicIsland baseline (verified in source, 2026-
 Cohesion: 0.36
 Nodes (4): AgentRecentProjects, String, UserDefaults, AgentRecentProjectsTests
 
-### Community 280 - "SystemHUDController.swift"
-Cohesion: 0.11
-Nodes (15): ApplicationServices, AudioToolbox, CoreAudio, Intents, IOKit, IOKit.graphics, BatteryHUDBand, critical (+7 more)
+### Community 280 - "Bool"
+Cohesion: 0.10
+Nodes (14): BatteryHUDStateTracker, CapsLockHUDStateTracker, FocusHUDStateTracker, Bool, Date, Self, SystemHUDAccentComponents, .glowStrength (+6 more)
 
-### Community 281 - "WorkspaceRenderHarness"
-Cohesion: 0.28
-Nodes (6): RightWorkspaceSnapshotTests, String, URL, V, View, WorkspaceRenderHarness
-
-### Community 282 - ".collapsePlan"
-Cohesion: 0.26
-Nodes (3): CGSize, IslandContractionMotionTests, String
-
-### Community 283 - "AgentProjectLocationIndex"
-Cohesion: 0.26
-Nodes (6): AgentProjectGrouping, AgentProjectLocationIndex, Fallback, perProvider, perSession, AgentProjectGroupingTests
-
-### Community 284 - "AgentCapabilities"
-Cohesion: 0.07
-Nodes (29): AgentCapabilities, .all, AgentCapability, approvalControl, approvalObservation, commandLifecycle, contextUsage, costUsage (+21 more)
-
-### Community 285 - "AgentUsageIndicator"
-Cohesion: 0.11
-Nodes (16): AgentUsageIndicator, .accessibilityDescription, .directionLabel, .id, .isAvailable, .label, .valueText, AgentUsageIndicatorPresentation (+8 more)
-
-### Community 286 - ".orderedList"
+### Community 281 - "ZipCompressionError"
 Cohesion: 0.25
-Nodes (7): Item, KeyPath, Bool, Int, Set, String, Void
+Nodes (8): ZipCompressionError, cancelled, destinationExists, .errorDescription, invalidArchive, launchFailed, missingSource, noSources
 
-### Community 287 - "FileClipboardHistoryPersistence"
-Cohesion: 0.32
-Nodes (3): FileClipboardHistoryPersistence, FileManager, URL
+### Community 282 - "IslandContractionMotionTests"
+Cohesion: 0.22
+Nodes (5): IslandContractionMotionTests, Bool, Int, String, TimeInterval
+
+### Community 283 - "Phase 6 — Right Workspace Calendar 2.0 (2026-10-01)"
+Cohesion: 0.20
+Nodes (9): Architecture, Intentional differences, Phase 6 — Right Workspace Calendar 2.0 (2026-10-01), Popover containment, Selected-date semantics, Sources inspected, UI, Validation (+1 more)
+
+### Community 284 - ".session"
+Cohesion: 0.21
+Nodes (9): AgentSourceAssociationResolver, AgentSourceOpenTarget, String, AgentConsoleExternalApprovalRow, .body, .transcriptContent, AgentSourceAssociationTests, Set (+1 more)
+
+### Community 285 - ".collapsedPresentationProfile"
+Cohesion: 0.29
+Nodes (5): AgentCollapsedShellPresentation, AgentWorkspaceVerticalLayoutProjection, CGFloat, .activeInteractiveSystemHUD, .collapsedPresentationProfile
+
+### Community 286 - "SettingsPreviewDependencies"
+Cohesion: 0.13
+Nodes (12): Item, KeyPath, RightWorkspaceSettingsView, SpotifyConnectionSettingsView, .spotifyIcon, .statusBadge, Bool, Int (+4 more)
+
+### Community 287 - "ClipboardHistoryStore"
+Cohesion: 0.09
+Nodes (24): ClipboardHistoryPersistence, ClipboardHistoryFinalPersistenceOperation, delete, save, ClipboardHistoryPersistenceFinalizationCompletion, ClipboardHistoryPersistenceFinalizationResult, completed, failed (+16 more)
 
 ### Community 288 - ".frame"
-Cohesion: 0.14
-Nodes (19): ChoreographyFrame, .body, .label, ContractionChoreographyFrame, .body, .label, .sourcePageSize, PlaceholderPage (+11 more)
+Cohesion: 0.15
+Nodes (18): ChoreographyFrame, .body, .label, ContractionChoreographyFrame, .body, .label, .sourcePageSize, PlaceholderPage (+10 more)
 
-### Community 289 - "AnimationPreset"
+### Community 289 - "AgentUsageIndicator"
+Cohesion: 0.06
+Nodes (35): AgentUsageIndicator, .accessibilityDescription, .directionLabel, .id, .isAvailable, .label, .valueText, AgentUsageIndicatorPresentation (+27 more)
+
+### Community 290 - "BackgroundOperationCompressionTests"
+Cohesion: 0.27
+Nodes (3): BackgroundOperationCompressionTests, String, URL
+
+### Community 291 - "AppLibraryTests"
+Cohesion: 0.28
+Nodes (4): AppLibraryTests, Any, String, URL
+
+### Community 292 - "Phase 4 — Background Operation Center"
 Cohesion: 0.25
-Nodes (8): AnimationPreset, .displayName, .id, instant, normal, .shellDuration, slow, subtle
+Nodes (7): Architecture, Cancellation and temporary ownership, Compression authority, Deferred, Island integration, Phase 4 — Background Operation Center, Validation
 
-### Community 290 - ".body"
-Cohesion: 0.32
-Nodes (4): SpotifyConnectionSettingsView, .body, .spotifyIcon, .statusBadge
-
-### Community 291 - "AgentUsageIndicatorCircle"
-Cohesion: 0.20
-Nodes (11): AgentUsageIndicatorCircle, .body, .helpText, .ringColor, .secondaryColor, .secondaryText, AgentUsageIndicatorRow, .body (+3 more)
-
-### Community 292 - "ScreenRecordingError"
-Cohesion: 0.13
-Nodes (14): ScreenRecordingError, captureUnavailable, .errorDescription, finalizationFailed, invalidArea, invalidOutput, noDisplay, noVideoSamples (+6 more)
-
-### Community 293 - "AgentEmbeddedConsoleView"
-Cohesion: 0.03
-Nodes (66): NSScrollView, NSTextView, NSTextViewDelegate, ScrollViewProxy, Selector, AgentConsoleApprovalRow, .body, .deliveryLabel (+58 more)
+### Community 293 - "AgentConsoleViews.swift"
+Cohesion: 0.07
+Nodes (28): NSScrollView, NSTextViewDelegate, AgentConsoleBottomPositionPreferenceKey, AgentConsoleComposer, .body, .composer, .composerPlaceholder, .submissionValue (+20 more)
 
 ### Community 294 - "Spotify distributor setup"
 Cohesion: 0.25
 Nodes (7): Current external blocker, End-user flow, One-time distributor setup, Provider split, Quota and rate limits, Spotify distributor setup, Token lifecycle
 
-### Community 295 - "AutoCollapseDelayPreset"
-Cohesion: 0.25
-Nodes (8): AutoCollapseDelayPreset, .displayName, fast, .id, .impliedSeconds, manual, normal, relaxed
-
-### Community 296 - "2. Settings / personalization audit (Phase 16)"
-Cohesion: 0.16
-Nodes (7): 2. Settings / personalization audit (Phase 16), 4. Blockers / manual, Phase 15 (media parity) + Phase 16 (personalization/settings QA) status — 2026-09-30, SettingsAuditTests, .sourcesRoot, String, URL
+### Community 295 - "RecordingFileShelfDefaults"
+Cohesion: 0.29
+Nodes (4): RecordingFileShelfDefaults, Any, String, UserDefaults
 
 ### Community 297 - "SystemHUDShellPreview"
-Cohesion: 0.21
-Nodes (10): 2026-10-01 - Interactive HUD Geometry And Recorder Presentation Repair, SystemHUDShellPreview, .body, .body, .previewCanvasHeight, CGSize, String, URL (+2 more)
+Cohesion: 0.25
+Nodes (8): SystemHUDShellPreview, .body, .body, CGSize, String, URL, V, SystemHUDShellSnapshotTests
 
-### Community 298 - "FileShelfMutationError"
+### Community 298 - "CameraUserIntent"
 Cohesion: 0.29
-Nodes (7): FileShelfMutationError, destinationExists, .errorDescription, invalidName, missingSource, moveFailed, String
+Nodes (7): 2026-10-01 - Phase 5: Camera Intent, Agents Performance, Record Activities, Approval Authority, CameraUserIntent, .allowsPassiveStart, closed, interrupted, undecided, wantsPreview
 
 ### Community 299 - "Phase 3 — File Shelf 2.0 + Drag Quick-Action Orbit"
 Cohesion: 0.33
 Nodes (5): Drag orbit, DynamicIsland architecture, File Shelf 2.0, Phase 3 — File Shelf 2.0 + Drag Quick-Action Orbit, Validation contract
 
-### Community 300 - "CountdownLifecycleEvent"
-Cohesion: 0.13
-Nodes (12): CountdownLifecycleEvent, cancelled, completed, scheduled, Double, Int, TimerProgressColorStage, high (+4 more)
+### Community 300 - "TimerProgressColorStage"
+Cohesion: 0.18
+Nodes (7): Int, TimerProgressColorStage, high, low, mid, TimerProgressFormatting, TimerProgressFormattingTests
 
-### Community 301 - "AgentBridgeClientTransportError"
-Cohesion: 0.33
-Nodes (6): AgentBridgeClientTransportError, connectTimedOut, malformedResponse, requestTimedOut, responseTooLarge, unavailable
+### Community 301 - "ClaudeCodeStreamingError"
+Cohesion: 0.29
+Nodes (7): ClaudeCodeStreamingError, executableNotFound, launchFailed, malformedMessage, sessionNotRunning, turnAlreadyRunning, unsupported
 
 ### Community 302 - "ScreenRecordingSetupView"
-Cohesion: 0.12
-Nodes (15): 2. Productivity → Screen Record appeared to do nothing, 3. Acceptance evidence, 4. Intermittent HUD height under persistent compact media — 2026-10-01 follow-up, 5. Collapse choreography follow-up, Fix, HUD geometry and recorder presentation — runtime repair, 2026-10-01, Root cause, Root cause (runtime evidence, real app, DEBUG instrumentation since removed) (+7 more)
+Cohesion: 0.07
+Nodes (24): 2. Productivity → Screen Record appeared to do nothing, Fix, Root cause (runtime evidence, real app, DEBUG instrumentation since removed), AppRelauncher, .canRelaunch, .isAdHocSigned, ScreenCaptureAccessState, granted (+16 more)
 
 ### Community 303 - "SpotifyMockURLProtocol"
 Cohesion: 0.25
@@ -1540,63 +1552,79 @@ Nodes (5): SpotifyMockURLProtocol, Bool, Handler, URLProtocol, URLRequest
 
 ### Community 304 - "AgentAttentionReason"
 Cohesion: 0.12
-Nodes (21): AgentAttentionReason, approvalRequired, completed, failed, interrupted, planReady, userInputRequired, AgentAttentionSoundIntent (+13 more)
+Nodes (20): AgentAttentionReason, approvalRequired, completed, failed, interrupted, planReady, userInputRequired, AgentNotchSoundParity (+12 more)
 
-### Community 305 - "ExpandedIslandMotion.swift"
-Cohesion: 0.23
-Nodes (7): ExpandedPageEntranceModifier, ExpandedPageMorphModifier, ExpandedPageMountID, .animation, View, View, ViewModifier
+### Community 305 - "Plan"
+Cohesion: 0.11
+Nodes (17): Kind, full, instant, reduced, Plan, .incomingFadeAnimation, .incomingScaleAnimation, .outgoingAnimation (+9 more)
 
-### Community 306 - "ScreenRecordingStateMachine"
-Cohesion: 0.10
-Nodes (16): CoreImage, CoreMedia, CoreVideo, ScreenCaptureKit, ScreenRecordingAreaGeometry, ScreenRecordingPhase, failed, finalizing (+8 more)
+### Community 306 - "ScreenRecordingError"
+Cohesion: 0.13
+Nodes (14): ScreenRecordingError, captureUnavailable, .errorDescription, invalidArea, invalidOutput, noDisplay, noVideoSamples, noWindow (+6 more)
 
 ### Community 307 - ".controlFrame"
-Cohesion: 0.43
+Cohesion: 0.39
 Nodes (4): AgentComposerReachabilityTests, FrameBox, CGSize, String
 
-### Community 308 - "AppendOnlyRecordTailerStatus"
-Cohesion: 0.33
-Nodes (6): AppendOnlyRecordTailerStatus, degraded, failed, stopped, tailing, waitingForFile
+### Community 308 - "VoiceTranscriptionController.swift"
+Cohesion: 0.16
+Nodes (5): AVFoundation, CoreMedia, CoreVideo, ScreenCaptureKit, Speech
 
 ### Community 309 - "Gap matrix against current DynamicIsland"
 Cohesion: 0.50
 Nodes (4): Already strong / preserve, Gap matrix against current DynamicIsland, Missing, Partial
 
-### Community 310 - "ReminderListDescriptor"
-Cohesion: 0.17
-Nodes (9): ReminderListDescriptor, RemindersControllerError, disabled, .errorDescription, invalidTitle, listUnavailable, permissionRequired, reminderUnavailable (+1 more)
+### Community 310 - "AppendOnlyRecordTailerStatus"
+Cohesion: 0.33
+Nodes (6): AppendOnlyRecordTailerStatus, degraded, failed, stopped, tailing, waitingForFile
 
 ### Community 311 - "CameraPreviewError"
+Cohesion: 0.25
+Nodes (8): CameraPreviewError, deviceUnavailable, disabled, .errorDescription, noDevices, permissionRequired, sessionFailed, unsupportedAction
+
+### Community 312 - "ConnectionState"
 Cohesion: 0.33
-Nodes (6): CameraPreviewError, deviceUnavailable, disabled, .errorDescription, noDevices, permissionRequired
+Nodes (6): ConnectionState, connected, connecting, disconnected, needsClientID, reconnectRequired
 
-### Community 312 - ".allowsCollapsedDrop"
+### Community 313 - "Outcome"
+Cohesion: 0.33
+Nodes (6): Outcome, consumed, ignored, next, passThrough, previous
+
+### Community 314 - ".startCompression"
+Cohesion: 0.32
+Nodes (3): BackgroundOperationControllerTests, Fixture, UUID
+
+### Community 315 - ".share"
 Cohesion: 0.40
-Nodes (3): FileDropPolicy, .canAcceptExpandedFileDrop, .canAcceptCollapsedFileDrop
-
-### Community 313 - "3. Session identity"
-Cohesion: 0.40
-Nodes (5): 3. Session identity, Collisions, Generation rules, Logical key, Project identity
-
-### Community 314 - "ExitCurve"
-Cohesion: 0.67
-Nodes (3): ExitCurve, close, easeIn
-
-### Community 315 - "5. Local bridge decision"
-Cohesion: 0.50
-Nodes (4): 5. Local bridge decision, Alternatives, OTLP, Selected architecture
+Nodes (4): 2026-07-05 - Phase 8A File Shelf Tray Polish, AirDropService, Bool, URL
 
 ### Community 316 - "ScreenRecordingSetupPresenter"
-Cohesion: 0.14
-Nodes (10): ScreenRecordingSetupAnchor, ScreenRecordingSetupPlacement, ScreenRecordingSetupPresenter, ScreenRecordingSetupSurface, CGFloat, CGSize, FakeSetupSurface, .fittingSize (+2 more)
+Cohesion: 0.13
+Nodes (11): 2026-10-01 - Interactive HUD Geometry And Recorder Presentation Repair, ScreenRecordingSetupAnchor, ScreenRecordingSetupPlacement, ScreenRecordingSetupPresenter, ScreenRecordingSetupSurface, CGFloat, CGSize, FakeSetupSurface (+3 more)
 
-### Community 317 - ".inputs"
+### Community 317 - "AlbumArtworkView"
 Cohesion: 0.50
-Nodes (3): Bool, Int, TimeInterval
+Nodes (4): AlbumArtworkView, .body, .body, NSImage
 
-### Community 321 - "SpotifyLibraryController"
-Cohesion: 0.10
-Nodes (22): ASPresentationAnchor, ASWebAuthenticationPresentationContextProviding, ASWebAuthenticationSession, .current, ConnectionState, connected, connecting, disconnected (+14 more)
+### Community 318 - "FileDragPromiseStorage"
+Cohesion: 0.26
+Nodes (5): FileDragPromiseStorage, NSPasteboard, TimeInterval, URL, URL
+
+### Community 319 - "ControlledClipboardPersistence"
+Cohesion: 0.18
+Nodes (7): ControlledClipboardPersistence, .data, .deleteCount, .saveCount, Bool, Int, TimeInterval
+
+### Community 320 - "BackgroundOperationState"
+Cohesion: 0.17
+Nodes (10): BackgroundOperationState, cancelled, completed, failed, .isActive, .isTerminal, preparing, queued (+2 more)
+
+### Community 321 - "String"
+Cohesion: 0.13
+Nodes (11): Authenticator, Bundle, SpotifyCredentialStoring, SpotifyStoredCredentials, SpotifyTokenStore, Date, String, UserDefaults (+3 more)
+
+### Community 322 - "AgentUsageIndicatorCircle"
+Cohesion: 0.14
+Nodes (15): AgentUsageIndicatorCircle, .body, .diameter, .helpText, .lineWidth, .ringColor, .secondaryColor, .secondaryText (+7 more)
 
 ### Community 324 - "Screen Recording parity audit — 2026-09-30"
 Cohesion: 0.22
@@ -1606,13 +1634,29 @@ Nodes (8): Current official Droppy behavior used as behavioral reference, Curren
 Cohesion: 0.29
 Nodes (5): CAMediaTimingFunction, ExpandedShellMorph, .panelTimingFunction, Animation, TimeInterval
 
-### Community 329 - "AgentSourceRegistryTests.swift"
-Cohesion: 0.50
-Nodes (3): Array, .single, Element
+### Community 326 - "ScreenRecordingStateMachine"
+Cohesion: 0.16
+Nodes (10): ScreenRecordingPhase, failed, finalizing, idle, paused, preparing, recording, saved (+2 more)
 
-### Community 330 - "State"
-Cohesion: 0.33
-Nodes (6): Targets (Package.swift), State, failed, idle, loaded, loading
+### Community 327 - "Owner"
+Cohesion: 0.67
+Nodes (3): Owner, horizontalPaging, verticalContent
+
+### Community 331 - "BackgroundOperationCenterView"
+Cohesion: 0.20
+Nodes (8): BackgroundOperationCenterView, .body, Bool, String, BackgroundOperationCenterSnapshotTests, CGSize, URL, V
+
+### Community 332 - "LiveActivitySourceAuthority"
+Cohesion: 0.22
+Nodes (9): LiveActivitySourceAuthority, accessibilityAPI, applicationState, avFoundation, eventKit, integrationAdapter, process, systemAPI (+1 more)
+
+### Community 333 - "AgentBridgeAuthenticationError"
+Cohesion: 0.08
+Nodes (23): ClaudeHookNormalizationError, emptyInput, inputTooLarge, invalidHook, malformedJSON, outputTooLarge, unsupportedHook, CodexHookNormalizationError (+15 more)
+
+### Community 335 - "SharingAnchorView"
+Cohesion: 0.48
+Nodes (4): SharingAnchorHolder, SharingAnchorView, Context, NSView
 
 ### Community 337 - "Recorder timeline + collapse choreography — 2026-10-01"
 Cohesion: 0.20
@@ -1620,35 +1664,51 @@ Nodes (9): 1. Static recordings collapsed to ~one frame, 2. Collapse did not mir
 
 ### Community 338 - "AgentProjectLocation"
 Cohesion: 0.15
-Nodes (12): AgentProjectLocation, .directoryName, .pathWithinRepository, .repositoryName, Status, directory, idle, missing (+4 more)
+Nodes (13): AgentProjectLocation, .directoryName, .pathWithinRepository, .repositoryName, RepositoryKind, checkout, linkedCheckout, Status (+5 more)
 
-### Community 340 - "Codable"
-Cohesion: 0.04
-Nodes (98): Codable, CodingKey, Comparable, Hashable, RawRepresentable, 1. Domain contracts, AgentProducerEpoch, AgentActionControlAssessment (+90 more)
+### Community 340 - "Equatable"
+Cohesion: 0.08
+Nodes (45): Equatable, 1. Domain contracts, AgentManagedNormalizedEvent, AgentActionControlAssessment, AgentActionControlGate, AgentActionControlMode, observationOnly, AgentActivity (+37 more)
+
+### Community 342 - "CameraPreviewPhase"
+Cohesion: 0.33
+Nodes (6): CameraPreviewPhase, failed, idle, running, starting, stopping
+
+### Community 343 - "Phase"
+Cohesion: 0.33
+Nodes (6): Phase, began, changed, ended, momentum, none
 
 ### Community 348 - "graphify reference: query, path, explain"
 Cohesion: 0.33
 Nodes (5): For /graphify explain, For /graphify path, graphify reference: query, path, explain, Step 0 — Constrained query expansion (REQUIRED before traversal), Step 1 — Traversal
 
+### Community 349 - "FileDragSourceRegion"
+Cohesion: 0.50
+Nodes (4): FileDragSourceRegion, collapsedIsland, trayAirDrop, trayShelf
+
+### Community 351 - "Source"
+Cohesion: 0.50
+Nodes (4): Source, appBundle, developerOverride, unavailable
+
 ## Knowledge Gaps
-- **2112 isolated node(s):** `PackageDescription`, `package_app.sh script`, `unavailable`, `connectTimedOut`, `requestTimedOut` (+2107 more)
-  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 2899 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
+- **2175 isolated node(s):** `PackageDescription`, `package_app.sh script`, `unavailable`, `connectTimedOut`, `requestTimedOut` (+2170 more)
+  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 3002 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
 - **15 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `AppSettings` connect `AppSettings` to `IslandGestureAction`, `MenuBarController`, `IslandRootView`, `SettingsView`, `ClipboardHistoryStore`, `.testRenderSettingsPreviews`, `XCTestCase`, `ClipboardHistoryStoreTests`, `.normalizeAndSaveDouble`, `IslandNavigationStore`, `FileShelfStore`, `OverlayWindowController`, `Change Log`, `RightWorkspaceStore`, `WorkspaceRenderHarness`, `LiveActivityLayoutResolution`, `Int`, `DynamicIslandLiveActivity`, `.collapsePlan`, `AgentManagedSessionController`, `.frame`, `AnimationPreset`, `MediaModuleView`, `AutoCollapseDelayPreset`, `IslandEscapeRouter`, `SystemHUDShellPreview`, `ProductivityIntegrationTests`, `String`, `AgentUISnapshotTests`, `SettingsPreviewID`, `AppSettingsTests`, `IslandStateStore`, `AppDelegate`, `SystemHUDController`, `.allowsCollapsedDrop`, `ClipboardPasteboardReadResult`, `OverlayPresentationSessionTests`, `CaseIterable`, `.plan`, `AppKit`, `IslandThemeStyle`, `ExpandedIslandView`, `LiveActivityStore`, `String`, `ShelfFileTile`, `IslandRootView.swift`, `LiveActivitySettingsSubscriberTests`, `Bool`, `Combine`, `IslandCollapseRequest`, `FileDropProviderLoaderTests`, `Int`?**
-  _High betweenness centrality (0.073) - this node is a cross-community bridge._
-- **Why does `DynamicIslandLiveActivity` connect `DynamicIslandLiveActivity` to `SystemHUDKind`, `SettingsView`, `IslandRootView`, `CameraPreviewController`, `CollapsedLiveActivitySelectorTests`, `IslandNavigationStore`, `OverlayWindowController`, `Change Log`, `TerminalSessionController`, `LiveActivityLayoutResolution`, `VoiceTranscriptionController`, `BatteryActivitySnapshot`, `RemindersController`, `SystemHUDShellPreview`, `ProductivityIntegrationTests`, `String`, `AppDelegate`, `KeepAwakeController`, `.resolve`, `SystemHUDController`, `AgentIntegrationOperationalState`, `LiveActivityStore`, `Sendable`, `IslandRootView.swift`, `BackgroundRemovalController`, `Identifiable`, `ScreenRecordingController`, `Bool`, `LiveActivityLayoutPreviewScenario`, `MessagingQueueEntry`?**
-  _High betweenness centrality (0.047) - this node is a cross-community bridge._
-- **Why does `AppDelegate` connect `AppDelegate` to `AppSettings`, `WindowSnapController`, `MenuBarController`, `CameraPreviewController`, `ClipboardHistoryStore`, `AgentProjectProjectionStore`, `TimerCompletionNotificationCoordinator`, `CGRect`, `IslandNavigationStore`, `SystemStatsController`, `FileShelfStore`, `OverlayWindowController`, `TerminalSessionController`, `RightWorkspaceStore`, `AgentApprovalController`, `DynamicIslandLiveActivity`, `AgentManagedSessionController`, `VoiceTranscriptionController`, `BatteryActivitySnapshot`, `AgentIngestionCoordinator`, `IslandCapabilityRegistry`, `AppLibraryStore`, `RemindersController`, `String`, `IslandStateStore`, `KeepAwakeController`, `AgentIntegrationRouter`, `SystemHUDController`, `ScreenRecordingSetupPresenter`, `FileDragSessionController`, `SpotifyLibraryController`, `ShortcutsStore`, `AgentEventStore`, `AgentBridge`, `LiveActivityStore`, `AgentAttentionEvent`, `CalendarEventsController`, `ShelfFileTile`, `.runTurn`, `BackgroundRemovalController`, `ScreenRecordingController`, `TimerController`, `Combine`, `CodexRolloutSessionMonitor`, `MessagesAppAdapter`, `IslandModules`, `ProductivityModules`?**
-  _High betweenness centrality (0.043) - this node is a cross-community bridge._
-- **Are the 45 inferred relationships involving `AppSettings` (e.g. with `2026-07-04 - Phase 7A.2 Expanded Island Settings Entry` and `2026-07-05 - Phase 7A.4 Island Size Settings Wiring`) actually correct?**
-  _`AppSettings` has 45 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 21 inferred relationships involving `AgentSession` (e.g. with `1. Domain contracts` and `.scheduleCompletion()`) actually correct?**
-  _`AgentSession` has 21 INFERRED edges - model-reasoned connections that need verification._
+- **Why does `AppSettings` connect `AppSettings` to `IslandGestureAction`, `MenuBarController`, `IslandRootView`, `SettingsView`, `ExpandedIslandView`, `ClipboardHistoryStoreTests`, `Double`, `IslandNavigationStore`, `FileShelfStore`, `OverlayWindowController`, `Change Log`, `AgentSessionID`, `LiveActivityLayoutResolution`, `Int`, `DynamicIslandLiveActivity`, `ExpandedIslandMotion`, `SettingsPreviewDependencies`, `ClipboardHistoryStore`, `.frame`, `Foundation`, `MediaModuleView`, `IslandCapabilityRegistry`, `SystemHUDShellPreview`, `ProductivityIntegrationTests`, `String`, `AgentUISnapshotTests`, `SettingsPreviewID`, `AppSettingsTests`, `IslandStateStore`, `AppDelegate`, `FileTrayQuickActionBar`, `SystemHUDController`, `ClipboardPasteboardReadResult`, `OverlayPresentationSessionTests`, `CaseIterable`, `.plan`, `AppKit`, `.reload`, `ExpandedIslandLayoutMetrics`, `.testMeasureAgentsPage`, `IslandSurfaceBackground`, `String`, `ShelfFileTile`, `.opacity`, `AgentActivityRecorder`, `LiveActivitySettingsSubscriberTests`, `Bool`, `FileDropProviderLoader`, `LiveActivityLayoutPreviewScenario`, `IslandRootView.swift`, `RightWorkspacePage`, `AgentSession`, `SpotifySectionView`?**
+  _High betweenness centrality (0.058) - this node is a cross-community bridge._
+- **Why does `XCTestCase` connect `XCTestCase` to `IslandGestureAction`, `AgentProjectLocationIndex`, `ArtworkFlipPresentationState`, `IslandRootView`, `ClipboardHistoryEntry`, `SystemClipboardPasteboardClient`, `ClipboardHistoryStoreTests`, `CollapsedLiveActivitySelectorTests`, `.start`, `FileShelfStore`, `MediaAutomationExecutor`, `ClipboardImageNormalizerTests`, `MediaArbitratorTests`, `VoiceTranscriptionControllerTests`, `Sendable`, `IslandCapabilityRegistry`, `AppLibraryStore`, `AgentMCPObservationAdapter`, `.refresh`, `AgentPresentationTests`, `AppSettingsTests`, `IslandStateStore`, `AgentIntegrationProvider`, `MessagingProviderCapabilities`, `CGRect`, `.resolve`, `RecordSink`, `ClipboardPasteboardReadResult`, `OverlayPresentationSessionTests`, `.event`, `.sessionID`, `AgentBridgeClient`, `String`, `FileDragSessionController`, `.makeProcessor`, `.plan`, `FileConversionFormat`, `ArtworkAccentColorCache`, `SystemNotificationMonitor`, `RemindersControllerTests`, `DelimitedRecordFramer`, `AgentEventStore`, `ClaudeCodeStreamingClient`, `MessagingController`, `AgentAttentionEvent`, `SequenceClientTransport`, `.apply`, `AgentBridgeDiscoveryReader`, `CodexRolloutRecoveryParser`, `CalendarAccessState`, `.decide`, `FakeTerminalProcessRunner`, `CalendarEventsController`, `ScreenRecordingStreamOutput`, `AgentActivityRecorder`, `.normalize`, `CameraPreviewControllerTests`, `LiveActivitySettingsSubscriberTests`, `FileDropProviderLoader`, `ServerFactorySpy`, `CodexRolloutSessionMonitor`, `MessagesAppAdapter`, `IslandRootView.swift`, `ResolvedIslandMetrics`, `AgentProducerPolicy`, `.parse`, `MessagingConversationID`, `ProductivityModules`, `IslandLayoutStore`, `AgentBridgeDiscoveryPublisher`, `.signedRequest`, `ClaudeUsageWindows`, `AgentBridge`, `AgentProjectResolverTests`, `ClipboardHistoryPresentationState`, `UInt64`, `.normalize`, `AgentProducerHandle`, `AgentSessionInstanceID`, `MediaSnapshot`, `FakeMessagesAutomation`, `.assertFailure`, `BatteryActivitySnapshot`, `PersistentSnapshotFakeProvider`, `IslandEscapeRouter`, `ProductivityIntegrationTests`, `NetworkCounters`, `AgentUISnapshotTests`, `SettingsPreviewID`, `AgentEvent`, `AppDelegate`, `KeepAwakeController`, `CameraMirrorConsumerLease`, `BackgroundRemovalControllerTests`, `SpotifyAuthConfiguration`, `ExpandedScrollEventRoutingPolicyTests`, `.makeSession`, `FakeWindowSnapSystem`, `.testMeasureAgentsPage`, `AgentCLIScrollAndFocusTests.swift`, `.cancel`, `.make`, `LiveActivityStore`, `Phase Workflow For Future Work`, `RightWorkspaceSwipeRecognizer`, `Data`, `MediaRefreshCoordinator`, `.runLive`, `VoicePermissionState`, `ScreenRecordingController`, `WorkflowFakeProvider`, `CodexAppServerProvider`, `ClaudeInteractiveProvider`, `.timeText`, `AgentActivityGlowCoordinator`, `.makeProvider`, `Int`, `.message`, `SpotifySectionView`, `.render`, `FakeScreenCaptureAuthorization`, `AgentInteractiveProviderEvent`, `AgentBridgeClientProfile`, `AgentProjectProjectionStore`, `ZipCompressionExecutor`, `URL`, `AgentRecentProjects`, `Bool`, `IslandContractionMotionTests`, `Phase 6 — Right Workspace Calendar 2.0 (2026-10-01)`, `.session`, `.frame`, `AgentUsageIndicator`, `BackgroundOperationCompressionTests`, `AppLibraryTests`, `AgentConsoleViews.swift`, `SystemHUDShellPreview`, `TimerProgressColorStage`, `AgentAttentionReason`, `.controlFrame`, `.startCompression`, `BackgroundOperationCenterView`, `.resolve`?**
+  _High betweenness centrality (0.055) - this node is a cross-community bridge._
+- **Why does `Foundation` connect `Foundation` to `IslandGestureAction`, `TimerCompletionNotificationCoordinator`, `ClipboardHistoryStoreTests`, `IslandNavigationStore`, `AgentEventValidationError`, `TerminalSessionController`, `AgentIngestionCoordinator`, `MediaAutomationExecutor`, `DynamicIslandLiveActivity`, `AppendOnlyRecordTailer`, `IslandCapabilityRegistry`, `AppLibraryStore`, `AgentMCPObservationAdapter`, `AgentPresentationTests`, `IslandStateStore`, `AgentIntegrationProvider`, `AgentIntegrationRouter`, `RecordSink`, `AgentBridgeClient`, `SystemNotificationMonitor`, `ClaudeCodeStreamingClient`, `MessagingController`, `SequenceClientTransport`, `.apply`, `AgentBridgeDiscoveryReader`, `CalendarAccessState`, `FakeTerminalProcessRunner`, `AgentActivityRecorder`, `TimerController`, `YouTubeMetadataProvider`, `FileDropProviderLoader`, `LiveActivityLayoutPreviewScenario`, `Codable`, `CodexRolloutSessionMonitor`, `MessagingConversationID`, `MessagesDatabaseMessage`, `CodexAppServerClient`, `ProductivityModules`, `IslandLayoutStore`, `ClaudeUsageWindows`, `ClipboardHistoryPayload`, `SpotifyLibraryController`, `AgentRelayExitCode`, `AgentProducerHandle`, `NowPlayingMediaProvider`, `AgentSessionID`, `AgentSessionInstanceID`, `LiveActivityLayoutResolution`, `FakeMessagesAutomation`, `AgentManagedSessionController`, `.assertFailure`, `BatteryActivitySnapshot`, `RemindersController`, `SettingsPreviewID`, `MessagingSettingsView`, `AgentEvent`, `KeepAwakeController`, `RightWorkspaceConfiguration`, `AgentBridgeShared`, `SpotifyAuthConfiguration`, `AppKit`, `ShortcutsStore`, `CameraPreviewController.swift`, `.make`, `LiveActivityStore`, `Data`, `CodexAppServerProvider`, `ClaudeInteractiveProvider`, `.makeProvider`, `AgentBridgeHTTPStatus`, `AgentBridgeSecurity.swift`, `Duration`, `LaunchAtLoginController.swift`, `AgentInteractiveProviderEvent`, `WindowSnapController`, `AgentBridgeClientProfile`, `AgentSessionControlSurface`, `MediaController.swift`, `BackgroundOperationCenter.swift`, `AgentProjectProjection.swift`, `SystemHUDController.swift`, `AgentRecentProjects`, `.session`, `AgentUsageIndicator`, `AgentAttentionReason`, `VoiceTranscriptionController.swift`, `Equatable`?**
+  _High betweenness centrality (0.045) - this node is a cross-community bridge._
+- **Are the 47 inferred relationships involving `AppSettings` (e.g. with `2026-07-04 - Phase 7A.2 Expanded Island Settings Entry` and `2026-07-05 - Phase 7A.4 Island Size Settings Wiring`) actually correct?**
+  _`AppSettings` has 47 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 23 inferred relationships involving `AgentSession` (e.g. with `1. Domain contracts` and `.scheduleCompletion()`) actually correct?**
+  _`AgentSession` has 23 INFERRED edges - model-reasoned connections that need verification._
 - **What connects `PackageDescription`, `package_app.sh script`, `unavailable` to the rest of the system?**
-  _2112 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _2175 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `AppSettings` be split into smaller, more focused modules?**
-  _Cohesion score 0.022012987012987012 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.021892655367231638 - nodes in this community are weakly interconnected._
