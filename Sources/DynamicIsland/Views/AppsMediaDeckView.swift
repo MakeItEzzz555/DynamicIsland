@@ -721,11 +721,17 @@ struct CalendarDayNavigator: View {
             )
 
             if !controller.isSelectedDayToday {
-                Button("Today") { controller.selectToday() }
-                    .font(.system(size: displayMetrics.font(10, minimum: 9, maximum: 11.6), weight: .semibold))
-                    .buttonStyle(WorkspaceTileButtonStyle(isOn: true, accent: .red, cornerRadius: 11))
-                    .frame(height: 22 * control)
-                    .accessibilityHint("Show today's events")
+                Button { controller.selectToday() } label: {
+                    Text("Today")
+                        .font(.system(size: displayMetrics.font(10, minimum: 9, maximum: 11.6), weight: .semibold))
+                        .lineLimit(1)
+                        .fixedSize()
+                        .padding(.horizontal, 10)
+                        .frame(height: 26 * control)
+                }
+                .buttonStyle(WorkspaceTileButtonStyle(isOn: true, accent: .red, cornerRadius: 13))
+                .fixedSize()
+                .accessibilityHint("Show today's events")
             }
         }
         // The popover is a separate native window; while it is open the
@@ -787,9 +793,13 @@ struct CalendarDatePickerPopover: View {
                 Spacer()
                 Button("Done") { isPresented = false }
                     .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
             }
             .controlSize(.small)
         }
+        // SwiftUI-drawn controls take the Calendar red; the AppKit-drawn
+        // graphical grid follows the system accent colour on macOS.
+        .tint(.red)
         .padding(12)
         .frame(width: 236)
     }
