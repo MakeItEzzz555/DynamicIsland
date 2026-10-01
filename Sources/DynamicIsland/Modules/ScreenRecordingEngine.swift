@@ -29,6 +29,10 @@ enum ScreenRecordingPhase: String, Equatable, Sendable {
 
 enum ScreenRecordingError: LocalizedError, Equatable {
     case permissionDenied
+    /// Access was requested or an entry exists, but this process still
+    /// cannot capture (needs relaunch, or a rebuilt ad-hoc app needs a
+    /// fresh System Settings entry).
+    case permissionNotActive
     case noDisplay
     case noWindow
     case invalidArea
@@ -41,6 +45,7 @@ enum ScreenRecordingError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .permissionDenied: "Screen Recording permission is required"
+        case .permissionNotActive: "Screen Recording permission isn't active for this copy of DynamicIsland"
         case .noDisplay: "The selected display is no longer available"
         case .noWindow: "The selected window is no longer available"
         case .invalidArea: "Select a larger recording area"

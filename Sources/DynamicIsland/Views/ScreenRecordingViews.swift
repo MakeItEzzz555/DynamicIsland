@@ -218,7 +218,7 @@ struct ScreenRecordingSetupView: View {
         .pickerStyle(.segmented)
         .accessibilityLabel("Screen recording target")
 
-        if CGPreflightScreenCaptureAccess() {
+        if controller.accessState == .granted {
             switch targetKind {
             case .display:
                 Picker("Display", selection: Binding(
@@ -281,19 +281,28 @@ struct ScreenRecordingSetupView: View {
             }
         } else {
             VStack(alignment: .leading, spacing: 9) {
-                Text("Screen Recording permission is required to choose and capture a display, window, or area.")
+                // The controller's truthful state: never a button that
+                // silently does nothing.
+                Text(controller.accessState == .unknown
+                    ? "Checking Screen Recording access…"
+                    : controller.accessMessage)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("screenRecording.accessMessage")
                 HStack {
-                    Button("Allow Screen Recording") {
-                        Task {
-                            await controller.prepareTargets(requestPermission: true)
-                            displayID = controller.displays.first?.id
-                            windowID = controller.windows.first?.id
-                        }
+                    if controller.accessState == .notActive, AppRelauncher.canRelaunch {
+                        Button("Relaunch DynamicIsland") { AppRelauncher.relaunch() }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.red)
+                    } else {
+                        Button("Allow Screen Recording") { Task { await checkAccess() } }
+                            .buttonStyle(.borderedProminent)
                     }
-                    .buttonStyle(.borderedProminent)
                     Button("Open Settings") { controller.openScreenRecordingSettings() }
+                    if controller.accessState == .notActive {
+                        Button("Check Again") { Task { await checkAccess() } }
+                    }
                 }
             }
         }
@@ -358,6 +367,12 @@ struct ScreenRecordingSetupView: View {
     private var selectedDisplay: ScreenRecordingDisplayChoice? {
         guard let displayID else { return controller.displays.first }
         return controller.displays.first { $0.id == displayID }
+    }
+
+    private func checkAccess() async {
+        await controller.prepareTargets(requestPermission: true)
+        displayID = controller.displays.first?.id
+        windowID = controller.windows.first?.id
     }
 
     private var canStart: Bool {

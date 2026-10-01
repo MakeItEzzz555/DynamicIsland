@@ -37,6 +37,75 @@ struct ScreenRecordingWindowChoice: Identifiable, Equatable, Sendable {
     }
 }
 
+/// What ScreenCaptureKit will actually allow this process to do.
+enum ScreenCaptureAccessState: Equatable, Sendable {
+    case unknown
+    case granted
+    /// Never allowed (or not yet asked): Allow / Open Settings.
+    case notGranted
+    /// Requested, or an entry exists, but capture is still refused: the
+    /// process must be relaunched, or (rebuilt ad-hoc builds) the System
+    /// Settings entry must be removed and re-added.
+    case notActive
+}
+
+@MainActor
+protocol ScreenCaptureAuthorizing: AnyObject {
+    func preflight() -> Bool
+    /// May show the system prompt; returns false immediately when an entry
+    /// already exists, even a stale one.
+    func request() -> Bool
+    func shareableContent() async throws -> SCShareableContent
+}
+
+@MainActor
+final class SystemScreenCaptureAuthorization: ScreenCaptureAuthorizing {
+    func preflight() -> Bool { CGPreflightScreenCaptureAccess() }
+    func request() -> Bool { CGRequestScreenCaptureAccess() }
+    func shareableContent() async throws -> SCShareableContent {
+        try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+    }
+}
+
+/// Relaunches the running app bundle (used when macOS only applies a
+/// privacy grant to a new process).
+@MainActor
+enum AppRelauncher {
+    static var canRelaunch: Bool { Bundle.main.bundleURL.pathExtension == "app" }
+
+    static func relaunch() {
+        guard canRelaunch else { return }
+        let pid = ProcessInfo.processInfo.processIdentifier
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = [
+            "-c",
+            "while /bin/kill -0 \(pid) 2>/dev/null; do /bin/sleep 0.2; done; /usr/bin/open \"$1\"",
+            "relaunch",
+            Bundle.main.bundleURL.path
+        ]
+        do {
+            try process.run()
+            NSApp.terminate(nil)
+        } catch {
+            // Leave the app running; the UI keeps the Open Settings path.
+        }
+    }
+
+    /// True when the running bundle is ad-hoc signed (its identity changes
+    /// with every rebuild, which invalidates existing privacy grants).
+    static var isAdHocSigned: Bool {
+        var staticCode: SecStaticCode?
+        guard SecStaticCodeCreateWithPath(Bundle.main.bundleURL as CFURL, [], &staticCode) == errSecSuccess,
+              let staticCode else { return false }
+        var info: CFDictionary?
+        guard SecCodeCopySigningInformation(staticCode, SecCSFlags(rawValue: kSecCSSigningInformation), &info) == errSecSuccess,
+              let dictionary = info as? [String: Any],
+              let flags = dictionary[kSecCodeInfoFlags as String] as? UInt32 else { return false }
+        return flags & SecCodeSignatureFlags.adhoc.rawValue != 0
+    }
+}
+
 struct ScreenRecordingOptions: Equatable, Sendable {
     var capturesSystemAudio = true
     var capturesMicrophone = false
@@ -55,10 +124,14 @@ final class ScreenRecordingController: ObservableObject {
     @Published private(set) var displays: [ScreenRecordingDisplayChoice] = []
     @Published private(set) var windows: [ScreenRecordingWindowChoice] = []
     @Published private(set) var lastSavedURL: URL?
+    @Published private(set) var accessState: ScreenCaptureAccessState = .unknown
     @Published var options = ScreenRecordingOptions()
+    let isAdHocSigned: Bool
 
     private let liveActivities: LiveActivityStore
     private let capabilities: IslandCapabilityRegistry
+    private let authorization: ScreenCaptureAuthorizing
+    private var requestAttempted = false
     private var machine = ScreenRecordingStateMachine()
     private var shareableContent: SCShareableContent?
     private var displayObjects: [CGDirectDisplayID: SCDisplay] = [:]
@@ -72,11 +145,62 @@ final class ScreenRecordingController: ObservableObject {
 
     init(
         liveActivities: LiveActivityStore,
-        capabilities: IslandCapabilityRegistry
+        capabilities: IslandCapabilityRegistry,
+        authorization: ScreenCaptureAuthorizing = SystemScreenCaptureAuthorization(),
+        isAdHocSigned: Bool = AppRelauncher.isAdHocSigned
     ) {
         self.liveActivities = liveActivities
         self.capabilities = capabilities
+        self.authorization = authorization
+        self.isAdHocSigned = isAdHocSigned
         publishCapability()
+    }
+
+    /// ScreenCaptureKit is the authority: a successful content query means
+    /// capture is allowed even if the CGPreflight cache is stale.
+    nonisolated static func accessState(
+        preflight: Bool,
+        contentAvailable: Bool?,
+        requestAttempted: Bool
+    ) -> ScreenCaptureAccessState {
+        if contentAvailable == true { return .granted }
+        if contentAvailable == nil, preflight { return .granted }
+        if preflight || requestAttempted { return .notActive }
+        return .notGranted
+    }
+
+    nonisolated static func isAuthorizationRefusal(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        return nsError.domain == SCStreamErrorDomain &&
+            nsError.code == SCStreamError.Code.userDeclined.rawValue
+    }
+
+    var accessMessage: String {
+        switch accessState {
+        case .unknown, .granted:
+            return statusText
+        case .notGranted:
+            return "Screen Recording permission is required. Click Allow, or turn on DynamicIsland in System Settings → Privacy & Security → Screen & System Audio Recording."
+        case .notActive:
+            var text = "Screen Recording permission isn't active for this copy of DynamicIsland. If you just turned it on, Relaunch DynamicIsland to activate it."
+            if isAdHocSigned {
+                text += " This build is ad-hoc signed, so after a rebuild macOS keeps the old entry: remove DynamicIsland with −, add it again, then Relaunch."
+            }
+            return text
+        }
+    }
+
+    private func applyAccess(_ state: ScreenCaptureAccessState) {
+        accessState = state
+        if state == .notGranted || state == .notActive {
+            shareableContent = nil
+            displayObjects = [:]
+            windowObjects = [:]
+            displays = []
+            windows = []
+            statusText = accessMessage
+            publishCapability(permission: .required)
+        }
     }
 
     var isActive: Bool {
@@ -103,20 +227,20 @@ final class ScreenRecordingController: ObservableObject {
         guard !isActuallyCapturing, phase != .finalizing else { return }
         statusText = "Checking Screen Recording access…"
 
-        guard CGPreflightScreenCaptureAccess() ||
-                (requestPermission && CGRequestScreenCaptureAccess()) else {
-            statusText = ScreenRecordingError.permissionDenied.localizedDescription
-            displays = []
-            windows = []
-            publishCapability(permission: .required)
+        let preflight = authorization.preflight()
+        if !preflight, requestPermission {
+            requestAttempted = true
+            _ = authorization.request()
+        }
+        guard preflight || requestPermission else {
+            // Opening the setup panel never prompts.
+            applyAccess(Self.accessState(preflight: false, contentAvailable: nil, requestAttempted: requestAttempted))
             return
         }
 
         do {
-            let content = try await SCShareableContent.excludingDesktopWindows(
-                false,
-                onScreenWindowsOnly: true
-            )
+            let content = try await authorization.shareableContent()
+            accessState = .granted
             shareableContent = content
             displayObjects = Dictionary(
                 uniqueKeysWithValues: content.displays.map { ($0.displayID, $0) }
@@ -163,7 +287,10 @@ final class ScreenRecordingController: ObservableObject {
 
             statusText = "Choose what to record"
             publishCapability(permission: .granted)
+        } catch where Self.isAuthorizationRefusal(error) || !preflight {
+            applyAccess(Self.accessState(preflight: preflight, contentAvailable: false, requestAttempted: requestAttempted))
         } catch {
+            accessState = .granted
             statusText = error.localizedDescription
             publishCapability(
                 permission: .granted,
@@ -300,13 +427,15 @@ final class ScreenRecordingController: ObservableObject {
         publishCapability()
 
         do {
-            guard CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() else {
-                throw ScreenRecordingError.permissionDenied
-            }
-            if shareableContent == nil {
-                await prepareTargets(requestPermission: false)
-            }
+            // Fresh authority and targets on every Start: a stale grant or a
+            // stale window list must fail visibly, never silently.
+            await refreshTargetsForStart()
             guard generation == lifecycleGeneration else { return }
+            switch accessState {
+            case .notGranted: throw ScreenRecordingError.permissionDenied
+            case .notActive: throw ScreenRecordingError.permissionNotActive
+            case .unknown, .granted: break
+            }
             guard let content = shareableContent else {
                 throw ScreenRecordingError.captureUnavailable(statusText)
             }
@@ -394,6 +523,11 @@ final class ScreenRecordingController: ObservableObject {
             guard generation == lifecycleGeneration else { return }
             await failAndCleanup(error, generation: generation)
         }
+    }
+
+    private func refreshTargetsForStart() async {
+        await prepareTargets(requestPermission: true)
+        if accessState == .granted { statusText = "Preparing…" }
     }
 
     private func connect(
@@ -555,12 +689,19 @@ final class ScreenRecordingController: ObservableObject {
         phase = machine.phase
         let nsError = error as NSError
         let reason = nsError.localizedFailureReason.map { " · \($0)" } ?? ""
-        statusText = "\(nsError.localizedDescription) [\(nsError.domain) \(nsError.code)]\(reason)"
+        switch error as? ScreenRecordingError {
+        case .permissionDenied?, .permissionNotActive?:
+            // Actionable recovery text, not an error code.
+            statusText = accessMessage
+        default:
+            statusText = "\(nsError.localizedDescription) [\(nsError.domain) \(nsError.code)]\(reason)"
+        }
         liveActivities.remove(id: Self.liveActivityID)
         previewImage = nil
         lastPublishedLiveActivitySecond = nil
         publishCapability(
-            permission: error as? ScreenRecordingError == .permissionDenied
+            permission: error as? ScreenRecordingError == .permissionDenied ||
+                error as? ScreenRecordingError == .permissionNotActive
                 ? .required : nil,
             health: .failed(message: error.localizedDescription)
         )
