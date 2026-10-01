@@ -21,8 +21,10 @@ final class FileDragOrbitSnapshotTests: XCTestCase {
         let layoutStore = IslandLayoutStore()
         layoutStore.canvasSize = CGSize(width: 760, height: 250)
         let registry = IslandCapabilityRegistry()
+        let liveActivities = LiveActivityStore()
+        let backgroundOperations = BackgroundOperationController(liveActivities: liveActivities)
         let backgroundRemoval = BackgroundRemovalController(
-            liveActivities: LiveActivityStore(),
+            liveActivities: liveActivities,
             capabilities: registry,
             addToShelf: { _ in }
         )
@@ -35,6 +37,7 @@ final class FileDragOrbitSnapshotTests: XCTestCase {
                     .offset(y: -45)
                 FileTrayQuickActionBar(
                     fileShelf: shelf,
+                    backgroundOperations: backgroundOperations,
                     backgroundRemoval: backgroundRemoval,
                     layoutStore: layoutStore,
                     reduceMotion: false

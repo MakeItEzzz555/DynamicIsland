@@ -23,6 +23,8 @@ final class LiveActivitySidecarSnapshotTests: XCTestCase {
             batteryState: .low
         )
         let agent = activity("agent", .agent, title: "Codex", subtitle: "Working", progress: nil)
+        let operation = activity("operation", .backgroundOperation, title: "Compressing 3 items", subtitle: "Running", progress: nil)
+        let operationHalf = activity("operation-half", .backgroundOperation, title: "Processing archive", subtitle: "50%", progress: 0.50)
         let hud = activity("systemHUD", .system, title: "Volume", subtitle: "68%", progress: 0.68)
 
         try render(name: "01-notched-media-primary", activities: [media], hasNotch: true, output: output)
@@ -39,6 +41,11 @@ final class LiveActivitySidecarSnapshotTests: XCTestCase {
         )
         try render(name: "07-notchless-three-slot", activities: [media, battery, timer], hasNotch: false, output: output)
         try render(name: "08-radial-timer-progress", activities: [media, timer], hasNotch: false, output: output)
+        try render(name: "09-notched-media-operation", activities: [media, operation], hasNotch: true, output: output)
+        try render(name: "10-floating-media-operation", activities: [media, operationHalf], hasNotch: false, output: output)
+        try render(name: "11-timer-operation", activities: [timer, operation], hasNotch: true, output: output)
+        try render(name: "12-battery-media-operation", activities: [media, battery, operation], hasNotch: true, output: output)
+        try render(name: "13-agent-operation", activities: [agent, operation], hasNotch: false, output: output)
     }
 
     private func render(
@@ -185,6 +192,7 @@ final class LiveActivitySidecarSnapshotTests: XCTestCase {
         case .media: "music.note"
         case .timer: "timer"
         case .fileTray: "tray.fill"
+        case .backgroundOperation: "archivebox"
         case .battery: "battery.25percent"
         case .system: "speaker.wave.2.fill"
         case .agent: "cpu"
@@ -206,6 +214,7 @@ final class LiveActivitySidecarSnapshotTests: XCTestCase {
         case .media: 80
         case .battery: 85
         case .fileTray: 60
+        case .backgroundOperation: 100
         case .keepAwake: 72
         case .terminalTask: 88
         case .windowSnapPreview: 170

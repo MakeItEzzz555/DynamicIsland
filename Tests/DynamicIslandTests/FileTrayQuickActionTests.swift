@@ -58,8 +58,8 @@ final class FileTrayQuickActionTests: XCTestCase {
         XCTAssertTrue(multiple.availability(of: .share).isAvailable)
     }
 
-    func testActionOrderIsRemoveBackgroundConvertShare() {
-        XCTAssertEqual(FileTrayQuickAction.allCases, [.removeBackground, .convert, .share])
+    func testActionOrderIncludesRealCompress() {
+        XCTAssertEqual(FileTrayQuickAction.allCases, [.removeBackground, .convert, .compress, .share])
     }
 
     // MARK: Selection

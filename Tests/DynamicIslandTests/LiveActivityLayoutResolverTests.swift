@@ -182,6 +182,45 @@ final class LiveActivityLayoutResolverTests: XCTestCase {
         XCTAssertEqual(result.leadingSidecar?.activity.id, "battery")
     }
 
+    func testBackgroundOperationCoexistsWithMediaAsSidecar() {
+        let result = resolve([
+            activity("media", .media, priority: 80),
+            activity("compress", .backgroundOperation, priority: 95)
+        ])
+
+        XCTAssertEqual(result.primary?.activity.id, "media")
+        XCTAssertEqual(result.trailingSidecar?.activity.id, "compress")
+    }
+
+    func testBackgroundOperationDropsUnderWidthPressureWithoutReplacingMedia() {
+        let result = resolve(
+            [
+                activity("media", .media, priority: 80),
+                activity("compress", .backgroundOperation, priority: 95)
+            ],
+            availableWidth: 200
+        )
+
+        XCTAssertEqual(result.primary?.activity.id, "media")
+        XCTAssertNil(result.leadingSidecar)
+        XCTAssertNil(result.trailingSidecar)
+    }
+
+    func testBackgroundOperationAndTimerPreferHighestPrioritySidecarWhenCapacityIsOne() {
+        let result = resolve(
+            [
+                activity("media", .media, priority: 80),
+                activity("timer", .timer, priority: 90, progress: 0.5),
+                activity("compress", .backgroundOperation, priority: 95)
+            ],
+            availableWidth: 230
+        )
+
+        XCTAssertEqual(result.primary?.activity.id, "media")
+        XCTAssertEqual(result.trailingSidecar?.activity.id, "timer")
+        XCTAssertNil(result.leadingSidecar)
+    }
+
     func testKeepAwakeCanCoexistAsSidecarWithMediaPrimary() {
         let result = resolve([
             activity("media", .media, priority: 80),
