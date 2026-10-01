@@ -4,6 +4,7 @@ enum DynamicIslandLiveActivityKind: String, Equatable, Sendable {
     case media
     case timer
     case fileTray
+    case backgroundOperation
     case battery
     case system
     case agent
@@ -24,7 +25,7 @@ enum DynamicIslandLiveActivityKind: String, Equatable, Sendable {
              .voiceRecording, .voiceTranscription, .camera, .backgroundRemoval,
              .screenRecording, .message:
             true
-        case .media, .timer, .fileTray, .battery, .system, .agent:
+        case .media, .timer, .fileTray, .backgroundOperation, .battery, .system, .agent:
             false
         }
     }
@@ -354,7 +355,7 @@ enum CollapsedLiveActivitySelector {
             return activity.isActive ? .runningTimer : .pausedTimer
         case .media:
             return activity.isActive ? .playingMedia : .pausedMedia
-        case .fileTray:
+        case .fileTray, .backgroundOperation:
             return .recentFiles
         case .battery:
             switch activity.batteryState {

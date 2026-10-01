@@ -635,6 +635,7 @@ struct FileTraySettingsPreview: View {
     let backgroundRemoval: BackgroundRemovalController
     @StateObject private var thumbnails = FileThumbnailCache()
     @StateObject private var layoutStore = IslandLayoutStore()
+    @StateObject private var backgroundOperations = BackgroundOperationController(liveActivities: LiveActivityStore())
 
     var body: some View {
         SettingsPreviewSandbox(title: "File Tray Preview", usesSampleContent: true, height: 170) { reduceMotion in
@@ -663,6 +664,7 @@ struct FileTraySettingsPreview: View {
                     }
                     FileTrayQuickActionBar(
                         fileShelf: shelf,
+                        backgroundOperations: backgroundOperations,
                         backgroundRemoval: backgroundRemoval,
                         layoutStore: layoutStore,
                         reduceMotion: reduceMotion

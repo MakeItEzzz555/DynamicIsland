@@ -82,6 +82,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let timerNotifications = TimerCompletionNotificationCoordinator()
     private let stats = SystemStatsController()
     private let liveActivities = LiveActivityStore()
+    private lazy var backgroundOperations = BackgroundOperationController(liveActivities: liveActivities)
     private let capabilityRegistry = IslandCapabilityRegistry()
     private lazy var keepAwakeController = KeepAwakeController(
         liveActivities: liveActivities,
@@ -211,6 +212,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let modules = IslandModules(
             media: media,
             fileShelf: fileShelf,
+            backgroundOperations: backgroundOperations,
             fileDragSession: fileDragSession,
             shortcuts: shortcuts,
             timer: timer,

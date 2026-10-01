@@ -215,6 +215,19 @@ enum LiveActivityPresentationPolicy {
                 preemptionPolicy: .persistent
             )
 
+        case .backgroundOperation:
+            return LiveActivityPresentationDescriptor(
+                activityID: activity.id,
+                preferredPlacement: .trailingSidecar,
+                allowedPlacements: [.leadingSidecar, .trailingSidecar, .primary],
+                compactShape: .capsule,
+                minimumWidth: 30,
+                idealWidth: 42,
+                priority: activity.isActive ? 100 : 64,
+                coexistencePolicy: .sidecarAllowed,
+                preemptionPolicy: .persistent
+            )
+
         case .keepAwake:
             return sidecarDescriptor(
                 activity,

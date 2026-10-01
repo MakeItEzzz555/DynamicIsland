@@ -18,6 +18,7 @@ protocol IslandModule {
 struct IslandModules {
     let media: MediaController
     let fileShelf: FileShelfStore
+    let backgroundOperations: BackgroundOperationController
     let fileDragSession: FileDragSessionController
     let shortcuts: ShortcutsStore
     let timer: TimerController

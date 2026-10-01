@@ -15,6 +15,7 @@ enum FileTrayQuickActionMetrics {
 enum FileTrayQuickAction: String, CaseIterable, Identifiable {
     case removeBackground
     case convert
+    case compress
     case share
 
     var id: String { rawValue }
@@ -23,6 +24,7 @@ enum FileTrayQuickAction: String, CaseIterable, Identifiable {
         switch self {
         case .removeBackground: "Remove Background"
         case .convert: "Convert"
+        case .compress: "Compress"
         case .share: "Share"
         }
     }
@@ -31,6 +33,7 @@ enum FileTrayQuickAction: String, CaseIterable, Identifiable {
         switch self {
         case .removeBackground: "person.crop.rectangle"
         case .convert: "arrow.triangle.2.circlepath"
+        case .compress: "archivebox"
         case .share: "square.and.arrow.up"
         }
     }
@@ -70,6 +73,14 @@ struct FileTrayActionTargets: Equatable {
             return converter.targetFormats(for: urls[0]).isEmpty
                 ? .unavailable("No supported conversion for this file")
                 : .available
+        case .compress:
+            guard !urls.isEmpty else {
+                return .unavailable("Select files or folders to compress")
+            }
+            guard urls.allSatisfy({ $0.isFileURL && FileManager.default.fileExists(atPath: $0.path) }) else {
+                return .unavailable("One or more selected items are unavailable")
+            }
+            return .available
         case .share:
             return urls.isEmpty ? .unavailable("Select files to share") : .available
         }

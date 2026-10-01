@@ -663,6 +663,7 @@ struct IslandRootView: View {
                 } else {
                     FileTrayQuickActionBar(
                         fileShelf: modules.fileShelf,
+                        backgroundOperations: modules.backgroundOperations,
                         backgroundRemoval: modules.productivity.backgroundRemoval,
                         layoutStore: layoutStore,
                         reduceMotion: reduceMotion || settings.reduceExtraMotion
@@ -899,6 +900,8 @@ struct IslandRootView: View {
             return .timer(primary)
         case .fileTray:
             return .fileTray(primary)
+        case .backgroundOperation:
+            return .generic(primary)
         case .battery:
             return .battery(primary)
         case .system:
@@ -932,7 +935,7 @@ struct IslandRootView: View {
         case .media:
             navigation.showIsland()
             onRequestExpand()
-        case .fileTray:
+        case .fileTray, .backgroundOperation:
             navigation.showTray()
             onRequestExpand()
         case .battery, .system, .keepAwake, .terminalTask, .windowSnapPreview,
@@ -1107,6 +1110,17 @@ struct IslandRootView: View {
                 symbolName: "tray.and.arrow.down.fill",
                 fallbackSymbolName: "tray.full",
                 kind: .fileDrop,
+                isPrimary: isPrimary
+            )
+        case .backgroundOperation:
+            return CollapsedPreviewRowContent(
+                id: activity.id,
+                title: activity.title,
+                subtitle: activity.subtitle,
+                trailingText: activity.progress.map { "\(Int(($0 * 100).rounded()))%" },
+                symbolName: activity.symbolName,
+                fallbackSymbolName: "archivebox",
+                kind: .liveActivity,
                 isPrimary: isPrimary
             )
         case .battery:
@@ -3583,6 +3597,7 @@ struct ExpandedIslandView: View {
                     FileShelfModuleView(
                         settings: settings,
                         fileShelf: modules.fileShelf,
+                        backgroundOperations: modules.backgroundOperations,
                         dragExplanation: modules.fileDragSession.explanatoryAction?.explanation
                             ?? modules.fileDragSession.outcomeMessage
                     )
@@ -4085,7 +4100,7 @@ struct LiveActivitiesModuleView: View {
             if settings.timerEnabled, settings.showTimerTab {
                 navigation.showTimer()
             }
-        case .fileTray:
+        case .fileTray, .backgroundOperation:
             if settings.trayEnabled, settings.showTrayTab {
                 navigation.showTray()
             }

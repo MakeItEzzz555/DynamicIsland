@@ -860,7 +860,9 @@ struct MediaButton: View {
 struct FileShelfModuleView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var fileShelf: FileShelfStore
+    @ObservedObject var backgroundOperations: BackgroundOperationController
     var dragExplanation: String? = nil
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @StateObject private var thumbnailCache = FileThumbnailCache()
 
     private let columns = [
@@ -869,6 +871,14 @@ struct FileShelfModuleView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            if backgroundOperations.primaryOperation != nil {
+                BackgroundOperationCenterView(
+                    controller: backgroundOperations,
+                    reduceMotion: reduceMotion || settings.reduceExtraMotion
+                )
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+
             HStack {
                 Label("File Shelf", systemImage: "tray.full")
                     .font(.system(size: 14, weight: .bold, design: .rounded))
@@ -934,7 +944,7 @@ struct FileShelfModuleView: View {
             }
         }
         .padding(12)
-        .frame(maxWidth: .infinity, minHeight: 154, maxHeight: 214, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: 154, maxHeight: backgroundOperations.primaryOperation == nil ? 214 : 260, alignment: .topLeading)
         .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay {
             if let dragExplanation {

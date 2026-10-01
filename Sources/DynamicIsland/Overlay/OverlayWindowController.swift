@@ -756,6 +756,8 @@ final class OverlayWindowController {
             return .timer
         case .fileTray:
             return .file
+        case .backgroundOperation:
+            return .genericActivity
         case .battery:
             return .battery
         case .system:
@@ -783,6 +785,8 @@ final class OverlayWindowController {
             return .timer(primary)
         case .fileTray:
             return .fileTray(primary)
+        case .backgroundOperation:
+            return .generic(primary)
         case .battery:
             return .battery(primary)
         case .system:

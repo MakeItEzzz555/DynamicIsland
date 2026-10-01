@@ -6,6 +6,7 @@ import SwiftUI
 /// report their frame so hover, hit-testing and passthrough include them.
 struct FileTrayQuickActionBar: View {
     @ObservedObject var fileShelf: FileShelfStore
+    @ObservedObject var backgroundOperations: BackgroundOperationController
     @ObservedObject var backgroundRemoval: BackgroundRemovalController
     let layoutStore: IslandLayoutStore
     let reduceMotion: Bool
@@ -23,6 +24,7 @@ struct FileTrayQuickActionBar: View {
         HStack(spacing: FileTrayQuickActionMetrics.spacing) {
             circle(.removeBackground) { removeBackground() }
             convertCircle
+            circle(.compress) { compress() }
             circle(.share) { share() }
                 .background(SharingAnchorView(holder: shareAnchor))
             if let status {
@@ -64,7 +66,12 @@ struct FileTrayQuickActionBar: View {
     private func circle(_ action: FileTrayQuickAction, perform: @escaping () -> Void) -> some View {
         let availability = targets.availability(of: action)
         return Button(action: perform) {
-            circleLabel(action, enabled: availability.isAvailable, busy: action == .removeBackground && backgroundRemoval.isProcessing)
+            circleLabel(
+                action,
+                enabled: availability.isAvailable,
+                busy: (action == .removeBackground && backgroundRemoval.isProcessing)
+                    || (action == .compress && backgroundOperations.operations.contains { $0.kind == .compression && $0.state.isActive })
+            )
         }
         .buttonStyle(.plain)
         .disabled(!availability.isAvailable)
@@ -149,6 +156,13 @@ struct FileTrayQuickActionBar: View {
             } catch {
                 show(error.localizedDescription, error: true)
             }
+        }
+    }
+
+    private func compress() {
+        guard targets.availability(of: .compress).isAvailable else { return }
+        if backgroundOperations.startCompression(sources: targets.urls) != nil {
+            show(targets.urls.count == 1 ? "Compressing…" : "Compressing \(targets.urls.count) items…")
         }
     }
 
