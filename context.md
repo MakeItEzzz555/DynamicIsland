@@ -4754,3 +4754,13 @@ For every requested feature phase:
 - Collapse mirrors expansion: children exit first, then the shell contracts top-pinned (`ExpandedIslandMotion.collapsePlan`, `IslandCollapseRequest`); shrinking page changes defer the shell until the outgoing page has left.
 - Details: `research/RECORDER_TIMELINE_AND_COLLAPSE_2026-10-01.md`. Physical UI acceptance still pending (keychain prompt, then lock).
 - Validation: `swift test` 1388 tests / 20 skipped / 0 failures; live recording 5/5; release build; package; `plutil -lint`; clean-copy strict signatures.
+
+### 2026-10-01 - Phase 5: Camera Intent, Agents Performance, Record Activities, Approval Authority
+
+- Camera Mirror: explicit `CameraUserIntent` in `CameraPreviewController`; passive view lifecycle (remount, page switch, collapse/expand, Settings) can no longer restart capture after an explicit close. Root cause was mirror presentation kept in ephemeral `@State` plus close/disappear sharing one passive release path.
+- Managed approvals: no wall-clock expiry (the old 75 s timer wrote an unchosen Deny); decisions are confirmed only by the provider's exact acknowledgement (Codex `serverRequest/resolved`, Claude `tool_result` for the answered `tool_use_id`); `failed(decision, reason)` delivery state stays visible. Verified with the real Claude CLI (incl. a 90 s late approval) and a protocol-accurate Codex app-server process; real Codex was blocked by the account usage limit.
+- Agents performance (measured, `AgentsPerformanceHarnessTests`, DEBUG main-thread CPU, baseline vs final with the same harness): streaming 200 deltas 5070 → 550 ms, typing 225 → 139 ms, snapshot refresh ×10 956 → 730 ms, enter/session/provider switch unchanged or better. Transcripts moved to per-session feeds; discovery refresh emits only real changes; composer owns its draft. Rejected after measurement: 24-row visible window, eager stack, removing the bottom scroll anchor.
+- Usage/provider: 5h/Week gauges 44 pt (36 pt narrow), Context 34/30 pt; Codex/Claude buttons show icon + name.
+- Record Activities: opt-in local JSON Lines of normalized events (no prompts/transcripts/paths/arguments) under Application Support/DynamicIsland/AgentActivity, 14 days / 20 MB.
+- Concurrent commits by another session on this branch during the phase: `aed9c1b` (harness typing scenario ends the synthetic turn first) and `df38f23` (suspend pointer-leave collapse while native menus track).
+- Details and evidence: `research/AGENTS_PHASE5_2026-10-01.md`.
