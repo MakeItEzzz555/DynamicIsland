@@ -653,10 +653,10 @@ struct FileTraySettingsPreview: View {
                         ForEach(shelf.files, id: \.self) { url in
                             ShelfFileTile(
                                 settings: settings,
+                                fileShelf: shelf,
                                 url: url,
                                 thumbnailCache: thumbnails,
                                 isSelected: shelf.selection.contains(url),
-                                onSelect: { _ in },
                                 onRemove: {}
                             )
                         }

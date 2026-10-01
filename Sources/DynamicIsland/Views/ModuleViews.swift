@@ -860,6 +860,7 @@ struct MediaButton: View {
 struct FileShelfModuleView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var fileShelf: FileShelfStore
+    var dragExplanation: String? = nil
     @StateObject private var thumbnailCache = FileThumbnailCache()
 
     private let columns = [
@@ -881,6 +882,14 @@ struct FileShelfModuleView: View {
                         .accessibilityLabel("\(fileShelf.files.count) files")
                 }
                 Spacer()
+                if fileShelf.files.count > 1 {
+                    Button("Select All") {
+                        fileShelf.selectAll()
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.white.opacity(0.58))
+                    .accessibilityLabel("Select all files in shelf")
+                }
                 Button("Clear") {
                     clearShelf()
                 }
@@ -910,10 +919,10 @@ struct FileShelfModuleView: View {
                         ForEach(fileShelf.files, id: \.self) { url in
                             ShelfFileTile(
                                 settings: settings,
+                                fileShelf: fileShelf,
                                 url: url,
                                 thumbnailCache: thumbnailCache,
                                 isSelected: fileShelf.selection.contains(url.standardizedFileURL),
-                                onSelect: { extend in fileShelf.select(url, extend: extend) },
                                 onRemove: { fileShelf.remove(url) }
                             )
                         }
@@ -927,6 +936,27 @@ struct FileShelfModuleView: View {
         .padding(12)
         .frame(maxWidth: .infinity, minHeight: 154, maxHeight: 214, alignment: .topLeading)
         .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay {
+            if let dragExplanation {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .fill(Color.black.opacity(0.82))
+                    VStack(spacing: 8) {
+                        Image(systemName: "arrow.down.circle.fill")
+                            .font(.system(size: 22, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.88))
+                        Text(dragExplanation)
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.9))
+                            .multilineTextAlignment(.center)
+                    }
+                    .padding(14)
+                }
+                .allowsHitTesting(false)
+                .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.14), value: dragExplanation)
     }
 
     private var emptyShelfSubtitle: String {
@@ -1062,13 +1092,14 @@ enum FileShelfActions {
         debugLog("FileShelfActions.copyName name=\(url.lastPathComponent)")
     }
 
+    @MainActor
     @discardableResult
     static func quickLook(_ url: URL) -> Bool {
         guard FileManager.default.fileExists(atPath: url.path) else {
             debugLog("FileShelfActions.quickLook skipped missing file path=\(url.path)")
             return false
         }
-        let didPreview = open(url)
+        let didPreview = FileShelfQuickLookController.shared.preview([url])
         debugLog("FileShelfActions.quickLook path=\(url.path) success=\(didPreview)")
         return didPreview
     }
@@ -1088,14 +1119,16 @@ enum FileShelfActions {
 
 struct ShelfFileTile: View {
     @ObservedObject var settings: AppSettings
+    @ObservedObject var fileShelf: FileShelfStore
     let url: URL
     @ObservedObject var thumbnailCache: FileThumbnailCache
     var isSelected = false
-    /// Click selects; `true` when Command is held (toggle, multi-select).
-    var onSelect: ((Bool) -> Void)?
     let onRemove: () -> Void
 
     @State private var isHovering = false
+    @State private var showsRename = false
+    @State private var renameText = ""
+    @State private var operationError: String?
     @Environment(\.isShellMorphing) private var isShellMorphing
 
     var body: some View {
@@ -1148,7 +1181,22 @@ struct ShelfFileTile: View {
             FileShelfActions.quickLook(url)
         }
         .onTapGesture {
-            onSelect?(NSEvent.modifierFlags.contains(.command))
+            let modifiers = NSEvent.modifierFlags
+            fileShelf.select(
+                url,
+                extend: modifiers.contains(.command),
+                range: modifiers.contains(.shift)
+            )
+        }
+        .focusable()
+        .onKeyPress(.return) {
+            let modifiers = NSEvent.modifierFlags
+            fileShelf.select(
+                url,
+                extend: modifiers.contains(.command),
+                range: modifiers.contains(.shift)
+            )
+            return .handled
         }
         .onHover { hovering in
             if isHovering != hovering {
@@ -1170,10 +1218,34 @@ struct ShelfFileTile: View {
 
             if settings.openFileActionEnabled {
                 Divider()
-
                 Button("Open") {
                     FileShelfActions.open(url)
                 }
+                let applications = FileShelfActions.openWithApplications(for: url)
+                if !applications.isEmpty {
+                    Menu("Open With") {
+                        ForEach(applications, id: \.self) { appURL in
+                            Button(appURL.deletingPathExtension().lastPathComponent) {
+                                FileShelfActions.open(url, withApplication: appURL)
+                            }
+                        }
+                    }
+                }
+            }
+
+            Divider()
+            Button("Copy") {
+                _ = FileShelfActions.copyFiles(contextTargets)
+            }
+            Button("Rename…") {
+                renameText = url.lastPathComponent
+                showsRename = true
+            }
+            Button("Copy To…") {
+                copyToChosenFolder()
+            }
+            Button("Move To…") {
+                moveToChosenFolder()
             }
 
             if settings.revealInFinderActionEnabled {
@@ -1184,11 +1256,9 @@ struct ShelfFileTile: View {
 
             if settings.copyPathActionEnabled {
                 Divider()
-
                 Button("Copy Path") {
                     FileShelfActions.copyPath(url)
                 }
-
                 Button("Copy File Name") {
                     FileShelfActions.copyName(url)
                 }
@@ -1196,17 +1266,84 @@ struct ShelfFileTile: View {
 
             if settings.removeFileActionEnabled {
                 Divider()
-
                 Button("Remove from Tray", role: .destructive) {
                     onRemove()
                 }
             }
+        }
+        .popover(isPresented: $showsRename, arrowEdge: .top) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Rename")
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                TextField("File name", text: $renameText)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 250)
+                    .onSubmit { performRename() }
+                HStack {
+                    Spacer()
+                    Button("Cancel") { showsRename = false }
+                    Button("Rename") { performRename() }
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(renameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+            .padding(14)
+        }
+        .alert("File operation failed", isPresented: operationErrorBinding) {
+            Button("OK") { operationError = nil }
+        } message: {
+            Text(operationError ?? "Unknown error")
         }
         .accessibilityLabel("File \(url.lastPathComponent)")
         .accessibilityHint("Click to select for quick actions. Right-click for file actions")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .onDrag {
             NSItemProvider(object: url as NSURL)
+        }
+    }
+
+    private var contextTargets: [URL] {
+        if isSelected, !fileShelf.selection.isEmpty {
+            return fileShelf.files.filter { fileShelf.selection.contains($0) }
+        }
+        return [url]
+    }
+
+    private var operationErrorBinding: Binding<Bool> {
+        Binding(
+            get: { operationError != nil },
+            set: { if !$0 { operationError = nil } }
+        )
+    }
+
+    private func performRename() {
+        do {
+            _ = try fileShelf.rename(url, to: renameText)
+            showsRename = false
+        } catch {
+            operationError = error.localizedDescription
+        }
+    }
+
+    private func copyToChosenFolder() {
+        guard let destination = FileShelfActions.chooseDestination(title: "Copy Files", prompt: "Copy") else { return }
+        do {
+            _ = try FileShelfDiskOperations.copy(contextTargets, to: destination)
+        } catch {
+            operationError = error.localizedDescription
+        }
+    }
+
+    private func moveToChosenFolder() {
+        let targets = contextTargets
+        guard let destination = FileShelfActions.chooseDestination(title: "Move Files", prompt: "Move") else { return }
+        do {
+            let moves = try FileShelfDiskOperations.move(targets, to: destination)
+            for move in moves {
+                fileShelf.recordMove(from: move.from, to: move.to)
+            }
+        } catch {
+            operationError = error.localizedDescription
         }
     }
 

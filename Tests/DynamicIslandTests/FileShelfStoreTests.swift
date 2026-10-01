@@ -161,6 +161,98 @@ final class FileShelfStoreTests: XCTestCase {
         store.clear()
     }
 
+
+    @MainActor
+    func testRangeSelectionUsesStableShelfOrderAndSelectAll() {
+        let settings = AppSettings(defaults: defaults)
+        let store = FileShelfStore(settings: settings, defaults: defaults)
+        let a = makeFile(named: "a.txt")
+        let b = makeFile(named: "b.txt")
+        let c = makeFile(named: "c.txt")
+        let d = makeFile(named: "d.txt")
+        store.add([a, b, c, d])
+        let files = store.files
+
+        store.select(files[1])
+        store.select(files[3], range: true)
+        XCTAssertEqual(store.selection, Set([files[1], files[2], files[3]]))
+
+        store.select(files[0], extend: true)
+        XCTAssertEqual(store.selection, Set(files))
+        store.clearSelection()
+        store.selectAll()
+        XCTAssertEqual(store.selection, Set(files))
+    }
+
+    @MainActor
+    func testFoldersAreRealShelfItems() throws {
+        let settings = AppSettings(defaults: defaults)
+        let store = FileShelfStore(settings: settings, defaults: defaults)
+        let folder = temporaryDirectory.appendingPathComponent("Folder", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+
+        store.add([folder])
+
+        XCTAssertEqual(store.files, [folder.standardizedFileURL])
+        var isDirectory: ObjCBool = false
+        XCTAssertTrue(FileManager.default.fileExists(atPath: store.files[0].path, isDirectory: &isDirectory))
+        XCTAssertTrue(isDirectory.boolValue)
+    }
+
+    @MainActor
+    func testRenameUpdatesShelfSelectionAndDiskWithoutOverwriting() throws {
+        let settings = AppSettings(defaults: defaults)
+        let store = FileShelfStore(settings: settings, defaults: defaults)
+        let original = makeFile(named: "before.txt")
+        let occupied = makeFile(named: "taken.txt")
+        store.add([original, occupied])
+        store.select(original)
+
+        let renamed = try store.rename(original, to: "after.txt")
+
+        XCTAssertEqual(renamed.lastPathComponent, "after.txt")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: original.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: renamed.path))
+        XCTAssertTrue(store.selection.contains(renamed))
+        XCTAssertFalse(store.selection.contains(original))
+
+        XCTAssertThrowsError(try store.rename(renamed, to: "taken.txt"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: renamed.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: occupied.path))
+    }
+
+    @MainActor
+    func testRemovingStableFileFromShelfNeverDeletesOriginal() {
+        let settings = AppSettings(defaults: defaults)
+        let store = FileShelfStore(settings: settings, defaults: defaults)
+        let file = makeFile(named: "keep-on-disk.txt")
+        store.add([file])
+
+        store.remove(file)
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+        XCTAssertTrue(store.files.isEmpty)
+    }
+
+
+    @MainActor
+    func testRecordMoveRetargetsShelfAndSelectionAfterRealDiskMove() throws {
+        let settings = AppSettings(defaults: defaults)
+        let store = FileShelfStore(settings: settings, defaults: defaults)
+        let source = makeFile(named: "move-me.txt")
+        store.add([source])
+        store.select(source)
+        let destinationDirectory = temporaryDirectory.appendingPathComponent("Moved", isDirectory: true)
+        try FileManager.default.createDirectory(at: destinationDirectory, withIntermediateDirectories: true)
+        let destination = destinationDirectory.appendingPathComponent(source.lastPathComponent)
+        try FileManager.default.moveItem(at: source, to: destination)
+
+        store.recordMove(from: source, to: destination)
+
+        XCTAssertEqual(store.files, [destination.standardizedFileURL])
+        XCTAssertEqual(store.selection, [destination.standardizedFileURL])
+    }
+
     private func makeFile(named name: String) -> URL {
         let url = temporaryDirectory.appendingPathComponent(name)
         _ = FileManager.default.createFile(atPath: url.path, contents: Data(name.utf8))
