@@ -157,8 +157,6 @@ struct AgentEmbeddedConsoleView: View {
     var loadDraft: ((AgentSessionInstanceID) -> String)? = nil
     var saveDraft: ((String, AgentSessionInstanceID) -> Void)? = nil
 
-    @State private var draft = ""
-    @State private var submissionInFlight = false
     @State private var follow = AgentTranscriptFollowState()
     @State private var scrollToLatestRequest = 0
     /// At most one bottom-settle in flight: a burst of streamed output
@@ -172,7 +170,17 @@ struct AgentEmbeddedConsoleView: View {
             transcript
             if mode.showsComposer {
                 managedInteractionFooter
-                composer
+                // Its own view owning the draft: typing re-renders only the
+                // composer, never the transcript above it.
+                AgentConsoleComposer(
+                    session: session,
+                    interactionState: interactionState,
+                    layoutStore: layoutStore,
+                    onSubmit: onSubmit,
+                    onInterrupt: onInterrupt,
+                    loadDraft: loadDraft,
+                    saveDraft: saveDraft
+                )
             } else {
                 observedFooter
             }
@@ -187,23 +195,9 @@ struct AgentEmbeddedConsoleView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Selected session details for \(AgentSessionPresentation.primaryTitle(for: session))")
-        .onChange(of: session.id) { previous, current in
-            saveDraft?(draft, previous)
-            draft = loadDraft?(current) ?? ""
+        .onChange(of: session.id) { _, _ in
             follow.reset()
             scrollToLatestRequest &+= 1
-        }
-        .onChange(of: mode.showsComposer) { _, isInteractive in
-            if !isInteractive {
-                saveDraft?(draft, session.id)
-                draft = ""
-            }
-        }
-        .onAppear {
-            if draft.isEmpty, let stored = loadDraft?(session.id) { draft = stored }
-        }
-        .onDisappear {
-            saveDraft?(draft, session.id)
         }
     }
 
@@ -453,6 +447,106 @@ struct AgentEmbeddedConsoleView: View {
         }
     }
 
+    private var managedInteractionFooter: some View {
+        HStack(spacing: 6) {
+            Image(systemName: interactionSymbol)
+                .font(.system(size: 7.5, weight: .semibold))
+            Text(interactionLabel)
+                .font(.system(size: 7.5, weight: .medium))
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            if interactionState.canInterrupt {
+                Text("Stop available")
+                    .font(.system(size: 7, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.28))
+            }
+        }
+        .foregroundStyle(interactionColor)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(interactionLabel)
+    }
+
+    private var observedFooter: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "eye")
+            Text("Observed session")
+            Text("·")
+            Text("Interactive control unavailable")
+        }
+        .font(.system(size: 7.5, weight: .medium))
+        .foregroundStyle(.white.opacity(0.34))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Observed session. Interactive control unavailable.")
+    }
+
+    private var interactionLabel: String {
+        switch interactionState {
+        case .observed: "Observed · read only"
+        case .connecting: "Connecting to exact thread…"
+        case .checkingAttachment: "Checking official thread…"
+        case .ready: "Connected · ready for prompt"
+        case .submitting: "Sending prompt…"
+        case .working: "Agent is working"
+        case .stopping: "Stopping current turn…"
+        case .failed(let message): message
+        }
+    }
+
+    private var interactionSymbol: String {
+        switch interactionState {
+        case .observed: "eye"
+        case .connecting, .checkingAttachment: "link.badge.plus"
+        case .ready: "checkmark.circle.fill"
+        case .submitting: "paperplane.fill"
+        case .working: "sparkles"
+        case .stopping: "stop.circle"
+        case .failed: "exclamationmark.triangle.fill"
+        }
+    }
+
+    private var interactionColor: Color {
+        switch interactionState {
+        case .ready: .green.opacity(0.62)
+        case .submitting, .working: .cyan.opacity(0.70)
+        case .stopping: .orange.opacity(0.80)
+        case .failed: .red.opacity(0.76)
+        case .observed, .connecting, .checkingAttachment: .white.opacity(0.34)
+        }
+    }
+
+
+}
+
+/// Prompt editor and Send/Stop. Owns the draft so keystrokes invalidate only
+/// this view. Drafts belong to one exact session instance: switching
+/// session, provider or project stores the draft and restores that
+/// session's own; leaving interactive mode stores it.
+private struct AgentConsoleComposer: View {
+    let session: AgentSession
+    let interactionState: AgentManagedInteractionState
+    let layoutStore: IslandLayoutStore?
+    let onSubmit: (String) async -> Bool
+    let onInterrupt: () -> Void
+    var loadDraft: ((AgentSessionInstanceID) -> String)?
+    var saveDraft: ((String, AgentSessionInstanceID) -> Void)?
+
+    @State private var draft = ""
+    @State private var submissionInFlight = false
+
+    var body: some View {
+        composer
+            .onChange(of: session.id) { previous, current in
+                saveDraft?(draft, previous)
+                draft = loadDraft?(current) ?? ""
+            }
+            .onAppear {
+                if draft.isEmpty, let stored = loadDraft?(session.id) { draft = stored }
+            }
+            .onDisappear {
+                saveDraft?(draft, session.id)
+            }
+    }
+
     private var composer: some View {
         HStack(alignment: .bottom, spacing: 4) {
             AgentPromptEditor(
@@ -515,38 +609,6 @@ struct AgentEmbeddedConsoleView: View {
         }
     }
 
-    private var managedInteractionFooter: some View {
-        HStack(spacing: 6) {
-            Image(systemName: interactionSymbol)
-                .font(.system(size: 7.5, weight: .semibold))
-            Text(interactionLabel)
-                .font(.system(size: 7.5, weight: .medium))
-                .lineLimit(1)
-            Spacer(minLength: 4)
-            if interactionState.canInterrupt {
-                Text("Stop available")
-                    .font(.system(size: 7, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.28))
-            }
-        }
-        .foregroundStyle(interactionColor)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(interactionLabel)
-    }
-
-    private var observedFooter: some View {
-        HStack(spacing: 5) {
-            Image(systemName: "eye")
-            Text("Observed session")
-            Text("·")
-            Text("Interactive control unavailable")
-        }
-        .font(.system(size: 7.5, weight: .medium))
-        .foregroundStyle(.white.opacity(0.34))
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Observed session. Interactive control unavailable.")
-    }
-
     private var composerPlaceholder: String {
         switch interactionState {
         case .ready:
@@ -563,41 +625,6 @@ struct AgentEmbeddedConsoleView: View {
             "Connecting…"
         case .observed:
             "Managed control unavailable"
-        }
-    }
-
-    private var interactionLabel: String {
-        switch interactionState {
-        case .observed: "Observed · read only"
-        case .connecting: "Connecting to exact thread…"
-        case .checkingAttachment: "Checking official thread…"
-        case .ready: "Connected · ready for prompt"
-        case .submitting: "Sending prompt…"
-        case .working: "Agent is working"
-        case .stopping: "Stopping current turn…"
-        case .failed(let message): message
-        }
-    }
-
-    private var interactionSymbol: String {
-        switch interactionState {
-        case .observed: "eye"
-        case .connecting, .checkingAttachment: "link.badge.plus"
-        case .ready: "checkmark.circle.fill"
-        case .submitting: "paperplane.fill"
-        case .working: "sparkles"
-        case .stopping: "stop.circle"
-        case .failed: "exclamationmark.triangle.fill"
-        }
-    }
-
-    private var interactionColor: Color {
-        switch interactionState {
-        case .ready: .green.opacity(0.62)
-        case .submitting, .working: .cyan.opacity(0.70)
-        case .stopping: .orange.opacity(0.80)
-        case .failed: .red.opacity(0.76)
-        case .observed, .connecting, .checkingAttachment: .white.opacity(0.34)
         }
     }
 
@@ -627,7 +654,6 @@ struct AgentEmbeddedConsoleView: View {
         }
         return true
     }
-
 }
 
 /// One transcript row. Equatable so SwiftUI re-lays-out only rows whose
