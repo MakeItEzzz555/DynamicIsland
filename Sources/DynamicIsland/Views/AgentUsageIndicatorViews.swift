@@ -42,10 +42,14 @@ struct AgentUsageIndicatorCircle: View {
     var body: some View {
         HStack(spacing: 6) {
             ZStack {
+                // Inset by half the stroke so the ring stays inside its frame
+                // and is never clipped by a tight control row.
                 Circle()
+                    .inset(by: lineWidth / 2)
                     .stroke(.white.opacity(indicator.isAvailable ? 0.12 : 0.07), lineWidth: lineWidth)
                 if let fraction = indicator.fraction {
                     Circle()
+                        .inset(by: lineWidth / 2)
                         .trim(from: 0, to: fraction)
                         .stroke(
                             ringColor,

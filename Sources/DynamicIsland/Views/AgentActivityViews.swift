@@ -1294,7 +1294,7 @@ private struct AgentSelectedSessionControlView: View {
 }
 
 /// Record Activities: opt-in local recording of normalized agent events.
-/// Click toggles recording; the menu offers Reveal and Clear. The red
+/// Click toggles recording; the context menu offers Reveal and Clear. The red
 /// filled record symbol and "Recording" label make the state obvious.
 struct AgentRecordActivitiesControl: View {
     @ObservedObject var recorder: AgentActivityRecorder
@@ -1303,17 +1303,10 @@ struct AgentRecordActivitiesControl: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        Menu {
-            Button(recorder.isRecording ? "Stop Recording Activities" : "Record Activities") {
-                setRecording(!recorder.isRecording)
-            }
-            Divider()
-            Button("Reveal Recorded Activity") { recorder.revealStorage() }
-            Button("Clear Recorded Activity", role: .destructive) { recorder.clear() }
-                .disabled(recorder.summary.fileCount == 0)
-            Divider()
-            Text(Self.summaryText(recorder.summary))
-            Text("Local only · events, not prompts or transcripts")
+        // A plain button keeps the red recording state (a menu-style label
+        // would be flattened to monochrome); Reveal/Clear are secondary.
+        Button {
+            setRecording(!recorder.isRecording)
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: recorder.isRecording ? "record.circle.fill" : "record.circle")
@@ -1327,22 +1320,35 @@ struct AgentRecordActivitiesControl: View {
                 }
             }
             .padding(.horizontal, compact ? 6 : 8)
-            .frame(height: 24)
+            .frame(minWidth: 26)
+            .frame(height: 25)
             .background(
                 recorder.isRecording ? Color.red.opacity(0.13) : Color.white.opacity(0.035),
                 in: Capsule(style: .continuous)
             )
-        } primaryAction: {
-            setRecording(!recorder.isRecording)
+            .contentShape(Capsule(style: .continuous))
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
+        .buttonStyle(.plain)
         .fixedSize()
+        .contextMenu {
+            Button(recorder.isRecording ? "Stop Recording Activities" : "Record Activities") {
+                setRecording(!recorder.isRecording)
+            }
+            Divider()
+            Button("Reveal Recorded Activity") { recorder.revealStorage() }
+            Button("Clear Recorded Activity", role: .destructive) { recorder.clear() }
+                .disabled(recorder.summary.fileCount == 0)
+            Divider()
+            Text(Self.summaryText(recorder.summary))
+            Text("Local only · events, not prompts or transcripts")
+        }
         .help(recorder.isRecording
-            ? "Recording agent activity locally. Click to stop; open the menu to reveal or clear it."
-            : "Record Activities: save normalized agent activity (no prompts or transcripts) on this Mac.")
+            ? "Recording agent activity locally. Click to stop; right-click to reveal or clear it."
+            : "Record Activities: save normalized agent activity (no prompts or transcripts) on this Mac. Right-click to reveal or clear.")
         .accessibilityLabel("Record Activities")
         .accessibilityValue(recorder.isRecording ? "On" : "Off")
+        .accessibilityAction(named: "Reveal Recorded Activity") { recorder.revealStorage() }
+        .accessibilityAction(named: "Clear Recorded Activity") { recorder.clear() }
     }
 
     static func summaryText(_ summary: AgentActivityStorageSummary) -> String {
