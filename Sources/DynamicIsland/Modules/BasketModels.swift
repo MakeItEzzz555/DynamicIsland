@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 
 // Source parity: Droppy/BasketState.swift, FloatingBasketWindowController.swift
 // (BasketAccentColor), DragMonitor.swift (detectJiggle). DynamicIsland keeps
-// its own implementation; see research/BASKET_PHASE7_2026-10-01.md.
+// its own implementation; see research/FLOATING_BASKET_PHASE6_2026-10-01.md.
 
 /// Per-basket identity colour. Values follow Droppy's subtle dark-surface
 /// accents; only shown when 2+ baskets are visible.
