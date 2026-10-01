@@ -148,6 +148,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         liveActivities: liveActivities
     )
     private lazy var clipboardHistory = ClipboardHistoryStore(settings: settings)
+    private lazy var basketManager = BasketManager(
+        settings: settings,
+        shelf: fileShelf,
+        operations: backgroundOperations
+    )
+    private lazy var basketPresenter = BasketPresenter(
+        manager: basketManager,
+        settings: settings,
+        fileShelf: fileShelf,
+        backgroundRemoval: backgroundRemoval
+    )
     private let batteryActivityProvider = BatteryActivityProvider()
     private let navigation = IslandNavigationStore()
     private let geometryService = NotchGeometryService()
@@ -231,8 +242,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             systemHUD: systemHUDController,
             messaging: messaging,
             rightWorkspace: rightWorkspace,
-            workspaceServices: workspaceServices
+            workspaceServices: workspaceServices,
+            basketPresenter: basketPresenter
         )
+        basketPresenter.start()
         agentProjects.observe(agentEvents.$sessions)
         installMessagingObservers()
         #if DEBUG
@@ -295,7 +308,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             settings: settings,
             onOpenSettings: { [weak self] in self?.openSettings() },
             onToggleOverlay: { [weak self] in self?.toggleOverlay() },
-            onQuit: { NSApp.terminate(nil) }
+            onQuit: { NSApp.terminate(nil) },
+            hiddenBasketCount: { [weak self] in self?.basketPresenter.hiddenBasketCount ?? 0 },
+            onShowBaskets: { [weak self] in self?.basketPresenter.revealHiddenBaskets() }
         )
 
         NotificationCenter.default.addObserver(
@@ -349,6 +364,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         voiceTranscription.cancel()
         cameraPreview.terminate()
         backgroundRemoval.terminate()
+        basketPresenter.stop()
         systemHUDController.stop()
         agentBridge.stop()
         agentManagedControl.stop()

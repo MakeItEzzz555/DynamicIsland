@@ -8,6 +8,7 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
     case tabs = "Tabs"
     case media = "Media"
     case tray = "Tray"
+    case basket = "Basket"
     case timer = "Timer"
     case stats = "Stats"
     case agents = "AI Agents"
@@ -29,6 +30,7 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
         case .tabs: "square.grid.2x2"
         case .media: "music.note"
         case .tray: "tray.full"
+        case .basket: "basket"
         case .timer: "timer"
         case .stats: "chart.xyaxis.line"
         case .agents: "cpu"
@@ -107,6 +109,8 @@ struct SettingsView: View {
                         mediaSection
                     case .tray:
                         traySection
+                    case .basket:
+                        basketSection
                     case .timer:
                         timerSection
                     case .stats:
@@ -337,6 +341,32 @@ struct SettingsView: View {
                 Toggle("Show YouTube launcher", isOn: $settings.showYouTubeLauncher)
             }
 
+        }
+    }
+
+    private var basketSection: some View {
+        settingsForm("Basket") {
+            FloatingBasketSettingsPreview(settings: settings)
+            SettingsGroup("Floating Basket") {
+                Toggle("Enable Floating Basket", isOn: $settings.floatingBasketEnabled)
+                HelpText("Shake while dragging files to summon a Basket near the pointer. Works without Accessibility.")
+                Stepper("Shake sensitivity: \(settings.basketJiggleSensitivity)", value: $settings.basketJiggleSensitivity, in: 1...5)
+                    .disabled(!settings.floatingBasketEnabled)
+                HelpText("Higher sensitivity needs fewer direction changes within half a second.")
+                Toggle("Allow multiple Baskets", isOn: $settings.basketMultipleEnabled)
+                    .disabled(!settings.floatingBasketEnabled)
+                HelpText("Shake again with one Basket open to add another; with two or more, shaking shows the Basket switcher. Turning this off merges Baskets.")
+            }
+            SettingsGroup("Auto-hide") {
+                Toggle("Hide idle Baskets", isOn: $settings.basketAutoHideEnabled)
+                    .disabled(!settings.floatingBasketEnabled)
+                Stepper(
+                    "Hide after \(settings.basketAutoHideDelay.formatted(.number.precision(.fractionLength(1)))) s",
+                    value: $settings.basketAutoHideDelay, in: 0.5...10, step: 0.5
+                )
+                .disabled(!settings.floatingBasketEnabled || !settings.basketAutoHideEnabled)
+                HelpText("Hidden Baskets keep their files. Shake during a drag or use the menu bar's Show Hidden Basket to bring them back. Empty Baskets close when a drag ends without a drop.")
+            }
         }
     }
 

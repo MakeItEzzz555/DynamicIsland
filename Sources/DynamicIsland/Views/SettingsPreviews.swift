@@ -745,3 +745,49 @@ struct TimerPageSettingsPreview: View {
         }
     }
 }
+
+/// Production FloatingBasketView with in-memory sample baskets. Inert by
+/// construction: `.inert` actions, no BasketManager, no window, no drop
+/// targets, no drag-out, no sharing and no file reads beyond icon lookup.
+struct FloatingBasketSettingsPreview: View {
+    @ObservedObject var settings: AppSettings
+    @StateObject private var samples = FloatingBasketPreviewSamples()
+
+    var body: some View {
+        SettingsPreviewSandbox(title: SettingsPreviewID.floatingBasket.rawValue, usesSampleContent: true, height: 230) { _ in
+            HStack(alignment: .top, spacing: 18) {
+                basket(samples.empty, accent: false)
+                basket(samples.stack, accent: settings.basketMultipleEnabled)
+                if settings.basketMultipleEnabled {
+                    basket(samples.second, accent: true)
+                }
+            }
+            .opacity(settings.floatingBasketEnabled ? 1 : 0.35)
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    private func basket(_ state: BasketState, accent: Bool) -> some View {
+        let metrics = BasketMetrics(scale: 0.9)
+        let size = metrics.windowSize(surface: metrics.collapsedSize)
+        return FloatingBasketView(state: state, showsAccent: accent, metrics: metrics, actions: .inert,
+                                  multiBasketMode: settings.basketMultipleEnabled)
+            .frame(width: size.width, height: size.height)
+            .scaleEffect(0.62, anchor: .top)
+            .frame(width: size.width * 0.62, height: size.height * 0.62, alignment: .top)
+    }
+}
+
+@MainActor
+final class FloatingBasketPreviewSamples: ObservableObject {
+    let empty = BasketState(accent: .teal)
+    let stack = BasketState(accent: .teal)
+    let second = BasketState(accent: .coral)
+
+    init() {
+        let base = URL(fileURLWithPath: "/DynamicIslandPreview", isDirectory: true)
+        stack.appendItems(["Brief.pdf", "Moodboard.png", "Notes.txt"].map { BasketItem(url: base.appendingPathComponent($0)) })
+        second.appendItems(["Archive.zip"].map { BasketItem(url: base.appendingPathComponent($0)) })
+        [empty, stack, second].forEach { $0.setVisible(true) }
+    }
+}

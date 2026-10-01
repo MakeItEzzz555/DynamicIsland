@@ -424,6 +424,9 @@ struct IslandRootView: View {
     var body: some View {
         animatedIslandCanvas
             .environment(\.islandDisplayMetrics, layoutStore.displayMetrics)
+            .environment(\.basketShelfTransfer, BasketShelfTransfer { [presenter = modules.basketPresenter] urls in
+                presenter.moveShelfFilesToBasket(urls)
+            })
     }
 
     private var baseIslandCanvas: some View {

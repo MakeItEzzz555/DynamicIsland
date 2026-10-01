@@ -115,6 +115,10 @@ final class FilePromiseDropNSView: NSView {
     var onDropStarted: (() -> Int?)?
     var onFilesReceived: ((Int, [URL]) -> Void)?
     var onMaterializationFailed: ((Int, String) -> Void)?
+    /// Optional drop region in this view's coordinates (e.g. a Floating
+    /// Basket's visible surface inside its transparent margin).
+    var acceptsDropAt: ((NSPoint) -> Bool)?
+    private var isTargetedForDrag = false
 
     private let promiseQueue: OperationQueue = {
         let queue = OperationQueue()
@@ -144,24 +148,35 @@ final class FilePromiseDropNSView: NSView {
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        guard accepts(sender.draggingPasteboard) else { return [] }
-        onTargetingChanged?(true)
-        return .copy
+        draggingUpdated(sender)
     }
 
     override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-        accepts(sender.draggingPasteboard) ? .copy : []
+        let accepted = accepts(sender.draggingPasteboard) && isInsideDropRegion(sender)
+        if accepted != isTargetedForDrag {
+            isTargetedForDrag = accepted
+            onTargetingChanged?(accepted)
+        }
+        return accepted ? .copy : []
     }
 
     override func draggingExited(_ sender: NSDraggingInfo?) {
+        isTargetedForDrag = false
         onTargetingChanged?(false)
     }
 
     override func draggingEnded(_ sender: NSDraggingInfo) {
+        isTargetedForDrag = false
         onTargetingChanged?(false)
     }
 
+    private func isInsideDropRegion(_ sender: NSDraggingInfo) -> Bool {
+        guard let acceptsDropAt else { return true }
+        return acceptsDropAt(convert(sender.draggingLocation, from: nil))
+    }
+
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard isInsideDropRegion(sender) else { return false }
         guard let claim = onDropStarted?() else { return false }
         let pasteboard = sender.draggingPasteboard
 

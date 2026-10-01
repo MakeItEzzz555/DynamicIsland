@@ -1140,6 +1140,7 @@ struct ShelfFileTile: View {
     @State private var renameText = ""
     @State private var operationError: String?
     @Environment(\.isShellMorphing) private var isShellMorphing
+    @Environment(\.basketShelfTransfer) private var basketTransfer
 
     var body: some View {
         VStack(spacing: 6) {
@@ -1271,6 +1272,14 @@ struct ShelfFileTile: View {
                 }
                 Button("Copy File Name") {
                     FileShelfActions.copyName(url)
+                }
+            }
+
+            if settings.floatingBasketEnabled, let basketTransfer {
+                Divider()
+                // App-surface transfer: the file itself is not moved on disk.
+                Button(contextTargets.count > 1 ? "Move \(contextTargets.count) to Basket" : "Move to Basket") {
+                    basketTransfer.moveToBasket(contextTargets)
                 }
             }
 

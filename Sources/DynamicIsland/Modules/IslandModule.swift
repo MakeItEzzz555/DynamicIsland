@@ -37,6 +37,7 @@ struct IslandModules {
     let messaging: MessagingController
     let rightWorkspace: RightWorkspaceStore
     let workspaceServices: WorkspaceServices
+    let basketPresenter: BasketPresenter
 }
 
 /// Real data sources for the right workspace's Apps & Media page.
