@@ -161,6 +161,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         presentationEnabled: { [weak self] in self?.settings.liveActivitiesEnabled ?? true }
     )
     private let agentAttention = AgentAttentionCoordinator()
+    private let agentActivityRecorder = AgentActivityRecorder()
     private let agentApprovalControl = AgentApprovalController()
     private lazy var agentIngestion = AgentIngestionCoordinator(eventStore: agentEvents)
     private lazy var agentIntegrationRouter = AgentIntegrationRouter(coordinator: agentIngestion)
@@ -225,6 +226,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             agentApprovalControl: agentApprovalControl,
             agentManagedControl: agentManagedControl,
             agentProjects: agentProjects,
+            agentActivityRecorder: agentActivityRecorder,
             productivity: productivity,
             systemHUD: systemHUDController,
             messaging: messaging,
@@ -267,6 +269,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .removeDuplicates()
             .sink { [weak self] interval in
                 self?.stats.setRefreshInterval(interval)
+            }
+            .store(in: &cancellables)
+
+        // Record Activities observes the normalized store; off unless the
+        // user opted in.
+        agentEvents.appliedEventObserver = { [weak agentActivityRecorder] event, session in
+            agentActivityRecorder?.handleApplied(event, session: session)
+        }
+        settings.$agentActivityRecordingEnabled
+            .removeDuplicates()
+            .sink { [weak self] enabled in
+                self?.agentActivityRecorder.setRecording(enabled)
             }
             .store(in: &cancellables)
 
@@ -338,6 +352,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         systemHUDController.stop()
         agentBridge.stop()
         agentManagedControl.stop()
+        agentActivityRecorder.flushForTermination()
         Task { [codexRolloutMonitor] in
             await codexRolloutMonitor.stop()
         }

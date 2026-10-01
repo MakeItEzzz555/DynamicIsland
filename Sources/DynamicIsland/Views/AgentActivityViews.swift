@@ -195,6 +195,7 @@ struct AgentActivityDashboardView: View {
     @ObservedObject var approvalControl: AgentApprovalController
     @ObservedObject var managedControl: AgentManagedSessionController
     @ObservedObject var layoutStore: IslandLayoutStore
+    var activityRecorder: AgentActivityRecorder? = nil
     let availableHeight: CGFloat
     let contentVisible: Bool
     let isContentRemoving: Bool
@@ -212,6 +213,7 @@ struct AgentActivityDashboardView: View {
             approvalControl: approvalControl,
             managedControl: managedControl,
             layoutStore: layoutStore,
+            activityRecorder: activityRecorder,
             availableHeight: availableHeight,
             settings: settings,
             contentVisible: contentVisible && presentation.chromeVisible,
@@ -292,6 +294,7 @@ struct AgentDashboardContentView: View {
     @ObservedObject var approvalControl: AgentApprovalController
     @ObservedObject var managedControl: AgentManagedSessionController
     var layoutStore: IslandLayoutStore? = nil
+    var activityRecorder: AgentActivityRecorder? = nil
     let availableHeight: CGFloat
     let settings: AppSettings?
     let contentVisible: Bool
@@ -313,6 +316,7 @@ struct AgentDashboardContentView: View {
         approvalControl: AgentApprovalController,
         managedControl: AgentManagedSessionController,
         layoutStore: IslandLayoutStore? = nil,
+        activityRecorder: AgentActivityRecorder? = nil,
         availableHeight: CGFloat,
         initialSelectedSessionID: AgentSessionInstanceID? = nil,
         settings: AppSettings? = nil,
@@ -329,6 +333,7 @@ struct AgentDashboardContentView: View {
         _approvalControl = ObservedObject(wrappedValue: approvalControl)
         _managedControl = ObservedObject(wrappedValue: managedControl)
         self.layoutStore = layoutStore
+        self.activityRecorder = activityRecorder
         self.availableHeight = availableHeight
         self.initialSelectedSessionID = initialSelectedSessionID
         self.settings = settings
@@ -406,6 +411,8 @@ struct AgentDashboardContentView: View {
                         selectProject(key, among: providerSessions)
                     },
                     trailingUsage: usageInHeader ? usageIndicators : [],
+                    activityRecorder: activityRecorder,
+                    onSetRecording: { enabled in settings?.agentActivityRecordingEnabled = enabled },
                     launcherOpen: launchFlow.isPresented,
                         onToggleLauncher: {
                             withAnimation(.easeOut(duration: 0.14)) {
@@ -656,6 +663,8 @@ private struct AgentCLIControlBar: View {
     var selectedProjectKey: String? = nil
     var onSelectProject: (String?) -> Void = { _ in }
     var trailingUsage: [AgentUsageIndicator] = []
+    var activityRecorder: AgentActivityRecorder? = nil
+    var onSetRecording: (Bool) -> Void = { _ in }
     let launcherOpen: Bool
     let onToggleLauncher: () -> Void
     var onNewSession: () -> Void = {}
@@ -711,6 +720,13 @@ private struct AgentCLIControlBar: View {
             launcherButton(compact: compact)
             newSessionButton(compact: compact)
             projectMenu(compact: compact)
+            if let activityRecorder {
+                AgentRecordActivitiesControl(
+                    recorder: activityRecorder,
+                    compact: compact,
+                    setRecording: onSetRecording
+                )
+            }
 
             if let session = selectedSession {
                 HStack(spacing: 4) {
@@ -1274,6 +1290,65 @@ private struct AgentSelectedSessionControlView: View {
             }
         }
         .animation(.easeOut(duration: 0.16), value: transcriptReady)
+    }
+}
+
+/// Record Activities: opt-in local recording of normalized agent events.
+/// Click toggles recording; the menu offers Reveal and Clear. The red
+/// filled record symbol and "Recording" label make the state obvious.
+struct AgentRecordActivitiesControl: View {
+    @ObservedObject var recorder: AgentActivityRecorder
+    let compact: Bool
+    let setRecording: (Bool) -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        Menu {
+            Button(recorder.isRecording ? "Stop Recording Activities" : "Record Activities") {
+                setRecording(!recorder.isRecording)
+            }
+            Divider()
+            Button("Reveal Recorded Activity") { recorder.revealStorage() }
+            Button("Clear Recorded Activity", role: .destructive) { recorder.clear() }
+                .disabled(recorder.summary.fileCount == 0)
+            Divider()
+            Text(Self.summaryText(recorder.summary))
+            Text("Local only · events, not prompts or transcripts")
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: recorder.isRecording ? "record.circle.fill" : "record.circle")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(recorder.isRecording ? Color.red : Color.white.opacity(0.62))
+                    .symbolEffect(.pulse, isActive: recorder.isRecording && !reduceMotion)
+                if !compact {
+                    Text(recorder.isRecording ? "Recording" : "Record")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(recorder.isRecording ? Color.red.opacity(0.92) : Color.white.opacity(0.62))
+                }
+            }
+            .padding(.horizontal, compact ? 6 : 8)
+            .frame(height: 24)
+            .background(
+                recorder.isRecording ? Color.red.opacity(0.13) : Color.white.opacity(0.035),
+                in: Capsule(style: .continuous)
+            )
+        } primaryAction: {
+            setRecording(!recorder.isRecording)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help(recorder.isRecording
+            ? "Recording agent activity locally. Click to stop; open the menu to reveal or clear it."
+            : "Record Activities: save normalized agent activity (no prompts or transcripts) on this Mac.")
+        .accessibilityLabel("Record Activities")
+        .accessibilityValue(recorder.isRecording ? "On" : "Off")
+    }
+
+    static func summaryText(_ summary: AgentActivityStorageSummary) -> String {
+        guard summary.fileCount > 0 else { return "Nothing recorded" }
+        let size = ByteCountFormatter.string(fromByteCount: Int64(summary.totalBytes), countStyle: .file)
+        return "\(size) recorded · kept 14 days, up to 20 MB"
     }
 }
 

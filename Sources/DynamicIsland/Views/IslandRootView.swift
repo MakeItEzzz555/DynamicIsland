@@ -3563,6 +3563,7 @@ struct ExpandedIslandView: View {
             approvalControl: modules.agentApprovalControl,
             managedControl: modules.agentManagedControl,
             layoutStore: layoutStore,
+            activityRecorder: modules.agentActivityRecorder,
             availableHeight: metrics.pageHeight,
             contentVisible: contentVisible,
             isContentRemoving: isContentRemoving

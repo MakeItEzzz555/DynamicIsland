@@ -422,6 +422,9 @@ struct SettingsView: View {
                     .disabled(!settings.agentActivityEnabled)
                 Toggle("Usage metrics", isOn: $settings.agentUsageMetricsEnabled)
                     .disabled(!settings.agentActivityEnabled)
+                Toggle("Record activities", isOn: $settings.agentActivityRecordingEnabled)
+                    .disabled(!settings.agentActivityEnabled)
+                    .help("Saves normalized agent activity (states, tools, approvals, usage) as local JSON Lines in Application Support/DynamicIsland/AgentActivity. Never prompts, transcripts, commands' arguments, paths or secrets. Kept 14 days, at most 20 MB.")
                 SliderRow(
                     title: "Alert duration",
                     value: $settings.agentPeekDurationSeconds,

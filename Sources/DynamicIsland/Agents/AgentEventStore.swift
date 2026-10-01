@@ -5,6 +5,10 @@ import Foundation
 final class AgentEventStore: ObservableObject {
     @Published private(set) var sessions: [AgentSession] = []
     @Published private(set) var attentionEvents: [AgentAttentionEvent] = []
+    /// Called once per normalized event that was applied, with the session it
+    /// produced. Record Activities observes the store here so every producer
+    /// (managed providers, hooks, rollouts) has one source of truth.
+    var appliedEventObserver: ((AgentEvent, AgentSession) -> Void)?
 
     let limits: AgentEventStoreLimits
 
@@ -81,6 +85,9 @@ final class AgentEventStore: ObservableObject {
             }
             enforceGlobalActivityLimit()
             publishSnapshots()
+            if case .applied = result.application {
+                appliedEventObserver?(event, reducedSession)
+            }
         case .duplicate, .staleGeneration, .rejected:
             if isNewGeneration, sessionsByID[event.instanceID] == nil {
                 currentGeneration.removeValue(forKey: event.sessionID)
@@ -115,6 +122,12 @@ final class AgentEventStore: ObservableObject {
         currentGeneration = working.currentGeneration
         sessions = working.sessions
         attentionEvents = working.attentionEvents
+        if let appliedEventObserver {
+            for (event, application) in zip(events, applications) {
+                guard case .applied = application, let session = sessionsByID[event.instanceID] else { continue }
+                appliedEventObserver(event, session)
+            }
+        }
         return .applied(applications)
     }
 

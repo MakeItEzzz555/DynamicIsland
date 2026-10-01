@@ -93,6 +93,8 @@ enum SettingsAuditCatalog {
         + visual(["agentUsageMetricsEnabled"], .agents)
         + entries(["agentActivityEnabled", "agentCompletionAlertsEnabled", "agentApprovalAlertsEnabled",
                    "agentPeekDurationSeconds"], .behavioral, "Agent monitoring and alert behavior.")
+        + entries(["agentActivityRecordingEnabled"], .behavioral,
+                  "Record Activities: opt-in local JSON Lines of normalized agent events (no prompts or transcripts), 14 days / 20 MB.")
         + entries(["agentSoundsEnabled"], .deprecatedHidden,
                   "Hidden: AgentNotch 1.1 plays no notification sound (bundle and full upstream history audited), so no parity sound exists and the toggle had no audible effect. Value kept for migration.")
         // Media

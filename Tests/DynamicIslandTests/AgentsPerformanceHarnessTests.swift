@@ -170,6 +170,41 @@ final class AgentsPerformanceHarnessTests: XCTestCase {
         } until: { true }
         report["snapshotRefresh"] = usage.json(probe: AgentPerformanceProbe.snapshot(), marks: [:], parameters: ["refreshes": 10])
 
+        // 5b. Normalized activity burst (200 tool events through the store),
+        // with Record Activities off and then on.
+        let recordingDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AgentsPerf-Recording-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: recordingDirectory) }
+        let recorder = AgentActivityRecorder(log: AgentActivityLog(directory: recordingDirectory))
+        store.appliedEventObserver = { [weak recorder] event, session in recorder?.handleApplied(event, session: session) }
+        for recording in [false, true] {
+            recorder.setRecording(recording)
+            AgentPerformanceProbe.reset()
+            let burst = try await measure(host) {
+                for index in 0..<100 {
+                    for type in [AgentEventType.toolStarted, .toolCompleted] {
+                        await codex.yield(.normalized(AgentManagedNormalizedEvent(
+                            nativeSessionID: selected.id.sessionID.nativeID,
+                            turnID: turn,
+                            type: type,
+                            correlationID: AgentCorrelationID(rawValue: "tool-\(recording)-\(index)"),
+                            payload: .tool(AgentToolEvent(name: "Read", category: nil, summary: nil, success: type == .toolCompleted ? true : nil))
+                        )))
+                    }
+                    if index.isMultiple(of: 10) { await host.settle() }
+                }
+                try await Task.sleep(for: .milliseconds(50))
+            } until: { true }
+            recorder.flushForTermination()
+            report[recording ? "normalizedBurstRecording" : "normalizedBurst"] = burst.json(
+                probe: AgentPerformanceProbe.snapshot(),
+                marks: [:],
+                parameters: ["events": 200, "recorded": recorder.log.readAll().count]
+            )
+        }
+        recorder.setRecording(false)
+        store.appliedEventObserver = nil
+
         // 6. Leave Agents -> next page.
         AgentPerformanceProbe.reset()
         let leave = try await measure(host) {

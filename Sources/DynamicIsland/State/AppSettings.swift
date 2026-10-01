@@ -223,6 +223,8 @@ public final class AppSettings: ObservableObject {
     @Published public var agentApprovalAlertsEnabled: Bool { didSet { save(agentApprovalAlertsEnabled, for: Key.agentApprovalAlertsEnabled) } }
     @Published public var agentSoundsEnabled: Bool { didSet { save(agentSoundsEnabled, for: Key.agentSoundsEnabled) } }
     @Published public var agentUsageMetricsEnabled: Bool { didSet { save(agentUsageMetricsEnabled, for: Key.agentUsageMetricsEnabled) } }
+    /// Record Activities: explicit opt-in, local normalized events only.
+    @Published public var agentActivityRecordingEnabled: Bool { didSet { save(agentActivityRecordingEnabled, for: Key.agentActivityRecordingEnabled) } }
     @Published public var agentPeekDurationSeconds: Double { didSet { save(agentPeekDurationSeconds, for: Key.agentPeekDurationSeconds) } }
 
     @Published public var mediaEnabled: Bool { didSet { save(mediaEnabled, for: Key.mediaEnabled) } }
@@ -464,6 +466,7 @@ public final class AppSettings: ObservableObject {
         agentApprovalAlertsEnabled = Self.bool(defaults, Key.agentApprovalAlertsEnabled, true)
         agentSoundsEnabled = Self.bool(defaults, Key.agentSoundsEnabled, true)
         agentUsageMetricsEnabled = Self.bool(defaults, Key.agentUsageMetricsEnabled, true)
+        agentActivityRecordingEnabled = Self.bool(defaults, Key.agentActivityRecordingEnabled, false)
         agentPeekDurationSeconds = Self.double(defaults, Key.agentPeekDurationSeconds, 5.0)
         showActivitiesTab = Self.bool(defaults, Key.showActivitiesTab, false)
         showLiveActivitiesTab = Self.bool(defaults, Key.showLiveActivitiesTab, false)
@@ -684,7 +687,8 @@ public final class AppSettings: ObservableObject {
         reset(keys: [
             Key.showTrayTab, Key.showTimerTab, Key.showStatsTab, Key.showToolsTab, Key.showAgentsTab,
             Key.agentActivityEnabled, Key.agentCompletionAlertsEnabled, Key.agentApprovalAlertsEnabled,
-            Key.agentSoundsEnabled, Key.agentUsageMetricsEnabled, Key.agentPeekDurationSeconds,
+            Key.agentSoundsEnabled, Key.agentUsageMetricsEnabled, Key.agentActivityRecordingEnabled,
+            Key.agentPeekDurationSeconds,
             Key.defaultExpandedTab,
             Key.mediaEnabled, Key.showMediaWhenPaused, Key.showMediaWhenNoSource,
             Key.showAlbumArtwork, Key.showMediaTitle, Key.showMediaArtist, Key.showMediaSourceName,
@@ -776,6 +780,7 @@ public final class AppSettings: ObservableObject {
         agentApprovalAlertsEnabled = Self.bool(defaults, Key.agentApprovalAlertsEnabled, true)
         agentSoundsEnabled = Self.bool(defaults, Key.agentSoundsEnabled, true)
         agentUsageMetricsEnabled = Self.bool(defaults, Key.agentUsageMetricsEnabled, true)
+        agentActivityRecordingEnabled = Self.bool(defaults, Key.agentActivityRecordingEnabled, false)
         agentPeekDurationSeconds = Self.double(defaults, Key.agentPeekDurationSeconds, 5.0)
         showActivitiesTab = Self.bool(defaults, Key.showActivitiesTab, false)
         showLiveActivitiesTab = Self.bool(defaults, Key.showLiveActivitiesTab, false)
@@ -1311,6 +1316,7 @@ private enum Key {
     static let agentApprovalAlertsEnabled = "agentApprovalAlertsEnabled"
     static let agentSoundsEnabled = "agentSoundsEnabled"
     static let agentUsageMetricsEnabled = "agentUsageMetricsEnabled"
+    static let agentActivityRecordingEnabled = "agentActivityRecordingEnabled"
     static let agentPeekDurationSeconds = "agentPeekDurationSeconds"
     static let showActivitiesTab = "showActivitiesTab"
     static let showLiveActivitiesTab = "showLiveActivitiesTab"
@@ -1465,7 +1471,7 @@ private enum Key {
         useBlurTransitions, useScaleTransitions, showIslandTab, showTrayTab,
         showTimerTab, showStatsTab, showToolsTab, showAgentsTab, agentActivityEnabled,
         agentCompletionAlertsEnabled, agentApprovalAlertsEnabled, agentSoundsEnabled,
-        agentUsageMetricsEnabled, agentPeekDurationSeconds,
+        agentUsageMetricsEnabled, agentActivityRecordingEnabled, agentPeekDurationSeconds,
         showActivitiesTab, showLiveActivitiesTab, showGesturesTab,
         rememberLastSelectedTab, defaultExpandedTab, mediaEnabled, showMediaWhenPaused,
         showMediaWhenNoSource, showAlbumArtwork, showMediaTitle, showMediaArtist, showMediaSourceName,
