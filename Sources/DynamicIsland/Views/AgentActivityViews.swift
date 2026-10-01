@@ -177,6 +177,7 @@ struct AgentActivityDashboardView: View {
     @State private var presentationTask: Task<Void, Never>?
 
     var body: some View {
+        let _ = AgentPerformanceProbe.count("agents.dashboard.body")
         let visibleSessions = agentEvents.sessions.filter(managedControl.shouldPresent)
         AgentDashboardContentView(
             sessions: visibleSessions,
@@ -218,6 +219,7 @@ struct AgentActivityDashboardView: View {
 
     private func beginPresentation() {
         presentationTask?.cancel()
+        AgentPerformanceProbe.mark("agents.enter.requested")
         let generation = presentation.begin()
         let shellDuration = IslandContentTransitionTiming.shellDuration(
             settings: settings,
@@ -235,17 +237,22 @@ struct AgentActivityDashboardView: View {
                 await Task.yield()
             }
             guard !Task.isCancelled else { return }
-            _ = presentation.revealChrome(generation: generation)
+            if presentation.revealChrome(generation: generation) {
+                AgentPerformanceProbe.mark("agents.chrome.visible")
+            }
 
             if transcriptDelay > 0 {
                 try? await Task.sleep(for: .seconds(transcriptDelay))
             }
             guard !Task.isCancelled else { return }
-            _ = presentation.revealTranscript(generation: generation)
+            if presentation.revealTranscript(generation: generation) {
+                AgentPerformanceProbe.mark("agents.transcript.allowed")
+            }
         }
     }
 
     private func cancelPresentation() {
+        AgentPerformanceProbe.mark("agents.leave")
         presentationTask?.cancel()
         presentationTask = nil
         presentation.cancel()
@@ -308,20 +315,25 @@ struct AgentDashboardContentView: View {
     }
 
     var body: some View {
+        let _ = AgentPerformanceProbe.count("agents.content.body")
         GeometryReader { proxy in
-            let workspace = AgentWorkspaceProjection.make(
-                sessions: sessions,
-                controller: managedControl,
-                projectKey: projectSelection.key,
-                locations: projectLocations,
-                launcherOpen: launchFlow.isPresented
-            )
+            let workspace = AgentPerformanceProbe.measure("agents.workspace.projection") {
+                AgentWorkspaceProjection.make(
+                    sessions: sessions,
+                    controller: managedControl,
+                    projectKey: projectSelection.key,
+                    locations: projectLocations,
+                    launcherOpen: launchFlow.isPresented
+                )
+            }
             let providerSessions = workspace.providerSessions
-            let projectOptions = AgentProjectFilter.options(
-                for: providerSessions,
-                locations: projectLocations,
-                activeManagedSessionIDs: managedControl.activeManagedSessionIDs
-            )
+            let projectOptions = AgentPerformanceProbe.measure("agents.project.options") {
+                AgentProjectFilter.options(
+                    for: providerSessions,
+                    locations: projectLocations,
+                    activeManagedSessionIDs: managedControl.activeManagedSessionIDs
+                )
+            }
             let effectiveProjectKey = workspace.effectiveProjectKey
             let controlSessions = workspace.controlSessions
             let layout = AgentDashboardLayoutProjection.make(width: proxy.size.width)
@@ -596,7 +608,9 @@ struct AgentDashboardContentView: View {
             transcriptLoadGate.cancel()
             return
         }
-        _ = transcriptLoadGate.complete(for: sessionID, generation: generation)
+        if transcriptLoadGate.complete(for: sessionID, generation: generation) {
+            AgentPerformanceProbe.mark("agents.transcript.gate.open")
+        }
     }
 }
 
@@ -627,6 +641,7 @@ private struct AgentCLIControlBar: View {
     }
 
     var body: some View {
+        let _ = AgentPerformanceProbe.count("agents.controlbar.body")
         HStack(alignment: .center, spacing: 12) {
             ViewThatFits(in: .horizontal) {
                 controls(compact: false)
@@ -1061,6 +1076,7 @@ struct AgentProviderButtons: View {
     var compact = false
 
     var body: some View {
+        let _ = AgentPerformanceProbe.count("agents.providerbuttons.body")
         HStack(spacing: 4) {
             ForEach(managedControl.managedProviders, id: \.self) { provider in
                 let selected = managedControl.selectedProvider == provider
@@ -1120,17 +1136,22 @@ private struct AgentSelectedSessionControlView: View {
     let transcriptReady: Bool
 
     var body: some View {
+        let _ = AgentPerformanceProbe.count("agents.selected.body")
         Group {
             if surface == .composer {
                 // A managed, input-ready session always gets its composer
                 // immediately; it never waits for a first provider event
                 // or the transcript reveal.
+                AgentTranscriptFeedReader(
+                    feed: managedControl.transcriptFeed(for: session),
+                    isEnabled: transcriptReady
+                ) { entries in
                 AgentEmbeddedConsoleView(
                     session: session,
                     mode: managedControl.mode(for: session),
                     interactionState: managedControl.interactionState(for: session),
                     maximumActivityEntries: activityLimit,
-                    transcriptEntries: transcriptReady ? managedControl.transcript(for: session) : [],
+                    transcriptEntries: entries,
                     workspaceSessions: AgentWorkspaceSelection.ordered(
                         sessions: sessions,
                         activeManagedSessionIDs: managedControl.activeManagedSessionIDs
@@ -1143,10 +1164,14 @@ private struct AgentSelectedSessionControlView: View {
                     loadDraft: managedControl.composerDraft(for:),
                     saveDraft: managedControl.setComposerDraft(_:for:)
                 )
+                }
                 // Ideal, not minimum: under height pressure the transcript
                 // shrinks so the composer and Send stay inside the page clip.
                 .frame(minHeight: 0, idealHeight: detailHeight, maxHeight: .infinity)
-                .task(id: session.id) {
+                .task(id: AgentTranscriptHydrationRequest(sessionID: session.id, isAllowed: transcriptReady)) {
+                    // History is read only once the transcript may show, so
+                    // entering Agents never competes with the shell motion.
+                    guard transcriptReady else { return }
                     await managedControl.refreshTranscript(for: session)
                 }
             } else if !transcriptReady {
@@ -1162,12 +1187,16 @@ private struct AgentSelectedSessionControlView: View {
                         onConnect: { managedControl.connect(session) }
                     )
 
+                    AgentTranscriptFeedReader(
+                        feed: managedControl.transcriptFeed(for: session),
+                        isEnabled: true
+                    ) { entries in
                     AgentEmbeddedConsoleView(
                         session: session,
                         mode: .observed,
                         interactionState: managedControl.interactionState(for: session),
                         maximumActivityEntries: activityLimit,
-                        transcriptEntries: managedControl.transcript(for: session),
+                        transcriptEntries: entries,
                         workspaceSessions: AgentWorkspaceSelection.ordered(
                             sessions: sessions,
                             activeManagedSessionIDs: managedControl.activeManagedSessionIDs
@@ -1178,6 +1207,7 @@ private struct AgentSelectedSessionControlView: View {
                         onSubmit: { _ in false },
                         onInterrupt: {}
                     )
+                    }
                     .frame(minHeight: 0, idealHeight: max(detailHeight - 31, 104), maxHeight: .infinity)
                 }
                 .task(id: session.id) {
@@ -1186,6 +1216,23 @@ private struct AgentSelectedSessionControlView: View {
             }
         }
         .animation(.easeOut(duration: 0.16), value: transcriptReady)
+    }
+}
+
+private struct AgentTranscriptHydrationRequest: Hashable {
+    let sessionID: AgentSessionInstanceID
+    let isAllowed: Bool
+}
+
+/// The only view that observes a transcript feed: streamed output re-renders
+/// the console, never the surrounding Agents chrome.
+private struct AgentTranscriptFeedReader<Content: View>: View {
+    @ObservedObject var feed: AgentTranscriptFeed
+    let isEnabled: Bool
+    @ViewBuilder let content: ([AgentManagedTranscriptEntry]) -> Content
+
+    var body: some View {
+        content(isEnabled ? feed.entries : [])
     }
 }
 

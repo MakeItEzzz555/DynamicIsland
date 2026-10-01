@@ -161,8 +161,13 @@ struct AgentEmbeddedConsoleView: View {
     @State private var submissionInFlight = false
     @State private var follow = AgentTranscriptFollowState()
     @State private var scrollToLatestRequest = 0
+    /// At most one bottom-settle in flight: a burst of streamed output
+    /// produces one scroll, not one per delta.
+    @State private var settlePending = false
+    @State private var settleRequestedAgain = false
 
     var body: some View {
+        let _ = AgentPerformanceProbe.count("agents.console.body")
         VStack(alignment: .leading, spacing: 7) {
             transcript
             if mode.showsComposer {
@@ -216,11 +221,13 @@ struct AgentEmbeddedConsoleView: View {
                             .id(AgentConsoleScrollAnchor.bottom)
                             .background {
                                 GeometryReader { bottomProxy in
+                                    // Whole points: sub-pixel jitter from lazy row
+                                    // height estimates must not feed back into state.
                                     Color.clear.preference(
                                         key: AgentConsoleBottomPositionPreferenceKey.self,
                                         value: bottomProxy.frame(
                                             in: .named(AgentConsoleCoordinateSpace.transcript)
-                                        ).maxY
+                                        ).maxY.rounded()
                                     )
                                 }
                             }
@@ -229,10 +236,16 @@ struct AgentEmbeddedConsoleView: View {
                     .defaultScrollAnchor(.bottom)
                     .scrollBounceBehavior(.basedOnSize)
                     .onPreferenceChange(AgentConsoleBottomPositionPreferenceKey.self) { bottomY in
-                        follow.observeViewport(
-                            distanceFromBottom: bottomY - viewport.size.height,
+                        // Write state only on a real change: an unconditional write
+                        // re-renders the transcript, which re-measures the lazy
+                        // stack and can report another bottom position — a layout
+                        // feedback loop that could livelock while output streams.
+                        var next = follow
+                        next.observeViewport(
+                            distanceFromBottom: bottomY - viewport.size.height.rounded(),
                             contentToken: transcriptFollowToken
                         )
+                        if next != follow { follow = next }
                     }
                     .onChange(of: transcriptFollowToken) { _, token in
                         guard follow.contentDidChange(to: token) else { return }
@@ -276,11 +289,25 @@ struct AgentEmbeddedConsoleView: View {
     }
 
     private func settleAtLatest(_ proxy: ScrollViewProxy, animated: Bool) {
+        guard !settlePending else {
+            settleRequestedAgain = true
+            return
+        }
+        settlePending = true
+        AgentPerformanceProbe.count("agents.console.autoscroll")
         Task { @MainActor in
+            defer {
+                settlePending = false
+                if settleRequestedAgain {
+                    // Content landed while settling: one more pass, not one
+                    // per delta.
+                    settleRequestedAgain = false
+                    settleAtLatest(proxy, animated: false)
+                }
+            }
             // The first yield lets LazyVStack publish its current extent; the
             // second catches transcript recovery/layout that lands one pass
-            // later. This complements defaultScrollAnchor instead of relying
-            // on a single fragile run-loop dispatch.
+            // later, instead of relying on a single fragile run-loop dispatch.
             await Task.yield()
             if animated {
                 withAnimation(.easeOut(duration: 0.16)) {
@@ -316,12 +343,15 @@ struct AgentEmbeddedConsoleView: View {
     }
 
     private var transcriptContent: some View {
-        let timeline = AgentConsoleTimelineProjectionCache.entries(
-            session: session,
-            transcript: transcriptEntries,
-            limit: maximumActivityEntries,
-            includePendingApprovals: actionableApproval == nil && externalPendingApproval == nil
-        )
+        let timeline = AgentPerformanceProbe.measure("agents.timeline.projection") {
+            AgentConsoleTimelineProjectionCache.entries(
+                session: session,
+                transcript: transcriptEntries,
+                limit: maximumActivityEntries,
+                includePendingApprovals: actionableApproval == nil && externalPendingApproval == nil
+            )
+        }
+        let _ = AgentPerformanceProbe.gauge("agents.timeline.rows", timeline.count)
 
         return LazyVStack(alignment: .leading, spacing: 7) {
             AgentCurrentWorkSummary(session: session, mode: mode)
@@ -342,8 +372,13 @@ struct AgentEmbeddedConsoleView: View {
                 }
                 .foregroundStyle(.white.opacity(0.48))
             } else {
+                // Lazy: only on-screen rows are realized and measured, so the
+                // controller's full bounded history costs nothing extra to
+                // keep. (A smaller eager or windowed stack measured slower and
+                // was less stable against the bottom anchor.)
                 ForEach(timeline) { entry in
-                    consoleEntryRow(entry)
+                    AgentConsoleEntryRow(entry: entry)
+                        .equatable()
                 }
             }
 
@@ -386,90 +421,6 @@ struct AgentEmbeddedConsoleView: View {
                 return lhs.requestID.rawValue < rhs.requestID.rawValue
             }
             .first
-    }
-
-    @ViewBuilder
-    private func consoleEntryRow(_ entry: AgentConsoleEntry) -> some View {
-        if entry.kind == .approval {
-            HStack(alignment: .top, spacing: 7) {
-                Image(systemName: entry.status == .failed ? "exclamationmark.triangle.fill" :
-                    entry.status == .resolved ? "checkmark.circle.fill" : "hand.raised.fill")
-                    .frame(width: 12)
-                    .foregroundStyle(operationColor(entry.status ?? .pending))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(entry.title)
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(.white.opacity(0.90))
-                    if let text = entry.text, !text.isEmpty {
-                        Text(text)
-                            .font(.system(size: 9, weight: .medium, design: .monospaced))
-                            .foregroundStyle(.white.opacity(0.55))
-                            .lineLimit(2)
-                    }
-                }
-                Spacer(minLength: 4)
-            }
-            .padding(7)
-            .background(
-                (entry.status == .resolved ? Color.green :
-                    entry.status == .failed ? Color.red : Color.orange).opacity(0.07)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(
-                        (entry.status == .resolved ? Color.green :
-                            entry.status == .failed ? Color.red : Color.orange).opacity(0.16),
-                        lineWidth: 1
-                    )
-            }
-        } else if entry.kind == .user || entry.kind == .agent {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(entry.title)
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(
-                        entry.kind == .user
-                            ? Color.white.opacity(0.48)
-                            : Color.cyan.opacity(0.72)
-                    )
-                if let text = entry.text {
-                    Text(text)
-                        .font(.system(size: 10.5, weight: .regular, design: .monospaced))
-                        .foregroundStyle(.white.opacity(entry.kind == .user ? 0.72 : 0.88))
-                        .textSelection(.enabled)
-                }
-            }
-            .padding(.vertical, 2)
-        } else {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Image(systemName: symbol(for: entry.kind))
-                    .frame(width: 11)
-                    .foregroundStyle(operationColor(entry.status ?? .unknown))
-                Text(entry.title)
-                    .fontDesign(entry.kind == .command ? .monospaced : .default)
-                    .foregroundStyle(.white.opacity(entry.status == .active ? 0.88 : 0.52))
-                    .lineLimit(2)
-                if let text = entry.text, !text.isEmpty {
-                    Text(text)
-                        .fontDesign(entry.kind == .command ? .monospaced : .default)
-                        .foregroundStyle(.white.opacity(0.34))
-                        .lineLimit(2)
-                }
-            }
-        }
-    }
-
-    private func symbol(for kind: AgentConsoleEntryKind) -> String {
-        switch kind {
-        case .user: "person.fill"
-        case .agent: "sparkles"
-        case .tool: "wrench.and.screwdriver"
-        case .command: "terminal"
-        case .plan: "list.bullet.clipboard"
-        case .approval: "checkmark.shield"
-        case .status: "circle.dotted"
-        case .error: "exclamationmark.triangle.fill"
-        }
     }
 
     @ViewBuilder
@@ -677,7 +628,104 @@ struct AgentEmbeddedConsoleView: View {
         return true
     }
 
+}
+
+/// One transcript row. Equatable so SwiftUI re-lays-out only rows whose
+/// content changed: while output streams, just the growing row is measured
+/// again instead of every visible row (and its text-selection overlay).
+private struct AgentConsoleEntryRow: View, Equatable {
+    let entry: AgentConsoleEntry
+
+    var body: some View {
+        if entry.kind == .approval {
+            HStack(alignment: .top, spacing: 7) {
+                Image(systemName: entry.status == .failed ? "exclamationmark.triangle.fill" :
+                    entry.status == .resolved ? "checkmark.circle.fill" : "hand.raised.fill")
+                    .frame(width: 12)
+                    .foregroundStyle(operationColor(entry.status ?? .pending))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(entry.title)
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.90))
+                    if let text = entry.text, !text.isEmpty {
+                        Text(text)
+                            .font(.system(size: 9, weight: .medium, design: .monospaced))
+                            .foregroundStyle(.white.opacity(0.55))
+                            .lineLimit(2)
+                    }
+                }
+                Spacer(minLength: 4)
+            }
+            .padding(7)
+            .background(
+                (entry.status == .resolved ? Color.green :
+                    entry.status == .failed ? Color.red : Color.orange).opacity(0.07)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(
+                        (entry.status == .resolved ? Color.green :
+                            entry.status == .failed ? Color.red : Color.orange).opacity(0.16),
+                        lineWidth: 1
+                    )
+            }
+        } else if entry.kind == .user || entry.kind == .agent {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entry.title)
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(
+                        entry.kind == .user
+                            ? Color.white.opacity(0.48)
+                            : Color.cyan.opacity(0.72)
+                    )
+                if let text = entry.text {
+                    Text(text)
+                        .font(.system(size: 10.5, weight: .regular, design: .monospaced))
+                        .foregroundStyle(.white.opacity(entry.kind == .user ? 0.72 : 0.88))
+                        .textSelection(.enabled)
+                }
+            }
+            .padding(.vertical, 2)
+        } else {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Image(systemName: symbol(for: entry.kind))
+                    .frame(width: 11)
+                    .foregroundStyle(operationColor(entry.status ?? .unknown))
+                Text(entry.title)
+                    .fontDesign(entry.kind == .command ? .monospaced : .default)
+                    .foregroundStyle(.white.opacity(entry.status == .active ? 0.88 : 0.52))
+                    .lineLimit(2)
+                if let text = entry.text, !text.isEmpty {
+                    Text(text)
+                        .fontDesign(entry.kind == .command ? .monospaced : .default)
+                        .foregroundStyle(.white.opacity(0.34))
+                        .lineLimit(2)
+                }
+            }
+        }
+    }
+
+    private func symbol(for kind: AgentConsoleEntryKind) -> String {
+        switch kind {
+        case .user: "person.fill"
+        case .agent: "sparkles"
+        case .tool: "wrench.and.screwdriver"
+        case .command: "terminal"
+        case .plan: "list.bullet.clipboard"
+        case .approval: "checkmark.shield"
+        case .status: "circle.dotted"
+        case .error: "exclamationmark.triangle.fill"
+        }
+    }
+
     private func operationColor(_ status: AgentOperationStatus) -> Color {
+        AgentConsoleStatusColor.color(status)
+    }
+}
+
+enum AgentConsoleStatusColor {
+    static func color(_ status: AgentOperationStatus) -> Color {
         switch status {
         case .active: .white.opacity(0.86)
         case .pending: .orange.opacity(0.88)

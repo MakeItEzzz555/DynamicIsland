@@ -1,4 +1,5 @@
 import AgentBridgeShared
+import Combine
 import Foundation
 
 @MainActor
@@ -9,7 +10,6 @@ final class AgentManagedSessionController: ObservableObject {
     @Published private(set) var lastTransportError: String?
     @Published private(set) var transportErrorsByProvider: [AgentProvider: String] = [:]
     @Published private(set) var accountUsageByProvider: [AgentProvider: AgentUsage] = [:]
-    @Published private(set) var transcripts: [AgentSessionID: [AgentManagedTranscriptEntry]] = [:]
     @Published private(set) var modelsByProvider: [AgentProvider: [AgentManagedModelDescriptor]] = [:]
     @Published private(set) var pendingModelOverrides: [AgentSessionID: String] = [:]
     @Published private(set) var newSessionModelByProvider: [AgentProvider: String] = [:]
@@ -46,6 +46,10 @@ final class AgentManagedSessionController: ObservableObject {
     private var awaitingApprovalTokens: [AgentApprovalControlKey: AgentInteractiveRequestToken] = [:]
     private var knownDiscoveredSessionIDs: Set<AgentSessionID> = []
     private var hydratedTranscriptSessionIDs: Set<AgentSessionID> = []
+    /// Transcripts live outside this object's published state: a streamed
+    /// delta publishes only to the selected console's feed, never to the
+    /// chrome that observes this controller.
+    private let transcripts = AgentTranscriptStore()
 
     init(
         provider: (any AgentInteractiveProvider)?,
@@ -60,7 +64,20 @@ final class AgentManagedSessionController: ObservableObject {
         self.eventStore = eventStore
         self.approvals = approvals
         selectedProvider = provider?.provider
+        installPerformanceProbe()
     }
+
+#if DEBUG
+    private var performanceProbe: AnyCancellable?
+
+    private func installPerformanceProbe() {
+        performanceProbe = objectWillChange.sink { _ in
+            MainActor.assumeIsolated { AgentPerformanceProbe.count("agents.managed.publish") }
+        }
+    }
+#else
+    private func installPerformanceProbe() {}
+#endif
 
     init(
         providers: [any AgentInteractiveProvider],
@@ -75,6 +92,7 @@ final class AgentManagedSessionController: ObservableObject {
         self.eventStore = eventStore
         self.approvals = approvals
         selectedProvider = Self.sortedProviders(self.providers.keys).first
+        installPerformanceProbe()
     }
 
     convenience init?(
@@ -182,15 +200,20 @@ final class AgentManagedSessionController: ObservableObject {
 
     func selectProvider(_ provider: AgentProvider) {
         guard managedProviders.contains(provider) else { return }
-        selectedProvider = provider
-        lastTransportError = transportErrorsByProvider[provider]
+        AgentPerformanceProbe.mark("agents.provider.switch")
+        // Each assignment publishes and re-renders the Agents chrome, so
+        // only real changes are written.
+        if selectedProvider != provider { selectedProvider = provider }
+        let error = transportErrorsByProvider[provider]
+        if lastTransportError != error { lastTransportError = error }
     }
 
     func selectSession(_ sessionID: AgentSessionInstanceID?) {
+        if sessionID != selectedSessionID { AgentPerformanceProbe.mark("agents.session.switch") }
         if let provider = sessionID?.sessionID.provider {
-            selectedProvider = provider
-            selectedSessionIDs[provider] = sessionID
-        } else if let selectedProvider {
+            if selectedProvider != provider { selectedProvider = provider }
+            if selectedSessionIDs[provider] != sessionID { selectedSessionIDs[provider] = sessionID }
+        } else if let selectedProvider, selectedSessionIDs[selectedProvider] != nil {
             selectedSessionIDs.removeValue(forKey: selectedProvider)
         }
     }
@@ -312,11 +335,14 @@ final class AgentManagedSessionController: ObservableObject {
         if provider.interactiveCapabilities.contains(.selectModel),
            let models = try? await provider.listModels() {
             let filtered = models.filter { !$0.model.isEmpty }
-            modelsByProvider[agentProvider] = filtered
+            if modelsByProvider[agentProvider] != filtered {
+                modelsByProvider[agentProvider] = filtered
+            }
             let validModels = Set(filtered.map(\.model))
-            pendingModelOverrides = pendingModelOverrides.filter { sessionID, model in
+            let overrides = pendingModelOverrides.filter { sessionID, model in
                 sessionID.provider != agentProvider || validModels.contains(model)
             }
+            if overrides != pendingModelOverrides { pendingModelOverrides = overrides }
         }
 
         if provider.interactiveCapabilities.contains(.accountUsage) {
@@ -325,7 +351,9 @@ final class AgentManagedSessionController: ObservableObject {
                 guard !Task.isCancelled else { return }
                 var retained = accountUsageByProvider[agentProvider] ?? AgentUsage()
                 retained.merge(refreshed)
-                accountUsageByProvider[agentProvider] = retained
+                if accountUsageByProvider[agentProvider] != retained {
+                    accountUsageByProvider[agentProvider] = retained
+                }
                 setTransportError(nil, for: agentProvider)
             } catch {
                 // Preserve the last trustworthy snapshot across transient provider failures.
@@ -333,7 +361,9 @@ final class AgentManagedSessionController: ObservableObject {
             }
         } else {
             // Unsupported providers must never inherit/fabricate another provider's account usage.
-            accountUsageByProvider.removeValue(forKey: agentProvider)
+            if accountUsageByProvider[agentProvider] != nil {
+                accountUsageByProvider.removeValue(forKey: agentProvider)
+            }
         }
 
         do {
@@ -346,8 +376,10 @@ final class AgentManagedSessionController: ObservableObject {
             )
             guard !Task.isCancelled else { return }
             let refreshedIDs = Set(discovered.map(\.session.sessionID))
-            discoveredSessionIDs.subtract(discoveredSessionIDs.filter { $0.provider == agentProvider })
-            discoveredSessionIDs.formUnion(refreshedIDs)
+            let discoveredNow = discoveredSessionIDs
+                .filter { $0.provider != agentProvider }
+                .union(refreshedIDs)
+            if discoveredNow != discoveredSessionIDs { discoveredSessionIDs = discoveredNow }
             knownDiscoveredSessionIDs.formUnion(refreshedIDs)
             for descriptor in discovered {
                 await registerDiscoveredSession(descriptor)
@@ -393,7 +425,14 @@ final class AgentManagedSessionController: ObservableObject {
 
         if existing == nil {
             _ = await emitDiscoveredSessionStart(discovered)
-        } else {
+        } else if let existing, !Self.metadataIsCurrent(
+            existing,
+            project: projectContext(for: descriptor),
+            availability: availability(for: discovered.runtimeState)
+        ) || min(discovered.updatedAt, Date()) > existing.lastUpdatedAt {
+            // Only real changes are emitted. Re-emitting unchanged metadata
+            // for every discovered session on each 8 s refresh republished
+            // the whole store once per session and re-rendered Agents ~36x.
             _ = await emit(
                 provider: descriptor.provider,
                 nativeSessionID: descriptor.nativeSessionID,
@@ -449,6 +488,25 @@ final class AgentManagedSessionController: ObservableObject {
             type: .agentWorking,
             payload: .activity(AgentActivityDescriptor(title: "Working", summary: nil))
         )
+    }
+
+    /// True when the normalized session already reflects this discovered
+    /// metadata (same merge semantics as the reducer: nil fields are kept).
+    nonisolated static func metadataIsCurrent(
+        _ session: AgentSession,
+        project: AgentProjectContext,
+        availability: AgentSessionAvailability
+    ) -> Bool {
+        let update = AgentPrivacyProjection.project(project)
+        func same<Value: Equatable>(_ new: Value?, _ old: Value?) -> Bool { new == nil || new == old }
+        return session.availability == availability &&
+            same(update.displayName, session.project.displayName) &&
+            same(update.workingDirectory, session.project.workingDirectory) &&
+            same(update.repositoryIdentity, session.project.repositoryIdentity) &&
+            same(update.gitBranch, session.project.gitBranch) &&
+            same(update.gitCommit, session.project.gitCommit) &&
+            same(update.model, session.project.model) &&
+            same(update.sourceApplication, session.project.sourceApplication)
     }
 
     @discardableResult
@@ -576,6 +634,16 @@ final class AgentManagedSessionController: ObservableObject {
 
     func transcript(for session: AgentSession) -> [AgentManagedTranscriptEntry] {
         transcripts[session.id.sessionID] ?? []
+    }
+
+    /// Observable transcript for one exact session (console only).
+    func transcriptFeed(for session: AgentSession) -> AgentTranscriptFeed {
+        transcripts.feed(for: session.id.sessionID)
+    }
+
+    /// Publishes coalesced transcript changes immediately.
+    func flushTranscriptPublications() {
+        transcripts.flush()
     }
 
     /// Reconciles an observed session with the provider's exact native thread
@@ -712,6 +780,8 @@ final class AgentManagedSessionController: ObservableObject {
         provider: any AgentInteractiveProvider,
         limit: Int
     ) async throws {
+        AgentPerformanceProbe.mark("agents.hydration.start")
+        defer { AgentPerformanceProbe.mark("agents.hydration.end") }
         let entries = try await provider.readTranscript(
             nativeSessionID: sessionID.nativeID,
             limit: min(max(limit, 1), 100)
@@ -1557,7 +1627,7 @@ final class AgentManagedSessionController: ObservableObject {
         )
         value.acceptsDirectInput = descriptor.acceptsDirectInput
         value.lastError = nil
-        managed[descriptor.sessionID] = value
+        if managed[descriptor.sessionID] != value { managed[descriptor.sessionID] = value }
     }
 
     private func updateControl(
@@ -1566,7 +1636,7 @@ final class AgentManagedSessionController: ObservableObject {
     ) {
         guard var state = managed[sessionID] else { return }
         update(&state)
-        managed[sessionID] = state
+        if managed[sessionID] != state { managed[sessionID] = state }
     }
 
     private func recordError(_ error: Error, for sessionID: AgentSessionID) {
@@ -1576,12 +1646,15 @@ final class AgentManagedSessionController: ObservableObject {
     }
 
     private func setTransportError(_ message: String?, for provider: AgentProvider) {
-        if let message {
-            transportErrorsByProvider[provider] = message
-        } else {
-            transportErrorsByProvider.removeValue(forKey: provider)
+        if transportErrorsByProvider[provider] != message {
+            if let message {
+                transportErrorsByProvider[provider] = message
+            } else {
+                transportErrorsByProvider.removeValue(forKey: provider)
+            }
         }
-        if selectedProvider == provider || (selectedProvider == nil && managedProvider == provider) {
+        if selectedProvider == provider || (selectedProvider == nil && managedProvider == provider),
+           lastTransportError != message {
             lastTransportError = message
         }
     }
@@ -1836,6 +1909,7 @@ final class AgentManagedSessionController: ObservableObject {
         delta: String
     ) {
         guard !delta.isEmpty else { return }
+        AgentPerformanceProbe.count("agents.stream.delta")
         var entries = transcripts[sessionID] ?? []
         if let index = entries.firstIndex(where: { $0.id == itemID }) {
             let combined = entries[index].text + delta
