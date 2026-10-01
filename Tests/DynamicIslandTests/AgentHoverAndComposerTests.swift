@@ -54,6 +54,40 @@ final class ExpandedHoverContainmentTests: XCTestCase {
         }
     }
 
+    func testNativeMenuTrackingLifecycleIsNestedAndNeverUnderflows() {
+        var lifecycle = NativeMenuTrackingLifecycle()
+        XCTAssertFalse(lifecycle.isTracking)
+        XCTAssertEqual(lifecycle.depth, 0)
+
+        lifecycle.begin()
+        lifecycle.begin()
+        XCTAssertTrue(lifecycle.isTracking)
+        XCTAssertEqual(lifecycle.depth, 2)
+
+        lifecycle.end()
+        XCTAssertTrue(lifecycle.isTracking)
+        XCTAssertEqual(lifecycle.depth, 1)
+
+        lifecycle.end()
+        lifecycle.end()
+        XCTAssertFalse(lifecycle.isTracking)
+        XCTAssertEqual(lifecycle.depth, 0)
+    }
+
+    func testNativeMenuTrackingHoldKeepsIslandExpandedOutsideShell() {
+        var lifecycle = NativeMenuTrackingLifecycle()
+        lifecycle.begin()
+        let holds: ExpandedHoverContainment.Holds = lifecycle.isTracking ? .menuTracking : []
+        XCTAssertEqual(
+            ExpandedHoverContainment.decide(
+                pointer: CGPoint(x: 0, y: 0),
+                shellFrame: agentsShell,
+                holds: holds
+            ),
+            .held(.menuTracking)
+        )
+    }
+
     func testSafeRegionDoesNotClaimTheDesktop() {
         let region = ExpandedHoverContainment.safeRegion(shellFrame: agentsShell)
         XCTAssertEqual(region.width, agentsShell.width + ExpandedHoverContainment.tolerance * 2)

@@ -8,6 +8,20 @@ import CoreGraphics
 /// workspace draws is clipped inside that shell, so header, transcript,
 /// composer, Send and Stop are all covered, including internal gaps.
 /// Nothing outside the shell is claimed, so mouse passthrough is unchanged.
+struct NativeMenuTrackingLifecycle: Equatable, Sendable {
+    private(set) var depth = 0
+
+    var isTracking: Bool { depth > 0 }
+
+    mutating func begin() {
+        depth &+= 1
+    }
+
+    mutating func end() {
+        depth = max(depth - 1, 0)
+    }
+}
+
 enum ExpandedHoverContainment {
     static let tolerance: CGFloat = 4
 

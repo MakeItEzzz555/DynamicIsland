@@ -237,7 +237,7 @@ final class OverlayWindowController {
     /// Page whose expanded geometry the shell currently has.
     private var committedExpandedPage: ExpandedIslandPage?
     private var expandedAt: CFTimeInterval = 0
-    private var nativeMenuTrackingDepth = 0
+    private var nativeMenuTracking = NativeMenuTrackingLifecycle()
     private var collapsedScrollDelta: CGSize = .zero
     private var collapsedScrollGestureHandled = false
     private var collapsedScrollLastActionAt: CFTimeInterval?
@@ -316,7 +316,7 @@ final class OverlayWindowController {
         hostingView.wantsLayer = true
         hostingView.layer?.backgroundColor = NSColor.clear.cgColor
         hostingView.onMouseExited = { [weak self] in
-            self?.collapseIfExpandedMouseOutsideAfterGrace()
+            self?.scheduleCollapseCheckAfterPointerExit()
         }
         hostingView.interactiveRegionProvider = { [weak self] in
             self?.currentInteractiveRegion() ?? .zero
@@ -336,13 +336,31 @@ final class OverlayWindowController {
 
         NotificationCenter.default.publisher(for: NSMenu.didBeginTrackingNotification)
             .sink { [weak self] _ in
-                self?.nativeMenuTrackingDepth += 1
+                guard let self else { return }
+                self.nativeMenuTracking.begin()
+                // NSMenu runs its own tracking loop/window. Keep the source
+                // island interactive and suspend pointer-leave polling while
+                // that native surface owns the interaction.
+                self.stopMouseContainmentTimer()
+                self.islandPanel.ignoresMouseEvents = false
             }
             .store(in: &cancellables)
         NotificationCenter.default.publisher(for: NSMenu.didEndTrackingNotification)
             .sink { [weak self] _ in
                 guard let self else { return }
-                self.nativeMenuTrackingDepth = max(self.nativeMenuTrackingDepth - 1, 0)
+                self.nativeMenuTracking.end()
+                guard !self.nativeMenuTracking.isTracking else { return }
+                // Re-arm after the menu tracking loop fully unwinds so a
+                // stale mouse-exit event cannot collapse the island before
+                // AppKit has restored the pointer/window relationship.
+                let generation = self.presentationSession.generation
+                DispatchQueue.main.async { [weak self] in
+                    guard let self,
+                          self.allowsOverlayWork(generation: generation),
+                          !self.nativeMenuTracking.isTracking else { return }
+                    self.updateMousePassthrough()
+                    self.updateMouseContainmentTimer()
+                }
             }
             .store(in: &cancellables)
 
@@ -1054,6 +1072,10 @@ final class OverlayWindowController {
             stopMouseContainmentTimer()
             return
         }
+        guard !nativeMenuTracking.isTracking else {
+            stopMouseContainmentTimer()
+            return
+        }
         switch islandState.state {
         case .collapsed:
             stopMouseContainmentTimer()
@@ -1063,7 +1085,7 @@ final class OverlayWindowController {
     }
 
     private func startMouseContainmentTimer() {
-        guard canPresentOverlay else { return }
+        guard canPresentOverlay, !nativeMenuTracking.isTracking else { return }
         guard mouseContainmentTimer == nil else {
             debugLog("timer start skipped; already running")
             return
@@ -1184,6 +1206,14 @@ final class OverlayWindowController {
         NSEvent.mouseLocation
     }
 
+    private func scheduleCollapseCheckAfterPointerExit() {
+        let generation = presentationSession.generation
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.allowsOverlayWork(generation: generation) else { return }
+            self.collapseIfExpandedMouseOutsideAfterGrace(source: "hostingViewDeferredExit")
+        }
+    }
+
     private func collapseIfExpandedMouseOutsideAfterGrace(source: String = "event") {
         guard canPresentOverlay else { return }
         debugLog("collapse check entered source=\(source) state=\(islandState.state)")
@@ -1232,7 +1262,7 @@ final class OverlayWindowController {
 
     private var currentExpandedHoverHolds: ExpandedHoverContainment.Holds {
         var holds: ExpandedHoverContainment.Holds = []
-        if nativeMenuTrackingDepth > 0 { holds.insert(.menuTracking) }
+        if nativeMenuTracking.isTracking { holds.insert(.menuTracking) }
         if layoutStore.isTransientInteractionActive { holds.insert(.transientInteraction) }
         if layoutStore.isTextInputFocused, islandPanel.isKeyWindow { holds.insert(.textInput) }
         if modules.fileDragSession.isActive { holds.insert(.fileDrag) }
@@ -1297,6 +1327,11 @@ final class OverlayWindowController {
     private func updateMousePassthrough(at screenPoint: NSPoint = NSEvent.mouseLocation) {
         guard canPresentOverlay else {
             islandPanel.ignoresMouseEvents = true
+            return
+        }
+        if nativeMenuTracking.isTracking &&
+            (islandState.state == .expanded || layoutStore.isCollapseShellOnly) {
+            islandPanel.ignoresMouseEvents = false
             return
         }
 
