@@ -457,7 +457,7 @@ struct AgentDashboardContentView: View {
             reconcileWorkspaceSelection()
         }
         .onChange(of: launchFlow.isPresented) { _, isOpen in
-            layoutStore?.isTransientInteractionActive = isOpen
+            layoutStore?.setTransientInteraction(isOpen, owner: .agentsLauncher)
             if isOpen {
                 layoutStore?.setExpandedScrollGestureSuppressed(true)
             } else {
@@ -466,7 +466,7 @@ struct AgentDashboardContentView: View {
         }
         .onDisappear {
             transcriptLoadGate.cancel()
-            layoutStore?.isTransientInteractionActive = false
+            layoutStore?.setTransientInteraction(false, owner: .agentsLauncher)
             layoutStore?.setExpandedScrollGestureSuppressed(false)
             layoutStore?.setExpandedContentScrollRegion(.zero)
         }

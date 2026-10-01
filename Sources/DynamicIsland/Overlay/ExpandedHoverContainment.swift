@@ -36,6 +36,17 @@ enum ExpandedHoverContainment {
         /// A file drag owns the Tray/orbit interaction even before the first
         /// accessory geometry preference has propagated to the window.
         static let fileDrag = Holds(rawValue: 1 << 3)
+        /// An app-owned native popover window (e.g. the Calendar date
+        /// picker) is visible; the pointer may legitimately be inside it.
+        static let nativePopover = Holds(rawValue: 1 << 4)
+    }
+
+    /// App-owned transient native windows (NSPopover-backed SwiftUI
+    /// popovers and calendar overlays) other than the island panel itself.
+    /// Same signal Droppy uses (`hasActivePopoverWindow`).
+    static func isTransientNativeWindow(className: String, isVisible: Bool, isIslandPanel: Bool) -> Bool {
+        guard isVisible, !isIslandPanel else { return false }
+        return className.contains("Popover") || className.contains("CalendarOverlay")
     }
 
     enum Decision: Equatable, Sendable {

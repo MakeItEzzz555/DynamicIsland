@@ -19,6 +19,12 @@ enum IslandCanvasCoordinateSpace {
     }
 }
 
+enum TransientInteractionOwner: Hashable, Sendable {
+    case agentsLauncher
+    case calendarDatePicker
+    case unspecified
+}
+
 @MainActor
 final class IslandLayoutStore: ObservableObject {
     @Published var overlayPresentationGeneration = 0
@@ -45,7 +51,26 @@ final class IslandLayoutStore: ObservableObject {
     @Published private(set) var displayMetrics: ResolvedIslandMetrics = .fallback
     @Published private(set) var isExpandedScrollGestureSuppressed = false
     @Published private(set) var expandedContentScrollRegion: CGRect = .zero
-    @Published var isTransientInteractionActive = false
+    /// Owners of an in-island transient interaction (Agents launcher,
+    /// Calendar date popover). The island stays expanded while any owner is
+    /// active; each owner clears only its own claim, so two surfaces can
+    /// never leave the island stuck or release each other's hold.
+    @Published private(set) var transientInteractionOwners: Set<TransientInteractionOwner> = []
+
+    var isTransientInteractionActive: Bool {
+        get { !transientInteractionOwners.isEmpty }
+        set { setTransientInteraction(newValue, owner: .unspecified) }
+    }
+
+    func setTransientInteraction(_ active: Bool, owner: TransientInteractionOwner) {
+        if active {
+            guard !transientInteractionOwners.contains(owner) else { return }
+            transientInteractionOwners.insert(owner)
+        } else {
+            guard transientInteractionOwners.contains(owner) else { return }
+            transientInteractionOwners.remove(owner)
+        }
+    }
     /// Visible accessories attached below the expanded shell (panel-local,
     /// AppKit coordinates). They own hover, hit-testing and passthrough
     /// exactly like the shell, and only their own area.

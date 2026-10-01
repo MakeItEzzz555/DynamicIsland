@@ -1143,6 +1143,11 @@ final class OverlayWindowController {
             if event.window === self.islandPanel {
                 return event
             }
+            // A native popover (Calendar date picker) owns its own scrolling;
+            // it must never page the workspace or drive island gestures.
+            if let window = event.window, self.isTransientNativeWindow(window) {
+                return event
+            }
 
             if self.handleExpandedScrollWheelFromMonitor(event, source: "localScrollMonitor") {
                 return nil
@@ -1266,7 +1271,20 @@ final class OverlayWindowController {
         if layoutStore.isTransientInteractionActive { holds.insert(.transientInteraction) }
         if layoutStore.isTextInputFocused, islandPanel.isKeyWindow { holds.insert(.textInput) }
         if modules.fileDragSession.isActive { holds.insert(.fileDrag) }
+        if hasVisibleTransientNativeWindow { holds.insert(.nativePopover) }
         return holds
+    }
+
+    private func isTransientNativeWindow(_ window: NSWindow) -> Bool {
+        ExpandedHoverContainment.isTransientNativeWindow(
+            className: String(describing: type(of: window)),
+            isVisible: window.isVisible,
+            isIslandPanel: window === islandPanel
+        )
+    }
+
+    private var hasVisibleTransientNativeWindow: Bool {
+        NSApp.windows.contains(where: isTransientNativeWindow)
     }
 
     /// Attached accessories (File Tray quick actions) in screen space.
