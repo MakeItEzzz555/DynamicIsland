@@ -24,8 +24,12 @@ struct VoiceTranscript: Equatable, Sendable {
     let wasOnDevice: Bool
 }
 
+/// idle -> requestingPermission -> preparing -> recording -> stopping ->
+/// transcribing -> completed, plus failed. `recording` is entered only after
+/// the recorder confirms capture actually started.
 enum VoiceTranscriptionPhase: Equatable, Sendable {
     case idle
+    case requestingPermission
     case preparing
     case recording(startedAt: Date)
     case stopping
@@ -38,6 +42,7 @@ enum VoiceTranscriptionError: LocalizedError, Equatable {
     case disabled
     case busy
     case microphonePermissionRequired
+    case noMicrophone
     case speechPermissionRequired
     case recognizerUnavailable
     case onDeviceRecognitionUnavailable
@@ -56,6 +61,8 @@ enum VoiceTranscriptionError: LocalizedError, Equatable {
             "A recording or transcription is already in progress."
         case .microphonePermissionRequired:
             "Microphone access is required to record."
+        case .noMicrophone:
+            "No microphone available."
         case .speechPermissionRequired:
             "Speech Recognition access is required to transcribe."
         case .recognizerUnavailable:
@@ -88,6 +95,8 @@ protocol VoicePermissionProviding: AnyObject {
 
 @MainActor
 protocol VoiceAudioRecording: AnyObject {
+    /// A default audio input device exists right now.
+    var hasInputDevice: Bool { get }
     /// Begins capturing microphone audio into `url`. Returns only after the
     /// recorder confirms it is actually recording.
     func startRecording(to url: URL) throws
@@ -109,6 +118,21 @@ protocol VoiceSpeechTranscribing: AnyObject {
 
 @MainActor
 final class SystemVoicePermissionProvider: VoicePermissionProviding {
+    /// TCC delivers the reply on a background queue. The reply must be
+    /// `@Sendable` (non-isolated): a closure that inherits this type's main-
+    /// actor isolation is checked by the Swift runtime when called from
+    /// Objective-C and traps (EXC_BREAKPOINT in requestSpeech(), the
+    /// production Voice crash).
+    typealias SpeechAuthorizationRequest = @Sendable (@escaping @Sendable (SFSpeechRecognizerAuthorizationStatus) -> Void) -> Void
+
+    private let speechAuthorizationRequest: SpeechAuthorizationRequest
+
+    init(speechAuthorizationRequest: @escaping SpeechAuthorizationRequest = { reply in
+        SFSpeechRecognizer.requestAuthorization { @Sendable status in reply(status) }
+    }) {
+        self.speechAuthorizationRequest = speechAuthorizationRequest
+    }
+
     var microphoneState: VoicePermissionState {
         Self.map(AVCaptureDevice.authorizationStatus(for: .audio))
     }
@@ -124,7 +148,7 @@ final class SystemVoicePermissionProvider: VoicePermissionProviding {
 
     func requestSpeech() async -> VoicePermissionState {
         let status = await withCheckedContinuation { (continuation: CheckedContinuation<SFSpeechRecognizerAuthorizationStatus, Never>) in
-            SFSpeechRecognizer.requestAuthorization { status in
+            speechAuthorizationRequest { @Sendable status in
                 continuation.resume(returning: status)
             }
         }
@@ -156,6 +180,8 @@ final class SystemVoicePermissionProvider: VoicePermissionProviding {
 final class AVFoundationVoiceRecorder: VoiceAudioRecording {
     private var recorder: AVAudioRecorder?
 
+    var hasInputDevice: Bool { AVCaptureDevice.default(for: .audio) != nil }
+
     func startRecording(to url: URL) throws {
         cancelRecording()
         let settings: [String: Any] = [
@@ -165,7 +191,9 @@ final class AVFoundationVoiceRecorder: VoiceAudioRecording {
             AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
         ]
         let recorder = try AVAudioRecorder(url: url, settings: settings)
-        guard recorder.prepareToRecord(), recorder.record() else {
+        // `record()` returning true is not enough: require the recorder to
+        // report live capture before the controller enters `.recording`.
+        guard recorder.prepareToRecord(), recorder.record(), recorder.isRecording else {
             recorder.stop()
             recorder.deleteRecording()
             throw VoiceTranscriptionError.recordingFailed("The microphone could not be started.")
@@ -223,7 +251,9 @@ final class SpeechFrameworkTranscriber: VoiceSpeechTranscribing {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<String, any Error>) in
                 let box = RecognitionContinuation(continuation)
                 pending = box
-                task = recognizer.recognitionTask(with: request) { result, error in
+                // @Sendable: Speech may call this off the main queue; it only
+                // touches the thread-safe one-shot box.
+                task = recognizer.recognitionTask(with: request) { @Sendable result, error in
                     if let error {
                         box.resume(throwing: VoiceTranscriptionError.transcriptionFailed(error.localizedDescription))
                     } else if let result, result.isFinal {
@@ -346,7 +376,7 @@ final class VoiceTranscriptionController: ObservableObject, IslandCapabilityAdap
 
     var isBusy: Bool {
         switch phase {
-        case .preparing, .recording, .stopping, .transcribing: true
+        case .requestingPermission, .preparing, .recording, .stopping, .transcribing: true
         case .idle, .completed, .failed: false
         }
     }
@@ -392,6 +422,7 @@ final class VoiceTranscriptionController: ObservableObject, IslandCapabilityAdap
         guard isEnabled else { return "Disabled" }
         switch phase {
         case .idle: return willTranscribeOnDevice ? "Ready · on-device" : "Ready"
+        case .requestingPermission: return "Waiting for permission"
         case .preparing: return "Preparing microphone"
         case .recording: return "Recording"
         case .stopping: return "Stopping"
@@ -450,15 +481,22 @@ final class VoiceTranscriptionController: ObservableObject, IslandCapabilityAdap
 
         generation += 1
         let token = generation
-        phase = .preparing
+        let needsPrompt = permissions.microphoneState == .notDetermined
+            || permissions.speechState == .notDetermined
+        phase = needsPrompt ? .requestingPermission : .preparing
         publishState()
 
         await requestPermissions()
         guard token == generation else { return }
+        phase = .preparing
+        publishState()
 
         do {
             guard microphoneState == .authorized else {
                 throw VoiceTranscriptionError.microphonePermissionRequired
+            }
+            guard recorder.hasInputDevice else {
+                throw VoiceTranscriptionError.noMicrophone
             }
             guard speechState == .authorized else {
                 throw VoiceTranscriptionError.speechPermissionRequired

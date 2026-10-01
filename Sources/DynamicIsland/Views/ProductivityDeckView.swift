@@ -417,7 +417,7 @@ private struct VoiceTile: View {
 
     private var isBusy: Bool {
         switch controller.phase {
-        case .preparing, .stopping, .transcribing: true
+        case .requestingPermission, .preparing, .stopping, .transcribing: true
         default: false
         }
     }

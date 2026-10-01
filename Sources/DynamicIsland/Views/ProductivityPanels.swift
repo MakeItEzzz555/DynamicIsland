@@ -286,7 +286,7 @@ struct VoiceTranscribePanel: View {
                         Label("Stop", systemImage: "stop.circle.fill")
                     }
                     Button("Cancel", role: .cancel) { controller.cancel() }
-                case .preparing, .stopping, .transcribing:
+                case .requestingPermission, .preparing, .stopping, .transcribing:
                     ProgressView()
                         .controlSize(.small)
                     Button("Cancel", role: .cancel) { controller.cancel() }

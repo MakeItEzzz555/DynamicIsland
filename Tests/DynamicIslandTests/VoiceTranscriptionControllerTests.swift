@@ -12,8 +12,10 @@ private final class FakeVoicePermissions: VoicePermissionProviding {
     var speechGrant: VoicePermissionState = .authorized
     var microphoneRequests = 0
     var speechRequests = 0
+    var onRequest: (() -> Void)?
 
     func requestMicrophone() async -> VoicePermissionState {
+        onRequest?()
         microphoneRequests += 1
         microphoneState = microphoneGrant
         return microphoneState
@@ -28,6 +30,7 @@ private final class FakeVoicePermissions: VoicePermissionProviding {
 
 @MainActor
 private final class FakeVoiceRecorder: VoiceAudioRecording {
+    var hasInputDevice = true
     var startError: Error?
     var isRecording = false
     var startedURLs: [URL] = []
@@ -458,5 +461,64 @@ private func XCTAssertThrowsVoiceError(
         XCTFail("Expected \(expected)", file: file, line: line)
     } catch {
         XCTAssertEqual(error as? VoiceTranscriptionError, expected, file: file, line: line)
+    }
+}
+
+
+// MARK: - Production crash / lifecycle regressions
+
+extension VoiceTranscriptionControllerTests {
+    func testPermissionRequestIsAnExplicitPhaseNotRecording() async throws {
+        let fixture = makeFixture()
+        var observed: [VoiceTranscriptionPhase] = []
+        fixture.permissions.onRequest = { observed.append(fixture.controller.phase) }
+        try await fixture.controller.startRecording()
+        XCTAssertEqual(observed, [.requestingPermission])
+        guard case .recording = fixture.controller.phase else { return XCTFail("expected recording") }
+    }
+
+    func testMissingInputDeviceFailsTruthfullyWithoutRecording() async {
+        let fixture = makeFixture(authorized: true)
+        fixture.recorder.hasInputDevice = false
+        await XCTAssertThrowsVoiceError(.noMicrophone) {
+            try await fixture.controller.startRecording()
+        }
+        XCTAssertTrue(fixture.recorder.startedURLs.isEmpty)
+        XCTAssertTrue(fixture.activities.activities.isEmpty)
+        XCTAssertEqual(fixture.controller.phase, .failed("No microphone available."))
+    }
+
+    func testPermissionGrantedAfterDenialRecoversOnNextStart() async throws {
+        let fixture = makeFixture()
+        fixture.permissions.microphoneState = .denied
+        fixture.permissions.speechState = .authorized
+        await XCTAssertThrowsVoiceError(.microphonePermissionRequired) {
+            try await fixture.controller.startRecording()
+        }
+        // The user grants access in System Settings and comes back.
+        fixture.permissions.microphoneState = .authorized
+        try await fixture.controller.startRecording()
+        guard case .recording = fixture.controller.phase else { return XCTFail("expected recording") }
+        XCTAssertEqual(fixture.permissions.microphoneRequests, 0, "denied access is never re-prompted")
+    }
+
+    func testStopThenImmediatelyStartAgainRecordsTwice() async throws {
+        let fixture = makeFixture(authorized: true)
+        try await fixture.controller.startRecording()
+        try await fixture.controller.stopAndTranscribe()
+        try await fixture.controller.startRecording()
+        guard case .recording = fixture.controller.phase else { return XCTFail("expected second recording") }
+        XCTAssertEqual(fixture.recorder.startedURLs.count, 2)
+        XCTAssertNotEqual(fixture.recorder.startedURLs[0], fixture.recorder.startedURLs[1])
+    }
+
+    func testRepeatedStartStopCancelCyclesNeverLeaveARecorderRunning() async throws {
+        let fixture = makeFixture(authorized: true)
+        for _ in 0..<25 {
+            try await fixture.controller.startRecording()
+            fixture.controller.cancel()
+            XCTAssertFalse(fixture.recorder.isRecording)
+            XCTAssertTrue(fixture.activities.activities.isEmpty)
+        }
     }
 }
