@@ -123,6 +123,19 @@ final class AgentsPerformanceHarnessTests: XCTestCase {
         }
         report["streaming"] = streaming.json(probe: AgentPerformanceProbe.snapshot(), marks: [:], parameters: ["deltas": deltas])
 
+        // End the synthetic provider turn before measuring typing. A real
+        // managed composer is intentionally disabled while its turn is still
+        // active, so searching for an editable NSTextView before turnCompleted
+        // measures the wrong product state and makes the harness fail.
+        await codex.yield(.turnCompleted(
+            .init(nativeSessionID: selected.id.sessionID.nativeID, turnID: turn),
+            state: .completed,
+            summary: nil
+        ))
+        for _ in 0..<100 where host.firstTextView() == nil {
+            await host.settle()
+        }
+
         // 2b. Typing 40 characters into the real composer text view.
         AgentPerformanceProbe.reset()
         let typing = try await measure(host) {
