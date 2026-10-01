@@ -49,15 +49,18 @@ struct BasketMetrics: Equatable {
     func surfaceSize(itemCount: Int, isExpanded: Bool, layout: BasketLayoutMode) -> CGSize {
         guard itemCount > 0, isExpanded else { return collapsedSize }
         let rows = Int(ceil(Double(itemCount) / Double(columns)))
-        let oneRow = headerHeight + tileHeight + bottomPadding
         switch layout {
         case .grid:
             let visibleRows = CGFloat(min(rows, 3))
             return CGSize(width: expandedWidth,
                           height: headerHeight + visibleRows * tileHeight + (visibleRows - 1) * gridSpacing + bottomPadding)
         case .list:
-            let height = rows <= 1 ? oneRow * 1.25 : (oneRow + tileHeight + gridSpacing) * 1.5
-            return CGSize(width: expandedWidth, height: height)
+            // Intentional difference: Droppy derives list height from 4-wide
+            // grid rows (×1.25 / ×1.5), which clips a 3-row list. Size from
+            // the real 44 pt rows instead; scroll after four.
+            let visibleRows = CGFloat(min(itemCount, 4))
+            return CGSize(width: expandedWidth,
+                          height: headerHeight + s(6) + visibleRows * (listRowHeight + s(4)) + s(18))
         }
     }
 
