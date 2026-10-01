@@ -13,7 +13,9 @@ struct ProductivityDeckView: View {
     @ObservedObject var capabilities: IslandCapabilityRegistry
     let reduceMotion: Bool
     let layoutStore: IslandLayoutStore?
-    @State private var isMirrorPresented = true
+    /// Mirror presentation follows the controller's recorded user intent, not
+    /// view state, so a remount can never resurrect a closed mirror.
+    @ObservedObject private var camera: CameraPreviewController
 
     init(
         productivity: ProductivityModules,
@@ -26,11 +28,13 @@ struct ProductivityDeckView: View {
         self.fileShelf = fileShelf
         self.tools = tools
         self.capabilities = productivity.capabilities
+        self.camera = productivity.camera
         self.reduceMotion = reduceMotion
         self.layoutStore = layoutStore
     }
 
     var body: some View {
+        let isMirrorPresented = !camera.isMirrorDismissed
         GeometryReader { proxy in
             let showsCamera = tools.contains(.camera) && isMirrorPresented
             let gridTools = tools.filter { $0 != .camera || !isMirrorPresented }
@@ -50,11 +54,7 @@ struct ProductivityDeckView: View {
                             controller: productivity.camera,
                             diameter: mirror,
                             layoutStore: layoutStore,
-                            onClose: {
-                                withAnimation(WorkspaceMotion.smoothContent(reduceMotion: reduceMotion)) {
-                                    isMirrorPresented = false
-                                }
-                            }
+                            reduceMotion: reduceMotion
                         )
                         .frame(width: mirror, height: min(contentHeight, max(mirror + 30, availableHeight)), alignment: .top)
                     }
@@ -92,7 +92,7 @@ struct ProductivityDeckView: View {
                     snapshot: capabilities.snapshot(for: capabilityID(tool)),
                     onOpenMirror: tool == .camera ? {
                         withAnimation(WorkspaceMotion.smoothContent(reduceMotion: reduceMotion)) {
-                            isMirrorPresented = true
+                            productivity.camera.requestMirror()
                         }
                     } : nil
                 )
@@ -119,14 +119,15 @@ struct ProductivityDeckView: View {
 // MARK: - Camera mirror
 
 /// Large circular mirror of the real camera. Capture runs only while this
-/// view is visible and access was already granted (Droppy
-/// previewDidAppear/previewDidDisappear); access is requested only from
-/// the explicit Allow button.
+/// view is visible, access was already granted (Droppy
+/// previewDidAppear/previewDidDisappear) and the user has not closed it;
+/// access is requested only from the explicit Allow button. Appearing never
+/// counts as a user request after an explicit Close.
 struct CameraMirrorView: View {
     @ObservedObject var controller: CameraPreviewController
     let diameter: CGFloat
     let layoutStore: IslandLayoutStore?
-    let onClose: () -> Void
+    let reduceMotion: Bool
     @Environment(\.isSettingsPreview) private var isSettingsPreview
     @Environment(\.rightWorkspacePageIsActive) private var isWorkspacePageActive
     /// Claimed synchronously so a close that races an in-flight attach can
@@ -137,12 +138,12 @@ struct CameraMirrorView: View {
         controller: CameraPreviewController,
         diameter: CGFloat,
         layoutStore: IslandLayoutStore?,
-        onClose: @escaping () -> Void
+        reduceMotion: Bool = false
     ) {
         self.controller = controller
         self.diameter = diameter
         self.layoutStore = layoutStore
-        self.onClose = onClose
+        self.reduceMotion = reduceMotion
         _lease = State(initialValue: CameraMirrorConsumerLease(controller: controller))
     }
 
@@ -243,9 +244,14 @@ struct CameraMirrorView: View {
     private func closeMirror() {
         layoutStore?.setRightWorkspaceMirrorActive(false)
         let lease = lease
+        // The user's close is recorded synchronously, before any await, so no
+        // later appear/remount can restart capture; the deck hides the mirror
+        // because the controller says so.
+        withAnimation(WorkspaceMotion.smoothContent(reduceMotion: reduceMotion)) {
+            controller.recordUserClose()
+        }
         Task { @MainActor in
             await lease.release()
-            onClose()
         }
     }
 

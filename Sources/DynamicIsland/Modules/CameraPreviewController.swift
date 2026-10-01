@@ -23,6 +23,27 @@ enum CameraPreviewPhase: Equatable, Sendable {
     case failed(String)
 }
 
+/// What the user last asked the camera to do. Only explicit user actions
+/// change it; SwiftUI appear/disappear, page switches, island collapse/expand
+/// and Settings re-renders never do. View lifecycle is not intent.
+enum CameraUserIntent: Equatable, Sendable {
+    /// No explicit decision this launch: a visible mirror may auto-start an
+    /// already-authorized camera (Droppy previewDidAppear parity).
+    case undecided
+    /// Explicit Open Mirror / Start / Allow / Retry / Open Preview.
+    case wantsPreview
+    /// Explicit Close / Deactivate / Disable / app termination. Only a new
+    /// explicit action can start capture again.
+    case closed
+    /// The system stopped capture (disconnect, interruption, runtime error).
+    /// A passive surface never retries on its own; Retry is explicit.
+    case interrupted
+
+    var allowsPassiveStart: Bool {
+        self == .undecided || self == .wantsPreview
+    }
+}
+
 enum CameraPreviewError: LocalizedError, Equatable {
     case disabled
     case permissionRequired
@@ -251,14 +272,25 @@ final class CameraMirrorConsumerLease {
 
     /// Explicit Allow / Start / Retry from the mirror UI; may prompt.
     func startExplicitly() async throws {
+        // Intent is recorded at click time, before any await.
+        controller.requestMirror()
         if !isHeld {
             isHeld = true
             await controller.attachPreviewConsumer()
         }
+        // A Close tapped while the attach was in flight wins.
+        guard isHeld, controller.userIntent != .closed else { return }
         try await controller.startPreviewConsumer()
     }
 
-    /// Close Mirror, page deactivation or disappearance.
+    /// Explicit Close Mirror: records the user's intent before releasing, so
+    /// no later appear/remount of any mirror can restart capture.
+    func closeByUser() async {
+        controller.recordUserClose()
+        await release()
+    }
+
+    /// Page deactivation or disappearance. Passive: never changes intent.
     func release() async {
         guard isHeld else { return }
         isHeld = false
@@ -279,6 +311,7 @@ final class CameraPreviewController: ObservableObject, IslandCapabilityAdapter {
     @Published private(set) var devices: [CameraDeviceDescriptor] = []
     @Published var selectedDeviceID: String?
     @Published private(set) var isEnabled = true
+    @Published private(set) var userIntent: CameraUserIntent = .undecided
 
     private let deviceProvider: CameraDeviceProviding
     private let session: CameraCaptureSessionControlling
@@ -314,6 +347,11 @@ final class CameraPreviewController: ObservableObject, IslandCapabilityAdapter {
         if case .running = phase { return session.previewSession }
         return nil
     }
+
+    /// The user closed the mirror; the deck shows the Open Mirror tile until
+    /// a new explicit request. Lives here, not in view state, so a remount
+    /// cannot resurrect a closed mirror.
+    var isMirrorDismissed: Bool { userIntent == .closed }
 
     var isRunning: Bool {
         if case .running = phase { return true }
@@ -408,6 +446,7 @@ final class CameraPreviewController: ObservableObject, IslandCapabilityAdapter {
     /// preview consumer) never stops capture an explicit owner relies on,
     /// even when the mirror started the session first.
     func open() async throws {
+        userIntent = .wantsPreview
         explicitOwnerActive = true
         do {
             try await startCapture()
@@ -470,6 +509,7 @@ final class CameraPreviewController: ObservableObject, IslandCapabilityAdapter {
     /// Idempotent. The activity is removed only after the session stopped.
     /// Stops capture for every owner and clears all ownership claims.
     func close() async {
+        userIntent = .closed
         explicitOwnerActive = false
         consumerStartedSession = false
         await stopCapture()
@@ -477,6 +517,7 @@ final class CameraPreviewController: ObservableObject, IslandCapabilityAdapter {
 
     private func stopCapture() async {
         generation += 1
+        let token = generation
         guard phase != .idle else {
             await session.stop()
             return
@@ -484,9 +525,41 @@ final class CameraPreviewController: ObservableObject, IslandCapabilityAdapter {
         phase = .stopping
         publishState()
         await session.stop()
+        // A newer start or stop owns the phase now.
+        guard token == generation else { return }
         liveActivities.remove(id: Self.activityID)
         phase = .idle
         publishState()
+    }
+
+    /// Explicit Open Mirror. Presents the mirror; its surface then attaches.
+    func requestMirror() {
+        userIntent = .wantsPreview
+    }
+
+    /// Explicit Close Mirror. Capture stops when the mirror releases its
+    /// consumer (an independent explicit owner keeps its own capture).
+    func recordUserClose() {
+        userIntent = .closed
+        generation += 1
+        if phase == .starting, !explicitOwnerActive {
+            // Cancel an in-flight mirror start; the lease release finishes
+            // the teardown.
+            consumerStartedSession = true
+        }
+    }
+
+    /// The Settings preview surface went away. Passive: releases only the
+    /// ownership `open()` took and never records a user close.
+    func releaseExplicitPreview() async {
+        guard explicitOwnerActive else { return }
+        explicitOwnerActive = false
+        if previewConsumers > 0 {
+            // A visible mirror inherits the session and releases it later.
+            consumerStartedSession = true
+        } else {
+            await stopCapture()
+        }
     }
 
     // MARK: Preview consumers (Droppy CameraManager.previewDidAppear/Disappear)
@@ -500,6 +573,7 @@ final class CameraPreviewController: ObservableObject, IslandCapabilityAdapter {
     func attachPreviewConsumer() async {
         previewConsumers += 1
         guard previewConsumers == 1,
+              userIntent.allowsPassiveStart,
               isEnabled,
               deviceProvider.permissionState == .authorized,
               !isRunning,
@@ -517,6 +591,7 @@ final class CameraPreviewController: ObservableObject, IslandCapabilityAdapter {
     /// preview consumer owns the session it starts, so closing the mirror can
     /// release capture resources without affecting another explicit camera use.
     func startPreviewConsumer() async throws {
+        userIntent = .wantsPreview
         if previewConsumers == 0 {
             previewConsumers = 1
         }
@@ -547,6 +622,7 @@ final class CameraPreviewController: ObservableObject, IslandCapabilityAdapter {
     }
 
     var activePreviewConsumers: Int { previewConsumers }
+
     /// True while capture was requested by an explicit owner (`open()`).
     var hasExplicitOwner: Bool { explicitOwnerActive }
 
@@ -556,6 +632,8 @@ final class CameraPreviewController: ObservableObject, IslandCapabilityAdapter {
         guard isRunning else { return }
         // Restart keeps the existing ownership (mirror consumer vs explicit).
         await stopCapture()
+        // A close/disable/termination that raced the stop wins.
+        guard userIntent.allowsPassiveStart, isEnabled, explicitOwnerActive || previewConsumers > 0 else { return }
         try await startCapture()
     }
 
@@ -569,6 +647,7 @@ final class CameraPreviewController: ObservableObject, IslandCapabilityAdapter {
 
     /// Synchronous teardown for application termination.
     func terminate() {
+        userIntent = .closed
         generation += 1
         explicitOwnerActive = false
         consumerStartedSession = false
@@ -620,12 +699,16 @@ final class CameraPreviewController: ObservableObject, IslandCapabilityAdapter {
     private func handleUnexpectedStop(_ message: String) {
         guard isRunning else { return }
         generation += 1
+        let token = generation
         // The explicit owner's session is gone; a later mirror retry must be
         // able to own (and on close, release) the capture it restarts.
         explicitOwnerActive = false
+        // Never silently restarted by a passive surface; Retry is explicit.
+        if userIntent != .closed { userIntent = .interrupted }
         Task { @MainActor [weak self] in
             guard let self else { return }
             await self.session.stop()
+            guard token == self.generation else { return }
             self.liveActivities.remove(id: Self.activityID)
             self.phase = .failed(message)
             self.publishState()

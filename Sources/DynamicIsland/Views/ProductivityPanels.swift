@@ -412,8 +412,9 @@ struct CameraPanel: View {
             }
         }
         .onDisappear {
-            // Preview-only: leaving the surface releases the camera.
-            Task { await controller.close() }
+            // Preview-only: leaving the surface releases the capture this
+            // panel opened. Passive, so it never records a user close.
+            Task { await controller.releaseExplicitPreview() }
         }
     }
 
