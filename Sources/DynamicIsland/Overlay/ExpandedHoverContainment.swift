@@ -19,6 +19,9 @@ enum ExpandedHoverContainment {
         static let transientInteraction = Holds(rawValue: 1 << 1)
         /// The Agents composer owns keyboard focus in the key island panel.
         static let textInput = Holds(rawValue: 1 << 2)
+        /// A file drag owns the Tray/orbit interaction even before the first
+        /// accessory geometry preference has propagated to the window.
+        static let fileDrag = Holds(rawValue: 1 << 3)
     }
 
     enum Decision: Equatable, Sendable {

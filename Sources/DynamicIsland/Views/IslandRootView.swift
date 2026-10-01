@@ -351,6 +351,7 @@ struct IslandRootView: View {
     let onOpenSettings: () -> Void
     @ObservedObject private var media: MediaController
     @ObservedObject private var navigation: IslandNavigationStore
+    @ObservedObject private var fileDragSession: FileDragSessionController
     @ObservedObject private var liveActivities: LiveActivityStore
     @ObservedObject private var agentAttention: AgentAttentionCoordinator
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -388,6 +389,7 @@ struct IslandRootView: View {
         self.onOpenSettings = onOpenSettings
         media = modules.media
         navigation = modules.navigation
+        fileDragSession = modules.fileDragSession
         liveActivities = modules.liveActivities
         agentAttention = modules.agentAttention
     }
@@ -548,6 +550,7 @@ struct IslandRootView: View {
             }
             .onDisappear {
                 agentGlow.stop()
+                fileDragSession.cancel()
             }
             .accessibilityElement(children: .contain)
             .accessibilityLabel("DynamicIsland")
@@ -643,19 +646,40 @@ struct IslandRootView: View {
            settings.trayEnabled,
            settings.fileShelfEnabled {
             let shell = layoutStore.expandedSurfaceFrame
-            FileTrayQuickActionBar(
-                fileShelf: modules.fileShelf,
-                backgroundRemoval: modules.productivity.backgroundRemoval,
-                layoutStore: layoutStore,
-                reduceMotion: reduceMotion || settings.reduceExtraMotion
+            ZStack {
+                if fileDragSession.isActive {
+                    FileDragQuickActionOrbit(
+                        session: fileDragSession,
+                        layoutStore: layoutStore,
+                        reduceMotion: reduceMotion || settings.reduceExtraMotion
+                    )
+                    .position(
+                        x: shell.midX,
+                        y: layoutStore.canvasSize.height - shell.minY
+                            + FileDragQuickActionMetrics.gap
+                            + FileDragQuickActionMetrics.diameter / 2
+                    )
+                    .transition(.opacity.combined(with: .scale(scale: (reduceMotion || settings.reduceExtraMotion) ? 1 : 0.92)))
+                } else {
+                    FileTrayQuickActionBar(
+                        fileShelf: modules.fileShelf,
+                        backgroundRemoval: modules.productivity.backgroundRemoval,
+                        layoutStore: layoutStore,
+                        reduceMotion: reduceMotion || settings.reduceExtraMotion
+                    )
+                    .position(
+                        x: shell.midX,
+                        y: layoutStore.canvasSize.height - shell.minY
+                            + FileTrayQuickActionMetrics.gap
+                            + FileTrayQuickActionMetrics.diameter / 2
+                    )
+                    .transition(.opacity.combined(with: .offset(y: reduceMotion ? 0 : -6)))
+                }
+            }
+            .animation(
+                (reduceMotion || settings.reduceExtraMotion) ? .easeOut(duration: 0.12) : .spring(response: 0.24, dampingFraction: 0.82),
+                value: fileDragSession.isActive
             )
-            .position(
-                x: shell.midX,
-                y: layoutStore.canvasSize.height - shell.minY
-                    + FileTrayQuickActionMetrics.gap
-                    + FileTrayQuickActionMetrics.diameter / 2
-            )
-            .transition(.opacity.combined(with: .offset(y: reduceMotion ? 0 : -6)))
         }
     }
 
@@ -1140,11 +1164,13 @@ struct IslandRootView: View {
         Binding(
             get: { modules.navigation.isFileDropTargeted },
             set: { isTargeted in
-                if isTargeted,
-                   settings.trayEnabled,
-                   settings.fileShelfEnabled,
-                   settings.allowFileDropsOnCollapsedIsland,
-                   settings.showTrayTab {
+                let accepted = isTargeted &&
+                    settings.trayEnabled &&
+                    settings.fileShelfEnabled &&
+                    settings.allowFileDropsOnCollapsedIsland &&
+                    settings.showTrayTab
+                fileDragSession.setSourceTargeted(accepted, region: .collapsedIsland)
+                if accepted {
                     modules.navigation.showTrayForFileDrag(using: settings)
                     onRequestExpand()
                 } else {
@@ -1156,11 +1182,15 @@ struct IslandRootView: View {
 
     private func loadDroppedFilesFromCollapsedIsland(from providers: [NSItemProvider]) -> Bool {
         let loader = FileDropProviderLoader()
-        guard canAcceptCollapsedFileDrop, loader.canLoad(providers) else {
+        guard islandState.state == .collapsed,
+              renderedContentMode == .compact,
+              canAcceptCollapsedFileDrop,
+              loader.canLoad(providers) else {
             modules.navigation.endFileDropTargeting()
             return false
         }
         modules.navigation.endFileDropTargeting()
+        fileDragSession.cancel()
 
         loader.loadURLs(from: providers) { urls in
             Task { @MainActor in
@@ -3550,7 +3580,12 @@ struct ExpandedIslandView: View {
                 }
 
                 if settings.fileShelfEnabled {
-                    FileShelfModuleView(settings: settings, fileShelf: modules.fileShelf)
+                    FileShelfModuleView(
+                        settings: settings,
+                        fileShelf: modules.fileShelf,
+                        dragExplanation: modules.fileDragSession.explanatoryAction?.explanation
+                            ?? modules.fileDragSession.outcomeMessage
+                    )
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .overlay {
                             if isFilesTargeted || (navigation.isFileDropTargeted && !isAirDropTargeted) {
@@ -3654,7 +3689,9 @@ struct ExpandedIslandView: View {
             get: { isAirDropTargeted },
             set: { isTargeted in
                 isAirDropTargeted = isTargeted
-                if isTargeted, settings.airDropZoneEnabled, settings.showTrayTab {
+                let accepted = isTargeted && settings.airDropZoneEnabled && settings.showTrayTab
+                modules.fileDragSession.setSourceTargeted(accepted, region: .trayAirDrop)
+                if accepted {
                     navigation.showTrayForFileDrag(using: settings)
                 }
             }
@@ -3666,11 +3703,13 @@ struct ExpandedIslandView: View {
             get: { isFilesTargeted },
             set: { isTargeted in
                 isFilesTargeted = isTargeted
-                if isTargeted,
-                   settings.trayEnabled,
-                   settings.fileShelfEnabled,
-                   settings.allowFileDropsOnExpandedTray,
-                   settings.showTrayTab {
+                let accepted = isTargeted &&
+                    settings.trayEnabled &&
+                    settings.fileShelfEnabled &&
+                    settings.allowFileDropsOnExpandedTray &&
+                    settings.showTrayTab
+                modules.fileDragSession.setSourceTargeted(accepted, region: .trayShelf)
+                if accepted {
                     navigation.showTrayForFileDrag(using: settings)
                 } else {
                     navigation.endFileDropTargeting()
@@ -3688,6 +3727,7 @@ struct ExpandedIslandView: View {
         }
         isFilesTargeted = false
         navigation.endFileDropTargeting()
+        modules.fileDragSession.cancel()
 
         loader.loadURLs(from: providers) { urls in
             Task { @MainActor in
@@ -3713,6 +3753,7 @@ struct ExpandedIslandView: View {
         }
         loadFileURLs(from: providers) { urls in
             Task { @MainActor in
+                modules.fileDragSession.setSourceTargeted(false, region: .trayAirDrop)
                 if !urls.isEmpty {
                     AirDropService.share(
                         urls: urls,

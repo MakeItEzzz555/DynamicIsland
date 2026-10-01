@@ -48,10 +48,10 @@ struct FileTrayQuickActionBar: View {
         .onPreferenceChange(FileTrayQuickActionFrameKey.self) { frame in
             layoutStore.setExpandedAccessoryFrames([
                 IslandCanvasCoordinateSpace.appKitLocalRect(fromSwiftUI: frame, canvasHeight: layoutStore.canvasSize.height)
-            ])
+            ], owner: .trayQuickActions)
         }
         .onDisappear {
-            layoutStore.setExpandedAccessoryFrames([])
+            layoutStore.setExpandedAccessoryFrames([], owner: .trayQuickActions)
         }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: hovered)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: status)

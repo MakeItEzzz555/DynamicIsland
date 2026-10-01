@@ -1231,6 +1231,7 @@ final class OverlayWindowController {
         if nativeMenuTrackingDepth > 0 { holds.insert(.menuTracking) }
         if layoutStore.isTransientInteractionActive { holds.insert(.transientInteraction) }
         if layoutStore.isTextInputFocused, islandPanel.isKeyWindow { holds.insert(.textInput) }
+        if modules.fileDragSession.isActive { holds.insert(.fileDrag) }
         return holds
     }
 

@@ -172,6 +172,24 @@ final class FileTrayQuickActionTests: XCTestCase {
         )
     }
 
+
+    @MainActor
+    func testAccessoryOwnersCannotClearEachOtherDuringStaticToDragTransition() {
+        let store = IslandLayoutStore()
+        let staticFrame = CGRect(x: 360, y: 10, width: 138, height: 38)
+        let orbitFrame = CGRect(x: 340, y: 10, width: 180, height: 40)
+
+        store.setExpandedAccessoryFrames([staticFrame], owner: .trayQuickActions)
+        store.setExpandedAccessoryFrames([orbitFrame], owner: .fileDragOrbit)
+        XCTAssertEqual(store.expandedAccessoryFrames, [staticFrame.integral, orbitFrame.integral])
+
+        store.setExpandedAccessoryFrames([], owner: .trayQuickActions)
+        XCTAssertEqual(store.expandedAccessoryFrames, [orbitFrame.integral])
+
+        store.setExpandedAccessoryFrames([], owner: .fileDragOrbit)
+        XCTAssertTrue(store.expandedAccessoryFrames.isEmpty)
+    }
+
     // MARK: Helpers
 
     private func makePNG(named name: String) throws -> URL {

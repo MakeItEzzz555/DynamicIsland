@@ -67,6 +67,16 @@ final class ExpandedHoverContainmentTests: XCTestCase {
             .keepExpanded
         )
     }
+
+    func testFileDragHoldPreventsCollapseBeforeAccessoryFrameArrives() {
+        let shell = CGRect(x: 100, y: 100, width: 700, height: 260)
+        let outside = CGPoint(x: 450, y: 30)
+        XCTAssertEqual(
+            ExpandedHoverContainment.decide(pointer: outside, shellFrame: shell, holds: .fileDrag),
+            .held(.fileDrag)
+        )
+    }
+
 }
 
 @MainActor

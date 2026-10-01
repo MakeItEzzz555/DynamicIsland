@@ -1,5 +1,10 @@
 import Foundation
 
+enum ExpandedAccessoryOwner: Hashable, Sendable {
+    case trayQuickActions
+    case fileDragOrbit
+}
+
 enum IslandCanvasCoordinateSpace {
     static let name = "DynamicIslandCanvas"
 
@@ -45,6 +50,7 @@ final class IslandLayoutStore: ObservableObject {
     /// AppKit coordinates). They own hover, hit-testing and passthrough
     /// exactly like the shell, and only their own area.
     @Published private(set) var expandedAccessoryFrames: [CGRect] = []
+    private var expandedAccessoryFramesByOwner: [ExpandedAccessoryOwner: [CGRect]] = [:]
     /// Panel-local region of the Island page's right workspace; horizontal
     /// swipes that start inside it page the workspace.
     @Published private(set) var rightWorkspaceRegion: CGRect = .zero
@@ -69,10 +75,30 @@ final class IslandLayoutStore: ObservableObject {
         rightWorkspaceRegion = next
     }
 
-    func setExpandedAccessoryFrames(_ frames: [CGRect]) {
-        let valid = frames.filter { !$0.isNull && !$0.isInfinite && $0.width > 0 && $0.height > 0 }.map(\.integral)
-        guard expandedAccessoryFrames != valid else { return }
-        expandedAccessoryFrames = valid
+    func setExpandedAccessoryFrames(_ frames: [CGRect], owner: ExpandedAccessoryOwner) {
+        let valid = frames
+            .filter { !$0.isNull && !$0.isInfinite && $0.width > 0 && $0.height > 0 }
+            .map(\.integral)
+        if valid.isEmpty {
+            expandedAccessoryFramesByOwner.removeValue(forKey: owner)
+        } else {
+            expandedAccessoryFramesByOwner[owner] = valid
+        }
+        let combined = ExpandedAccessoryOwnerOrder.allCases.flatMap { expandedAccessoryFramesByOwner[$0.owner] ?? [] }
+        guard expandedAccessoryFrames != combined else { return }
+        expandedAccessoryFrames = combined
+    }
+
+    private enum ExpandedAccessoryOwnerOrder: Int, CaseIterable {
+        case trayQuickActions
+        case fileDragOrbit
+
+        var owner: ExpandedAccessoryOwner {
+            switch self {
+            case .trayQuickActions: .trayQuickActions
+            case .fileDragOrbit: .fileDragOrbit
+            }
+        }
     }
 
     /// An in-island text editor (Agents composer) is first responder.
