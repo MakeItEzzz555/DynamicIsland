@@ -94,6 +94,53 @@ final class AgentLiveApprovalEndToEndTests: XCTestCase {
         XCTAssertNil(approvals.presentedRequest(for: instance))
     }
 
+    /// Regression for the 75 s wall-clock expiry: a decision made long after
+    /// the request appeared still reaches the exact real request, and the
+    /// turn continues. Opt in with DYNAMIC_ISLAND_LIVE_APPROVAL_LONG_WAIT=1.
+    @MainActor
+    func testClaudeLiveApprovalAfterLongWaitStillUnblocksExactTurn() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["DYNAMIC_ISLAND_LIVE_APPROVAL_LONG_WAIT"] == "1",
+              let root = environment["DYNAMIC_ISLAND_LIVE_AGENT_ROOT"] else {
+            throw XCTSkip("Set DYNAMIC_ISLAND_LIVE_APPROVAL_LONG_WAIT=1 and DYNAMIC_ISLAND_LIVE_AGENT_ROOT to run.")
+        }
+        let folder = URL(fileURLWithPath: root)
+            .appendingPathComponent("approval-wait-\(UUID().uuidString.prefix(6))", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let store = AgentEventStore()
+        let approvals = AgentApprovalController()
+        let controller = AgentManagedSessionController(
+            providers: [try ClaudeInteractiveProvider.makeDefault()],
+            coordinator: AgentIngestionCoordinator(eventStore: store),
+            eventStore: store,
+            approvals: approvals
+        )
+        controller.startObserving()
+        defer { controller.stop() }
+        await controller.refreshPersistentSnapshot()
+        XCTAssertTrue(controller.selectNewSessionModel("haiku", for: .claude))
+        guard case .success(let started) = await controller.startManagedSession(provider: .claude, cwd: folder.path) else {
+            return XCTFail("start failed")
+        }
+        let target = folder.appendingPathComponent("approval-late.txt")
+        let evidence = try await runTurn(
+            prompt: "Use the Write tool to create a file named approval-late.txt in the current directory containing exactly: late-check. Then reply with the single word DONE.",
+            decision: .allow,
+            controller: controller,
+            store: store,
+            approvals: approvals,
+            instance: started.instance,
+            decisionDelay: .seconds(90)
+        )
+        XCTAssertFalse(evidence.isEmpty)
+        let contents = try? String(contentsOf: target, encoding: .utf8)
+        log("LATE ALLOW (90 s) contents=\(contents ?? "missing")")
+        XCTAssertEqual(contents?.trimmingCharacters(in: .whitespacesAndNewlines), "late-check")
+        for requestID in evidence {
+            XCTAssertEqual(store.session(for: started.instance)?.approvals[requestID]?.state, .approved)
+        }
+    }
+
     /// Submits one turn and answers every real approval request of that
     /// turn with `decision`, through the public resolve API only. Returns
     /// the exact request ids that were answered.
@@ -104,8 +151,10 @@ final class AgentLiveApprovalEndToEndTests: XCTestCase {
         controller: AgentManagedSessionController,
         store: AgentEventStore,
         approvals: AgentApprovalController,
-        instance: AgentSessionInstanceID
+        instance: AgentSessionInstanceID,
+        decisionDelay: Duration = .zero
     ) async throws -> [AgentCorrelationID] {
+        var firstSeen: ContinuousClock.Instant?
         let label = decision == .allow ? "ALLOW" : "DENY"
         let session = try XCTUnwrap(store.session(for: instance))
         let accepted = await controller.submit(prompt, for: session)
@@ -115,6 +164,16 @@ final class AgentLiveApprovalEndToEndTests: XCTestCase {
         let deadline = Date().addingTimeInterval(240)
         while Date() < deadline {
             if let pending = approvals.pendingRequest(for: instance) {
+                let seen = firstSeen ?? ContinuousClock.now
+                firstSeen = seen
+                if ContinuousClock.now - seen < decisionDelay {
+                    // The provider is still blocked; the island must keep the
+                    // exact request actionable and send nothing on its own.
+                    XCTAssertEqual(approvals.deliveryState(for: pending.key), .awaitingDecision)
+                    try await Task.sleep(for: .milliseconds(500))
+                    continue
+                }
+                firstSeen = nil
                 XCTAssertEqual(pending.key.session, instance, "request bound to another session")
                 let turn = controller.activeManagedSessionIDs.contains(instance.sessionID)
                 log("\(label) request …\(pending.key.requestID.rawValue.suffix(8)) session=…\(pending.key.session.sessionID.nativeID.suffix(8)) gen=\(pending.key.session.generation.rawValue) activeTurn=\(turn) summary=\"\(pending.summary)\"")

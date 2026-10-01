@@ -127,6 +127,53 @@ final class CodexAppServerClientTests: XCTestCase {
         await provider.stop()
     }
 
+    func testDecisionIsAcknowledgedOnlyByExactServerRequestResolved() async throws {
+        let executable = try makeFakeServer(script: #"""
+        #!/usr/bin/env python3
+        import json, sys
+        for line in sys.stdin:
+            message = json.loads(line)
+            method = message.get("method")
+            request_id = message.get("id")
+            if method == "initialize":
+                print(json.dumps({"id": request_id, "result": {}}), flush=True)
+            elif method == "thread/list":
+                print(json.dumps({"id": request_id, "result": {"data": []}}), flush=True)
+                print(json.dumps({"id": 41, "method": "item/fileChange/requestApproval",
+                    "params": {"threadId": "thread-a", "turnId": "turn-a", "itemId": "item-a"}}), flush=True)
+            elif request_id == 41 and "result" in message:
+                decision = message["result"].get("decision")
+                # Unrelated resolution first: another thread, then another request.
+                print(json.dumps({"method": "serverRequest/resolved", "params": {"threadId": "thread-b", "requestId": 41}}), flush=True)
+                print(json.dumps({"method": "serverRequest/resolved", "params": {"threadId": "thread-a", "requestId": 99}}), flush=True)
+                if decision == "decline":
+                    print(json.dumps({"method": "serverRequest/resolved", "params": {"threadId": "thread-a", "requestId": 41}}), flush=True)
+        """#)
+        let client = try CodexAppServerClient(executableURL: executable, requestTimeout: .seconds(2))
+        let provider = CodexAppServerProvider(client: client)
+        let events = await provider.events()
+        let collector = Task<[AgentInteractiveProviderEvent], Never> {
+            var seen: [AgentInteractiveProviderEvent] = []
+            for await event in events {
+                seen.append(event)
+                if case .approvalRequested(let request) = event {
+                    try? await provider.resolveApproval(request, allow: false)
+                }
+                if seen.filter({ if case .approvalAcknowledged = $0 { return true }; return false }).count == 3 { break }
+            }
+            return seen
+        }
+        _ = try await client.listThreads()
+        let seen = await collector.value
+        let acks = seen.compactMap { event -> String? in
+            guard case .approvalAcknowledged(let thread, let token) = event else { return nil }
+            return "\(thread):\(token)"
+        }
+        XCTAssertEqual(acks, ["thread-b:integer(41)", "thread-a:integer(99)", "thread-a:integer(41)"],
+                       "acknowledgements carry the exact thread and JSON-RPC id; the controller matches both")
+        await provider.stop()
+    }
+
     func testModelListAndTurnModelOverrideUseProviderAuthoritativeSchema() async throws {
         let executable = try makeFakeServer(script: #"""
         #!/usr/bin/env python3

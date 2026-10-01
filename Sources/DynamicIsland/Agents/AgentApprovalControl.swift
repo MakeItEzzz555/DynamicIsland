@@ -19,9 +19,16 @@ enum AgentApprovalControlResult: Equatable, Sendable {
     case missing
 }
 
+/// awaitingDecision -> submitting -> (provider-confirmed: removed; the
+/// normalized store records Approved/Denied) or failed. Clicking never
+/// produces "Approved" on its own.
 enum AgentApprovalDeliveryState: Equatable, Sendable {
     case awaitingDecision
     case submitting(AgentBridgePermissionDecision)
+    /// The decision was not confirmed by the provider. Provider responses are
+    /// single-use (Codex JSON-RPC id, Claude control_response), so a failed
+    /// delivery is never re-sent; the row stays visible until dismissed.
+    case failed(AgentBridgePermissionDecision, reason: String)
 }
 
 @MainActor
@@ -34,15 +41,19 @@ final class AgentApprovalController: ObservableObject {
     private var expirationTasks: [AgentApprovalControlKey: Task<Void, Never>] = [:]
     private var completedRequests: [AgentApprovalControlKey: Date] = [:]
     private var deliveryDecisions: [AgentApprovalControlKey: AgentBridgePermissionDecision] = [:]
+    private var deliveryFailures: [AgentApprovalControlKey: String] = [:]
     private let now: @Sendable () -> Date
 
     init(now: @escaping @Sendable () -> Date = Date.init) {
         self.now = now
     }
 
+    /// `maximumWait: nil` is for managed provider requests: the provider
+    /// keeps waiting, so the request lives until the user decides or the
+    /// provider/turn/transport withdraws it. Never answered by a timer.
     func request(
         _ request: AgentApprovalControlRequest,
-        maximumWait: Duration = .seconds(75)
+        maximumWait: Duration? = .seconds(75)
     ) async -> AgentBridgePermissionDecision? {
         pruneCompletedRequests()
         guard request.expiresAt > now(),
@@ -58,8 +69,9 @@ final class AgentApprovalController: ObservableObject {
             await withCheckedContinuation { continuation in
                 continuations[request.key] = continuation
                 pendingRequests[request.key] = request
+                guard let maximumWait else { return }
                 let remaining = max(0, request.expiresAt.timeIntervalSince(now()))
-                let expiryWait = min(maximumWait, .milliseconds(Int64(remaining * 1_000)))
+                let expiryWait = min(maximumWait, .milliseconds(Int64(min(remaining, 86_400) * 1_000)))
                 expirationTasks[request.key] = Task { [weak self] in
                     try? await Task.sleep(for: expiryWait)
                     guard !Task.isCancelled else { return }
@@ -133,16 +145,30 @@ final class AgentApprovalController: ObservableObject {
     }
 
     func deliveryState(for key: AgentApprovalControlKey) -> AgentApprovalDeliveryState? {
-        if let decision = deliveryDecisions[key] { return .submitting(decision) }
+        if let decision = deliveryDecisions[key] {
+            if let reason = deliveryFailures[key] { return .failed(decision, reason: reason) }
+            return .submitting(decision)
+        }
         return pendingRequests[key] == nil ? nil : .awaitingDecision
     }
 
+    /// The provider acknowledged this exact decision.
     func confirmDelivery(_ key: AgentApprovalControlKey) {
         deliveringRequests.removeValue(forKey: key)
         deliveryDecisions.removeValue(forKey: key)
+        deliveryFailures.removeValue(forKey: key)
     }
 
-    func failDelivery(_ key: AgentApprovalControlKey) {
+    /// The decision could not be confirmed. Kept presented (no buttons) so
+    /// the user sees the failure instead of a silent disappearance.
+    func failDelivery(_ key: AgentApprovalControlKey, reason: String) {
+        guard deliveringRequests[key] != nil, deliveryDecisions[key] != nil else { return }
+        deliveryFailures[key] = reason
+        objectWillChange.send()
+    }
+
+    func dismissFailedDelivery(_ key: AgentApprovalControlKey) {
+        guard deliveryFailures[key] != nil else { return }
         confirmDelivery(key)
     }
 
@@ -200,6 +226,7 @@ final class AgentApprovalController: ObservableObject {
         }
         deliveringRequests.removeAll()
         deliveryDecisions.removeAll()
+        deliveryFailures.removeAll()
     }
 
     private func finish(
@@ -213,6 +240,7 @@ final class AgentApprovalController: ObservableObject {
         pendingRequests.removeValue(forKey: key)
         deliveringRequests.removeValue(forKey: key)
         deliveryDecisions.removeValue(forKey: key)
+        deliveryFailures.removeValue(forKey: key)
         continuations.removeValue(forKey: key)?.resume(returning: decision)
     }
 

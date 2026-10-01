@@ -1,3 +1,4 @@
+import AgentBridgeShared
 import AppKit
 import SwiftUI
 
@@ -369,7 +370,11 @@ struct AgentEmbeddedConsoleView: View {
 
     private var actionableApproval: AgentApprovalControlRequest? {
         let pending = approvalControl.presentedRequest(for: session.id)
-        return AgentApprovalPresentation.isActionable(session: session, pending: pending) ? pending : nil
+        return AgentApprovalPresentation.isPresented(
+            session: session,
+            pending: pending,
+            delivery: pending.flatMap { approvalControl.deliveryState(for: $0.key) }
+        ) ? pending : nil
     }
 
     private var externalPendingApproval: AgentApproval? {
@@ -918,9 +923,24 @@ struct AgentConsoleApprovalRow: View {
         approvalControl.deliveryState(for: request.key) ?? .awaitingDecision
     }
 
+    /// Buttons are live only while the provider still awaits a decision.
     private var isSubmitting: Bool {
-        if case .submitting = deliveryState { return true }
-        return false
+        deliveryState != .awaitingDecision
+    }
+
+    private var failure: (decision: AgentBridgePermissionDecision, reason: String)? {
+        if case .failed(let decision, let reason) = deliveryState { return (decision, reason) }
+        return nil
+    }
+
+    /// Always the exact request this row was built for, never whichever
+    /// session is currently displayed.
+    private func decide(_ decision: AgentBridgePermissionDecision) {
+        _ = approvalControl.resolve(
+            session: request.key.session,
+            requestID: request.key.requestID,
+            decision: decision
+        )
     }
 
     var body: some View {
@@ -962,15 +982,28 @@ struct AgentConsoleApprovalRow: View {
                 .lineLimit(3)
                 .textSelection(.enabled)
 
+            if let failure {
+                HStack(spacing: 8) {
+                    Label(failure.reason, systemImage: "exclamationmark.triangle.fill")
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundStyle(Color(red: 1.0, green: 0.55, blue: 0.55))
+                        .lineLimit(2)
+                    Spacer(minLength: 0)
+                    Button("Dismiss") { approvalControl.dismissFailedDelivery(request.key) }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.82))
+                        .padding(.horizontal, 14)
+                        .frame(height: 28)
+                        .background(.white.opacity(0.07), in: Capsule())
+                        .accessibilityHint("The \(failure.decision == .allow ? "approval" : "denial") was not confirmed by the provider")
+                }
+            } else {
             HStack(spacing: 8) {
                 Spacer(minLength: 0)
 
                 Button {
-                    _ = approvalControl.resolve(
-                        session: session.id,
-                        requestID: request.key.requestID,
-                        decision: .deny
-                    )
+                    decide(.deny)
                 } label: {
                     Text("Deny")
                         .font(.system(size: 10, weight: .semibold))
@@ -985,11 +1018,7 @@ struct AgentConsoleApprovalRow: View {
                 .accessibilityHint("Deny this exact permission request")
 
                 Button {
-                    _ = approvalControl.resolve(
-                        session: session.id,
-                        requestID: request.key.requestID,
-                        decision: .allow
-                    )
+                    decide(.allow)
                 } label: {
                     HStack(spacing: 5) {
                         Text("Approve")
@@ -1006,6 +1035,7 @@ struct AgentConsoleApprovalRow: View {
                 .keyboardShortcut(.defaultAction)
                 .disabled(isSubmitting)
                 .accessibilityHint("Approve this exact permission request once")
+            }
             }
         }
         .padding(.horizontal, 12)
@@ -1036,8 +1066,11 @@ struct AgentConsoleApprovalRow: View {
     }
 
     private var deliveryLabel: String {
-        guard case .submitting(let decision) = deliveryState else { return "Permission required" }
-        return decision == .allow ? "Approving…" : "Denying…"
+        switch deliveryState {
+        case .awaitingDecision: "Permission required"
+        case .submitting(let decision): decision == .allow ? "Approving…" : "Denying…"
+        case .failed(let decision, _): decision == .allow ? "Approval not confirmed" : "Denial not confirmed"
+        }
     }
 }
 

@@ -103,6 +103,11 @@ enum AgentInteractiveProviderEvent: Equatable, Sendable {
     /// The provider withdrew one exact pending approval request (for example
     /// Claude Code `control_cancel_request`). It must never be answered.
     case approvalCancelled(nativeSessionID: String, requestID: String)
+    /// The provider's own authoritative statement that one exact pending
+    /// request (by its wire token) is resolved: Codex
+    /// `serverRequest/resolved`, Claude Code `tool_result` for the answered
+    /// tool use. The only evidence that may confirm a delivered decision.
+    case approvalAcknowledged(nativeSessionID: String, requestToken: AgentInteractiveRequestToken)
     case transportClosed(String?)
 }
 
@@ -114,7 +119,7 @@ struct AgentManagedNormalizedEvent: Equatable, Sendable {
     let payload: AgentEventPayload
 }
 
-enum AgentInteractiveRequestToken: Equatable, Sendable {
+enum AgentInteractiveRequestToken: Hashable, Sendable {
     case string(String)
     case integer(Int64)
 }

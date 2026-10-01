@@ -39,8 +39,11 @@ final class AgentManagedSessionController: ObservableObject {
     /// Provider cancels that arrived before the request reached the approval
     /// controller (`provider:thread:request`).
     private var providerCancelledApprovals: Set<String> = []
+    /// Decisions written to the provider, awaiting its exact acknowledgement.
     private var pendingApprovalConfirmations: [String: PendingApprovalConfirmation] = [:]
-    private var approvalConfirmationTasks: [String: Task<Void, Never>] = [:]
+    /// Wire token of each request still awaiting the user, so a provider-side
+    /// resolution (`approvalAcknowledged` before any decision) withdraws it.
+    private var awaitingApprovalTokens: [AgentApprovalControlKey: AgentInteractiveRequestToken] = [:]
     private var knownDiscoveredSessionIDs: Set<AgentSessionID> = []
     private var hydratedTranscriptSessionIDs: Set<AgentSessionID> = []
 
@@ -252,8 +255,7 @@ final class AgentManagedSessionController: ObservableObject {
         withdrawnApprovalKeys.removeAll()
         providerCancelledApprovals.removeAll()
         pendingApprovalConfirmations.removeAll()
-        for task in approvalConfirmationTasks.values { task.cancel() }
-        approvalConfirmationTasks.removeAll()
+        awaitingApprovalTokens.removeAll()
         approvals.cancelAll()
         approvals.clearPolicies()
         managed.removeAll()
@@ -1046,10 +1048,13 @@ final class AgentManagedSessionController: ObservableObject {
             await refreshPersistentSnapshot()
 
         case .turnCompleted(let turn, let state, let summary):
-            await confirmApprovalProgress(
+            // Acknowledgements arrive before the turn ends; a decision still
+            // unconfirmed now was never proven delivered.
+            await failUnconfirmedApprovals(
                 provider: agentProvider,
                 nativeSessionID: turn.nativeSessionID,
-                turnID: turn.turnID
+                turnID: turn.turnID,
+                reason: "The turn ended before \(providerName(agentProvider)) confirmed the decision."
             )
             let sessionID = AgentSessionID(provider: agentProvider, nativeID: turn.nativeSessionID)
             // A request still awaiting a decision cannot outlive its turn.
@@ -1094,6 +1099,12 @@ final class AgentManagedSessionController: ObservableObject {
                 }
             }
             for target in targets {
+                await failUnconfirmedApprovals(
+                    provider: agentProvider,
+                    nativeSessionID: target.nativeID,
+                    turnID: nil,
+                    reason: "\(providerName(agentProvider)) failed before confirming the decision."
+                )
                 withdrawPendingApprovals(for: target)
                 updateControl(target) {
                     $0.activeTurnID = nil
@@ -1115,21 +1126,9 @@ final class AgentManagedSessionController: ObservableObject {
             await refreshPersistentSnapshot()
 
         case .transcript(let entry):
-            if let turnID = entry.turnID {
-                await confirmApprovalProgress(
-                    provider: agentProvider,
-                    nativeSessionID: entry.nativeSessionID,
-                    turnID: turnID
-                )
-            }
             upsertTranscript(entry, provider: agentProvider)
 
         case .transcriptDelta(let nativeSessionID, let turnID, let itemID, let delta):
-            await confirmApprovalProgress(
-                provider: agentProvider,
-                nativeSessionID: nativeSessionID,
-                turnID: turnID
-            )
             appendTranscriptDelta(
                 sessionID: AgentSessionID(provider: agentProvider, nativeID: nativeSessionID),
                 turnID: turnID,
@@ -1141,13 +1140,6 @@ final class AgentManagedSessionController: ObservableObject {
             await refreshPersistentSnapshot()
 
         case .normalized(let event):
-            if let turnID = event.turnID {
-                await confirmApprovalProgress(
-                    provider: agentProvider,
-                    nativeSessionID: event.nativeSessionID,
-                    turnID: turnID
-                )
-            }
             _ = await emit(
                 provider: agentProvider,
                 nativeSessionID: event.nativeSessionID,
@@ -1157,11 +1149,6 @@ final class AgentManagedSessionController: ObservableObject {
             )
 
         case .approvalRequested(let request):
-            await confirmApprovalProgress(
-                provider: agentProvider,
-                nativeSessionID: request.threadID,
-                turnID: request.turnID
-            )
             let key = "\(agentProvider.stableName):\(request.threadID):\(request.turnID):\(request.requestID)"
             guard approvalTasks[key] == nil else { return }
             approvalTasks[key] = Task { [weak self] in
@@ -1192,27 +1179,29 @@ final class AgentManagedSessionController: ObservableObject {
                 }
             }
 
+        case .approvalAcknowledged(let nativeSessionID, let token):
+            await handleApprovalAcknowledgement(
+                provider: agentProvider,
+                nativeSessionID: nativeSessionID,
+                token: token
+            )
+
         case .transportClosed:
             approvals.clearPolicies(for: agentProvider)
             let transportMessage = agentProvider == .codex
                 ? "Codex app-server disconnected"
                 : "\(providerName(agentProvider)) unavailable"
             setTransportError(transportMessage, for: agentProvider)
-            let stranded = pendingApprovalConfirmations.filter { $0.value.provider == agentProvider }
-            for (key, confirmation) in stranded {
-                pendingApprovalConfirmations.removeValue(forKey: key)
-                approvalConfirmationTasks.removeValue(forKey: key)?.cancel()
-                if let instance = eventStore.sessions.first(where: {
-                    $0.id.sessionID == AgentSessionID(
-                        provider: confirmation.provider,
-                        nativeID: confirmation.nativeSessionID
-                    ) && $0.endedAt == nil
-                })?.id {
-                    approvals.failDelivery(AgentApprovalControlKey(
-                        session: instance,
-                        requestID: confirmation.correlationID
-                    ))
-                }
+            let strandedSessions = Set(pendingApprovalConfirmations.values
+                .filter { $0.provider == agentProvider }
+                .map(\.nativeSessionID))
+            for nativeSessionID in strandedSessions {
+                await failUnconfirmedApprovals(
+                    provider: agentProvider,
+                    nativeSessionID: nativeSessionID,
+                    turnID: nil,
+                    reason: "\(transportMessage) before confirming the decision."
+                )
             }
             // The transport is gone: withdraw with no decision. Never record
             // or display a Deny the user did not choose.
@@ -1302,7 +1291,7 @@ final class AgentManagedSessionController: ObservableObject {
             payload: .approvalRequest(AgentApprovalRequest(
                 summary: AgentPrivacyProjection.summary(request.summary),
                 operationCorrelationID: correlation,
-                expiresAt: Date().addingTimeInterval(75)
+                expiresAt: nil
             ))
         ) else {
             // If the request cannot be represented safely in the normalized
@@ -1316,14 +1305,18 @@ final class AgentManagedSessionController: ObservableObject {
             return
         }
 
+        // No wall-clock expiry: the provider keeps waiting, so the request
+        // stays actionable until the user decides or the provider, turn or
+        // transport withdraws it. A timer never answers for the user.
         let controlRequest = AgentApprovalControlRequest(
             key: AgentApprovalControlKey(session: instance, requestID: correlation),
             summary: AgentPrivacyProjection.summary(request.summary) ??
                 "\(providerName(agentProvider)) approval required",
-            expiresAt: Date().addingTimeInterval(75)
+            expiresAt: .distantFuture
         )
         guard !approvals.hasHandled(controlRequest.key) else { return }
-        if providerCancelledApprovals.remove(cancelIdentity) != nil {
+        if providerCancelledApprovals.remove(cancelIdentity) != nil ||
+            providerCancelledApprovals.remove(Self.tokenIdentity(agentProvider, request.threadID, request.requestToken)) != nil {
             // The provider withdrew it before it reached the controller.
             _ = await emit(
                 provider: agentProvider,
@@ -1336,8 +1329,12 @@ final class AgentManagedSessionController: ObservableObject {
         }
         let wasAutomatic = approvals.automaticallyApproves(controlRequest)
         managedApprovalKeys.insert(controlRequest.key)
-        defer { managedApprovalKeys.remove(controlRequest.key) }
-        guard let decision = await approvals.request(controlRequest) else {
+        awaitingApprovalTokens[controlRequest.key] = request.requestToken
+        defer {
+            managedApprovalKeys.remove(controlRequest.key)
+            awaitingApprovalTokens.removeValue(forKey: controlRequest.key)
+        }
+        guard let decision = await approvals.request(controlRequest, maximumWait: nil) else {
             if withdrawnApprovalKeys.remove(controlRequest.key) != nil {
                 // Withdrawn (provider cancel, turn end, transport loss): the
                 // provider no longer waits for it, so nothing is written.
@@ -1350,11 +1347,28 @@ final class AgentManagedSessionController: ObservableObject {
                 )
                 return
             }
-            // Expiry/cancellation while the provider still waits: fail closed.
-            try? await provider.resolveApproval(request, allow: false)
+            // Shutdown/cancellation: no decision. The user never chose one,
+            // so nothing is written on their behalf.
             return
         }
         let allow = decision == .allow
+        awaitingApprovalTokens.removeValue(forKey: controlRequest.key)
+        guard managed[sessionID]?.activeTurnID == request.turnID else {
+            // The turn ended (or the transport closed) between the click and
+            // the write: the provider no longer waits, so nothing is sent.
+            approvals.failDelivery(
+                controlRequest.key,
+                reason: "The turn ended before the decision could be delivered."
+            )
+            _ = await emit(
+                provider: agentProvider,
+                nativeSessionID: request.threadID,
+                type: .approvalResolved,
+                correlationID: correlation,
+                payload: .approvalResolution(AgentApprovalResolution(state: .unknown))
+            )
+            return
+        }
 
         let confirmationKey = approvalKey
         pendingApprovalConfirmations[confirmationKey] = PendingApprovalConfirmation(
@@ -1362,29 +1376,25 @@ final class AgentManagedSessionController: ObservableObject {
             nativeSessionID: request.threadID,
             turnID: request.turnID,
             correlationID: correlation,
+            controlKey: controlRequest.key,
+            requestToken: request.requestToken,
             state: allow ? .approved : .denied,
             automatic: allow && wasAutomatic
         )
-        approvalConfirmationTasks[confirmationKey] = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(75))
-            guard !Task.isCancelled else { return }
-            await self?.expireApprovalConfirmation(
-                key: confirmationKey,
-                controlKey: controlRequest.key
-            )
-        }
         do {
             try await provider.resolveApproval(request, allow: allow)
         } catch {
-            pendingApprovalConfirmations.removeValue(forKey: confirmationKey)
-            approvalConfirmationTasks.removeValue(forKey: confirmationKey)?.cancel()
-            approvals.failDelivery(controlRequest.key)
+            guard pendingApprovalConfirmations.removeValue(forKey: confirmationKey) != nil else { return }
+            approvals.failDelivery(
+                controlRequest.key,
+                reason: "\(providerName(agentProvider)) did not receive the decision."
+            )
             _ = await emit(
                 provider: agentProvider,
                 nativeSessionID: request.threadID,
                 type: .approvalResolved,
                 correlationID: correlation,
-                payload: .approvalResolution(AgentApprovalResolution(state: .cancelled))
+                payload: .approvalResolution(AgentApprovalResolution(state: .unknown))
             )
             recordError(error, for: AgentSessionID(
                 provider: agentProvider,
@@ -1416,31 +1426,29 @@ final class AgentManagedSessionController: ObservableObject {
         providerCancelledApprovals = providerCancelledApprovals.filter { !$0.hasPrefix(prefix) }
     }
 
-    private func confirmApprovalProgress(
+    nonisolated private static func tokenIdentity(
+        _ provider: AgentProvider,
+        _ nativeSessionID: String,
+        _ token: AgentInteractiveRequestToken
+    ) -> String {
+        "\(provider.stableName):\(nativeSessionID):token:\(token)"
+    }
+
+    /// The provider resolved one exact request. If we delivered a decision
+    /// for it, that decision is now confirmed; if the user had not decided
+    /// yet, the provider withdrew it (no wire reply, never a fake decision).
+    private func handleApprovalAcknowledgement(
         provider: AgentProvider,
         nativeSessionID: String,
-        turnID: String
+        token: AgentInteractiveRequestToken
     ) async {
-        let matches = pendingApprovalConfirmations.filter { _, value in
-            value.provider == provider &&
-                value.nativeSessionID == nativeSessionID &&
-                value.turnID == turnID
-        }
-        guard !matches.isEmpty else { return }
-        for (key, confirmation) in matches {
+        if let (key, confirmation) = pendingApprovalConfirmations.first(where: {
+            $0.value.provider == provider &&
+                $0.value.nativeSessionID == nativeSessionID &&
+                $0.value.requestToken == token
+        }) {
             pendingApprovalConfirmations.removeValue(forKey: key)
-            approvalConfirmationTasks.removeValue(forKey: key)?.cancel()
-            if let instance = eventStore.sessions.first(where: {
-                $0.id.sessionID == AgentSessionID(
-                    provider: confirmation.provider,
-                    nativeID: confirmation.nativeSessionID
-                ) && $0.endedAt == nil
-            })?.id {
-                approvals.confirmDelivery(AgentApprovalControlKey(
-                    session: instance,
-                    requestID: confirmation.correlationID
-                ))
-            }
+            approvals.confirmDelivery(confirmation.controlKey)
             if confirmation.automatic && confirmation.state == .approved {
                 upsertTranscript(AgentManagedTranscriptEntry(
                     id: "auto-approval:\(confirmation.nativeSessionID):\(confirmation.turnID):\(confirmation.correlationID.rawValue)",
@@ -1458,27 +1466,51 @@ final class AgentManagedSessionController: ObservableObject {
                 correlationID: confirmation.correlationID,
                 payload: .approvalResolution(AgentApprovalResolution(state: confirmation.state))
             )
+            return
+        }
+        let sessionID = AgentSessionID(provider: provider, nativeID: nativeSessionID)
+        let awaiting = awaitingApprovalTokens.filter {
+            $0.key.session.sessionID == sessionID && $0.value == token
+        }
+        if awaiting.isEmpty {
+            // Still on its way to the approval controller: refuse it there.
+            let inFlight = approvalTasks.keys.contains {
+                $0.hasPrefix("\(provider.stableName):\(nativeSessionID):")
+            }
+            if inFlight {
+                providerCancelledApprovals.insert(Self.tokenIdentity(provider, nativeSessionID, token))
+            }
+            return
+        }
+        for key in awaiting.keys where approvals.withdraw(session: key.session, requestID: key.requestID) == .accepted {
+            withdrawnApprovalKeys.insert(key)
         }
     }
 
-    private func expireApprovalConfirmation(
-        key: String,
-        controlKey: AgentApprovalControlKey
+    /// Delivered decisions that never received the provider's exact
+    /// acknowledgement fail visibly; they are never shown as Approved/Denied.
+    private func failUnconfirmedApprovals(
+        provider: AgentProvider,
+        nativeSessionID: String,
+        turnID: String?,
+        reason: String
     ) async {
-        guard let confirmation = pendingApprovalConfirmations.removeValue(forKey: key) else { return }
-        approvalConfirmationTasks.removeValue(forKey: key)
-        approvals.failDelivery(controlKey)
-        _ = await emit(
-            provider: confirmation.provider,
-            nativeSessionID: confirmation.nativeSessionID,
-            type: .approvalResolved,
-            correlationID: confirmation.correlationID,
-            payload: .approvalResolution(AgentApprovalResolution(state: .cancelled))
-        )
-        recordError(
-            CodexAppServerError.requestTimedOut("approval continuation"),
-            for: controlKey.session.sessionID
-        )
+        let unconfirmed = pendingApprovalConfirmations.filter {
+            $0.value.provider == provider &&
+                $0.value.nativeSessionID == nativeSessionID &&
+                (turnID == nil || $0.value.turnID == turnID)
+        }
+        for (key, confirmation) in unconfirmed {
+            pendingApprovalConfirmations.removeValue(forKey: key)
+            approvals.failDelivery(confirmation.controlKey, reason: reason)
+            _ = await emit(
+                provider: provider,
+                nativeSessionID: confirmation.nativeSessionID,
+                type: .approvalResolved,
+                correlationID: confirmation.correlationID,
+                payload: .approvalResolution(AgentApprovalResolution(state: .unknown))
+            )
+        }
     }
 
     private func projectManagedTurnStartIfNeeded(
@@ -1887,6 +1919,8 @@ private struct PendingApprovalConfirmation: Sendable {
     let nativeSessionID: String
     let turnID: String
     let correlationID: AgentCorrelationID
+    let controlKey: AgentApprovalControlKey
+    let requestToken: AgentInteractiveRequestToken
     let state: AgentApprovalState
     let automatic: Bool
 }

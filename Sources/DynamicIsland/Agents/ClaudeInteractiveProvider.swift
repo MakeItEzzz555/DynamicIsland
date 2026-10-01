@@ -64,6 +64,9 @@ actor ClaudeInteractiveProvider: AgentInteractiveProvider {
     /// only), so the stream index is the block's true identity.
     private var streamBlockStarts: [String: (messageID: String, index: Int)] = [:]
     private var pendingPermissions: [String: PendingPermission] = [:]
+    /// Answered permissions awaiting the CLI's `tool_result` for the exact
+    /// tool use (session:toolUseID -> request id). Bounded like pending ones.
+    private var answeredPermissions: [String: String] = [:]
     private var lastAssistantContext: [String: Double] = [:]
     private var accountUsage = AgentUsage()
     private var accountUsageUpdatedAt: Date?
@@ -249,6 +252,10 @@ actor ClaudeInteractiveProvider: AgentInteractiveProvider {
             // Unknown or already-answered request: one-shot, never reused.
             throw ClaudeCodeStreamingError.malformedMessage
         }
+        if answeredPermissions.count >= Self.maximumPendingPermissions {
+            answeredPermissions.removeAll()
+        }
+        answeredPermissions[Self.permissionKey(request.threadID, pending.request.itemID)] = request.requestID
         try await client.respondToPermission(
             nativeSessionID: request.threadID,
             requestID: request.requestID,
@@ -337,6 +344,9 @@ actor ClaudeInteractiveProvider: AgentInteractiveProvider {
 
         case "stream_event":
             return mapStreamEvent(envelope)
+
+        case "user":
+            return mapToolResultAcknowledgements(envelope)
 
         case "assistant":
             recordAssistantContext(envelope)
@@ -541,6 +551,26 @@ actor ClaudeInteractiveProvider: AgentInteractiveProvider {
 
     private func dropPermissions(for nativeSessionID: String) {
         pendingPermissions = pendingPermissions.filter { $0.value.request.threadID != nativeSessionID }
+        answeredPermissions = answeredPermissions.filter { !$0.key.hasPrefix("\(nativeSessionID):") }
+    }
+
+    /// The CLI reports the outcome of an answered permission as the
+    /// `tool_result` of that exact tool use (allowed: the tool ran; denied:
+    /// an error result). Only results for answered permissions count.
+    private func mapToolResultAcknowledgements(_ envelope: ClaudeCodeStreamEnvelope) -> [AgentInteractiveProviderEvent] {
+        guard !answeredPermissions.isEmpty,
+              let content = envelope.message["message"]?["content"]?.arrayValue else { return [] }
+        return content.compactMap { block in
+            guard block["type"]?.stringValue == "tool_result",
+                  let toolUseID = block["tool_use_id"]?.stringValue,
+                  let requestID = answeredPermissions.removeValue(
+                      forKey: Self.permissionKey(envelope.nativeSessionID, toolUseID)
+                  ) else { return nil }
+            return .approvalAcknowledged(
+                nativeSessionID: envelope.nativeSessionID,
+                requestToken: .string(requestID)
+            )
+        }
     }
 
     private func pruneKnownSessions() {

@@ -939,9 +939,9 @@ enum AgentOperationAggregation {
                 case .pending: ("Approval requested", .pending)
                 case .approved: ("Approved", .resolved)
                 case .denied: ("Denied", .resolved)
-                case .cancelled: ("Approval failed", .failed)
+                case .cancelled: ("Request withdrawn", .cancelled)
                 case .expired: ("Approval expired", .cancelled)
-                case .unknown: ("Approval status unknown", .unknown)
+                case .unknown: ("Decision not confirmed", .failed)
                 }
                 return AgentOperationSummary(
                     id: "approval:\(approval.requestID.rawValue)",
@@ -1100,6 +1100,17 @@ enum AgentApprovalPresentation {
         session.state == .waitingForApproval &&
             session.capabilities.contains(.approvalControl) &&
             pending?.key.session == session.id
+    }
+
+    /// Actionable requests, plus a failed delivery for this exact session
+    /// instance: the failure stays visible (no buttons) until dismissed.
+    static func isPresented(
+        session: AgentSession,
+        pending: AgentApprovalControlRequest?,
+        delivery: AgentApprovalDeliveryState?
+    ) -> Bool {
+        if case .failed? = delivery, pending?.key.session == session.id { return true }
+        return isActionable(session: session, pending: pending)
     }
 }
 

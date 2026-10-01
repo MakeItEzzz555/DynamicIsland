@@ -349,6 +349,14 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
 
         case .notification(let method, let params):
             switch method {
+            case "serverRequest/resolved":
+                // Authoritative: app-server finished one exact server request
+                // (answered by us, or withdrawn by the server).
+                guard let threadID = params["threadId"]?.stringValue,
+                      let requestID = params["requestId"],
+                      let token = interactiveRequestToken(requestID) else { return nil }
+                return .approvalAcknowledged(nativeSessionID: threadID, requestToken: token)
+
             case "thread/started":
                 guard let thread = params["thread"],
                       let threadID = thread["id"]?.stringValue else { return nil }

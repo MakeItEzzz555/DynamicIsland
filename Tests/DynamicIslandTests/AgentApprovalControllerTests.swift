@@ -168,3 +168,48 @@ final class AgentApprovalControllerTests: XCTestCase {
         )
     }
 }
+
+@MainActor
+final class AgentApprovalDeliveryStateTests: XCTestCase {
+    private func key(_ id: String = "r1") -> AgentApprovalControlKey {
+        AgentApprovalControlKey(
+            session: AgentSessionInstanceID(
+                sessionID: AgentSessionID(provider: .codex, nativeID: "thread"),
+                generation: AgentSessionGeneration(rawValue: 1)
+            ),
+            requestID: AgentCorrelationID(rawValue: id)
+        )
+    }
+
+    func testUnboundedManagedRequestNeverExpiresWhileProviderWaits() async throws {
+        final class Clock: @unchecked Sendable { var date = Date(timeIntervalSince1970: 1_000) }
+        let clock = Clock()
+        let controller = AgentApprovalController(now: { clock.date })
+        let request = AgentApprovalControlRequest(key: key(), summary: "Run", expiresAt: .distantFuture)
+        let task = Task { await controller.request(request, maximumWait: nil) }
+        while controller.pendingRequests.isEmpty { await Task.yield() }
+        clock.date = clock.date.addingTimeInterval(3_600)
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertNotNil(controller.presentedRequest(for: request.key.session))
+        XCTAssertEqual(controller.resolve(session: request.key.session, requestID: request.key.requestID, decision: .allow), .accepted)
+        let decision = await task.value
+        XCTAssertEqual(decision, .allow)
+        XCTAssertEqual(controller.deliveryState(for: request.key), .submitting(.allow))
+    }
+
+    func testFailedDeliveryStaysPresentedUntilDismissed() async {
+        let controller = AgentApprovalController()
+        let request = AgentApprovalControlRequest(key: key(), summary: "Run", expiresAt: .distantFuture)
+        let task = Task { await controller.request(request, maximumWait: nil) }
+        while controller.pendingRequests.isEmpty { await Task.yield() }
+        _ = controller.resolve(session: request.key.session, requestID: request.key.requestID, decision: .deny)
+        _ = await task.value
+        controller.failDelivery(request.key, reason: "Codex did not confirm the decision.")
+        XCTAssertEqual(controller.deliveryState(for: request.key), .failed(.deny, reason: "Codex did not confirm the decision."))
+        XCTAssertEqual(controller.presentedRequest(for: request.key.session), request)
+        XCTAssertEqual(controller.resolve(session: request.key.session, requestID: request.key.requestID, decision: .allow), .missing)
+        controller.dismissFailedDelivery(request.key)
+        XCTAssertNil(controller.presentedRequest(for: request.key.session))
+        XCTAssertNil(controller.deliveryState(for: request.key))
+    }
+}

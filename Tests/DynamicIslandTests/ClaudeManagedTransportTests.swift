@@ -198,6 +198,23 @@ final class ClaudeProviderProtocolTests: XCTestCase {
         }
     }
 
+    func testToolResultForAnsweredPermissionIsTheExactAcknowledgement() async throws {
+        let provider = try makeProvider()
+        let events = await provider.project(envelope(#"{"type":"control_request","request_id":"req-ack","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{},"tool_use_id":"toolu_ack"}}"#))
+        guard case .approvalRequested(let request) = try XCTUnwrap(events.first) else { return XCTFail() }
+        // A tool_result before any answer is not an acknowledgement.
+        let early = await provider.project(envelope(#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_ack","content":"x"}]}}"#))
+        XCTAssertTrue(early.isEmpty)
+        // Answering reaches the transport (no process here) but is recorded.
+        do { try await provider.resolveApproval(request, allow: true) } catch {}
+        let other = await provider.project(envelope(#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_other","content":"x"}]}}"#))
+        XCTAssertTrue(other.isEmpty)
+        let ack = await provider.project(envelope(#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_ack","content":"done","is_error":false}]}}"#))
+        XCTAssertEqual(ack, [.approvalAcknowledged(nativeSessionID: "s1", requestToken: .string("req-ack"))])
+        let replay = await provider.project(envelope(#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_ack","content":"done"}]}}"#))
+        XCTAssertTrue(replay.isEmpty, "acknowledged once")
+    }
+
     func testRateLimitEventUpdatesAccountUsage() async throws {
         let provider = try makeProvider()
         let events = await provider.project(envelope(#"{"type":"rate_limit_event","rate_limit_info":{"unifiedWindows":{"five_hour":{"utilization":0.25,"resetsAt":1},"seven_day":{"utilization":0.5,"resetsAt":2}}}}"#))
