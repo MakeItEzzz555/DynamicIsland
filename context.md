@@ -4764,3 +4764,10 @@ For every requested feature phase:
 - Record Activities: opt-in local JSON Lines of normalized events (no prompts/transcripts/paths/arguments) under Application Support/DynamicIsland/AgentActivity, 14 days / 20 MB.
 - Concurrent commits by another session on this branch during the phase: `aed9c1b` (harness typing scenario ends the synthetic turn first) and `df38f23` (suspend pointer-leave collapse while native menus track).
 - Details and evidence: `research/AGENTS_PHASE5_2026-10-01.md`.
+
+### 2026-10-01 - Voice crash, Screen Recording grants, Phase 6 Calendar
+
+- Voice Transcribe crash: Swift 6 isolation trap in `SystemVoicePermissionProvider.requestSpeech()` (TCC replies on a background queue to a main-actor-isolated closure; four EXC_BREAKPOINT DiagnosticReports). Callbacks are now `@Sendable`.
+- Screen Recording "granted but nothing works": ad-hoc signing gives every build a new cdhash, so tccd logs "Failed to match existing code requirement" for ScreenCapture (and every other privacy service). The app now publishes a truthful access state with Relaunch / Open Settings / Check Again; `LOCAL_SIGN_IDENTITY` in `Scripts/package_app.sh` keeps grants across rebuilds.
+- Phase 6: Right Workspace Calendar selected-day browsing with a red native DatePicker popover; native-popover island containment. Details: `research/RIGHT_WORKSPACE_CALENDAR_PHASE6_2026-10-01.md`.
+- **UI rule:** for visual/UI work, inspect Droppy source, ExploreSwiftUI and the supplied Droppy recordings before implementing (see `research/SOURCE_PARITY_MANIFEST.md`).
