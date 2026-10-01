@@ -78,9 +78,9 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <key>NSAppleEventsUsageDescription</key>
   <string>DynamicIsland can read and control Spotify or Music playback when you use the media module, and send the Messages replies you write in the island to the exact conversation they answer.</string>
   <key>NSCalendarsFullAccessUsageDescription</key>
-  <string>After you allow access, DynamicIsland reads your upcoming calendar events to show them in the island. It does not create, change or share events.</string>
+  <string>After you allow access, DynamicIsland reads your calendar events for the days you view in the island. It does not create, change or share events.</string>
   <key>NSCalendarsUsageDescription</key>
-  <string>After you allow access, DynamicIsland reads your upcoming calendar events to show them in the island. It does not create, change or share events.</string>
+  <string>After you allow access, DynamicIsland reads your calendar events for the days you view in the island. It does not create, change or share events.</string>
   <key>NSCameraUsageDescription</key>
   <string>DynamicIsland shows a live camera preview in the island only while you have the camera preview open. Frames are not recorded or saved.</string>
   <key>NSFocusStatusUsageDescription</key>
