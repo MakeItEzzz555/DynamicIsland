@@ -8,7 +8,8 @@ enum AirDropService {
         guard !fileURLs.isEmpty else {
             return false
         }
-        guard let service = NSSharingService(named: .sendViaAirDrop) else {
+        guard let service = NSSharingService(named: .sendViaAirDrop),
+              service.canPerform(withItems: fileURLs) else {
             if fallbackRevealInFinder {
                 NSWorkspace.shared.activateFileViewerSelecting(fileURLs)
             }

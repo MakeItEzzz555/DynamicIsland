@@ -75,6 +75,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let settings = AppSettings()
     private let islandState = IslandStateStore()
     private lazy var fileShelf = FileShelfStore(settings: settings)
+    private let fileDragSession = FileDragSessionController()
     private let shortcuts = ShortcutsStore()
     private let media = MediaController()
     private let timer = TimerController()
@@ -210,6 +211,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let modules = IslandModules(
             media: media,
             fileShelf: fileShelf,
+            fileDragSession: fileDragSession,
             shortcuts: shortcuts,
             timer: timer,
             stats: stats,
