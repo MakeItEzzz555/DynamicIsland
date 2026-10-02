@@ -226,6 +226,9 @@ public final class AppSettings: ObservableObject {
     /// Record Activities: explicit opt-in, local normalized events only.
     @Published public var agentActivityRecordingEnabled: Bool { didSet { save(agentActivityRecordingEnabled, for: Key.agentActivityRecordingEnabled) } }
     @Published public var agentPeekDurationSeconds: Double { didSet { save(agentPeekDurationSeconds, for: Key.agentPeekDurationSeconds) } }
+    @Published var agentVisualPreferences: AgentVisualPreferences {
+        didSet { normalizeAgentVisualPreferences(oldValue: oldValue) }
+    }
 
     @Published public var mediaEnabled: Bool { didSet { save(mediaEnabled, for: Key.mediaEnabled) } }
     @Published public var showMediaWhenPaused: Bool { didSet { save(showMediaWhenPaused, for: Key.showMediaWhenPaused) } }
@@ -482,6 +485,7 @@ public final class AppSettings: ObservableObject {
         agentUsageMetricsEnabled = Self.bool(defaults, Key.agentUsageMetricsEnabled, true)
         agentActivityRecordingEnabled = Self.bool(defaults, Key.agentActivityRecordingEnabled, false)
         agentPeekDurationSeconds = Self.double(defaults, Key.agentPeekDurationSeconds, 5.0)
+        agentVisualPreferences = AgentVisualPreferences.decode(from: defaults, key: Key.agentVisualPreferences)
         showActivitiesTab = Self.bool(defaults, Key.showActivitiesTab, false)
         showLiveActivitiesTab = Self.bool(defaults, Key.showLiveActivitiesTab, false)
         showGesturesTab = Self.bool(defaults, Key.showGesturesTab, false)
@@ -994,8 +998,28 @@ public final class AppSettings: ObservableObject {
         collapsedPriorityPausedMedia = normalizedCollapsedLiveActivityPriority(collapsedPriorityPausedMedia)
         gestureSensitivity = normalizedDouble(gestureSensitivity, fallback: 0.5, range: 0...1.0)
         gestureCooldownSeconds = normalizedDouble(gestureCooldownSeconds, fallback: 0.75, range: 0.1...10.0)
+        agentVisualPreferences = agentVisualPreferences.normalized()
         showIslandTab = true
         saveAllNormalizedValues()
+    }
+
+    private func normalizeAgentVisualPreferences(oldValue: AgentVisualPreferences) {
+        guard !isNormalizingSettings else { return }
+        let normalized = agentVisualPreferences.normalized()
+        if normalized != agentVisualPreferences {
+            isNormalizingSettings = true
+            agentVisualPreferences = normalized
+            isNormalizingSettings = false
+        }
+        if normalized != oldValue || defaults.data(forKey: Key.agentVisualPreferences) == nil {
+            if let data = normalized.encoded() {
+                save(data, for: Key.agentVisualPreferences)
+            }
+        }
+    }
+
+    func resetAgentVisualPreferences() {
+        agentVisualPreferences = .defaults
     }
 
     private func normalizeAutoCollapseGrace(oldValue: Double) {
@@ -1237,6 +1261,9 @@ public final class AppSettings: ObservableObject {
         save(collapsedPriorityPausedMedia, for: Key.collapsedPriorityPausedMedia)
         save(gestureSensitivity, for: Key.gestureSensitivity)
         save(gestureCooldownSeconds, for: Key.gestureCooldownSeconds)
+        if let data = agentVisualPreferences.normalized().encoded() {
+            save(data, for: Key.agentVisualPreferences)
+        }
         save(showIslandTab, for: Key.showIslandTab)
     }
 
@@ -1354,6 +1381,7 @@ private enum Key {
     static let agentUsageMetricsEnabled = "agentUsageMetricsEnabled"
     static let agentActivityRecordingEnabled = "agentActivityRecordingEnabled"
     static let agentPeekDurationSeconds = "agentPeekDurationSeconds"
+    static let agentVisualPreferences = "agentVisualPreferences"
     static let showActivitiesTab = "showActivitiesTab"
     static let showLiveActivitiesTab = "showLiveActivitiesTab"
     static let showGesturesTab = "showGesturesTab"
@@ -1516,7 +1544,7 @@ private enum Key {
         showTimerTab, showStatsTab, showToolsTab, showAgentsTab, agentActivityEnabled,
         agentCompletionAlertsEnabled, agentApprovalAlertsEnabled, agentSoundsEnabled,
         agentUsageMetricsEnabled, agentActivityRecordingEnabled, agentPeekDurationSeconds,
-        showActivitiesTab, showLiveActivitiesTab, showGesturesTab,
+        agentVisualPreferences, showActivitiesTab, showLiveActivitiesTab, showGesturesTab,
         rememberLastSelectedTab, defaultExpandedTab, mediaEnabled, showMediaWhenPaused,
         showMediaWhenNoSource, showAlbumArtwork, showMediaTitle, showMediaArtist, showMediaSourceName,
         showPlaybackControls, showProgressSlider, showVolumeSlider, showVisualizer,

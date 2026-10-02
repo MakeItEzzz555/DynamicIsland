@@ -97,6 +97,9 @@ protocol VoicePermissionProviding: AnyObject {
 protocol VoiceAudioRecording: AnyObject {
     /// A default audio input device exists right now.
     var hasInputDevice: Bool { get }
+    /// Current microphone envelope normalized to 0...1. Implementations that
+    /// cannot meter may use the protocol default of zero.
+    var normalizedLevel: Double { get }
     /// Begins capturing microphone audio into `url`. Returns only after the
     /// recorder confirms it is actually recording.
     func startRecording(to url: URL) throws
@@ -104,6 +107,10 @@ protocol VoiceAudioRecording: AnyObject {
     func stopRecording()
     /// Stops capture, releases the microphone and discards the file. Idempotent.
     func cancelRecording()
+}
+
+extension VoiceAudioRecording {
+    var normalizedLevel: Double { 0 }
 }
 
 @MainActor
@@ -182,6 +189,15 @@ final class AVFoundationVoiceRecorder: VoiceAudioRecording {
 
     var hasInputDevice: Bool { AVCaptureDevice.default(for: .audio) != nil }
 
+    var normalizedLevel: Double {
+        guard let recorder, recorder.isRecording else { return 0 }
+        recorder.updateMeters()
+        let decibels = Double(recorder.averagePower(forChannel: 0))
+        guard decibels.isFinite else { return 0 }
+        let linear = min(max((decibels + 60) / 60, 0), 1)
+        return pow(linear, 1.55)
+    }
+
     func startRecording(to url: URL) throws {
         cancelRecording()
         let settings: [String: Any] = [
@@ -191,6 +207,7 @@ final class AVFoundationVoiceRecorder: VoiceAudioRecording {
             AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
         ]
         let recorder = try AVAudioRecorder(url: url, settings: settings)
+        recorder.isMeteringEnabled = true
         // `record()` returning true is not enough: require the recorder to
         // report live capture before the controller enters `.recording`.
         guard recorder.prepareToRecord(), recorder.record(), recorder.isRecording else {
@@ -372,6 +389,11 @@ final class VoiceTranscriptionController: ObservableObject, IslandCapabilityAdap
     var transcript: VoiceTranscript? {
         if case .completed(let transcript) = phase { return transcript }
         return nil
+    }
+
+    var liveAudioLevel: Double {
+        guard case .recording = phase else { return 0 }
+        return recorder.normalizedLevel
     }
 
     var isBusy: Bool {

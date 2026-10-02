@@ -465,6 +465,12 @@ struct SettingsView: View {
                 HelpText("Usage values are shown only when supported data is available.")
             }
 
+            SettingsGroup("Appearance") {
+                AgentAppearanceSettingsView(settings: settings)
+                    .disabled(!settings.agentActivityEnabled)
+                HelpText("Orb, avatar, voice-beam and send-button previews are local presentation state and never change a live agent session.")
+            }
+
             if let agentManagedControl, let agentProjects {
                 SettingsGroup("Provider & Project Diagnostics") {
                     AgentDiagnosticsView(

@@ -614,6 +614,7 @@ struct IslandRootView: View {
             collapsedRightRegionWidth: layoutStore.collapsedRightRegionWidth,
             isNotchIntegratedShell: layoutStore.hasHardwareNotch
         )
+        .environment(\.agentVisualPreferences, settings.agentVisualPreferences)
         .contentShape(Rectangle())
         .onHover(perform: handleCollapsedHover)
         .onTapGesture {
@@ -911,8 +912,12 @@ struct IslandRootView: View {
             return .inactive
         case .screenRecording:
             return .screenRecording(primary)
+        case .voiceRecording:
+            return .voiceRecording(primary)
+        case .voiceTranscription:
+            return .voiceTranscription(primary)
         case .keepAwake, .terminalTask, .windowSnapPreview, .reminder,
-             .voiceRecording, .voiceTranscription, .camera, .backgroundRemoval, .message:
+             .camera, .backgroundRemoval, .message:
             return .generic(primary)
         }
     }
@@ -1885,7 +1890,8 @@ struct CompactIslandView: View {
                     sideSlotLayout {
                         AgentCompactAttentionLeadingView(
                             provider: primary.session.sessionID.provider,
-                            project: attentionSession?.project.displayName
+                            project: attentionSession?.project.displayName,
+                            session: attentionSession
                         )
                     } right: {
                         AgentCompactAttentionTrailingView(
@@ -2026,6 +2032,13 @@ struct CompactIslandView: View {
             CollapsedScreenRecordingActivityView(
                 controller: modules.productivity.screenRecording,
                 layout: sideSlotGeometry
+            )
+            .transition(.compactMediaContent)
+
+        case .voiceRecording(let activity), .voiceTranscription(let activity):
+            CollapsedVoiceBeamCompactView(
+                controller: modules.productivity.voice,
+                activity: activity
             )
             .transition(.compactMediaContent)
 
@@ -3575,6 +3588,7 @@ struct ExpandedIslandView: View {
             contentVisible: contentVisible,
             isContentRemoving: isContentRemoving
         )
+        .environment(\.agentVisualPreferences, settings.agentVisualPreferences)
         .frame(maxWidth: .infinity, maxHeight: metrics.pageHeight, alignment: .topLeading)
     }
 

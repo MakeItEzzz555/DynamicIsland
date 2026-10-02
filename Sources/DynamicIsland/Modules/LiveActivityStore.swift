@@ -175,6 +175,8 @@ enum CollapsedIslandContentMode: Equatable {
     case fileTray(DynamicIslandLiveActivity)
     case battery(DynamicIslandLiveActivity)
     case screenRecording(DynamicIslandLiveActivity)
+    case voiceRecording(DynamicIslandLiveActivity)
+    case voiceTranscription(DynamicIslandLiveActivity)
     case generic(DynamicIslandLiveActivity)
 }
 

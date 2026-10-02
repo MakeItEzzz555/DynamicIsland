@@ -1918,15 +1918,9 @@ private struct AgentStateMarker: View {
     var emphasized = false
 
     var body: some View {
-        ZStack {
-            Circle()
-                .fill(AgentVisualStyle.providerAccent(session.id.sessionID.provider).opacity(emphasized ? 0.18 : 0.10))
-            Image(systemName: AgentSessionPresentation.displayedStateSymbol(for: session, at: Date()))
-                .font(.system(size: emphasized ? 12 : 10, weight: .bold))
-                .foregroundStyle(AgentVisualStyle.accent(for: session.state))
-        }
-        .frame(width: 26, height: 26)
-        .accessibilityLabel("\(session.id.sessionID.provider.stableName), \(AgentSessionPresentation.displayedStateLabel(for: session, at: Date()))")
+        AgentPresenceGlyph(session: session, size: emphasized ? 26 : 22)
+            .frame(width: 26, height: 26)
+            .accessibilityLabel("\(session.id.sessionID.provider.stableName), \(AgentSessionPresentation.displayedStateLabel(for: session, at: Date()))")
     }
 }
 
@@ -2174,12 +2168,17 @@ struct AgentCompactOverviewView: View {
 struct AgentCompactAttentionLeadingView: View {
     let provider: AgentProvider
     let project: String?
+    var session: AgentSession? = nil
 
     var body: some View {
         HStack(spacing: 5) {
-            Image(systemName: AgentVisualStyle.providerSymbol(provider))
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(AgentVisualStyle.providerAccent(provider))
+            if let session {
+                AgentPresenceGlyph(session: session, size: 18)
+            } else {
+                Image(systemName: AgentVisualStyle.providerSymbol(provider))
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(AgentVisualStyle.providerAccent(provider))
+            }
             Text(project.flatMap { $0.isEmpty ? nil : $0 } ?? provider.stableName.capitalized)
                 .font(.system(size: 9, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.88))
@@ -2294,11 +2293,15 @@ struct AgentCompactRoutineLeadingView: View {
     let session: AgentSession
 
     var body: some View {
-        Text(session.project.displayName ?? session.id.sessionID.provider.stableName.capitalized)
-            .font(.system(size: 9.5, weight: .semibold))
-            .foregroundStyle(.white.opacity(0.88))
-            .lineLimit(1)
-            .truncationMode(.middle)
+        HStack(spacing: 5) {
+            AgentPresenceGlyph(session: session, size: 18)
+            Text(session.project.displayName ?? session.id.sessionID.provider.stableName.capitalized)
+                .font(.system(size: 9.5, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.88))
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 

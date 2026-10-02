@@ -532,6 +532,7 @@ private struct AgentConsoleComposer: View {
 
     @State private var draft = ""
     @State private var submissionInFlight = false
+    @Environment(\.agentVisualPreferences) private var visualPreferences
 
     var body: some View {
         composer
@@ -572,29 +573,17 @@ private struct AgentConsoleComposer: View {
                 .help("Stop current agent turn")
                 .accessibilityLabel("Stop current agent turn")
             } else {
-                Button(action: { _ = submitDraft() }) {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.system(size: 18, weight: .semibold))
-                }
-                .buttonStyle(.borderless)
-                .foregroundStyle(
-                    submissionValue != nil &&
-                    interactionState.allowsPromptSubmission &&
-                    !submissionInFlight
-                        ? .white
-                        : .white.opacity(0.24)
-                )
-                .disabled(
-                    submissionValue == nil ||
-                    !interactionState.allowsPromptSubmission ||
-                    submissionInFlight
+                MetalSendButton(
+                    configuration: visualPreferences.metal,
+                    isEnabled: submissionValue != nil &&
+                        interactionState.allowsPromptSubmission &&
+                        !submissionInFlight,
+                    action: { _ = submitDraft() }
                 )
                 .keyboardShortcut(.return, modifiers: [.command])
-                .fixedSize()
                 .layoutPriority(3)
                 .reportsComposerActionFrame()
                 .help("Send prompt (Command-Return)")
-                .accessibilityLabel("Send prompt")
             }
         }
         .padding(.trailing, 5)
