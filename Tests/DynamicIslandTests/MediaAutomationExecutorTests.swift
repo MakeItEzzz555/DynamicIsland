@@ -549,6 +549,17 @@ final class MediaControllerAutomationIntegrationTests: XCTestCase {
         MediaAutomationScriptResult(output: output, failure: nil)
     }
 
+    /// A drawable fixture: an empty `NSImage(size:)` has no representations, so the
+    /// production artwork hash's `tiffRepresentation` fails and ImageIO logs
+    /// `CGImageDestinationFinalize failed for output type 'public.tiff'`.
+    private static func artwork(size: CGFloat) -> NSImage {
+        NSImage(size: CGSize(width: size, height: size), flipped: false) { rect in
+            NSColor(white: size / 32, alpha: 1).setFill()
+            rect.fill()
+            return true
+        }
+    }
+
     private static func snapshot(title: String, imageSize: CGFloat) -> MediaSnapshot {
         MediaSnapshot(
             sourceKind: .spotify,
@@ -557,7 +568,7 @@ final class MediaControllerAutomationIntegrationTests: XCTestCase {
             title: title,
             artist: "Artist",
             album: "Album",
-            artwork: NSImage(size: CGSize(width: imageSize, height: imageSize)),
+            artwork: Self.artwork(size: imageSize),
             isPlaying: true,
             duration: 180,
             elapsedTime: 1,
