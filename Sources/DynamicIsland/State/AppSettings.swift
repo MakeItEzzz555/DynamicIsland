@@ -330,6 +330,9 @@ public final class AppSettings: ObservableObject {
     }
     @Published public var clipboardHistoryPersistenceEnabled: Bool { didSet { save(clipboardHistoryPersistenceEnabled, for: Key.clipboardHistoryPersistenceEnabled) } }
     @Published public var clipboardHistoryCaptureImagesEnabled: Bool { didSet { save(clipboardHistoryCaptureImagesEnabled, for: Key.clipboardHistoryCaptureImagesEnabled) } }
+    @Published public var clipboardHistoryExcludedAppBundleIDs: [String] { didSet { save(clipboardHistoryExcludedAppBundleIDs, for: Key.clipboardHistoryExcludedAppBundleIDs) } }
+    @Published public var clipboardHistoryAutoFocusSearch: Bool { didSet { save(clipboardHistoryAutoFocusSearch, for: Key.clipboardHistoryAutoFocusSearch) } }
+    @Published public var clipboardHistoryTagsEnabled: Bool { didSet { save(clipboardHistoryTagsEnabled, for: Key.clipboardHistoryTagsEnabled) } }
 
     @Published public var liveActivitiesEnabled: Bool { didSet { save(liveActivitiesEnabled, for: Key.liveActivitiesEnabled) } }
     @Published public var showExpandedLiveActivitiesSection: Bool {
@@ -567,6 +570,9 @@ public final class AppSettings: ObservableObject {
         clipboardHistoryMaximumItems = Self.int(defaults, Key.clipboardHistoryMaximumItems, 50)
         clipboardHistoryPersistenceEnabled = Self.bool(defaults, Key.clipboardHistoryPersistenceEnabled, false)
         clipboardHistoryCaptureImagesEnabled = Self.bool(defaults, Key.clipboardHistoryCaptureImagesEnabled, true)
+        clipboardHistoryExcludedAppBundleIDs = defaults.stringArray(forKey: Key.clipboardHistoryExcludedAppBundleIDs) ?? []
+        clipboardHistoryAutoFocusSearch = Self.bool(defaults, Key.clipboardHistoryAutoFocusSearch, false)
+        clipboardHistoryTagsEnabled = Self.bool(defaults, Key.clipboardHistoryTagsEnabled, true)
 
         liveActivitiesEnabled = Self.bool(defaults, Key.liveActivitiesEnabled, true)
         showExpandedLiveActivitiesSection = Self.bool(defaults, Key.showExpandedLiveActivitiesSection, true)
@@ -884,6 +890,9 @@ public final class AppSettings: ObservableObject {
         clipboardHistoryMaximumItems = Self.int(defaults, Key.clipboardHistoryMaximumItems, 50)
         clipboardHistoryPersistenceEnabled = Self.bool(defaults, Key.clipboardHistoryPersistenceEnabled, false)
         clipboardHistoryCaptureImagesEnabled = Self.bool(defaults, Key.clipboardHistoryCaptureImagesEnabled, true)
+        clipboardHistoryExcludedAppBundleIDs = defaults.stringArray(forKey: Key.clipboardHistoryExcludedAppBundleIDs) ?? []
+        clipboardHistoryAutoFocusSearch = Self.bool(defaults, Key.clipboardHistoryAutoFocusSearch, false)
+        clipboardHistoryTagsEnabled = Self.bool(defaults, Key.clipboardHistoryTagsEnabled, true)
         liveActivitiesEnabled = Self.bool(defaults, Key.liveActivitiesEnabled, true)
         showExpandedLiveActivitiesSection = Self.bool(defaults, Key.showExpandedLiveActivitiesSection, true)
         liveActivityStyle = Self.enumValue(defaults, Key.liveActivityStyle, .compact)
@@ -1429,6 +1438,9 @@ private enum Key {
     static let clipboardHistoryMaximumItems = "clipboardHistoryMaximumItems"
     static let clipboardHistoryPersistenceEnabled = "clipboardHistoryPersistenceEnabled"
     static let clipboardHistoryCaptureImagesEnabled = "clipboardHistoryCaptureImagesEnabled"
+    static let clipboardHistoryExcludedAppBundleIDs = "clipboardHistoryExcludedAppBundleIDs"
+    static let clipboardHistoryAutoFocusSearch = "clipboardHistoryAutoFocusSearch"
+    static let clipboardHistoryTagsEnabled = "clipboardHistoryTagsEnabled"
     static let liveActivitiesEnabled = "liveActivitiesEnabled"
     static let showExpandedLiveActivitiesSection = "showExpandedLiveActivitiesSection"
     static let liveActivityStyle = "liveActivityStyle"
@@ -1527,7 +1539,8 @@ private enum Key {
         activitiesRefreshIntervalSeconds, showRunningAppsActivity, showDownloadsActivity,
         showCalendarActivity, showNowPlayingActivity, clipboardHistoryEnabled,
         clipboardHistoryMaximumItems, clipboardHistoryPersistenceEnabled,
-        clipboardHistoryCaptureImagesEnabled, liveActivitiesEnabled,
+        clipboardHistoryCaptureImagesEnabled, clipboardHistoryExcludedAppBundleIDs,
+        clipboardHistoryAutoFocusSearch, clipboardHistoryTagsEnabled, liveActivitiesEnabled,
         showExpandedLiveActivitiesSection, liveActivityStyle,
         showMusicLiveActivity, showTimerLiveActivity, showFileDropLiveActivity,
         showBatteryLiveActivity, showCalendarLiveActivity, showDownloadsLiveActivity,
@@ -1553,6 +1566,9 @@ private enum Key {
         clipboardHistoryEnabled,
         clipboardHistoryMaximumItems,
         clipboardHistoryPersistenceEnabled,
-        clipboardHistoryCaptureImagesEnabled
+        clipboardHistoryCaptureImagesEnabled,
+        clipboardHistoryExcludedAppBundleIDs,
+        clipboardHistoryAutoFocusSearch,
+        clipboardHistoryTagsEnabled
     ]
 }

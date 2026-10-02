@@ -4779,3 +4779,12 @@ For every requested feature phase:
 - Baskets: per-basket state and accent (accents show only when 2+ are visible), grid/list, Finder-like selection, copy-only `NSDraggingSession` drag-out, native owner-held context menus, Compress via `BackgroundOperationController` (the archive returns to the Basket that started it), ImageIO Convert, and Remove Background delivered to the requesting Basket. There is no cloud/Quickshare upload.
 - Intentional differences from Droppy: the panel is sized to the visible surface instead of an invisible 500×600 drop shield; list height comes from real row heights; one jiggle per drag generation.
 - Physical drag/drop, Photos promises, the switcher and auto-hide need manual real-device acceptance. Details and checklist: `research/FLOATING_BASKET_PHASE6_2026-10-01.md`.
+
+### 2026-10-02 - Clipboard History Organization
+
+- Entries now carry a source-app snapshot (name + bundle ID only), favorites, custom titles and tags. Archive schema 2 decodes schema 1 archives with safe defaults; tags persist only when persistence is enabled.
+- Favorites sort first and are trimmed separately (cap 50) so ordinary history limits never evict them; byte-budget pruning removes ordinary entries first.
+- Excluded apps (Settings → Clipboard → Privacy) are checked against the frontmost app before the pasteboard is read, so their content is never captured.
+- Clipboard view: search over text/URL/filename/source/title/tag (case and diacritic insensitive), kind/favorites filter, tag filter and editor, keyboard navigation (↑/↓/Return/⌘F/Esc), rename, and file Add to Shelf / Add to Basket (copies stable originals; Shelf ownership unchanged). A deleted or disabled tag filter no longer hides history.
+- New settings: `clipboardHistoryExcludedAppBundleIDs`, `clipboardHistoryAutoFocusSearch` (off), `clipboardHistoryTagsEnabled` (on).
+- Validation: `swift build`, `swift test` (1584 tests, 32 skipped, 0 failures).

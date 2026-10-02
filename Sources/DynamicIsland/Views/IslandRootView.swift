@@ -3370,7 +3370,11 @@ struct ExpandedIslandView: View {
                 store: modules.clipboardHistory,
                 onClose: {
                     closeClipboardHistoryAnimated()
-                }
+                },
+                externalActions: ClipboardHistoryExternalActions(
+                    addFilesToShelf: { urls in modules.fileShelf.add(urls) },
+                    addFilesToBasket: { urls in modules.basketPresenter.addClipboardFilesToBasket(urls) }
+                )
             )
             .frame(width: cardWidth, height: metrics.pageHeight)
             .innerBlurScaleClean(

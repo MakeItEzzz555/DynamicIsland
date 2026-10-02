@@ -137,9 +137,13 @@ enum SettingsAuditCatalog {
         + entries(["activitiesEnabled", "activitiesRefreshIntervalSeconds", "showRunningAppsActivity", "showDownloadsActivity",
                    "showCalendarActivity", "showNowPlayingActivity"], .deprecatedHidden, deprecatedNote)
         // Clipboard
-        + entries(["clipboardHistoryEnabled"], .behavioral, "Starts or stops pasteboard monitoring.")
-        + entries(["clipboardHistoryMaximumItems", "clipboardHistoryPersistenceEnabled", "clipboardHistoryCaptureImagesEnabled"],
-                  .dataPersistence, "History size, persistence and image capture. The Clipboard preview shows the real history.")
+        + entries(["clipboardHistoryEnabled", "clipboardHistoryAutoFocusSearch"], .behavioral,
+                  "Starts/stops pasteboard monitoring and controls Clipboard search focus.")
+        + entries(["clipboardHistoryMaximumItems", "clipboardHistoryPersistenceEnabled", "clipboardHistoryCaptureImagesEnabled",
+                   "clipboardHistoryExcludedAppBundleIDs"],
+                  .dataPersistence, "History size, persistence, image capture and source-app privacy exclusions.")
+        + visual(["clipboardHistoryTagsEnabled"], .clipboard,
+                 "Shows or hides the production Clipboard tag controls.")
         // Live Activities
         + visual(["liveActivitiesEnabled", "showExpandedLiveActivitiesSection"], .rightWorkspace, "Overview page.")
         + visual(["showMusicLiveActivity", "showTimerLiveActivity", "showFileDropLiveActivity", "showBatteryLiveActivity",
