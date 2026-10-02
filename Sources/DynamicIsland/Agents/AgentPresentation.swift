@@ -68,7 +68,7 @@ enum AgentCollapsedShellPresentation {
         let project = primary.project.displayName ?? primary.id.sessionID.provider.stableName.capitalized
         let state = AgentSessionPresentation.displayedStateLabel(for: primary, at: Date())
         return .agentRoutine(
-            leftContentWidth: estimatedWidth(project, minimum: 62, maximum: 112),
+            leftContentWidth: min(112, estimatedWidth(project, minimum: 62, maximum: 112) + 28),
             rightContentWidth: estimatedWidth(state, minimum: 62, maximum: 112)
         )
     }
@@ -83,7 +83,7 @@ enum AgentCollapsedShellPresentation {
             ? "\(presentation.totalCount) agents"
             : (presentation.primary?.displaySummary ?? "Needs attention")
         return .agentAttention(
-            leftContentWidth: estimatedWidth(project, minimum: 62, maximum: 112),
+            leftContentWidth: min(112, estimatedWidth(project, minimum: 62, maximum: 112) + 28),
             rightContentWidth: estimatedWidth(trailing, minimum: 76, maximum: 126)
         )
     }

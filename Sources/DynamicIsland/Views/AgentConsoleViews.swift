@@ -140,6 +140,7 @@ enum AgentConsoleTimelineProjectionCache {
 }
 
 struct AgentEmbeddedConsoleView: View {
+    @Environment(\.agentVisualPreferences) private var visualPreferences
     @Environment(\.islandDisplayMetrics) private var displayMetrics
     let session: AgentSession
     var mode: AgentConsoleMode = .observed
@@ -449,8 +450,12 @@ struct AgentEmbeddedConsoleView: View {
 
     private var managedInteractionFooter: some View {
         HStack(spacing: 6) {
-            Image(systemName: interactionSymbol)
-                .font(.system(size: 7.5, weight: .semibold))
+            if interactionState == .connecting || interactionState == .checkingAttachment || interactionState == .submitting || interactionState == .stopping {
+                AgentOrbView(state: AgentOrbStateMapper.state(for: interactionState, session: session), size: 20, speed: visualPreferences.orbSpeed)
+            } else {
+                Image(systemName: interactionSymbol)
+                    .font(.system(size: 7.5, weight: .semibold))
+            }
             Text(interactionLabel)
                 .font(.system(size: 7.5, weight: .medium))
                 .lineLimit(1)

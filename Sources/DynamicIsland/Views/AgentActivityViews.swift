@@ -1918,7 +1918,7 @@ private struct AgentStateMarker: View {
     var emphasized = false
 
     var body: some View {
-        AgentPresenceGlyph(session: session, size: emphasized ? 26 : 22)
+        AgentPresenceGlyph(session: session, size: emphasized ? 26 : 22, paused: !emphasized)
             .frame(width: 26, height: 26)
             .accessibilityLabel("\(session.id.sessionID.provider.stableName), \(AgentSessionPresentation.displayedStateLabel(for: session, at: Date()))")
     }
@@ -2172,12 +2172,11 @@ struct AgentCompactAttentionLeadingView: View {
 
     var body: some View {
         HStack(spacing: 5) {
+            Image(systemName: AgentVisualStyle.providerSymbol(provider))
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(AgentVisualStyle.providerAccent(provider))
             if let session {
                 AgentPresenceGlyph(session: session, size: 18)
-            } else {
-                Image(systemName: AgentVisualStyle.providerSymbol(provider))
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(AgentVisualStyle.providerAccent(provider))
             }
             Text(project.flatMap { $0.isEmpty ? nil : $0 } ?? provider.stableName.capitalized)
                 .font(.system(size: 9, weight: .semibold))
@@ -2295,6 +2294,9 @@ struct AgentCompactRoutineLeadingView: View {
     var body: some View {
         HStack(spacing: 5) {
             AgentPresenceGlyph(session: session, size: 18)
+            Image(systemName: AgentVisualStyle.providerSymbol(session.id.sessionID.provider))
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(AgentVisualStyle.providerAccent(session.id.sessionID.provider))
             Text(session.project.displayName ?? session.id.sessionID.provider.stableName.capitalized)
                 .font(.system(size: 9.5, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.88))
@@ -2310,9 +2312,6 @@ struct AgentCompactRoutineTrailingView: View {
 
     var body: some View {
         HStack(spacing: 5) {
-            Circle()
-                .fill(AgentVisualStyle.accent(for: session.state))
-                .frame(width: 5, height: 5)
             Text(AgentSessionPresentation.displayedStateLabel(for: session, at: Date()))
                 .font(.system(size: 9, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.88))

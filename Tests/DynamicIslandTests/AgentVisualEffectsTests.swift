@@ -40,6 +40,107 @@ final class AgentVisualEffectsTests: XCTestCase {
 
         XCTAssertEqual(BotAvatarDeterminism.type(for: first), BotAvatarDeterminism.type(for: same))
         XCTAssertTrue(BotAvatarType.allCases.contains(BotAvatarDeterminism.type(for: nextGeneration)))
+        let assignments = (0..<100).map { value in
+            BotAvatarDeterminism.type(for: AgentSessionInstanceID(
+                sessionID: AgentSessionID(provider: .codex, nativeID: "thread-\(value)"),
+                generation: AgentSessionGeneration(rawValue: 1)
+            ))
+        }
+        XCTAssertEqual(Set(assignments).count, 18, "Must hash identity, not a constant seed")
+        XCTAssertNotEqual(BotAvatarDeterminism.type(for: first), BotAvatarDeterminism.type(for: nextGeneration))
+    }
+
+    func testActivityHintsRespectActiveStateAndIgnoreOldCompletedWork() throws {
+        let hints: [(String, AgentOrbVisualState)] = [
+            ("Searching web", .searching), ("Browsing docs", .searching),
+            ("Connecting", .connecting), ("Resuming session", .connecting),
+            ("Loading tools", .connecting), ("Generating answer", .composing),
+            ("Compose response", .composing), ("Write file", .composing)
+        ]
+        var session = try XCTUnwrap(AgentDashboardPreviewFactory.sessions().first)
+        for domain in [AgentState.thinking, .planning, .working, .runningTool, .runningCommand] {
+            session.state = domain
+            for (title, expected) in hints {
+                session.recentActivity = [AgentActivity(id: AgentEventID(rawValue: "hint"), kind: .tool, title: title, summary: nil, status: .active, correlationID: nil, timestamp: Date())]
+                XCTAssertEqual(AgentOrbStateMapper.state(for: session), expected, "\(domain) / \(title)")
+            }
+        }
+        for domain in [AgentState.idle, .waitingForApproval, .waitingForUser, .planReady, .completed, .failed, .interrupted] {
+            session.state = domain
+            XCTAssertEqual(AgentOrbStateMapper.state(for: session), AgentOrbStateMapper.state(for: domain))
+            XCTAssertFalse(AgentVisualMotion.animates(domain))
+        }
+        session.state = .working
+        session.recentActivity = [AgentActivity(id: AgentEventID(rawValue: "old"), kind: .tool, title: "Searching", summary: nil, status: .completed, correlationID: nil, timestamp: Date())]
+        XCTAssertEqual(AgentOrbStateMapper.state(for: session), .working)
+    }
+
+    func testVoiceLifecycleMappingsAndMotionPolicy() {
+        XCTAssertEqual(AgentOrbStateMapper.state(for: VoiceTranscriptionPhase.requestingPermission), .connecting)
+        XCTAssertEqual(AgentOrbStateMapper.state(for: VoiceTranscriptionPhase.stopping), .connecting)
+        XCTAssertEqual(AgentOrbStateMapper.state(for: VoiceTranscriptionPhase.failed("denied")), .breathing)
+        XCTAssertEqual(AgentOrbStateMapper.state(for: VoiceTranscriptionPhase.completed(VoiceTranscript(text: "done", createdAt: Date(), wasOnDevice: true))), .breathing)
+        XCTAssertFalse(AgentVisualMotion.paused(reduceMotion: false, visible: true, active: true))
+        XCTAssertTrue(AgentVisualMotion.paused(reduceMotion: true, visible: true, active: true))
+        XCTAssertTrue(AgentVisualMotion.paused(reduceMotion: false, visible: false, active: true))
+        XCTAssertTrue(AgentVisualMotion.paused(reduceMotion: false, visible: true, active: false))
+        XCTAssertTrue(AgentVisualMotion.paused(reduceMotion: false, visible: true, active: true, enabled: false))
+    }
+
+    func testProcessingBeamIgnoresMicAndFocusesWhileTravelling() {
+        let c = VoiceBeamConfiguration()
+        let silent = VoiceBeamGeometry.make(width: 200, height: 20, level: 0, processing: true, time: 0, configuration: c)
+        let loud = VoiceBeamGeometry.make(width: 200, height: 20, level: 1, processing: true, time: 0, configuration: c)
+        let listening = VoiceBeamGeometry.make(width: 200, height: 20, level: 1, processing: false, time: 0, configuration: c)
+        XCTAssertEqual(silent, loud)
+        XCTAssertLessThan(silent.width, listening.width)
+        XCTAssertLessThan(silent.bloom, listening.bloom)
+        XCTAssertNotEqual(silent.centerX, VoiceBeamGeometry.make(width: 200, height: 20, level: 0, processing: true, time: 1, configuration: c).centerX)
+        XCTAssertEqual(listening.centerX, 100)
+    }
+
+    func testManagedConnectingAndSubmissionRemainPresentationOnly() throws {
+        let session = try XCTUnwrap(AgentDashboardPreviewFactory.sessions().first)
+        let original = session
+        for interaction in [AgentManagedInteractionState.connecting, .checkingAttachment, .stopping] {
+            XCTAssertEqual(AgentOrbStateMapper.state(for: interaction, session: session), .connecting)
+        }
+        XCTAssertEqual(AgentOrbStateMapper.state(for: AgentManagedInteractionState.submitting, session: session), .composing)
+        XCTAssertEqual(AgentOrbStateMapper.state(for: AgentManagedInteractionState.ready, session: session), .breathing)
+        XCTAssertEqual(AgentOrbStateMapper.state(for: AgentManagedInteractionState.failed("offline"), session: session), .breathing)
+        XCTAssertEqual(session, original)
+    }
+
+    func testAdvancedClampingAndInvalidAccessoryColors() {
+        var c = BotAvatarAdvancedConfiguration()
+        c.shadow = -1; c.lightAngle = .infinity; c.furLength = 9
+        c.density = -2; c.curl = .nan; c.jumpDuration = 0; c.spin = 99
+        let normalized = c.normalized()
+        XCTAssertEqual(normalized.shadow, 0)
+        XCTAssertEqual(normalized.lightAngle, 225)
+        XCTAssertEqual(normalized.furLength, 1)
+        XCTAssertEqual(normalized.density, 0)
+        XCTAssertEqual(normalized.curl, 0.25)
+        XCTAssertEqual(normalized.jumpDuration, 0.3)
+        XCTAssertEqual(normalized.spin, 2)
+        var avatar = BotAvatarConfiguration()
+        for invalid in ["", "red", "#GGGGGG", "-12345", "#12345678"] {
+            avatar.accessoryColorHex = invalid
+            XCTAssertEqual(avatar.normalized().accessoryColorHex, "#222222")
+        }
+        XCTAssertEqual(VoiceBeamConfiguration().reactiveLevel(.nan), 0.08)
+    }
+
+    func testCheckpointJSONRemainsCompatible() throws {
+        let original = try XCTUnwrap(AgentVisualPreferences.defaults.encoded())
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: original) as? [String: Any])
+        var avatar = try XCTUnwrap(json["avatar"] as? [String: Any])
+        avatar.removeValue(forKey: "advanced")
+        avatar.removeValue(forKey: "automaticShape")
+        json["avatar"] = avatar
+        let decoded = try JSONDecoder().decode(AgentVisualPreferences.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertEqual(decoded.avatar.details, BotAvatarAdvancedConfiguration())
+        XCTAssertEqual(decoded, .defaults)
     }
 
     func testVisualPreferencesClampInvalidValues() {
@@ -101,6 +202,9 @@ final class AgentVisualEffectsTests: XCTestCase {
         preferences.avatar.type = .cat
         preferences.voice.variant = .ocean
         preferences.metal.preset = .gold
+        preferences.avatar.details.curl = 0.8
+        preferences.avatar.details.jumpHeight = 0.2
+        preferences.avatar.automaticShape = false
         first.agentVisualPreferences = preferences
 
         let second = AppSettings(defaults: defaults)
@@ -108,6 +212,9 @@ final class AgentVisualEffectsTests: XCTestCase {
         XCTAssertEqual(second.agentVisualPreferences.avatar.type, .cat)
         XCTAssertEqual(second.agentVisualPreferences.voice.variant, .ocean)
         XCTAssertEqual(second.agentVisualPreferences.metal.preset, .gold)
+        XCTAssertEqual(second.agentVisualPreferences.avatar.details.curl, 0.8)
+        XCTAssertEqual(second.agentVisualPreferences.avatar.details.jumpHeight, 0.2)
+        XCTAssertEqual(second.agentVisualPreferences.avatar.automaticShape, false)
         XCTAssertEqual(second.agentActivityEnabled, originalActivityEnabled)
 
         second.resetAgentVisualPreferences()

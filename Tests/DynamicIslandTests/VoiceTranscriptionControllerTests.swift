@@ -31,6 +31,7 @@ private final class FakeVoicePermissions: VoicePermissionProviding {
 @MainActor
 private final class FakeVoiceRecorder: VoiceAudioRecording {
     var hasInputDevice = true
+    var normalizedLevel = 0.0
     var startError: Error?
     var isRecording = false
     var startedURLs: [URL] = []
@@ -329,6 +330,26 @@ final class VoiceTranscriptionControllerTests: XCTestCase {
         XCTAssertEqual(fixture.controller.phase, .idle)
         XCTAssertGreaterThanOrEqual(fixture.transcriber.cancelCount, 1)
         XCTAssertTrue(fixture.activities.activities.isEmpty)
+    }
+
+    func testMeterIsOnlyReadDuringCaptureAndCancellationFailureRemovesBeam() async throws {
+        let fixture = makeFixture(authorized: true)
+        fixture.recorder.normalizedLevel = 0.7
+        XCTAssertEqual(fixture.controller.liveAudioLevel, 0)
+        try await fixture.controller.startRecording()
+        XCTAssertEqual(fixture.controller.liveAudioLevel, 0.7)
+        fixture.transcriber.result = .failure(CancellationError())
+        do {
+            try await fixture.controller.stopAndTranscribe()
+            XCTFail("Recognizer cancellation must finish the lifecycle")
+        } catch {
+            guard case .failed = fixture.controller.phase else {
+                return XCTFail("Current-generation cancellation must not leave transcription running")
+            }
+        }
+        XCTAssertEqual(fixture.controller.liveAudioLevel, 0)
+        XCTAssertTrue(fixture.activities.activities.isEmpty)
+        XCTAssertFalse(fixture.controller.isBusy)
     }
 
     func testDisableWhileRecordingTearsDown() async throws {

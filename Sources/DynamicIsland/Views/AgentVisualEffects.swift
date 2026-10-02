@@ -1,5 +1,6 @@
 import SwiftUI
 import Foundation
+import AppKit
 
 enum AgentPresenceIndicatorStyle: String, CaseIterable, Codable, Identifiable, Sendable {
     case automatic
@@ -82,6 +83,14 @@ struct BotAvatarConfiguration: Codable, Equatable, Sendable {
     var accessoryColorHex = "#222222"
     var whirl = 0.0
     var motionStrength = 1.0
+    // Optional additions preserve the checkpoint's persisted JSON.
+    var automaticShape: Bool? = nil
+    var advanced: BotAvatarAdvancedConfiguration? = nil
+
+    var details: BotAvatarAdvancedConfiguration {
+        get { advanced ?? BotAvatarAdvancedConfiguration() }
+        set { advanced = newValue }
+    }
 
     func normalized() -> Self {
         var copy = self
@@ -92,8 +101,79 @@ struct BotAvatarConfiguration: Codable, Equatable, Sendable {
         copy.turn = copy.turn.clamped(to: 0...2, fallback: 1)
         copy.whirl = copy.whirl.clamped(to: 0...2, fallback: 0)
         copy.motionStrength = copy.motionStrength.clamped(to: 0...2, fallback: 1)
+        copy.advanced = copy.advanced?.normalized()
         if Color.agentHexComponents(copy.accessoryColorHex) == nil { copy.accessoryColorHex = "#222222" }
         return copy
+    }
+}
+
+struct BotAvatarAdvancedConfiguration: Codable, Equatable, Sendable {
+    var shadow = 0.28
+    var highlight = 0.48
+    var lightAngle = 225.0
+    var rimLight = 0.26
+    var spread = 1.0
+    var depth = 1.0
+    var roundness = 1.0
+    var furLength = 0.12
+    var density = 0.5
+    var fuzz = 0.35
+    var clumping = 0.25
+    var curl = 0.25
+    var gravity = 0.4
+    var jumpHeight = 0.08
+    var jumpDuration = 1.0
+    var squashStretch = 0.12
+    var spin = 0.0
+    var lean = 5.0
+    var idleJumpCadence = 0.0
+
+    func normalized() -> Self {
+        var c = self
+        for key in [\Self.shadow, \.highlight, \.rimLight, \.furLength, \.density, \.fuzz, \.clumping, \.curl, \.gravity, \.squashStretch] {
+            c[keyPath: key] = c[keyPath: key].clamped(to: 0...1, fallback: Self()[keyPath: key])
+        }
+        c.lightAngle = c.lightAngle.clamped(to: 0...360, fallback: 225)
+        c.spread = c.spread.clamped(to: 0.25...2, fallback: 1)
+        c.depth = c.depth.clamped(to: 0...2, fallback: 1)
+        c.roundness = c.roundness.clamped(to: 0...2, fallback: 1)
+        c.jumpHeight = c.jumpHeight.clamped(to: 0...0.3, fallback: 0.08)
+        c.jumpDuration = c.jumpDuration.clamped(to: 0.3...3, fallback: 1)
+        c.spin = c.spin.clamped(to: 0...2, fallback: 0)
+        c.lean = c.lean.clamped(to: 0...20, fallback: 5)
+        c.idleJumpCadence = c.idleJumpCadence.clamped(to: 0...20, fallback: 0)
+        return c
+    }
+}
+
+enum AgentVisualMotion {
+    static func animates(_ state: AgentState) -> Bool {
+        [.thinking, .planning, .working, .runningTool, .runningCommand].contains(state)
+    }
+
+    static func paused(reduceMotion: Bool, visible: Bool, active: Bool, enabled: Bool = true) -> Bool {
+        reduceMotion || !visible || !active || !enabled
+    }
+}
+
+// Local visibility and scene activity; never publish decorative ticks into the store/island.
+private struct AgentVisualTimeline<Content: View>: View {
+    @State private var visible = false
+    @State private var appActive = NSApplication.shared.isActive
+    var interval: Double
+    var paused: Bool
+    var runsWhileInactive = false
+    @ViewBuilder var content: (TimeInterval) -> Content
+
+    var body: some View {
+        let stopped = AgentVisualMotion.paused(reduceMotion: paused, visible: visible, active: appActive || runsWhileInactive)
+        TimelineView(.animation(minimumInterval: appActive ? interval : max(interval, 1.0 / 8.0), paused: stopped)) { timeline in
+            content(stopped ? 0 : timeline.date.timeIntervalSinceReferenceDate)
+        }
+            .onAppear { visible = true }
+            .onDisappear { visible = false }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in appActive = true }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in appActive = false }
     }
 }
 
@@ -128,7 +208,8 @@ struct VoiceBeamConfiguration: Codable, Equatable, Sendable {
 
     func reactiveLevel(_ raw: Double) -> Double {
         let c = normalized()
-        let gated = max(0, raw - c.threshold) / max(1 - c.threshold, 0.001)
+        let input = raw.clamped(to: 0...1, fallback: 0)
+        let gated = max(0, input - c.threshold) / max(1 - c.threshold, 0.001)
         return min(max(gated * c.sensitivity, c.idle), 1)
     }
 }
@@ -189,6 +270,15 @@ private extension Double {
 }
 
 enum AgentOrbStateMapper {
+    static func state(for interaction: AgentManagedInteractionState, session: AgentSession) -> AgentOrbVisualState {
+        switch interaction {
+        case .connecting, .checkingAttachment, .stopping: .connecting
+        case .submitting: .composing
+        case .working: state(for: session)
+        case .observed, .ready, .failed: .breathing
+        }
+    }
+
     static func state(for state: AgentState) -> AgentOrbVisualState {
         switch state {
         case .idle, .completed, .waitingForApproval, .waitingForUser: .breathing
@@ -203,6 +293,13 @@ enum AgentOrbStateMapper {
     }
 
     static func state(for session: AgentSession) -> AgentOrbVisualState {
+        if AgentVisualMotion.animates(session.state), let hint = activityHint(for: session) {
+            switch hint {
+            case .searching: return .searching
+            case .connecting: return .connecting
+            case .composing: return .composing
+            }
+        }
         switch session.state {
         case .idle, .completed, .waitingForApproval, .waitingForUser:
             return .breathing
@@ -240,10 +337,11 @@ enum AgentOrbStateMapper {
     private enum ActivityHint { case searching, connecting, composing }
 
     private static func activityHint(for session: AgentSession) -> ActivityHint? {
-        guard let activity = session.recentActivity.last else { return nil }
+        guard let activity = session.recentActivity.last,
+              activity.status == .active || activity.status == .pending else { return nil }
         let text = "\(activity.title) \(activity.summary ?? "")".lowercased()
-        if text.contains("search") || text.contains("browse") || text.contains("lookup") { return .searching }
-        if text.contains("connect") || text.contains("resume") || text.contains("loading") { return .connecting }
+        if text.contains("search") || text.contains("brows") || text.contains("lookup") { return .searching }
+        if text.contains("connect") || text.contains("resum") || text.contains("loading") { return .connecting }
         if text.contains("write") || text.contains("compose") || text.contains("draft") || text.contains("generat") { return .composing }
         return nil
     }
@@ -251,7 +349,7 @@ enum AgentOrbStateMapper {
 
 enum BotAvatarDeterminism {
     static func type(for id: AgentSessionInstanceID) -> BotAvatarType {
-        let seed = "(id.sessionID.provider.stableName)|(id.sessionID.nativeID)|(id.generation.rawValue)"
+        let seed = "\(id.sessionID.provider.stableName)|\(id.sessionID.nativeID)|\(id.generation.rawValue)"
         var hash: UInt64 = 14_695_981_039_346_656_037
         for byte in seed.utf8 {
             hash ^= UInt64(byte)
@@ -274,14 +372,19 @@ struct AgentOrbView: View {
 
     var body: some View {
         let motionPaused = paused || reduceMotion || terminal
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: motionPaused)) { timeline in
-            Canvas { context, canvasSize in
-                draw(in: &context, size: canvasSize, time: motionPaused ? 0 : timeline.date.timeIntervalSinceReferenceDate)
+        AgentVisualTimeline(interval: size <= 26 ? 1.0 / 15.0 : 1.0 / 30.0, paused: motionPaused) { time in
+            ZStack {
+                Canvas { context, canvasSize in
+                    draw(in: &context, size: canvasSize, time: time)
+                }
+                .id(state)
+                .transition(.opacity)
             }
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.24), value: state)
         }
         .frame(width: size, height: size)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("(state.displayName) agent activity")
+        .accessibilityLabel("\(state.displayName) agent activity")
     }
 
     private func draw(in context: inout GraphicsContext, size canvasSize: CGSize, time: TimeInterval) {
@@ -368,6 +471,7 @@ struct BotAvatarView: View {
     var state: AgentState = .idle
     var overrideType: BotAvatarType? = nil
     var compact = false
+    var paused = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
@@ -375,12 +479,17 @@ struct BotAvatarView: View {
 
     var body: some View {
         let config = configuration.normalized()
-        let type = overrideType ?? sessionID.map(BotAvatarDeterminism.type(for:)) ?? config.type
+        let detail = config.details
+        let type = overrideType ?? (config.automaticShape == false ? config.type : sessionID.map(BotAvatarDeterminism.type(for:)) ?? config.type)
         let size = CGFloat(compact ? min(config.size, 24) : config.size)
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: reduceMotion || state == .completed || state == .failed || state == .interrupted)) { timeline in
-            let t = reduceMotion ? 0 : timeline.date.timeIntervalSinceReferenceDate * config.speed
-            let working = [.thinking, .planning, .working, .runningTool, .runningCommand].contains(state)
+        let working = AgentVisualMotion.animates(state)
+        let idleJump = state == .idle && detail.idleJumpCadence > 0 && detail.jumpHeight > 0 && config.motionStrength > 0
+        let animated = (working && config.motionStrength > 0) || idleJump
+        AgentVisualTimeline(interval: compact ? 1.0 / 15.0 : 1.0 / 30.0, paused: paused || reduceMotion || !animated) { time in
+            let t = time * config.speed
             let sleeping = state == .idle || state == .completed
+            let jumpPhase = working ? t / detail.jumpDuration : t.truncatingRemainder(dividingBy: max(detail.idleJumpCadence, detail.jumpDuration)) / detail.jumpDuration
+            let jump = time == 0 || jumpPhase > 1 && !working ? 0 : abs(sin(jumpPhase * .pi))
             ZStack {
                 if config.whirl > 0, working {
                     Circle()
@@ -390,20 +499,27 @@ struct BotAvatarView: View {
                         .padding(-size * 0.08)
                 }
 
-                AvatarBodyShape(type: type)
+                AvatarBodyShape(type: type, roundness: detail.roundness)
                     .fill(bodyFill(type: type, config: config))
                     .overlay {
-                        AvatarBodyShape(type: type)
-                            .stroke(Color.white.opacity(edgeOpacity(config.shading)), lineWidth: config.shading == .flat ? 0 : 0.8)
+                        AvatarBodyShape(type: type, roundness: detail.roundness)
+                            .stroke(LinearGradient(colors: [.white.opacity(detail.rimLight), .clear], startPoint: .bottomTrailing, endPoint: .topLeading), lineWidth: config.shading == .flat ? 0 : 0.8 + detail.depth)
                     }
-                    .shadow(color: Color.black.opacity(config.shading == .flat ? 0 : 0.28), radius: config.shading == .fabric ? 3 : 1.5, y: 1)
+                    .overlay {
+                        if config.shading == .fabric {
+                            AvatarFabricTexture(configuration: detail)
+                                .clipShape(AvatarBodyShape(type: type, roundness: detail.roundness))
+                        }
+                    }
+                    .shadow(color: Color.black.opacity(config.shading == .flat ? 0 : detail.shadow), radius: 1 + 3 * detail.spread, y: detail.depth * 2)
 
                 avatarFace(size: size, sleeping: sleeping, config: config)
                 accessories(size: size, config: config)
             }
             .frame(width: size, height: size)
-            .rotationEffect(.degrees(working ? sin(t * 3.2) * 5 * config.motionStrength : sin(t * 0.7) * 2 * config.turn))
-            .offset(y: working ? -abs(sin(t * 3.2)) * size * 0.08 * config.motionStrength : 0)
+            .scaleEffect(x: max(0.5, 1 - jump * detail.squashStretch * 0.25 * config.motionStrength), y: 1 + jump * detail.squashStretch * 0.25 * config.motionStrength)
+            .rotationEffect(.degrees(working ? (sin(t * 3.2) * detail.lean + t * 90 * detail.spin) * config.motionStrength : 0))
+            .offset(y: -jump * size * detail.jumpHeight * config.motionStrength * (compact ? 0.25 : 1))
         }
         .frame(width: CGFloat(compact ? min(config.size, 24) : config.size), height: CGFloat(compact ? min(config.size, 24) : config.size))
         .scaleEffect(config.interactive && hovering && !reduceMotion ? 1.05 : 1)
@@ -430,17 +546,21 @@ struct BotAvatarView: View {
 
     private func bodyFill(type: BotAvatarType, config: BotAvatarConfiguration) -> AnyShapeStyle {
         let base = bodyColor(type, config: config)
+        let detail = config.details
+        let angle = detail.lightAngle * .pi / 180
+        let light = UnitPoint(x: 0.5 + cos(angle) * 0.5, y: 0.5 + sin(angle) * 0.5)
+        let end = UnitPoint(x: 1 - light.x, y: 1 - light.y)
         switch config.shading {
         case .flat:
             return AnyShapeStyle(base)
         case .smooth:
-            return AnyShapeStyle(LinearGradient(colors: [base.opacity(0.95), base.opacity(0.62)], startPoint: .topLeading, endPoint: .bottomTrailing))
+            return AnyShapeStyle(LinearGradient(colors: [.white.opacity(detail.highlight * 0.4), base, base.opacity(1 - 0.3 * detail.depth)], startPoint: light, endPoint: end))
         case .crisp:
-            return AnyShapeStyle(LinearGradient(colors: [.white.opacity(0.38), base, base.opacity(0.66)], startPoint: .topLeading, endPoint: .bottomTrailing))
+            return AnyShapeStyle(LinearGradient(stops: [.init(color: .white.opacity(detail.highlight), location: 0), .init(color: base, location: min(0.8, 0.35 * detail.spread)), .init(color: base.opacity(1 - 0.3 * detail.depth), location: 1)], startPoint: light, endPoint: end))
         case .plastic:
-            return AnyShapeStyle(RadialGradient(colors: [.white.opacity(0.68), base, base.opacity(0.58)], center: .topLeading, startRadius: 0, endRadius: 42))
+            return AnyShapeStyle(RadialGradient(colors: [.white.opacity(detail.highlight), base, base.opacity(1 - 0.3 * detail.depth)], center: light, startRadius: 0, endRadius: config.size * detail.spread))
         case .fabric:
-            return AnyShapeStyle(RadialGradient(colors: [.white.opacity(0.48), base.opacity(0.95), base.opacity(0.56)], center: .topLeading, startRadius: 0, endRadius: 50))
+            return AnyShapeStyle(RadialGradient(colors: [.white.opacity(detail.highlight), base, base.opacity(1 - 0.3 * detail.depth)], center: light, startRadius: 0, endRadius: config.size * detail.spread))
         }
     }
 
@@ -498,12 +618,17 @@ struct BotAvatarView: View {
             .offset(y: -size * 0.43)
         }
         if config.glasses != .none {
-            Image(systemName: config.glasses == .shades ? "sunglasses.fill" : "eyeglasses")
-                .resizable()
-                .scaledToFit()
-                .foregroundStyle(accessoryColor)
-                .frame(width: size * 0.48, height: size * 0.18)
-                .offset(y: size * 0.01)
+            HStack(spacing: size * 0.04) {
+                ForEach(0..<2) { _ in
+                    RoundedRectangle(cornerRadius: config.glasses == .round ? size * 0.1 : size * 0.025)
+                        .fill(config.glasses == .shades ? accessoryColor : .clear)
+                        .overlay {
+                            RoundedRectangle(cornerRadius: config.glasses == .round ? size * 0.1 : size * 0.025)
+                                .stroke(accessoryColor, lineWidth: max(1, size * 0.025))
+                        }
+                        .frame(width: size * 0.21, height: size * 0.18)
+                }
+            }.offset(y: size * 0.01)
         }
         if config.headphones {
             Image(systemName: "headphones")
@@ -522,17 +647,49 @@ struct BotAvatarView: View {
     }
 }
 
+// Bounded static fibers, deterministic across redraws. No texture timer or random seed.
+private struct AvatarFabricTexture: View {
+    var configuration: BotAvatarAdvancedConfiguration
+
+    var body: some View {
+        Canvas { context, size in
+            let c = configuration
+            let count = Int(c.density * 120)
+            for index in 0..<count {
+                let seed = Double(index)
+                let group = floor(seed / 4)
+                let x = (sin(seed * 78.233) * 43758.5453).fraction
+                let y = (sin(seed * 12.9898) * 96321.9123).fraction
+                let cluster = (sin(group * 32.17) * 15731.7).fraction
+                let start = CGPoint(x: (x * (1 - c.clumping) + cluster * c.clumping) * size.width, y: y * size.height)
+                let length = size.height * c.furLength * 0.35
+                let end = CGPoint(x: start.x + length * (x - 0.5), y: start.y + length * (c.gravity - 0.5) * 2)
+                var path = Path()
+                path.move(to: start)
+                path.addQuadCurve(to: end, control: CGPoint(x: start.x + length * c.curl, y: start.y - length * (1 - c.gravity)))
+                context.stroke(path, with: .color(.white.opacity(0.10 + c.fuzz * 0.25)), lineWidth: 0.35 + c.fuzz)
+            }
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+private extension Double {
+    var fraction: Double { self - floor(self) }
+}
+
 private struct AvatarBodyShape: Shape {
     let type: BotAvatarType
+    var roundness: Double = 1
 
     func path(in rect: CGRect) -> Path {
         let inset = rect.insetBy(dx: rect.width * 0.08, dy: rect.height * 0.08)
         switch type {
         case .circle: return Path(ellipseIn: inset)
         case .square, .droid, .mech:
-            return Path(roundedRect: inset, cornerRadius: rect.width * (type == .square ? 0.18 : 0.28))
+            return Path(roundedRect: inset, cornerRadius: rect.width * (type == .square ? 0.18 : 0.28) * roundness)
         case .pill:
-            return Path(roundedRect: inset.insetBy(dx: 0, dy: rect.height * 0.14), cornerRadius: rect.width * 0.42)
+            return Path(roundedRect: inset.insetBy(dx: 0, dy: rect.height * 0.14), cornerRadius: rect.width * 0.42 * roundness)
         case .triangle:
             var p = Path(); p.move(to: CGPoint(x: rect.midX, y: inset.minY)); p.addLine(to: CGPoint(x: inset.maxX, y: inset.maxY)); p.addLine(to: CGPoint(x: inset.minX, y: inset.maxY)); p.closeSubpath(); return p
         case .hexagon:
@@ -550,16 +707,16 @@ private struct AvatarBodyShape: Shape {
             for i in 0..<6 { let a = Double(i) * .pi / 3; let c = CGPoint(x: rect.midX + cos(a)*rect.width*0.25, y: rect.midY + sin(a)*rect.height*0.25); p.addEllipse(in:CGRect(x:c.x-r,y:c.y-r,width:r*2,height:r*2)) }
             p.addEllipse(in: CGRect(x: rect.midX-r, y: rect.midY-r, width:r*2,height:r*2)); return p
         case .ghost:
-            let p = Path(roundedRect: inset, cornerRadius: rect.width * 0.34); return p
+            let p = Path(roundedRect: inset, cornerRadius: rect.width * 0.34 * roundness); return p
         case .cloud:
             var p = Path(); p.addEllipse(in: CGRect(x: inset.minX, y: rect.midY-rect.height*0.18, width:rect.width*0.44,height:rect.height*0.36)); p.addEllipse(in:CGRect(x:rect.midX-rect.width*0.24,y:inset.minY,width:rect.width*0.48,height:rect.height*0.48)); p.addEllipse(in:CGRect(x:rect.midX,y:rect.midY-rect.height*0.16,width:rect.width*0.42,height:rect.height*0.34)); return p
         case .cat:
-            var p = Path(roundedRect: inset, cornerRadius: rect.width * 0.30); p.move(to: CGPoint(x:inset.minX+rect.width*0.12,y:inset.minY+rect.height*0.06)); p.addLine(to: CGPoint(x:inset.minX,y:inset.minY-rect.height*0.12)); p.addLine(to: CGPoint(x:inset.minX+rect.width*0.24,y:inset.minY)); p.move(to: CGPoint(x:inset.maxX-rect.width*0.12,y:inset.minY+rect.height*0.06)); p.addLine(to: CGPoint(x:inset.maxX,y:inset.minY-rect.height*0.12)); p.addLine(to: CGPoint(x:inset.maxX-rect.width*0.24,y:inset.minY)); return p
+            var p = Path(roundedRect: inset, cornerRadius: rect.width * 0.30 * roundness); p.move(to: CGPoint(x:inset.minX+rect.width*0.12,y:inset.minY+rect.height*0.06)); p.addLine(to: CGPoint(x:inset.minX,y:inset.minY-rect.height*0.12)); p.addLine(to: CGPoint(x:inset.minX+rect.width*0.24,y:inset.minY)); p.move(to: CGPoint(x:inset.maxX-rect.width*0.12,y:inset.minY+rect.height*0.06)); p.addLine(to: CGPoint(x:inset.maxX,y:inset.minY-rect.height*0.12)); p.addLine(to: CGPoint(x:inset.maxX-rect.width*0.24,y:inset.minY)); return p
         case .blob, .alien, .pebble, .puddle:
             let xScale: CGFloat = type == .puddle ? 0.98 : type == .pebble ? 0.78 : 0.90
             let yScale: CGFloat = type == .puddle ? 0.58 : type == .alien ? 0.92 : 0.82
             let r = CGRect(x: rect.midX - inset.width*xScale/2, y: rect.midY - inset.height*yScale/2, width: inset.width*xScale, height: inset.height*yScale)
-            return Path(roundedRect: r, cornerRadius: rect.width * (type == .blob ? 0.34 : 0.42))
+            return Path(roundedRect: r, cornerRadius: rect.width * (type == .blob ? 0.34 : 0.42) * roundness)
         }
     }
 
@@ -627,19 +784,17 @@ struct VoiceBeamView: View {
 
     var body: some View {
         let config = configuration.normalized()
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: reduceMotion || !config.animationEnabled)) { timeline in
+        AgentVisualTimeline(interval: 1.0 / 30.0, paused: reduceMotion || !config.animationEnabled, runsWhileInactive: true) { time in
             GeometryReader { proxy in
-                let t = (reduceMotion || !config.animationEnabled) ? 0 : timeline.date.timeIntervalSinceReferenceDate * config.flow
+                let t = time * config.flow
                 Canvas { context, size in
-                    let raw = min(max(level(), 0), 1)
-                    let reactive = envelope.sample(
-                        rawLevel: raw,
-                        timestamp: timeline.date.timeIntervalSinceReferenceDate,
-                        configuration: config
-                    )
-                    let centerX = processing ? size.width * CGFloat(0.5 + 0.18 * sin(t * 1.9)) : size.width / 2
-                    let beamWidth = max(18, size.width * CGFloat((0.20 + 0.55 * reactive) * config.spread))
-                    let bloom = max(2, size.height * CGFloat((0.18 + reactive * 0.72) * config.reach))
+                    // Static listening still reflects the meter when its owner updates;
+                    // processing never reads the microphone after capture stops.
+                    let reactive = processing ? 0.55 : (time == 0 ? config.reactiveLevel(level()) : envelope.sample(rawLevel: level(), timestamp: time, configuration: config))
+                    let geometry = VoiceBeamGeometry.make(width: size.width, height: size.height, level: reactive, processing: processing, time: t, configuration: config)
+                    let centerX = geometry.centerX
+                    let beamWidth = geometry.width
+                    let bloom = geometry.bloom
                     let colors = beamColors(config.variant)
                     for index in colors.indices {
                         let p = Double(index) / Double(max(colors.count - 1, 1))
@@ -658,6 +813,8 @@ struct VoiceBeamView: View {
         .frame(height: height)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
+        .onChange(of: processing) { _, _ in envelope.reset() }
+        .onDisappear { envelope.reset() }
     }
 
     private func beamColors(_ variant: VoiceBeamColorVariant) -> [Color] {
@@ -674,6 +831,22 @@ struct VoiceBeamView: View {
     }
 }
 
+struct VoiceBeamGeometry: Equatable {
+    var centerX: CGFloat
+    var width: CGFloat
+    var bloom: CGFloat
+
+    static func make(width: CGFloat, height: CGFloat, level: Double, processing: Bool, time: Double, configuration: VoiceBeamConfiguration) -> Self {
+        let c = configuration.normalized()
+        let reactive = processing ? 0.55 : level.clamped(to: 0...1, fallback: 0)
+        return Self(
+            centerX: processing ? width * (0.5 + 0.18 * sin(time * 1.9)) : width / 2,
+            width: min(width * 0.85, max(18, width * (processing ? 0.22 : 0.20 + 0.55 * reactive) * c.spread)),
+            bloom: min(height, max(2, height * (processing ? 0.48 : 0.18 + reactive * 0.72) * c.reach))
+        )
+    }
+}
+
 struct MetalSendButton: View {
     var configuration: MetalSendConfiguration
     var isEnabled: Bool
@@ -681,14 +854,13 @@ struct MetalSendButton: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var hovering = false
-    @State private var pressing = false
 
     var body: some View {
         let config = configuration.normalized()
         Button(action: action) {
             Image(systemName: "arrow.up")
                 .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(isEnabled ? Color.black.opacity(0.82) : Color.white.opacity(0.24))
+                .foregroundStyle(isEnabled ? (config.enabled && config.strength >= 0.5 ? Color.black.opacity(0.9) : Color.white) : Color.white.opacity(0.45))
                 .frame(width: 30, height: 30)
                 .background {
                     if config.enabled {
@@ -697,25 +869,20 @@ struct MetalSendButton: View {
                         Circle().fill(Color.white.opacity(isEnabled ? 0.16 : 0.06))
                     }
                 }
-                .contentShape(Circle())
-                .scaleEffect(pressing ? 0.92 : hovering ? 1.05 : 1)
+                .padding(2)
+                .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .frame(width: 34, height: 34)
-        .contentShape(Rectangle())
+        .buttonStyle(MetalSendPressStyle(reduceMotion: reduceMotion, hovering: hovering && isEnabled))
         .disabled(!isEnabled)
         .onHover { hovering = $0 }
-        .simultaneousGesture(DragGesture(minimumDistance: 0).onChanged { _ in pressing = true }.onEnded { _ in pressing = false })
         .animation(reduceMotion ? nil : .spring(response: 0.18, dampingFraction: 0.72), value: hovering)
-        .animation(reduceMotion ? nil : .spring(response: 0.14, dampingFraction: 0.72), value: pressing)
         .accessibilityLabel("Send prompt")
         .accessibilityValue(isEnabled ? "Ready" : "Unavailable")
     }
 
     @ViewBuilder
     private func metalSurface(_ config: MetalSendConfiguration) -> some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 24.0, paused: reduceMotion || !config.animationEnabled)) { timeline in
-            let t = (reduceMotion || !config.animationEnabled) ? 0 : timeline.date.timeIntervalSinceReferenceDate
+        AgentVisualTimeline(interval: 1.0 / 24.0, paused: reduceMotion || !config.animationEnabled || !isEnabled || !hovering) { t in
             let colors: [Color] = switch config.preset {
             case .chromatic: [.cyan, .white, .pink, .purple, .cyan]
             case .silver: [.white.opacity(0.9), .gray.opacity(0.55), .white, .gray.opacity(0.72)]
@@ -731,6 +898,18 @@ struct MetalSendButton: View {
                 }
                 .shadow(color: config.glowEnabled && isEnabled ? colors.first!.opacity(0.32 * config.glowGain) : .clear, radius: 7 * config.glowGain)
         }
+        .allowsHitTesting(false)
+    }
+}
+
+private struct MetalSendPressStyle: ButtonStyle {
+    var reduceMotion: Bool
+    var hovering: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(reduceMotion ? 1 : configuration.isPressed ? 0.92 : hovering ? 1.05 : 1)
+            .animation(reduceMotion ? nil : .spring(response: 0.18, dampingFraction: 0.72), value: configuration.isPressed)
     }
 }
 
@@ -743,7 +922,7 @@ extension Color {
     fileprivate static func agentHexComponents(_ value: String) -> (Double, Double, Double)? {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         let hex = trimmed.hasPrefix("#") ? String(trimmed.dropFirst()) : trimmed
-        guard hex.count == 6, let number = Int(hex, radix:16) else { return nil }
+        guard hex.count == 6, hex.allSatisfy({ $0.isASCII && $0.isHexDigit }), let number = Int(hex, radix:16) else { return nil }
         return (Double((number >> 16) & 0xff)/255, Double((number >> 8) & 0xff)/255, Double(number & 0xff)/255)
     }
 }
@@ -763,6 +942,7 @@ extension EnvironmentValues {
 struct AgentPresenceGlyph: View {
     let session: AgentSession
     var size: CGFloat = 20
+    var paused = false
     @Environment(\.agentVisualPreferences) private var preferences
 
     var body: some View {
@@ -781,7 +961,8 @@ struct AgentPresenceGlyph: View {
                         sessionID: session.id,
                         configuration: compactAvatar(config.avatar),
                         state: session.state,
-                        compact: true
+                        compact: true,
+                        paused: paused
                     )
                 } else {
                     orb(config)
@@ -800,13 +981,14 @@ struct AgentPresenceGlyph: View {
             state: AgentOrbStateMapper.state(for: session),
             size: size,
             speed: config.orbSpeed,
-            terminal: session.state == .completed || session.state == .failed || session.state == .interrupted
+            paused: paused,
+            terminal: !AgentVisualMotion.animates(session.state)
         )
     }
 
     private func compactAvatar(_ config: BotAvatarConfiguration) -> BotAvatarConfiguration {
         var copy = config
-        copy.size = Double(size)
+        copy.size = min(config.size, Double(size))
         return copy
     }
 }

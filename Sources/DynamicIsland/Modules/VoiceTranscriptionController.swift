@@ -581,7 +581,7 @@ final class VoiceTranscriptionController: ObservableObject, IslandCapabilityAdap
             if error is VoiceTranscriptionError {
                 mapped = error
             } else if error is CancellationError {
-                return
+                mapped = VoiceTranscriptionError.transcriptionFailed("Transcription cancelled")
             } else {
                 mapped = VoiceTranscriptionError.transcriptionFailed(error.localizedDescription)
             }
