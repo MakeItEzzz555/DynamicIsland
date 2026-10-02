@@ -4771,3 +4771,11 @@ For every requested feature phase:
 - Screen Recording "granted but nothing works": ad-hoc signing gives every build a new cdhash, so tccd logs "Failed to match existing code requirement" for ScreenCapture (and every other privacy service). The app now publishes a truthful access state with Relaunch / Open Settings / Check Again; `LOCAL_SIGN_IDENTITY` in `Scripts/package_app.sh` keeps grants across rebuilds.
 - Phase 6: Right Workspace Calendar selected-day browsing with a red native DatePicker popover; native-popover island containment. Details: `research/RIGHT_WORKSPACE_CALENDAR_PHASE6_2026-10-01.md`.
 - **UI rule:** for visual/UI work, inspect Droppy source, ExploreSwiftUI and the supplied Droppy recordings before implementing (see `research/SOURCE_PARITY_MANIFEST.md`).
+
+### 2026-10-02 - Floating Basket (Droppy parity roadmap item 8)
+
+- Shake a real external file drag to summon a floating Basket near the pointer. Detection polls the drag pasteboard change count at 10 Hz with no Accessibility; thresholds come from Droppy `DragMonitor` (0.5 s window, reversal dot < -0.3, reversals `max(2, min(5, round(6 - s)))`). Each drag generation triggers at most once.
+- `TemporaryFileOwnershipLedger` is now the only path that deletes DynamicIsland temp files (Shelf and drag-promise roots). Owners: shelf / basket / drag-out / operation. Stable user files are never deleted, and moving items between Shelf and Baskets never triggers cleanup.
+- Baskets: per-basket state and accent (accents show only when 2+ are visible), grid/list, Finder-like selection, copy-only `NSDraggingSession` drag-out, native owner-held context menus, Compress via `BackgroundOperationController` (the archive returns to the Basket that started it), ImageIO Convert, and Remove Background delivered to the requesting Basket. There is no cloud/Quickshare upload.
+- Intentional differences from Droppy: the panel is sized to the visible surface instead of an invisible 500×600 drop shield; list height comes from real row heights; one jiggle per drag generation.
+- Physical drag/drop, Photos promises, the switcher and auto-hide need manual real-device acceptance. Details and checklist: `research/FLOATING_BASKET_PHASE6_2026-10-01.md`.
