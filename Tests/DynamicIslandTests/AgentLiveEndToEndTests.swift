@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import XCTest
 @testable import DynamicIsland
@@ -42,6 +43,8 @@ final class AgentLiveEndToEndTests: XCTestCase {
 
         // 1. Start in that folder.
         let first = try makeController()
+        let firstObservation = observeRuntime(first.store, provider: provider, cwd: folder.path)
+        defer { firstObservation.cancel(); first.controller.stop() }
         await first.controller.refreshPersistentSnapshot()
         if let model {
             XCTAssertTrue(first.controller.selectNewSessionModel(model, for: provider), "model \(model) not offered")
@@ -61,7 +64,7 @@ final class AgentLiveEndToEndTests: XCTestCase {
         // 2. Submit; the agent writes a file in the exact cwd.
         first.approvals.setAutoApprove(true, for: started.instance)
         let accepted = await first.controller.submit(
-            "Create a file named hello.txt in the current directory containing exactly the text: hi from \(provider.stableName). Then reply with the single word DONE.",
+            "Create hello.txt in the current directory. Its entire contents must be the text between the delimiters below, excluding the delimiters, with no punctuation or other text added.\n<contents>hi from \(provider.stableName)</contents>\nThen reply with the single word DONE.",
             for: session
         )
         XCTAssertTrue(accepted, "submit refused: \(first.controller.lastTransportError ?? "-")")
@@ -79,6 +82,8 @@ final class AgentLiveEndToEndTests: XCTestCase {
         XCTAssertEqual(written?.trimmingCharacters(in: .whitespacesAndNewlines), "hi from \(provider.stableName)")
         first.approvals.setAutoApprove(false, for: started.instance)
         let afterTurn = try XCTUnwrap(first.store.session(for: started.instance))
+        log(provider, "after turn state=\(afterTurn.state.rawValue) orb=\(AgentOrbStateMapper.state(for: afterTurn).rawValue)")
+        XCTAssertEqual(afterTurn.state, .completed)
         let context = AgentUsageIndicatorPresentation.make(
             provider: provider,
             accountUsage: first.controller.accountUsageByProvider[provider] ?? AgentUsage(),
@@ -108,6 +113,8 @@ final class AgentLiveEndToEndTests: XCTestCase {
 
         // 4. Resume the exact session from a fresh controller (as after relaunch).
         let second = try makeController()
+        let secondObservation = observeRuntime(second.store, provider: provider, cwd: folder.path)
+        defer { secondObservation.cancel(); second.controller.stop() }
         await second.controller.refreshPersistentSnapshot()
         let resumable = try XCTUnwrap(
             second.store.sessions.first { $0.id.sessionID == started.instance.sessionID },
@@ -152,6 +159,26 @@ final class AgentLiveEndToEndTests: XCTestCase {
         )
         controller.startObserving()
         return (controller, store, approvals)
+    }
+
+    /// Observe production publications so short-lived tool states are not
+    /// lost between polling intervals. This never injects presentation hints.
+    @MainActor
+    private func observeRuntime(_ store: AgentEventStore, provider: AgentProvider, cwd: String) -> AnyCancellable {
+        var previous: [AgentSessionInstanceID: String] = [:]
+        let canonicalCWD = URL(fileURLWithPath: cwd).resolvingSymlinksInPath().path
+        return store.$sessions.sink { [weak self] sessions in
+            for session in sessions where session.project.workingDirectory.map({
+                URL(fileURLWithPath: $0).resolvingSymlinksInPath().path
+            }) == canonicalCWD {
+                let orb = AgentOrbStateMapper.state(for: session)
+                let activity = session.recentActivity.last
+                let detail = "state=\(session.state.rawValue) orb=\(orb.rawValue) activity=\(String(describing: activity?.kind)) status=\(String(describing: activity?.status))"
+                guard previous[session.id] != detail else { continue }
+                previous[session.id] = detail
+                self?.log(provider, "runtime id=\(session.id) \(detail)")
+            }
+        }
     }
 
     /// Waits for a submitted turn to start and finish. Returns whether a

@@ -269,14 +269,16 @@ enum LiveActivityPresentationPolicy {
             return primaryDescriptor(
                 activity,
                 shape: .progressPill,
-                priority: max(activity.priority, 125)
+                // An explicitly started microphone session must remain
+                // visible even while a routine agent (priority 130) works.
+                priority: max(activity.priority, 140)
             )
 
         case .voiceTranscription:
             return primaryDescriptor(
                 activity,
                 shape: .progressPill,
-                priority: max(activity.priority, 105)
+                priority: max(activity.priority, 135)
             )
 
         case .camera:

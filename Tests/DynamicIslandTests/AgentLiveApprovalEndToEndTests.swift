@@ -4,7 +4,7 @@ import XCTest
 @testable import DynamicIsland
 
 /// Opt-in live acceptance for managed approval authority. Drives the real
-/// Claude Code CLI (stream-json, host permission prompts over stdio)
+/// Claude Code CLI and Codex app-server (host permission prompts over stdio)
 /// through `AgentManagedSessionController`, and answers each real
 /// `can_use_tool` request through `AgentApprovalController.resolve` — the
 /// same call the Allow/Deny buttons make. No auto-approve policy is used.
@@ -17,20 +17,51 @@ import XCTest
 final class AgentLiveApprovalEndToEndTests: XCTestCase {
     @MainActor
     func testClaudeLiveDenyThenAllowThroughApprovalController() async throws {
+        try await runDenyThenAllow(.claude)
+    }
+
+    @MainActor
+    func testCodexLiveDenyThenAllowThroughApprovalController() async throws {
+        try await runDenyThenAllow(.codex)
+    }
+
+    @MainActor
+    private func runDenyThenAllow(_ provider: AgentProvider) async throws {
         let environment = ProcessInfo.processInfo.environment
         guard environment["DYNAMIC_ISLAND_LIVE_APPROVAL_E2E"] == "1",
               let root = environment["DYNAMIC_ISLAND_LIVE_AGENT_ROOT"] else {
             throw XCTSkip("Set DYNAMIC_ISLAND_LIVE_APPROVAL_E2E=1 and DYNAMIC_ISLAND_LIVE_AGENT_ROOT to run.")
         }
+        if let only = environment["DYNAMIC_ISLAND_LIVE_AGENT_PROVIDERS"],
+           !only.split(separator: ",").contains(Substring(provider.stableName)) {
+            throw XCTSkip("\(provider.stableName) not selected")
+        }
+        let tool = provider == .claude ? "Write" : "apply_patch"
         let folder = URL(fileURLWithPath: root)
             .appendingPathComponent("approval-\(UUID().uuidString.prefix(6))", isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        log("folder \(folder.path)")
+        log("provider=\(provider.stableName) folder \(folder.path)")
 
         let store = AgentEventStore()
         let approvals = AgentApprovalController()
+        // Codex normally permits workspace writes without a prompt. Use
+        // per-process CLI overrides to require real approvals; never edit
+        // the user's config, credentials or the production launch policy.
+        let interactiveProvider: any AgentInteractiveProvider
+        if provider == .codex {
+            let wrapper = folder.appendingPathComponent("codex-approval-host")
+            try """
+            #!/bin/sh
+            exec /usr/bin/env codex "$@" -c 'sandbox_mode="read-only"' -c 'approval_policy="on-request"' -c 'approvals_reviewer="user"' -c 'features.code_mode_host=false' -c 'features.hooks=false' -c 'features.guardian_approval=false'
+
+            """.write(to: wrapper, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: wrapper.path)
+            interactiveProvider = CodexAppServerProvider(client: try CodexAppServerClient(executableURL: wrapper))
+        } else {
+            interactiveProvider = try ClaudeInteractiveProvider.makeDefault()
+        }
         let controller = AgentManagedSessionController(
-            providers: [try ClaudeInteractiveProvider.makeDefault()],
+            providers: [interactiveProvider],
             coordinator: AgentIngestionCoordinator(eventStore: store),
             eventStore: store,
             approvals: approvals
@@ -38,10 +69,16 @@ final class AgentLiveApprovalEndToEndTests: XCTestCase {
         controller.startObserving()
         defer { controller.stop() }
         await controller.refreshPersistentSnapshot()
-        XCTAssertTrue(controller.selectNewSessionModel("haiku", for: .claude))
+        if provider == .claude {
+            XCTAssertTrue(controller.selectNewSessionModel("haiku", for: .claude))
+        } else {
+            // Exercise native app-server approvals. The default model's
+            // external code-mode tools use the running app's relay instead.
+            XCTAssertTrue(controller.selectNewSessionModel("gpt-5.5", for: .codex))
+        }
 
         let started: AgentManagedStartedSession
-        switch await controller.startManagedSession(provider: .claude, cwd: folder.path) {
+        switch await controller.startManagedSession(provider: provider, cwd: folder.path) {
         case .success(let value): started = value
         case .failure(let failure): return XCTFail("start failed: \(failure.message)")
         }
@@ -51,8 +88,11 @@ final class AgentLiveApprovalEndToEndTests: XCTestCase {
 
         // Turn 1 — DENY.
         let denied = folder.appendingPathComponent("approval-denied.txt")
+        let deniedPrompt = provider == .codex
+            ? "Use exec_command with sandbox_permissions=require_escalated and justification='Approval acceptance: create the denied scratch file'. Run exactly the command between delimiters, excluding delimiters: <command>printf %s denied-check > approval-denied.txt</command>. Do not use apply_patch or another tool. If permission is denied, do not retry; reply REFUSED."
+            : "Use only the \(tool) tool to create approval-denied.txt in the current directory. Exact contents between delimiters: <contents>denied-check</contents>. Exclude delimiters and punctuation. If permission is denied, do not retry with any tool; reply with the single word REFUSED."
         let denyEvidence = try await runTurn(
-            prompt: "Use the Write tool to create a file named approval-denied.txt in the current directory containing exactly: denied-check. If permission is denied, do not retry with any tool; reply with the single word REFUSED.",
+            prompt: deniedPrompt,
             decision: .deny,
             controller: controller,
             store: store,
@@ -71,8 +111,11 @@ final class AgentLiveApprovalEndToEndTests: XCTestCase {
 
         // Turn 2 — ALLOW.
         let allowed = folder.appendingPathComponent("approval-allowed.txt")
+        let allowedPrompt = provider == .codex
+            ? "Use exec_command with sandbox_permissions=require_escalated and justification='Approval acceptance: create the allowed scratch file'. Run exactly the command between delimiters, excluding delimiters: <command>printf %s allowed-check > approval-allowed.txt</command>. Do not use apply_patch or another tool. Then reply DONE."
+            : "Use only the \(tool) tool to create approval-allowed.txt in the current directory. Exact contents between delimiters: <contents>allowed-check</contents>. Exclude delimiters and punctuation. Then reply with the single word DONE."
         let allowEvidence = try await runTurn(
-            prompt: "Use the Write tool to create a file named approval-allowed.txt in the current directory containing exactly: allowed-check. Then reply with the single word DONE.",
+            prompt: allowedPrompt,
             decision: .allow,
             controller: controller,
             store: store,
@@ -178,8 +221,11 @@ final class AgentLiveApprovalEndToEndTests: XCTestCase {
                 let turn = controller.activeManagedSessionIDs.contains(instance.sessionID)
                 log("\(label) request …\(pending.key.requestID.rawValue.suffix(8)) session=…\(pending.key.session.sessionID.nativeID.suffix(8)) gen=\(pending.key.session.generation.rawValue) activeTurn=\(turn) summary=\"\(pending.summary)\"")
                 // For Allow, only the requested file write is approved.
+                let isFileWrite = instance.sessionID.provider == .claude
+                    ? pending.summary.contains("Write")
+                    : pending.summary.contains("Approval acceptance: create the allowed scratch file")
                 let choice: AgentBridgePermissionDecision =
-                    decision == .allow && pending.summary.contains("Write") ? .allow : .deny
+                    decision == .allow && isFileWrite ? .allow : .deny
                 let result = approvals.resolve(
                     session: pending.key.session,
                     requestID: pending.key.requestID,
@@ -214,6 +260,6 @@ final class AgentLiveApprovalEndToEndTests: XCTestCase {
     }
 
     private func log(_ message: String) {
-        print("LIVE-APPROVAL[claude] \(message)")
+        print("LIVE-APPROVAL \(message)")
     }
 }

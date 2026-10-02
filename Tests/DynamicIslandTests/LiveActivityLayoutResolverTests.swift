@@ -241,6 +241,31 @@ final class LiveActivityLayoutResolverTests: XCTestCase {
         XCTAssertEqual(result.primary?.descriptor.preemptionPolicy, .persistent)
     }
 
+    @MainActor
+    func testLiveVoicePhasesBeatRoutineAgentAndPreserveSidecars() {
+        let routine = [
+            activity("agent", .agent, priority: 130),
+            activity("battery", .battery, priority: 85, progress: 0.18, batteryState: .low),
+            activity("timer", .timer, priority: 90, progress: 0.5)
+        ]
+        let baseline = resolve(routine)
+        let now = Date(timeIntervalSince1970: 1)
+        let phases = [
+            VoiceTranscriptionController.makeRecordingActivity(startedAt: now),
+            VoiceTranscriptionController.makeTranscriptionActivity(onDevice: true, updatedAt: now)
+        ]
+        for voice in phases {
+            for activities in [routine + [voice], [voice] + routine] {
+                let result = resolve(activities)
+                XCTAssertEqual(result.primary?.activity.id, voice.id)
+                XCTAssertEqual(result.leadingSidecar?.activity.id, baseline.leadingSidecar?.activity.id)
+                XCTAssertEqual(result.trailingSidecar?.activity.id, baseline.trailingSidecar?.activity.id)
+            }
+        }
+        // Removing the source-owned voice activity restores ordinary presence.
+        XCTAssertEqual(resolve(routine).primary?.activity.id, "agent")
+    }
+
     func testWindowSnapPreviewIsTransientOverlayAndPreservesPersistentSlots() {
         let persistent = resolve(fullSet)
         let withPreview = resolve(
