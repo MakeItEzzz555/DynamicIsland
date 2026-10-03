@@ -464,3 +464,215 @@ committed. Remaining release gates: human consent/speech, Claude/concurrent
 provider success, uninterrupted detailed motion and whole-app memory follow-up.
 Recommended next phase: **Human-assisted live release acceptance and allocation
 profiling of the full shell before release promotion**. Keep PR Draft/unmerged.
+
+
+## Phase 2 — Whole-App Memory Closure + Human-Assisted Release Acceptance
+
+October 3, 2026. Baseline/remote: `907da403e1b67e3c2999e794cbe302fa4d5e133d`,
+branch `feature/agents-ui-overhaul-continuation`. No newer commits were present
+after fetch. Environment: MacBookPro18,3, Apple M1 Pro (8 cores), 32 GB RAM,
+macOS 15.7.4 (24G517), hardware notch, 1147×745 logical display.
+All unrelated graph/cache/research/skill/user files remain outside this commit.
+
+### Whole-app verdict and controlled workload
+
+**PASS — live: bounded allocation for the measured fixed whole-app workload.**
+This is decision B for these measurements, not a universal no-leak claim.
+Repeated shell/section mounts reached a substantially flatter RSS range after
+warm-up; native malloc object counts decreased. No reproducible unbounded
+ownership defect was isolated, so no production cache flushing, lifecycle
+rewrite or speculative allocation optimization was made. Unbounded session
+creation, every media/capture/provider path, and a much longer identical
+workload remain **NOT VERIFIED**.
+
+Measurements target actual Release packaged process PID 90279, launched at
+04:34. Each cycle uses production input/AX controls: expand if necessary,
+Agents → Island → Tools, Escape/cursor leave, then settle. Three batches of
+20 cycles include 20-second batch idle periods and a final 60-second cleanup
+idle. The repeat completed **60/60 cycles in 386.74 seconds**, with one AX
+window throughout. Real root Codex activity continued; no fixture session or
+domain-state injection was used. This is UI idle, not a claim of zero ongoing
+agent/audio work. Later native FD inspection confirmed an existing microphone
+recording, created at 04:36, remained active during the workload. The workload
+therefore also includes sustained recorder/metering presence, but neither
+controlled speech nor a fresh recording lifecycle is inferred from that fact.
+
+| Checkpoint | RSS KiB | Physical footprint MiB |
+| --- | ---: | ---: |
+| Repeat initial | 207936 | 108.49 |
+| Initial collapsed idle | 207936 | 109.57 |
+| Batch 1 cycle 10 | 208032 | 110.03 |
+| Batch 1 cycle 20 | 208144 | 109.91 |
+| Batch 1 idle | 208144 | 110.13 |
+| Batch 2 cycle 10 | 208176 | 109.16 |
+| Batch 2 cycle 20 | 212832 | 111.02 |
+| Batch 2 idle | 209888 | 111.14 |
+| Batch 3 cycle 10 | 208032 | 111.24 |
+| Batch 3 cycle 20 | 208048 | 111.25 |
+| Batch 3 idle | 208048 | 111.80 |
+| Post-cleanup | 208048 | 111.55 |
+| Final 60-second idle | 211280 | 111.52 |
+
+Repeat RSS range: 203.1–207.8 MiB; final 206.3 MiB. Physical footprint
+rose about 3 MiB and flattened near 111.5 MiB rather than repeating the
+earlier 40-cycle RSS slope. Instantaneous CPU was approximately 18–35% with
+real background agent/recording work; this is not an idle CPU benchmark.
+
+An earlier run is retained separately: initial RSS 190560 KiB, initial physical
+footprint 94.71 MiB; by batch 2 idle, RSS 211552 KiB / footprint 108.77 MiB.
+It stopped after 43 successful cycles when the Island navigation control was
+missing. That failed complete-workload attempt is **NOT VERIFIED**, not counted
+as a passing 60-cycle batch. A driver mouse-exit race was corrected by entering
+an already expanded shell before section navigation. No product change followed.
+
+Native `vmmap -summary` before/after both runs provides allocation evidence:
+
+| Native observation | Initial | Post-workload |
+| --- | ---: | ---: |
+| Physical footprint / peak | 94.8 / 101.2 MiB | 111.5 / 119.1 MiB |
+| Total malloc allocation count | 349218 | 339226 |
+| Total malloc allocated | 54.7 MiB | 56.6 MiB |
+| Total malloc fragmentation | 9676 KiB | 19.9 MiB |
+| Default-zone allocation count | 348139 | 338130 |
+| Default-zone allocated | 52.7 MiB | 50.1 MiB |
+| Default-zone fragmentation | 8028 KiB (13%) | 21.9 MiB (31%) |
+| AttributeGraph malloc | 101 allocations / 47 KiB | 101 allocations / 47 KiB |
+| CoreAnimation | 1248 KiB / 18 regions | 1264 KiB / 19 regions |
+| IOSurface resident | 2720 KiB / 14 regions | 7008 KiB / 16 regions |
+
+These aggregates support allocator spare capacity/fragmentation and bounded
+render-buffer growth rather than per-cycle retained controllers. They do not
+identify allocation backtraces or prove every additional byte intentional.
+`heap -s` succeeded: one each of AppDelegate, OverlayWindowController,
+IslandHostingView, AgentManagedSessionController, AgentTranscriptFeed,
+VoiceTranscriptionController and ScreenRecordingController; nine NSTimers.
+This is a post-workload census, not a timer leak comparison or retain-path proof.
+
+A six-minute Instruments-compatible Allocations attachment was attempted.
+`xctrace` ultimately returned exit 2, “Failed to attach to target”; there are no
+allocation stack samples to interpret. No signing/security policy was changed
+to bypass attachment restrictions. The failed trace is not a profiling PASS.
+
+Reproducible native driver: `Scripts/profile_native_lifecycle.swift`. Compile:
+`xcrun swiftc Scripts/profile_native_lifecycle.swift -o /tmp/dynamicisland-native-lifecycle`;
+run `/tmp/dynamicisland-native-lifecycle <packaged-app-PID> <temporary-output-dir>`.
+Requires existing AX permission and this hardware-notch layout, with no
+simultaneous human pointer input. Native `proc_pid_rusage`/`ps` samples are
+written atomically; missing controls/modal/foreign frontmost application abort
+rather than count fake cycles. The driver never selects approvals, grants
+permission, requests AX consent, or changes system preferences. Its reports
+require inspection; they do not hardcode a PASS.
+
+### Skills and motion classification
+
+Applied transitions-dev and transitions-polish guidance to the acceptance:
+single native shell, geometry/content handoff, correct expanded endpoints,
+close/cancellation cleanup, hover stability, motion lifecycle and meaningful
+Reduce Motion feedback. Relevant transition references: card resize, panel
+reveal and menu morph; CSS/runtime packages were not introduced. Performance
+engineering drove native measurement before hypotheses; QA kept fixture and
+real-device results separate; accessibility guidance checked actual runtime
+setting/consent boundaries; Graphify supplied scoped ownership navigation. No
+additional specialized Swift/Instruments skill was installed.
+
+**PASS — live:** repeated expanded Agents/Island/Tools navigation and collapse
+endpoints in the completed native workload.
+**NOT VERIFIED:** detailed uninterrupted timing/jank/opacity/hover acceptance
+for all requested transitions. Screenshot sequences were attempted; expansion
+failed its endpoint assertion in repeats, and simultaneous user pointer input
+was observed. Those incomplete runs were rejected. The experimental frame
+capture mode was removed from the committed memory driver. No product motion
+defect was established and no animation implementation changed.
+
+Actual macOS Reduce Motion was OFF during the workload and remained OFF. The
+Phase 1 real OFF → ON → OFF acceptance remains valid baseline evidence; it is
+not reported as a new Phase 2 ON pass. Full transition/environment regressions
+are **PASS — automated/fixture**. No system setting was altered in Phase 2.
+
+### Live provider and human gates
+
+**PASS — live, real Codex:** existing acceptance rerun passed 2/0/1, including
+creation, commands, normalized activity, exact-request deny then allow,
+interruption and exact-session resume. The Claude test was explicitly excluded
+and skipped; request/session/generation ownership and security policy remain
+unchanged. These real provider events are driven by acceptance controllers,
+not a claim of manually inspecting every natural thinking/search/plan state.
+
+**BLOCKED — external acceptance dependency: Claude quota.** One actual read-only
+Haiku request returned “You've hit your weekly limit”, reset October 4 at
+21:00 Asia/Nicosia. No repeated quota attempts or credential changes. Genuine
+concurrent Codex + Claude acceptance remains externally quota-blocked.
+
+**BLOCKED — external acceptance dependency: controlled human speech.** The
+requested sentence and normal/louder speech confirmation were not supplied.
+The checkpoint package displayed real Listening/LIVE/beam while ordinary agent
+activity continued, but ambient capture and a still-open recorder do not
+prove controlled transcription, amplitude calibration or the full next-action
+sequence. Human participation was requested; no consent or Keychain decision
+was automated.
+
+**BLOCKED — external acceptance dependency: development microphone consent.**
+Native opt-in preflight again reported microphone authorization raw value 0
+for XCTest and skipped without prompting. Debug app recording acceptance is
+**NOT VERIFIED**; the XCTest preflight is not equivalent to it.
+
+**PASS — live:** real development ScreenCaptureKit acceptance rerun, 5/0/0,
+including display/window/area capture, movie validation, pause/resume and
+system audio. Existing production controller teardown is exercised. This
+does not imply every packaged capture/voice/agent coexistence sequence passed.
+
+The existing packaged process was gracefully quit after profiling. Normal
+`applicationWillTerminate` calls the existing voice cancellation cleanup;
+PID 90279 exited, releasing its recording FD and process resources. No user
+recording was manually deleted, no second microphone session was introduced,
+and no teardown code was changed. Recognition terminal/recovery behavior
+continues to have passing focused automated coverage.
+
+### Validation and release results
+
+- Focused voice/layout/motion smoke: **76 passed / 0 failed / 0 skipped**.
+- Full suite: **1570 passed / 0 failed / 35 skipped**, 1605 total. Inventory and
+  skip count are unchanged from Phase 1.
+- Native opt-in: **7 passed / 0 failed / 1 skipped** (actual microphone consent).
+- Selected real Codex: **2 passed / 0 failed / 1 skipped** (Claude excluded).
+- Real screen capture: **5 passed / 0 failed / 0 skipped**.
+- Bounded fixture soak: **1 passed / 0 failed / 0 skipped**, 110 cycles /
+  151 seconds, 32 fixed sessions and an 80-entry transcript. Physical footprint
+  cycles 10/30/50/70/90/110: 46.5/47.2/47.9/48.1/48.1/48.1 MiB; after
+  teardown 44.1 MiB. Controller released. **PASS — automated/fixture**,
+  separately from the whole-app native workload.
+- Native profiling driver compiles; no product source/test changes or weakened
+  tests. These test sets overlap; do not sum them.
+- Release build and project packaging: **PASS** under unchanged ad-hoc policy.
+  Initial deep strict verification rejected reattached generated FinderInfo.
+  Clearing xattrs only from the generated app restored verification without
+  changing its signature: app and all three helpers **PASS**. A temporary
+  package export also passed deep strict verification.
+- **PASS — live:** rebuilt package launch, executable confirmed under `dist`,
+  PID 61134. Its native Tools action succeeded, but the subsequent Voice
+  navigation lost its expanded endpoint during simultaneous user pointer
+  input. Final rebuilt microphone consent/record/transcribe controls are
+  **NOT VERIFIED** in this phase; no new permission decision or speech PASS
+  is inferred from the checkpoint recording. Detailed UI/speech acceptance
+  requires a short uninterrupted human-assisted window.
+- Graphify AST update completed; generated graph files are left unstaged.
+
+No demonstrated product defect was fixed in Phase 2. The only additions are
+this evidence record and a fail-closed reproducible native memory driver.
+The earlier driver mouse-exit/input/endpoint errors were harness defects,
+not permission or app-state passes. The incomplete screenshot experiment
+was removed rather than presenting it as accepted motion.
+
+Remaining gates: controlled human speech and final rebuilt/development
+microphone acceptance; Claude quota and concurrent provider execution;
+uninterrupted detailed motion; longer whole-app profiling with additional
+resource/session churn and allocation ownership if further growth appears.
+Keep PR #24 Draft/open/unmerged. Recommended next phase: **Human-assisted
+release acceptance after Claude quota reset**, with a quiet pointer window
+and the documented fixed-workload memory baseline before release promotion.
+
+Evidence is local under `/tmp/dynamicisland-phase2/`: full/native/Codex/capture
+logs, initial/post-workload vmmap, native heap census, completed
+`workload-repeat/memory.json`, rejected first workload and motion captures.
+No recordings, traces, build products, screenshots, Graphify caches or
+credentials are included in the phase commit.
