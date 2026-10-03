@@ -75,6 +75,13 @@ struct AgentTranscriptFollowState: Equatable, Sendable {
     }
 }
 
+enum AgentTranscriptScrollTarget {
+    static func latestConversationEntryID(_ entries: [AgentManagedTranscriptEntry]) -> String? {
+        entries.last(where: { $0.role == .user || $0.role == .agent })
+            .map { "message:\($0.id)" }
+    }
+}
+
 enum AgentPromptDraftPolicy {
     static let maximumLength = 8_000
 
@@ -146,6 +153,7 @@ enum AgentConsoleTimelineProjectionCache {
 struct AgentEmbeddedConsoleView: View {
     @Environment(\.agentVisualPreferences) private var visualPreferences
     @Environment(\.islandDisplayMetrics) private var displayMetrics
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let session: AgentSession
     var mode: AgentConsoleMode = .observed
     var interactionState: AgentManagedInteractionState = .observed
@@ -250,17 +258,17 @@ struct AgentEmbeddedConsoleView: View {
                     }
                     .onChange(of: transcriptFollowToken) { _, token in
                         guard follow.contentDidChange(to: token) else { return }
-                        settleAtLatest(proxy, animated: false)
+                        settleAtLatest(proxy, target: latestScrollTarget, animated: false)
                     }
                     .onChange(of: scrollToLatestRequest) { _, _ in
-                        withAnimation(.easeOut(duration: 0.16)) {
-                            proxy.scrollTo(AgentConsoleScrollAnchor.bottom, anchor: .bottom)
-                        }
                         follow.jumpToLatest()
+                        withAnimation(.easeOut(duration: 0.16)) {
+                            proxy.scrollTo(latestScrollTarget, anchor: .bottom)
+                        }
                     }
                     .onAppear {
                         follow.jumpToLatest()
-                        settleAtLatest(proxy, animated: false)
+                        settleAtLatest(proxy, target: latestScrollTarget, animated: false)
                     }
                 }
             }
@@ -289,7 +297,7 @@ struct AgentEmbeddedConsoleView: View {
         }
     }
 
-    private func settleAtLatest(_ proxy: ScrollViewProxy, animated: Bool) {
+    private func settleAtLatest(_ proxy: ScrollViewProxy, target: AnyHashable, animated: Bool) {
         guard !settlePending else {
             settleRequestedAgain = true
             return
@@ -299,33 +307,47 @@ struct AgentEmbeddedConsoleView: View {
         Task { @MainActor in
             defer {
                 settlePending = false
-                if settleRequestedAgain {
-                    // Content landed while settling: one more pass, not one
-                    // per delta.
+                if settleRequestedAgain, follow.isFollowing {
+                    // Coalesce a burst of streamed deltas into at most one
+                    // additional settle against the newest stable row.
                     settleRequestedAgain = false
-                    settleAtLatest(proxy, animated: false)
+                    settleAtLatest(proxy, target: latestScrollTarget, animated: false)
+                } else {
+                    settleRequestedAgain = false
                 }
             }
-            // The first yield lets LazyVStack publish its current extent; the
-            // second catches transcript recovery/layout that lands one pass
-            // later, instead of relying on a single fragile run-loop dispatch.
+            // One layout yield is enough for the growing LazyVStack row. A
+            // second unconditional bottom scroll could run against newer
+            // geometry and overshoot below the response the user is reading.
             await Task.yield()
+            guard follow.isFollowing else { return }
             if animated {
                 withAnimation(.easeOut(duration: 0.16)) {
-                    proxy.scrollTo(AgentConsoleScrollAnchor.bottom, anchor: .bottom)
+                    proxy.scrollTo(target, anchor: .bottom)
                 }
             } else {
-                proxy.scrollTo(AgentConsoleScrollAnchor.bottom, anchor: .bottom)
+                proxy.scrollTo(target, anchor: .bottom)
             }
-            await Task.yield()
-            proxy.scrollTo(AgentConsoleScrollAnchor.bottom, anchor: .bottom)
         }
+    }
+
+    private var latestScrollTarget: AnyHashable {
+        if let entryID = AgentTranscriptScrollTarget.latestConversationEntryID(transcriptEntries) {
+            return AnyHashable(entryID)
+        }
+        return AnyHashable(AgentConsoleScrollAnchor.bottom)
     }
 
     private var transcriptFollowToken: String {
         let transcriptToken = transcriptEntries.last.map {
             "\($0.id):\($0.text.count)"
         } ?? "none"
+
+        // The dedicated Feed owns operational/provider state. In conversation-
+        // only mode, scrolling follows only transcript growth; state/approval
+        // publications must not move the user's chat viewport.
+        guard showsOperationalTraffic else { return transcriptToken }
+
         let managedApprovalToken: String = {
             guard let request = actionableApproval else { return "managed:none" }
             let delivery = approvalControl.deliveryState(for: request.key)
@@ -352,7 +374,9 @@ struct AgentEmbeddedConsoleView: View {
                 includePendingApprovals: showsOperationalTraffic && actionableApproval == nil && externalPendingApproval == nil
             )
         }
-        let _ = AgentPerformanceProbe.gauge("agents.timeline.rows", timeline.count)
+        let displayedEntries = showsOperationalTraffic ? timeline : conversationEntries
+        let latestAgentEntryID = displayedEntries.last(where: { $0.kind == .agent })?.id
+        let _ = AgentPerformanceProbe.gauge("agents.timeline.rows", displayedEntries.count)
 
         return LazyVStack(alignment: .leading, spacing: 7) {
             if showsOperationalTraffic { AgentCurrentWorkSummary(session: session, mode: mode) }
@@ -377,9 +401,22 @@ struct AgentEmbeddedConsoleView: View {
                 // controller's full bounded history costs nothing extra to
                 // keep. (A smaller eager or windowed stack measured slower and
                 // was less stable against the bottom anchor.)
-                ForEach(showsOperationalTraffic ? timeline : conversationEntries) { entry in
-                    AgentConsoleEntryRow(entry: entry)
-                        .equatable()
+                ForEach(displayedEntries) { entry in
+                    let isLatestAgentResponse = entry.kind == .agent && entry.id == latestAgentEntryID
+                    AgentConsoleEntryRow(
+                        entry: entry,
+                        sessionID: session.id,
+                        sessionState: isLatestAgentResponse ? session.state : .idle,
+                        processingKind: isLatestAgentResponse ? session.currentProcessingKind : nil,
+                        isLatestAgentResponse: isLatestAgentResponse
+                    )
+                    .equatable()
+                    .id(entry.id)
+                    .transition(
+                        .opacity.combined(
+                            with: .scale(scale: 0.995, anchor: .topLeading)
+                        )
+                    )
                 }
             }
 
@@ -402,6 +439,10 @@ struct AgentEmbeddedConsoleView: View {
         }
         .font(.system(size: displayMetrics.transcriptFontSize, weight: .medium))
         .frame(maxWidth: .infinity, alignment: .leading)
+        .animation(
+            reduceMotion ? nil : .easeOut(duration: 0.14),
+            value: displayedEntries.map(\.id)
+        )
     }
 
     private var conversationEntries: [AgentConsoleEntry] {
@@ -668,6 +709,10 @@ private struct AgentConsoleComposer: View {
 /// again instead of every visible row (and its text-selection overlay).
 private struct AgentConsoleEntryRow: View, Equatable {
     let entry: AgentConsoleEntry
+    let sessionID: AgentSessionInstanceID
+    let sessionState: AgentState
+    let processingKind: AgentProcessingKind?
+    let isLatestAgentResponse: Bool
 
     var body: some View {
         if entry.kind == .approval {
@@ -703,21 +748,39 @@ private struct AgentConsoleEntryRow: View, Equatable {
                         lineWidth: 1
                     )
             }
-        } else if entry.kind == .user || entry.kind == .agent {
+        } else if entry.kind == .user {
             VStack(alignment: .leading, spacing: 2) {
                 Text(entry.title)
                     .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(
-                        entry.kind == .user
-                            ? Color.white.opacity(0.48)
-                            : Color.cyan.opacity(0.72)
-                    )
+                    .foregroundStyle(.white.opacity(0.48))
                 if let text = entry.text {
                     Text(text)
                         .font(.system(size: 10.5, weight: .regular, design: .monospaced))
-                        .foregroundStyle(.white.opacity(entry.kind == .user ? 0.72 : 0.88))
+                        .foregroundStyle(.white.opacity(0.72))
                         .textSelection(.enabled)
                 }
+            }
+            .padding(.vertical, 2)
+        } else if entry.kind == .agent {
+            HStack(alignment: .top, spacing: 7) {
+                AgentInlineResponseAvatar(
+                    sessionID: sessionID,
+                    state: sessionState,
+                    processingKind: processingKind,
+                    isLatest: isLatestAgentResponse
+                )
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(entry.title)
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(Color.cyan.opacity(0.72))
+                    if let text = entry.text {
+                        Text(text)
+                            .font(.system(size: 10.5, weight: .regular, design: .monospaced))
+                            .foregroundStyle(.white.opacity(0.88))
+                            .textSelection(.enabled)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(.vertical, 2)
         } else {
@@ -754,6 +817,121 @@ private struct AgentConsoleEntryRow: View, Equatable {
 
     private func operationColor(_ status: AgentOperationStatus) -> Color {
         AgentConsoleStatusColor.color(status)
+    }
+}
+
+struct AgentInlineResponseAvatarTuning: Equatable, Sendable {
+    let speedMultiplier: Double
+    let turnMultiplier: Double
+    let minimumWhirl: Double
+    let motionMultiplier: Double
+    let animates: Bool
+}
+
+enum AgentInlineResponseAvatarPresentation {
+    static func tuning(
+        state: AgentState,
+        processingKind: AgentProcessingKind?,
+        isLatest: Bool
+    ) -> AgentInlineResponseAvatarTuning {
+        guard isLatest, AgentVisualMotion.animates(state) else {
+            return .init(
+                speedMultiplier: 1,
+                turnMultiplier: 1,
+                minimumWhirl: 0,
+                motionMultiplier: 1,
+                animates: false
+            )
+        }
+
+        switch processingKind {
+        case .reasoning:
+            return .init(speedMultiplier: 0.72, turnMultiplier: 0.50, minimumWhirl: 0, motionMultiplier: 0.62, animates: true)
+        case .planning:
+            return .init(speedMultiplier: 0.78, turnMultiplier: 0.62, minimumWhirl: 0, motionMultiplier: 0.68, animates: true)
+        case .searching:
+            return .init(speedMultiplier: 0.96, turnMultiplier: 1.45, minimumWhirl: 0.10, motionMultiplier: 0.82, animates: true)
+        case .executing:
+            return .init(speedMultiplier: 1.22, turnMultiplier: 1.00, minimumWhirl: 0.46, motionMultiplier: 1.00, animates: true)
+        case .connecting:
+            return .init(speedMultiplier: 0.90, turnMultiplier: 0.78, minimumWhirl: 0.72, motionMultiplier: 0.72, animates: true)
+        case .listening:
+            return .init(speedMultiplier: 0.62, turnMultiplier: 0.48, minimumWhirl: 0, motionMultiplier: 0.46, animates: true)
+        case .composing:
+            return .init(speedMultiplier: 0.84, turnMultiplier: 0.56, minimumWhirl: 0, motionMultiplier: 0.62, animates: true)
+        case .synthesizing:
+            return .init(speedMultiplier: 0.94, turnMultiplier: 0.90, minimumWhirl: 0.24, motionMultiplier: 0.76, animates: true)
+        case .background:
+            return .init(speedMultiplier: 0.55, turnMultiplier: 0.36, minimumWhirl: 0, motionMultiplier: 0.40, animates: true)
+        case nil:
+            switch state {
+            case .runningCommand, .runningTool:
+                return .init(speedMultiplier: 1.18, turnMultiplier: 0.95, minimumWhirl: 0.36, motionMultiplier: 0.95, animates: true)
+            case .thinking, .planning:
+                return .init(speedMultiplier: 0.76, turnMultiplier: 0.55, minimumWhirl: 0, motionMultiplier: 0.65, animates: true)
+            case .working:
+                return .init(speedMultiplier: 1.00, turnMultiplier: 0.82, minimumWhirl: 0.12, motionMultiplier: 0.82, animates: true)
+            default:
+                return .init(speedMultiplier: 1, turnMultiplier: 1, minimumWhirl: 0, motionMultiplier: 1, animates: false)
+            }
+        }
+    }
+
+    static func displayedState(state: AgentState, isLatest: Bool) -> AgentState {
+        guard isLatest else { return .idle }
+        switch state {
+        case .waitingForApproval, .waitingForUser, .planReady,
+             .completed, .failed, .interrupted, .idle:
+            return .idle
+        default:
+            return state
+        }
+    }
+}
+
+private struct AgentInlineResponseAvatar: View {
+    let sessionID: AgentSessionInstanceID
+    let state: AgentState
+    let processingKind: AgentProcessingKind?
+    let isLatest: Bool
+
+    @Environment(\.agentVisualPreferences) private var visualPreferences
+
+    var body: some View {
+        let tuning = AgentInlineResponseAvatarPresentation.tuning(
+            state: state,
+            processingKind: processingKind,
+            isLatest: isLatest
+        )
+        BotAvatarView(
+            sessionID: sessionID,
+            configuration: configuration(tuning),
+            state: AgentInlineResponseAvatarPresentation.displayedState(
+                state: state,
+                isLatest: isLatest
+            ),
+            compact: true,
+            paused: !tuning.animates,
+            frozenTime: tuning.animates ? nil : 0.6,
+            interactionEnabled: false
+        )
+        .frame(width: 28, height: 30, alignment: .top)
+        .accessibilityLabel(
+            isLatest
+                ? "\(sessionID.sessionID.provider.stableName.capitalized) response, \(processingKind?.rawValue ?? state.rawValue)"
+                : "\(sessionID.sessionID.provider.stableName.capitalized) response"
+        )
+    }
+
+    private func configuration(_ tuning: AgentInlineResponseAvatarTuning) -> BotAvatarConfiguration {
+        var value = visualPreferences.avatar
+        value.size = min(30, max(24, value.size))
+        value.interactive = false
+        value.speed = min(2, max(0.25, value.speed * tuning.speedMultiplier))
+        value.turn = min(2, max(0, value.turn * tuning.turnMultiplier))
+        value.whirl = min(2, max(value.whirl, tuning.minimumWhirl))
+        value.motionStrength = min(2, max(0, value.motionStrength * tuning.motionMultiplier))
+        return value
     }
 }
 

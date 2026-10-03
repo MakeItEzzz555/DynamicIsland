@@ -1013,3 +1013,36 @@ The bounded fixture soak ran **110 cycles / about 104 seconds**, with 32 session
 **NOT VERIFIED:** fresh actual macOS Reduce Motion OFF → ON → OFF; original OFF remained intact. Deterministic reduced-motion coverage passed. Detailed uninterrupted motion, final GPU/frame-pacing closure, whole-app leak freedom, non-zsh live shell acceptance and fresh packaged multi-agent approval navigation remain outside the proven evidence. Existing renderer parity/material/accessory differences remain unchanged.
 
 Recommended next work is human-assisted release acceptance for those precise remaining gates, not another workspace reconstruction or product feature phase.
+
+
+## October 4, 2026 — visual hierarchy and streaming UX refinement
+
+Starting checkpoint: `1b63f912670595e4ab517d0a35f644899ba02c91` on `feature/agents-ui-overhaul-continuation`. This phase refines presentation/streaming while preserving the exact-session Feed, native PTY, New Chat fallback, provider ownership and crash hardening from the prior checkpoint.
+
+### UI and ownership changes
+
+- The primary Agents toolbar is intentionally limited to provider selection, an actually available selected model, session/repository discovery, repository filtering and New Chat. Record Activities, selected-session status text, approval-policy/status/Stop chrome and redundant tail controls no longer consume this row. Record Activities remains reachable from Settings > Agents with the same opt-in/local/14-day/20-MB privacy contract.
+- Cross-agent actionable-approval attention moved to the right workspace header next to Feed/Terminal. It still routes through the existing exact project/session selection path; ordinary Feed history remains selected-session scoped.
+- The six usage gauges now own the full telemetry row in three equal semantic groups: Codex+Claude 5-hour remaining, Codex+Claude weekly remaining and Codex+Claude selected-session context used. Normal width uses 48-point gauges and width pressure steps to 40 points.
+- ThinkingOrb remains the selected chat's persistent top-left high-level semantic activity indicator. Assistant transcript rows now use the same deterministic `provider + native session ID + generation` BotAvatar identity as the Feed. Only the latest active assistant response receives live semantic rig tuning; historical responses are frozen and do not keep continuous animation work alive. Waiting-for-approval/user and terminal outcomes are presented as non-executing avatar states.
+- Approval/denial Feed presentation remains content-driven and may use multiple lines. No single-row approval constraint was introduced. Exact provider/session/generation/request ownership and acknowledgement-before-final-state semantics are unchanged.
+
+### Streaming/follow correction
+
+The selected conversation no longer scrolls on unrelated provider/session/approval publications because the dedicated Feed owns those events. Streaming follows the transcript's own latest stable user/agent row ID. A streamed response retains one row/scroll identity while its text grows. Auto-follow now performs one layout yield and one scroll against the latest conversation row, coalescing a burst into at most one additional settle; the old unconditional second bottom-sentinel scroll was removed because it could target newer geometry and place the viewport below the response. Manual history scrolling still disables following, and returning near the bottom or invoking Jump to latest restores it. New row insertion uses a subtle 140 ms opacity/0.995-scale transition; token/delta growth does not repeatedly animate/recreate the row.
+
+### Automated evidence
+
+- Focused hierarchy/streaming/workspace set: **82 passed / 0 failed / 1 skipped** (83 total). The skip is the opt-in snapshot destination when the environment variable is absent.
+- Deterministic 23-scenario native workspace review: **1 / 0 / 0**. The review visibly shows the enlarged usage strip, reduced control bar, top-left ThinkingOrb and inline assistant BotAvatar. Offscreen `CAMetalLayer nextDrawable` diagnostics remain fixture limitations and are not live GPU evidence.
+- PTY/crash/scroll regression set: **60 passed / 0 failed / 0 skipped**. Nine real-local-PTY integration tests still cover persistent PID/cwd/environment/prompt, native Return/history/Tab/control keys, ANSI, pager, resize, bounded output, remount/restart and teardown. The focused Agents native-host mount/unmount crash regression remains green.
+- Performance harness: **PASS — automated/fixture**. For 200 streamed deltas, surrounding Agents content/controlbar/dashboard/Feed/selected views each evaluated **6** times and the managed controller published **2** times; transcript coalescing published **67** times. The growing console evaluated **140** times, as expected for visible response growth. Typing 38 keys produced **3** console evaluations.
+- A first post-cleanup full-suite run exposed two suite-load timing assumptions: the managed-interaction test's fixed 20 ms connect delay produced three assertions and the native terminal-host stress missed one mount deadline. Both tests passed immediately in isolation. They were hardened to wait on the actual ready/view condition rather than fixed timing; no production behavior was weakened and no failure was converted to a skip.
+- Final clean full suite after that hardening: **1,662 passed / 0 failed / 38 skipped** (1,700 total).
+- Bounded lifecycle soak: **PASS — automated/fixture**, 110 cycles / ~98.5 s, fixed 32 sessions and 80 transcript entries. Physical footprint cycles 10/30/50/70/90/110: **44,534,528 / 45,386,496 / 45,468,416 / 44,436,224 / 44,763,904 / 44,796,672 bytes**; after teardown **40,028,928 bytes**. Controller released. This is fixture ownership evidence, not unrestricted whole-app leak proof.
+
+### Release boundary
+
+The Release source build completed successfully with only existing unrelated warnings. The synced `dist` directory again reattached Finder/FileProvider metadata; no security setting or signing policy was changed. A clean `ditto --norsrc` staging copy at `/tmp/DynamicIsland-streaming-refine-final.app`, signed with the existing ad-hoc policy, passed deep/strict verification for the app and all three helpers and launched successfully. The October 3 22:26 crash remains the newest DynamicIsland diagnostic report after the launch smoke.
+
+**NOT VERIFIED / external:** this phase does not claim a fresh uninterrupted packaged animation trace for every BotAvatar semantic tuning, an actual macOS Reduce Motion OFF→ON→OFF human toggle, fresh Claude/concurrent-provider live acceptance, consent-dependent microphone/human-speech closure, or whole-app/GPU frame-pacing closure. Those evidence boundaries remain unchanged rather than being inferred from fixtures.

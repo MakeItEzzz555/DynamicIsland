@@ -417,17 +417,13 @@ struct AgentDashboardContentView: View {
                     onSelectProject: { key in
                         selectProject(key, among: providerSessions)
                     },
-                    trailingUsage: [],
-                    activityRecorder: activityRecorder,
-                    onSetRecording: { enabled in settings?.agentActivityRecordingEnabled = enabled },
                     launcherOpen: launchFlow.isPresented,
                         onToggleLauncher: {
                             withAnimation(AgentWorkspaceMotion.selection(reduceMotion: reduceMotion)) {
                                 launchFlow.toggle(provider: managedControl.selectedProvider)
                             }
                         },
-                        onNewSession: { openNewSession(folder: newSessionFolder) },
-                        onSelectAttention: selectAttentionSession
+                        onNewSession: { openNewSession(folder: newSessionFolder) }
                     )
                 }
 
@@ -554,7 +550,9 @@ struct AgentDashboardContentView: View {
                     AgentRightWorkspace(
                         presentation: workspacePresentation, feed: feed, approvals: approvalControl,
                         terminal: terminal, sessions: sessions, selectedSession: selectedSession,
-                        onSelect: managedControl.selectSession, canEmphasize: canEmphasize,
+                        onSelect: managedControl.selectSession,
+                        onSelectAttention: selectAttentionSession,
+                        canEmphasize: canEmphasize,
                         isVisible: contentVisible, layoutStore: layoutStore
                     )
                 }
@@ -697,13 +695,9 @@ private struct AgentCLIControlBar: View {
     var projectOptions: [AgentProjectOption] = []
     var selectedProjectKey: String? = nil
     var onSelectProject: (String?) -> Void = { _ in }
-    var trailingUsage: [AgentUsageIndicator] = []
-    var activityRecorder: AgentActivityRecorder? = nil
-    var onSetRecording: (Bool) -> Void = { _ in }
     let launcherOpen: Bool
     let onToggleLauncher: () -> Void
     var onNewSession: () -> Void = {}
-    var onSelectAttention: (AgentSessionInstanceID) -> Void = { _ in }
 
     private var selectedSession: AgentSession? {
         if let current = managedControl.selectedSessionID {
@@ -720,22 +714,14 @@ private struct AgentCLIControlBar: View {
 
     var body: some View {
         let _ = AgentPerformanceProbe.count("agents.controlbar.body")
-        HStack(alignment: .center, spacing: 12) {
-            ViewThatFits(in: .horizontal) {
-                controls(compact: false)
-                    .fixedSize(horizontal: true, vertical: false)
-                controls(compact: true)
-                    .frame(maxWidth: .infinity)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .frame(height: 31)
-
-            if !trailingUsage.isEmpty {
-                AgentUsageIndicatorRow(indicators: trailingUsage, spacing: 12)
-                    .layoutPriority(2)
-            }
+        ViewThatFits(in: .horizontal) {
+            controls(compact: false)
+                .fixedSize(horizontal: true, vertical: false)
+            controls(compact: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(minHeight: trailingUsage.isEmpty ? 31 : AgentUsageIndicatorCircle.diameter + 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minHeight: 31)
         .padding(.horizontal, 10)
         .padding(.bottom, 3)
         .overlay(alignment: .bottom) {
@@ -750,69 +736,35 @@ private struct AgentCLIControlBar: View {
 
     private func controls(compact: Bool) -> some View {
         HStack(spacing: compact ? 5 : 8) {
-            // Provider names stay visible in the compact row; the buttons
-            // fall back to icons only when they themselves cannot fit.
+            // Provider, model, repository/session discovery and New Chat are
+            // the only persistent controls in the primary Agents toolbar.
             ViewThatFits(in: .horizontal) {
                 AgentProviderButtons(managedControl: managedControl)
                     .fixedSize()
                 AgentProviderButtons(managedControl: managedControl, compact: true)
             }
-            .layoutPriority(3)
-            launcherButton(compact: compact)
-            newSessionButton(compact: compact)
-            projectMenu(compact: compact)
-            AgentWorkspaceApprovalAttentionControl(
-                approvals: approvalControl, selectedSessionID: managedControl.selectedSessionID,
-                onSelect: onSelectAttention
-            )
-            if let activityRecorder {
-                AgentRecordActivitiesControl(
-                    recorder: activityRecorder,
-                    compact: compact,
-                    setRecording: onSetRecording
-                )
-            }
+            .layoutPriority(4)
 
             if let session = selectedSession {
-                HStack(spacing: 4) {
-                    Text(selectedSessionLabel(session))
-                        .font(.system(size: compact ? 9 : 10.5, weight: .semibold))
-                        .lineLimit(1)
-                }
-                .foregroundStyle(.white.opacity(0.82))
-                .layoutPriority(2)
-
-                Spacer(minLength: compact ? 2 : 6)
-                approvalPolicyControl(for: session, compact: compact)
-                statusControl(for: session, compact: compact)
-
-                if managedControl.mode(for: session).canInterrupt {
-                    Button {
-                        managedControl.interrupt(session)
-                    } label: {
-                        adaptiveLabel("Stop", systemImage: "stop.fill", compact: compact)
-                    }
-                    .buttonStyle(.borderless)
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.red.opacity(0.86))
-                    .keyboardShortcut(".", modifiers: [.command])
-                    .help("Interrupt the exact active managed turn (Command-.)")
-                    .accessibilityLabel("Stop active agent turn")
-                }
+                modelControl(for: session, compact: compact)
+                    .layoutPriority(3)
             }
+
+            launcherButton(compact: compact)
+                .layoutPriority(2)
+            projectMenu(compact: compact)
+                .layoutPriority(2)
+            newSessionButton(compact: compact)
+                .layoutPriority(3)
         }
     }
 
     private func launcherButton(compact: Bool) -> some View {
-        let provider = selectedSession?.id.sessionID.provider ?? managedControl.managedProvider ?? .other("agent")
-        let project = selectedSession.map { AgentPrivacyProjection.displayProject($0.project).displayName }
-            ?? nil
-        let title = project ?? provider.stableName.capitalized
-        return Button(action: onToggleLauncher) {
+        Button(action: onToggleLauncher) {
             HStack(spacing: 4) {
                 Image(systemName: "rectangle.stack")
                 if !compact {
-                    Text(title)
+                    Text("Sessions")
                         .lineLimit(1)
                 }
                 Image(systemName: launcherOpen ? "chevron.up" : "chevron.down")
@@ -972,7 +924,9 @@ private struct AgentCLIControlBar: View {
                     ? modelSelectionHelp(for: session)
                     : "Model changes are unavailable while a turn is active or submitting"
             )
-        } else if !compact {
+        } else if !compact,
+                  managedControl.selectedModel(for: session) != nil ||
+                  managedControl.pendingModel(for: session) != nil {
             Text(modelLabel(for: session))
                 .font(.system(size: 8, weight: .medium, design: .monospaced))
                 .foregroundStyle(.white.opacity(0.40))
@@ -1315,71 +1269,6 @@ private struct AgentSelectedSessionControlView: View {
             }
         }
         .animation(AgentWorkspaceMotion.selection(reduceMotion: reduceMotion), value: transcriptReady)
-    }
-}
-
-/// Record Activities: opt-in local recording of normalized agent events.
-/// Click toggles recording; the context menu offers Reveal and Clear. The red
-/// filled record symbol and "Recording" label make the state obvious.
-struct AgentRecordActivitiesControl: View {
-    @ObservedObject var recorder: AgentActivityRecorder
-    let compact: Bool
-    let setRecording: (Bool) -> Void
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        // A plain button keeps the red recording state (a menu-style label
-        // would be flattened to monochrome); Reveal/Clear are secondary.
-        Button {
-            setRecording(!recorder.isRecording)
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: recorder.isRecording ? "record.circle.fill" : "record.circle")
-                    .font(.system(size: 10.5, weight: .semibold))
-                    .foregroundStyle(recorder.isRecording ? Color.red : Color.white.opacity(0.62))
-                    .symbolEffect(.pulse, isActive: recorder.isRecording && !reduceMotion)
-                if !compact {
-                    Text(recorder.isRecording ? "Recording" : "Record")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(recorder.isRecording ? Color.red.opacity(0.92) : Color.white.opacity(0.62))
-                }
-            }
-            .padding(.horizontal, compact ? 6 : 8)
-            .frame(minWidth: 26)
-            .frame(height: 25)
-            .background(
-                recorder.isRecording ? Color.red.opacity(0.13) : Color.white.opacity(0.035),
-                in: Capsule(style: .continuous)
-            )
-            .contentShape(Capsule(style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .fixedSize()
-        .contextMenu {
-            Button(recorder.isRecording ? "Stop Recording Activities" : "Record Activities") {
-                setRecording(!recorder.isRecording)
-            }
-            Divider()
-            Button("Reveal Recorded Activity") { recorder.revealStorage() }
-            Button("Clear Recorded Activity", role: .destructive) { recorder.clear() }
-                .disabled(recorder.summary.fileCount == 0)
-            Divider()
-            Text(Self.summaryText(recorder.summary))
-            Text("Local only · events, not prompts or transcripts")
-        }
-        .help(recorder.isRecording
-            ? "Recording agent activity locally. Click to stop; right-click to reveal or clear it."
-            : "Record Activities: save normalized agent activity (no prompts or transcripts) on this Mac. Right-click to reveal or clear.")
-        .accessibilityLabel("Record Activities")
-        .accessibilityValue(recorder.isRecording ? "On" : "Off")
-        .accessibilityAction(named: "Reveal Recorded Activity") { recorder.revealStorage() }
-        .accessibilityAction(named: "Clear Recorded Activity") { recorder.clear() }
-    }
-
-    static func summaryText(_ summary: AgentActivityStorageSummary) -> String {
-        guard summary.fileCount > 0 else { return "Nothing recorded" }
-        let size = ByteCountFormatter.string(fromByteCount: Int64(summary.totalBytes), countStyle: .file)
-        return "\(size) recorded · kept 14 days, up to 20 MB"
     }
 }
 

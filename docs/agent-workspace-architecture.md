@@ -6,11 +6,11 @@ Original reconstruction checkpoint: October 3, 2026. Interaction cleanup continu
 
 DynamicIsland still has only the persistent `collapsed` and `expanded` shells. Agents workspace emphasis is an internal expanded-layout allocation, not a third island state.
 
-- **Primary chat:** the exact selected managed session transcript, or an explicit provider-verified exact Resume handoff. Non-attachable observation never establishes interactive ownership; it uses the existing New Chat launcher form instead. A semantic Libraries.dev ThinkingOrb is the agent/activity glyph. The active surface is wrapped by the native Libraries.dev BorderBeam. Model and reasoning-effort controls live in this surface.
+- **Primary chat:** the exact selected managed session transcript, or an explicit provider-verified exact Resume handoff. Non-attachable observation never establishes interactive ownership; it uses the existing New Chat launcher form instead. A semantic Libraries.dev ThinkingOrb remains the persistent top-left high-level activity glyph. The active surface is wrapped by the native Libraries.dev BorderBeam. The selected model is controlled from the compact Agents toolbar; supported next-turn reasoning effort remains inside the chat surface. Assistant transcript rows use the same session's deterministic BotAvatar identity; only the latest active response runs the rich semantic rig, while historical response avatars are frozen.
 - **Right workspace:** one retained surface with **Feed** and **Terminal** pages. Page switching changes presentation only; the terminal process controller is not recreated.
 - **Feed:** curated operational traffic from Codex and Claude, normally filtered to the currently selected exact session. Stable Libraries.dev BotAvatar identity is derived from `provider + native session ID + generation`. Approvals, denials, command/tool lifecycles, provider state changes, interruptions and terminal outcomes belong here; transcript text does not.
 - **Terminal:** the existing `TerminalSessionController` now owns one persistent interactive PTY shell and one retained native SwiftTerm emulator. Chat/Terminal, Feed/Terminal and Tools mount that same emulator; none owns another shell. The native terminal handles keyboard input, ANSI, cursor, selection, scrolling and 2,000-line bounded scrollback. The old one-shot command runner and retained output String are replaced. This manual shell does not replace or bypass provider-managed commands/approvals.
-- **Usage strip:** three paired categories, each Codex then Claude: 5-hour remaining, weekly remaining, and selected-session context used.
+- **Usage strip:** three equal-width paired categories, each Codex then Claude: 5-hour remaining, weekly remaining, and selected-session context used. Normal expanded geometry uses 48-point gauges and steps down to 40 points under width pressure; the strip owns the full row rather than sharing it with session/status chrome.
 
 ## Ownership
 
@@ -21,7 +21,7 @@ Provider/session truth remains in the existing ingestion/store path. Workspace p
 - Feed history is bounded in memory and stores semantic summaries/IDs, not prompts, transcripts, filesystem paths or secrets.
 - Chat/Terminal interaction intent and Feed/Terminal workspace selection are presentation state retained by AppDelegate across shell remounts.
 - Terminal process lifetime is independent from visual page visibility.
-- Record Activities remains a separate opt-in bounded persistence feature; the Feed does not broaden it.
+- Record Activities remains a separate opt-in bounded persistence feature controlled from Settings > Agents; it no longer consumes permanent primary-toolbar space, and the Feed does not broaden it.
 
 ## Motion
 
@@ -31,7 +31,7 @@ The workspace uses the installed transitions.dev guidance:
 - feed insertion: 8 pt + opacity;
 - Reduce Motion removes spatial/decorative transitions.
 
-The ThinkingOrb communicates *what* an agent is doing. BorderBeam communicates that the selected chat surface is actively processing. BotAvatar identifies actors in the operational Feed. These roles are intentionally separate.
+The ThinkingOrb communicates *what* the selected agent is doing at the chat-header level. BorderBeam communicates that the selected chat surface is actively processing. BotAvatar carries the stable agent identity both beside assistant transcript responses and in the operational Feed; only the latest active response and current Feed activity animate continuously. These roles are intentionally separate.
 
 ## Rendering and performance
 

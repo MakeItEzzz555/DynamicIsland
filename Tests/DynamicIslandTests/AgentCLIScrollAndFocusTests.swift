@@ -147,6 +147,43 @@ final class AgentTranscriptFollowStateTests: XCTestCase {
         state.observeViewport(distanceFromBottom: 240, contentToken: "b")
         XCTAssertTrue(state.isFollowing, "Grace passes while the jump animation lands")
     }
+
+    func testStreamingGrowthKeepsStableLatestMessageTarget() {
+        let start = Date()
+        let partial = AgentManagedTranscriptEntry(
+            id: "assistant-1", nativeSessionID: "thread-1", turnID: "turn-1",
+            role: .agent, text: "partial", timestamp: start
+        )
+        let grown = AgentManagedTranscriptEntry(
+            id: "assistant-1", nativeSessionID: "thread-1", turnID: "turn-1",
+            role: .agent, text: "partial response continues in place", timestamp: start
+        )
+        XCTAssertEqual(
+            AgentTranscriptScrollTarget.latestConversationEntryID([partial]),
+            "message:assistant-1"
+        )
+        XCTAssertEqual(
+            AgentTranscriptScrollTarget.latestConversationEntryID([grown]),
+            "message:assistant-1",
+            "streaming text must grow the same scroll target instead of creating queued targets"
+        )
+    }
+
+    func testOperationalRowsDoNotReplaceConversationScrollTarget() {
+        let start = Date()
+        let assistant = AgentManagedTranscriptEntry(
+            id: "assistant-1", nativeSessionID: "thread-1", turnID: "turn-1",
+            role: .agent, text: "answer", timestamp: start
+        )
+        let tool = AgentManagedTranscriptEntry(
+            id: "tool-1", nativeSessionID: "thread-1", turnID: "turn-1",
+            role: .tool, text: "search", timestamp: start.addingTimeInterval(1)
+        )
+        XCTAssertEqual(
+            AgentTranscriptScrollTarget.latestConversationEntryID([assistant, tool]),
+            "message:assistant-1"
+        )
+    }
 }
 
 final class AgentPromptEditingShortcutTests: XCTestCase {

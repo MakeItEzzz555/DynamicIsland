@@ -172,6 +172,18 @@ final class AgentsPerformanceArchitectureTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(AgentUsageIndicatorMetrics.valueFontSize(for: 30), 7.5, "still legible when narrow")
     }
 
+    func testWorkspaceUsageStripUsesTheFullRowWithLargerPairedGauges() {
+        XCTAssertEqual(AgentWorkspaceUsageStrip.diameter(for: 960), 48)
+        XCTAssertEqual(AgentWorkspaceUsageStrip.diameter(for: 620), 48)
+        XCTAssertEqual(AgentWorkspaceUsageStrip.diameter(for: 560), 40)
+        XCTAssertGreaterThan(AgentWorkspaceUsageStrip.rowHeight(for: 960), 60)
+        XCTAssertGreaterThan(
+            AgentWorkspaceUsageStrip.diameter(for: 960),
+            32,
+            "the workspace strip must not regress to the old tiny floating rings"
+        )
+    }
+
     func testProviderButtonsShowIconAndNameWithPracticalHitTargets() async throws {
         let (_, _, controller) = try await makeController(providers: [.codex, .claude])
         defer { controller.stop() }

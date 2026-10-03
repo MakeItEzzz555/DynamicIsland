@@ -106,7 +106,7 @@ final class AgentWorkspaceSnapshotTests: XCTestCase {
                                                                selectedSessions: selectedByProvider, now: fixtureDate)
                 XCTAssertEqual(groups.count, 3)
                 XCTAssertEqual(groups.map(\.count), [2, 2, 2])
-                try await hosted(AgentWorkspaceUsageStrip(groups: groups).padding(20), size: CGSize(width: 700, height: 100),
+                try await hosted(AgentWorkspaceUsageStrip(groups: groups).padding(20), size: CGSize(width: 700, height: 120),
                                  reduceMotion: false, light: false, to: output.appendingPathComponent(name + ".png"))
             } else {
                 let columns = AgentWorkspaceColumns.make(width: width - 28, emphasized: fixture.presentation.isEmphasized)
@@ -333,7 +333,7 @@ final class AgentWorkspaceSnapshotTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(3))
 
             if cycle.isMultiple(of: 2) {
-                let mountDeadline = ContinuousClock.now + .seconds(2)
+                let mountDeadline = ContinuousClock.now + .seconds(5)
                 while Self.findInteractiveTerminal(in: hosting) == nil, ContinuousClock.now < mountDeadline {
                     await Task.yield()
                     try await Task.sleep(for: .milliseconds(1))

@@ -84,6 +84,54 @@ final class AgentVisualEffectsTests: XCTestCase {
         XCTAssertTrue(AgentVisualMotion.paused(reduceMotion: false, visible: true, active: true, enabled: false))
     }
 
+    func testLatestResponseAvatarUsesSemanticRigTuning() {
+        let reasoning = AgentInlineResponseAvatarPresentation.tuning(
+            state: .thinking, processingKind: .reasoning, isLatest: true
+        )
+        let searching = AgentInlineResponseAvatarPresentation.tuning(
+            state: .working, processingKind: .searching, isLatest: true
+        )
+        let executing = AgentInlineResponseAvatarPresentation.tuning(
+            state: .runningCommand, processingKind: .executing, isLatest: true
+        )
+        let connecting = AgentInlineResponseAvatarPresentation.tuning(
+            state: .runningTool, processingKind: .connecting, isLatest: true
+        )
+
+        XCTAssertTrue(reasoning.animates)
+        XCTAssertTrue(searching.animates)
+        XCTAssertTrue(executing.animates)
+        XCTAssertTrue(connecting.animates)
+        XCTAssertGreaterThan(searching.turnMultiplier, reasoning.turnMultiplier)
+        XCTAssertGreaterThan(executing.speedMultiplier, reasoning.speedMultiplier)
+        XCTAssertGreaterThan(connecting.minimumWhirl, searching.minimumWhirl)
+    }
+
+    func testHistoricalAndBlockedResponseAvatarsDoNotContinuouslyAnimate() {
+        let historical = AgentInlineResponseAvatarPresentation.tuning(
+            state: .runningCommand, processingKind: .executing, isLatest: false
+        )
+        let waiting = AgentInlineResponseAvatarPresentation.tuning(
+            state: .waitingForApproval, processingKind: .executing, isLatest: true
+        )
+        XCTAssertFalse(historical.animates)
+        XCTAssertFalse(waiting.animates)
+        XCTAssertEqual(
+            AgentInlineResponseAvatarPresentation.displayedState(
+                state: .waitingForApproval,
+                isLatest: true
+            ),
+            .idle
+        )
+        XCTAssertEqual(
+            AgentInlineResponseAvatarPresentation.displayedState(
+                state: .completed,
+                isLatest: true
+            ),
+            .idle
+        )
+    }
+
     func testProcessingBeamIgnoresMicAndFocusesWhileTravelling() {
         let c = VoiceBeamConfiguration()
         let silent = VoiceBeamGeometry.make(width: 200, height: 20, level: 0, processing: true, time: 0, configuration: c)

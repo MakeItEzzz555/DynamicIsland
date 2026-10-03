@@ -24,13 +24,21 @@ struct AgentWorkspaceSplitView<Chat: View, Workspace: View>: View {
 struct AgentWorkspaceUsageStrip: View {
     let groups: [[AgentUsageIndicator]]
 
+    static func diameter(for width: CGFloat) -> CGFloat {
+        width < 620 ? 40 : 48
+    }
+
+    static func rowHeight(for width: CGFloat) -> CGFloat {
+        diameter(for: width) + 18
+    }
+
     var body: some View {
         GeometryReader { geometry in
-            let side: CGFloat = geometry.size.width < 500 ? 28 : 32
+            let side = Self.diameter(for: geometry.size.width)
             HStack(spacing: 0) {
                 ForEach(Array(groups.enumerated()), id: \.offset) { _, pair in
-                    VStack(spacing: 2) {
-                        HStack(spacing: 7) {
+                    VStack(spacing: 3) {
+                        HStack(spacing: side >= 48 ? 12 : 8) {
                             ForEach(pair) { value in
                                 AgentUsageIndicatorCircle(
                                     indicator: value,
@@ -40,15 +48,17 @@ struct AgentWorkspaceUsageStrip: View {
                             }
                         }
                         Text(pair.first.map { "\($0.label) · \($0.directionLabel)" } ?? "")
-                            .font(.system(size: 7.5, weight: .medium))
+                            .font(.system(size: side >= 48 ? 9 : 8, weight: .semibold))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
+                            .minimumScaleFactor(0.82)
                     }
                     .frame(maxWidth: .infinity)
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         }
-        .frame(height: 45)
+        .frame(minHeight: 58, idealHeight: 66)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Both providers: five-hour, weekly and selected-session context usage")
     }
@@ -304,13 +314,15 @@ struct AgentChatSurface<Conversation: View>: View {
                 .padding(.horizontal, 9).padding(.top, 7).padding(.bottom, 3)
                 conversation()
                     .frame(maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
-                if controller.isManaged(session), controller.mode(for: session).showsComposer {
-                HStack(spacing: 5) {
-                    modelControl
-                    reasoningControl
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, 10).padding(.bottom, 7)
+                if controller.isManaged(session),
+                   controller.mode(for: session).showsComposer,
+                   !controller.availableReasoningEfforts(for: session).isEmpty {
+                    HStack(spacing: 5) {
+                        reasoningControl
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 7)
                 }
             }
             .background(.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 12))
@@ -430,6 +442,7 @@ struct AgentRightWorkspace: View {
     let sessions: [AgentSession]
     let selectedSession: AgentSession?
     let onSelect: (AgentSessionInstanceID) -> Void
+    let onSelectAttention: (AgentSessionInstanceID) -> Void
     let canEmphasize: Bool
     let isVisible: Bool
     let layoutStore: IslandLayoutStore?
@@ -437,8 +450,16 @@ struct AgentRightWorkspace: View {
 
     var body: some View {
         VStack(spacing: 6) {
-            AgentWorkspaceSwitcher(presentation: presentation, canEmphasize: canEmphasize)
-                .padding(.horizontal, 3)
+            HStack(spacing: 5) {
+                AgentWorkspaceSwitcher(presentation: presentation, canEmphasize: canEmphasize)
+                    .frame(maxWidth: .infinity)
+                AgentWorkspaceApprovalAttentionControl(
+                    approvals: approvals,
+                    selectedSessionID: selectedSession?.id,
+                    onSelect: onSelectAttention
+                )
+            }
+            .padding(.horizontal, 3)
             GeometryReader { geometry in
                 RetainedWorkspacePages(
                     pages: AgentWorkspaceMode.allCases, selection: presentation.mode,

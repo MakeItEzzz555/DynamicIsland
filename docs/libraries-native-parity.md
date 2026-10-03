@@ -133,3 +133,16 @@ The existing upstream-derived ThinkingOrb, BotAvatar and BorderBeam geometry, ma
 - **NOT VERIFIED:** fresh OS Reduce Motion toggle, complete uninterrupted shell/orb/avatar motion and GPU frame pacing. Original OS Reduce Motion OFF was preserved. **BLOCKED — external acceptance dependency:** fresh Claude/concurrent-provider execution and consent-dependent controlled speech.
 
 Acknowledged perceptual differences remain fabric fringe/lighting, accessory mesh/depth and extreme-pose occlusion, whirl sampling and browser/CoreGraphics rasterization. No new browser pixel-identity claim is made. SwiftTerm 1.20.0 is a separate MIT native terminal dependency, not a Libraries.dev renderer or an animation framework.
+
+
+## October 4 — inline response identity refinement
+
+The pinned Libraries.dev ThinkingOrb/BotAvatar/BorderBeam engines, body paths, material equations, shader presets and upstream revision are unchanged. This phase changes placement and animation ownership rather than claiming new renderer parity.
+
+- ThinkingOrb is now exclusively the persistent high-level semantic activity indicator at the selected chat's top-left; it is not repeated for assistant messages.
+- Assistant transcript responses use the same deterministic BotAvatar identity as their session's Feed events. Only the latest response representing current live activity is allowed to animate continuously. Historical response avatars render from a deterministic frozen time so long transcripts do not accumulate active clocks.
+- Normalized `AgentProcessingKind` evidence tunes the existing native avatar rig rather than inventing nine BotAvatar states: reasoning/planning use restrained working motion, searching increases gaze/turn activity, executing increases energy/whirl, connecting emphasizes whirl, listening/composing are calmer, and background work is low-intensity. Waiting-for-approval/user and terminal outcomes do not retain execution-style animation.
+- The visual review harness shows the new inline avatar and enlarged usage hierarchy. Offscreen snapshots remain deterministic review evidence only; they do not replace live continuous-motion/GPU acceptance.
+- Feed approval cards retain the existing readable multi-line layout. No single-row permission rendering requirement was added.
+
+The native fidelity gaps already documented for fabric fringe/lighting, accessory depth/occlusion, whirl sampling and browser/CoreGraphics rasterization remain unchanged.

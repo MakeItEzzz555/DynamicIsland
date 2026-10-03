@@ -819,7 +819,15 @@ final class AgentManagedSessionControllerTests: XCTestCase {
         await controller.refreshPersistentSnapshot()
         let observed = try XCTUnwrap(store.sessions.first)
         controller.connect(observed)
-        try await Task.sleep(for: .milliseconds(20))
+        let readyDeadline = ContinuousClock.now + .seconds(2)
+        while ContinuousClock.now < readyDeadline {
+            guard let candidate = store.sessions.first else {
+                await Task.yield()
+                continue
+            }
+            if controller.interactionState(for: candidate) == .ready { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
 
         let managed = try XCTUnwrap(store.sessions.first)
         XCTAssertEqual(controller.interactionState(for: managed), .ready)
@@ -839,7 +847,11 @@ final class AgentManagedSessionControllerTests: XCTestCase {
             state: .completed,
             summary: nil
         ))
-        try await Task.sleep(for: .milliseconds(20))
+        let completionDeadline = ContinuousClock.now + .seconds(2)
+        while controller.interactionState(for: managed) != .ready,
+              ContinuousClock.now < completionDeadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
         XCTAssertEqual(controller.interactionState(for: managed), .ready)
         controller.stop()
     }
