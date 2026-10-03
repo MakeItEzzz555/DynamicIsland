@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import SwiftTerm
 
 enum TerminalSessionState: Equatable, Sendable {
     case idle
@@ -34,11 +35,20 @@ enum TerminalSessionError: LocalizedError, Equatable {
     }
 }
 
+@MainActor
 protocol TerminalProcessHandle: AnyObject {
     var isRunning: Bool { get }
     func terminate()
+    func send(data: [UInt8])
+    var processID: Int32? { get }
 }
 
+extension TerminalProcessHandle {
+    var processID: Int32? { nil }
+    func send(data: [UInt8]) {}
+}
+
+@MainActor
 protocol TerminalProcessRunning {
     func start(
         command: String,
@@ -49,105 +59,19 @@ protocol TerminalProcessRunning {
     ) throws -> TerminalProcessHandle
 }
 
-private final class FoundationTerminalProcessHandle: TerminalProcessHandle {
-    private let process: Process
-    private let outputPipe: Pipe
-
-    init(process: Process, outputPipe: Pipe) {
-        self.process = process
-        self.outputPipe = outputPipe
-    }
-
-    var isRunning: Bool {
-        process.isRunning
-    }
-
-    func terminate() {
-        outputPipe.fileHandleForReading.readabilityHandler = nil
-        if process.isRunning {
-            process.terminate()
-        }
-    }
-
-    deinit {
-        outputPipe.fileHandleForReading.readabilityHandler = nil
-        if process.isRunning {
-            process.terminate()
-        }
-    }
-}
-
-struct FoundationTerminalProcessRunner: TerminalProcessRunning {
-    func start(
-        command: String,
-        shellPath: String,
-        workingDirectory: URL?,
-        onOutput: @escaping @Sendable (String) -> Void,
-        onExit: @escaping @Sendable (Int32) -> Void
-    ) throws -> TerminalProcessHandle {
-        let shellURL = URL(fileURLWithPath: shellPath)
-        guard FileManager.default.isExecutableFile(atPath: shellURL.path) else {
-            throw TerminalSessionError.invalidShell(shellPath)
-        }
-
-        if let workingDirectory {
-            var isDirectory: ObjCBool = false
-            guard FileManager.default.fileExists(
-                atPath: workingDirectory.path,
-                isDirectory: &isDirectory
-            ), isDirectory.boolValue else {
-                throw TerminalSessionError.invalidWorkingDirectory(workingDirectory.path)
-            }
-        }
-
-        let process = Process()
-        let pipe = Pipe()
-        process.executableURL = shellURL
-        process.arguments = ["-lc", command]
-        process.currentDirectoryURL = workingDirectory
-        process.standardOutput = pipe
-        process.standardError = pipe
-
-        pipe.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            guard !data.isEmpty else { return }
-            guard let output = String(data: data, encoding: .utf8), !output.isEmpty else { return }
-            onOutput(output)
-        }
-
-        process.terminationHandler = { process in
-            pipe.fileHandleForReading.readabilityHandler = nil
-            let trailing = pipe.fileHandleForReading.readDataToEndOfFile()
-            if !trailing.isEmpty, let output = String(data: trailing, encoding: .utf8), !output.isEmpty {
-                onOutput(output)
-            }
-            onExit(process.terminationStatus)
-        }
-
-        do {
-            try process.run()
-        } catch {
-            pipe.fileHandleForReading.readabilityHandler = nil
-            throw TerminalSessionError.launchFailed(error.localizedDescription)
-        }
-
-        return FoundationTerminalProcessHandle(process: process, outputPipe: pipe)
-    }
-}
-
 @MainActor
 final class TerminalSessionController: ObservableObject, IslandCapabilityAdapter {
     static let activityID = "terminalTask"
     static let defaultShell = "/bin/zsh"
-    /// In-memory terminal scrollback is intentionally bounded. This is a
-    /// command surface, not persistent activity recording.
-    static let maximumOutputCharacters = 120_000
-    static let trimmedOutputMarker = "… earlier terminal output trimmed …\n"
 
     let capabilityID: IslandCapabilityID = .terminal
 
     @Published private(set) var state: TerminalSessionState = .idle
-    @Published private(set) var output = ""
+    /// The emulator is the only scrollback owner. Text is materialized only for explicit export/tests.
+    var output: String { String(decoding: terminalView.getTerminal().getBufferAsData(), as: UTF8.self) }
+    @Published private(set) var terminalView: InteractiveTerminalView
+    var processID: Int32? { processHandle?.processID }
+    static let maximumScrollbackLines = 2_000
     @Published private(set) var commandHistory: [String] = []
     @Published var shellPath: String
     @Published var workingDirectoryPath: String
@@ -161,7 +85,10 @@ final class TerminalSessionController: ObservableObject, IslandCapabilityAdapter
         }
     }
 
-    private let runner: TerminalProcessRunning
+    private var runner: TerminalProcessRunning
+    private let usesNativePTY: Bool
+    private var launchedBefore = false
+    private var launchGeneration: UInt64 = 0
     private let liveActivities: LiveActivityStore
     private let capabilities: IslandCapabilityRegistry
     private let now: () -> Date
@@ -173,19 +100,38 @@ final class TerminalSessionController: ObservableObject, IslandCapabilityAdapter
     init(
         liveActivities: LiveActivityStore,
         capabilities: IslandCapabilityRegistry,
-        runner: TerminalProcessRunning = FoundationTerminalProcessRunner(),
-        shellPath: String = TerminalSessionController.defaultShell,
+        runner: TerminalProcessRunning? = nil,
+        shellPath: String = TerminalSessionController.configuredUserShell,
         workingDirectoryPath: String = FileManager.default.homeDirectoryForCurrentUser.path,
         now: @escaping () -> Date = Date.init
     ) {
         self.liveActivities = liveActivities
         self.capabilities = capabilities
-        self.runner = runner
+        let view = InteractiveTerminalView()
+        self.terminalView = view
+        self.runner = runner ?? PTYTerminalProcessRunner(view: view)
+        usesNativePTY = runner == nil
         self.shellPath = shellPath
         self.workingDirectoryPath = workingDirectoryPath
         self.now = now
+        view.onSend = { [weak self] data in self?.sendInput(data) }
         publishState()
     }
+
+    static var configuredUserShell: String {
+        let shell = getpwuid(getuid()).flatMap { $0.pointee.pw_shell }.map { String(cString: $0) }
+        return shell.flatMap { FileManager.default.isExecutableFile(atPath: $0) ? $0 : nil } ?? defaultShell
+    }
+
+    /// Starts once. Later selections never alter the shell-owned cwd.
+    func startShell(initialDirectory: String? = nil) throws {
+        guard !isRunning, isEnabled else { return }
+        if let initialDirectory, !initialDirectory.isEmpty { workingDirectoryPath = initialDirectory }
+        try launchShell(command: "")
+    }
+
+    func sendInput(_ data: [UInt8]) { processHandle?.send(data: data) }
+    func interrupt() { sendInput([3]) }
 
     var snapshot: IslandCapabilitySnapshot {
         IslandCapabilitySnapshot(
@@ -208,61 +154,67 @@ final class TerminalSessionController: ObservableObject, IslandCapabilityAdapter
     var statusText: String {
         switch state {
         case .idle: "Ready"
-        case .running(let command): command
+        case .running(let shell): "Interactive \(shell) shell"
         case .finished(_, let code): "Exited \(code)"
         case .failed(_, let message): message
         }
     }
 
+    /// Explicit user input only; every command goes to the same interactive PTY.
     func run(command rawCommand: String) throws {
         guard isEnabled else { return }
-        guard !isRunning else { throw TerminalSessionError.alreadyRunning }
-
         let command = rawCommand.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !command.isEmpty else { throw TerminalSessionError.emptyCommand }
-
-        let workingDirectory: URL?
-        let trimmedDirectory = workingDirectoryPath.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmedDirectory.isEmpty {
-            workingDirectory = nil
-        } else {
-            workingDirectory = URL(fileURLWithPath: NSString(string: trimmedDirectory).expandingTildeInPath)
+        if !isRunning { try launchShell(command: command) }
+        processHandle?.send(data: Array((command + "\r").utf8))
+        if persistCommandHistory {
+            commandHistory.append(command)
+            if commandHistory.count > 128 { commandHistory.removeFirst(commandHistory.count - 128) }
         }
+    }
 
+    private func launchShell(command: String) throws {
+        let shell = NSString(string: shellPath).expandingTildeInPath
+        guard FileManager.default.isExecutableFile(atPath: shell) else { throw TerminalSessionError.invalidShell(shell) }
+        let directory = NSString(string: workingDirectoryPath).expandingTildeInPath
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: directory, isDirectory: &isDirectory), isDirectory.boolValue else {
+            throw TerminalSessionError.invalidWorkingDirectory(directory)
+        }
         lastError = nil
         completionDismissWorkItem?.cancel()
-
+        launchGeneration &+= 1
+        let generation = launchGeneration
         do {
+            if usesNativePTY, launchedBefore {
+                let view = InteractiveTerminalView()
+                view.onSend = { [weak self] data in self?.sendInput(data) }
+                terminalView = view
+                runner = PTYTerminalProcessRunner(view: view)
+            }
             let handle = try runner.start(
-                command: command,
-                shellPath: NSString(string: shellPath).expandingTildeInPath,
-                workingDirectory: workingDirectory,
+                command: command, shellPath: shell, workingDirectory: URL(fileURLWithPath: directory),
                 onOutput: { [weak self] chunk in
                     Task { @MainActor [weak self] in
-                        self?.appendOutput(chunk)
+                        guard let self, self.launchGeneration == generation, self.isRunning else { return }
+                        self.terminalView.feed(text: chunk)
                     }
                 },
                 onExit: { [weak self] exitCode in
                     Task { @MainActor [weak self] in
-                        self?.handleExit(command: command, exitCode: exitCode)
+                        guard let self, self.launchGeneration == generation, self.isRunning else { return }
+                        self.handleExit(command: "Shell", exitCode: exitCode)
                     }
                 }
             )
-            appendCommandHeader(command)
             processHandle = handle
-            if persistCommandHistory {
-                commandHistory.append(command)
-            }
-            state = .running(command: command)
-            publishActivity(
-                title: terminalTitle(for: command),
-                subtitle: "Running",
-                isActive: true,
-                completionEvidence: nil
-            )
+            launchedBefore = true
+            state = .running(command: URL(fileURLWithPath: shell).lastPathComponent)
+            // An idle interactive shell is not an ongoing command or agent task.
+            liveActivities.remove(id: Self.activityID)
             publishState()
         } catch {
-            state = .failed(command: command, message: error.localizedDescription)
+            state = .failed(command: nil, message: error.localizedDescription)
             lastError = error.localizedDescription
             publishState(failed: true)
             throw error
@@ -271,7 +223,12 @@ final class TerminalSessionController: ObservableObject, IslandCapabilityAdapter
 
     func terminate() {
         guard isRunning else { return }
+        launchGeneration &+= 1
         processHandle?.terminate()
+        processHandle = nil
+        state = .idle
+        liveActivities.remove(id: Self.activityID)
+        publishState()
     }
 
     func clearCommandHistory() {
@@ -279,7 +236,8 @@ final class TerminalSessionController: ObservableObject, IslandCapabilityAdapter
     }
 
     func resetOutput() {
-        output = ""
+        terminalView.getTerminal().resetToInitialState()
+        terminalView.needsDisplay = true
     }
 
     func setEnabled(_ enabled: Bool) {
@@ -314,31 +272,6 @@ final class TerminalSessionController: ObservableObject, IslandCapabilityAdapter
         case .start, .configureShortcut:
             throw TerminalSessionError.unsupportedAction(action)
         }
-    }
-
-    private func appendOutput(_ chunk: String) {
-        appendBoundedOutput(chunk)
-    }
-
-    private func appendCommandHeader(_ command: String) {
-        if !output.isEmpty, !output.hasSuffix("\n") {
-            appendBoundedOutput("\n")
-        }
-        if !output.isEmpty {
-            appendBoundedOutput("\n")
-        }
-        appendBoundedOutput("$ \(command)\n")
-    }
-
-    private func appendBoundedOutput(_ chunk: String) {
-        guard !chunk.isEmpty else { return }
-        output.append(chunk)
-        guard output.count > Self.maximumOutputCharacters else { return }
-        let payloadLimit = max(
-            0,
-            Self.maximumOutputCharacters - Self.trimmedOutputMarker.count
-        )
-        output = Self.trimmedOutputMarker + output.suffix(payloadLimit)
     }
 
     private func handleExit(command: String, exitCode: Int32) {
@@ -401,8 +334,8 @@ final class TerminalSessionController: ObservableObject, IslandCapabilityAdapter
             updatedAt: updatedAt,
             lifecycle: LiveActivityLifecycleMetadata(
                 authority: .process,
-                startEvidence: "Foundation Process successfully launched",
-                progressEvidence: "stdout/stderr stream and Process.isRunning",
+                startEvidence: "Interactive PTY shell successfully launched",
+                progressEvidence: "PTY shell process lifecycle",
                 completionEvidence: completionEvidence,
                 dismissPolicy: isActive ? .untilSourceEnds : .automatic,
                 supportsCancellation: true

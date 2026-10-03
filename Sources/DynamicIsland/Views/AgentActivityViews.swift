@@ -371,7 +371,8 @@ struct AgentDashboardContentView: View {
                     controller: managedControl,
                     projectKey: projectSelection.key,
                     locations: projectLocations,
-                    launcherOpen: launchFlow.isPresented
+                    launcherOpen: launchFlow.isPresented,
+                    approvalControl: approvalControl
                 )
             }
             let providerSessions = workspace.providerSessions
@@ -421,11 +422,12 @@ struct AgentDashboardContentView: View {
                     onSetRecording: { enabled in settings?.agentActivityRecordingEnabled = enabled },
                     launcherOpen: launchFlow.isPresented,
                         onToggleLauncher: {
-                            withAnimation(.easeOut(duration: 0.14)) {
+                            withAnimation(AgentWorkspaceMotion.selection(reduceMotion: reduceMotion)) {
                                 launchFlow.toggle(provider: managedControl.selectedProvider)
                             }
                         },
-                        onNewSession: { openNewSession(folder: newSessionFolder) }
+                        onNewSession: { openNewSession(folder: newSessionFolder) },
+                        onSelectAttention: selectAttentionSession
                     )
                 }
 
@@ -453,6 +455,12 @@ struct AgentDashboardContentView: View {
         .frame(maxWidth: .infinity, maxHeight: availableHeight, alignment: .topLeading)
         .foregroundStyle(.white)
         .onChange(of: sessions.map(\.id)) { _, _ in
+            reconcileWorkspaceSelection()
+        }
+        .onChange(of: managedControl.selectedProvider) { _, _ in
+            reconcileWorkspaceSelection()
+        }
+        .onChange(of: managedControl.selectedSessionID) { _, _ in
             reconcileWorkspaceSelection()
         }
         .onAppear {
@@ -496,7 +504,7 @@ struct AgentDashboardContentView: View {
                     didStartSession(started)
                 },
                 onDismiss: {
-                    withAnimation(.easeOut(duration: 0.12)) {
+                    withAnimation(AgentWorkspaceMotion.selection(reduceMotion: reduceMotion)) {
                         launchFlow.dismiss()
                     }
                 }
@@ -509,7 +517,7 @@ struct AgentDashboardContentView: View {
         } else {
             stagedAgentContent(index: 3) {
                 AgentWorkspaceSplitView(presentation: workspacePresentation, reduceMotion: reduceMotion) {
-                    if let selectedSession {
+                    if case .session(let selectedSession, let controlSurface) = workspace.surface {
                         AgentChatSurface(
                             session: selectedSession, controller: managedControl,
                             presentation: workspacePresentation, isVisible: contentVisible,
@@ -517,7 +525,7 @@ struct AgentDashboardContentView: View {
                         ) {
                             AgentSelectedSessionControlView(
                                 session: selectedSession,
-                                surface: AgentWorkspaceProjection.controlSurface(for: selectedSession, controller: managedControl),
+                                surface: controlSurface,
                                 sessions: controlSessions, managedControl: managedControl,
                                 approvalControl: approvalControl,
                                 detailHeight: max(verticalLayout.selectedDetailHeight, 138),
@@ -526,9 +534,21 @@ struct AgentDashboardContentView: View {
                             )
                         }
                     } else {
-                        AgentEmptyConsoleState(managedControl: managedControl) {
-                            openNewSession(folder: newSessionFolder)
+                        AgentSessionLauncherView(
+                            sessions: sessions, managedControl: managedControl, flow: launchFlow,
+                            onSelectSession: managedControl.selectSession,
+                            onStarted: didStartSession, onDismiss: {},
+                            embeddedNewChat: true
+                        )
+                        .onAppear {
+                            launchFlow.prepareNewChat(provider: managedControl.selectedProvider ?? managedControl.managedProvider,
+                                folder: newSessionFolder)
                         }
+                        .onChange(of: managedControl.selectedProvider) { _, provider in
+                            launchFlow.prepareNewChat(provider: provider, folder: newSessionFolder)
+                        }
+                        .transition(.opacity)
+                        .accessibilityIdentifier("agents.newChatFallback")
                     }
                 } workspace: { canEmphasize in
                     AgentRightWorkspace(
@@ -543,8 +563,19 @@ struct AgentDashboardContentView: View {
         }
     }
 
+    private func selectAttentionSession(_ instance: AgentSessionInstanceID) {
+        guard let session = sessions.first(where: { $0.id == instance }) else { return }
+        let projectKey = AgentProjectGrouping.key(for: session, locations: projectLocations).rawValue
+        if projectSelection.key != nil && projectSelection.key != projectKey {
+            projectSelection.set(projectKey)
+        }
+        managedControl.selectSession(instance)
+        workspacePresentation.select(.feed)
+        launchFlow.dismiss()
+    }
+
     private func openNewSession(folder: String?) {
-        withAnimation(.easeOut(duration: 0.14)) {
+        withAnimation(AgentWorkspaceMotion.selection(reduceMotion: reduceMotion)) {
             launchFlow.present(
                 .newSession,
                 provider: managedControl.selectedProvider ?? managedControl.managedProvider,
@@ -576,24 +607,26 @@ struct AgentDashboardContentView: View {
             projectKey: key,
             locations: projectLocations
         )
-        let preferred = AgentSessionLauncherProjection.preferredSelection(
-            current: managedControl.selectedSessionID,
-            sessions: filtered,
-            activeManagedSessionIDs: managedControl.activeManagedSessionIDs,
-            locations: projectLocations
-        )
+        let preferred = AgentWorkspaceProjection.preferredSession(
+            current: managedControl.selectedSessionID, sessions: filtered, controller: managedControl,
+            approvalControl: approvalControl
+        )?.id
         if preferred != managedControl.selectedSessionID {
             managedControl.selectSession(preferred)
         }
     }
 
     private func reconcileWorkspaceSelection() {
-        let preferred = AgentSessionLauncherProjection.preferredSelection(
-            current: managedControl.selectedSessionID,
-            sessions: sessions,
-            activeManagedSessionIDs: managedControl.activeManagedSessionIDs,
-            locations: projectLocations
+        // Selection, Chat routing, Feed and Context use the same effective
+        // provider/project projection. A managed chat in another project must
+        // never steal ownership from the project currently being viewed.
+        let projection = AgentWorkspaceProjection.make(
+            sessions: sessions, controller: managedControl,
+            projectKey: projectSelection.key, locations: projectLocations,
+            launcherOpen: launchFlow.isPresented,
+            approvalControl: approvalControl
         )
+        let preferred = projection.selectedSession?.id
         if preferred != managedControl.selectedSessionID {
             managedControl.selectSession(preferred)
         }
@@ -670,12 +703,18 @@ private struct AgentCLIControlBar: View {
     let launcherOpen: Bool
     let onToggleLauncher: () -> Void
     var onNewSession: () -> Void = {}
+    var onSelectAttention: (AgentSessionInstanceID) -> Void = { _ in }
 
     private var selectedSession: AgentSession? {
-        AgentWorkspaceSelection.session(
-            current: managedControl.selectedSessionID,
-            sessions: sessions,
-            activeManagedSessionIDs: managedControl.activeManagedSessionIDs
+        if let current = managedControl.selectedSessionID {
+            guard let exact = sessions.first(where: { $0.id == current }),
+                  AgentWorkspaceProjection.offersPrimaryChat(exact, controller: managedControl) else { return nil }
+            return exact
+        }
+        return AgentWorkspaceProjection.preferredSession(
+            current: nil,
+            sessions: sessions.filter { AgentWorkspaceProjection.offersPrimaryChat($0, controller: managedControl) },
+            controller: managedControl, approvalControl: approvalControl
         )
     }
 
@@ -722,6 +761,10 @@ private struct AgentCLIControlBar: View {
             launcherButton(compact: compact)
             newSessionButton(compact: compact)
             projectMenu(compact: compact)
+            AgentWorkspaceApprovalAttentionControl(
+                approvals: approvalControl, selectedSessionID: managedControl.selectedSessionID,
+                onSelect: onSelectAttention
+            )
             if let activityRecorder {
                 AgentRecordActivitiesControl(
                     recorder: activityRecorder,
@@ -1207,6 +1250,7 @@ private struct AgentSelectedSessionControlView: View {
     let activityLimit: Int
     let layoutStore: IslandLayoutStore?
     let transcriptReady: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         let _ = AgentPerformanceProbe.count("agents.selected.body")
@@ -1249,50 +1293,28 @@ private struct AgentSelectedSessionControlView: View {
                     guard transcriptReady else { return }
                     await managedControl.refreshTranscript(for: session)
                 }
-            } else if !transcriptReady {
-                AgentTranscriptLoadingView(session: session)
-                    .frame(minHeight: 0, idealHeight: detailHeight, maxHeight: .infinity)
-                    .transition(.opacity)
             } else {
-                VStack(spacing: 5) {
+                VStack(spacing: 8) {
                     AgentSessionControlBanner(
-                        session: session,
-                        surface: surface,
-                        status: managedControl.statusMessage(for: session),
+                        session: session, surface: surface,
+                        status: nil,
                         onConnect: { managedControl.connect(session) }
                     )
-
-                    AgentTranscriptFeedReader(
-                        feed: managedControl.transcriptFeed(for: session),
-                        isEnabled: true
-                    ) { entries in
-                    AgentEmbeddedConsoleView(
-                        session: session,
-                        mode: .observed,
-                        interactionState: managedControl.interactionState(for: session),
-                        maximumActivityEntries: activityLimit,
-                        showsOperationalTraffic: false,
-                        showsActivityOrb: false,
-                        transcriptEntries: entries,
-                        workspaceSessions: AgentWorkspaceSelection.ordered(
-                            sessions: sessions,
-                            activeManagedSessionIDs: managedControl.activeManagedSessionIDs
-                        ),
-                        layoutStore: layoutStore,
-                        approvalControl: approvalControl,
-                        onSelectSession: managedControl.selectSession,
-                        onSubmit: { _ in false },
-                        onInterrupt: {}
-                    )
+                    if surface == .attaching {
+                        AgentTranscriptLoadingView(session: session)
+                    } else {
+                        Spacer(minLength: 0)
+                        Text("Resume this exact session to continue the conversation")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                        Spacer(minLength: 0)
                     }
-                    .frame(minHeight: 0, idealHeight: max(detailHeight - 31, 104), maxHeight: .infinity)
                 }
-                .task(id: session.id) {
-                    await managedControl.reconcileObservedSession(session)
-                }
+                .frame(minHeight: 0, idealHeight: detailHeight, maxHeight: .infinity)
             }
         }
-        .animation(.easeOut(duration: 0.16), value: transcriptReady)
+        .animation(AgentWorkspaceMotion.selection(reduceMotion: reduceMotion), value: transcriptReady)
     }
 }
 
@@ -1443,7 +1465,7 @@ struct AgentSessionControlBanner: View {
         case .resumable:
             return Content(providerName: name, symbol: "arrow.clockwise.circle", title: "Resumable \(name) session", detail: nil, action: "Resume")
         case .controllable:
-            return Content(providerName: name, symbol: "eye", title: "Observed \(name) session", detail: nil, action: "Take Control")
+            return Content(providerName: name, symbol: "arrow.clockwise.circle", title: "Resume \(name) session", detail: nil, action: "Resume")
         case .attaching:
             return Content(providerName: name, symbol: "link.badge.plus", title: "Attaching \(name) session…", detail: nil, action: nil)
         case .controlUnavailable(let reason):
@@ -1486,49 +1508,6 @@ private struct AgentTranscriptLoadingView: View {
             .accessibilityElement(children: .combine)
             .accessibilityLabel("Loading selected agent session")
         }
-    }
-}
-
-private struct AgentEmptyConsoleState: View {
-    @ObservedObject var managedControl: AgentManagedSessionController
-    let onNewSession: () -> Void
-
-    var body: some View {
-        let provider = managedControl.managedProvider
-        let providerName = provider?.stableName.capitalized ?? "agent"
-        VStack(spacing: 9) {
-            Image(systemName: AgentVisualStyle.providerSymbol(provider ?? .other("agent")))
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.52))
-            Text("No active \(providerName) session")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.88))
-
-            if let status = managedControl.lastTransportError {
-                Label(status, systemImage: "exclamationmark.circle")
-                    .font(.system(size: 8, weight: .medium))
-                    .foregroundStyle(.orange.opacity(0.78))
-                    .lineLimit(2)
-            }
-
-            if !managedControl.managedProviders.isEmpty {
-                Button(action: onNewSession) {
-                    Label("New Session", systemImage: "plus")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(.black.opacity(0.86))
-                        .padding(.horizontal, 12)
-                        .frame(height: 26)
-                        .background(.white.opacity(0.92), in: Capsule(style: .continuous))
-                }
-                .buttonStyle(.plain)
-                .fixedSize()
-                .help("Choose provider, folder and model, then start")
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.vertical, 18)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("No active \(providerName) session")
     }
 }
 

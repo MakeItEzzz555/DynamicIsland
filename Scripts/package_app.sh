@@ -39,6 +39,9 @@ while IFS= read -r resource_bundle; do
   cp -R "$resource_bundle" "$RESOURCES_DIR/"
 done < <(find "$ROOT_DIR/.build" -path "*/release/*.bundle" -print)
 
+# SwiftPM dependency resources may arrive read-only (for example SwiftTerm's
+# shader). Metadata cleanup needs write permission on the generated copy only.
+find "$RESOURCES_DIR" -type f -exec chmod u+w {} +
 xattr -cr "$APP_DIR"
 
 cat > "$CONTENTS_DIR/Info.plist" <<PLIST

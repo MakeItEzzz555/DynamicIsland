@@ -956,3 +956,60 @@ Latest-source verification after these follow-up changes:
 - Actual Reduce Motion remains **NOT VERIFIED**. Current system state is OFF (`defaults=0`, `NSWorkspace=false`). macOS rejected programmatic writes to `com.apple.universalaccess`; no preference-store bypass was attempted and the original setting remained unchanged.
 
 This follow-up supersedes any earlier implication that hover feedback or repeated-command terminal scrollback were already complete.
+
+## October 4, 2026 — interaction cleanup, exact-session Feed and native PTY
+
+Starting checkpoint: `a987a9c4139b1be2a05994f9a36a02fb0c2f9869`; branch `feature/agents-ui-overhaul-continuation`. PR #24 remains Draft/open/unmerged. This section supersedes the previous command-runner terminal description and records fresh evidence rather than promoting prior phase results.
+
+Environment: arm64 MacBook Pro, hardware-notch display (1147×745 logical points, 24-point top safe area), macOS 15.7.4 (24G517), Swift 6.2.3. Development tests and a newly built Release package were used. Actual Reduce Motion remained OFF and was not changed. No TCC, Keychain, credentials, entitlements or signing-policy changes were made.
+
+### Audit and corrections
+
+- Observed backend discovery/ingestion remains truthful and useful. Its read-only transcript/banner/dead-control primary route is replaced by the existing embedded glowing New Chat form for both providers. Managed sessions and provider-verified exact Resume retain their existing transport/control path; telemetry cannot manufacture control.
+- Selection and reconciliation now share the provider/project projection. An explicitly selected exact approval owner remains selected for Feed even when it cannot host managed Chat; that owner's primary surface still uses New Chat. Toolbar controls cannot silently belong to another managed session.
+- Normal Feed traffic and resolved approval history use the complete selected identity. Other-owner pending/unconfirmed requests are exposed through the existing approval controller's global attention/navigation, never mixed into selected history. Canonical approval state can recover a pending card even after bounded ordinary history is evicted. Provider acknowledgement semantics were not changed.
+- Feed history is one bounded 256-item store with bounded event deduplication, not unbounded per-session caches. Consecutive semantic activity is coalesced. Command/tool summaries keep recognized safe names and exit codes; arguments, filesystem paths, prompts, hidden reasoning, transcripts and secrets are excluded.
+- Historical Feed avatars use a frozen local renderer and cannot suspend/reset the visible agent's shared animation rig. Orb and Beam continue to follow normalized selected-session activity, with approval/interruption/terminal precedence intact.
+- The single existing terminal controller now owns a real interactive PTY and native SwiftTerm 1.20.0 emulator (MIT, revision `5d14406844143538cd8f8851d2d8a67c1fe443e5`). The one-shot runner is replaced, not run in parallel. One retained emulator owns 2,000-line scrollback; there is no retained duplicate output String. Child-local cwd prompts do not edit user shell files. New project context sets initial cwd only; the live shell subsequently owns cwd/environment/history.
+- Focus/start publication is deferred outside responder/layout teardown. Retiring hosts cannot steal a mounted terminal; resize is coalesced and leaves process identity intact. Stale callback generations cannot mutate a restarted shell. PTY cleanup intentionally targets only the unreaped owned child. Programmatic OSC 52 clipboard access is denied while explicit keyboard copy/paste remains supported.
+- The strengthened native mount/unmount harness exposed a real macOS 15 Swift back-deployment crash in actor-isolated AppKit/controller deinitialization. Nonisolated owned cleanup bags replace that teardown path. Subsequent focused stress and the complete suite passed; no test was weakened.
+- SwiftPM's read-only SwiftTerm shader copy initially prevented generated-package xattr cleanup. Packaging now grants owner write permission only to generated resource copies before the existing metadata cleanup. Dependency checkouts, signing policy and user files are untouched.
+
+### Test accounting correction and final automated results
+
+Older entries mislabeled XCTest's `Executed` total as the number passed. The starting raw log `/tmp/di-phase-audit-full.log` contains **1,670 total, 38 skipped, 0 failed**, therefore **1,632 passed**. This phase's full log contains **1,695 total, 38 skipped, 0 failed**, therefore **1,657 passed**. The inventory increased by 25 tests: workflow +6, Feed +9, controller +1 and real-PTY integration +9. Skips were neither added nor used to hide failures.
+
+| Validation | Passed | Failed | Skipped | Evidence |
+| --- | ---: | ---: | ---: | --- |
+| Focused workflow/Feed/controller/PTY/native-host set | 62 | 0 | 1 | PASS — automated/fixture; integration cases use real local PTYs |
+| Full suite | 1,657 | 0 | 38 | PASS — automated/fixture |
+| Native opt-in acceptance | 7 | 0 | 1 | PASS — automated/fixture; legitimate ungranted microphone gate remains skipped |
+| Performance harness | 1 | 0 | 0 | PASS — automated/fixture |
+| Bounded lifecycle soak | 1 | 0 | 0 | PASS — automated/fixture |
+| Real Codex exact-request deny/allow | 1 | 0 | 0 | PASS — live; actual provider through controller acceptance harness |
+
+Nine real-PTY integration cases validate persistent PID/cwd/environment/prompt, native Return/history/Tab/Control-C/Control-L, ANSI parsing, `less` alternate screen, actual PTY resize, bounded large output, shell preservation through 24 host remounts, explicit restart/natural exit and child teardown. The focused native Agents harness exercises 48 mount/tab-switch cycles with agent and terminal focus and separately validates agent Return/Shift-Return versus terminal Return. These are automated integration/host tests, not packaged user acceptance.
+
+Latest performance JSON: 200 streamed deltas → **6** surrounding Agents/Feed evaluations and **2** managed-controller publications (46 coalesced transcript publications); 38 typed keys → **3** console evaluations. Streaming main-thread CPU **398.8 ms**, typing **146.8 ms** in the native run. The independent performance run also passed; publication isolation remains healthy, without claiming a new cross-machine speedup ratio.
+
+The bounded fixture soak ran **110 cycles / about 104 seconds**, with 32 sessions and 80 transcript entries. Physical footprint at cycles 10/30/50/70/90/110: **49,400,320 / 50,727,424 / 50,858,496 / 51,726,848 / 51,350,016 / 50,678,272 bytes**; after teardown **41,388,544 bytes**. Controller release was confirmed. This proves the fixture's bounded lifecycle, not whole-app leak freedom. A 5,000-line PTY output test retained native bounded scrollback and caused zero controller publications after startup.
+
+**PASS — live:** the final packaged app completed **40 Agents → Island → Tools cycles / 120 successful section actions**, including collapse/re-expansion and the retained shell, without a crash. Runtime was approximately 3 minutes 26 seconds plus 3 seconds idle. RSS checkpoints at cycles 0/10/20/30/40/post-idle were **189,728 / 203,936 / 218,224 / 229,328 / 241,792 / 241,936 KiB**. The shell still reported `hello 49184` afterward, preserving its environment and PID through the workload. **NOT VERIFIED:** whole-app memory closure. This batch did not plateau; RSS alone neither identifies a leak nor proves bounded allocation. The short final idle is insufficient for allocator/retention attribution. Process-lifetime CPU values from `ps` are not isolated frame-pacing or idle-CPU measurements.
+
+### Fresh packaged live acceptance
+
+**PASS — live:** the clean Release artifact `/tmp/DynamicIsland-interaction-cleanup.app` launched. In one actual embedded zsh session, the cwd prompt changed after `cd ..` and `cd DynamicIsland`; `pwd`, `printf`/`echo`, `git status`, `git log`, and `swift --version` executed. `export DI_TERMINAL_TEST=hello` survived later commands. A foreground `sleep 30` was interrupted with native Control-C; Up recalled it; Tab completed a partial `/tmp` path; Control-L cleared the display. `less /etc/shells` entered its alternate screen and `q` returned to the same usable shell. Shell PID **49184** remained the same through Feed → Terminal and Agents → Island → Tools → Agents → Terminal, with cwd, exported variable and scrollback preserved. Workspace emphasis changed `stty size` from **13×49** to **13×33** when restored, without shell restart. Native integration covers additional ANSI/bounded-output/restart cases; fresh packaged copy/paste and complete VoiceOver navigation were not manually accepted.
+
+**PASS — live:** existing New Chat created a managed Codex session (visible suffix …3015). A native Agent Return sent a read-only task to discover filenames and run `pwd`/`swift --version`; the actual transcript and selected Feed showed connection, reasoning, command outcomes, composition and completion, without unrelated observed-session traffic. The provider used shell-command items for repository discovery, so this run does **not** prove a distinct live search-item orb transition. A subsequent active provider turn was interrupted; the Feed showed interruption and the composer recovered to ready. The same selected session accepted a subsequent prompt. This interruption observation does not claim the shell command had already started when Stop was pressed.
+
+**PASS — live:** actual Codex approval acceptance denied the exact first request and allowed the exact second request, confirmed provider acknowledgement and filesystem effects only in its test-owned scratch repository. No automatic approval policy was enabled. This is fresh provider/controller acceptance; exact Feed card/attention integration is automated evidence, not a fresh manual packaged cross-agent approval demonstration.
+
+### Release and evidence boundaries
+
+**PASS — automated/fixture:** Release build and packaging succeeded after the generated read-only-resource fix. The synced `dist` bundle immediately reacquired Finder metadata. `ditto --norsrc` produced a clean staging copy, which passed `codesign --verify --deep --strict --verbose=2` for the app and all three helpers using the existing signatures. No signing-policy workaround or privacy reset was used. **PASS — live:** the verified staging artifact launched and supplied the terminal/Codex observations above.
+
+**BLOCKED — external acceptance dependency:** Claude execution and concurrent Codex/Claude remain quota/availability-gated (previous reset reported October 4, 21:00 Asia/Nicosia; this run precedes it). Both-provider routing/observation fallback and isolation are automated, not fabricated live Claude acceptance. Microphone authorization remains not determined in the native test (raw authorization 0); controlled human speech and the prior consent/Keychain-dependent path are not newly accepted. No consent dialog was bypassed or privacy setting changed.
+
+**NOT VERIFIED:** fresh actual macOS Reduce Motion OFF → ON → OFF; original OFF remained intact. Deterministic reduced-motion coverage passed. Detailed uninterrupted motion, final GPU/frame-pacing closure, whole-app leak freedom, non-zsh live shell acceptance and fresh packaged multi-agent approval navigation remain outside the proven evidence. Existing renderer parity/material/accessory differences remain unchanged.
+
+Recommended next work is human-assisted release acceptance for those precise remaining gates, not another workspace reconstruction or product feature phase.

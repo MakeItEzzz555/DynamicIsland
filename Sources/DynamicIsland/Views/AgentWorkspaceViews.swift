@@ -143,6 +143,7 @@ struct AgentWorkspaceFeedView: View {
     @ObservedObject var feed: AgentWorkspaceFeedStore
     @ObservedObject var approvals: AgentApprovalController
     let sessions: [AgentSession]
+    var selectedSessionID: AgentSessionInstanceID? = nil
     let onSelect: (AgentSessionInstanceID) -> Void
     let isVisible: Bool
     @Environment(\.agentVisualPreferences) private var visualPreferences
@@ -150,19 +151,20 @@ struct AgentWorkspaceFeedView: View {
 
     var body: some View {
         let _ = AgentPerformanceProbe.count("agents.feed.body")
+        let selectedItems = feed.items(for: selectedSessionID, session: sessions.first { $0.id == selectedSessionID })
         ScrollView(.vertical) {
             LazyVStack(alignment: .leading, spacing: 6) {
-                if feed.items.isEmpty {
+                if selectedItems.isEmpty {
                     VStack(alignment: .leading, spacing: 5) {
                         Label("Agents, in motion", systemImage: "bolt.horizontal")
                             .font(.system(size: 10, weight: .semibold))
-                        Text("Commands, tools and permission requests from both providers appear here.")
+                        Text("Recent actions and permission requests for the selected agent appear here.")
                             .font(.system(size: 9))
                             .foregroundStyle(.secondary)
                     }
                     .padding(.vertical, 14)
                 }
-                ForEach(feed.items) { item in
+                ForEach(selectedItems) { item in
                     feedRow(item)
                         .id(item.id)
                         .transition(reduceMotion ? .opacity : .opacity.combined(with: .offset(y: 8)))
@@ -172,14 +174,15 @@ struct AgentWorkspaceFeedView: View {
             .padding(.bottom, 5)
             .animation(
                 AgentWorkspaceMotion.selection(reduceMotion: reduceMotion),
-                value: feed.items.map(\.id)
+                value: selectedItems.map(\.id)
             )
         }
+        .id(selectedSessionID)
         .scrollBounceBehavior(.basedOnSize)
         .onAppear { feed.reconcileApprovals(sessions: sessions) }
         .onChange(of: sessions) { _, value in feed.reconcileApprovals(sessions: value) }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Operational feed, Codex and Claude")
+        .accessibilityLabel(selectedSessionID.map { "Selected \($0.sessionID.provider.stableName) agent operational feed" } ?? "No selected agent feed")
     }
 
     private func feedRow(_ item: AgentWorkspaceFeedItem) -> some View {
@@ -193,7 +196,8 @@ struct AgentWorkspaceFeedView: View {
                     configuration: feedAvatar,
                     state: active ? .working : .idle,
                     compact: true,
-                    paused: !isVisible || !active
+                    paused: !isVisible || !active,
+                    frozenTime: active ? nil : 0
                 )
                 .frame(width: 26, height: 26)
                 .accessibilityHidden(true)
@@ -219,7 +223,7 @@ struct AgentWorkspaceFeedView: View {
                     .foregroundStyle(.tertiary)
             }
             if let session, let key = item.approvalKey,
-               let request = approvals.presentedRequest(for: session.id), request.key == key,
+               let request = approvals.pendingRequests[key] ?? approvals.deliveringRequests[key], request.key == key,
                approval == .pending || approval == .submitting || approval == .failed {
                 AgentConsoleApprovalRow(request: request, session: session, approvalControl: approvals)
             } else if let session, let key = item.approvalKey, approval == .pending {
@@ -300,12 +304,14 @@ struct AgentChatSurface<Conversation: View>: View {
                 .padding(.horizontal, 9).padding(.top, 7).padding(.bottom, 3)
                 conversation()
                     .frame(maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+                if controller.isManaged(session), controller.mode(for: session).showsComposer {
                 HStack(spacing: 5) {
                     modelControl
                     reasoningControl
                     Spacer(minLength: 0)
                 }
                 .padding(.horizontal, 10).padding(.bottom, 7)
+                }
             }
             .background(.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 12))
             .overlay { RoundedRectangle(cornerRadius: 12).strokeBorder(.primary.opacity(0.055), lineWidth: 1).allowsHitTesting(false) }
@@ -441,7 +447,7 @@ struct AgentRightWorkspace: View {
                     switch mode {
                     case .feed:
                         AgentWorkspaceFeedView(
-                            feed: feed, approvals: approvals, sessions: sessions,
+                            feed: feed, approvals: approvals, sessions: sessions, selectedSessionID: selectedSession?.id,
                             onSelect: onSelect, isVisible: isVisible && presentation.mode == .feed
                         )
                     case .terminal:
@@ -493,195 +499,35 @@ struct AgentWorkspaceTerminalView: View {
     let isVisible: Bool
     let focusRequest: Int
     let layoutStore: IslandLayoutStore?
-    @State private var command = ""
-    @State private var commandFocused = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 4) {
-                Text(controller.isRunning ? "Running · \(controller.workingDirectoryPath)" : session?.project.workingDirectory ?? controller.workingDirectoryPath)
-                    .font(.system(size: 8, design: .monospaced)).foregroundStyle(.secondary)
-                    .lineLimit(1).truncationMode(.middle)
+                Text(URL(fileURLWithPath: controller.shellPath).lastPathComponent)
+                    .font(.system(size: 9, design: .monospaced)).foregroundStyle(.secondary)
                 Spacer(minLength: 0)
-                if controller.isRunning {
-                    Button { controller.terminate() } label: {
-                        Image(systemName: "stop.fill").frame(width: 24, height: 24).contentShape(Rectangle())
-                    }.buttonStyle(.plain).foregroundStyle(.orange).accessibilityLabel("Stop terminal command")
-                }
+                Button { controller.interrupt() } label: {
+                    Image(systemName: "stop.fill").frame(width: 24, height: 24).contentShape(Rectangle())
+                }.buttonStyle(.plain).accessibilityLabel("Interrupt foreground terminal command")
+                Button { controller.resetOutput() } label: {
+                    Image(systemName: "eraser").frame(width: 24, height: 24).contentShape(Rectangle())
+                }.buttonStyle(.plain).accessibilityLabel("Clear terminal display")
+                Button { controller.terminate(); try? controller.startShell() } label: {
+                    Image(systemName: "arrow.clockwise").frame(width: 24, height: 24).contentShape(Rectangle())
+                }.buttonStyle(.plain).accessibilityLabel("Restart embedded shell")
             }
-            ScrollView(.vertical) {
-                Text(controller.output.isEmpty ? "Run a command in the selected project." : controller.output)
-                    .font(.system(size: 9.5, design: .monospaced))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                    .padding(6)
+            NativeTerminalHost(controller: controller,
+                               initialDirectory: session?.project.workingDirectory,
+                               isVisible: isVisible, focusRequest: focusRequest,
+                               onFocusChange: { value in layoutStore?.setTextInputFocused(value) })
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+            if case .failed = controller.state {
+                Text(controller.statusText).font(.system(size: 8)).foregroundStyle(.red).lineLimit(2)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(.black.opacity(0.18), in: RoundedRectangle(cornerRadius: 6))
-            HStack(spacing: 3) {
-                TerminalCommandField(
-                    text: $command,
-                    isEnabled: !controller.isRunning,
-                    isVisible: isVisible,
-                    focusRequest: focusRequest,
-                    onSubmit: run,
-                    onFocusChange: { commandFocused = $0 }
-                )
-                    .frame(maxWidth: .infinity, minHeight: 22)
-                Button(action: run) {
-                    Image(systemName: "return").frame(width: 26, height: 26).contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .disabled(controller.isRunning || command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .accessibilityLabel("Run terminal command")
-            }
-            .padding(.horizontal, 7)
-            .frame(height: 30)
-            .background(.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 7))
-            Text(controller.statusText)
-                .font(.system(size: 8)).foregroundStyle(.secondary).lineLimit(1)
         }
         .padding(.horizontal, 4)
-        .onChange(of: commandFocused) { _, value in
-            DispatchQueue.main.async { layoutStore?.setTextInputFocused(value) }
-        }
-        .onDisappear {
-            DispatchQueue.main.async { layoutStore?.setTextInputFocused(false) }
-        }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Embedded project terminal")
-    }
-
-    private func run() {
-        guard isVisible, !controller.isRunning else { return }
-        let value = command.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !value.isEmpty else { return }
-        if let cwd = session?.project.workingDirectory, !cwd.isEmpty { controller.workingDirectoryPath = cwd }
-        do { try controller.run(command: value); command = "" } catch { /* Existing status publishes the failure. */ }
-    }
-}
-
-
-private struct TerminalCommandField: NSViewRepresentable {
-    @Binding var text: String
-    let isEnabled: Bool
-    let isVisible: Bool
-    let focusRequest: Int
-    let onSubmit: () -> Void
-    let onFocusChange: (Bool) -> Void
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text, onSubmit: onSubmit, onFocusChange: onFocusChange)
-    }
-
-    func makeNSView(context: Context) -> NSTextField {
-        let field = NSTextField()
-        field.delegate = context.coordinator
-        field.isBezeled = false
-        field.drawsBackground = false
-        field.focusRingType = .none
-        field.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
-        field.textColor = NSColor.labelColor.withAlphaComponent(0.90)
-        field.placeholderString = "Shell command"
-        field.lineBreakMode = .byTruncatingMiddle
-        field.cell?.usesSingleLineMode = true
-        field.isEditable = isEnabled
-        field.isSelectable = true
-        field.setAccessibilityLabel("Terminal shell command")
-        context.coordinator.field = field
-        context.coordinator.lastFocusRequest = focusRequest
-        return field
-    }
-
-    func updateNSView(_ field: NSTextField, context: Context) {
-        context.coordinator.onSubmit = onSubmit
-        context.coordinator.onFocusChange = onFocusChange
-        field.isEditable = isEnabled
-        field.isSelectable = true
-
-        // Do not replace the field editor's live string while the user is
-        // typing. Binding updates originate from controlTextDidChange.
-        if field.currentEditor() == nil, field.stringValue != text {
-            field.stringValue = text
-        }
-
-        let shouldRequestFocus = isVisible &&
-            (context.coordinator.lastFocusRequest != focusRequest || !context.coordinator.wasVisible)
-        context.coordinator.lastFocusRequest = focusRequest
-        context.coordinator.wasVisible = isVisible
-
-        if shouldRequestFocus {
-            DispatchQueue.main.async { [weak field] in
-                guard let field, field.isEditable, field.window != nil else { return }
-                field.window?.makeKey()
-                field.window?.makeFirstResponder(field)
-            }
-        } else if !isVisible, field.currentEditor() != nil {
-            DispatchQueue.main.async { [weak field] in
-                guard let field else { return }
-                if field.window?.firstResponder === field.currentEditor() {
-                    field.window?.makeFirstResponder(nil)
-                }
-            }
-        }
-    }
-
-    static func dismantleNSView(_ field: NSTextField, coordinator: Coordinator) {
-        field.delegate = nil
-        coordinator.field = nil
-        let handler = coordinator.onFocusChange
-        coordinator.onFocusChange = { _ in }
-        DispatchQueue.main.async { handler(false) }
-    }
-
-    final class Coordinator: NSObject, NSTextFieldDelegate {
-        @Binding var text: String
-        var onSubmit: () -> Void
-        var onFocusChange: (Bool) -> Void
-        weak var field: NSTextField?
-        var lastFocusRequest = 0
-        var wasVisible = false
-
-        init(
-            text: Binding<String>,
-            onSubmit: @escaping () -> Void,
-            onFocusChange: @escaping (Bool) -> Void
-        ) {
-            _text = text
-            self.onSubmit = onSubmit
-            self.onFocusChange = onFocusChange
-        }
-
-        func controlTextDidBeginEditing(_ notification: Notification) {
-            DispatchQueue.main.async { [onFocusChange] in onFocusChange(true) }
-        }
-
-        func controlTextDidEndEditing(_ notification: Notification) {
-            DispatchQueue.main.async { [onFocusChange] in onFocusChange(false) }
-        }
-
-        func controlTextDidChange(_ notification: Notification) {
-            guard let field else { return }
-            text = field.stringValue
-        }
-
-        func control(
-            _ control: NSControl,
-            textView: NSTextView,
-            doCommandBy commandSelector: Selector
-        ) -> Bool {
-            guard commandSelector == #selector(NSResponder.insertNewline(_:)) else {
-                return false
-            }
-            onSubmit()
-            // AgentWorkspaceTerminalView clears the binding only after the
-            // controller accepts the command. Keep the active field editor in
-            // sync with that accepted state; launch failures preserve text.
-            if text.isEmpty {
-                textView.string = ""
-                field?.stringValue = ""
-            }
-            return true
-        }
+        .accessibilityLabel("Embedded interactive project terminal")
     }
 }

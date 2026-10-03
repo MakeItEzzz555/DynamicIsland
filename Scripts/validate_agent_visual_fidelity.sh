@@ -25,6 +25,11 @@ case "${1:-focused}" in
     DYNAMIC_ISLAND_LIVE_AGENT_E2E=1 DYNAMIC_ISLAND_LIVE_APPROVAL_E2E=1 DYNAMIC_ISLAND_LIVE_AGENT_ROOT="$output/live-codex" DYNAMIC_ISLAND_LIVE_AGENT_PROVIDERS=codex swift test --skip-build --filter 'AgentLiveEndToEndTests/testCodexLiveEndToEnd|AgentLiveApprovalEndToEndTests/testCodexLiveDenyThenAllowThroughApprovalController' > "$output/codex.log" 2>&1
     tail -12 "$output/codex.log"
     ;;
+  approval)
+    # Exact user-decided deny/allow acceptance; never enables auto-approval.
+    DYNAMIC_ISLAND_LIVE_APPROVAL_E2E=1 DYNAMIC_ISLAND_LIVE_AGENT_ROOT="$output/live-codex" DYNAMIC_ISLAND_LIVE_AGENT_PROVIDERS=codex swift test --skip-build --filter 'AgentLiveApprovalEndToEndTests/testCodexLiveDenyThenAllowThroughApprovalController' > "$output/approval.log" 2>&1
+    tail -12 "$output/approval.log"
+    ;;
   semantics)
     DYNAMIC_ISLAND_LIVE_CODEX_SEMANTICS=1 swift test --skip-build --filter 'AgentProcessingSemanticTests/testLiveCodexSemanticSequence' > "$output/live-semantics.log" 2>&1
     tail -12 "$output/live-semantics.log"
@@ -50,5 +55,5 @@ case "${1:-focused}" in
     codesign --verify --deep --strict --verbose=2 dist/DynamicIsland.app > "$output/signature.log" 2>&1
     cat "$output/signature.log"
     ;;
-  *) echo 'usage: validate_agent_visual_fidelity.sh focused|parity|full|native|codex|semantics|soak|performance|capture|camera|release [output-directory]' >&2; exit 64 ;;
+  *) echo 'usage: validate_agent_visual_fidelity.sh focused|parity|full|native|codex|approval|semantics|soak|performance|capture|camera|release [output-directory]' >&2; exit 64 ;;
 esac

@@ -38,6 +38,9 @@ struct AgentWorkspaceFeedItem: Identifiable, Equatable, Sendable {
     var status: AgentOperationStatus
     var processingKind: AgentProcessingKind?
     var approvalState: AgentApprovalState?
+    /// Only an allowlisted executable/tool label, never provider arguments.
+    var operationLabel: String? = nil
+    var exitCode: Int? = nil
 
     var sessionID: AgentSessionInstanceID { id.session }
     var provider: AgentProvider { sessionID.sessionID.provider }
@@ -69,13 +72,21 @@ struct AgentWorkspaceFeedItem: Identifiable, Equatable, Sendable {
         guard let session, session.id == sessionID, !session.state.isTerminal,
               session.state != .idle,
               session.state != .waitingForApproval, session.state != .waitingForUser,
-              session.state != .planReady, let correlationID else { return false }
+              session.state != .planReady else { return false }
         switch kind {
-        case .command: return session.commands[correlationID]?.status == .active
-        case .tool: return session.tools[correlationID]?.status == .active
-        case .subagent: return session.subagents[correlationID]?.status == .active
+        case .command: return correlationID.flatMap { session.commands[$0]?.status } == .active
+        case .tool: return correlationID.flatMap { session.tools[$0]?.status } == .active
+        case .subagent: return correlationID.flatMap { session.subagents[$0]?.status } == .active
         case .processing:
-            return session.processingActivities[correlationID] != nil && session.currentProcessingKind == processingKind
+            guard status == .active else { return false }
+            if let correlationID {
+                return session.processingActivities[correlationID] != nil && session.currentProcessingKind == processingKind
+            }
+            // Legacy normalized reasoning/planning events (notably recovered
+            // Claude thinking blocks) have concrete event semantics but no item
+            // correlation. Canonical precedence still controls animation.
+            return (processingKind == .reasoning && session.state == .thinking) ||
+                (processingKind == .planning && session.state == .planning)
         default: return false
         }
     }
@@ -84,6 +95,46 @@ struct AgentWorkspaceFeedItem: Identifiable, Equatable, Sendable {
 /// Bounded, in-memory operational presentation, separate from transcript and
 /// Record Activities. It retains IDs and fixed semantic labels only, never
 /// provider prose, prompt text, command arguments, paths or tool payloads.
+enum AgentWorkspaceFeedProjection {
+    /// Selection is a complete session instance, not a project/provider filter.
+    /// No selection means no owned operational feed, including approvals.
+    static func items(
+        _ history: [AgentWorkspaceFeedItem],
+        selectedSessionID: AgentSessionInstanceID?,
+        session: AgentSession? = nil
+    ) -> [AgentWorkspaceFeedItem] {
+        guard let selectedSessionID else { return [] }
+        var selected = history.filter { $0.sessionID == selectedSessionID }
+        if let session, session.id == selectedSessionID {
+            for index in selected.indices {
+                guard let requestID = selected[index].approvalKey?.requestID,
+                      let request = session.approvals[requestID],
+                      selected[index].approvalState != request.state else { continue }
+                selected[index].approvalState = request.state
+                selected[index].status = request.state == .pending ? .pending : request.state == .unknown ? .failed : .resolved
+                selected[index].updatedAt = request.resolvedAt ?? request.requestedAt
+            }
+            // A global history cap must not hide the selected owner's current
+            // canonical request. This temporary projection remains bounded by
+            // the domain's per-session operation limits; no new store is kept.
+            for request in session.approvals.values where request.state == .pending || request.state == .unknown {
+                guard !selected.contains(where: { $0.approvalKey?.requestID == request.requestID }) else { continue }
+                selected.append(AgentWorkspaceFeedItem(
+                    id: .init(session: session.id, eventID: .init(rawValue: "restored-approval:\(request.requestID.rawValue)")),
+                    kind: .approval, correlationID: request.requestID,
+                    timestamp: request.requestedAt, updatedAt: request.resolvedAt ?? request.requestedAt,
+                    title: "Approval request", status: request.state == .pending ? .pending : .failed,
+                    processingKind: nil, approvalState: request.state
+                ))
+            }
+        }
+        return selected.sorted {
+            if $0.updatedAt != $1.updatedAt { return $0.updatedAt > $1.updatedAt }
+            return $0.id.eventID.rawValue < $1.id.eventID.rawValue
+        }
+    }
+}
+
 @MainActor
 final class AgentWorkspaceFeedStore: ObservableObject {
     @Published private(set) var items: [AgentWorkspaceFeedItem] = []
@@ -93,6 +144,10 @@ final class AgentWorkspaceFeedStore: ObservableObject {
 
     init(maximumItems: Int = 256) {
         self.maximumItems = min(1_024, max(16, maximumItems))
+    }
+
+    func items(for selectedSessionID: AgentSessionInstanceID?, session: AgentSession? = nil) -> [AgentWorkspaceFeedItem] {
+        AgentWorkspaceFeedProjection.items(items, selectedSessionID: selectedSessionID, session: session)
     }
 
     /// Existing canonical requests may predate a newly mounted workspace. This
@@ -137,17 +192,53 @@ final class AgentWorkspaceFeedStore: ObservableObject {
         guard var item = Self.project(event, session: session) else { return }
         var next = items
         // Pair one exact operation/request across starts, delivery and endings.
-        if let correlation = item.correlationID,
-           let index = next.lastIndex(where: {
-               $0.sessionID == item.sessionID && $0.kind == item.kind && $0.correlationID == correlation
-           }) {
+        let operationIndex: Int? = if let correlation = item.correlationID {
+            next.lastIndex {
+                $0.sessionID == item.sessionID && $0.kind == item.kind && $0.correlationID == correlation
+            }
+        } else if event.type == .thinkingEnded {
+            // Resolve the current uncorrelated reasoning episode, rather than
+            // leaving an active historical row beside a disconnected ending.
+            next.firstIndex {
+                $0.sessionID == item.sessionID && $0.kind == .processing &&
+                    $0.correlationID == nil && $0.processingKind == .reasoning && $0.status == .active
+            }
+        } else { nil }
+        if let index = operationIndex {
             let prior = next[index]
             item = AgentWorkspaceFeedItem(
-                id: prior.id, kind: item.kind, correlationID: correlation,
+                id: prior.id, kind: item.kind, correlationID: item.correlationID,
                 timestamp: prior.timestamp, updatedAt: item.updatedAt,
                 title: item.title, status: item.status,
                 processingKind: item.processingKind ?? prior.processingKind,
-                approvalState: item.approvalState
+                approvalState: item.approvalState,
+                operationLabel: item.operationLabel ?? prior.operationLabel,
+                exitCode: item.exitCode
+            )
+            if item.kind == .command || item.kind == .tool {
+                item.title = Self.operationTitle(item)
+            }
+            // Repeated live-state publications are not new history traffic.
+            if prior.kind == .processing, prior.status == item.status,
+               prior.processingKind == item.processingKind, prior.title == item.title,
+               next.firstIndex(where: { $0.sessionID == item.sessionID }) == index {
+                return
+            }
+            next[index] = item
+        } else if item.kind == .processing,
+                  let index = next.firstIndex(where: { $0.sessionID == item.sessionID }),
+                  next[index].kind == .processing,
+                  next[index].processingKind == item.processingKind,
+                  next[index].status == item.status {
+            // Preserve one row for a consecutive semantic state even when the
+            // provider emits several concrete reasoning items. Keep the newest
+            // correlation so live avatar ownership still uses canonical truth.
+            let prior = next[index]
+            item = AgentWorkspaceFeedItem(
+                id: prior.id, kind: item.kind, correlationID: item.correlationID,
+                timestamp: prior.timestamp, updatedAt: prior.updatedAt,
+                title: item.title, status: item.status,
+                processingKind: item.processingKind, approvalState: nil
             )
             next[index] = item
         } else {
@@ -219,6 +310,8 @@ final class AgentWorkspaceFeedStore: ObservableObject {
         var status: AgentOperationStatus = .completed
         var processing: AgentProcessingKind?
         var approval: AgentApprovalState?
+        var operationLabel: String?
+        var exitCode: Int?
         switch event.type {
         case .sessionStarted:
             // Catch-up/discovery is not live traffic; do not flood Feed on launch.
@@ -229,10 +322,15 @@ final class AgentWorkspaceFeedStore: ObservableObject {
         case .thinkingEnded:
             kind = .processing; processing = .reasoning; status = .completed; title = "Reasoning"
         case .agentWorking, .thinkingStarted, .planningStarted:
-            guard case .activity(let descriptor) = event.payload,
-                  let typed = descriptor.processingKind else { return nil }
+            let descriptor: AgentActivityDescriptor? = if case .activity(let value) = event.payload { value } else { nil }
+            let eventKind: AgentProcessingKind? = switch event.type {
+            case .thinkingStarted: .reasoning
+            case .planningStarted: .planning
+            default: nil
+            }
+            guard let typed = descriptor?.processingKind ?? eventKind else { return nil }
             kind = .processing; processing = typed
-            status = descriptor.processingStatus ?? .active
+            status = descriptor?.processingStatus ?? .active
             switch typed {
             case .reasoning: title = "Reasoning"
             case .planning: title = "Planning"
@@ -249,6 +347,7 @@ final class AgentWorkspaceFeedStore: ObservableObject {
             status = event.type == .toolStarted ? .active : .completed
             if case .tool(let tool) = event.payload {
                 processing = tool.processingKind
+                operationLabel = safeToolLabel(tool.name, category: tool.category)
                 if event.type == .toolCompleted, tool.success == false { status = .failed }
             }
             title = status == .active ? "Tool started" : status == .failed ? "Tool failed" : "Tool completed"
@@ -257,6 +356,8 @@ final class AgentWorkspaceFeedStore: ObservableObject {
             status = event.type == .commandStarted ? .active : .completed
             if case .command(let command) = event.payload {
                 processing = command.processingKind
+                operationLabel = safeExecutableLabel(command.executable)
+                exitCode = command.exitCode
                 if event.type == .commandCompleted, command.success == false { status = .failed }
             }
             title = status == .active ? "Command started" : status == .failed ? "Command failed" : "Command completed"
@@ -277,11 +378,42 @@ final class AgentWorkspaceFeedStore: ObservableObject {
         case .sessionMetadataUpdated, .planUpdated, .usageUpdated, .capabilitiesUpdated,
              .projectContextUpdated, .heartbeat, .unsupported: return nil
         }
-        return AgentWorkspaceFeedItem(
+        var item = AgentWorkspaceFeedItem(
             id: .init(session: event.instanceID, eventID: event.eventID),
             kind: kind, correlationID: event.correlationID,
             timestamp: event.effectiveTimestamp, updatedAt: event.effectiveTimestamp,
-            title: title, status: status, processingKind: processing, approvalState: approval
+            title: title, status: status, processingKind: processing, approvalState: approval,
+            operationLabel: operationLabel, exitCode: exitCode
         )
+        if kind == .command || kind == .tool { item.title = operationTitle(item) }
+        return item
+    }
+
+    private static func operationTitle(_ item: AgentWorkspaceFeedItem) -> String {
+        let operation = item.kind == .command ? "Command" : "Tool"
+        var title = switch item.status {
+        case .active: operation
+        case .failed: "\(operation) failed"
+        case .cancelled: "\(operation) interrupted"
+        default: "\(operation) completed"
+        }
+        if let label = item.operationLabel { title += item.status == .active ? ": \(label)" : " · \(label)" }
+        if let exitCode = item.exitCode { title += " · exit \(exitCode)" }
+        return title
+    }
+
+    private static func safeExecutableLabel(_ executable: String?) -> String? {
+        guard let executable else { return nil }
+        // Provider data can be malformed or sensitive; never retain arbitrary
+        // strings, even if the normal adapter promises an executable only.
+        let allowed = Set(["swift", "git", "rg", "grep", "find", "ls", "pwd", "cat", "sed", "head", "tail", "echo", "printf", "xcodebuild", "make", "cmake", "cargo", "go", "python", "python3", "ruby", "bash", "zsh", "sh"])
+        return allowed.contains(executable) ? executable : nil
+    }
+
+    private static func safeToolLabel(_ name: String?, category: String?) -> String? {
+        let known = ["read_file": "Read file", "read": "Read file", "search": "Search", "web_search": "Web search", "apply_patch": "Apply patch", "edit": "Edit", "exec_command": "Execute command", "shell": "Shell", "mcp": "MCP"]
+        if let name, let label = known[name.lowercased()] { return label }
+        if let category, let label = known[category.lowercased()] { return label }
+        return nil
     }
 }

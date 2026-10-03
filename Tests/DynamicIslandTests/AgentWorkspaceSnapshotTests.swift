@@ -216,7 +216,7 @@ final class AgentWorkspaceSnapshotTests: XCTestCase {
         )
     }
 
-    func testTerminalReturnRunsCommandFromFocusedWorkspaceField() async throws {
+    func testTerminalReturnSendsInputToOnePersistentNativeShell() async throws {
         let fixture = try await makeFixture()
         defer {
             fixture.controller.stop()
@@ -252,22 +252,27 @@ final class AgentWorkspaceSnapshotTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(4))
             hosting.layoutSubtreeIfNeeded()
         }
-        let field = try XCTUnwrap(Self.findTerminalCommandField(in: hosting))
-        XCTAssertTrue(window.makeFirstResponder(field))
-        guard let editor = field.currentEditor() as? NSTextView else {
-            return XCTFail("Terminal field editor unavailable")
-        }
-        editor.insertText("printf terminal-enter-ok", replacementRange: editor.selectedRange())
-        try await Task.sleep(for: .milliseconds(8))
-        editor.doCommand(by: #selector(NSResponder.insertNewline(_:)))
-
-        for _ in 0..<20 where fixture.runner.startCount == 0 {
-            await Task.yield()
-            try await Task.sleep(for: .milliseconds(5))
-        }
-        XCTAssertEqual(fixture.runner.startCount, 1)
+        let terminal = try XCTUnwrap(Self.findInteractiveTerminal(in: hosting))
+        XCTAssertTrue(terminal === fixture.terminal.terminalView)
+        XCTAssertTrue(window.makeFirstResponder(terminal))
+        XCTAssertEqual(fixture.runner.startCount, 1, "Visibility starts exactly one persistent shell before typing")
+        let transcriptBefore = fixture.controller.transcript(for: selected)
+        terminal.insertText("printf terminal-enter-ok", replacementRange: NSRange(location: NSNotFound, length: 0))
+        let enter = try XCTUnwrap(NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window.windowNumber, context: nil,
+            characters: "\r", charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36
+        ))
+        terminal.keyDown(with: enter)
+        XCTAssertEqual(fixture.runner.startCount, 1, "Return cannot create a second shell")
         XCTAssertTrue(fixture.terminal.isRunning)
-        XCTAssertEqual(field.stringValue, "", "Successful Return submission must clear the live native field editor")
+        XCTAssertEqual(String(decoding: fixture.runner.handle.input, as: UTF8.self), "printf terminal-enter-ok\r")
+        XCTAssertEqual(fixture.runner.handle.input.last, 13, "Native Enter belongs to PTY input")
+        XCTAssertEqual(fixture.controller.transcript(for: selected), transcriptBefore,
+            "Terminal Return must never submit an agent prompt")
+        XCTAssertEqual(fixture.terminal.processID, fixture.runner.handle.processID)
+
     }
 
     func testRapidAgentsMountUnmountWithFocusedNativeEditorAndTerminalSwitching() async throws {
@@ -327,7 +332,18 @@ final class AgentWorkspaceSnapshotTests: XCTestCase {
             hosting.layoutSubtreeIfNeeded()
             try await Task.sleep(for: .milliseconds(3))
 
-            if let editor = Self.findPromptEditor(in: hosting) {
+            if cycle.isMultiple(of: 2) {
+                let mountDeadline = ContinuousClock.now + .seconds(2)
+                while Self.findInteractiveTerminal(in: hosting) == nil, ContinuousClock.now < mountDeadline {
+                    await Task.yield()
+                    try await Task.sleep(for: .milliseconds(1))
+                    hosting.layoutSubtreeIfNeeded()
+                }
+                let terminal = try XCTUnwrap(Self.findInteractiveTerminal(in: hosting))
+                XCTAssertTrue(terminal === fixture.terminal.terminalView)
+                XCTAssertTrue(window.makeFirstResponder(terminal))
+                terminal.insertText("stress-\(cycle)", replacementRange: NSRange(location: NSNotFound, length: 0))
+            } else if let editor = Self.findPromptEditor(in: hosting) {
                 XCTAssertTrue(window.makeFirstResponder(editor))
             }
 
@@ -350,6 +366,26 @@ final class AgentWorkspaceSnapshotTests: XCTestCase {
 
         XCTAssertTrue(state.showsAgents)
         XCTAssertNotNil(Self.findPromptEditor(in: hosting))
+        XCTAssertEqual(fixture.presentation.mode, .feed, "The final odd cycle intentionally leaves Feed visible")
+        XCTAssertEqual(fixture.runner.startCount, 1, "Hidden Terminal must retain its one shell after remounts")
+        XCTAssertTrue(fixture.terminal.isRunning)
+        // A newly mounted hidden page deliberately does not claim the native
+        // emulator. Verify continuity by revealing Terminal, rather than
+        // requiring offscreen rendering while Feed is selected.
+        fixture.presentation.select(.terminal)
+        let revealDeadline = ContinuousClock.now + .seconds(2)
+        while Self.findInteractiveTerminal(in: hosting) == nil, ContinuousClock.now < revealDeadline {
+            await Task.yield()
+            try await Task.sleep(for: .milliseconds(1))
+            hosting.layoutSubtreeIfNeeded()
+        }
+        let resumedTerminal = try XCTUnwrap(Self.findInteractiveTerminal(in: hosting))
+        XCTAssertTrue(resumedTerminal === fixture.terminal.terminalView)
+        XCTAssertTrue(window.makeFirstResponder(resumedTerminal))
+        XCTAssertEqual(fixture.runner.startCount, 1, "48 focus/page remounts and final reveal must preserve one shell")
+        XCTAssertTrue(fixture.terminal.isRunning)
+        XCTAssertEqual(fixture.terminal.processID, fixture.runner.handle.processID)
+        XCTAssertTrue(String(decoding: fixture.runner.handle.input, as: UTF8.self).contains("stress-46"))
     }
 
     private static func findPromptEditor(in view: NSView) -> NSTextView? {
@@ -362,15 +398,10 @@ final class AgentWorkspaceSnapshotTests: XCTestCase {
         return nil
     }
 
-    private static func findTerminalCommandField(in view: NSView) -> NSTextField? {
-        // SwiftUI may expose the accessibility label on an ancestor rather than
-        // the backing NSTextField itself. This harness hosts only the terminal
-        // command field, so the first editable text field is the command input.
-        if let field = view as? NSTextField, field.isEditable {
-            return field
-        }
+    private static func findInteractiveTerminal(in view: NSView) -> InteractiveTerminalView? {
+        if let terminal = view as? InteractiveTerminalView { return terminal }
         for child in view.subviews {
-            if let found = findTerminalCommandField(in: child) { return found }
+            if let terminal = findInteractiveTerminal(in: child) { return terminal }
         }
         return nil
     }
@@ -507,7 +538,7 @@ private actor WorkspaceSnapshotProvider: AgentInteractiveProvider {
         stream = pair.stream; continuation = pair.continuation
     }
     private var descriptor: AgentManagedSessionDescriptor {
-        .init(provider: provider, nativeSessionID: "\(provider.stableName)-workspace-fixture", cwd: "/tmp/DynamicIsland-fixture",
+        .init(provider: provider, nativeSessionID: "\(provider.stableName)-workspace-fixture", cwd: "/tmp",
               model: provider == .codex ? "gpt-fixture" : "claude-fixture", acceptsDirectInput: true)
     }
     func events() async -> AsyncStream<AgentInteractiveProviderEvent> { stream }
@@ -541,6 +572,9 @@ private actor WorkspaceSnapshotProvider: AgentInteractiveProvider {
 
 private final class WorkspaceSnapshotTerminalHandle: TerminalProcessHandle {
     var isRunning = true
+    var processID: Int32? { isRunning ? 42_001 : nil }
+    private(set) var input: [UInt8] = []
+    func send(data: [UInt8]) { input.append(contentsOf: data) }
     func terminate() { isRunning = false }
 }
 private final class WorkspaceSnapshotTerminalRunner: TerminalProcessRunning {

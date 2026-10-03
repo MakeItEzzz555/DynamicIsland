@@ -39,7 +39,8 @@ struct AgentWorkspaceProjection {
         controller: AgentManagedSessionController,
         projectKey: String?,
         locations: AgentProjectLocationIndex,
-        launcherOpen: Bool
+        launcherOpen: Bool,
+        approvalControl: AgentApprovalController? = nil
     ) -> AgentWorkspaceProjection {
         let provider = controller.selectedProvider ?? controller.managedProvider
         let providerSessions = provider.map { provider in
@@ -55,15 +56,14 @@ struct AgentWorkspaceProjection {
             projectKey: effectiveKey,
             locations: locations
         )
-        let selected = AgentWorkspaceSelection.session(
-            current: controller.selectedSessionID,
-            sessions: controlSessions,
-            activeManagedSessionIDs: controller.activeManagedSessionIDs
+        let selected = preferredSession(
+            current: controller.selectedSessionID, sessions: controlSessions, controller: controller,
+            approvalControl: approvalControl
         )
         let surface: AgentWorkspaceSurface
         if launcherOpen {
             surface = .launcher
-        } else if let selected {
+        } else if let selected, offersPrimaryChat(selected, controller: controller) {
             surface = .session(selected, controlSurface(for: selected, controller: controller))
         } else {
             surface = .empty(provider)
@@ -75,6 +75,50 @@ struct AgentWorkspaceProjection {
             selectedSession: selected,
             surface: surface
         )
+    }
+
+    /// Observation remains available to the Feed, but never establishes chat
+    /// ownership. Only an exact managed session or a provider-verified resume
+    /// candidate may occupy the primary interaction surface.
+    @MainActor
+    static func offersPrimaryChat(_ session: AgentSession, controller: AgentManagedSessionController) -> Bool {
+        switch controlSurface(for: session, controller: controller) {
+        case .composer, .resumable, .controllable, .attaching: return true
+        case .controlUnavailable, .readOnly: return false
+        }
+    }
+
+    @MainActor
+    static func preferredSession(
+        current: AgentSessionInstanceID?, sessions: [AgentSession], controller: AgentManagedSessionController,
+        approvalControl: AgentApprovalController? = nil
+    ) -> AgentSession? {
+        let interactive = sessions.filter { controller.isManaged($0) && controller.mode(for: $0).showsComposer }
+        if let current, let exact = sessions.first(where: { $0.id == current }), let approvalControl {
+            // Shared bridge requests can be actionable without managed Chat
+            // attachment. Attention must keep the selected exact Feed owner,
+            // while offersPrimaryChat independently refuses fabricated control.
+            let hasPending = approvalControl.pendingRequests.values.contains {
+                $0.key.session == current && $0.expiresAt > Date()
+            }
+            let hasUnconfirmed = approvalControl.deliveringRequests.values.contains { $0.key.session == current }
+            if hasPending || hasUnconfirmed { return exact }
+        }
+        if let current, let exact = sessions.first(where: { $0.id == current }),
+           offersPrimaryChat(exact, controller: controller) { return exact }
+        // A discovered external session must never displace a managed chat.
+        if !interactive.isEmpty {
+            return AgentWorkspaceSelection.session(current: nil, sessions: interactive,
+                activeManagedSessionIDs: controller.activeManagedSessionIDs)
+        }
+        let resumable = sessions.filter { offersPrimaryChat($0, controller: controller) }
+        if !resumable.isEmpty {
+            return AgentWorkspaceSelection.session(current: current, sessions: resumable,
+                activeManagedSessionIDs: controller.activeManagedSessionIDs)
+        }
+        // Retain truthful exact observation identity for operational data only.
+        return AgentWorkspaceSelection.session(current: current, sessions: sessions,
+            activeManagedSessionIDs: controller.activeManagedSessionIDs)
     }
 
     @MainActor
@@ -138,6 +182,17 @@ final class AgentNewSessionFlow: ObservableObject {
         }
         errorMessage = nil
         isPresented = true
+    }
+
+    /// Configures the existing launcher as the primary New Chat fallback,
+    /// without opening an overlay or creating a second launch flow.
+    func prepareNewChat(provider: AgentProvider?, folder: String?) {
+        guard !isStarting else { return }
+        mode = .newSession
+        if let provider { self.provider = provider }
+        if let folder, let valid = AgentManagedSessionController.validatedWorkingDirectory(folder) {
+            folderPath = valid
+        }
     }
 
     func toggle(provider: AgentProvider?) {

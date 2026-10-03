@@ -32,7 +32,7 @@ final class AgentWorkspaceFeedTests: XCTestCase {
                payload: .command(.init(executable: nil, success: true, exitCode: 0)))
         XCTAssertEqual(feed.items.count, 2)
         XCTAssertEqual(feed.items.first?.id, identity)
-        XCTAssertEqual(feed.items.first?.title, "Command completed")
+        XCTAssertEqual(feed.items.first?.title, "Command completed · echo · exit 0")
         XCTAssertEqual(feed.items.first?.status, .completed)
         XCTAssertEqual(feed.items.first?.timestamp, AgentTestFixture.baseDate.addingTimeInterval(1))
         XCTAssertEqual(feed.items.first?.updatedAt, AgentTestFixture.baseDate.addingTimeInterval(3))
@@ -182,6 +182,186 @@ final class AgentWorkspaceFeedTests: XCTestCase {
         XCTAssertTrue(feed.items.isEmpty)
         feed.handleApplied(stale, session: store.sessions[0])
         XCTAssertTrue(feed.items.isEmpty)
+    }
+
+    func testSelectedFeedFiltersExactProviderNativeSessionAndGenerationAtomically() {
+        let (store, feed) = runtime()
+        for provider in [AgentProvider.codex, .claude] {
+            start(store, provider: provider)
+            ingest(store, provider: provider, name: "command", type: .commandStarted, offset: 1,
+                   correlation: "shared-command", payload: .command(.init(executable: "swift", success: nil, exitCode: nil)))
+        }
+        let firstCodex = AgentSessionInstanceID(sessionID: id(.codex), generation: .init(rawValue: 1))
+        let claude = AgentSessionInstanceID(sessionID: id(.claude), generation: .init(rawValue: 1))
+        start(store, generation: 2)
+        ingest(store, generation: 2, name: "next-command", type: .commandStarted, offset: 2,
+               correlation: "shared-command", payload: .command(.init(executable: "git", success: nil, exitCode: nil)))
+        let nextCodex = AgentSessionInstanceID(sessionID: id(.codex), generation: .init(rawValue: 2))
+        XCTAssertEqual(feed.items(for: firstCodex).map(\.sessionID), [firstCodex])
+        XCTAssertEqual(feed.items(for: claude).map(\.sessionID), [claude])
+        XCTAssertEqual(feed.items(for: nextCodex).map(\.sessionID), [nextCodex])
+        XCTAssertEqual(feed.items(for: firstCodex).first?.title, "Command: swift")
+        XCTAssertEqual(feed.items(for: nextCodex).first?.title, "Command: git")
+        XCTAssertTrue(feed.items(for: nil).isEmpty)
+        XCTAssertTrue(feed.items(for: .init(sessionID: AgentTestFixture.sessionID(.codex, "foreign"), generation: .init(rawValue: 1))).isEmpty)
+        XCTAssertEqual(feed.items.count, 3, "Selection projects history without mutating another provider")
+    }
+
+    func testAllTypedSemanticStatesEnterSelectedHistoryWithoutProviderProse() {
+        let (store, feed) = runtime()
+        start(store)
+        let states: [AgentProcessingKind] = [.reasoning, .planning, .searching, .executing, .connecting, .listening, .composing, .synthesizing, .background]
+        for (index, state) in states.enumerated() {
+            ingest(store, name: "state-\(index)", type: .agentWorking, offset: Double(index + 1), correlation: "state-\(index)",
+                   payload: .activity(.init(title: "private hidden reasoning", summary: "secret prompt", processingKind: state, processingStatus: .active)))
+        }
+        let selected = store.sessions[0].id
+        XCTAssertEqual(Set(feed.items(for: selected).compactMap(\.processingKind)), Set(states))
+        XCTAssertEqual(feed.items(for: selected).first?.title, "Background processing")
+        XCTAssertFalse(String(describing: feed.items).contains("private hidden reasoning"))
+        XCTAssertFalse(String(describing: feed.items).contains("secret prompt"))
+    }
+
+    func testRepeatedSemanticPublicationCoalescesButReturnAfterAnActionCreatesHistory() {
+        let (store, feed) = runtime()
+        start(store)
+        var publications = 0
+        let cancellable = feed.$items.dropFirst().sink { _ in publications += 1 }
+        for index in 0..<12 {
+            ingest(store, name: "reason-\(index)", type: .agentWorking, offset: Double(index + 1), correlation: "reasoning",
+                   payload: .activity(.init(title: nil, summary: nil, processingKind: .reasoning, processingStatus: .active)))
+        }
+        XCTAssertEqual(feed.items.count, 1)
+        XCTAssertEqual(publications, 1, "Repeated semantic state must not republish the Feed")
+        let firstIdentity = feed.items[0].id
+        ingest(store, name: "next-reasoning-item", type: .agentWorking, offset: 13, correlation: "next-reasoning-item",
+               payload: .activity(.init(title: nil, summary: nil, processingKind: .reasoning, processingStatus: .active)))
+        XCTAssertEqual(feed.items.count, 1)
+        XCTAssertEqual(feed.items[0].id, firstIdentity)
+        XCTAssertEqual(feed.items[0].correlationID, AgentTestFixture.correlation("next-reasoning-item"))
+        XCTAssertTrue(feed.items[0].isCurrentActivity(in: store.sessions[0]))
+        ingest(store, name: "search", type: .toolStarted, offset: 14, correlation: "search",
+               payload: .tool(.init(name: "search", category: nil, summary: nil, success: nil, processingKind: .searching)))
+        ingest(store, name: "return-reasoning", type: .agentWorking, offset: 15, correlation: "return-reasoning",
+               payload: .activity(.init(title: nil, summary: nil, processingKind: .reasoning, processingStatus: .active)))
+        XCTAssertEqual(feed.items.count, 3)
+        XCTAssertEqual(feed.items.filter { $0.kind == .processing }.count, 2)
+        withExtendedLifetime(cancellable) {}
+    }
+
+    func testRecentSafeActionsRetainExecutableAndExitCodeButNoArgumentsPathsOrSecrets() {
+        let (store, feed) = runtime()
+        start(store)
+        ingest(store, name: "safe-command", type: .commandStarted, offset: 1, correlation: "safe",
+               payload: .command(.init(executable: "swift", success: nil, exitCode: nil)))
+        ingest(store, name: "safe-completed", type: .commandCompleted, offset: 2, correlation: "safe",
+               payload: .command(.init(executable: nil, success: true, exitCode: 0)))
+        XCTAssertEqual(feed.items[0].title, "Command completed · swift · exit 0")
+        let secret = "swift test /Users/private --api-key=private"
+        ingest(store, name: "malformed-command", type: .commandStarted, offset: 3, correlation: "malformed",
+               payload: .command(.init(executable: secret, success: nil, exitCode: nil)))
+        ingest(store, name: "malformed-tool", type: .toolStarted, offset: 4, correlation: "malformed-tool",
+               payload: .tool(.init(name: secret, category: nil, summary: secret, success: nil)))
+        XCTAssertNil(feed.items.first { $0.correlationID == AgentTestFixture.correlation("malformed") }?.operationLabel)
+        XCTAssertFalse(String(describing: feed.items).contains(secret))
+        ingest(store, name: "safe-tool", type: .toolStarted, offset: 5, correlation: "read",
+               payload: .tool(.init(name: "read_file", category: nil, summary: secret, success: nil)))
+        XCTAssertEqual(feed.items[0].title, "Tool: Read file")
+    }
+
+    func testReturningToSameReasoningItemAfterAnActionPublishesLatestSemanticState() {
+        let (store, feed) = runtime()
+        start(store)
+        let reasoning = AgentEventPayload.activity(.init(title: nil, summary: nil, processingKind: .reasoning, processingStatus: .active))
+        ingest(store, name: "reasoning", type: .agentWorking, offset: 1, correlation: "reasoning", payload: reasoning)
+        ingest(store, name: "command", type: .commandStarted, offset: 2, correlation: "command",
+               payload: .command(.init(executable: "swift", success: nil, exitCode: nil)))
+        ingest(store, name: "command-end", type: .commandCompleted, offset: 3, correlation: "command",
+               payload: .command(.init(executable: nil, success: true, exitCode: 0)))
+        XCTAssertEqual(feed.items.first?.kind, .command)
+        ingest(store, name: "reasoning-return", type: .agentWorking, offset: 4, correlation: "reasoning", payload: reasoning)
+        XCTAssertEqual(feed.items.first?.kind, .processing)
+        XCTAssertEqual(feed.items.first?.processingKind, .reasoning)
+        XCTAssertEqual(feed.items.first?.updatedAt, AgentTestFixture.baseDate.addingTimeInterval(4))
+        XCTAssertEqual(feed.items.count, 2, "A concrete work item stays one item while its updated state becomes current")
+    }
+
+    func testOtherApprovalDoesNotEnterSelectedFeedButRemainsExactGlobalAttention() {
+        let (store, feed) = runtime()
+        start(store)
+        start(store, provider: .claude)
+        ingest(store, provider: .claude, name: "request", type: .approvalRequested, offset: 1, correlation: "exact",
+               payload: .approvalRequest(.init(summary: nil, operationCorrelationID: nil, expiresAt: nil)))
+        let codex = AgentSessionInstanceID(sessionID: id(.codex), generation: .init(rawValue: 1))
+        let claude = AgentSessionInstanceID(sessionID: id(.claude), generation: .init(rawValue: 1))
+        XCTAssertTrue(feed.items(for: codex).isEmpty)
+        XCTAssertEqual(feed.items(for: claude).first?.approvalKey, .init(session: claude, requestID: AgentTestFixture.correlation("exact")))
+        let request = AgentApprovalControlRequest(key: .init(session: claude, requestID: AgentTestFixture.correlation("exact")), summary: "Permission", expiresAt: .distantFuture)
+        let attention = AgentWorkspaceApprovalAttentionProjection.requests(pending: [request], delivering: [], selectedSessionID: codex, now: AgentTestFixture.baseDate)
+        XCTAssertEqual(attention.map(\.key.session), [claude])
+        let policy = AgentAttentionPolicyEngine.apply(
+            events: store.attentionEvents, sessions: store.sessions,
+            now: AgentTestFixture.baseDate.addingTimeInterval(1),
+            state: AgentAttentionPolicyState(), options: AgentAttentionPolicyOptions()
+        )
+        XCTAssertEqual(policy.state.badges[claude]?.session, claude,
+                       "Existing global attention keeps the exact background owner discoverable")
+        XCTAssertEqual(policy.state.presentation?.primary?.session, claude)
+        XCTAssertEqual(feed.items(for: attention[0].key.session).first?.approvalKey, request.key,
+                       "Navigating exact attention owner reveals its exact request")
+        XCTAssertTrue(AgentWorkspaceApprovalAttentionProjection.requests(pending: [request], delivering: [], selectedSessionID: claude, now: AgentTestFixture.baseDate).isEmpty)
+        ingest(store, provider: .claude, name: "ack", type: .approvalResolved, offset: 2, correlation: "exact", payload: .approvalResolution(.init(state: .approved)))
+        XCTAssertEqual(feed.items(for: claude).first?.approvalPresentation(delivery: nil), .approved)
+        XCTAssertTrue(feed.items(for: codex).isEmpty)
+    }
+
+    func testGlobalAttentionKeepsUnconfirmedDeliveryAndDeduplicatesExactRequestOnly() {
+        let codex = AgentSessionInstanceID(sessionID: id(.codex), generation: .init(rawValue: 1))
+        let nextCodex = AgentSessionInstanceID(sessionID: id(.codex), generation: .init(rawValue: 2))
+        let make: (AgentSessionInstanceID, Date) -> AgentApprovalControlRequest = { session, expiry in
+            .init(key: .init(session: session, requestID: AgentTestFixture.correlation("same-request")), summary: "Permission", expiresAt: expiry)
+        }
+        let first = make(codex, .distantFuture)
+        let second = make(nextCodex, .distantFuture)
+        let expired = make(.init(sessionID: id(.claude), generation: .init(rawValue: 1)), .distantPast)
+        let attention = AgentWorkspaceApprovalAttentionProjection.requests(pending: [first, second, expired], delivering: [first, expired], selectedSessionID: nil, now: AgentTestFixture.baseDate)
+        XCTAssertEqual(attention.count, 3)
+        XCTAssertEqual(Set(attention.map(\.key.session)), [codex, nextCodex, expired.key.session])
+        XCTAssertEqual(attention.filter { $0.key == first.key }.count, 1)
+    }
+
+    func testSelectedCanonicalApprovalSurvivesGlobalHistoryCapacityPressure() {
+        let (store, feed) = runtime(maximumItems: 16)
+        start(store)
+        for index in 0..<20 {
+            ingest(store, name: "request-\(index)", type: .approvalRequested, offset: Double(index + 1), correlation: "request-\(index)",
+                   payload: .approvalRequest(.init(summary: nil, operationCorrelationID: nil, expiresAt: nil)))
+        }
+        let session = store.sessions[0]
+        XCTAssertEqual(feed.items.count, 16, "Persistent Feed storage stays bounded")
+        let selected = feed.items(for: session.id, session: session)
+        XCTAssertEqual(selected.filter { $0.kind == .approval }.count, session.approvals.count)
+        XCTAssertEqual(Set(selected.compactMap(\.approvalKey).map(\.requestID)), Set(session.approvals.keys))
+        XCTAssertEqual(feed.items.count, 16, "Recovering visible requests creates no additional retained store")
+        let foreign = AgentSessionInstanceID(sessionID: id(.claude), generation: .init(rawValue: 1))
+        XCTAssertTrue(feed.items(for: foreign, session: session).isEmpty)
+    }
+
+    func testUncorrelatedClaudeThinkingEventUsesNormalizedSemanticsAndStopsAtEnd() {
+        let (store, feed) = runtime()
+        start(store, provider: .claude)
+        ingest(store, provider: .claude, name: "thinking", type: .thinkingStarted, offset: 1,
+               payload: .activity(.init(title: "private reasoning", summary: "private context")))
+        XCTAssertEqual(feed.items.first?.processingKind, .reasoning)
+        XCTAssertEqual(feed.items.first?.title, "Reasoning")
+        XCTAssertTrue(feed.items[0].isCurrentActivity(in: store.sessions[0]))
+        let identity = feed.items[0].id
+        ingest(store, provider: .claude, name: "thinking-end", type: .thinkingEnded, offset: 2)
+        XCTAssertEqual(feed.items.count, 1)
+        XCTAssertEqual(feed.items[0].id, identity)
+        XCTAssertEqual(feed.items[0].status, .completed)
+        XCTAssertFalse(feed.items[0].isCurrentActivity(in: store.sessions[0]))
+        XCTAssertFalse(String(describing: feed.items).contains("private reasoning"))
     }
 
     private func runtime(maximumItems: Int = 256) -> (AgentEventStore, AgentWorkspaceFeedStore) {

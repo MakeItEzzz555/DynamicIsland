@@ -120,3 +120,16 @@ The October 3 post-crash audit does not change the pinned ThinkingOrb, BotAvatar
 - The crash-sensitive native-host mount/unmount test, expanded phase audit, full suite, performance harness and bounded lifecycle workload remain green after these changes.
 
 These changes are workspace interaction/lifecycle work; they do not broaden Libraries.dev fidelity claims or convert fixture evidence into live renderer acceptance.
+
+## October 4 — exact-session interaction and PTY cleanup
+
+The existing upstream-derived ThinkingOrb, BotAvatar and BorderBeam geometry, material equations, shader presets and source revisions remain in place. No renderer was rebuilt or replaced with web content.
+
+- **PASS — automated/fixture:** selected-session Feed ownership, activity coalescing, provider/generation isolation and exact approval-state precedence. Primary Chat now uses exact managed/verified Resume routing or the existing glowing New Chat form; observation cannot manufacture control. BorderBeam/ThinkingOrb remain tied to the selected normalized activity, not background traffic or transcript prose.
+- **PASS — automated/fixture:** historical Feed avatars use a frozen local rig (`frozenTime = 0`) rather than modifying/suspending the shared live-session rig. Live avatars continue using their existing stable identity/player. This fixes historical mount/disappearance interference without changing the upstream rendering equations.
+- transitions-dev and transitions-polish were applied to the existing 250 ms reversible content handoff, 300 ms smooth-out internal width allocation, local hover feedback and reduced-motion alternatives. Terminal cell geometry is resized/coalesced directly, not spatially animated; the native process/emulator survives presentation changes.
+- **PASS — live:** the newly packaged Codex workspace showed real connection/reasoning/command/composition/completion and interruption history alongside the existing orb/Beam treatment. Feed/Terminal and main-tab changes preserved the real PTY. This is endpoint/native-input acceptance, not an uninterrupted animation trace proving every orb state or final GPU frame pacing.
+- **PASS — automated/fixture:** full suite **1,657 passed / 0 failed / 38 skipped**, native acceptance **7 / 0 / 1**, publication-isolation harness and bounded fixture teardown. See `agent-presence-validation.md` for accounting correction, memory measurements, native PTY and actual-provider evidence.
+- **NOT VERIFIED:** fresh OS Reduce Motion toggle, complete uninterrupted shell/orb/avatar motion and GPU frame pacing. Original OS Reduce Motion OFF was preserved. **BLOCKED — external acceptance dependency:** fresh Claude/concurrent-provider execution and consent-dependent controlled speech.
+
+Acknowledged perceptual differences remain fabric fringe/lighting, accessory mesh/depth and extreme-pose occlusion, whirl sampling and browser/CoreGraphics rasterization. No new browser pixel-identity claim is made. SwiftTerm 1.20.0 is a separate MIT native terminal dependency, not a Libraries.dev renderer or an animation framework.

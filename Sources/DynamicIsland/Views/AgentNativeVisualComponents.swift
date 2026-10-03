@@ -142,7 +142,11 @@ struct BotAvatarView: View {
         let type = overrideType ?? (config.automaticShape == false ? config.type : sessionID.map(BotAvatarDeterminism.type(for:)) ?? config.type)
         let nativeType = LibrariesNative.BotAvatarType(rawValue: type.rawValue)!
         let nativeState = AgentAvatarStateMapper.state(state)
-        let player = sessionID.map { AgentAvatarPlayers.player(for: $0, state: nativeState, seed: fidelity.seed) } ?? rendering.player
+        // Historical/snapshot poses must not change or suspend the live rig for
+        // the same session while a current working presentation is visible.
+        let player = renderTime == nil
+            ? sessionID.map { AgentAvatarPlayers.player(for: $0, state: nativeState, seed: fidelity.seed) } ?? rendering.player
+            : rendering.player
         let side = compact ? min(config.size, 24) : config.size
         // Unlike the reference's free overscan, island/row content is bounded.
         // Reserve room above the body for the complete jump arc and hats.

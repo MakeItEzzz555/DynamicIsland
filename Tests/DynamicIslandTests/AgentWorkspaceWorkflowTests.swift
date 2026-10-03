@@ -1,3 +1,4 @@
+import AgentBridgeShared
 import AppKit
 import Foundation
 import SwiftUI
@@ -209,11 +210,184 @@ final class AgentWorkspaceWorkflowTests: XCTestCase {
         )
         XCTAssertEqual(
             AgentSessionControlBanner.content(for: .controllable, provider: .claude).action,
-            "Take Control"
+            "Resume"
         )
     }
 
+    func testExternalCodexAndClaudeObservationFallsBackToNewChatWithoutClaimingOwnership() throws {
+        let harness = Harness(providers: [.codex, .claude])
+        for provider in [AgentProvider.codex, .claude] {
+            let observed = AgentSession.fixture(provider: provider, nativeID: "external", cwd: "/tmp/external")
+            harness.controller.selectSession(observed.id)
+            let projection = AgentWorkspaceProjection.make(
+                sessions: [observed], controller: harness.controller,
+                projectKey: nil, locations: .empty, launcherOpen: false
+            )
+            XCTAssertEqual(projection.surface, .empty(provider))
+            XCTAssertEqual(projection.selectedSession?.id, observed.id,
+                "Truthful observation identity remains available to exact Feed filtering")
+            XCTAssertFalse(harness.controller.isManaged(observed))
+            XCTAssertFalse(harness.controller.canConnect(observed), "No fabricated control of foreign sessions")
+            XCTAssertFalse(AgentWorkspaceProjection.offersPrimaryChat(observed, controller: harness.controller))
+        }
+    }
+
+    func testExternalObservationCannotHijackExistingManagedChatForEitherProvider() async throws {
+        let harness = Harness(providers: [.codex, .claude])
+        for provider in [AgentProvider.codex, .claude] {
+            let started = try await harness.start(provider, in: try makeFolder("managed-\(provider.stableName)"))
+            let managed = try XCTUnwrap(harness.store.session(for: started.instance))
+            let observed = AgentSession.fixture(provider: provider, nativeID: "foreign", cwd: "/tmp/foreign")
+            harness.controller.selectSession(observed.id)
+            let projection = AgentWorkspaceProjection.make(
+                sessions: [observed, managed], controller: harness.controller,
+                projectKey: nil, locations: .empty, launcherOpen: false
+            )
+            XCTAssertEqual(projection.selectedSession?.id, started.instance)
+            XCTAssertEqual(projection.surface, .session(managed, .composer))
+            XCTAssertFalse(harness.controller.isManaged(observed))
+        }
+    }
+
+    func testExplicitExactResumeSelectionIsNotOverriddenByAnotherManagedChat() async throws {
+        let harness = Harness(providers: [.codex])
+        let managed = try await harness.start(.codex, in: try makeFolder("current-managed"))
+        await harness.fake(.codex).setDiscovered([AgentDiscoveredSessionDescriptor(
+            session: AgentManagedSessionDescriptor(
+                provider: .codex, nativeSessionID: "explicit-resume", cwd: try makeFolder("resume-other").path,
+                model: nil, acceptsDirectInput: true
+            ), runtimeState: .notLoaded, updatedAt: Date()
+        )])
+        await harness.controller.refreshPersistentSnapshot()
+        let resumable = try XCTUnwrap(harness.store.sessions.first { $0.id.sessionID.nativeID == "explicit-resume" })
+        harness.controller.selectSession(resumable.id)
+        XCTAssertEqual(harness.projection().surface, .session(resumable, .resumable))
+        XCTAssertNotEqual(harness.projection().selectedSession?.id, managed.instance)
+        harness.controller.connect(resumable)
+        try await waitFor { harness.controller.isManaged(resumable) }
+        XCTAssertEqual(harness.controller.selectedSessionID?.sessionID, resumable.id.sessionID)
+        let resumed = try XCTUnwrap(harness.store.sessions.first { $0.id.sessionID == resumable.id.sessionID })
+        XCTAssertEqual(harness.projection().surface, .session(resumed, .composer))
+    }
+
+    func testExactBridgeApprovalAttentionKeepsNonAttachableFeedOwnerWithoutManagedChatOwnership() async throws {
+        for provider in [AgentProvider.codex, .claude] {
+            let harness = Harness(providers: [provider])
+            let managedA = try await harness.start(provider, in: try makeFolder("approval-managed-a"))
+            let externalID = AgentTestFixture.sessionID(provider, "bridge-external-b")
+            XCTAssertEqual(harness.store.ingest(AgentTestFixture.event(
+                "external-b-start", sessionID: externalID, type: .sessionStarted, offset: 100,
+                payload: .sessionMetadata(AgentSessionMetadata(project: AgentTestFixture.project(path: "/tmp")))
+            )), .applied)
+            let externalB = try XCTUnwrap(harness.store.sessions.first { $0.id.sessionID == externalID })
+            harness.controller.selectSession(externalB.id)
+            XCTAssertEqual(harness.projection().selectedSession?.id, managedA.instance,
+                "Ordinary unmanageable observation must not hijack managed Chat")
+
+            let correlation = AgentTestFixture.correlation("bridge/exact-request")
+            let key = AgentApprovalControlKey(session: externalB.id, requestID: correlation)
+            let feed = AgentWorkspaceFeedStore()
+            let event = AgentTestFixture.event(
+                "external-b-request", sessionID: externalID, type: .approvalRequested, offset: 101,
+                correlationID: correlation.rawValue,
+                payload: .approvalRequest(.init(summary: "Run validation", operationCorrelationID: nil, expiresAt: nil))
+            )
+            XCTAssertEqual(harness.store.ingest(event), .applied)
+            let requestedB = try XCTUnwrap(harness.store.session(for: externalB.id))
+            feed.handleApplied(event, session: requestedB)
+            let waiter = Task {
+                await harness.approvals.request(.init(key: key, summary: "Run validation", expiresAt: .distantFuture), maximumWait: nil)
+            }
+            defer { waiter.cancel(); harness.approvals.cancelAll() }
+            for _ in 0..<1_000 where harness.approvals.pendingRequests[key] == nil { await Task.yield() }
+            XCTAssertNotNil(harness.approvals.pendingRequests[key])
+            harness.controller.selectSession(externalB.id) // Exact attention navigation.
+            let pending = harness.projection()
+            XCTAssertEqual(pending.selectedSession?.id, externalB.id)
+            XCTAssertEqual(pending.surface, .empty(provider), "Bridge approval does not grant interactive Chat ownership")
+            XCTAssertFalse(harness.controller.isManaged(requestedB))
+            XCTAssertFalse(harness.controller.canConnect(requestedB))
+            XCTAssertEqual(feed.items(for: pending.selectedSession?.id).first?.approvalKey, key)
+            XCTAssertTrue(feed.items(for: managedA.instance).isEmpty)
+
+            XCTAssertEqual(harness.approvals.resolve(session: externalB.id, requestID: correlation, decision: .allow), .accepted)
+            _ = await waiter.value
+            XCTAssertEqual(harness.projection().selectedSession?.id, externalB.id,
+                "Unconfirmed provider delivery must keep exact Feed navigation available")
+            harness.approvals.failDelivery(key, reason: "Fixture acknowledgement unavailable")
+            XCTAssertEqual(harness.projection().selectedSession?.id, externalB.id)
+            XCTAssertEqual(feed.items(for: externalB.id).first?.approvalPresentation(delivery: harness.approvals.deliveryState(for: key)), .failed)
+            harness.approvals.confirmDelivery(key)
+            XCTAssertEqual(harness.projection().selectedSession?.id, managedA.instance,
+                "Resolved request no longer overrides normal managed Chat precedence")
+        }
+    }
+
+    func testNewChatFallbackReusesExistingLaunchFlowAndRequiresExplicitStart() async throws {
+        let harness = Harness(providers: [.codex, .claude])
+        let folder = try makeFolder("fallback")
+        for provider in [AgentProvider.codex, .claude] {
+            harness.flow.prepareNewChat(provider: provider, folder: folder.path)
+            XCTAssertEqual(harness.flow.mode, .newSession)
+            XCTAssertEqual(harness.flow.provider, provider)
+            XCTAssertEqual(harness.flow.folderPath, folder.path)
+            XCTAssertFalse(harness.flow.isPresented, "Fallback is not a second overlay or launch architecture")
+            XCTAssertTrue(harness.flow.canStart)
+            let calls = await harness.fake(provider).startedCalls()
+            XCTAssertTrue(calls.isEmpty, "Presentation alone cannot start a provider process")
+            let started = await harness.flow.start(using: harness.controller)
+            XCTAssertNotNil(started)
+            XCTAssertFalse(harness.flow.isPresented)
+        }
+    }
+
     // MARK: Project filter and provider switching
+
+    func testFilteredObservedProjectKeepsExactSelectionWhenAnotherProjectHasManagedChat() async throws {
+        for provider in [AgentProvider.codex, .claude] {
+            let harness = Harness(providers: [provider])
+            let managedA = try await harness.start(provider, in: try makeFolder("managed-project-a"))
+            let projectB = try makeFolder("observed-project-b")
+            let observedID = AgentTestFixture.sessionID(provider, "external-project-b")
+            XCTAssertEqual(harness.store.ingest(AgentTestFixture.event(
+                "external-project-b-start", sessionID: observedID, type: .sessionStarted, offset: 100,
+                payload: .sessionMetadata(AgentSessionMetadata(project: AgentTestFixture.project(path: projectB.path)))
+            )), .applied)
+            let observedB = try XCTUnwrap(harness.store.sessions.first { $0.id.sessionID == observedID })
+            let keyB = AgentProjectGrouping.key(for: observedB, locations: .empty).rawValue
+            harness.controller.selectSession(observedB.id)
+            let projection = harness.projection(projectKey: keyB)
+            XCTAssertEqual(projection.controlSessions.map(\.id), [observedB.id])
+            XCTAssertEqual(projection.selectedSession?.id, observedB.id)
+            XCTAssertEqual(projection.surface, .empty(provider))
+
+            // Exercise actual onAppear/onChange reconciliation, not a second
+            // test-only ranking algorithm. This previously selected managed A
+            // while the visible Chat/Feed projection remained on project B.
+            let size = CGSize(width: 800, height: 400)
+            let view = AgentDashboardContentView(
+                sessions: harness.store.sessions, showsUsage: false,
+                approvalControl: AgentApprovalController(), managedControl: harness.controller,
+                availableHeight: size.height, contentVisible: true, reduceMotion: true,
+                transcriptPresentationReady: true, transcriptLoadDelay: 0
+            )
+            .environment(\.agentProjectSelection, AgentProjectSelectionBinding(key: keyB, set: { _ in }))
+            .frame(width: size.width, height: size.height)
+            let host = NSHostingView(rootView: view)
+            let window = NSWindow(contentRect: CGRect(origin: CGPoint(x: -5000, y: -5000), size: size),
+                styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.contentView = host
+            window.orderFrontRegardless()
+            defer { window.orderOut(nil); window.contentView = nil }
+            for _ in 0..<12 { await Task.yield(); host.layoutSubtreeIfNeeded() }
+            XCTAssertEqual(harness.controller.selectedSessionID, observedB.id,
+                "A managed session outside the effective project must not replace the selected exact Feed owner")
+            XCTAssertNotEqual(harness.controller.selectedSessionID, managedA.instance)
+            XCTAssertFalse(harness.controller.isManaged(observedB))
+            XCTAssertEqual(harness.projection(projectKey: keyB).surface, .empty(provider))
+        }
+    }
 
     func testNewSessionInAnotherProjectIsNeverFilteredOut() async throws {
         let harness = Harness(providers: [.claude])
@@ -347,6 +521,7 @@ final class AgentWorkspaceWorkflowTests: XCTestCase {
 private final class Harness {
     let store = AgentEventStore()
     let controller: AgentManagedSessionController
+    let approvals = AgentApprovalController()
     let flow = AgentNewSessionFlow()
     private let fakes: [AgentProvider: WorkflowFakeProvider]
 
@@ -357,13 +532,13 @@ private final class Harness {
             providers: providers.compactMap { fakes[$0] },
             coordinator: AgentIngestionCoordinator(eventStore: store),
             eventStore: store,
-            approvals: AgentApprovalController()
+            approvals: approvals
         )
         controller.startObserving()
     }
 
     deinit {
-        MainActor.assumeIsolated { controller.stop() }
+        MainActor.assumeIsolated { controller.stop(); approvals.cancelAll() }
     }
 
     func fake(_ provider: AgentProvider) -> WorkflowFakeProvider {
@@ -376,7 +551,8 @@ private final class Harness {
             controller: controller,
             projectKey: projectKey,
             locations: .empty,
-            launcherOpen: flow.isPresented
+            launcherOpen: flow.isPresented,
+            approvalControl: approvals
         )
     }
 

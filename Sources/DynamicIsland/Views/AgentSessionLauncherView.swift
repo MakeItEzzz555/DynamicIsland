@@ -11,6 +11,7 @@ struct AgentSessionLauncherView: View {
     let onSelectSession: (AgentSessionInstanceID) -> Void
     let onStarted: (AgentManagedStartedSession) -> Void
     let onDismiss: () -> Void
+    var embeddedNewChat = false
 
     @State private var query = ""
     @State private var repositoryPathDraft = ""
@@ -127,13 +128,16 @@ struct AgentSessionLauncherView: View {
                 }
                 .padding(.vertical, 2)
             }
-            .frame(maxHeight: flow.mode == .newSession ? 150 : 205)
+            .frame(minHeight: 0, maxHeight: embeddedNewChat ? .infinity : (flow.mode == .newSession ? 150 : 205))
         }
         .padding(9)
         .background(Color.black.opacity(0.96), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .stroke(.white.opacity(0.11), lineWidth: 1)
+                .stroke(.white.opacity(embeddedNewChat ? 0.19 : 0.11), lineWidth: 1)
+                .shadow(color: .cyan.opacity(embeddedNewChat ? 0.22 : 0), radius: 7)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
         }
         .shadow(color: .black.opacity(0.55), radius: 12, y: 5)
         .task(id: repositoryProjectionKey) {
@@ -153,23 +157,31 @@ struct AgentSessionLauncherView: View {
             await managedControl.refreshAgents(for: launchProvider)
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Agent session launcher")
+        .accessibilityLabel(embeddedNewChat ? "New agent chat" : "Agent session launcher")
     }
 
     // MARK: Header
 
     private var header: some View {
         HStack(spacing: 6) {
-            modeButton("Sessions", mode: .sessions, symbol: "list.bullet")
-            modeButton("New Session", mode: .newSession, symbol: "plus")
-            Spacer(minLength: 6)
-            Button(action: onDismiss) {
-                Image(systemName: "xmark.circle.fill")
-                    .foregroundStyle(.white.opacity(0.38))
+            if embeddedNewChat {
+                Label("New Chat", systemImage: "plus.bubble.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.9))
+            } else {
+                modeButton("Sessions", mode: .sessions, symbol: "list.bullet")
+                modeButton("New Session", mode: .newSession, symbol: "plus")
             }
-            .buttonStyle(.plain)
-            .disabled(flow.isStarting)
-            .accessibilityLabel("Close launcher")
+            Spacer(minLength: 6)
+            if !embeddedNewChat {
+                Button(action: onDismiss) {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.white.opacity(0.38))
+                }
+                .buttonStyle(.plain)
+                .disabled(flow.isStarting)
+                .accessibilityLabel("Close launcher")
+            }
         }
     }
 
@@ -194,12 +206,14 @@ struct AgentSessionLauncherView: View {
 
     private var newSessionForm: some View {
         VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 6) {
-                providerMenu
-                modelMenu
-                agentMenu
-                Spacer(minLength: 0)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    providerMenu
+                    modelMenu
+                    agentMenu
+                }
             }
+            .frame(height: 24)
 
             HStack(spacing: 6) {
                 Image(systemName: flow.folderPath == nil ? "folder.badge.questionmark" : "folder.fill")

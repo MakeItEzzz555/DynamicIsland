@@ -13,6 +13,7 @@ let package = Package(
         .executable(name: "DynamicIslandCodexHookRelay", targets: ["DynamicIslandCodexHookRelay"]),
         .executable(name: "DynamicIslandClaudeHookRelay", targets: ["DynamicIslandClaudeHookRelay"])
     ],
+    dependencies: [.package(url: "https://github.com/migueldeicaza/SwiftTerm.git", exact: "1.20.0")],
     targets: [
         .target(name: "LibrariesNative", path: "Sources/LibrariesNative", resources: [.copy("LICENSE.txt"), .copy("BorderBeam/Resources")], swiftSettings: [.swiftLanguageMode(.v5)]),
         .target(
@@ -21,10 +22,10 @@ let package = Package(
         ),
         .executableTarget(
             name: "DynamicIsland",
-            dependencies: ["AgentBridgeShared", "LibrariesNative"],
+            dependencies: ["AgentBridgeShared", "LibrariesNative", .product(name: "SwiftTerm", package: "SwiftTerm")],
             path: "Sources/DynamicIsland",
             resources: [
-                .process("Assets.xcassets")
+                .process("Assets.xcassets"), .copy("ThirdPartyNotices")
             ]
         ),
         .target(
