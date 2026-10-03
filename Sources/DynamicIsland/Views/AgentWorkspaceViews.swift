@@ -59,6 +59,8 @@ struct AgentWorkspaceSwitcher: View {
     let canEmphasize: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Namespace private var selection
+    @State private var hoveredMode: AgentWorkspaceMode?
+    @State private var emphasisHovered = false
 
     var body: some View {
         HStack(spacing: 5) {
@@ -71,18 +73,33 @@ struct AgentWorkspaceSwitcher: View {
                     } label: {
                         Label(mode.title, systemImage: mode.symbol)
                             .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(presentation.mode == mode ? .primary : .secondary)
+                            .foregroundStyle(
+                                presentation.mode == mode || hoveredMode == mode
+                                    ? .primary
+                                    : .secondary
+                            )
                             .padding(.horizontal, 8)
                             .frame(height: 26)
                             .background {
                                 if presentation.mode == mode {
                                     Capsule().fill(.primary.opacity(0.10))
                                         .matchedGeometryEffect(id: "agent-workspace-tab", in: selection)
+                                } else if hoveredMode == mode {
+                                    Capsule().fill(.primary.opacity(0.065))
                                 }
                             }
                             .contentShape(Capsule())
                     }
                     .buttonStyle(.plain)
+                    .onHover { hovering in
+                        withAnimation(AgentWorkspaceMotion.selection(reduceMotion: reduceMotion)) {
+                            if hovering {
+                                hoveredMode = mode
+                            } else if hoveredMode == mode {
+                                hoveredMode = nil
+                            }
+                        }
+                    }
                     .help("Show agent \(mode.title.lowercased())")
                     .accessibilityLabel("Agent workspace \(mode.title)")
                     .accessibilityAddTraits(presentation.mode == mode ? [.isSelected, .isButton] : .isButton)
@@ -97,10 +114,20 @@ struct AgentWorkspaceSwitcher: View {
             } label: {
                 Image(systemName: presentation.isEmphasized ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
                     .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(emphasisHovered && canEmphasize ? .primary : .secondary)
                     .frame(width: 26, height: 26)
+                    .background(
+                        emphasisHovered && canEmphasize ? Color.primary.opacity(0.065) : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    )
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .onHover { hovering in
+                withAnimation(AgentWorkspaceMotion.selection(reduceMotion: reduceMotion)) {
+                    emphasisHovered = hovering
+                }
+            }
             .disabled(!canEmphasize)
             .help(presentation.isEmphasized ? "Balance conversation and workspace" : "Give the selected workspace more room")
             .accessibilityLabel(presentation.isEmphasized ? "Restore balanced agent workspace" : "Expand agent workspace")
@@ -236,6 +263,7 @@ struct AgentChatSurface<Conversation: View>: View {
     @ViewBuilder let conversation: () -> Conversation
     @Environment(\.agentVisualPreferences) private var visuals
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var hoveredInteractionMode: AgentInteractionMode?
 
     var body: some View {
         let interaction = controller.interactionState(for: session)
@@ -290,14 +318,31 @@ struct AgentChatSurface<Conversation: View>: View {
         Button {
             withAnimation(AgentWorkspaceMotion.selection(reduceMotion: reduceMotion)) { presentation.interact(mode) }
         } label: {
+            let highlighted = presentation.interactionMode == mode || hoveredInteractionMode == mode
             Image(systemName: icon)
                 .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(presentation.interactionMode == mode ? .primary : .secondary)
+                .foregroundStyle(highlighted ? .primary : .secondary)
                 .frame(width: 28, height: 25)
-                .background(presentation.interactionMode == mode ? Color.primary.opacity(0.10) : Color.clear, in: Capsule())
+                .background(
+                    presentation.interactionMode == mode
+                        ? Color.primary.opacity(0.10)
+                        : hoveredInteractionMode == mode
+                            ? Color.primary.opacity(0.06)
+                            : Color.clear,
+                    in: Capsule()
+                )
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(AgentWorkspaceMotion.selection(reduceMotion: reduceMotion)) {
+                if hovering {
+                    hoveredInteractionMode = mode
+                } else if hoveredInteractionMode == mode {
+                    hoveredInteractionMode = nil
+                }
+            }
+        }
         .help(mode == .chat ? "Use selected agent chat" : "Focus the project terminal without interrupting the agent")
         .accessibilityLabel("Selected agent \(title) interaction")
         .accessibilityAddTraits(presentation.interactionMode == mode ? [.isSelected, .isButton] : .isButton)

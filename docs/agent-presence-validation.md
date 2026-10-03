@@ -934,3 +934,25 @@ Terminal scope remains explicit: this surface reuses `TerminalSessionController`
 - Generated `dist/DynamicIsland.app` can reacquire Finder metadata in the synced directory; clearing only generated bundle xattrs and reapplying the same ad-hoc signatures restores deep/strict verification. No Keychain, TCC, entitlement or signing-policy changes were made.
 
 The correct next work is human/external acceptance closure (final live Codex send after quota reset, Claude/concurrent provider availability, actual Reduce Motion OFF→ON→OFF, and remaining consent-dependent microphone/Keychain checks), not another workspace redesign.
+
+### Follow-up completeness audit after user crash report
+
+A second requirement-by-requirement review found two phase gaps that were not covered by the earlier completion checkpoint:
+
+1. **Hover feedback:** Feed/Terminal workspace tabs, workspace emphasis, and Chat/Terminal interaction controls now have explicit stable hover feedback using the existing workspace transition timing. Hover changes color/background only; hit geometry does not resize, so the earlier hover-collapse class of bugs is not reintroduced.
+2. **Terminal scrollback/memory:** `TerminalSessionController` no longer erases output at every accepted command. Successful commands append a shell-style command header and preserve prior output in the retained terminal surface. Scrollback is bounded to **120,000 characters** with an explicit trim marker, preventing unbounded RAM growth. Failed launches do not erase or append to scrollback.
+
+Terminal ownership remains unchanged: one existing `TerminalSessionController`, one running command at a time, selected-project cwd, streamed stdout/stderr, Stop, copy/selection, native Return execution and retained output across Feed/Terminal switches. It remains a shell-command surface rather than a PTY emulator; no second terminal process architecture or SwiftTerm runtime was introduced.
+
+Latest-source verification after these follow-up changes:
+
+- Focused terminal/crash/input set: **36 executed / 0 failed / 1 skipped**.
+- Expanded phase audit (workspace, approvals, provider control, usage, Orb semantics, Beam GPU, shell motion, scroll routing and terminal): **230 executed / 0 failed / 2 skipped**.
+- Clean full suite: **1,670 passed / 0 failed / 38 skipped**.
+- Performance harness: 200 deltas → **6** surrounding Agents/Feed evaluations and **2** managed-controller publications; 38 typed keys → **3** console evaluations.
+- Fresh bounded lifecycle soak: **1/0/0**, 110 cycles / ~98.6 s. Footprint cycles 10/30/50/70/90/110: **42,404,480 / 45,648,512 / 47,598,208 / 48,450,176 / 49,023,680 / 49,203,904 B**; after teardown **42,764,992 B**. Controller released; sessions remained 32 and transcript entries 80.
+- Release source build: **PASS**. The synced `dist` folder immediately reattaches `com.apple.FinderInfo`, so deep strict verification there remains filesystem-provider-sensitive. A `ditto --norsrc` clean staging copy at `/tmp/DynamicIsland-postcrash.app`, signed with the same ad-hoc policy, passes deep/strict verification for the app and all three helpers and launches successfully.
+- The original real crash remains the newest DynamicIsland diagnostic report. The crash-hardening commit's prior packaged **40/40 Agents → Island → Tools** stress remains live evidence for the unchanged focus/teardown fix. The newest staged package launched successfully, but its expanded navigation controls were not exposed through the bounded AX probe after programmatic shell activation, so a new 40-cycle UI claim is intentionally **not** made.
+- Actual Reduce Motion remains **NOT VERIFIED**. Current system state is OFF (`defaults=0`, `NSWorkspace=false`). macOS rejected programmatic writes to `com.apple.universalaccess`; no preference-store bypass was attempted and the original setting remained unchanged.
+
+This follow-up supersedes any earlier implication that hover feedback or repeated-command terminal scrollback were already complete.

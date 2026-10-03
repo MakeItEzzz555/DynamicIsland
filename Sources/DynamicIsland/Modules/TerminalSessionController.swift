@@ -139,6 +139,10 @@ struct FoundationTerminalProcessRunner: TerminalProcessRunning {
 final class TerminalSessionController: ObservableObject, IslandCapabilityAdapter {
     static let activityID = "terminalTask"
     static let defaultShell = "/bin/zsh"
+    /// In-memory terminal scrollback is intentionally bounded. This is a
+    /// command surface, not persistent activity recording.
+    static let maximumOutputCharacters = 120_000
+    static let trimmedOutputMarker = "… earlier terminal output trimmed …\n"
 
     let capabilityID: IslandCapabilityID = .terminal
 
@@ -225,7 +229,6 @@ final class TerminalSessionController: ObservableObject, IslandCapabilityAdapter
             workingDirectory = URL(fileURLWithPath: NSString(string: trimmedDirectory).expandingTildeInPath)
         }
 
-        output = ""
         lastError = nil
         completionDismissWorkItem?.cancel()
 
@@ -245,6 +248,7 @@ final class TerminalSessionController: ObservableObject, IslandCapabilityAdapter
                     }
                 }
             )
+            appendCommandHeader(command)
             processHandle = handle
             if persistCommandHistory {
                 commandHistory.append(command)
@@ -313,7 +317,28 @@ final class TerminalSessionController: ObservableObject, IslandCapabilityAdapter
     }
 
     private func appendOutput(_ chunk: String) {
+        appendBoundedOutput(chunk)
+    }
+
+    private func appendCommandHeader(_ command: String) {
+        if !output.isEmpty, !output.hasSuffix("\n") {
+            appendBoundedOutput("\n")
+        }
+        if !output.isEmpty {
+            appendBoundedOutput("\n")
+        }
+        appendBoundedOutput("$ \(command)\n")
+    }
+
+    private func appendBoundedOutput(_ chunk: String) {
+        guard !chunk.isEmpty else { return }
         output.append(chunk)
+        guard output.count > Self.maximumOutputCharacters else { return }
+        let payloadLimit = max(
+            0,
+            Self.maximumOutputCharacters - Self.trimmedOutputMarker.count
+        )
+        output = Self.trimmedOutputMarker + output.suffix(payloadLimit)
     }
 
     private func handleExit(command: String, exitCode: Int32) {

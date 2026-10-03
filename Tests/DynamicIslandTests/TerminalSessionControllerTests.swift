@@ -99,7 +99,39 @@ final class TerminalSessionControllerTests: XCTestCase {
         await Task.yield()
         await Task.yield()
 
-        XCTAssertEqual(fixture.controller.output, "one\ntwo\n")
+        XCTAssertEqual(fixture.controller.output, "$ build\none\ntwo\n")
+    }
+
+    func testRepeatedCommandsPreserveBoundedInMemoryScrollback() async throws {
+        let runner = FakeTerminalProcessRunner()
+        let fixture = makeFixture(runner: runner)
+
+        try fixture.controller.run(command: "echo first")
+        runner.outputCallback?("first\n")
+        runner.exitCallback?(0)
+        await Task.yield()
+        await Task.yield()
+
+        try fixture.controller.run(command: "echo second")
+        runner.outputCallback?("second\n")
+        await Task.yield()
+        await Task.yield()
+
+        XCTAssertTrue(fixture.controller.output.contains("$ echo first\nfirst\n"))
+        XCTAssertTrue(fixture.controller.output.contains("$ echo second\nsecond\n"))
+
+        let oversized = String(repeating: "x", count: TerminalSessionController.maximumOutputCharacters + 2_000)
+        runner.outputCallback?(oversized)
+        await Task.yield()
+        await Task.yield()
+
+        XCTAssertLessThanOrEqual(
+            fixture.controller.output.count,
+            TerminalSessionController.maximumOutputCharacters
+        )
+        XCTAssertTrue(
+            fixture.controller.output.hasPrefix(TerminalSessionController.trimmedOutputMarker)
+        )
     }
 
     func testExitTransitionsToFinishedAndActivityReflectsActualExitCode() async throws {

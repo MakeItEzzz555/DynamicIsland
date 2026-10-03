@@ -109,3 +109,14 @@ Transition guidance applied from `transitions-dev` / `transitions-polish`: 250 m
 **BLOCKED / NOT VERIFIED:** the final live Codex workspace sequence is blocked by the user's current Codex usage limit, so no repeated provider retry was attempted. Claude/concurrent-provider acceptance remains subject to the existing external quota gate and is not reclassified. Final packaged uninterrupted pointer/click, Beam/orb motion, actual OFF → ON → OFF Reduce Motion, and final-package UI acceptance remain human-assisted gates. The currently running packaged process predates the rebuilt artifact and is not used as final-package evidence.
 
 See [agent-workspace-architecture.md](agent-workspace-architecture.md) for ownership and surface boundaries and [border-beam-native-source.md](border-beam-native-source.md) for upstream shader/source provenance.
+
+## Post-crash workspace completeness follow-up
+
+The October 3 post-crash audit does not change the pinned ThinkingOrb, BotAvatar or BorderBeam rendering equations, presets, shader source, identity mapping or fidelity claims above. It closes workspace interaction requirements around those renderers:
+
+- Feed/Terminal and Chat/Terminal controls now provide explicit hover feedback without changing their hit geometry or recreating retained surfaces.
+- The retained terminal command surface preserves successful multi-command output in bounded in-memory scrollback (120,000 characters) instead of clearing output on every command or retaining unbounded output.
+- Plain Return continues to submit the agent composer and execute the terminal command field; Shift-Return remains the agent-composer newline path.
+- The crash-sensitive native-host mount/unmount test, expanded phase audit, full suite, performance harness and bounded lifecycle workload remain green after these changes.
+
+These changes are workspace interaction/lifecycle work; they do not broaden Libraries.dev fidelity claims or convert fixture evidence into live renderer acceptance.
