@@ -5,9 +5,9 @@ final class AgentVisualEffectsTests: XCTestCase {
     func testDomainStateToOrbStateMapping() {
         XCTAssertEqual(AgentOrbStateMapper.state(for: AgentState.idle), .breathing)
         XCTAssertEqual(AgentOrbStateMapper.state(for: AgentState.thinking), .solving)
-        XCTAssertEqual(AgentOrbStateMapper.state(for: AgentState.planning), .weaving)
+        XCTAssertEqual(AgentOrbStateMapper.state(for: AgentState.planning), .shaping)
         XCTAssertEqual(AgentOrbStateMapper.state(for: AgentState.working), .working)
-        XCTAssertEqual(AgentOrbStateMapper.state(for: AgentState.runningTool), .shaping)
+        XCTAssertEqual(AgentOrbStateMapper.state(for: AgentState.runningTool), .working)
         XCTAssertEqual(AgentOrbStateMapper.state(for: AgentState.runningCommand), .working)
         XCTAssertEqual(AgentOrbStateMapper.state(for: AgentState.waitingForApproval), .breathing)
         XCTAssertEqual(AgentOrbStateMapper.state(for: AgentState.waitingForUser), .breathing)
@@ -50,27 +50,24 @@ final class AgentVisualEffectsTests: XCTestCase {
         XCTAssertNotEqual(BotAvatarDeterminism.type(for: first), BotAvatarDeterminism.type(for: nextGeneration))
     }
 
-    func testActivityHintsRespectActiveStateAndIgnoreOldCompletedWork() throws {
-        let hints: [(String, AgentOrbVisualState)] = [
-            ("Searching web", .searching), ("Browsing docs", .searching),
-            ("Connecting", .connecting), ("Resuming session", .connecting),
-            ("Loading tools", .connecting), ("Generating answer", .composing),
-            ("Compose response", .composing), ("Write file", .composing)
-        ]
+    func testUnstructuredActivityTextCannotChooseOrbState() throws {
         var session = try XCTUnwrap(AgentDashboardPreviewFactory.sessions().first)
+        // Display text must never masquerade as provider evidence.
         for domain in [AgentState.thinking, .planning, .working, .runningTool, .runningCommand] {
             session.state = domain
-            for (title, expected) in hints {
-                session.recentActivity = [AgentActivity(id: AgentEventID(rawValue: "hint"), kind: .tool, title: title, summary: nil, status: .active, correlationID: nil, timestamp: Date())]
-                XCTAssertEqual(AgentOrbStateMapper.state(for: session), expected, "\(domain) / \(title)")
+            session.tools = [:]; session.commands = [:]; session.processingActivities = [:]
+            for title in ["Searching web", "Connecting", "Generating answer", "Write file"] {
+                session.recentActivity = [AgentActivity(id: AgentEventID(rawValue: "hint"), kind: .tool, title: title, summary: title, status: .active, correlationID: nil, timestamp: Date())]
+                XCTAssertEqual(AgentOrbStateMapper.state(for: session), AgentOrbStateMapper.state(for: domain))
             }
         }
         for domain in [AgentState.idle, .waitingForApproval, .waitingForUser, .planReady, .completed, .failed, .interrupted] {
             session.state = domain
+            session.processingActivities = [AgentCorrelationID(rawValue: "underlying"): AgentProcessingActivity(kind: .searching, startedAt: Date())]
             XCTAssertEqual(AgentOrbStateMapper.state(for: session), AgentOrbStateMapper.state(for: domain))
             XCTAssertFalse(AgentVisualMotion.animates(domain))
         }
-        session.state = .working
+        session.state = .working; session.processingActivities = [:]
         session.recentActivity = [AgentActivity(id: AgentEventID(rawValue: "old"), kind: .tool, title: "Searching", summary: nil, status: .completed, correlationID: nil, timestamp: Date())]
         XCTAssertEqual(AgentOrbStateMapper.state(for: session), .working)
     }

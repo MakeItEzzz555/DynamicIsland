@@ -213,9 +213,21 @@ enum AgentSessionPresentation {
         if session.isOpen && session.state == .completed {
             return "Idle"
         }
-        return hasStaleActiveSignal(session, at: date)
-            ? "Awaiting update"
-            : stateLabel(session.state)
+        if hasStaleActiveSignal(session, at: date) { return "Awaiting update" }
+        if let kind = session.currentProcessingKind {
+            switch kind {
+            case .reasoning: return "Thinking"
+            case .planning: return "Planning"
+            case .searching: return "Searching"
+            case .executing: return stateLabel(session.state)
+            case .connecting: return "Connecting"
+            case .listening: return "Reading / listening"
+            case .composing: return "Composing"
+            case .synthesizing: return "Combining results"
+            case .background: return "Background processing"
+            }
+        }
+        return stateLabel(session.state)
     }
 
     static func displayedStateSymbol(for session: AgentSession, at date: Date) -> String {

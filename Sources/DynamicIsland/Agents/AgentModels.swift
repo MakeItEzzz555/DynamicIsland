@@ -368,6 +368,16 @@ enum AgentActivityKind: String, Hashable, Codable, Sendable {
     case subagent
 }
 
+/// Provider-neutral processing evidence. Presentation maps this to visual states.
+enum AgentProcessingKind: String, Hashable, Codable, Sendable {
+    case reasoning, planning, searching, executing, connecting, listening, composing, synthesizing, background
+}
+
+struct AgentProcessingActivity: Equatable, Sendable {
+    let kind: AgentProcessingKind
+    let startedAt: Date
+}
+
 struct AgentActivity: Identifiable, Equatable, Codable, Sendable {
     let id: AgentEventID
     let kind: AgentActivityKind
@@ -387,6 +397,7 @@ struct AgentTool: Equatable, Codable, Sendable {
     let startedAt: Date
     var completedAt: Date?
     var success: Bool?
+    var processingKind: AgentProcessingKind? = nil
 }
 
 struct AgentCommand: Equatable, Codable, Sendable {
@@ -397,6 +408,7 @@ struct AgentCommand: Equatable, Codable, Sendable {
     var completedAt: Date?
     var exitCode: Int?
     var success: Bool?
+    var processingKind: AgentProcessingKind? = nil
 }
 
 enum AgentApprovalState: String, Hashable, Codable, Sendable {
@@ -522,6 +534,7 @@ struct AgentSession: Identifiable, Equatable, Sendable {
     var sourceAuthority: AgentEvidenceAuthority = .heuristic
 
     var isThinking = false
+    var processingActivities: [AgentCorrelationID: AgentProcessingActivity] = [:]
     var isPlanning = false
     var isWorking = false
     var isPlanReady = false
@@ -540,6 +553,29 @@ struct AgentSession: Identifiable, Equatable, Sendable {
 
     var isOpen: Bool {
         endedAt == nil
+    }
+
+    /// Uses the existing primary-state precedence, including blocking states.
+    /// The same evidence is consumed by compact and expanded presentation.
+    var currentProcessingKind: AgentProcessingKind? {
+        switch state {
+        case .runningCommand:
+            return commands.values.filter { $0.status == .active }.max {
+                if $0.startedAt != $1.startedAt { return $0.startedAt < $1.startedAt }
+                return $0.correlationID.rawValue < $1.correlationID.rawValue
+            }.map { $0.processingKind ?? .executing }
+        case .runningTool:
+            return tools.values.filter { $0.status == .active }.max {
+                if $0.startedAt != $1.startedAt { return $0.startedAt < $1.startedAt }
+                return $0.correlationID.rawValue < $1.correlationID.rawValue
+            }.map { $0.processingKind ?? ($0.category == "search" ? .searching : .executing) }
+        case .thinking, .planning, .working:
+            return processingActivities.max {
+                if $0.value.startedAt != $1.value.startedAt { return $0.value.startedAt < $1.value.startedAt }
+                return $0.key.rawValue < $1.key.rawValue
+            }?.value.kind
+        default: return nil
+        }
     }
 }
 

@@ -48,6 +48,33 @@ Hats, glasses, headphones and bow tie are attached native vector forms with pose
 
 Compact characters deliberately use a smaller body box, a quarter of the jump displacement, and clipping to preserve the actual island/row bounds. Full primary previews retain reference overscan. The expanded CLI stays content-first: its selected-session toolbar has the stable identity glyph, provider buttons remain recognizable, and a separate inline activity orb accompanies active console status. No larger showcase row was added to the transcript. A 64-point primary orb is available in Appearance and the review harness; the real compact/CLI placements use inline tuning.
 
+## Phase 4 — event-driven Codex semantics
+
+Baseline `883f2b6971a7d842435d159b4b765a4b3b95ba57`, October 3, 2026. The renderer engines, paths, rig, presets and caches are preserved. The defect was upstream of rendering: reasoning items were discarded, while presentation guessed search/connection/composition from activity text. A running turn could therefore show the wrong orb despite correct renderer geometry.
+
+Typed provider evidence now enters the existing normalized stream/store as optional `AgentProcessingKind` metadata. Item correlation retains nested work until its exact completion; existing command/tool and approval precedence remains authoritative. Legacy payloads decode without the optional fields. No reasoning content, command arguments, search queries or paths are added to this metadata. Compact and expanded use the same presentation mapper. Transcript completion still publishes the existing transcript separately.
+
+| Concrete normalized evidence | Native orb | Scope / qualification |
+|---|---|---|
+| reasoning item | solving | Active item only; reasoning text excluded |
+| plan item / unfinished turn plan | shaping | Completed planning metadata is removed |
+| webSearch / commandActions search or listFiles | searching | Structured provider classification, never assistant prose |
+| command execution / file change / MCP or dynamic tool | working | Tool and command retain distinct text/state labels |
+| thread-scoped MCP startup / spawnAgent or resumeAgent | connecting | Global startup cannot choose an arbitrary session |
+| structured read command / collab wait | listening | Active external input/read evidence |
+| agentMessage item | composing | Completion removes processing and retains transcript delivery |
+| contextCompaction | breathing | Active low-intensity/background evidence |
+| typed synthesis | weaving | Supported semantic model; this provider run supplied no genuine synthesis event |
+| approval, user wait, plan ready, interrupted, failed, completed, idle | no continuous processing orb | Existing attention/avatar or static terminal treatment wins |
+
+**PASS — automated/fixture:** raw provider notification → adapter → reducer → orb tests cover nested return to reasoning, typed search/read/tool distinctions, planning, misleading prose, exact blocking precedence, terminal cleanup, legacy decoding, bounded/idempotent tracking and provider/generation isolation. Existing deterministic phase, pause/resume, identity, accessibility, geometry and cache tests remain green.
+
+**PASS — live:** a real Codex 0.160.0 task used repository search, file reading and Python execution; exact-session normalized evidence drove solving, searching, listening, working, connecting and composing, followed by terminal cleanup. This is live provider/controller evidence, **not packaged visual acceptance**. Shaping/weaving and a post-tool return to reasoning were not observed in that run; deterministic provider fixtures cover their supported routing without inventing live events.
+
+**NOT VERIFIED:** final uninterrupted packaged working animation, visual semantic transitions, pointer/click and compact/expanded phase continuity. The rebuilt app launched, four real shell/section cycles completed, and a fifth aborted when navigation disappeared during concurrent desktop use. A real microphone consent dialog then required human action. These endpoints and the passing grids do not certify continuous motion. Actual Reduce Motion was checked OFF and left OFF; this phase did not complete OFF → ON → OFF.
+
+Transition guidance was applied from `transitions-dev` (Thinking states and Avatar group hover) and `transitions-polish`: stable hit/layout geometry, local content handoff, lifecycle termination, and reduced-motion suppression. The recipe's demonstration timer/state cycling was deliberately excluded because provider events must own semantic state. Upstream rig timing was preserved; no CSS, JavaScript or new animation framework was introduced. Fabric fringe/light, accessory meshes/extreme-pose occlusion, whirl sampling and rasterisation gaps remain unchanged. See [the Phase 4 validation record](agent-presence-validation.md#phase-4--native-fidelity-release-gate-and-codex-semantic-routing) for exact release, profiling and blocker evidence.
+
 ## Lifecycle and harness
 
 The presentation-only roster retains at most 64 provider/native-session/generation players across shell handoff. Explicit seed changes reseed the same player; neither project nor source metadata replaces identity. StateObject retains each view's clock/render context instead of allocating a discarded material buffer on every struct reconstruction. The player deduplicates identical ticks and integrates speed with bounded substeps; invisible/resumed output never catches up a long background gap. Visibility tracks window occlusion, hidden ancestors and clipping; pointer tracking uses a stable outer region and consumes no hit tests. Frame ticks never publish into domain state, transcripts or the island root. No per-frame Task, timer, notification subscription or second capture session is introduced.

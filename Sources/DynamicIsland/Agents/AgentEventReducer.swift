@@ -262,25 +262,31 @@ enum AgentEventReducer {
             }
 
         case .agentWorking:
-            session.isWorking = true
-            if event.authority >= session.planReadyAuthority {
-                session.isPlanReady = false
-                session.planReadyAuthority = .heuristic
+            if let rejection = updateProcessing(event, in: &session, limits: limits) { return .rejected(rejection) }
+            if case .activity(let descriptor) = event.payload, descriptor.processingKind != nil {
+                // Item-level evidence does not resume a user wait/plan or turn.
+            } else {
+                session.isWorking = true
+                if event.authority >= session.planReadyAuthority {
+                    session.isPlanReady = false
+                    session.planReadyAuthority = .heuristic
+                }
+                session.waitingForUserID = nil
             }
-            session.waitingForUserID = nil
             if case .activity(let descriptor) = event.payload {
                 appendActivity(
                     event: event,
                     kind: .session,
                     title: AgentPrivacyProjection.title(descriptor.title, fallback: "Working"),
                     summary: descriptor.summary,
-                    status: .active,
+                    status: descriptor.processingStatus ?? .active,
                     to: &session,
                     limits: limits
                 )
             }
 
         case .thinkingStarted:
+            if let rejection = updateProcessing(event, in: &session, limits: limits) { return .rejected(rejection) }
             session.isThinking = true
             if case .activity(let descriptor) = event.payload {
                 appendActivity(
@@ -295,9 +301,11 @@ enum AgentEventReducer {
             }
 
         case .thinkingEnded:
-            session.isThinking = false
+            if let rejection = updateProcessing(event, in: &session, limits: limits) { return .rejected(rejection) }
+            session.isThinking = session.processingActivities.values.contains { $0.kind == .reasoning }
 
         case .planningStarted:
+            if let rejection = updateProcessing(event, in: &session, limits: limits) { return .rejected(rejection) }
             session.isPlanning = true
             if event.authority >= session.planReadyAuthority {
                 session.isPlanReady = false
@@ -366,7 +374,8 @@ enum AgentEventReducer {
                     status: .active,
                     startedAt: event.effectiveTimestamp,
                     completedAt: nil,
-                    success: nil
+                    success: nil,
+                    processingKind: toolEvent.processingKind
                 )
                 let pendingKey = AgentPendingOperationKey(kind: .tool, correlationID: correlationID)
                 if case .tool(let pending, let completedAt)? = session.pendingOperations.removeValue(forKey: pendingKey) {
@@ -438,7 +447,8 @@ enum AgentEventReducer {
                     startedAt: event.effectiveTimestamp,
                     completedAt: nil,
                     exitCode: nil,
-                    success: nil
+                    success: nil,
+                    processingKind: commandEvent.processingKind
                 )
                 let pendingKey = AgentPendingOperationKey(kind: .command, correlationID: correlationID)
                 if case .command(let pending, let completedAt)? = session.pendingOperations.removeValue(forKey: pendingKey) {
@@ -760,8 +770,31 @@ enum AgentEventReducer {
         }
         if session.isThinking { return .thinking }
         if session.isPlanning { return .planning }
+        if !session.processingActivities.isEmpty { return .working }
         if session.isWorking { return .working }
         return .idle
+    }
+
+    private static func updateProcessing(_ event: AgentEvent, in session: inout AgentSession,
+                                         limits: AgentEventStoreLimits) -> AgentEventRejection? {
+        guard case .activity(let descriptor) = event.payload,
+              let kind = descriptor.processingKind, let status = descriptor.processingStatus else { return nil }
+        guard let key = event.correlationID else { return .missingCorrelation }
+        if status == .active || status == .pending {
+            guard session.processingActivities[key] != nil || session.processingActivities.count < limits.maximumTrackedOperations else {
+                return .operationCapacity
+            }
+            // Repeated item evidence is idempotent and cannot restart its phase.
+            if session.processingActivities[key] == nil {
+                session.processingActivities[key] = AgentProcessingActivity(kind: kind, startedAt: event.effectiveTimestamp)
+            }
+        } else {
+            session.processingActivities.removeValue(forKey: key)
+            if kind == .planning {
+                session.isPlanning = session.processingActivities.values.contains { $0.kind == .planning }
+            }
+        }
+        return nil
     }
 
     private static func mergeSessionMetadata(
@@ -917,7 +950,8 @@ enum AgentEventReducer {
             name: event.name.map { AgentPrivacyProjection.toolName($0) },
             category: AgentPrivacyProjection.summary(event.category),
             summary: AgentPrivacyProjection.summary(event.summary),
-            success: event.success
+            success: event.success,
+            processingKind: event.processingKind
         )
     }
 
@@ -925,7 +959,8 @@ enum AgentEventReducer {
         AgentCommandEvent(
             executable: event.executable.map { AgentPrivacyProjection.commandSummary(executable: $0) },
             success: event.success,
-            exitCode: event.exitCode
+            exitCode: event.exitCode,
+            processingKind: event.processingKind
         )
     }
 
@@ -967,6 +1002,7 @@ enum AgentEventReducer {
             session.approvals[key]?.resolvedAt = date
         }
         session.isThinking = false
+        session.processingActivities.removeAll(keepingCapacity: false)
         session.isPlanning = false
         session.isWorking = false
         session.isPlanReady = false

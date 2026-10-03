@@ -277,54 +277,39 @@ enum AgentOrbStateMapper {
         case .connecting, .checkingAttachment, .stopping: .connecting
         case .submitting: .composing
         case .working: state(for: session)
-        case .observed, .ready, .failed: .breathing
+        case .observed, .ready: state(for: session)
+        case .failed: .breathing
         }
     }
 
     static func state(for state: AgentState) -> AgentOrbVisualState {
         switch state {
-        case .idle, .completed, .waitingForApproval, .waitingForUser: .breathing
+        case .idle, .completed, .waitingForApproval, .waitingForUser, .failed, .interrupted: .breathing
         case .thinking: .solving
-        case .planning: .weaving
-        case .working: .working
-        case .runningTool: .shaping
-        case .runningCommand: .working
+        case .planning: .shaping
+        case .working, .runningTool, .runningCommand: .working
         case .planReady: .composing
-        case .failed, .interrupted: .breathing
+        }
+    }
+
+    static func state(for kind: AgentProcessingKind) -> AgentOrbVisualState {
+        switch kind {
+        case .reasoning: .solving
+        case .planning: .shaping
+        case .searching: .searching
+        case .executing: .working
+        case .connecting: .connecting
+        case .listening: .listening
+        case .composing: .composing
+        case .synthesizing: .weaving
+        case .background: .breathing
         }
     }
 
     static func state(for session: AgentSession) -> AgentOrbVisualState {
-        if AgentVisualMotion.animates(session.state), let hint = activityHint(for: session) {
-            switch hint {
-            case .searching: return .searching
-            case .connecting: return .connecting
-            case .composing: return .composing
-            }
-        }
-        switch session.state {
-        case .idle, .completed, .waitingForApproval, .waitingForUser:
-            return .breathing
-        case .thinking:
-            return activityHint(for: session) == .searching ? .searching : .solving
-        case .planning:
-            return .weaving
-        case .working:
-            switch activityHint(for: session) {
-            case .searching: return .searching
-            case .connecting: return .connecting
-            case .composing: return .composing
-            case .none: return .working
-            }
-        case .runningTool:
-            return .shaping
-        case .runningCommand:
-            return .working
-        case .planReady:
-            return .composing
-        case .failed, .interrupted:
-            return .breathing
-        }
+        guard AgentVisualMotion.animates(session.state) else { return state(for: session.state) }
+        if let kind = session.currentProcessingKind { return state(for: kind) }
+        return state(for: session.state)
     }
 
     static func state(for voicePhase: VoiceTranscriptionPhase) -> AgentOrbVisualState {
@@ -334,18 +319,6 @@ enum AgentOrbStateMapper {
         case .transcribing: .composing
         case .idle, .completed, .failed: .breathing
         }
-    }
-
-    private enum ActivityHint { case searching, connecting, composing }
-
-    private static func activityHint(for session: AgentSession) -> ActivityHint? {
-        guard let activity = session.recentActivity.last,
-              activity.status == .active || activity.status == .pending else { return nil }
-        let text = "\(activity.title) \(activity.summary ?? "")".lowercased()
-        if text.contains("search") || text.contains("brows") || text.contains("lookup") { return .searching }
-        if text.contains("connect") || text.contains("resum") || text.contains("loading") { return .connecting }
-        if text.contains("write") || text.contains("compose") || text.contains("draft") || text.contains("generat") { return .composing }
-        return nil
     }
 }
 

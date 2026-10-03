@@ -491,7 +491,7 @@ struct AgentEmbeddedConsoleView: View {
         case .checkingAttachment: "Checking official thread…"
         case .ready: "Connected · ready for prompt"
         case .submitting: "Sending prompt…"
-        case .working: "Agent is working"
+        case .working: AgentSessionPresentation.displayedStateLabel(for: session, at: Date())
         case .stopping: "Stopping current turn…"
         case .failed(let message): message
         }

@@ -746,3 +746,71 @@ Read-only native `heap -s` and `vmmap -summary` were taken for PID 31661 after w
 Remaining gates: human Keychain decision, final packaged working/motion/pointer/Reduce Motion acceptance and longer representative memory/GPU profiling; complete fabric/accessory shader/mesh parity remains explicitly approximate. Previous controlled-speech/development microphone and Claude/concurrent-provider release gates remain external limitations and are not reclassified by this visual phase. Keep PR #24 Draft/open/unmerged. Recommended next phase: **human-assisted native fidelity and release-gate acceptance**, with an uninterrupted pointer window and allocation/GPU follow-up before promotion. No next product phase was started.
 
 Local evidence: `/tmp/dynamicisland-phase3` (focused/full/native/Codex/parity/package/signature logs, native grids/GIF, real workload memory.json, heap/vmmap and rejected motion video). No screenshots, recordings, build products, Graphify caches or credentials are included in this commit.
+
+## Phase 4 — native fidelity release gate and Codex semantic routing
+
+Baseline `883f2b6971a7d842435d159b4b765a4b3b95ba57`, fetched equal to the feature remote; PR #24 verified Draft/open/unmerged. Environment: arm64 hardware-notch Mac, macOS 15.7.4 (24G517), October 3, 2026, SwiftPM debug tests and the existing ad-hoc Release policy. Phase 5 camera ownership, exact provider acknowledgement, transcript publication isolation and bounded/private activity recording remain intact. Unrelated files and `summary.md` were preserved outside this phase's staging.
+
+### Demonstrated defect and smallest fix
+
+The mapper inferred search/connection/composition from activity prose, and the Codex adapter discarded reasoning/item-level composition events. This violated real semantic routing. Optional provider-neutral processing metadata now travels through the existing ingestion/reducer/store. Nested item correlation, typed commandActions, reasoning, plans, composition, background work and scoped connections select the orb while existing blocking/command/tool precedence remains authoritative. Cleared/empty plans remove planning evidence instead of leaving shaping active. Terminal paths clear processing; previews never mutate sessions. No approval delivery semantics, transport identity, renderer implementation, camera policy or privacy collection scope changed.
+
+The installed Codex 0.160.0 JSON schema was generated and inspected alongside the official app-server documentation. Global MCP startup lacks a session owner and is ignored. Synthesizing/weaving is supported only when typed evidence exists; no timed demonstration or text guessing was added. The full semantic matrix and limitations are in [libraries-native-parity.md](libraries-native-parity.md).
+
+### Live provider and resource acceptance
+
+**PASS — live:** real exact-session Codex semantic test, 38.52 seconds. Observed provider sequence included scoped startup → connecting, reasoning start → solving, structured repository search → searching, file read → listening, Python command → working, agent message → composing, completed turn → no active processing animation. The recorded run returned from commands to still-active composition; it did not emit planning/shaping or a second post-tool reasoning item. These states are not falsely reported as live. Raw event → reducer fixtures separately prove return to underlying reasoning when provider evidence remains active. Evidence: `live-semantic-sequence.json`, filtered by the exact provider/native-session/generation; the earlier unfiltered observer run is excluded from exact-session acceptance.
+
+**PASS — live:** selected real Codex creation/command/interruption/exact-session resume and deny/allow tests, **2/0/0**, 120.43 seconds. Stop produced interrupted/ready and a static terminal orb policy; the exact session resumed and completed. Deny/allow uses existing exact provider acknowledgement. This does not replace packaged approval/animation coexistence inspection.
+
+**PASS — live:** development screen-capture lifecycle, **5/0/0**, including area crop, system audio, pause/resume, static-window duration and teardown. Development camera ownership, **3/0/0**, including explicit close/remount remaining stopped and independent owner/reopen. These are real devices/resources exercised by opt-in XCTest, not simulated captures or final packaged camera UI acceptance.
+
+**PASS — live, partial:** rebuilt app PID 72780 launched from `dist`; Tools → Voice → Record initially reached “Waiting for permission” and macOS Allow/Don't Allow. Human action was requested. Later inspection showed compact “Listening / LIVE”; Stop reached Transcribing, then “No speech was recognized”, with Record available again and no stale LIVE state. No controlled test utterance was supplied, so this is real recording/transcription/no-speech recovery, not successful human-speech acceptance or measured speech-envelope response.
+
+**PASS — live, partial:** a subsequent recording attempt after ad-hoc package replacement displayed microphone consent again. A later snapshot showed real Listening/LIVE; Stop again returned to “No speech was recognized” with Record usable. Two real recording/no-speech recovery paths were therefore observed, with human consent decisions left to the user. Cancellation was not accepted: the macro did not produce a verified Cancel action and is excluded as cancellation evidence.
+
+**BLOCKED — external acceptance dependency:** controlled human speech and final-package microphone identity acceptance remain pending. These recordings ran in the process launched before the last cleared-plan packaging step and do not certify that later identity's consent. No TCC, Keychain, password or signing policy changed. Development mic opt-in skipped because authorization was undetermined (raw value 0). The earlier Keychain service `com.local.dynamicisland.agent-bridge` did not display a dialog in this launch; that is not evidence its consent-dependent path is closed.
+
+**BLOCKED — external acceptance dependency: Claude quota.** One minimal real Haiku invocation returned the weekly limit, resetting October 4 at 21:00 Asia/Nicosia. No retries or credential changes. Concurrent real Codex + Claude acceptance remains blocked. Provider/generation isolation is independently regression-tested and is not reported as live concurrency.
+
+### Packaged motion and accessibility
+
+**PASS — live:** rebuilt package launch, compact real Codex presence, expanded Tools/Voice controls and permission-state text. The controlled navigation report contains **four** successful expand → Agents → Island → Tools → collapse cycles, then a fifth aborted with `missingControl("Show Island page")` during desktop interference. The aborted 38.78-second run is not a completed 60-cycle soak or an uninterrupted motion pass.
+
+**NOT VERIFIED:** final packaged orb/avatar continuous animation and semantic visual transitions, toolbar identity continuity, pointer/click, exact approval UI coexistence and GPU frame pacing. Concurrent desktop input and then the real permission dialog prevented a clean uninterrupted acceptance window. No consent-obscured clip is accepted as motion proof. The real Accessibility Display page was opened and inspected; an ON attempt did not change the setting (NSWorkspace remained false, defaults readback 0). Reduce Motion stayed OFF; OFF → ON → OFF was not completed. No blind repeated toggling or privacy changes followed. Existing static policy, phase/lifecycle, visibility, reduced-motion and interaction geometry tests remain passing fixture evidence.
+
+Applied skills: transitions-dev and transitions-polish (native stable hit geometry, local state handoff, terminal cleanup and Reduce Motion; no timer-driven recipe demo), performance-engineer (measure before optimize), accessibility-tester (text/state and static policy), qa-expert (strict evidence separation) and Graphify (scoped queries and AST update). No subjective visual retiming or renderer rewrite was justified. Existing fabric/light, mesh/occlusion, whirl and rasterisation differences remain documented.
+
+### Whole-app memory and frame-pacing evidence
+
+**NOT VERIFIED — whole-app memory closure.** PID 72780 measurements:
+
+| Checkpoint | RSS KiB | Footprint | Qualification |
+|---|---:|---:|---|
+| initial | 85,648 | 43.02 MiB | Startup, before settled ingestion/render caches |
+| 21.33-second idle baseline | 113,584 | 62.33 MiB | Before controlled section cycles |
+| process age 13:28 | 142,528 | not sampled simultaneously | After live provider tests, snapshots and pending microphone consent |
+| 15-minute heap census | not sampled simultaneously | 73.5 MiB; peak 79.4 MiB | Mixed workload, not post-teardown |
+
+Initial/post native heap allocations: **162,521 / 171,475 nodes**, **28,374,640 / 29,535,888 bytes**. AvatarSim/Player census remained **4/4**; AvatarRenderContext decreased **2 → 1**, RenderState **2 → 1**, visibility observer bag **1 → 0**. Post vmmap footprint was 72.6 MiB (79.4 MiB peak), malloc allocated 26.7 MiB and dirty fragmentation 19.7 MiB (43%), versus initial 27.5 MiB allocated / 9.66 MiB fragmentation (27%). These differently timed censuses support a material allocator-retention contribution, not a complete explanation for RSS. This is stronger evidence against one retained renderer per appearance, not proof every allocation owner is bounded. Whole-process RSS increased during real ingestion, warm-up, UI work and consent; the run has no controlled repeated-batch plateau or final app teardown. RSS alone does not identify a leak. No arbitrary cache flushing or speculative ownership change was made.
+
+**PASS — automated/fixture, separately:** 110-cycle bounded soak, 32 sessions and 80 transcript entries, 154 seconds; footprint at cycles 10/30/50/70/90/110: **47.47 / 48.78 / 49.27 / 49.25 / 49.25 / 50.14 MiB**, after teardown **45.78 MiB**; controller released. This is not whole-app closure.
+
+**PASS — automated/fixture:** 2,160 geometry frames / 338,602 dots, about **0.46 ms mean / 1.51 ms p99**. Native cache bounds and resource teardown remain covered. **NOT VERIFIED — GPU/frame pacing:** native Animation Hitches capture/export tooling ran for 15 seconds against the earlier process, but exported app commit/hitch tables contained no useful rows; global display-surface rows do not establish this app's frame rate. No GPU/hitch PASS is inferred from an empty trace or engine timings.
+
+**PASS — automated/fixture:** combined native `DYNAMIC_ISLAND_AGENT_PERF=1` measured 200 streaming deltas → 47 transcript publications, six dashboard/chrome evaluations, **595.3 ms main-thread CPU / 1,790.9 ms wall**. A justified isolated follow-up, without snapshot-generation load, measured **510.3 ms CPU / 1,777.1 ms wall**, 45 transcript publications and six chrome evaluations. Typing 38 keys caused three console evaluations, not a transcript-wide update per key (148.8 ms CPU). Publication isolation remains intact; the isolated run is about **9.9×** faster than the old 5,070 ms CPU baseline. Neither timing run is GPU/frame-pacing proof.
+
+### Final regression and release evidence
+
+- Focused renderer/semantic/layout/motion/send: **86 passed / 0 failed / 1 skipped**.
+- Full suite: **1,595 passed / 0 failed / 37 skipped**, 1,632 total. Baseline 1,586/0/36; nine deterministic semantic/isolation tests added and one honest opt-in live semantic skip. Existing skips/failures were not reclassified.
+- Native acceptance: **7/0/1**; development mic undetermined.
+- Parity/integration: **3/0/0**; deterministic review artifacts only.
+- Selected real Codex: **2/0/0**; separate semantic real-provider opt-in **1/0/0**.
+- Real screen capture: **5/0/0**; real camera ownership: **3/0/0**.
+- Bounded fixture soak: **1/0/0**.
+- Isolated transcript performance harness: **1/0/0**.
+- Release build passed (100.48 seconds). The final script's bundle signing initially failed on generated Finder metadata. Clearing only generated package metadata and reapplying the same ad-hoc bundle signature completed packaging; deep strict verification passed for app plus three helpers. The final signed package launched as PID **99608**, with startup/compact shell inspected. No application/security data was reset. Earlier recording/control evidence is separated from final-package consent and uninterrupted visual acceptance as described above.
+- Graphify AST update completed; graph/cache output remains unstaged. Validation runner accepts a phase-specific evidence directory and exposes semantic/performance/capture/camera modes.
+
+Local evidence: `/tmp/dynamicisland-phase4` contains tests, exact-session semantic sequence, parity/native grids, performance/soak JSON, aborted navigation memory.json, heap/vmmap and diagnostic trace exports. Generated evidence, recordings, caches and credentials are excluded from the commit. Remaining release gates: human microphone/Keychain path, controlled speech, quiet packaged animation/pointer/Reduce Motion/approval inspection, real concurrent Claude after quota reset, and controlled whole-app allocation/GPU follow-up. Recommended next phase: **finish these human-assisted acceptance gates**, not another product feature. PR #24 remains Draft/open/unmerged; release is not promoted.
