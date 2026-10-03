@@ -814,3 +814,53 @@ Initial/post native heap allocations: **162,521 / 171,475 nodes**, **28,374,640 
 - Graphify AST update completed; graph/cache output remains unstaged. Validation runner accepts a phase-specific evidence directory and exposes semantic/performance/capture/camera modes.
 
 Local evidence: `/tmp/dynamicisland-phase4` contains tests, exact-session semantic sequence, parity/native grids, performance/soak JSON, aborted navigation memory.json, heap/vmmap and diagnostic trace exports. Generated evidence, recordings, caches and credentials are excluded from the commit. Remaining release gates: human microphone/Keychain path, controlled speech, quiet packaged animation/pointer/Reduce Motion/approval inspection, real concurrent Claude after quota reset, and controlled whole-app allocation/GPU follow-up. Recommended next phase: **finish these human-assisted acceptance gates**, not another product feature. PR #24 remains Draft/open/unmerged; release is not promoted.
+
+
+## Agents workspace reconstruction — BorderBeam / Feed / Terminal
+
+Date: October 3, 2026. Supplied baseline: `883f2b6971a7d842435d159b4b765a4b3b95ba57`. The branch legitimately advanced to `32d7430369b4be6509dc50a561a7bf363023e277` before the workspace continuation because the event-driven Codex ThinkingOrb routing was committed first; no valid work was reset. PR #24 remains a Draft and is not to be merged during this acceptance phase.
+
+### Workspace implementation
+
+- Main selected-agent chat uses the semantic ThinkingOrb and the native Libraries.dev BorderBeam. Beam activity follows normalized session/provider state, not transcript text, and does not falsely imply execution while approval/user/terminal blocking states are authoritative.
+- Model and reasoning-effort controls moved inside the chat surface. Codex reasoning effort is read from the provider's advertised model catalog and submitted as a validated exact-generation next-turn override; unsupported providers/models do not invent choices.
+- The expanded right workspace retains **Feed** and **Terminal** pages in one surface. It preserves the existing terminal process controller and scrollback/focus identity rather than creating duplicate terminals.
+- The Feed aggregates curated operational traffic from both providers, uses deterministic BotAvatar identity, bounds in-memory history, excludes prompts/transcripts/paths/secrets, and hosts managed approval/denial UI. Provider/session/generation/request ownership remains exact.
+- Usage is six compact indicators in three semantic pairs: Codex + Claude 5-hour remaining; Codex + Claude weekly remaining; Codex + Claude selected-session context used.
+- The right workspace has its own registered scroll region. Vertical Feed/Terminal scrolling is routed to content instead of the global collapse gesture; horizontal routing remains island/workspace owned according to the existing policy.
+- Final visual audit corrected collapsed active-agent presence to explicit ThinkingOrb rendering. BotAvatar is now confined to operational Feed identity for this workspace role split.
+
+### Motion and accessibility
+
+Applied installed `transitions-dev` and `transitions-polish` guidance: retained surfaces, stable hit geometry, 250 ms smooth-out Feed/Terminal handoff, 300 ms smooth-out width allocation, and local 8-point/opacity Feed insertion. No additional persistent island shell state was introduced.
+
+System Reduce Motion readback was `0` (OFF) and was left unchanged. **NOT VERIFIED:** actual OFF → ON → OFF acceptance for this new workspace; changing the user's system accessibility preference was intentionally not automated. Fixture policy tests confirm that Reduce Motion removes spatial workspace transitions and continuous decorative motion while preserving state/function.
+
+### Test and performance evidence
+
+- Full final regression: **1,665 passed / 0 failed / 38 skipped**. Supplied pre-workspace baseline: 1,586/0/36. Added coverage remains explicit; no failing test was converted to a skip.
+- Provider/controller/client targeted suite: **94/0/0**.
+- Workspace presentation: **7/0/0**.
+- Feed ownership/approval/history: **11/0/0**.
+- BorderBeam native/GPU: **12/0/0**.
+- Semantic/visual/workspace/Beam selected pass: **52 passed / 0 failed / 1 skipped** (the skip is the opt-in real Codex semantic task).
+- Expanded scroll/gesture + right workspace + transcript follow: **42/0/0**.
+- Workspace 23-scenario deterministic review export: **1/0/0**. Offscreen snapshots produced expected `CAMetalLayer nextDrawable` warnings and are not counted as live Metal presentation evidence.
+- Performance harness: **1 passed / 0 failed / 1 bounded-soak opt-in skip** in the ordinary run. For 200 streamed deltas, only six dashboard/content/controlbar/feed/selected view evaluations occurred; managed controller published twice while transcript coalescing published 73 times. Typing 38 keys caused three console evaluations. The new Feed/Beam/Orb surfaces did not republish provider state per animation frame.
+- Bounded lifecycle soak run separately with opt-in: **1/0/0**, 110 cycles / ~100 s, 32 fixed sessions, 80 transcript entries. Footprint: cycle 10 **43,879,168 B**; 30 **45,058,816 B**; 50 **45,337,408 B**; 70 **45,370,176 B**; 90 **44,419,904 B**; 110 **44,469,056 B**; after teardown **39,914,304 B**. Controller released. Classification remains **PASS — automated/fixture**, not whole-app live memory closure.
+
+### Release/package/signature
+
+Production Release build completed. The first package-signing pass hit the known generated metadata error: `resource fork, Finder information, or similar detritus not allowed`. This was confined to the generated `dist/DynamicIsland.app`. Clearing only generated bundle xattrs and reapplying the same existing ad-hoc signatures recovered packaging. Deep strict verification then passed for the app and all three helper executables. Existing build warnings (deprecated `NSUnarchiver` and two pre-existing Sendable warnings) remain warnings, not new build failures.
+
+The currently running `dist` process was started before the rebuilt package, so it is explicitly excluded as final-package launch evidence. No existing app process was killed merely to manufacture a launch result.
+
+### External / human gates
+
+**BLOCKED — external acceptance dependency: Codex quota.** The active Codex CLI reported the user's usage limit and a later retry time during this phase. No repeated live-provider task was fired merely to consume quota.
+
+**BLOCKED — external acceptance dependency: Claude/concurrent providers.** The earlier Claude weekly quota gate has not been reclassified by fixture coverage.
+
+**NOT VERIFIED:** final rebuilt-package uninterrupted Beam/orb animation, pointer/click interaction, Feed approval coexistence under real provider traffic, actual Reduce Motion OFF → ON → OFF, and unrestricted whole-app/GPU frame-pacing closure. Human consent/Keychain/microphone gates from the prior acceptance record also remain separate and are not converted into PASS here.
+
+Generated snapshots, performance logs, soak reports, package logs, Graphify output, recordings, `.agents`, `.claude` and user research material remain outside this phase's intended commit. See `docs/agent-workspace-architecture.md`, `docs/border-beam-native-source.md` and `docs/libraries-native-parity.md`.

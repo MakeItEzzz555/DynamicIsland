@@ -51,6 +51,10 @@ final class IslandLayoutStore: ObservableObject {
     @Published private(set) var displayMetrics: ResolvedIslandMetrics = .fallback
     @Published private(set) var isExpandedScrollGestureSuppressed = false
     @Published private(set) var expandedContentScrollRegion: CGRect = .zero
+    /// A second viewport inside the same expanded shell (Agents Feed/Terminal).
+    /// Separate from the transcript: neither viewport may steal the other's
+    /// trackpad sequence or turn vertical history scrolling into shell collapse.
+    @Published private(set) var agentWorkspaceScrollRegion: CGRect = .zero
     /// Owners of an in-island transient interaction (Agents launcher,
     /// Calendar date popover). The island stays expanded while any owner is
     /// active; each owner clears only its own claim, so two surfaces can
@@ -157,6 +161,15 @@ final class IslandLayoutStore: ObservableObject {
             debugPrint("[GestureDebug] expanded content scroll region", next)
         }
         #endif
+    }
+
+    func setAgentWorkspaceScrollRegion(_ region: CGRect) {
+        let next = region.isNull || region.isInfinite || region.width <= 0 || region.height <= 0 ? .zero : region.integral
+        if agentWorkspaceScrollRegion != next { agentWorkspaceScrollRegion = next }
+    }
+
+    func containsExpandedScrollPoint(_ point: CGPoint) -> Bool {
+        [expandedContentScrollRegion, agentWorkspaceScrollRegion].contains { !$0.isEmpty && $0.contains(point) }
     }
 
     func update(

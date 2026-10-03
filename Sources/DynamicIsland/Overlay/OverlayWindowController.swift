@@ -1998,7 +1998,9 @@ final class OverlayWindowController {
            settings.gestureInputSource == .trackpad,
            event.hasPreciseScrollingDeltas {
             let region = screenRect(for: layoutStore.expandedContentScrollRegion)
-            let startsInsideContent = !region.isEmpty && region.contains(NSEvent.mouseLocation)
+            let agentRegion = screenRect(for: layoutStore.agentWorkspaceScrollRegion)
+            let startsInsideContent = (!region.isEmpty && region.contains(NSEvent.mouseLocation)) ||
+                (!agentRegion.isEmpty && agentRegion.contains(NSEvent.mouseLocation))
             let verticalIntent = ExpandedScrollIntent.isVertical(
                 deltaX: event.scrollingDeltaX,
                 deltaY: event.scrollingDeltaY,

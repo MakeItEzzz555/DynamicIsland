@@ -5,6 +5,92 @@ import XCTest
 
 final class AgentManagedSessionControllerTests: XCTestCase {
     @MainActor
+    func testReasoningOptionsFollowExactProviderAndAdvertisedPendingModel() async throws {
+        let codex = PersistentSnapshotFakeProvider(
+            sessions: [Self.descriptor(id: "reasoning", state: .idle)], usage: AgentUsage(),
+            capabilities: [.startSession, .resumeSession, .submitPrompt, .selectModel, .selectReasoningEffort]
+        )
+        let claude = PersistentSnapshotFakeProvider(
+            provider: .claude, sessions: [Self.descriptor(id: "reasoning", state: .idle, provider: .claude)],
+            usage: AgentUsage(), capabilities: [.resumeSession, .submitPrompt, .selectModel]
+        )
+        await codex.setModels([
+            Self.reasoningModel("model-a", efforts: ["medium", "ultra"], defaultEffort: "medium"),
+            Self.reasoningModel("model-b", efforts: ["low"], defaultEffort: "low")
+        ])
+        await claude.setModels([Self.reasoningModel("model-a", efforts: ["medium"], defaultEffort: "medium")])
+        let store = AgentEventStore()
+        let controller = AgentManagedSessionController(
+            providers: [codex, claude], coordinator: AgentIngestionCoordinator(eventStore: store),
+            eventStore: store, approvals: AgentApprovalController()
+        )
+        await controller.refreshPersistentSnapshot()
+        let session = try XCTUnwrap(store.sessions.first { $0.id.sessionID.provider == .codex })
+        let other = try XCTUnwrap(store.sessions.first { $0.id.sessionID.provider == .claude })
+        // Unknown observed model must not borrow the default model's options.
+        XCTAssertTrue(controller.availableReasoningEfforts(for: session).isEmpty)
+        XCTAssertTrue(controller.selectModel("model-a", for: session))
+        XCTAssertEqual(controller.availableReasoningEfforts(for: session).map(\.id), ["medium", "ultra"])
+        XCTAssertEqual(controller.selectedReasoningEffort(for: session), "medium")
+        XCTAssertTrue(controller.selectReasoningEffort("ultra", for: session))
+        XCTAssertFalse(controller.selectReasoningEffort("invented", for: session))
+        XCTAssertEqual(controller.selectedReasoningEffort(for: session), "ultra")
+        XCTAssertTrue(controller.selectReasoningEffort(nil, for: session))
+        XCTAssertEqual(controller.selectedReasoningEffort(for: session), "medium")
+        XCTAssertTrue(controller.selectReasoningEffort("ultra", for: session))
+        XCTAssertTrue(controller.availableReasoningEfforts(for: other).isEmpty)
+        XCTAssertFalse(controller.selectReasoningEffort("medium", for: other))
+        XCTAssertTrue(controller.selectModel("model-b", for: session))
+        XCTAssertEqual(controller.availableReasoningEfforts(for: session).map(\.id), ["low"])
+        XCTAssertEqual(controller.selectedReasoningEffort(for: session), "low")
+        controller.stop()
+    }
+
+    @MainActor
+    func testReasoningOverrideUsesExactGenerationAndFreezesDuringTurn() async throws {
+        let provider = PersistentSnapshotFakeProvider(
+            sessions: [], usage: AgentUsage(),
+            capabilities: [.startSession, .resumeSession, .submitPrompt, .selectModel, .selectReasoningEffort]
+        )
+        await provider.setModels([Self.reasoningModel("model-a", efforts: ["medium", "ultra"], defaultEffort: "medium")])
+        let store = AgentEventStore()
+        let controller = AgentManagedSessionController(
+            provider: provider, coordinator: AgentIngestionCoordinator(eventStore: store),
+            eventStore: store, approvals: AgentApprovalController()
+        )
+        await controller.refreshPersistentSnapshot()
+        XCTAssertTrue(controller.selectNewSessionModel("model-a", for: .codex))
+        guard case .success(let started) = await controller.startManagedSession(provider: .codex, cwd: "/tmp") else {
+            return XCTFail("Expected managed session")
+        }
+        let session = try XCTUnwrap(controller.session(for: started.instance))
+        XCTAssertTrue(controller.selectReasoningEffort("ultra", for: session))
+        let foreignGeneration = AgentSession(
+            id: .init(sessionID: session.id.sessionID, generation: .init(rawValue: session.id.generation.rawValue + 1)),
+            source: session.source, state: session.state, project: session.project,
+            capabilities: session.capabilities, usage: session.usage, tools: [:], commands: [:],
+            approvals: [:], subagents: [:], recentActivity: [], startedAt: session.startedAt,
+            endedAt: nil, lastUpdatedAt: session.lastUpdatedAt
+        )
+        XCTAssertEqual(controller.selectedReasoningEffort(for: foreignGeneration), "medium")
+        XCTAssertFalse(controller.selectReasoningEffort("ultra", for: foreignGeneration))
+        let rejected = await controller.submit("wrong generation", for: foreignGeneration)
+        XCTAssertFalse(rejected)
+        let accepted = await controller.submit("hello", for: session)
+        XCTAssertTrue(accepted)
+        let efforts = await provider.submittedReasoningEfforts()
+        XCTAssertEqual(efforts, ["ultra"])
+        XCTAssertFalse(controller.canSelectReasoningEffort(for: session))
+        XCTAssertFalse(controller.selectReasoningEffort("medium", for: session))
+        controller.stop()
+    }
+
+    private static func reasoningModel(_ model: String, efforts: [String], defaultEffort: String) -> AgentManagedModelDescriptor {
+        .init(id: model, model: model, displayName: model, description: nil, isDefault: true,
+              supportedReasoningEfforts: efforts.map { .init(id: $0, description: nil) }, defaultReasoningEffort: defaultEffort)
+    }
+
+    @MainActor
     func testCrossProviderIdentitySelectionAndUsageRemainIsolated() async throws {
         let codexUsage = AgentUsage(scopedSamples: [
             AgentUsageKey(metric: .quotaUsed, scope: "5h"): AgentUsageSample(
@@ -1841,6 +1927,7 @@ private actor PersistentSnapshotFakeProvider: AgentInteractiveProvider {
     private var usageFailure = false
     private var transcript: [AgentManagedTranscriptEntry] = []
     private var submitted: [String] = []
+    private var submittedEfforts: [String?] = []
     private var submitFailure = false
     private var startFailure = false
     private var startedModels: [String?] = []
@@ -2005,6 +2092,14 @@ private actor PersistentSnapshotFakeProvider: AgentInteractiveProvider {
     func setSubmitFailure(_ value: Bool) {
         submitFailure = value
     }
+
+    func submit(prompt: String, nativeSessionID: String, model: String?, reasoningEffort: String?) async throws -> AgentManagedTurnDescriptor {
+        let turn = try await submit(prompt: prompt, nativeSessionID: nativeSessionID, model: model)
+        submittedEfforts.append(reasoningEffort)
+        return turn
+    }
+
+    func submittedReasoningEfforts() -> [String?] { submittedEfforts }
 
     func submittedPrompts() -> [String] {
         submitted

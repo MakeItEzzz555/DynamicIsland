@@ -196,6 +196,9 @@ struct AgentActivityDashboardView: View {
     @ObservedObject var managedControl: AgentManagedSessionController
     @ObservedObject var layoutStore: IslandLayoutStore
     var activityRecorder: AgentActivityRecorder? = nil
+    var workspaceFeed: AgentWorkspaceFeedStore? = nil
+    var workspacePresentation: AgentWorkspacePresentation? = nil
+    var terminal: TerminalSessionController? = nil
     let availableHeight: CGFloat
     let contentVisible: Bool
     let isContentRemoving: Bool
@@ -221,7 +224,8 @@ struct AgentActivityDashboardView: View {
             reduceMotion: reduceMotion,
             transcriptPresentationReady: presentation.transcriptReady,
             presentationGeneration: presentation.generation,
-            transcriptLoadDelay: reduceMotion ? 0 : 0.04
+            transcriptLoadDelay: reduceMotion ? 0 : 0.04,
+            workspaceFeed: workspaceFeed, workspacePresentation: workspacePresentation, terminal: terminal
         )
         .environment(\.agentProjectLocations, projects.index)
         .environment(\.agentProjectSelection, AgentProjectSelectionBinding(
@@ -304,6 +308,13 @@ struct AgentDashboardContentView: View {
     let presentationGeneration: Int
     let transcriptLoadDelay: TimeInterval
     private let initialSelectedSessionID: AgentSessionInstanceID?
+    private let suppliedFeed: AgentWorkspaceFeedStore?
+    private let suppliedPresentation: AgentWorkspacePresentation?
+    private let terminal: TerminalSessionController?
+    @StateObject private var localFeed = AgentWorkspaceFeedStore()
+    @StateObject private var localPresentation = AgentWorkspacePresentation()
+    private var feed: AgentWorkspaceFeedStore { suppliedFeed ?? localFeed }
+    private var workspacePresentation: AgentWorkspacePresentation { suppliedPresentation ?? localPresentation }
     @StateObject private var launchFlow = AgentNewSessionFlow()
     @State private var transcriptLoadGate = AgentTranscriptLoadGate()
     @Environment(\.agentProjectLocations) private var projectLocations
@@ -325,7 +336,10 @@ struct AgentDashboardContentView: View {
         reduceMotion: Bool = false,
         transcriptPresentationReady: Bool = true,
         presentationGeneration: Int = 0,
-        transcriptLoadDelay: TimeInterval = 0.4
+        transcriptLoadDelay: TimeInterval = 0.4,
+        workspaceFeed: AgentWorkspaceFeedStore? = nil,
+        workspacePresentation: AgentWorkspacePresentation? = nil,
+        terminal: TerminalSessionController? = nil
     ) {
         self.sessions = sessions
         self.accountUsage = accountUsage
@@ -343,6 +357,9 @@ struct AgentDashboardContentView: View {
         self.transcriptPresentationReady = transcriptPresentationReady
         self.presentationGeneration = presentationGeneration
         self.transcriptLoadDelay = transcriptLoadDelay
+        self.suppliedFeed = workspaceFeed
+        self.suppliedPresentation = workspacePresentation
+        self.terminal = terminal
     }
 
     var body: some View {
@@ -367,36 +384,25 @@ struct AgentDashboardContentView: View {
             }
             let effectiveProjectKey = workspace.effectiveProjectKey
             let controlSessions = workspace.controlSessions
-            let layout = AgentDashboardLayoutProjection.make(width: proxy.size.width)
             let verticalLayout = AgentWorkspaceVerticalLayoutProjection.make(
                 availableHeight: proxy.size.height
             )
             let selectedSession = workspace.selectedSession
             let newSessionFolder = projectOptions.first { $0.id == effectiveProjectKey }?.path
                 ?? selectedSession?.project.workingDirectory
-            let usageProvider = managedControl.managedProvider
-                ?? selectedSession?.id.sessionID.provider
-                ?? .codex
-            let usageIndicators = showsUsage
-                ? Array(AgentUsageIndicatorPresentation.make(
-                    provider: usageProvider,
-                    accountUsage: accountUsage,
-                    selectedSession: selectedSession
-                ).prefix(layout.maximumGaugeCount + 1))
-                : []
-            let usageInHeader = !usageIndicators.isEmpty &&
-                proxy.size.width >= AgentWorkspaceHeaderLayout.inlineUsageMinimumWidth
-            let usageMetrics = AgentUsageIndicatorMetrics.make(width: proxy.size.width)
-            VStack(alignment: .leading, spacing: 7) {
-                if showsUsage, !usageIndicators.isEmpty, !usageInHeader {
+            let selectedByProvider = Dictionary(uniqueKeysWithValues: [AgentProvider.codex, .claude].compactMap { provider -> (AgentProvider, AgentSession)? in
+                guard let id = managedControl.selectedSessionIDs[provider],
+                      let session = sessions.first(where: { $0.id == id }) else { return nil }
+                return (provider, session)
+            })
+            let usage = AgentWorkspaceUsageProjection.make(
+                accountUsage: managedControl.accountUsageByProvider,
+                selectedSessions: selectedByProvider
+            )
+            VStack(alignment: .leading, spacing: 6) {
+                if showsUsage {
                     stagedAgentContent(index: 1) {
-                        AgentUsageIndicatorRow(
-                            indicators: usageIndicators,
-                            spacing: layout.isNarrow ? 10 : 18,
-                            metrics: usageMetrics
-                        )
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.vertical, 3)
+                        AgentWorkspaceUsageStrip(groups: usage)
                     }
                 }
 
@@ -410,7 +416,7 @@ struct AgentDashboardContentView: View {
                     onSelectProject: { key in
                         selectProject(key, among: providerSessions)
                     },
-                    trailingUsage: usageInHeader ? usageIndicators : [],
+                    trailingUsage: [],
                     activityRecorder: activityRecorder,
                     onSetRecording: { enabled in settings?.agentActivityRecordingEnabled = enabled },
                     launcherOpen: launchFlow.isPresented,
@@ -500,43 +506,39 @@ struct AgentDashboardContentView: View {
             .zIndex(20)
             .frame(maxHeight: .infinity, alignment: .top)
             .layoutPriority(2)
-        } else if controlSessions.isEmpty {
-            stagedAgentContent(index: 3) {
-                AgentEmptyConsoleState(managedControl: managedControl) {
-                    openNewSession(folder: newSessionFolder)
-                }
-            }
         } else {
-            if let pending = approvalControl.nextPendingRequest(),
-               pending.key.session != selectedSession?.id,
-               let approvalSession = sessions.first(where: { $0.id == pending.key.session }) {
-                stagedAgentContent(index: 3) {
-                    AgentConsoleApprovalRow(
-                        request: pending,
-                        session: approvalSession,
-                        approvalControl: approvalControl
+            stagedAgentContent(index: 3) {
+                AgentWorkspaceSplitView(presentation: workspacePresentation, reduceMotion: reduceMotion) {
+                    if let selectedSession {
+                        AgentChatSurface(
+                            session: selectedSession, controller: managedControl,
+                            presentation: workspacePresentation, isVisible: contentVisible,
+                            onNewSession: { openNewSession(folder: newSessionFolder) }
+                        ) {
+                            AgentSelectedSessionControlView(
+                                session: selectedSession,
+                                surface: AgentWorkspaceProjection.controlSurface(for: selectedSession, controller: managedControl),
+                                sessions: controlSessions, managedControl: managedControl,
+                                approvalControl: approvalControl,
+                                detailHeight: max(verticalLayout.selectedDetailHeight, 138),
+                                activityLimit: 0, layoutStore: layoutStore,
+                                transcriptReady: transcriptLoadGate.isReady(for: selectedSession.id)
+                            )
+                        }
+                    } else {
+                        AgentEmptyConsoleState(managedControl: managedControl) {
+                            openNewSession(folder: newSessionFolder)
+                        }
+                    }
+                } workspace: { canEmphasize in
+                    AgentRightWorkspace(
+                        presentation: workspacePresentation, feed: feed, approvals: approvalControl,
+                        terminal: terminal, sessions: sessions, selectedSession: selectedSession,
+                        onSelect: managedControl.selectSession, canEmphasize: canEmphasize,
+                        isVisible: contentVisible, layoutStore: layoutStore
                     )
                 }
-            }
-
-            if let selectedSession {
-                stagedAgentContent(index: 4) {
-                    AgentSelectedSessionControlView(
-                        session: selectedSession,
-                        surface: AgentWorkspaceProjection.controlSurface(
-                            for: selectedSession,
-                            controller: managedControl
-                        ),
-                        sessions: controlSessions,
-                        managedControl: managedControl,
-                        approvalControl: approvalControl,
-                        detailHeight: max(verticalLayout.selectedDetailHeight, 138),
-                        activityLimit: max(verticalLayout.selectedDetailActivityLimit, 6),
-                        layoutStore: layoutStore,
-                        transcriptReady: transcriptLoadGate.isReady(for: selectedSession.id)
-                    )
-                    .layoutPriority(2)
-                }
+                .layoutPriority(2)
             }
         }
     }
@@ -730,7 +732,6 @@ private struct AgentCLIControlBar: View {
 
             if let session = selectedSession {
                 HStack(spacing: 4) {
-                    AgentPresenceGlyph(session: session, size: compact ? 18 : 22)
                     Text(selectedSessionLabel(session))
                         .font(.system(size: compact ? 9 : 10.5, weight: .semibold))
                         .lineLimit(1)
@@ -739,7 +740,6 @@ private struct AgentCLIControlBar: View {
                 .layoutPriority(2)
 
                 Spacer(minLength: compact ? 2 : 6)
-                modelControl(for: session, compact: compact)
                 approvalPolicyControl(for: session, compact: compact)
                 statusControl(for: session, compact: compact)
 
@@ -1224,6 +1224,8 @@ private struct AgentSelectedSessionControlView: View {
                     mode: managedControl.mode(for: session),
                     interactionState: managedControl.interactionState(for: session),
                     maximumActivityEntries: activityLimit,
+                    showsOperationalTraffic: false,
+                    showsActivityOrb: false,
                     transcriptEntries: entries,
                     workspaceSessions: AgentWorkspaceSelection.ordered(
                         sessions: sessions,
@@ -1269,6 +1271,8 @@ private struct AgentSelectedSessionControlView: View {
                         mode: .observed,
                         interactionState: managedControl.interactionState(for: session),
                         maximumActivityEntries: activityLimit,
+                        showsOperationalTraffic: false,
+                        showsActivityOrb: false,
                         transcriptEntries: entries,
                         workspaceSessions: AgentWorkspaceSelection.ordered(
                             sessions: sessions,
@@ -2289,10 +2293,18 @@ struct AgentCompactPeekNotificationView: View {
 
 struct AgentCompactRoutineLeadingView: View {
     let session: AgentSession
+    @Environment(\.agentVisualPreferences) private var visualPreferences
 
     var body: some View {
         HStack(spacing: 5) {
-            AgentPresenceGlyph(session: session, size: 18)
+            // Compact active-agent presence follows the chat visual language:
+            // semantic ThinkingOrb for activity; BotAvatar remains Feed identity.
+            AgentOrbView(
+                state: AgentOrbStateMapper.state(for: session),
+                size: 18,
+                speed: visualPreferences.orbSpeed,
+                terminal: !AgentVisualMotion.animates(session.state)
+            )
             Image(systemName: AgentVisualStyle.providerSymbol(session.id.sessionID.provider))
                 .font(.system(size: 9, weight: .semibold))
                 .foregroundStyle(AgentVisualStyle.providerAccent(session.id.sessionID.provider))

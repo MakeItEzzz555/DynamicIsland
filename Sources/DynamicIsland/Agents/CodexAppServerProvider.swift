@@ -10,6 +10,7 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
         .submitPrompt,
         .interrupt,
         .selectModel,
+        .selectReasoningEffort,
         .resolveApprovals,
         .accountUsage,
         .contextUsage,
@@ -105,7 +106,9 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
                     model: $0.model,
                     displayName: $0.displayName,
                     description: $0.description,
-                    isDefault: $0.isDefault
+                    isDefault: $0.isDefault,
+                    supportedReasoningEfforts: $0.supportedReasoningEfforts,
+                    defaultReasoningEffort: $0.defaultReasoningEffort
                 )
             }
     }
@@ -162,10 +165,15 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
         nativeSessionID: String,
         model: String?
     ) async throws -> AgentManagedTurnDescriptor {
+        try await submit(prompt: prompt, nativeSessionID: nativeSessionID, model: model, reasoningEffort: nil)
+    }
+
+    func submit(prompt: String, nativeSessionID: String, model: String?, reasoningEffort: String?) async throws -> AgentManagedTurnDescriptor {
         let turn = try await client.startTurn(
             threadID: nativeSessionID,
             prompt: prompt,
-            model: model
+            model: model,
+            reasoningEffort: reasoningEffort
         )
         return AgentManagedTurnDescriptor(nativeSessionID: nativeSessionID, turnID: turn.id)
     }

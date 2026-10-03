@@ -24,6 +24,7 @@ enum AgentInteractiveCapability: String, CaseIterable, Hashable, Sendable {
     case submitPrompt
     case interrupt
     case selectModel
+    case selectReasoningEffort
     case resolveApprovals
     case accountUsage
     case contextUsage
@@ -32,12 +33,30 @@ enum AgentInteractiveCapability: String, CaseIterable, Hashable, Sendable {
     case loadHistory
 }
 
+struct AgentManagedReasoningEffort: Identifiable, Equatable, Sendable {
+    let id: String
+    let description: String?
+}
+
 struct AgentManagedModelDescriptor: Identifiable, Equatable, Sendable {
     let id: String
     let model: String
     let displayName: String
     let description: String?
     let isDefault: Bool
+    let supportedReasoningEfforts: [AgentManagedReasoningEffort]
+    let defaultReasoningEffort: String?
+
+    init(id: String, model: String, displayName: String, description: String?, isDefault: Bool,
+         supportedReasoningEfforts: [AgentManagedReasoningEffort] = [], defaultReasoningEffort: String? = nil) {
+        self.id = id
+        self.model = model
+        self.displayName = displayName
+        self.description = description
+        self.isDefault = isDefault
+        self.supportedReasoningEfforts = supportedReasoningEfforts
+        self.defaultReasoningEffort = defaultReasoningEffort
+    }
 }
 
 enum AgentModelSelectionScope: String, Equatable, Sendable {
@@ -165,6 +184,7 @@ protocol AgentInteractiveProvider: Sendable {
         nativeSessionID: String,
         model: String?
     ) async throws -> AgentManagedTurnDescriptor
+    func submit(prompt: String, nativeSessionID: String, model: String?, reasoningEffort: String?) async throws -> AgentManagedTurnDescriptor
     func interrupt(nativeSessionID: String, turnID: String) async throws
     func resolveApproval(_ request: AgentManagedApprovalRequest, allow: Bool) async throws
     func stop() async
@@ -175,12 +195,20 @@ protocol AgentInteractiveProvider: Sendable {
 }
 
 extension AgentInteractiveProvider {
+    func submit(prompt: String, nativeSessionID: String, model: String?, reasoningEffort: String?) async throws -> AgentManagedTurnDescriptor {
+        guard reasoningEffort == nil else { throw AgentManagedReasoningSelectionError.unsupported }
+        return try await submit(prompt: prompt, nativeSessionID: nativeSessionID, model: model)
+    }
     func listAgents() async throws -> [AgentManagedAgentDescriptor] { [] }
 
     func startSession(cwd: String?, model: String?, agent: String?) async throws -> AgentManagedSessionDescriptor {
         guard agent == nil else { throw AgentManagedAgentSelectionError.unsupported }
         return try await startSession(cwd: cwd, model: model)
     }
+}
+
+enum AgentManagedReasoningSelectionError: Error, Equatable {
+    case unsupported
 }
 
 enum AgentManagedAgentSelectionError: Error, Equatable {

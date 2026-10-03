@@ -12,6 +12,9 @@ final class AgentManagedSessionController: ObservableObject {
     @Published private(set) var accountUsageByProvider: [AgentProvider: AgentUsage] = [:]
     @Published private(set) var modelsByProvider: [AgentProvider: [AgentManagedModelDescriptor]] = [:]
     @Published private(set) var pendingModelOverrides: [AgentSessionID: String] = [:]
+    /// Next-turn preferences belong to one exact generation and advertised model.
+    /// They never mutate provider state until an authoritative turn/start.
+    @Published private var reasoningSelections: [AgentSessionInstanceID: ReasoningSelection] = [:]
     @Published private(set) var newSessionModelByProvider: [AgentProvider: String] = [:]
     @Published private(set) var agentsByProvider: [AgentProvider: [AgentManagedAgentDescriptor]] = [:]
     @Published private(set) var newSessionAgentByProvider: [AgentProvider: String] = [:]
@@ -50,6 +53,11 @@ final class AgentManagedSessionController: ObservableObject {
     /// delta publishes only to the selected console's feed, never to the
     /// chrome that observes this controller.
     private let transcripts = AgentTranscriptStore()
+
+    private struct ReasoningSelection: Equatable {
+        let model: String
+        let effort: String
+    }
 
     init(
         provider: (any AgentInteractiveProvider)?,
@@ -220,6 +228,8 @@ final class AgentManagedSessionController: ObservableObject {
 
     func reconcileSelection(with sessions: [AgentSession]) {
         let validInstances = Set(sessions.map(\.id))
+        let retainedReasoning = reasoningSelections.filter { validInstances.contains($0.key) }
+        if retainedReasoning != reasoningSelections { reasoningSelections = retainedReasoning }
         approvals.retainPolicies(for: validInstances)
 
         let candidates = selectedProvider.map { provider in
@@ -290,6 +300,7 @@ final class AgentManagedSessionController: ObservableObject {
         transcripts.removeAll()
         hydratedTranscriptSessionIDs.removeAll()
         modelsByProvider.removeAll()
+        reasoningSelections.removeAll()
         verifiedAttachmentSessionIDs.removeAll()
         reconcilingAttachmentSessionIDs.removeAll()
         attachmentErrors.removeAll()
@@ -953,6 +964,60 @@ final class AgentManagedSessionController: ObservableObject {
         pendingModelOverrides[session.id.sessionID]
     }
 
+    private func reasoningModel(for session: AgentSession) -> AgentManagedModelDescriptor? {
+        let catalog = availableModels(for: session)
+        if let model = pendingModel(for: session) ?? selectedModel(for: session) {
+            return catalog.first { $0.model == model }
+        }
+        return catalog.first { $0.isDefault }
+    }
+
+    func availableReasoningEfforts(for session: AgentSession) -> [AgentManagedReasoningEffort] {
+        guard capabilities(for: session.id.sessionID.provider).contains(.selectReasoningEffort),
+              let model = reasoningModel(for: session) else { return [] }
+        var seen = Set<String>()
+        return model.supportedReasoningEfforts.filter {
+            !$0.id.isEmpty && $0.id.count <= AgentDomainLimits.tokenLength && seen.insert($0.id).inserted
+        }
+    }
+
+    /// Advertised default or this exact instance's validated next-turn override.
+    func selectedReasoningEffort(for session: AgentSession) -> String? {
+        guard let model = reasoningModel(for: session) else { return nil }
+        let supported = Set(availableReasoningEfforts(for: session).map(\.id))
+        if let choice = reasoningSelections[session.id], choice.model == model.model,
+           supported.contains(choice.effort) { return choice.effort }
+        return model.defaultReasoningEffort.flatMap { supported.contains($0) ? $0 : nil }
+    }
+
+    func canSelectReasoningEffort(for session: AgentSession) -> Bool {
+        guard eventStore.session(for: session.id) != nil,
+              !availableReasoningEfforts(for: session).isEmpty,
+              !connecting.contains(session.id.sessionID),
+              !Self.hasExternallyActiveTurn(session) else { return false }
+        if let control = managed[session.id.sessionID] { return control.canSubmit }
+        return canSelectModel(for: session)
+    }
+
+    @discardableResult
+    func selectReasoningEffort(_ effort: String?, for session: AgentSession) -> Bool {
+        guard canSelectReasoningEffort(for: session), let model = reasoningModel(for: session) else { return false }
+        // Omitting effort would preserve a previous provider override. An
+        // explicit reset therefore sends the validated catalog default.
+        guard let resolved = effort ?? model.defaultReasoningEffort,
+              availableReasoningEfforts(for: session).contains(where: { $0.id == resolved }) else { return false }
+        let choice = ReasoningSelection(model: model.model, effort: resolved)
+        if reasoningSelections[session.id] != choice { reasoningSelections[session.id] = choice }
+        return true
+    }
+
+    private func reasoningOverride(for session: AgentSession) -> String? {
+        guard let model = reasoningModel(for: session), let choice = reasoningSelections[session.id],
+              choice.model == model.model,
+              availableReasoningEfforts(for: session).contains(where: { $0.id == choice.effort }) else { return nil }
+        return choice.effort
+    }
+
     func newSessionModel(for provider: AgentProvider) -> String? {
         newSessionModelByProvider[provider]
     }
@@ -1003,7 +1068,8 @@ final class AgentManagedSessionController: ObservableObject {
               provider.interactiveCapabilities.contains(.submitPrompt),
               let bounded = AgentPromptDraftPolicy.submission(from: prompt),
               var state = managed[session.id.sessionID],
-              state.canSubmit else {
+              state.canSubmit,
+              eventStore.session(for: session.id) != nil else {
             return false
         }
 
@@ -1017,7 +1083,8 @@ final class AgentManagedSessionController: ObservableObject {
             let turn = try await provider.submit(
                 prompt: bounded,
                 nativeSessionID: nativeID,
-                model: pendingModelOverrides[session.id.sessionID]
+                model: pendingModelOverrides[session.id.sessionID],
+                reasoningEffort: reasoningOverride(for: session)
             )
             beginAuthoritativeTurn(turn.turnID, for: sessionID)
             updateControl(sessionID) {

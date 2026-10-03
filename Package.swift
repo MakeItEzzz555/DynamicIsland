@@ -14,7 +14,7 @@ let package = Package(
         .executable(name: "DynamicIslandClaudeHookRelay", targets: ["DynamicIslandClaudeHookRelay"])
     ],
     targets: [
-        .target(name: "LibrariesNative", path: "Sources/LibrariesNative", resources: [.copy("LICENSE.txt")], swiftSettings: [.swiftLanguageMode(.v5)]),
+        .target(name: "LibrariesNative", path: "Sources/LibrariesNative", resources: [.copy("LICENSE.txt"), .copy("BorderBeam/Resources")], swiftSettings: [.swiftLanguageMode(.v5)]),
         .target(
             name: "AgentBridgeShared",
             path: "Sources/AgentBridgeShared"

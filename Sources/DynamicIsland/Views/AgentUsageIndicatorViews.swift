@@ -35,6 +35,7 @@ struct AgentUsageIndicatorCircle: View {
 
     let indicator: AgentUsageIndicator
     var metrics: AgentUsageIndicatorMetrics = .standard
+    var showsLabels = true
 
     private var diameter: CGFloat { metrics.diameter(for: indicator.kind) }
     private var lineWidth: CGFloat { AgentUsageIndicatorMetrics.lineWidth(for: diameter) }
@@ -79,6 +80,7 @@ struct AgentUsageIndicatorCircle: View {
             .frame(width: diameter, height: diameter)
             .opacity(indicator.freshness == .stale ? 0.55 : 1)
 
+            if showsLabels {
             VStack(alignment: .leading, spacing: 0) {
                 Text(indicator.label)
                     .font(.system(size: indicator.kind == .context ? 9 : 10, weight: .semibold))
@@ -89,6 +91,7 @@ struct AgentUsageIndicatorCircle: View {
             }
             .lineLimit(1)
             .fixedSize()
+            }
         }
         .help(helpText)
         .accessibilityElement(children: .ignore)

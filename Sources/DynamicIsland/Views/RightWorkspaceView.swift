@@ -44,29 +44,14 @@ struct RightWorkspaceView<Overview: View, Productivity: View, AppsMedia: View>: 
         GeometryReader { proxy in
             let pageHeight = max(proxy.size.height - (showsIndicator ? Self.indicatorBand : 0), 0)
             VStack(spacing: 0) {
-                ZStack(alignment: .topLeading) {
-                    ForEach(pages) { workspacePage in
-                        let isCurrent = workspacePage == currentPage
-                        let relative = pageRelativeOffset(
-                            workspacePage,
-                            current: currentPage,
-                            pages: pages
-                        )
-                        page(workspacePage)
-                            .frame(width: proxy.size.width, height: pageHeight, alignment: .topLeading)
-                            .offset(x: reduceMotion ? 0 : CGFloat(relative) * proxy.size.width * WorkspaceMotion.pageTravelFraction)
-                            .blur(radius: isCurrent || reduceMotion || WorkspaceMotion.prefersLightweightEffects
-                                ? 0
-                                : WorkspaceMotion.transitionBlurRadius)
-                            .opacity(isCurrent ? 1 : 0)
-                            .allowsHitTesting(isCurrent)
-                            .accessibilityHidden(!isCurrent)
-                            .environment(\.rightWorkspacePageIsActive, isCurrent)
-                            .zIndex(isCurrent ? 1 : 0)
-                    }
-                }
-                .frame(width: proxy.size.width, height: pageHeight, alignment: .topLeading)
-                .clipped()
+                RetainedWorkspacePages(
+                    pages: pages, selection: currentPage,
+                    size: CGSize(width: proxy.size.width, height: pageHeight),
+                    travel: proxy.size.width * WorkspaceMotion.pageTravelFraction,
+                    blur: WorkspaceMotion.prefersLightweightEffects ? 0 : WorkspaceMotion.transitionBlurRadius,
+                    reduceMotion: reduceMotion,
+                    content: page
+                )
                 .animation(
                     WorkspaceMotion.smoothContent(reduceMotion: reduceMotion),
                     value: store.currentPage

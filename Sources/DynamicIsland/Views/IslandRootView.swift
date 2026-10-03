@@ -3584,6 +3584,9 @@ struct ExpandedIslandView: View {
             managedControl: modules.agentManagedControl,
             layoutStore: layoutStore,
             activityRecorder: modules.agentActivityRecorder,
+            workspaceFeed: modules.agentWorkspaceFeed,
+            workspacePresentation: modules.agentWorkspacePresentation,
+            terminal: modules.productivity.terminal,
             availableHeight: metrics.pageHeight,
             contentVisible: contentVisible,
             isContentRemoving: isContentRemoving

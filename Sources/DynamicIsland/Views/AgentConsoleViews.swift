@@ -146,6 +146,8 @@ struct AgentEmbeddedConsoleView: View {
     var mode: AgentConsoleMode = .observed
     var interactionState: AgentManagedInteractionState = .observed
     var maximumActivityEntries = 3
+    var showsOperationalTraffic = true
+    var showsActivityOrb = true
     var transcriptEntries: [AgentManagedTranscriptEntry] = []
     var workspaceSessions: [AgentSession] = []
     var layoutStore: IslandLayoutStore? = nil
@@ -343,15 +345,15 @@ struct AgentEmbeddedConsoleView: View {
                 session: session,
                 transcript: transcriptEntries,
                 limit: maximumActivityEntries,
-                includePendingApprovals: actionableApproval == nil && externalPendingApproval == nil
+                includePendingApprovals: showsOperationalTraffic && actionableApproval == nil && externalPendingApproval == nil
             )
         }
         let _ = AgentPerformanceProbe.gauge("agents.timeline.rows", timeline.count)
 
         return LazyVStack(alignment: .leading, spacing: 7) {
-            AgentCurrentWorkSummary(session: session, mode: mode)
+            if showsOperationalTraffic { AgentCurrentWorkSummary(session: session, mode: mode) }
 
-            if workspaceSessions.count > 1 {
+            if showsOperationalTraffic && workspaceSessions.count > 1 {
                 AgentWorkspaceActivityGroups(
                     sessions: workspaceSessions,
                     selectedSessionID: session.id,
@@ -371,7 +373,7 @@ struct AgentEmbeddedConsoleView: View {
                 // controller's full bounded history costs nothing extra to
                 // keep. (A smaller eager or windowed stack measured slower and
                 // was less stable against the bottom anchor.)
-                ForEach(timeline) { entry in
+                ForEach(showsOperationalTraffic ? timeline : conversationEntries) { entry in
                     AgentConsoleEntryRow(entry: entry)
                         .equatable()
                 }
@@ -380,13 +382,13 @@ struct AgentEmbeddedConsoleView: View {
             // A pending permission is the newest authoritative event, so it
             // lives at the chronological bottom of the console. Resolved
             // approvals remain in `timeline` through normalized provider data.
-            if let approval = actionableApproval {
+            if showsOperationalTraffic, let approval = actionableApproval {
                 AgentConsoleApprovalRow(
                     request: approval,
                     session: session,
                     approvalControl: approvalControl
                 )
-            } else if let approval = externalPendingApproval {
+            } else if showsOperationalTraffic, let approval = externalPendingApproval {
                 AgentConsoleExternalApprovalRow(
                     approval: approval,
                     sourceTarget: AgentSourceAssociationResolver.openTarget(for: session)
@@ -396,6 +398,13 @@ struct AgentEmbeddedConsoleView: View {
         }
         .font(.system(size: displayMetrics.transcriptFontSize, weight: .medium))
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var conversationEntries: [AgentConsoleEntry] {
+        AgentConsoleEntry.make(
+            transcript: transcriptEntries.filter { $0.role == .user || $0.role == .agent },
+            operations: [], provider: session.id.sessionID.provider
+        )
     }
 
     private var actionableApproval: AgentApprovalControlRequest? {
@@ -450,7 +459,7 @@ struct AgentEmbeddedConsoleView: View {
 
     private var managedInteractionFooter: some View {
         HStack(spacing: 6) {
-            if interactionState == .connecting || interactionState == .checkingAttachment || interactionState == .submitting || interactionState == .stopping || AgentVisualMotion.animates(session.state) {
+            if showsActivityOrb && (interactionState == .connecting || interactionState == .checkingAttachment || interactionState == .submitting || interactionState == .stopping || AgentVisualMotion.animates(session.state)) {
                 AgentOrbView(state: AgentOrbStateMapper.state(for: interactionState, session: session), size: 20, speed: visualPreferences.orbSpeed)
             } else {
                 Image(systemName: interactionSymbol)

@@ -173,6 +173,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     )
     private let agentAttention = AgentAttentionCoordinator()
     private let agentActivityRecorder = AgentActivityRecorder()
+    private let agentWorkspaceFeed = AgentWorkspaceFeedStore()
+    private let agentWorkspacePresentation = AgentWorkspacePresentation()
     private let agentApprovalControl = AgentApprovalController()
     private lazy var agentIngestion = AgentIngestionCoordinator(eventStore: agentEvents)
     private lazy var agentIntegrationRouter = AgentIntegrationRouter(coordinator: agentIngestion)
@@ -243,7 +245,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             messaging: messaging,
             rightWorkspace: rightWorkspace,
             workspaceServices: workspaceServices,
-            basketPresenter: basketPresenter
+            basketPresenter: basketPresenter,
+            agentWorkspaceFeed: agentWorkspaceFeed,
+            agentWorkspacePresentation: agentWorkspacePresentation
         )
         basketPresenter.start()
         agentProjects.observe(agentEvents.$sessions)
@@ -287,8 +291,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Record Activities observes the normalized store; off unless the
         // user opted in.
-        agentEvents.appliedEventObserver = { [weak agentActivityRecorder] event, session in
+        agentEvents.appliedEventObserver = { [weak agentActivityRecorder, weak agentWorkspaceFeed] event, session in
             agentActivityRecorder?.handleApplied(event, session: session)
+            agentWorkspaceFeed?.handleApplied(event, session: session)
         }
         settings.$agentActivityRecordingEnabled
             .removeDuplicates()
