@@ -730,8 +730,7 @@ private struct AgentCLIControlBar: View {
 
             if let session = selectedSession {
                 HStack(spacing: 4) {
-                    Image(systemName: selectorStateSymbol(session))
-                        .font(.system(size: 8.5, weight: .semibold))
+                    AgentPresenceGlyph(session: session, size: compact ? 18 : 22)
                     Text(selectedSessionLabel(session))
                         .font(.system(size: compact ? 9 : 10.5, weight: .semibold))
                         .lineLimit(1)
@@ -1918,7 +1917,7 @@ private struct AgentStateMarker: View {
     var emphasized = false
 
     var body: some View {
-        AgentPresenceGlyph(session: session, size: emphasized ? 26 : 22, paused: !emphasized)
+        AgentPresenceGlyph(session: session, size: emphasized ? 26 : 22)
             .frame(width: 26, height: 26)
             .accessibilityLabel("\(session.id.sessionID.provider.stableName), \(AgentSessionPresentation.displayedStateLabel(for: session, at: Date()))")
     }

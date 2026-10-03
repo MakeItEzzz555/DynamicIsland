@@ -14,13 +14,14 @@ let package = Package(
         .executable(name: "DynamicIslandClaudeHookRelay", targets: ["DynamicIslandClaudeHookRelay"])
     ],
     targets: [
+        .target(name: "LibrariesNative", path: "Sources/LibrariesNative", resources: [.copy("LICENSE.txt")], swiftSettings: [.swiftLanguageMode(.v5)]),
         .target(
             name: "AgentBridgeShared",
             path: "Sources/AgentBridgeShared"
         ),
         .executableTarget(
             name: "DynamicIsland",
-            dependencies: ["AgentBridgeShared"],
+            dependencies: ["AgentBridgeShared", "LibrariesNative"],
             path: "Sources/DynamicIsland",
             resources: [
                 .process("Assets.xcassets")
@@ -53,8 +54,9 @@ let package = Package(
         ),
         .testTarget(
             name: "DynamicIslandTests",
-            dependencies: ["DynamicIsland", "AgentBridgeShared", "CodexHookShared", "ClaudeHookShared"],
-            path: "Tests/DynamicIslandTests"
+            dependencies: ["DynamicIsland", "LibrariesNative", "AgentBridgeShared", "CodexHookShared", "ClaudeHookShared"],
+            path: "Tests/DynamicIslandTests",
+            exclude: ["ReferenceVectors"]
         )
     ]
 )

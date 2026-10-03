@@ -4,6 +4,7 @@ struct AgentAppearanceSettingsView: View {
     @ObservedObject var settings: AppSettings
     @State private var orbPreviewState: AgentOrbVisualState = .working
     @State private var avatarAdvanced = false
+    @State private var avatarPreviewState: AgentState = .working
     @State private var voiceAdvanced = false
     @State private var accessoryColorDraft = ""
 
@@ -45,7 +46,7 @@ struct AgentAppearanceSettingsView: View {
                 BotAvatarView(
                     sessionID: nil,
                     configuration: settings.agentVisualPreferences.avatar,
-                    state: .working,
+                    state: avatarPreviewState,
                     overrideType: settings.agentVisualPreferences.avatar.type
                 )
                 Text("Avatar")
@@ -125,6 +126,11 @@ struct AgentAppearanceSettingsView: View {
                     .labelsHidden()
             }
 
+            Picker("Avatar preview state", selection: $avatarPreviewState) {
+                Text("Default").tag(AgentState.idle)
+                Text("Working").tag(AgentState.working)
+                Text("Sleeping").tag(AgentState.completed)
+            }
             Picker("Shape", selection: visualBinding(\.avatar.type)) {
                 ForEach(BotAvatarType.allCases) { type in
                     Text(type.displayName).tag(type)
@@ -189,8 +195,7 @@ struct AgentAppearanceSettingsView: View {
                     advancedSlider("Rim / back light", \.rimLight, 0...1)
                     advancedSlider("Light spread", \.spread, 0.25...2)
                     advancedSlider("Depth", \.depth, 0...2)
-                    advancedSlider("Body corner roundness", \.roundness, 0...2)
-                        .disabled(![BotAvatarType.square, .droid, .mech, .pill, .ghost, .cat, .blob, .alien, .pebble, .puddle].contains(settings.agentVisualPreferences.avatar.type))
+                    advancedSlider("Pillow roundness", \.roundness, 0...2)
                 }.padding(.top, 7)
             }
             .disabled(settings.agentVisualPreferences.avatar.shading == .flat)
@@ -217,6 +222,69 @@ struct AgentAppearanceSettingsView: View {
                     advancedSlider("Idle jump interval (0 = off)", \.idleJumpCadence, 0...20)
                 }.padding(.top, 7)
             }
+            fidelityControls
+        }
+    }
+
+    private var supportsSurfaceLights: Bool {
+        [.fabric, .plastic].contains(settings.agentVisualPreferences.avatar.shading)
+    }
+
+    private var fidelityControls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            DisclosureGroup("Surface & pose") {
+                VStack(alignment: .leading, spacing: 9) {
+                    OptionalAvatarColorField(title: "Body color (#RRGGBB, Return to apply)", value: fidelityBinding(\.bodyColorHex))
+                    OptionalAvatarColorField(title: "Face ink (#RRGGBB, Return to apply)", value: fidelityBinding(\.inkColorHex))
+                    Toggle("Pause avatar", isOn: fidelityBinding(\.paused))
+                    Toggle("Hold explicit pose", isOn: fidelityBinding(\.poseEnabled))
+                    fidelitySlider("Yaw", \.yaw, -180...180)
+                    fidelitySlider("Pitch", \.pitch, -180...180)
+                    fidelitySlider("Roll", \.roll, -180...180)
+                    fidelitySlider("Back light", \.backLight, 0...2)
+                        .disabled(!supportsSurfaceLights)
+                    fidelitySlider("Front light angle", \.lightFront, 0...90)
+                        .disabled(!supportsSurfaceLights)
+                    fidelitySlider("Shine", \.shine, 0...2)
+                        .disabled(!supportsSurfaceLights)
+                    fidelitySlider("Sheen", \.sheen, 0...2)
+                        .disabled(!supportsSurfaceLights)
+                    fidelitySlider("Back light softness", \.backSoftness, 0.1...2)
+                        .disabled(!supportsSurfaceLights)
+                }.padding(.top, 7)
+            }
+            DisclosureGroup("Landing & whirl timing") {
+                VStack(alignment: .leading, spacing: 9) {
+                    fidelitySlider("Landing press time", \.jumpSquashTime, 0.05...2)
+                    easePicker("Landing easing", \.jumpSquashEase)
+                    fidelitySlider("Ground hold time", \.jumpGroundTime, 0...2)
+                    easePicker("Ground easing", \.jumpGroundEase)
+                    fidelitySlider("Recovery time", \.jumpRiseTime, 0.05...2)
+                    easePicker("Recovery easing", \.jumpRiseEase)
+                    fidelitySlider("Click crouch time", \.jumpClickSquashTime, 0.05...2)
+                    fidelitySlider("Landing offset", \.jumpLand, -0.3...0.3)
+                    fidelitySlider("Whirl size", \.whirlSize, 0.6...1.6)
+                    fidelitySlider("Whirl width", \.whirlWidth, 0.4...2)
+                    fidelitySlider("Whirl length", \.whirlLength, 0.4...1.6)
+                    fidelitySlider("Whirl tilt", \.whirlTilt, 0.5...1.8)
+                }.padding(.top, 7)
+            }
+        }
+    }
+
+    private func fidelityBinding<Value>(_ key: WritableKeyPath<BotAvatarFidelityConfiguration, Value>) -> Binding<Value> {
+        Binding(get: { (settings.agentVisualPreferences.avatar.fidelity ?? .init())[keyPath: key] }, set: { value in
+            var f = settings.agentVisualPreferences.avatar.fidelity ?? .init()
+            f[keyPath: key] = value
+            settings.agentVisualPreferences.avatar.fidelity = f
+        })
+    }
+    private func fidelitySlider(_ title: String, _ key: WritableKeyPath<BotAvatarFidelityConfiguration, Double>, _ range: ClosedRange<Double>) -> some View {
+        settingsSlider(title, value: fidelityBinding(key), range: range, format: "%.2f")
+    }
+    private func easePicker(_ title: String, _ key: WritableKeyPath<BotAvatarFidelityConfiguration, String>) -> some View {
+        Picker(title, selection: fidelityBinding(key)) {
+            ForEach(["sharp", "pulse", "soft", "bouncy"], id: \.self) { Text($0.capitalized).tag($0) }
         }
     }
 
@@ -281,8 +349,8 @@ struct AgentAppearanceSettingsView: View {
 
     private func advancedSlider(_ title: String, _ key: WritableKeyPath<BotAvatarAdvancedConfiguration, Double>, _ range: ClosedRange<Double>) -> some View {
         settingsSlider(title, value: Binding(
-            get: { settings.agentVisualPreferences.avatar.details[keyPath: key] },
-            set: { settings.agentVisualPreferences.avatar.details[keyPath: key] = $0 }
+            get: { settings.agentVisualPreferences.avatar.renderDetails[keyPath: key] },
+            set: { settings.agentVisualPreferences.avatar.renderDetails[keyPath: key] = $0 }
         ), range: range, format: "%.2f")
     }
 
@@ -301,5 +369,18 @@ struct AgentAppearanceSettingsView: View {
             }
             Slider(value: value, in: range)
         }
+    }
+}
+
+private struct OptionalAvatarColorField: View {
+    let title: String
+    @Binding var value: String?
+    @State private var draft = ""
+    var body: some View {
+        TextField(title, text: $draft)
+            .textFieldStyle(.roundedBorder)
+            .onAppear { draft = value ?? "" }
+            .onSubmit { value = draft.isEmpty ? nil : draft; draft = value ?? "" }
+            .onChange(of: value) { _, color in draft = color ?? "" }
     }
 }

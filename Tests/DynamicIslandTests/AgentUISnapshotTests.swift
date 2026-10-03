@@ -505,7 +505,7 @@ final class AgentUISnapshotTests: XCTestCase {
 
     private func render<V: View>(_ view: V, size: CGSize, to url: URL) throws {
         let renderer = ImageRenderer(
-            content: view
+            content: view.environment(\.nativeVisualSnapshotTime, 0.6)
                 .frame(width: size.width, height: size.height)
                 .preferredColorScheme(.dark)
         )

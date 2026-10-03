@@ -676,3 +676,73 @@ logs, initial/post-workload vmmap, native heap census, completed
 `workload-repeat/memory.json`, rejected first workload and motion captures.
 No recordings, traces, build products, screenshots, Graphify caches or
 credentials are included in the phase commit.
+
+
+## Phase 3 — Libraries.dev native fidelity
+
+Baseline: `06b36a20963e2a097748c9ea01bb19c79c9c7d76`, fetched and equal to the remote feature branch before edits. PR #24 was verified Draft/open/unmerged. Environment: the same arm64 hardware-notch Mac, macOS 15.7.4 (24G517), SwiftPM debug tests and unchanged ad-hoc Release package. Unrelated local files, research recordings, installed skills and Graphify outputs remain outside this phase's staged delta.
+
+### Reference, implementation and fidelity review
+
+**PASS — automated/fixture:** actual public TypeScript and official native source inspected at `Jakubantalik/Libraries.dev@d06640864eb4adc2fe240f899a44ee6210779782`, thinking-orbs 0.3.2 / bot-avatars 0.2.2. MIT metadata and notices inspected; the full notice is copied into the app's local native resource bundle. No React/npm/WebView runtime, external package or new rendering framework was added. The preimplementation matrix and exact parity gaps are recorded in [libraries-native-parity.md](libraries-native-parity.md).
+
+The nine orb engines, 20/64 presets and 18 distinct body SVG paths replace the prior generic drawing. Golden coverage verifies 72 cases / 70,115 values within 0.0001. Independent inline tuning, reference monochrome ink, speed, theme, freeze, real-state mappings and Canvas-local state handoff are retained. Bot rig uses current upstream gaze/eye lead, deterministic seed, state cross-animation, staged jump/spin/landing and projected faces. Native shading supports all five materials, lighting/fur controls, accessories, custom paths, held poses and whirl. Existing appearance JSON remains compatible; optional additions normalize, persist and reset through AppSettings.
+
+**PASS — live reference inspection:** opened the authoritative public `/bots` preview in the actual browser and compared its clover/flower/ghost/square bodies with the native grids. Source inspection, rather than screenshots alone, established silhouette, rig, palette, face placement and light concepts. Direct comparison prompted denser native fleece and a softer fringe. That review then caught a reflected bitmap film and regular tuft lattice on asymmetric native bodies; orientation and combing were corrected, with an alpha-based asymmetric-triangle regression test. A headless browser attempt was rejected after failing to produce an image; it contributes no acceptance evidence. The `/orbs` navigation was attempted, but its settled browser preview was not accepted; mathematical/source comparison and native grids are the orb fidelity evidence.
+
+**PASS — automated/fixture:** final review harness renders 18 PNG grids plus a deterministic 45-frame motion GIF, covering dark/light, all nine orbs at 20/64, all 18 bodies × three states × five materials, eye/mouth modes, seeds, compact/primary working frames, accessories and held poses. Existing compact/expanded Agents snapshots also render. ImageRenderer originally displayed a red/yellow unsupported-view placeholder for AppKit visibility probes; an isolated frozen-time render environment omits those adapters in deterministic snapshots. Real hosted views retain visibility/pointer tracking. No real session is mutated by previews.
+
+**Parity limitations:** fabric is a bounded native perceptual approximation, not the browser's full multi-film signed-distance/fibre-lighting shader. Native accessory vectors approximate attached three-dimensional meshes; extreme-pose occlusion differs. Native whirl sampling and CoreGraphics rasterisation differ from browser strokes. Compact bodies intentionally reduce jump amplitude and reserve hat space inside clipped shell/row bounds. 64-point primary rendering is supported in Appearance/review; normal CLI/compact identity placements remain small to preserve transcript space. Exact shader/pixel parity is not claimed.
+
+### Integration, motion and accessibility
+
+**PASS — live:** the first rebuilt package launched from `dist` (PID 31661), displayed real ingested Codex running-command/tool presence in the hardware-notch compact island, and opened the expanded Agents CLI with correct provider labels and session-owned transcript. The existing workload completed 60 expand → Agents → Island → Tools → collapse cycles and rejected no endpoint. Subsequent settled screenshots showed the expanded native CLI. The live pass exposed a missing selected-session toolbar identity glyph; it was added at 18/22 points and re-rendered in final fixture acceptance, without changing session selection or provider controls. Final live inspection of that toolbar delta remains blocked by the later Keychain dialog.
+
+**PASS — automated/fixture:** visible working rows no longer pause because they are not emphasized or because the menu-bar app is inactive. Each animation owns local timing; bounded player reuse preserves identity/phase through compact/expanded handoff. Offscreen/occluded hosts suspend, resumed clocks do not catch up long gaps, duplicate ticks do not advance twice, explicit held/paused poses freeze, and pointer targets do not consume button or scroll hit testing. Relevant layout/resolver, motion, Metal hit-target, state, identity, persistence and lifecycle tests pass. Accessibility exposes one provider/state image description, not decorative layers. The CLI keeps provider identity plus the stable avatar and useful inline activity indication.
+
+Transition guidance was actually applied from `transitions-dev` and `transitions-polish`: stable outer pointer geometry, local transform/opacity handoff, persistent character state, Reduce Motion suppression and cancellation/resume without catch-up. Upstream hand-tuned rig timings were preserved rather than mechanically replaced with motion tokens or a generic spring. Performance-engineer, accessibility-tester, qa-expert and Graphify guidance were also used. No second shell or persistent island state was introduced.
+
+**BLOCKED — external acceptance dependency: Keychain decision.** After rebuilding/relaunching, macOS displayed a password/Allow/Deny dialog for `com.local.dynamicisland.agent-bridge`. Human action was requested. No password, consent decision, Keychain item, TCC entry or signing policy was changed. UI automation stopped when the dialog was observed. A six-second motion recording was inspected and rejected as working-animation evidence because the dialog covered the intended state. **NOT VERIFIED:** final packaged uninterrupted working animation, pointer/click interaction, complete continuity and actual Reduce Motion OFF → ON → OFF for the new renderer. The actual setting was checked OFF and left OFF; earlier Phase 1 ON acceptance does not certify these new visuals. Static Reduce Motion policy and pause/resume logic have automated coverage.
+
+### Performance and allocation evidence
+
+**PASS — automated/fixture:** 2,160 orb-engine frames / 338,602 dots measured about 0.46 ms mean and 1.51 ms p99 in the final focused debug run. These are geometry-generation timings, not GPU presentation/frame-drop measurements. Rendering caches are bounded: 48 forms, eight pending serial bakes, 24 fibre images (<4 MiB), 64 custom paths/seats and 64 identity players. StateObject keeps render buffers stable across SwiftUI struct reconstruction. No per-frame Task, independent capture session or unbounded timer/observer creation was added. Host/render teardown tests release their objects.
+
+**PASS — live workload execution; NOT VERIFIED — unrestricted whole-app memory closure:** same fail-closed native Phase 2 driver, three batches × 20 shell/section cycles, 20-second idle gaps and final 60-second idle, 387 seconds total. No synthetic session state was injected into the package. This run preceded the final toolbar/fleece-coordinate corrections; those changes were separately regression-tested, but this is not reported as a final-package long soak.
+
+| Checkpoint | RSS KiB | Physical footprint MiB | CPU % (ps sample) |
+|---|---:|---:|---:|
+| initial | 126592 | 62.91 | 33.3 |
+| idleBaseline | 126304 | 63.07 | 26.5 |
+| batch1-cycle10 | 134448 | 69.52 | 33.7 |
+| batch1-cycle20 | 135840 | 71.13 | 33.2 |
+| batch1-idle | 135872 | 71.38 | 26.4 |
+| batch2-cycle10 | 138352 | 73.33 | 33.3 |
+| batch2-cycle20 | 141184 | 76.07 | 32.2 |
+| batch2-idle | 141264 | 75.82 | 24.9 |
+| batch3-cycle10 | 145024 | 79.21 | 31.8 |
+| batch3-cycle20 | 145456 | 79.60 | 28.5 |
+| batch3-idle | 145472 | 79.42 | 23.5 |
+| postCleanup | 145472 | 79.42 | 23.3 |
+| finalIdle | 145504 | 79.22 | 22.9 |
+
+RSS grew from 126,304 KiB after initial idle to 145,504 KiB after final idle (+18.75 MiB); the final ten cycles + idle changed by 480 KiB. Footprint ended at 79.22 MiB. CPU was roughly 23–34%, comparable in scale to the Phase 2 driver (about 19–35%); this is whole-process work including live ingestion, not an isolated GPU benchmark. Late flattening is encouraging but too short to establish an unlimited plateau.
+
+Read-only native `heap -s` and `vmmap -summary` were taken for PID 31661 after workload. Census showed three BotAvatarSim/Player objects, two AvatarRenderContext/RenderState objects and one visibility observer bag, rather than one retained renderer per cycle. vmmap reported about 24.3 MiB allocated in malloc zones and 32.5 MiB dirty fragmentation (58%); allocator retention contributes materially to RSS. A single census cannot assign all growth to caches or prove absence of another leak. No arbitrary flushing or speculative app-wide refactor was made.
+
+**PASS — automated/fixture, separately:** existing 110-cycle bounded controller/render workload, 32 fixed sessions and 80 transcript entries, 151 seconds. Footprint cycles 10/30/50/70/90/110: 44.96/46.49/46.88/47.03/47.27/47.69 MiB; after teardown 43.24 MiB. Controller released. This is not whole-app proof. The final native performance harness rerun supplies supplementary transcript/provider/session switching measurements.
+
+### Regression and release gate
+
+- Focused final renderer/layout/motion/send controls: **77 passed / 0 failed / 0 skipped**.
+- Full final suite: **1586 passed / 0 failed / 36 skipped**, 1622 total. Baseline was 1570/0/35: added 15 fidelity tests, one golden-vector test and one opt-in parity test (skipped by default). Existing tests/skips were not weakened or replaced.
+- Parity/integration render opt-in: **3 passed / 0 failed / 0 skipped**.
+- Native opt-in: **7 passed / 0 failed / 1 skipped**; microphone authorization raw value 0. No consent prompt was forced.
+- Real Codex acceptance: **2 passed / 0 failed / 0 skipped**, selected Codex creation/command/interruption/exact-session resume and real deny/allow tests. Claude was not selected; this is a narrower filter than the prior 2/0/1 set, not a converted Claude skip.
+- Bounded fixture soak: **1 passed / 0 failed / 0 skipped**.
+- Release build / packaging / deep strict signature: **PASS**, unchanged ad-hoc signing, app plus three native helpers. Native MIT notice bundled. Final source package is built; later UI controls remain subject to the Keychain gate above. Earlier package launch is live evidence, not a claim that all final controls passed.
+- Graphify AST update completed; generated graph/cache files remain unstaged.
+
+Remaining gates: human Keychain decision, final packaged working/motion/pointer/Reduce Motion acceptance and longer representative memory/GPU profiling; complete fabric/accessory shader/mesh parity remains explicitly approximate. Previous controlled-speech/development microphone and Claude/concurrent-provider release gates remain external limitations and are not reclassified by this visual phase. Keep PR #24 Draft/open/unmerged. Recommended next phase: **human-assisted native fidelity and release-gate acceptance**, with an uninterrupted pointer window and allocation/GPU follow-up before promotion. No next product phase was started.
+
+Local evidence: `/tmp/dynamicisland-phase3` (focused/full/native/Codex/parity/package/signature logs, native grids/GIF, real workload memory.json, heap/vmmap and rejected motion video). No screenshots, recordings, build products, Graphify caches or credentials are included in this commit.
