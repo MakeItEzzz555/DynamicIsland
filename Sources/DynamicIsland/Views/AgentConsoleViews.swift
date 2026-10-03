@@ -89,7 +89,11 @@ enum AgentPromptDraftPolicy {
     }
 
     static func submitsReturn(with modifiers: NSEvent.ModifierFlags) -> Bool {
-        modifiers.intersection(.deviceIndependentFlagsMask).contains(.command)
+        let flags = modifiers.intersection(.deviceIndependentFlagsMask)
+        // Plain Return is the primary send action. Command-Return remains a
+        // supported accelerator; Shift-Return intentionally inserts a newline.
+        guard !flags.contains(.shift) else { return false }
+        return flags.subtracting([.command, .capsLock, .numericPad, .function]).isEmpty
     }
 }
 
@@ -597,7 +601,7 @@ private struct AgentConsoleComposer: View {
                 .keyboardShortcut(.return, modifiers: [.command])
                 .layoutPriority(3)
                 .reportsComposerActionFrame()
-                .help("Send prompt (Command-Return)")
+                .help("Send prompt (Return or Command-Return; Shift-Return for newline)")
             }
         }
         .padding(.trailing, 5)
@@ -1242,7 +1246,7 @@ private struct AgentPromptEditor: NSViewRepresentable {
         editor.isEditable = isEnabled
         editor.isSelectable = true
         editor.setAccessibilityLabel("Agent prompt")
-        editor.setAccessibilityHelp("Command-Return sends. Shift-Return inserts a new line. Escape releases focus.")
+        editor.setAccessibilityHelp("Return sends. Shift-Return inserts a new line. Command-Return also sends. Escape releases focus.")
 
         scroll.documentView = editor
         context.coordinator.editor = editor
@@ -1269,7 +1273,9 @@ private struct AgentPromptEditor: NSViewRepresentable {
         guard let editor = scroll.documentView as? AgentPromptTextView else { return }
         let handler = editor.focusHandler
         editor.focusHandler = nil
-        handler?(false)
+        if let handler {
+            DispatchQueue.main.async { handler(false) }
+        }
         guard editor.window?.firstResponder === editor else { return }
         editor.window?.makeFirstResponder(nil)
     }
@@ -1301,14 +1307,23 @@ private final class AgentPromptTextView: NSTextView {
 
     override func becomeFirstResponder() -> Bool {
         let accepted = super.becomeFirstResponder()
-        if accepted { focusHandler?(true) }
+        if accepted { publishFocus(true) }
         return accepted
     }
 
     override func resignFirstResponder() -> Bool {
         let resigned = super.resignFirstResponder()
-        if resigned { focusHandler?(false) }
+        if resigned { publishFocus(false) }
         return resigned
+    }
+
+    /// NSViewRepresentable can be dismantled while SwiftUI/AppKit is already
+    /// mutating the host hierarchy. Publishing layout-observed focus state
+    /// synchronously from responder callbacks can re-enter that display-cycle
+    /// constraint update. Defer one main-run-loop turn instead.
+    private func publishFocus(_ focused: Bool) {
+        guard let handler = focusHandler else { return }
+        DispatchQueue.main.async { handler(focused) }
     }
 
     override func keyDown(with event: NSEvent) {

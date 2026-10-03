@@ -136,6 +136,245 @@ final class AgentWorkspaceSnapshotTests: XCTestCase {
         """.write(to: output.appendingPathComponent("EVIDENCE.txt"), atomically: true, encoding: .utf8)
     }
 
+
+
+    func testPlainReturnSubmitsAgentPromptFromNativeEditor() async throws {
+        let fixture = try await makeFixture()
+        defer {
+            fixture.controller.stop()
+            fixture.approvals.cancelAll()
+            fixture.terminal.terminate()
+        }
+
+        let selected = try XCTUnwrap(fixture.store.sessions.first { $0.id.sessionID.provider == .codex })
+        fixture.controller.selectProvider(.codex)
+        fixture.controller.selectSession(selected.id)
+
+        let size = CGSize(width: 900, height: 480)
+        let view = AgentDashboardContentView(
+            sessions: fixture.store.sessions,
+            accountUsage: fixture.controller.accountUsage,
+            showsUsage: true,
+            approvalControl: fixture.approvals,
+            managedControl: fixture.controller,
+            availableHeight: 460,
+            initialSelectedSessionID: selected.id,
+            contentVisible: true,
+            reduceMotion: true,
+            transcriptPresentationReady: true,
+            transcriptLoadDelay: 0,
+            workspaceFeed: fixture.feed,
+            workspacePresentation: fixture.presentation,
+            terminal: fixture.terminal
+        )
+        let hosting = NSHostingView(rootView: view.frame(width: size.width, height: size.height))
+        hosting.frame = CGRect(origin: .zero, size: size)
+        let window = NSWindow(contentRect: CGRect(origin: CGPoint(x: -5000, y: -5000), size: size),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = hosting
+        window.orderFrontRegardless()
+        defer {
+            window.makeFirstResponder(nil)
+            window.orderOut(nil)
+            window.contentView = nil
+        }
+
+        for _ in 0..<10 {
+            await Task.yield()
+            try await Task.sleep(for: .milliseconds(4))
+            hosting.layoutSubtreeIfNeeded()
+        }
+        let editor = try XCTUnwrap(Self.findPromptEditor(in: hosting))
+        XCTAssertTrue(window.makeFirstResponder(editor))
+        editor.insertText("plain return sends", replacementRange: editor.selectedRange())
+        try await Task.sleep(for: .milliseconds(8))
+
+        let event = try XCTUnwrap(NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window.windowNumber,
+            context: nil,
+            characters: "\r",
+            charactersIgnoringModifiers: "\r",
+            isARepeat: false,
+            keyCode: 36
+        ))
+        editor.keyDown(with: event)
+
+        for _ in 0..<20 {
+            await Task.yield()
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        fixture.controller.flushTranscriptPublications()
+        XCTAssertTrue(
+            fixture.controller.transcript(for: selected).contains {
+                $0.role == .user && $0.text == "plain return sends"
+            }
+        )
+    }
+
+    func testTerminalReturnRunsCommandFromFocusedWorkspaceField() async throws {
+        let fixture = try await makeFixture()
+        defer {
+            fixture.controller.stop()
+            fixture.approvals.cancelAll()
+            fixture.terminal.terminate()
+        }
+        let selected = try XCTUnwrap(fixture.store.sessions.first { $0.id.sessionID.provider == .codex })
+        fixture.presentation.select(.terminal)
+
+        let size = CGSize(width: 440, height: 300)
+        let view = AgentWorkspaceTerminalView(
+            controller: fixture.terminal,
+            session: selected,
+            isVisible: true,
+            focusRequest: fixture.presentation.terminalFocusRequest,
+            layoutStore: nil
+        )
+        let hosting = NSHostingView(rootView: view.frame(width: size.width, height: size.height))
+        hosting.frame = CGRect(origin: .zero, size: size)
+        let window = NSWindow(contentRect: CGRect(origin: CGPoint(x: -5000, y: -5000), size: size),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = hosting
+        window.orderFrontRegardless()
+        defer {
+            window.makeFirstResponder(nil)
+            window.orderOut(nil)
+            window.contentView = nil
+        }
+
+        for _ in 0..<10 {
+            await Task.yield()
+            try await Task.sleep(for: .milliseconds(4))
+            hosting.layoutSubtreeIfNeeded()
+        }
+        let field = try XCTUnwrap(Self.findTerminalCommandField(in: hosting))
+        XCTAssertTrue(window.makeFirstResponder(field))
+        guard let editor = field.currentEditor() as? NSTextView else {
+            return XCTFail("Terminal field editor unavailable")
+        }
+        editor.insertText("printf terminal-enter-ok", replacementRange: editor.selectedRange())
+        try await Task.sleep(for: .milliseconds(8))
+        editor.doCommand(by: #selector(NSResponder.insertNewline(_:)))
+
+        for _ in 0..<20 where fixture.runner.startCount == 0 {
+            await Task.yield()
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertEqual(fixture.runner.startCount, 1)
+        XCTAssertTrue(fixture.terminal.isRunning)
+        XCTAssertEqual(field.stringValue, "", "Successful Return submission must clear the live native field editor")
+    }
+
+    func testRapidAgentsMountUnmountWithFocusedNativeEditorAndTerminalSwitching() async throws {
+        let fixture = try await makeFixture()
+        defer {
+            fixture.controller.stop()
+            fixture.approvals.cancelAll()
+            fixture.terminal.terminate()
+        }
+
+        let selected = try XCTUnwrap(fixture.store.sessions.first { $0.id.sessionID.provider == .codex })
+        fixture.controller.selectProvider(.codex)
+        fixture.controller.selectSession(selected.id)
+
+        let state = AgentWorkspaceMountStressState()
+        let size = CGSize(width: 960, height: 510)
+        let root = AgentWorkspaceMountStressHarness(
+            state: state,
+            sessions: fixture.store.sessions,
+            controller: fixture.controller,
+            approvals: fixture.approvals,
+            feed: fixture.feed,
+            presentation: fixture.presentation,
+            terminal: fixture.terminal,
+            selectedID: selected.id
+        )
+        .frame(width: size.width, height: size.height)
+        .environment(\.nativeVisualSnapshotTime, 1.35)
+
+        let hosting = NSHostingView(rootView: root)
+        hosting.frame = CGRect(origin: .zero, size: size)
+        let window = NSWindow(
+            contentRect: CGRect(origin: CGPoint(x: -5000, y: -5000), size: size),
+            styleMask: [.borderless], backing: .buffered, defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentView = hosting
+        window.orderFrontRegardless()
+        defer {
+            window.makeFirstResponder(nil)
+            window.orderOut(nil)
+            window.contentView = nil
+        }
+
+        for _ in 0..<8 {
+            await Task.yield()
+            hosting.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(5))
+        }
+
+        for cycle in 0..<48 {
+            if cycle.isMultiple(of: 2) {
+                fixture.presentation.select(.terminal)
+            } else {
+                fixture.presentation.select(.feed)
+            }
+            hosting.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(3))
+
+            if let editor = Self.findPromptEditor(in: hosting) {
+                XCTAssertTrue(window.makeFirstResponder(editor))
+            }
+
+            state.generation &+= 1
+            state.showsAgents = false
+            try await Task.sleep(for: .milliseconds(4))
+            hosting.layoutSubtreeIfNeeded()
+
+            state.generation &+= 1
+            state.showsAgents = true
+            try await Task.sleep(for: .milliseconds(4))
+            hosting.layoutSubtreeIfNeeded()
+        }
+
+        for _ in 0..<8 {
+            await Task.yield()
+            try await Task.sleep(for: .milliseconds(4))
+            hosting.layoutSubtreeIfNeeded()
+        }
+
+        XCTAssertTrue(state.showsAgents)
+        XCTAssertNotNil(Self.findPromptEditor(in: hosting))
+    }
+
+    private static func findPromptEditor(in view: NSView) -> NSTextView? {
+        if let text = view as? NSTextView, text.accessibilityLabel() == "Agent prompt" {
+            return text
+        }
+        for child in view.subviews {
+            if let found = findPromptEditor(in: child) { return found }
+        }
+        return nil
+    }
+
+    private static func findTerminalCommandField(in view: NSView) -> NSTextField? {
+        // SwiftUI may expose the accessibility label on an ancestor rather than
+        // the backing NSTextField itself. This harness hosts only the terminal
+        // command field, so the first editable text field is the command input.
+        if let field = view as? NSTextField, field.isEditable {
+            return field
+        }
+        for child in view.subviews {
+            if let found = findTerminalCommandField(in: child) { return found }
+        }
+        return nil
+    }
+
     private func compact(_ session: AgentSession) -> some View {
         HStack(spacing: 12) {
             AgentCompactRoutineLeadingView(session: session)
@@ -205,6 +444,52 @@ final class AgentWorkspaceSnapshotTests: XCTestCase {
                       correlation: String? = nil, offset: Double, payload: AgentEventPayload) {
         XCTAssertEqual(fixture.store.ingest(AgentTestFixture.event("fixture-\(type.stableName)-\(offset)", sessionID: session.sessionID,
             generation: session.generation.rawValue, type: type, offset: offset, correlationID: correlation, payload: payload)), .applied)
+    }
+}
+
+
+@MainActor
+private final class AgentWorkspaceMountStressState: ObservableObject {
+    @Published var showsAgents = true
+    @Published var generation = 0
+}
+
+private struct AgentWorkspaceMountStressHarness: View {
+    @ObservedObject var state: AgentWorkspaceMountStressState
+    let sessions: [AgentSession]
+    let controller: AgentManagedSessionController
+    let approvals: AgentApprovalController
+    let feed: AgentWorkspaceFeedStore
+    let presentation: AgentWorkspacePresentation
+    let terminal: TerminalSessionController
+    let selectedID: AgentSessionInstanceID
+
+    var body: some View {
+        ZStack {
+            if state.showsAgents {
+                AgentDashboardContentView(
+                    sessions: sessions,
+                    accountUsage: controller.accountUsage,
+                    showsUsage: true,
+                    approvalControl: approvals,
+                    managedControl: controller,
+                    availableHeight: 482,
+                    initialSelectedSessionID: selectedID,
+                    contentVisible: true,
+                    reduceMotion: false,
+                    transcriptPresentationReady: true,
+                    transcriptLoadDelay: 0,
+                    workspaceFeed: feed,
+                    workspacePresentation: presentation,
+                    terminal: terminal
+                )
+                .id("agents-\(state.generation)")
+            } else {
+                Color.black.opacity(0.01)
+                    .id("other-\(state.generation)")
+            }
+        }
+        .animation(.easeOut(duration: 0.01), value: state.showsAgents)
     }
 }
 

@@ -22,11 +22,14 @@ final class AgentConsoleTests: XCTestCase {
         )
     }
 
-    func testCommandReturnSubmitsWhileShiftReturnRemainsNativeNewline() {
+    func testPlainAndCommandReturnSubmitWhileShiftReturnRemainsNativeNewline() {
+        XCTAssertTrue(AgentPromptDraftPolicy.submitsReturn(with: []))
         XCTAssertTrue(AgentPromptDraftPolicy.submitsReturn(with: [.command]))
-        XCTAssertTrue(AgentPromptDraftPolicy.submitsReturn(with: [.command, .shift]))
+        XCTAssertTrue(AgentPromptDraftPolicy.submitsReturn(with: [.capsLock]))
         XCTAssertFalse(AgentPromptDraftPolicy.submitsReturn(with: [.shift]))
-        XCTAssertFalse(AgentPromptDraftPolicy.submitsReturn(with: []))
+        XCTAssertFalse(AgentPromptDraftPolicy.submitsReturn(with: [.command, .shift]))
+        XCTAssertFalse(AgentPromptDraftPolicy.submitsReturn(with: [.option]))
+        XCTAssertFalse(AgentPromptDraftPolicy.submitsReturn(with: [.control]))
     }
 
     func testConsoleProjectionMapsMessagesAndSafeOperationsAndStaysBounded() {

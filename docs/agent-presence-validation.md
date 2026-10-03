@@ -864,3 +864,73 @@ The currently running `dist` process was started before the rebuilt package, so 
 **NOT VERIFIED:** final rebuilt-package uninterrupted Beam/orb animation, pointer/click interaction, Feed approval coexistence under real provider traffic, actual Reduce Motion OFF → ON → OFF, and unrestricted whole-app/GPU frame-pacing closure. Human consent/Keychain/microphone gates from the prior acceptance record also remain separate and are not converted into PASS here.
 
 Generated snapshots, performance logs, soak reports, package logs, Graphify output, recordings, `.agents`, `.claude` and user research material remain outside this phase's intended commit. See `docs/agent-workspace-architecture.md`, `docs/border-beam-native-source.md` and `docs/libraries-native-parity.md`.
+
+
+## Post-crash Agents workspace completion audit — 2026-10-03
+
+This audit reopens the workspace checkpoint after a real packaged-app crash while switching between Agents and other primary pages. The prior checkpoint must not be treated as final acceptance for page switching or keyboard submission.
+
+### Real crash evidence and lifecycle hardening
+
+The user's crash report is `~/Library/Logs/DiagnosticReports/DynamicIsland-2026-10-03-222628.ips`. It records `EXC_BREAKPOINT / SIGTRAP` on the main thread during an AppKit/SwiftUI display transaction. The stack enters `NSView addSubview:` / SwiftUI `NSHostingView.swiftui_addRenderedSubview` while AppKit is updating constraints. The report does not expose a trustworthy high-level exception reason, so this audit does **not** claim one exact root cause.
+
+The phase had one concrete re-entrancy risk in that path: the native agent prompt editor synchronously published text-input focus state from `becomeFirstResponder`, `resignFirstResponder`, and `dismantleNSView` while SwiftUI could already be removing/remounting the Agents host. Those focus publications feed `IslandLayoutStore` and therefore can trigger layout-observed state changes inside the same AppKit display cycle. Focus publication/teardown is now deferred one main-run-loop turn. Terminal focus publications use the same deferred discipline.
+
+A new hosted `NSWindow`/ `NSHostingView` regression repeatedly mounts and unmounts the full Agents workspace while the native prompt editor owns first responder, alternates Feed/Terminal, and performs 48 remount cycles. **PASS — automated/native-host:** 48/48 cycles, no exception.
+
+**PASS — live packaged app:** the final rebuilt app completed **40/40 cycles** of `Agents → Island → Tools`, i.e. 120 successful primary-page changes, using bounded Accessibility control discovery. The app remained alive and no DynamicIsland diagnostic report newer than the original 22:26:28 crash was created. An initial acceptance helper run hung while recursively walking AX; it was stopped and replaced with bounded-depth/bounded-retry discovery. One later first-cycle attempt timed out waiting for a navigation control during the page morph; after adding a bounded retry window the exact same final package completed 40/40. Neither automation limitation is counted as an application pass/failure.
+
+### Return-key behavior
+
+**Agent composer:** plain Return is now the primary submit action. Command-Return remains supported. Shift-Return inserts a newline. Option/Control Return are not treated as send shortcuts. Accessibility/help text was updated to match.
+
+The native prompt editor test hosts the actual Agents view in an `NSWindow`, makes the real `NSTextView` first responder, types `plain return sends`, dispatches keyCode 36 with no modifiers, and verifies the provider-accepted user transcript entry. **PASS — automated/native-host.** A fresh live Codex send is still blocked by the user's current Codex usage limit, so fixture/native-host evidence is not relabeled as live provider acceptance.
+
+**Terminal:** the generic SwiftUI `TextField.onSubmit` was not reliable inside the island's nonactivating panel. The Terminal input is now an AppKit-backed `NSTextField` with an `NSTextFieldDelegate`; the field editor explicitly handles `insertNewline:`, updates the SwiftUI binding on real edits, accepts focus requests from both Terminal entry paths, and clears the live field editor only after `TerminalSessionController` accepts the command. Failed launches preserve the command text.
+
+**PASS — live packaged app:** selecting Agents → Terminal, focusing the real Terminal field and pressing Return executed a harmless command to **Exited 0**, cleared the input, and produced `TERMINAL_ENTER_OK`. **PASS — automated/native-host:** the same path launches the fixture process controller and asserts the native field becomes empty after successful submission.
+
+Terminal scope remains explicit: this surface reuses `TerminalSessionController`, so it is a repeatable shell-command runner with selected-project cwd, streamed output, Stop, status and optional history. It is **not a PTY emulator** and does not replace the provider-driven agent CLI.
+
+### Phase requirement audit
+
+| Requirement | Final audit |
+| --- | --- |
+| Single collapsed/expanded island shell | PASS — no additional persistent shell state introduced |
+| BorderBeam around selected agent chat | PASS — native Libraries.dev port, actual-GPU tests remain green |
+| ThinkingOrb for selected chat / compact active presence | PASS |
+| BotAvatar for operational Feed identity | PASS — deterministic provider/native-session/generation identity |
+| Model + reasoning controls inside chat | PASS — provider-advertised options and exact-generation next-turn reasoning selection |
+| Right workspace only Feed / Terminal | PASS |
+| Feed contains curated operational traffic, not a second transcript | PASS — bounded/redaction/ownership tests |
+| Feed approvals/denials preserve exact provider acknowledgement | PASS — request/session/provider/generation fail-closed tests |
+| Six usage indicators: Codex+Claude 5h / Week / Context | PASS — remaining/remaining/used semantics and unavailable-state tests |
+| Terminal preserves process/controller ownership across page switching | PASS |
+| Terminal selectable/focusable and Return executes | PASS — live packaged + native-host |
+| Agent composer Return sends; Shift-Return newline | PASS — native-host; live provider blocked by quota |
+| Transcript + right workspace vertical scrolling stay isolated from collapse gestures | PASS — routing suites |
+| Horizontal workspace/global gesture ownership preserved | PASS |
+| Feed/Terminal and width-emphasis transitions follow installed transition guidance | PASS — deterministic policy/hosted transition coverage; Reduce Motion removes spatial transitions |
+| Agents ↔ other primary-page switching does not crash | PASS — final packaged 40-cycle/120-transition live stress; no new crash report |
+| Transcript streaming does not republish whole Agents chrome | PASS — final performance harness |
+| Provider/session/generation isolation | PASS — deterministic multi-provider tests |
+| Codex semantic activity → Orb mapping | PASS — deterministic; prior live provider evidence preserved |
+| Claude provider-neutral isolation/mapping | PASS — deterministic; live Claude/concurrent-provider still externally blocked |
+| Bounded lifecycle / teardown | PASS — exact-source 110-cycle soak; controller released |
+| Release build / package / strict signature | PASS after generated-bundle xattr cleanup and same ad-hoc signing policy |
+| Actual Reduce Motion OFF→ON→OFF | NOT VERIFIED — system readback remained OFF (0), unchanged |
+| Fresh live Codex agent Return on final package | BLOCKED — usage limit |
+| Fresh live Claude + concurrent Codex/Claude | BLOCKED — external quota/provider availability |
+| Existing microphone/Keychain human acceptance gates | unchanged / external |
+
+### Final validation after fixes
+
+- Phase-targeted audit: **188 executed / 0 failed / 1 skipped**. The skip is the explicit opt-in real Codex semantic task.
+- Clean full suite, with no packaged DynamicIsland process running: **1,669 passed / 0 failed / 38 skipped**.
+- One full-suite run while the packaged app was concurrently active hit the existing `MetalSendInteractionTests` timing-sensitive click case (three cascading assertions in one test). The exact test immediately passed in isolation, and the subsequent clean full suite passed 1,669/0/38. No test was weakened, skipped or changed to hide that event.
+- Final performance harness: 200 deltas → **6** Agents content/controlbar/dashboard/Feed/selected evaluations and **2** managed-controller publications; transcript coalescing published 63 times. Typing 38 keys → **3** console evaluations.
+- Exact-source bounded lifecycle soak: **1/0/0**, 110 cycles / ~98 s, 32 sessions, 80 transcript entries. Physical footprint cycles 10/30/50/70/90/110: **44,010,176 / 45,370,112 / 45,681,408 / 46,484,224 / 46,664,448 / 46,779,136 B**; after teardown **41,175,808 B**; controller released.
+- Final Release build: PASS. Existing unrelated compile warnings remain warnings.
+- Generated `dist/DynamicIsland.app` can reacquire Finder metadata in the synced directory; clearing only generated bundle xattrs and reapplying the same ad-hoc signatures restores deep/strict verification. No Keychain, TCC, entitlement or signing-policy changes were made.
+
+The correct next work is human/external acceptance closure (final live Codex send after quota reset, Claude/concurrent provider availability, actual Reduce Motion OFF→ON→OFF, and remaining consent-dependent microphone/Keychain checks), not another workspace redesign.

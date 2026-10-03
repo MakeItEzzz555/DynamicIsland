@@ -20,13 +20,13 @@ final class AgentWorkspacePresentation: ObservableObject {
 
     func select(_ mode: AgentWorkspaceMode) {
         if self.mode != mode { self.mode = mode }
+        if mode == .terminal { terminalFocusRequest &+= 1 }
     }
 
     func interact(_ mode: AgentInteractionMode) {
         if interactionMode != mode { interactionMode = mode }
         if mode == .terminal {
             select(.terminal)
-            terminalFocusRequest &+= 1
         }
     }
 

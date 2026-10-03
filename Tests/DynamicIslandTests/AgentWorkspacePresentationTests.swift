@@ -77,4 +77,24 @@ final class AgentWorkspacePresentationTests: XCTestCase {
         XCTAssertFalse(layout.containsExpandedScrollPoint(CGPoint(x: 300, y: 30)))
         XCTAssertTrue(layout.containsExpandedScrollPoint(CGPoint(x: 20, y: 30)))
     }
+    @MainActor
+    func testSelectingTerminalRequestsKeyboardFocusFromEitherControlPath() {
+        let presentation = AgentWorkspacePresentation()
+        let initial = presentation.terminalFocusRequest
+
+        presentation.select(.terminal)
+        XCTAssertEqual(presentation.mode, .terminal)
+        XCTAssertEqual(presentation.terminalFocusRequest, initial + 1)
+
+        presentation.select(.feed)
+        presentation.interact(.terminal)
+        XCTAssertEqual(presentation.mode, .terminal)
+        XCTAssertEqual(presentation.interactionMode, .terminal)
+        XCTAssertEqual(presentation.terminalFocusRequest, initial + 2)
+
+        presentation.interact(.chat)
+        XCTAssertEqual(presentation.interactionMode, .chat)
+        XCTAssertEqual(presentation.terminalFocusRequest, initial + 2)
+    }
+
 }

@@ -449,7 +449,7 @@ struct AgentWorkspaceTerminalView: View {
     let focusRequest: Int
     let layoutStore: IslandLayoutStore?
     @State private var command = ""
-    @FocusState private var focused: Bool
+    @State private var commandFocused = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -474,13 +474,15 @@ struct AgentWorkspaceTerminalView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(.black.opacity(0.18), in: RoundedRectangle(cornerRadius: 6))
             HStack(spacing: 3) {
-                TextField("Shell command", text: $command)
-                    .font(.system(size: 10, design: .monospaced))
-                    .textFieldStyle(.plain)
-                    .focused($focused)
-                    .disabled(controller.isRunning)
-                    .onSubmit(run)
-                    .accessibilityLabel("Terminal shell command")
+                TerminalCommandField(
+                    text: $command,
+                    isEnabled: !controller.isRunning,
+                    isVisible: isVisible,
+                    focusRequest: focusRequest,
+                    onSubmit: run,
+                    onFocusChange: { commandFocused = $0 }
+                )
+                    .frame(maxWidth: .infinity, minHeight: 22)
                 Button(action: run) {
                     Image(systemName: "return").frame(width: 26, height: 26).contentShape(Rectangle())
                 }
@@ -495,10 +497,12 @@ struct AgentWorkspaceTerminalView: View {
                 .font(.system(size: 8)).foregroundStyle(.secondary).lineLimit(1)
         }
         .padding(.horizontal, 4)
-        .onChange(of: focusRequest) { _, _ in if isVisible { focused = true } }
-        .onChange(of: isVisible) { _, visible in if !visible { focused = false } }
-        .onChange(of: focused) { _, value in layoutStore?.setTextInputFocused(value) }
-        .onDisappear { layoutStore?.setTextInputFocused(false) }
+        .onChange(of: commandFocused) { _, value in
+            DispatchQueue.main.async { layoutStore?.setTextInputFocused(value) }
+        }
+        .onDisappear {
+            DispatchQueue.main.async { layoutStore?.setTextInputFocused(false) }
+        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Embedded project terminal")
     }
@@ -509,5 +513,130 @@ struct AgentWorkspaceTerminalView: View {
         guard !value.isEmpty else { return }
         if let cwd = session?.project.workingDirectory, !cwd.isEmpty { controller.workingDirectoryPath = cwd }
         do { try controller.run(command: value); command = "" } catch { /* Existing status publishes the failure. */ }
+    }
+}
+
+
+private struct TerminalCommandField: NSViewRepresentable {
+    @Binding var text: String
+    let isEnabled: Bool
+    let isVisible: Bool
+    let focusRequest: Int
+    let onSubmit: () -> Void
+    let onFocusChange: (Bool) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text, onSubmit: onSubmit, onFocusChange: onFocusChange)
+    }
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField()
+        field.delegate = context.coordinator
+        field.isBezeled = false
+        field.drawsBackground = false
+        field.focusRingType = .none
+        field.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
+        field.textColor = NSColor.labelColor.withAlphaComponent(0.90)
+        field.placeholderString = "Shell command"
+        field.lineBreakMode = .byTruncatingMiddle
+        field.cell?.usesSingleLineMode = true
+        field.isEditable = isEnabled
+        field.isSelectable = true
+        field.setAccessibilityLabel("Terminal shell command")
+        context.coordinator.field = field
+        context.coordinator.lastFocusRequest = focusRequest
+        return field
+    }
+
+    func updateNSView(_ field: NSTextField, context: Context) {
+        context.coordinator.onSubmit = onSubmit
+        context.coordinator.onFocusChange = onFocusChange
+        field.isEditable = isEnabled
+        field.isSelectable = true
+
+        // Do not replace the field editor's live string while the user is
+        // typing. Binding updates originate from controlTextDidChange.
+        if field.currentEditor() == nil, field.stringValue != text {
+            field.stringValue = text
+        }
+
+        let shouldRequestFocus = isVisible &&
+            (context.coordinator.lastFocusRequest != focusRequest || !context.coordinator.wasVisible)
+        context.coordinator.lastFocusRequest = focusRequest
+        context.coordinator.wasVisible = isVisible
+
+        if shouldRequestFocus {
+            DispatchQueue.main.async { [weak field] in
+                guard let field, field.isEditable, field.window != nil else { return }
+                field.window?.makeKey()
+                field.window?.makeFirstResponder(field)
+            }
+        } else if !isVisible, field.currentEditor() != nil {
+            DispatchQueue.main.async { [weak field] in
+                guard let field else { return }
+                if field.window?.firstResponder === field.currentEditor() {
+                    field.window?.makeFirstResponder(nil)
+                }
+            }
+        }
+    }
+
+    static func dismantleNSView(_ field: NSTextField, coordinator: Coordinator) {
+        field.delegate = nil
+        coordinator.field = nil
+        let handler = coordinator.onFocusChange
+        coordinator.onFocusChange = { _ in }
+        DispatchQueue.main.async { handler(false) }
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        @Binding var text: String
+        var onSubmit: () -> Void
+        var onFocusChange: (Bool) -> Void
+        weak var field: NSTextField?
+        var lastFocusRequest = 0
+        var wasVisible = false
+
+        init(
+            text: Binding<String>,
+            onSubmit: @escaping () -> Void,
+            onFocusChange: @escaping (Bool) -> Void
+        ) {
+            _text = text
+            self.onSubmit = onSubmit
+            self.onFocusChange = onFocusChange
+        }
+
+        func controlTextDidBeginEditing(_ notification: Notification) {
+            DispatchQueue.main.async { [onFocusChange] in onFocusChange(true) }
+        }
+
+        func controlTextDidEndEditing(_ notification: Notification) {
+            DispatchQueue.main.async { [onFocusChange] in onFocusChange(false) }
+        }
+
+        func controlTextDidChange(_ notification: Notification) {
+            guard let field else { return }
+            text = field.stringValue
+        }
+
+        func control(
+            _ control: NSControl,
+            textView: NSTextView,
+            doCommandBy commandSelector: Selector
+        ) -> Bool {
+            guard commandSelector == #selector(NSResponder.insertNewline(_:)) else {
+                return false
+            }
+            onSubmit()
+            // AgentWorkspaceTerminalView clears the binding only after the
+            // controller accepts the command. Keep the active field editor in
+            // sync with that accepted state; launch failures preserve text.
+            if text.isEmpty {
+                textView.string = ""
+                field?.stringValue = ""
+            }
+            return true
+        }
     }
 }

@@ -9,7 +9,7 @@ DynamicIsland still has only the persistent `collapsed` and `expanded` shells. A
 - **Primary chat:** selected managed/observed session transcript. A semantic Libraries.dev ThinkingOrb is the agent/activity glyph. The active surface is wrapped by the native Libraries.dev BorderBeam. Model and reasoning-effort controls live in this surface.
 - **Right workspace:** one retained surface with **Feed** and **Terminal** pages. Page switching changes presentation only; the terminal process controller is not recreated.
 - **Feed:** curated operational traffic from Codex and Claude. Stable Libraries.dev BotAvatar identity is derived from `provider + native session ID + generation`. Approvals, denials, command/tool lifecycles, provider state changes, interruptions and terminal outcomes belong here; transcript text does not.
-- **Terminal:** the existing embedded terminal process/controller. Selecting Terminal focuses/reveals the retained terminal; changing pages must not restart the process.
+- **Terminal:** the existing `TerminalSessionController` presented as a retained shell-command surface: selected-project cwd, streamed output, status, Stop, optional history, repeated commands, and native Return submission. It is not a PTY emulator and does not replace the provider-driven agent CLI. Selecting Terminal focuses/reveals the retained command field; changing pages must not restart an active command.
 - **Usage strip:** three paired categories, each Codex then Claude: 5-hour remaining, weekly remaining, and selected-session context used.
 
 ## Ownership

@@ -166,10 +166,11 @@ final class AgentPromptEditingShortcutTests: XCTestCase {
         XCTAssertNil(AgentPromptEditingShortcut.action(characters: ".", modifiers: .command))
     }
 
-    func testCommandReturnStillSubmitsAndPlainReturnDoesNot() {
+    func testReturnAndCommandReturnSubmitWhileShiftReturnInsertsNewline() {
+        XCTAssertTrue(AgentPromptDraftPolicy.submitsReturn(with: []))
         XCTAssertTrue(AgentPromptDraftPolicy.submitsReturn(with: .command))
         XCTAssertFalse(AgentPromptDraftPolicy.submitsReturn(with: .shift))
-        XCTAssertFalse(AgentPromptDraftPolicy.submitsReturn(with: []))
+        XCTAssertFalse(AgentPromptDraftPolicy.submitsReturn(with: [.command, .shift]))
     }
 }
 
