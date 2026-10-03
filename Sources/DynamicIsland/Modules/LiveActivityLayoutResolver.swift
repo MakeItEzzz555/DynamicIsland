@@ -281,6 +281,9 @@ enum LiveActivityPresentationPolicy {
                 priority: max(activity.priority, 135)
             )
 
+        case .voiceStatus:
+            return primaryDescriptor(activity, shape: .capsule, priority: max(activity.priority, 140))
+
         case .camera:
             return primaryDescriptor(
                 activity,

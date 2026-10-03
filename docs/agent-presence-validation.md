@@ -274,3 +274,193 @@ and a controlled sustained performance plateau remain unaccepted.
 Recommended next phase: **Close live acceptance blockers and complete the human
 speech, Claude/multi-provider, detailed motion and controlled soak pass before
 release promotion.** Keep the PR Draft and do not merge.
+
+## Live Acceptance Closure & Release Gate — 2026-10-03
+
+Baseline: `8b2e0b013ea748fd7068a68cd2bdc7b56a9f5c38`, branch
+`feature/agents-ui-overhaul-continuation`. Fetch confirmed the same remote
+checkpoint; no newer work was reset/rebased. Environment: macOS 15.7.4
+(24G517), arm64, built-in Retina hardware notch, 1147×745 logical display,
+24pt safe-area top. Debug XCTest and the checkpoint/final Release packages
+are distinguished below. PR #24 remains open and Draft. This is a verified
+fix checkpoint, **not release promotion or a claim that every live gate closed**.
+
+### Skills and native motion acceptance
+
+Actively applied installed `transitions-dev` and `transitions-polish`, including
+Card Resize, Panel Reveal and Plus Menu Morph guidance: preserve one surface,
+match timing to interaction, hand off content after shell geometry commits,
+keep interruption/replay cleanup deterministic, maintain a stable hover target,
+and suppress decorative travel under Reduce Motion. Audited existing native
+shell/content timing and cancellation paths and applied these checks to the
+device navigation workload. Existing 0.40s normal shell/0.24s reduced shell
+timings and content staging were retained; CSS values were not transplanted
+into SwiftUI. Graphify, accessibility-tester, qa-expert, performance-engineer
+and ui-designer guidance supported scoped inspection, text feedback, evidence
+classification, repeatable workloads and existing visual-system consistency.
+No framework/dependency or animation redesign was introduced.
+
+**PASS — live (representative endpoints)**: checkpoint package repeatedly
+expanded/collapsed and switched Island → Agents → Tools with real root Codex
+activity. Two 40-cycle batches produced 79 complete cycles; one first-batch
+cycle had no successful AX actions during competing pointer/approval activity.
+The second batch completed all 120 section actions. Compact presence retained
+its battery sidecar; expanded provider/session rows and transcript were visible.
+This checks endpoints and repeated usability, not frame-by-frame timing.
+
+**PASS — live (OS propagation)**: actual Accessibility → Display Reduce Motion
+OFF → ON → OFF. Fresh NSWorkspace queries confirmed ON without restarting the
+app and final restored OFF. ON retained textual agent status and actual
+Listening/LIVE recording feedback with a minimal beam. Recording started, but
+the automated cancel/navigation sequence was interrupted by other pointer
+activity; successful cleanup of that particular sequence is not claimed.
+The checkpoint process subsequently exited before the rebuilt package launched.
+**NOT VERIFIED**: uninterrupted detailed jank/opacity/hover/pointer-motion
+acceptance for every requested transition. Existing motion/layout/Reduce Motion
+tests and regenerated images remain **PASS — automated/simulated** evidence.
+
+### Microphone and recording evidence
+
+**PASS — live, checkpoint Release package**: real microphone recording was
+started using production Voice controls; collapsed Listening/LIVE and the beam
+remained visible while ordinary Codex activity existed. Stop reached actual
+no-speech recovery and the next Record control was available. A separate repeated
+record/cancel cycle successfully invoked Record and Cancel. No generated audio
+or second capture session was used. Ambient/silence capture is not a controlled
+human speech sample. The requested phrase/normal-versus-louder speech response
+was not supplied, so amplitude calibration and successful controlled speech
+transcription remain **BLOCKED — external acceptance dependency: human input**.
+
+Final rebuilt Release package launched (PID 90279) and real AX Tools → Voice →
+Record succeeded, reaching **Waiting for permission**. macOS then displayed a
+Keychain dialog for existing `com.local.dynamicisland.agent-bridge` access; a
+local human Allow/Deny decision was requested. No password, credential, consent,
+privacy preference or Keychain policy was changed by automation.
+**BLOCKED — external acceptance dependency: OS Keychain/permission decision**
+for final rebuilt recording/transcription smoke acceptance. No success is
+inferred from the earlier binary's permission grant. A premature helper attempt
+found no running app during relaunch and failed; it was a harness launch-order
+failure, not a product pass. The final packaged process was explicitly confirmed
+before the successful controls/permission attempt.
+
+**BLOCKED — external acceptance dependency: development microphone consent**:
+the existing opt-in production-recorder test reported authorization raw value 0
+(not determined) for XCTest and skipped without prompting. Debug app microphone
+launch is **NOT VERIFIED**; this test-process result is not equivalent to it.
+
+**PASS — live, development ScreenCaptureKit acceptance: 5/0/0**. Existing tests
+captured actual display, static test window and selected area; validated movie
+dimensions/duration, pause/resume excluding paused time, and system-audio track
+with 98 written audio samples. This is real capture through production recording
+controllers in the Debug test process. Full packaged screen-recording + agent +
+microphone shell coexistence is **NOT VERIFIED**, not inferred from these tests.
+
+### Provider evidence
+
+**PASS — live, real Codex: 2 passed / 0 failed / 1 skipped** (excluded Claude).
+Actual app-server creation, command/file output, normalized idle/working/command/
+approval/completed/interrupted states, stop and exact-native-session resume
+passed. Native deny left the denied file absent and request denied; native allow
+created only the intended file and marked its exact request approved. Native ID
+and generation stayed stable across resume. These are real provider events,
+although driven by the existing acceptance test controller rather than manual
+composer entry. Production approval policy/transport/identity were unchanged.
+The running packaged app separately displayed real root Codex activity and
+discovered acceptance-session rows. Natural thinking/planning/search/composing/
+plan-ready transitions were not observed and remain **NOT VERIFIED — live**.
+
+**BLOCKED — external acceptance dependency: Claude quota**. A real read-only
+Haiku request returned HTTP/API 429: “You've hit your weekly limit”, resetting
+Oct 4 at 9pm (Asia/Nicosia). No repeated quota retries or credential changes.
+Successful Claude execution/resume and concurrent Codex + Claude acceptance
+remain blocked. Fixture provider/session switching is classified separately.
+
+### Controlled memory follow-up
+
+Repeated native device workload: each cycle expands if needed, switches Agents,
+Island and Tools, then leaves/collapses; real root agent traffic continues.
+Each 40-cycle batch lasted approximately 208s including settling. Checkpoint
+package RSS KiB at cycles 0/10/20/30/40:
+
+| Batch | 0 | 10 | 20 | 30 | 40 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| First | 201072 | 204496 | 210320 | 214784 | 220544 |
+| Second | 221152 | 225824 | 231696 | 241824 | 248672 |
+
+Instantaneous CPU samples were 22.7–40.1%. RSS did not settle within those batches.
+A subsequent 3s process sample reported 132.8MiB physical footprint, peak
+174.3MiB, and most main-thread samples waiting in mach messaging. RSS and physical
+footprint are different metrics; neither is an allocation-retention diagnosis.
+A restricted `leaks` scan reported 18 objects/2272 bytes (CoreVideo,
+CoreAnimation and strings), exit 1, with read-only inspection restrictions.
+That small report does not explain the larger RSS changes. Real session/history,
+ongoing events and SwiftUI/AppKit/media caches confound attribution.
+**NOT VERIFIED: whole-app sustained memory plateau/unbounded-retention closure.**
+No speculative session or animation optimization was performed.
+
+**PASS — automated/simulated, bounded lifecycle soak: 1/0/0**, 110 cycles/151s:
+32 fixed sessions (the established per-provider discovery cap), replaced 80-entry
+transcript, streamed fixture deltas, completion/interruption, two-session
+switching, production dashboard remounts and fixture-level listening/processing
+beam mounts. Physical footprint MiB at cycles 10/30/50/70/90/110:
+45.2/46.4/47.3/47.3/47.2/47.7; after teardown 43.7. Controller/subscriptions
+released. This establishes bounded behavior for this workload, not a no-leak
+claim for the full shell. The initial new harness incorrectly expected 36
+single-provider sessions despite the existing discovery cap; its failed run
+was rejected. Setup now uses that canonical cap with exact-count assertions;
+production limits and existing tests were not relaxed. Measurement JSON does
+not hardcode a pass independent of XCTest results.
+
+The combined native acceptance's streaming measurement was slower (10,695ms
+main-thread CPU, 200 publications/9 dashboard evaluations). An isolated repeat
+of the unchanged workload passed in 6.19s: 200 deltas, 44 transcript publications,
+6 dashboard evaluations, 391ms CPU/1625.5ms streaming wall time; typing 38 keys
+144.3ms CPU/251.4ms wall. Leaving produced no dashboard/console evaluations.
+This repeat is consistent with baseline coalescing; the mixed-run measurement
+is retained rather than hidden. Competing native windows/OS interactions make
+cross-run timing attribution unreliable. No speculative performance fix followed.
+
+### Scoped defects and fixes
+
+1. Permission/preparation/recovery published no compact voice activity, letting
+   ordinary agent status take its place. Added presentation-only static
+   `voiceStatus` through the existing resolver/generic compact route: textual
+   permission/preparation notice and an 8s recovery notice, with no LIVE beam or
+   fake recorder. Progress/cancel removes it; generation guarding prevents stale
+   cleanup after retry. Existing recording/transcription priority is preserved,
+   as are blocking agent attention, sidecars and the single shell. Resolver and
+   controller regressions pass; final device permission remains externally blocked.
+2. SpeechFrameworkTranscriber kept its last task/request/continuation until
+   cancel, while controller success/failure did not release them. Terminal
+   current-generation success/failure now calls the existing cancellation cleanup.
+   Tests verify cleanup, static recovery expiry, permission cancellation and no
+   accidental capture. This fixes bounded last-recognition retention; it does
+   not establish that recognition caused the earlier whole-app memory growth.
+
+### Final validation and release gate
+
+- Full suite: **1,570 passed / 0 failed / 35 skipped**, 1,605 total. Two new voice
+  regressions pass; the new opt-in soak adds one ordinary-suite skip and passes
+  when enabled. No existing test deleted or weakened.
+- Focused resolver/voice: **55/0/0**; voice rerun after resource cleanup **29/0/0**.
+- Native opt-in acceptance: **7/0/1**; the microphone consent skip above is real.
+- Selected real Codex: **2/0/1**; real development screen capture: **5/0/0**;
+  bounded fixture soak: **1/0/0**. These sets overlap other suites; do not sum them.
+- Release compilation and project packaging pass. Synced-directory FinderInfo
+  reappeared and initially failed strict verification. Generated-bundle-only
+  xattr cleanup followed immediately by unchanged ad-hoc signing recovered it.
+  App plus all three helpers and temporary exported app passed deep strict
+  verification. No entitlements/signing policy/dependencies changed.
+- Final package launch and Tools/Voice/Record controls pass; terminal microphone
+  smoke remains blocked at the OS interaction above. Graphify AST update passed;
+  generated graph/research/build/skill files remain outside the phase commit.
+
+Temporary evidence: `/tmp/dynamicisland-closure/` (`full.log`, `native-final.log`,
+`development-recording.log`, `soak-final.json`, `performance-final.json`,
+`performance-isolated.json`, `packaged-soak.sample`, regenerated `visual-final/`, `ui-final/`, `sidecars-final/`,
+and strictly verified package export). Native screenshots additionally reside
+under `/tmp/dynamicisland-live-acceptance/`. No recordings/build artifacts are
+committed. Remaining release gates: human consent/speech, Claude/concurrent
+provider success, uninterrupted detailed motion and whole-app memory follow-up.
+Recommended next phase: **Human-assisted live release acceptance and allocation
+profiling of the full shell before release promotion**. Keep PR Draft/unmerged.

@@ -251,6 +251,8 @@ final class LiveActivityLayoutResolverTests: XCTestCase {
         let baseline = resolve(routine)
         let now = Date(timeIntervalSince1970: 1)
         let phases = [
+            VoiceTranscriptionController.makeStatusActivity(title: "Mic permission", subtitle: "Waiting for permission", updatedAt: now),
+            VoiceTranscriptionController.makeStatusActivity(title: "Voice needs attention", subtitle: "No speech was recognized", updatedAt: now),
             VoiceTranscriptionController.makeRecordingActivity(startedAt: now),
             VoiceTranscriptionController.makeTranscriptionActivity(onDevice: true, updatedAt: now)
         ]

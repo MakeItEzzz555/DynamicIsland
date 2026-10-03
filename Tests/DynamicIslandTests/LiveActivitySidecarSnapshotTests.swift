@@ -202,6 +202,7 @@ final class LiveActivitySidecarSnapshotTests: XCTestCase {
         case .reminder: "checklist"
         case .voiceRecording: "mic.fill"
         case .voiceTranscription: "waveform"
+        case .voiceStatus: "mic.badge.exclamationmark"
         case .camera: "camera.fill"
         case .backgroundRemoval: "person.crop.rectangle"
         case .screenRecording: "record.circle.fill"
@@ -221,6 +222,7 @@ final class LiveActivitySidecarSnapshotTests: XCTestCase {
         case .reminder: 78
         case .voiceRecording: 125
         case .voiceTranscription: 105
+        case .voiceStatus: 140
         case .camera: 128
         case .backgroundRemoval: 84
         case .screenRecording: 146

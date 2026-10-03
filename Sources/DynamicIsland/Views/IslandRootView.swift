@@ -917,7 +917,7 @@ struct IslandRootView: View {
         case .voiceTranscription:
             return .voiceTranscription(primary)
         case .keepAwake, .terminalTask, .windowSnapPreview, .reminder,
-             .camera, .backgroundRemoval, .message:
+             .voiceStatus, .camera, .backgroundRemoval, .message:
             return .generic(primary)
         }
     }
@@ -947,7 +947,7 @@ struct IslandRootView: View {
             navigation.showTray()
             onRequestExpand()
         case .battery, .system, .keepAwake, .terminalTask, .windowSnapPreview,
-             .reminder, .voiceRecording, .voiceTranscription, .camera, .backgroundRemoval:
+             .reminder, .voiceRecording, .voiceTranscription, .voiceStatus, .camera, .backgroundRemoval:
             break
         case .screenRecording:
             navigation.showIsland()
@@ -1156,7 +1156,7 @@ struct IslandRootView: View {
         case .system:
             return nil
         case .keepAwake, .terminalTask, .windowSnapPreview, .reminder,
-             .voiceRecording, .voiceTranscription, .camera, .backgroundRemoval,
+             .voiceRecording, .voiceTranscription, .voiceStatus, .camera, .backgroundRemoval,
              .screenRecording, .message:
             return CollapsedPreviewRowContent(
                 id: activity.id,
@@ -4139,7 +4139,7 @@ struct LiveActivitiesModuleView: View {
         case .message:
             navigation.showMessages()
         case .keepAwake, .terminalTask, .windowSnapPreview, .reminder,
-             .voiceRecording, .voiceTranscription, .camera, .backgroundRemoval:
+             .voiceRecording, .voiceTranscription, .voiceStatus, .camera, .backgroundRemoval:
             break
         case .screenRecording:
             navigation.showIsland()

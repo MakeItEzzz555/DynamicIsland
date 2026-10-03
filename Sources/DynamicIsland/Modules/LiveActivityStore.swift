@@ -14,6 +14,7 @@ enum DynamicIslandLiveActivityKind: String, Equatable, Sendable {
     case reminder
     case voiceRecording
     case voiceTranscription
+    case voiceStatus
     case camera
     case backgroundRemoval
     case screenRecording
@@ -22,7 +23,7 @@ enum DynamicIslandLiveActivityKind: String, Equatable, Sendable {
     var usesDirectLayoutProjection: Bool {
         switch self {
         case .keepAwake, .terminalTask, .windowSnapPreview, .reminder,
-             .voiceRecording, .voiceTranscription, .camera, .backgroundRemoval,
+             .voiceRecording, .voiceTranscription, .voiceStatus, .camera, .backgroundRemoval,
              .screenRecording, .message:
             true
         case .media, .timer, .fileTray, .backgroundOperation, .battery, .system, .agent:
@@ -373,7 +374,7 @@ enum CollapsedLiveActivitySelector {
         case .system:
             return .systemHUD
         case .agent, .keepAwake, .terminalTask, .windowSnapPreview, .reminder,
-             .voiceRecording, .voiceTranscription, .camera, .backgroundRemoval,
+             .voiceRecording, .voiceTranscription, .voiceStatus, .camera, .backgroundRemoval,
              .screenRecording, .message:
             return nil
         }

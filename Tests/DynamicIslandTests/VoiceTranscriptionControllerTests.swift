@@ -177,7 +177,7 @@ final class VoiceTranscriptionControllerTests: XCTestCase {
             try await fixture.controller.startRecording()
         }
         XCTAssertTrue(fixture.recorder.startedURLs.isEmpty)
-        XCTAssertTrue(fixture.activities.activities.isEmpty)
+        XCTAssertEqual(fixture.activities.activities.map(\.kind), [.voiceStatus], "Only static recovery remains; capture and processing are removed")
         XCTAssertEqual(fixture.registry.snapshot(for: .voiceTranscribe)?.permission, .denied)
     }
 
@@ -236,14 +236,14 @@ final class VoiceTranscriptionControllerTests: XCTestCase {
         XCTAssertNil(activity?.progress)
     }
 
-    func testRecorderStartFailureLeavesNoActivity() async {
+    func testRecorderStartFailureLeavesOnlyStaticRecovery() async {
         let fixture = makeFixture(authorized: true)
         fixture.recorder.startError = VoiceTranscriptionError.recordingFailed("busy")
 
         await XCTAssertThrowsVoiceError(.recordingFailed("busy")) {
             try await fixture.controller.startRecording()
         }
-        XCTAssertTrue(fixture.activities.activities.isEmpty)
+        XCTAssertEqual(fixture.activities.activities.map(\.kind), [.voiceStatus], "Only static recovery remains; capture and processing are removed")
         guard case .failed = fixture.registry.snapshot(for: .voiceTranscribe)?.health else {
             return XCTFail("Expected failed health")
         }
@@ -257,6 +257,7 @@ final class VoiceTranscriptionControllerTests: XCTestCase {
         try await fixture.controller.stopAndTranscribe()
 
         XCTAssertEqual(fixture.recorder.stopCount, 1)
+        XCTAssertEqual(fixture.transcriber.cancelCount, 1, "A final result releases the recognition task/request")
         XCTAssertEqual(fixture.transcriber.requestedOnDevice, [true])
         XCTAssertEqual(fixture.transcriber.transcribedURLs, [audioURL])
         XCTAssertEqual(fixture.transcriber.observedActivitiesDuringWork, [[.voiceTranscription]])
@@ -283,7 +284,8 @@ final class VoiceTranscriptionControllerTests: XCTestCase {
         guard case .failed = fixture.controller.phase else {
             return XCTFail("Expected failed phase")
         }
-        XCTAssertTrue(fixture.activities.activities.isEmpty)
+        XCTAssertEqual(fixture.transcriber.cancelCount, 1, "Failure releases recognition resources")
+        XCTAssertEqual(fixture.activities.activities.map(\.kind), [.voiceStatus], "Only static recovery remains; capture and processing are removed")
         XCTAssertFalse(FileManager.default.fileExists(atPath: audioURL.path))
     }
 
@@ -348,7 +350,7 @@ final class VoiceTranscriptionControllerTests: XCTestCase {
             }
         }
         XCTAssertEqual(fixture.controller.liveAudioLevel, 0)
-        XCTAssertTrue(fixture.activities.activities.isEmpty)
+        XCTAssertEqual(fixture.activities.activities.map(\.kind), [.voiceStatus], "Only static recovery remains; capture and processing are removed")
         XCTAssertFalse(fixture.controller.isBusy)
     }
 
@@ -427,7 +429,7 @@ final class VoiceTranscriptionControllerTests: XCTestCase {
         let shelfStorage: FileShelfTemporaryStorage
     }
 
-    private func makeFixture(authorized: Bool = false) -> Fixture {
+    private func makeFixture(authorized: Bool = false, recoveryDisplayDuration: Duration = .seconds(8)) -> Fixture {
         let permissions = FakeVoicePermissions()
         if authorized {
             permissions.microphoneState = .authorized
@@ -454,7 +456,8 @@ final class VoiceTranscriptionControllerTests: XCTestCase {
             addToShelf: { shelf.urls.append(contentsOf: $0) },
             writeToPasteboard: { pasteboard.values.append($0) },
             workingDirectory: directory.appendingPathComponent("Work", isDirectory: true),
-            now: { Date(timeIntervalSince1970: 1_000) }
+            now: { Date(timeIntervalSince1970: 1_000) },
+            recoveryDisplayDuration: recoveryDisplayDuration
         )
         return Fixture(
             controller: controller,
@@ -492,7 +495,12 @@ extension VoiceTranscriptionControllerTests {
     func testPermissionRequestIsAnExplicitPhaseNotRecording() async throws {
         let fixture = makeFixture()
         var observed: [VoiceTranscriptionPhase] = []
-        fixture.permissions.onRequest = { observed.append(fixture.controller.phase) }
+        fixture.permissions.onRequest = {
+            observed.append(fixture.controller.phase)
+            XCTAssertEqual(fixture.activities.activities.map(\.kind), [.voiceStatus])
+            XCTAssertEqual(fixture.controller.liveAudioLevel, 0)
+            XCTAssertTrue(fixture.recorder.startedURLs.isEmpty)
+        }
         try await fixture.controller.startRecording()
         XCTAssertEqual(observed, [.requestingPermission])
         guard case .recording = fixture.controller.phase else { return XCTFail("expected recording") }
@@ -505,7 +513,7 @@ extension VoiceTranscriptionControllerTests {
             try await fixture.controller.startRecording()
         }
         XCTAssertTrue(fixture.recorder.startedURLs.isEmpty)
-        XCTAssertTrue(fixture.activities.activities.isEmpty)
+        XCTAssertEqual(fixture.activities.activities.map(\.kind), [.voiceStatus], "Only static recovery remains; capture and processing are removed")
         XCTAssertEqual(fixture.controller.phase, .failed("No microphone available."))
     }
 
@@ -541,5 +549,30 @@ extension VoiceTranscriptionControllerTests {
             XCTAssertFalse(fixture.recorder.isRecording)
             XCTAssertTrue(fixture.activities.activities.isEmpty)
         }
+    }
+}
+
+
+extension VoiceTranscriptionControllerTests {
+    func testStaticRecoveryExpiresWithoutKeepingControllerAlive() async throws {
+        var fixture: Fixture? = makeFixture(authorized: true, recoveryDisplayDuration: .milliseconds(10))
+        fixture!.recorder.startError = VoiceTranscriptionError.noMicrophone
+        _ = try? await fixture!.controller.startRecording()
+        let activities = fixture!.activities
+        XCTAssertEqual(activities.activities.map(\.kind), [.voiceStatus])
+        try await Task.sleep(for: .milliseconds(40))
+        XCTAssertTrue(activities.activities.isEmpty)
+        weak var controller = fixture!.controller
+        fixture = nil
+        XCTAssertNil(controller)
+    }
+
+    func testPermissionCancellationRemovesStaticStatusAndCannotStartCapture() async throws {
+        let fixture = makeFixture()
+        fixture.permissions.onRequest = { fixture.controller.cancel() }
+        try await fixture.controller.startRecording()
+        XCTAssertEqual(fixture.controller.phase, .idle)
+        XCTAssertTrue(fixture.recorder.startedURLs.isEmpty)
+        XCTAssertTrue(fixture.activities.activities.isEmpty)
     }
 }

@@ -451,3 +451,126 @@ private actor PerfFakeProvider: AgentInteractiveProvider {
     func resolveApproval(_ request: AgentManagedApprovalRequest, allow: Bool) async throws {}
     func stop() async { continuation.finish() }
 }
+
+// Bounded repeatable workload: fixture events, production views/controllers.
+// This supplements packaged-device profiling; it is never live-provider evidence.
+extension AgentsPerformanceHarnessTests {
+    func testMeasureBoundedLifecycleSoak() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["DYNAMIC_ISLAND_AGENT_SOAK"] == "1" else {
+            throw XCTSkip("Set DYNAMIC_ISLAND_AGENT_SOAK=1 for the bounded lifecycle/memory workload.")
+        }
+        let started = ContinuousClock.now
+        var samples: [[String: Any]] = []
+        weak var releasedController: AgentManagedSessionController?
+        do {
+            let sessionCount = AgentManagedSessionController.maximumDiscoveredSessionsPerProvider
+            let provider = PerfFakeProvider(provider: .codex, sessionCount: sessionCount)
+            let store = AgentEventStore()
+            let approvals = AgentApprovalController()
+            let controller = AgentManagedSessionController(
+                providers: [provider], coordinator: AgentIngestionCoordinator(eventStore: store),
+                eventStore: store, approvals: approvals
+            )
+            releasedController = controller
+            controller.startObserving()
+            await controller.refreshPersistentSnapshot()
+            let selected = try XCTUnwrap(store.sessions.first)
+            let other = try XCTUnwrap(store.sessions.dropFirst().first)
+            controller.connect(selected)
+            for _ in 0..<200 where !controller.isManaged(selected) {
+                try await Task.sleep(for: .milliseconds(5))
+            }
+            let suite = "AgentsSoak-\(UUID().uuidString)"
+            let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+            defer { defaults.removePersistentDomain(forName: suite) }
+            let settings = AppSettings(defaults: defaults)
+            let projects = AgentProjectProjectionStore()
+            let layout = IslandLayoutStore()
+            let host = PerfHost(size: CGSize(width: 820, height: 430))
+            host.window.isReleasedWhenClosed = false
+            func page() -> AnyView {
+                AnyView(AgentActivityDashboardView(
+                    settings: settings, agentEvents: store, projects: projects,
+                    approvalControl: approvals, managedControl: controller, layoutStore: layout,
+                    availableHeight: 410, contentVisible: true, isContentRemoving: false
+                ))
+            }
+            // Ten warm-up cycles, then five equal batches of twenty cycles.
+            // Reuse sessions and replace transcript history: data growth is bounded.
+            for cycle in 0..<110 {
+                controller.selectSession(selected.id)
+                await controller.refreshTranscript(for: selected)
+                XCTAssertEqual(controller.transcript(for: selected).count, 80)
+                host.show(page())
+                try await Task.sleep(for: .milliseconds(520))
+                await host.settle()
+                controller.selectSession(other.id)
+                await host.settle()
+                controller.selectSession(selected.id)
+                let turn = "soak-\(cycle)"
+                await provider.yield(.turnStarted(.init(nativeSessionID: selected.id.sessionID.nativeID, turnID: turn)))
+                for index in 0..<4 {
+                    await provider.yield(.transcriptDelta(
+                        nativeSessionID: selected.id.sessionID.nativeID, turnID: turn,
+                        itemID: "bounded-stream", delta: "cycle\(cycle)-\(index) "
+                    ))
+                }
+                await host.settle()
+                await provider.yield(.turnCompleted(
+                    .init(nativeSessionID: selected.id.sessionID.nativeID, turnID: turn),
+                    state: cycle.isMultiple(of: 2) ? .completed : .interrupted, summary: nil
+                ))
+                host.show(AnyView(VoiceBeamView(
+                    level: { 0.4 }, processing: cycle.isMultiple(of: 2),
+                    configuration: VoiceBeamConfiguration(), height: 14
+                )))
+                try await Task.sleep(for: .milliseconds(80))
+                await host.settle()
+                host.show(AnyView(Color.black))
+                try await Task.sleep(for: .milliseconds(80))
+                await host.settle()
+                XCTAssertEqual(store.sessions.count, sessionCount)
+                if cycle == 9 || (cycle + 1 - 10).isMultiple(of: 20) && cycle >= 10 {
+                    let bytes = try Self.physicalFootprint()
+                    let sample: [String: Any] = ["cycle": cycle + 1, "physicalFootprintBytes": bytes,
+                        "sessions": store.sessions.count, "transcriptEntries": controller.transcript(for: selected).count]
+                    samples.append(sample)
+                    progress("AGENTS-SOAK \(sample)")
+                }
+            }
+            controller.stop()
+            host.show(AnyView(Color.black))
+            host.window.orderOut(nil)
+            host.window.contentView = nil
+            host.window.close()
+        }
+        for _ in 0..<200 where releasedController != nil {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertNil(releasedController, "Stopped controller and its subscriptions must release after the host is removed")
+        try await Task.sleep(for: .seconds(2))
+        samples.append(["cycle": "afterTeardown", "physicalFootprintBytes": try Self.physicalFootprint()])
+        let elapsed = ContinuousClock.now - started
+        let report: [String: Any] = ["classification": "automated/simulated measurement; see XCTest result",
+            "cycles": 110, "warmupCycles": 10, "elapsedSeconds": Double(elapsed.components.seconds),
+            "controllerReleased": releasedController == nil, "samples": samples]
+        let data = try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
+        print("AGENTS-SOAK-REPORT\n" + String(decoding: data, as: UTF8.self))
+        if let path = environment["DYNAMIC_ISLAND_AGENT_SOAK_REPORT"] {
+            try data.write(to: URL(fileURLWithPath: path))
+        }
+    }
+
+    private static func physicalFootprint() throws -> UInt64 {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+            }
+        }
+        guard result == KERN_SUCCESS else { throw NSError(domain: "task_info", code: Int(result)) }
+        return info.phys_footprint
+    }
+}

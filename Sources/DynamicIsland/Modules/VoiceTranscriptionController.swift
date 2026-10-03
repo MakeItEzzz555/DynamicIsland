@@ -325,6 +325,7 @@ private final class RecognitionContinuation: @unchecked Sendable {
 final class VoiceTranscriptionController: ObservableObject, IslandCapabilityAdapter {
     static let recordingActivityID = "voice.recording"
     static let transcriptionActivityID = "voice.transcription"
+    static let statusActivityID = "voice.status"
 
     let capabilityID: IslandCapabilityID = .voiceTranscribe
 
@@ -350,6 +351,8 @@ final class VoiceTranscriptionController: ObservableObject, IslandCapabilityAdap
     private let now: () -> Date
     private var generation = 0
     private var recordingURL: URL?
+    private let recoveryDisplayDuration: Duration
+    private var recoveryDismissTask: Task<Void, Never>?
 
     init(
         liveActivities: LiveActivityStore,
@@ -363,7 +366,8 @@ final class VoiceTranscriptionController: ObservableObject, IslandCapabilityAdap
         workingDirectory: URL = FileManager.default.temporaryDirectory
             .appendingPathComponent("DynamicIsland", isDirectory: true)
             .appendingPathComponent("VoiceTranscribe", isDirectory: true),
-        now: @escaping () -> Date = Date.init
+        now: @escaping () -> Date = Date.init,
+        recoveryDisplayDuration: Duration = .seconds(8)
     ) {
         self.liveActivities = liveActivities
         self.capabilities = capabilities
@@ -375,11 +379,14 @@ final class VoiceTranscriptionController: ObservableObject, IslandCapabilityAdap
         self.writeToPasteboard = writeToPasteboard
         self.workingDirectory = workingDirectory
         self.now = now
+        self.recoveryDisplayDuration = recoveryDisplayDuration
         self.microphoneState = permissions.microphoneState
         self.speechState = permissions.speechState
         self.recognizerAvailability = transcriber.availability
         publishState()
     }
+
+    deinit { recoveryDismissTask?.cancel() }
 
     static let systemPasteboardWriter: (String) -> Void = { text in
         NSPasteboard.general.clearContents()
@@ -503,14 +510,17 @@ final class VoiceTranscriptionController: ObservableObject, IslandCapabilityAdap
 
         generation += 1
         let token = generation
+        clearStatusActivity()
         let needsPrompt = permissions.microphoneState == .notDetermined
             || permissions.speechState == .notDetermined
         phase = needsPrompt ? .requestingPermission : .preparing
+        publishStatusActivity(title: needsPrompt ? "Mic permission" : "Preparing mic", subtitle: statusText)
         publishState()
 
         await requestPermissions()
         guard token == generation else { return }
         phase = .preparing
+        publishStatusActivity(title: "Preparing mic", subtitle: statusText)
         publishState()
 
         do {
@@ -542,6 +552,7 @@ final class VoiceTranscriptionController: ObservableObject, IslandCapabilityAdap
             recordingURL = url
             let startedAt = now()
             phase = .recording(startedAt: startedAt)
+            clearStatusActivity()
             publishRecordingActivity(startedAt: startedAt)
             publishState()
         } catch {
@@ -569,6 +580,9 @@ final class VoiceTranscriptionController: ObservableObject, IslandCapabilityAdap
         do {
             let text = try await transcriber.transcribe(fileURL: url, requiresOnDevice: onDevice)
             guard token == generation else { return }
+            // Speech owns its task and URL request until explicitly released.
+            // A final result must not keep the last recognition resources alive.
+            transcriber.cancel()
             discardRecordingFile()
             liveActivities.remove(id: Self.transcriptionActivityID)
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -682,9 +696,19 @@ final class VoiceTranscriptionController: ObservableObject, IslandCapabilityAdap
 
     private func fail(_ error: Error) {
         recorder.cancelRecording()
+        transcriber.cancel()
         discardRecordingFile()
         removeActivities()
         phase = .failed(error.localizedDescription)
+        publishStatusActivity(title: "Voice needs attention", subtitle: error.localizedDescription)
+        let token = generation
+        let delay = recoveryDisplayDuration
+        recoveryDismissTask = Task { [weak self] in
+            do { try await Task.sleep(for: delay) } catch { return }
+            guard let self, self.generation == token else { return }
+            self.liveActivities.remove(id: Self.statusActivityID)
+            self.recoveryDismissTask = nil
+        }
         publishState()
     }
 
@@ -696,8 +720,33 @@ final class VoiceTranscriptionController: ObservableObject, IslandCapabilityAdap
     }
 
     private func removeActivities() {
+        clearStatusActivity()
         liveActivities.remove(id: Self.recordingActivityID)
         liveActivities.remove(id: Self.transcriptionActivityID)
+    }
+
+    private func clearStatusActivity() {
+        recoveryDismissTask?.cancel()
+        recoveryDismissTask = nil
+        liveActivities.remove(id: Self.statusActivityID)
+    }
+
+    private func publishStatusActivity(title: String, subtitle: String) {
+        liveActivities.update(Self.makeStatusActivity(title: title, subtitle: subtitle, updatedAt: now()))
+    }
+
+    /// Static feedback, distinct from a recording or recognition task.
+    static func makeStatusActivity(title: String, subtitle: String, updatedAt: Date) -> DynamicIslandLiveActivity {
+        DynamicIslandLiveActivity(
+            id: statusActivityID, kind: .voiceStatus, title: title, subtitle: subtitle,
+            symbolName: "mic.badge.exclamationmark", priority: 140, isActive: false,
+            progress: nil, updatedAt: updatedAt,
+            lifecycle: LiveActivityLifecycleMetadata(
+                authority: .applicationState, startEvidence: "Explicit voice permission, preparation or recovery",
+                progressEvidence: nil, completionEvidence: "Voice proceeds, cancels or recovery notice expires",
+                dismissPolicy: .untilSourceEnds, supportsCancellation: false
+            )
+        )
     }
 
     private func publishRecordingActivity(startedAt: Date) {
