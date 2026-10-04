@@ -275,6 +275,8 @@ struct AgentChatSurface<Conversation: View>: View {
     @ObservedObject var presentation: AgentWorkspacePresentation
     let isVisible: Bool
     let onNewSession: () -> Void
+    var onSelectInteraction: ((AgentInteractionMode) -> Void)? = nil
+    var approvalAttention: AnyView? = nil
     @ViewBuilder let conversation: () -> Conversation
     @Environment(\.agentVisualPreferences) private var visuals
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -306,6 +308,7 @@ struct AgentChatSurface<Conversation: View>: View {
                         .font(.system(size: 8)).foregroundStyle(.secondary).lineLimit(1)
                     }
                     Spacer(minLength: 0)
+                    if let approvalAttention { approvalAttention }
                     HStack(spacing: 1) {
                         interactionButton(.chat, icon: "bubble.left", title: "Chat")
                         interactionButton(.terminal, icon: "terminal", title: "Terminal")
@@ -326,7 +329,10 @@ struct AgentChatSurface<Conversation: View>: View {
 
     private func interactionButton(_ mode: AgentInteractionMode, icon: String, title: String) -> some View {
         Button {
-            withAnimation(AgentWorkspaceMotion.selection(reduceMotion: reduceMotion)) { presentation.interact(mode) }
+            withAnimation(AgentWorkspaceMotion.selection(reduceMotion: reduceMotion)) {
+                if let onSelectInteraction { onSelectInteraction(mode) }
+                else { presentation.interact(mode) }
+            }
         } label: {
             let highlighted = presentation.interactionMode == mode || hoveredInteractionMode == mode
             Image(systemName: icon)

@@ -112,6 +112,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         capabilities: capabilityRegistry
     )
     private let rightWorkspace = RightWorkspaceStore()
+    private let customization = WorkspaceCustomizationStore()
     private lazy var workspaceServices = WorkspaceServices(
         appLibrary: AppLibraryStore(),
         calendar: CalendarEventsController(),
@@ -247,8 +248,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             workspaceServices: workspaceServices,
             basketPresenter: basketPresenter,
             agentWorkspaceFeed: agentWorkspaceFeed,
-            agentWorkspacePresentation: agentWorkspacePresentation
+            agentWorkspacePresentation: agentWorkspacePresentation,
+            customization: customization
         )
+        navigation.applyConfiguration(customization.configuration, using: settings)
+        customization.$configuration.dropFirst().removeDuplicates().sink { [weak self] configuration in
+            guard let self else { return }
+            self.navigation.applyConfiguration(configuration, using: self.settings)
+        }.store(in: &cancellables)
         basketPresenter.start()
         agentProjects.observe(agentEvents.$sessions)
         installMessagingObservers()

@@ -452,6 +452,7 @@ struct MetalSendButton: View {
     var action: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.rightWorkspacePageIsActive) private var contentIsActive
     @State private var hovering = false
     @State private var visible = false
     @StateObject private var localMetal = MetalFxModel()
@@ -489,9 +490,9 @@ struct MetalSendButton: View {
             strength: isEnabled ? config.strength : 0.20,
             innerShadow: config.innerShadow, glow: config.glowEnabled && isEnabled,
             glowGain: config.glowGain,
-            paused: reduceMotion || !config.animationEnabled || !isEnabled || !visible)
+            paused: reduceMotion || !config.animationEnabled || !isEnabled || !visible || !contentIsActive)
         .background { NativeVisualVisibility { visible = $0 } }
-        .background { NativeMetalPointer(model: metal, enabled: visible && isEnabled && !reduceMotion) }
+        .background { NativeMetalPointer(model: metal, enabled: visible && contentIsActive && isEnabled && !reduceMotion) }
 
         .allowsHitTesting(false)
     }

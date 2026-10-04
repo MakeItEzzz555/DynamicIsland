@@ -185,6 +185,7 @@ struct AgentEmbeddedConsoleView: View {
 
     var composerControls: AnyView? = nil
 
+    @Environment(\.rightWorkspacePageIsActive) private var contentIsActive
     @State private var transcriptTail = AgentTranscriptTailAnchor()
 
     @State private var follow = AgentTranscriptFollowState()
@@ -245,13 +246,19 @@ struct AgentEmbeddedConsoleView: View {
                         AgentTranscriptViewportProbe(
                             sessionID: session.id, contentToken: transcriptFollowToken,
                             jumpRequest: scrollToLatestRequest, realizationID: String(describing: latestTranscriptAnchor), tail: transcriptTail,
-                            realizeLatest: { proxy.scrollTo(latestTranscriptAnchor, anchor: .bottom) }
+                            realizeLatest: { proxy.scrollTo(latestTranscriptAnchor, anchor: .bottom) },
+                            realizeReadingAnchor: { id in
+                                let entries = showsOperationalTraffic ? AgentConsoleTimelineProjectionCache.entries(session: session, transcript: transcriptEntries, limit: maximumActivityEntries, includePendingApprovals: actionableApproval == nil && externalPendingApproval == nil) : conversationEntries
+                                guard entries.contains(where: { $0.id == id }) else { return false }
+                                proxy.scrollTo(id, anchor: .top)
+                                return true
+                            }
                         ) { following in
                             follow.restoreIntent(following: following)
                         }
                     }
                     .onPreferenceChange(AgentTranscriptReadingAnchorKey.self) { frames in
-                        guard !follow.isFollowing else { return }
+                        guard !follow.isFollowing, !AgentTranscriptViewportStore.shared.isRestoringHistory(for: session.id) else { return }
                         let intersecting = frames.filter { $0.value.minY <= 0 && $0.value.maxY > 0 }
                         guard let anchor = (intersecting.isEmpty ? frames : intersecting)
                             .min(by: { abs($0.value.minY) < abs($1.value.minY) }) else { return }
@@ -288,9 +295,6 @@ struct AgentEmbeddedConsoleView: View {
                             proxy.scrollTo(latestTranscriptAnchor, anchor: .bottom)
                         } else {
                             follow.restoreIntent(following: false)
-                            if abs(saved.width - viewport.size.width) > 1, let id = saved.readingEntryID {
-                                proxy.scrollTo(id, anchor: .top)
-                            }
                         }
                     }
                 }
@@ -394,12 +398,13 @@ struct AgentEmbeddedConsoleView: View {
                     AgentConsoleEntryRow(
                         entry: entry,
                         sessionID: session.id,
-                        sessionState: isLatestAgentResponse ? session.state : .idle,
+                        sessionState: isLatestAgentResponse && contentIsActive ? session.state : .idle,
                         processingKind: isLatestAgentResponse ? session.currentProcessingKind : nil,
                         isLatestAgentResponse: isLatestAgentResponse
                     )
                     .equatable()
                     .id(entry.id)
+                    .background { AgentTranscriptEntryMarker(anchor: transcriptTail, entryID: entry.id) }
                     .background(alignment: .bottom) {
                         if entry.id == displayedEntries.last?.id && !hasApprovalTail {
                             AgentTranscriptTailMarker(anchor: transcriptTail).frame(height: 1)
@@ -1304,7 +1309,6 @@ struct AgentConsoleApprovalRow: View {
                         .background(.white.opacity(0.07), in: Capsule())
                 }
                 .buttonStyle(.plain)
-                .keyboardShortcut(.cancelAction)
                 .disabled(isSubmitting)
                 .accessibilityHint("Deny this exact permission request")
 
@@ -1323,7 +1327,6 @@ struct AgentConsoleApprovalRow: View {
                     .background(.white.opacity(0.95), in: Capsule())
                 }
                 .buttonStyle(.plain)
-                .keyboardShortcut(.defaultAction)
                 .disabled(isSubmitting)
                 .accessibilityHint("Approve this exact permission request once")
             }

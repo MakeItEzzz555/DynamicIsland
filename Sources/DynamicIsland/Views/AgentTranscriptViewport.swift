@@ -7,6 +7,19 @@ import SwiftUI
 final class AgentTranscriptTailAnchor {
     weak var view: NSView?
     var geometryChanged: (() -> Void)?
+    weak var geometryOwner: AnyObject?
+    private var entries: [String: WeakEntry] = [:]
+    private final class WeakEntry { weak var view: NSView?; init(_ view: NSView) { self.view = view } }
+    func register(_ view: NSView, entryID: String) { entries[entryID] = WeakEntry(view); geometryChanged?() }
+    func unregister(_ view: NSView, entryID: String) {
+        if entries[entryID]?.view === view { entries.removeValue(forKey: entryID) }
+    }
+    func entryStart(_ entryID: String, in document: NSView) -> CGFloat? {
+        guard let view = entries[entryID]?.view, let window = view.window,
+              document.window === window, view.bounds.height > 0 else { return nil }
+        return view.convert(view.bounds, to: document).minY
+    }
+
     func end(in document: NSView) -> CGFloat? {
         guard let view, let window = view.window, document.window === window else { return nil }
         return view.convert(view.bounds, to: document).maxY
@@ -27,6 +40,31 @@ struct AgentTranscriptTailMarker: NSViewRepresentable {
     }
 }
 
+/// Measured row origin owns history restoration across width/stack changes.
+/// Weak, realized rows only; dismantling removes entries from the registry.
+struct AgentTranscriptEntryMarker: NSViewRepresentable {
+    let anchor: AgentTranscriptTailAnchor
+    let entryID: String
+    func makeNSView(context: Context) -> Marker { Marker() }
+    func updateNSView(_ view: Marker, context: Context) { view.configure(anchor: anchor, entryID: entryID) }
+    static func dismantleNSView(_ view: Marker, coordinator: ()) { view.detach() }
+    final class Marker: NSView {
+        private weak var anchor: AgentTranscriptTailAnchor?
+        private var entryID: String?
+        func configure(anchor: AgentTranscriptTailAnchor, entryID: String) {
+            if self.anchor !== anchor || self.entryID != entryID { detach() }
+            self.anchor = anchor; self.entryID = entryID
+            anchor.register(self, entryID: entryID)
+        }
+        override func layout() { super.layout(); anchor?.geometryChanged?() }
+        override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); anchor?.geometryChanged?() }
+        func detach() {
+            if let entryID { anchor?.unregister(self, entryID: entryID) }
+            anchor = nil; entryID = nil
+        }
+    }
+}
+
 /// Viewport intent survives shell/page unmounts. It is presentation state,
 /// keyed by the exact provider/session/generation, with a bounded LRU.
 @MainActor
@@ -42,12 +80,20 @@ final class AgentTranscriptViewportStore {
     static let capacity = 64
     private var positions: [AgentSessionInstanceID: Position] = [:]
     private var order: [AgentSessionInstanceID] = []
+    private var restoringHistory: Set<AgentSessionInstanceID> = []
+    func isRestoringHistory(for id: AgentSessionInstanceID) -> Bool { restoringHistory.contains(id) }
+    func setRestoringHistory(_ restoring: Bool, for id: AgentSessionInstanceID) {
+        if restoring { restoringHistory.insert(id) } else { restoringHistory.remove(id) }
+    }
     var count: Int { positions.count }
     func position(for id: AgentSessionInstanceID) -> Position { positions[id] ?? Position() }
     func save(_ position: Position, for id: AgentSessionInstanceID) {
         positions[id] = position
         order.removeAll { $0 == id }; order.append(id)
-        if order.count > Self.capacity { positions.removeValue(forKey: order.removeFirst()) }
+        if order.count > Self.capacity {
+            let removed = order.removeFirst(); positions.removeValue(forKey: removed)
+            restoringHistory.remove(removed)
+        }
     }
 }
 
@@ -61,12 +107,13 @@ struct AgentTranscriptViewportProbe: NSViewRepresentable {
     let realizationID: String
     let tail: AgentTranscriptTailAnchor
     var realizeLatest: () -> Void
+    var realizeReadingAnchor: (String) -> Bool = { _ in false }
     var onFollowingChanged: (Bool) -> Void
 
     func makeNSView(context: Context) -> Probe { Probe() }
     func updateNSView(_ view: Probe, context: Context) {
         view.configure(sessionID: sessionID, contentToken: contentToken,
-                       jumpRequest: jumpRequest, realizationID: realizationID, tail: tail, realizeLatest: realizeLatest, changed: onFollowingChanged)
+                       jumpRequest: jumpRequest, realizationID: realizationID, tail: tail, realizeLatest: realizeLatest, realizeReadingAnchor: realizeReadingAnchor, changed: onFollowingChanged)
     }
     static func dismantleNSView(_ view: Probe, coordinator: ()) { view.detach() }
 
@@ -89,6 +136,8 @@ struct AgentTranscriptViewportProbe: NSViewRepresentable {
         private var realizeLatest: () -> Void = { }
         private var realizationWidth: CGFloat?
         private var realizationID: String?
+        private var realizeReadingAnchor: (String) -> Bool = { _ in false }
+        private var requestedReadingRealization = false
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
@@ -97,20 +146,29 @@ struct AgentTranscriptViewportProbe: NSViewRepresentable {
         override func layout() { super.layout(); scheduleLayoutCorrection() }
 
         func configure(sessionID: AgentSessionInstanceID, contentToken: String,
-                       jumpRequest: Int, realizationID: String, tail: AgentTranscriptTailAnchor, realizeLatest: @escaping () -> Void, changed: @escaping (Bool) -> Void) {
+                       jumpRequest: Int, realizationID: String, tail: AgentTranscriptTailAnchor, realizeLatest: @escaping () -> Void, realizeReadingAnchor: @escaping (String) -> Bool = { _ in false }, changed: @escaping (Bool) -> Void) {
             self.changed = changed
             self.realizeLatest = realizeLatest
+            self.realizeReadingAnchor = realizeReadingAnchor
             self.tail = tail
+            tail.geometryOwner = self
             tail.geometryChanged = { [weak self] in self?.scheduleLayoutCorrection() }
             if self.sessionID != sessionID {
-                save(); observations.clear(); scroll = nil
+                save();
+                if let previousID = self.sessionID { AgentTranscriptViewportStore.shared.setRestoringHistory(false, for: previousID) }
+                observations.clear(); scroll = nil
                 self.sessionID = sessionID
                 position = AgentTranscriptViewportStore.shared.position(for: sessionID)
                 restoringReadingAnchor = !position.followingLatest && position.readingEntryID != nil
+                AgentTranscriptViewportStore.shared.setRestoringHistory(restoringReadingAnchor, for: sessionID)
                 token = nil; reported = nil
                 realizationWidth = nil
+                requestedReadingRealization = false
             }
-            if jump != jumpRequest { position.followingLatest = true }
+            if jump != jumpRequest {
+                position.followingLatest = true; restoringReadingAnchor = false
+                AgentTranscriptViewportStore.shared.setRestoringHistory(false, for: sessionID)
+            }
             jump = jumpRequest
             if self.realizationID != realizationID {
                 self.realizationID = realizationID
@@ -150,6 +208,8 @@ struct AgentTranscriptViewportProbe: NSViewRepresentable {
                     object: scroll, queue: .main) { [weak self] _ in
                         MainActor.assumeIsolated {
                             guard let self else { return }
+                            self.restoringReadingAnchor = false
+                            if let id = self.sessionID { AgentTranscriptViewportStore.shared.setRestoringHistory(false, for: id) }
                             self.userScrolling = true; self.position.followingLatest = false
                             self.save(); self.report()
                         }
@@ -172,6 +232,8 @@ struct AgentTranscriptViewportProbe: NSViewRepresentable {
             let scrollKey = event == .keyDown && [UInt16(116), 121, 115, 119, 125, 126].contains(NSApp.currentEvent?.keyCode ?? 0)
                 && (responder === scroll || responder?.isDescendant(of: document) == true)
             if userScrolling || event == .scrollWheel || scrollKey {
+                restoringReadingAnchor = false
+                if let id = sessionID { AgentTranscriptViewportStore.shared.setRestoringHistory(false, for: id) }
                 position.followingLatest = (tail?.end(in: document) ?? document.bounds.maxY) - clip.maxY <= AgentTranscriptFollowState.nearBottomThreshold
                 position.origin = clip.origin; position.width = clip.width
                 save(); report(); return
@@ -206,14 +268,28 @@ struct AgentTranscriptViewportProbe: NSViewRepresentable {
                     return
                 }
                 let bottom = max(0, (tail?.end(in: document) ?? document.bounds.maxY) - clip.height)
-                if restoringReadingAnchor {
-                    if position.width > 0, abs(position.width - clip.width) > 1 {
-                        position.origin = CGPoint(x: clip.minX, y: clip.minY + position.readingEntryOffset)
+                var readingOrigin = position.origin
+                if !position.followingLatest, let entryID = position.readingEntryID,
+                   restoringReadingAnchor || clip.size != lastViewportSize || document.frame.size != lastDocumentSize {
+                    if let start = tail?.entryStart(entryID, in: document) {
+                        // The actual row, not the current lazy clip estimate, owns
+                        // the saved intra-row offset. Repeat while geometry settles.
+                        readingOrigin = CGPoint(x: clip.minX, y: start + position.readingEntryOffset)
+                    } else if restoringReadingAnchor, !requestedReadingRealization {
+                        requestedReadingRealization = true
+                        if realizeReadingAnchor(entryID) {
+                            return // Do not overwrite saved intent with an early clamped origin.
+                        }
+                        // The bounded transcript no longer contains the row.
+                        // Restore the saved origin rather than waiting for an impossible marker.
+                        restoringReadingAnchor = false
+                        if let id = sessionID { AgentTranscriptViewportStore.shared.setRestoringHistory(false, for: id) }
+                    } else if restoringReadingAnchor {
+                        return
                     }
-                    restoringReadingAnchor = false
                 }
                 let origin = position.followingLatest ? CGPoint(x: clip.minX, y: bottom)
-                    : CGPoint(x: position.origin.x, y: min(max(0, position.origin.y), bottom))
+                    : CGPoint(x: readingOrigin.x, y: min(max(0, readingOrigin.y), bottom))
                 if abs(clip.minY - origin.y) > 0.5 {
                     scroll.contentView.scroll(to: origin)
                     scroll.reflectScrolledClipView(scroll.contentView)
@@ -246,9 +322,12 @@ struct AgentTranscriptViewportProbe: NSViewRepresentable {
             }
         }
         func detach() {
+            if let id = sessionID { AgentTranscriptViewportStore.shared.setRestoringHistory(false, for: id) }
             save(); correction?.cancel(); correction = nil
-            tail?.geometryChanged = nil
-            realizeLatest = {}; changed = { _ in }
+            if tail?.geometryOwner === self {
+                tail?.geometryChanged = nil; tail?.geometryOwner = nil
+            }
+            realizeLatest = {}; realizeReadingAnchor = { _ in false }; changed = { _ in }
             observations.clear(); scroll = nil
         }
     }

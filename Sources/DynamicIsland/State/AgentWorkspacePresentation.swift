@@ -9,6 +9,13 @@ enum AgentWorkspaceMode: String, CaseIterable, Identifiable, Sendable {
 
 enum AgentInteractionMode: String, Sendable { case chat, terminal }
 
+enum AgentStackPage: String, CaseIterable, Identifiable {
+    case chat, terminal
+    var id: Self { self }
+    var title: String { self == .chat ? "Chat" : "Terminal" }
+    var symbol: String { self == .chat ? "bubble.left" : "terminal" }
+}
+
 /// Presentation intent only. Agent truth, drafts and the terminal process stay
 /// in their existing owners. AppDelegate retains this across shell remounts.
 @MainActor
@@ -17,6 +24,20 @@ final class AgentWorkspacePresentation: ObservableObject {
     @Published private(set) var interactionMode: AgentInteractionMode = .chat
     @Published private(set) var isEmphasized = false
     @Published private(set) var terminalFocusRequest = 0
+    @Published private(set) var stackPage: AgentStackPage = .chat
+    @Published private(set) var stackDirection = 1
+
+    func showStack(_ page: AgentStackPage) {
+        guard stackPage != page else { return }
+        stackDirection = page == .terminal ? 1 : -1
+        stackPage = page
+        if page == .terminal { terminalFocusRequest &+= 1 }
+    }
+
+    func swipeStack(by direction: Int) {
+        guard direction != 0 else { return }
+        showStack(stackPage == .chat ? .terminal : .chat)
+    }
 
     func select(_ mode: AgentWorkspaceMode) {
         if self.mode != mode { self.mode = mode }

@@ -80,6 +80,12 @@ final class TerminalMountView: NSView {
 
     func mount(_ terminal: InteractiveTerminalView) {
         guard self.terminal !== terminal || terminal.superview !== self else { return }
+        // Restart replaces the controller's emulator. Remove the retired
+        // renderer before mounting its replacement, including responder ownership.
+        if let previous = self.terminal, previous !== terminal, previous.superview === self {
+            if previous.window?.firstResponder === previous { previous.window?.makeFirstResponder(nil) }
+            previous.removeFromSuperview()
+        }
         self.terminal = terminal
         // At most one presentation owns this exact native emulator.
         terminal.removeFromSuperview()

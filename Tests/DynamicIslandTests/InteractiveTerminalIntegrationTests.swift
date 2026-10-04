@@ -147,8 +147,13 @@ final class InteractiveTerminalIntegrationTests: XCTestCase {
         try terminal.startShell()
         let old = terminal.processID
         let oldView = terminal.terminalView
+        let retiredHost = TerminalMountView()
+        retiredHost.mount(oldView)
         terminal.terminate()
         try terminal.startShell()
+        XCTAssertNil(oldView.superview, "Restart detaches even a hidden/retiring host's dead renderer")
+        XCTAssertNil(oldView.onSend, "The retired renderer cannot send into the new shell")
+        XCTAssertTrue(retiredHost.subviews.isEmpty)
         XCTAssertNotEqual(terminal.processID, old)
         XCTAssertFalse(terminal.terminalView === oldView)
         try await command("printf 'DI_RESTART_OK\\n'", marker: "DI_RESTART_READY", terminal: terminal)

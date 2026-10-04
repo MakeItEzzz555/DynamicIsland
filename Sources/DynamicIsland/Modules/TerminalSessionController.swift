@@ -187,6 +187,12 @@ final class TerminalSessionController: ObservableObject, IslandCapabilityAdapter
         let generation = launchGeneration
         do {
             if usesNativePTY, launchedBefore {
+                // A restarted process has one new emulator. Retiring/hidden
+                // presentation hosts must not retain the dead interactive view.
+                let previous = terminalView
+                previous.onSend = nil
+                if previous.window?.firstResponder === previous { previous.window?.makeFirstResponder(nil) }
+                previous.removeFromSuperview()
                 let view = InteractiveTerminalView()
                 view.onSend = { [weak self] data in self?.sendInput(data) }
                 terminalView = view

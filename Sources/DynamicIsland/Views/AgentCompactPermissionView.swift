@@ -10,11 +10,7 @@ struct AgentCompactPermission: Equatable {
     @MainActor
     static func current(sessions: [AgentSession], approvals: AgentApprovalController,
                         managed: AgentManagedSessionController) -> Self? {
-        let requests = Array(approvals.pendingRequests.values) + Array(approvals.deliveringRequests.values)
-        return requests.sorted {
-            if $0.expiresAt != $1.expiresAt { return $0.expiresAt < $1.expiresAt }
-            return $0.key.requestID.rawValue < $1.key.requestID.rawValue
-        }.compactMap { request -> Self? in
+        return approvals.presentedRequestsInArrivalOrder.compactMap { request -> Self? in
             guard let session = sessions.first(where: { $0.id == request.key.session }),
                   managed.isManaged(session), session.capabilities.contains(.approvalControl),
                   approvals.deliveryState(for: request.key) != nil else { return nil }
@@ -51,6 +47,7 @@ struct AgentCompactPermissionView: View {
     let permission: AgentCompactPermission
     @ObservedObject var approvals: AgentApprovalController
     let topBandHeight: CGFloat
+    var openFeed: (() -> Void)? = nil
 
     var body: some View {
         let state = approvals.deliveryState(for: permission.request.key)
@@ -64,6 +61,18 @@ struct AgentCompactPermissionView: View {
                 Text("· …" + permission.session.id.sessionID.nativeID.suffix(4)).foregroundStyle(.secondary)
                 Text(permission.request.summary.replacingOccurrences(of: "\n", with: " "))
                     .lineLimit(1).truncationMode(.middle)
+                if let openFeed {
+                    Button(action: openFeed) { Image(systemName: "arrow.up.right.square") }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Open Feed for this exact permission owner")
+                        .help("Open the full permission context")
+                }
+                if case .failed = state {
+                    Button("Dismiss") { approvals.dismissFailedDelivery(permission.request.key) }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Dismiss this unconfirmed decision")
+                        .help("Dismiss presentation without approving or denying again")
+                }
             }
             .font(.system(size: 10))
             .frame(height: 16)

@@ -4788,3 +4788,12 @@ For every requested feature phase:
 - Clipboard view: search over text/URL/filename/source/title/tag (case and diacritic insensitive), kind/favorites filter, tag filter and editor, keyboard navigation (↑/↓/Return/⌘F/Esc), rename, and file Add to Shelf / Add to Basket (copies stable originals; Shelf ownership unchanged). A deleted or disabled tag filter no longer hides history.
 - New settings: `clipboardHistoryExcludedAppBundleIDs`, `clipboardHistoryAutoFocusSearch` (off), `clipboardHistoryTagsEnabled` (on).
 - Validation: `swift build`, `swift test` (1584 tests, 32 skipped, 0 failures).
+
+### 2026-10-04 - Native Customizable Workspace
+
+- One versioned `WorkspaceConfiguration` (schema 1, `IslandWidgetLayout.swift`) holds stable widget IDs, kinds, surfaces, order, visibility, Chat/Terminal composition groups and navigation order/visibility. `WorkspaceCustomizationStore` persists JSON with safe decoding, legacy CSV migration, normalization and defaults. Tab visibility is independent of widget placement (Timer tab hidden + Timer widget is valid).
+- `IslandWidgetEditor` is a local edit transaction: native `NSDraggingSource` handles with a private UTType, frozen measured slots, midpoint/hysteresis targets via the pure `WorkspaceDropResolver`, palette, Remove, Move Left/Right, Combine/Separate. Done commits once; Cancel, outside drops and collapsing discard. No floating windows; "drag out" stays unresolved.
+- Agents: Terminal can be removed/added without touching the PTY, and dropped onto Chat to form a swipe stack (`AgentChatTerminalStack`); stack paging only starts from the stack header. Navigation tabs reorder/hide/restore through `WorkspaceNavigationEditor`.
+- Runtime audit fixes: Return/Escape no longer approve/deny; retired terminal renderers detach on restart; no-op approval policy updates are silent; compact approvals use arrival order and offer Open Feed when unconfirmed; collapsed glow honors Reduce Motion; permission repositioning is coalesced and signature-gated; transcript history restores from the measured reading row.
+- Timer stays on the existing `TimerController`/`FocusTimerView`; the ruler countdown renderer is a separate Claude lane to reconcile later.
+- Validation: `swift build`, `swift test` (1770 tests, 40 skipped, 0 failures, screen unlocked), `swift build -c release`, packaging (synced-folder xattrs require signing a clean copy), strict signature on helpers and app. `MetalSendInteractionTests` needs an unlocked screen.

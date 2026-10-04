@@ -52,6 +52,12 @@ final class AgentsPerformanceHarnessTests: XCTestCase {
 
         let defaults = UserDefaults(suiteName: "AgentsPerf-\(UUID().uuidString)")!
         let settings = AppSettings(defaults: defaults)
+        let customization = WorkspaceCustomizationStore(defaults: defaults)
+        if environment["DYNAMIC_ISLAND_CUSTOM_WORKSPACE_PERF"] == "1" {
+            var configuration = customization.configuration
+            configuration.markCustomized(.agents)
+            customization.commit(configuration)
+        }
         settings.agentUsageMetricsEnabled = true
         let host = PerfHost(size: CGSize(width: 820, height: 430))
         let projects = AgentProjectProjectionStore()
@@ -64,6 +70,7 @@ final class AgentsPerformanceHarnessTests: XCTestCase {
                 approvalControl: approvals,
                 managedControl: controller,
                 layoutStore: layoutStore,
+                customization: environment["DYNAMIC_ISLAND_CUSTOM_WORKSPACE_PERF"] == "1" ? customization : nil,
                 availableHeight: 410,
                 contentVisible: visible,
                 isContentRemoving: false
@@ -272,6 +279,15 @@ final class AgentsPerformanceHarnessTests: XCTestCase {
         try terminal.startShell(initialDirectory: "/tmp")
         let pid = try XCTUnwrap(terminal.processID)
         let settings = AppSettings(defaults: UserDefaults(suiteName: "ShellHandoff-\(UUID().uuidString)")!)
+        let customization = WorkspaceCustomizationStore(defaults: UserDefaults(suiteName: "StackHandoff-\(UUID().uuidString)")!)
+        let usesStack = environment["DYNAMIC_ISLAND_CUSTOM_WORKSPACE_PERF"] == "1"
+        if usesStack {
+            var configuration = customization.configuration
+            configuration.add(.terminal, on: .agents)
+            configuration.combineTerminalWithChat()
+            configuration.markCustomized(.agents)
+            customization.commit(configuration)
+        }
         let host = PerfHost(size: CGSize(width: 820, height: 430))
         defer { host.window.orderOut(nil); host.window.contentView = nil }
         let workspace = AgentWorkspacePresentation(), feed = AgentWorkspaceFeedStore()
@@ -280,7 +296,8 @@ final class AgentsPerformanceHarnessTests: XCTestCase {
             AnyView(AgentActivityDashboardView(settings: settings, agentEvents: store,
                 projects: projects, approvalControl: approvals, managedControl: controller,
                 layoutStore: layout, workspaceFeed: feed, workspacePresentation: workspace,
-                terminal: terminal, availableHeight: 410, contentVisible: visible, isContentRemoving: false))
+                terminal: terminal, customization: usesStack ? customization : nil,
+                availableHeight: 410, contentVisible: visible, isContentRemoving: false))
         }
         var report: [String: Any] = [:], samples: [[String: Any]] = []
         for cycle in 0..<20 {
@@ -297,7 +314,10 @@ final class AgentsPerformanceHarnessTests: XCTestCase {
             if cycle == 0 { report["expandChildren"] = enter.json(probe: AgentPerformanceProbe.snapshot(), marks: [:]) }
             for mode in [AgentWorkspaceMode.terminal, .feed] {
                 AgentPerformanceProbe.reset()
-                let swap = try await measure(host) { workspace.select(mode) } until: {
+                let swap = try await measure(host) {
+                    if usesStack { workspace.showStack(mode == .terminal ? .terminal : .chat) }
+                    else { workspace.select(mode) }
+                } until: {
                     mode == .terminal ? terminal.terminalView.superview != nil : terminal.terminalView.superview == nil
                 }
                 if cycle == 0 { report[mode == .terminal ? "feedToTerminal" : "terminalToFeed"] = swap.json(probe: AgentPerformanceProbe.snapshot(), marks: [:]) }

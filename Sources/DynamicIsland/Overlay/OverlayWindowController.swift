@@ -17,6 +17,13 @@ struct OverlayGeometrySignature: Equatable, CustomStringConvertible {
     }
 }
 
+/// Content/delivery publications do not change the permission's shell bounds.
+enum OverlayPermissionGeometryPolicy {
+    static func needsReposition(current: OverlayGeometrySignature, applied: OverlayGeometrySignature?) -> Bool {
+        current != applied
+    }
+}
+
 /// Geometry-relevant subset of live-activity state. In particular, the
 /// transient Volume/Brightness HUD can overlay persistent compact media while
 /// keeping the same activity layout profile. Its presentation profile still
@@ -225,6 +232,7 @@ final class OverlayWindowController {
     private var targetCollapsedFrame: NSRect?
     private var targetExpandedFrame: NSRect?
     private var lastAppliedGeometrySignature: OverlayGeometrySignature?
+    private var permissionGeometryCheckScheduled = false
     private var canonicalPanelFrame: NSRect = .zero
     private var lastOrderedVisibilityState: IslandPresentationState?
     private var presentationSession = OverlayPresentationSession()
@@ -244,6 +252,7 @@ final class OverlayWindowController {
     private var expandedScrollDelta: CGSize = .zero
     private var expandedScrollGestureHandled = false
     private var rightWorkspaceSwipe = RightWorkspaceSwipeRecognizer()
+    private var agentStackSwipe = RightWorkspaceSwipeRecognizer()
     private var expandedScrollLastActionAt: CFTimeInterval?
     private var expandedScrollGestureResetWorkItem: DispatchWorkItem?
     private var expandedContentScrollOwnership = ExpandedContentScrollSequenceOwnership()
@@ -406,9 +415,10 @@ final class OverlayWindowController {
             .sink { [weak self] _ in
                 let generation = self?.presentationSession.generation
                 DispatchQueue.main.async { [weak self] in
-                    guard let self, self.allowsOverlayWork(generation: generation) else { return }
+                    guard let self, self.allowsOverlayWork(generation: generation),
+                          self.currentGeometrySignature != self.lastAppliedGeometrySignature else { return }
                     self.beginCollapsedPresentationMorph()
-                    self.reposition(animated: true, reason: "agentCollapsedPresentationChanged", force: true)
+                    self.reposition(animated: true, reason: "agentCollapsedPresentationChanged")
                 }
             }
             .store(in: &cancellables)
@@ -416,8 +426,14 @@ final class OverlayWindowController {
         modules.agentApprovalControl.objectWillChange
             .merge(with: modules.agentManagedControl.objectWillChange)
             .sink { [weak self] _ in
+                guard let self, !self.permissionGeometryCheckScheduled else { return }
+                self.permissionGeometryCheckScheduled = true
                 DispatchQueue.main.async { [weak self] in
-                    guard let self, self.canPresentOverlay, self.islandState.state == .collapsed else { return }
+                    guard let self else { return }
+                    self.permissionGeometryCheckScheduled = false
+                    guard self.canPresentOverlay, self.islandState.state == .collapsed,
+                          OverlayPermissionGeometryPolicy.needsReposition(current: self.currentGeometrySignature, applied: self.lastAppliedGeometrySignature) else { return }
+                    AgentPerformanceProbe.count("overlay.permission.reposition")
                     self.reposition(animated: true, reason: "compactExactPermissionChanged")
                 }
             }.store(in: &cancellables)
@@ -1772,6 +1788,9 @@ final class OverlayWindowController {
         // The right workspace owns its own two-axis gesture arbitration.
         // Ask it first so vertical intent can be delivered to its nested
         // ScrollViews without leaking into global expanded-island actions.
+        if let stackRoute = routeAgentStackSwipe(event) {
+            return stackRoute
+        }
         if let workspaceRoute = routeRightWorkspaceSwipe(event) {
             return workspaceRoute
         }
@@ -1804,6 +1823,9 @@ final class OverlayWindowController {
     private func handleExpandedScrollWheel(_ event: NSEvent, source: String) -> Bool {
         guard acceptsOverlayScroll(event) else { return false }
 
+        if let stackRoute = routeAgentStackSwipe(event) {
+            return stackRoute
+        }
         if let workspaceRoute = routeRightWorkspaceSwipe(event) {
             return workspaceRoute
         }
@@ -1927,6 +1949,50 @@ final class OverlayWindowController {
             expandedScrollDelta = .zero
             return true
         case .expand, .none:
+            return true
+        }
+    }
+
+    /// Only the stack header owns horizontal paging. Transcript selection,
+    /// composer input and terminal mouse/scroll events remain native content.
+    private func routeAgentStackSwipe(_ event: NSEvent) -> Bool? {
+        guard settings.gesturesEnabled, settings.gestureInputSource == .trackpad,
+              islandState.state == .expanded, event.hasPreciseScrollingDeltas,
+              modules.navigation.selectedPage == .agents,
+              let action = layoutStore.agentStackSwipeAction else {
+            agentStackSwipe.reset(); return nil
+        }
+        let region = screenRect(for: layoutStore.agentStackSwipeRegion)
+        guard !region.isEmpty else { agentStackSwipe.reset(); return nil }
+        let begins = event.phase.contains(.began) || event.phase.contains(.mayBegin)
+        let quiet = agentStackSwipe.lastEventAt.map { event.timestamp - $0 > RightWorkspaceSwipeRecognizer.sequenceTimeout } ?? false
+        if begins || quiet || !agentStackSwipe.ownsSequence {
+            guard region.contains(NSEvent.mouseLocation) else { agentStackSwipe.reset(); return nil }
+        }
+        let phase: RightWorkspaceSwipeRecognizer.Phase
+        if !event.momentumPhase.isEmpty { phase = .momentum }
+        else if begins { phase = .began }
+        else if event.phase.contains(.ended) || event.phase.contains(.cancelled) { phase = .ended }
+        else if event.phase.contains(.changed) { phase = .changed }
+        else { phase = .none }
+        let outcome = agentStackSwipe.handle(deltaX: event.scrollingDeltaX, deltaY: event.scrollingDeltaY,
+                                             phase: phase, at: event.timestamp)
+        if event.momentumPhase.contains(.ended) || event.momentumPhase.contains(.cancelled) { agentStackSwipe.reset() }
+        switch outcome {
+        case .ignored: return nil
+        case .passThrough:
+            resetExpandedScrollTracking(); return false
+        case .consumed:
+            resetExpandedScrollTracking(); return true
+        case .next, .previous:
+            resetExpandedScrollTracking()
+            let direction = outcome == .next ? 1 : -1
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.islandState.state == .expanded,
+                      self.modules.navigation.selectedPage == .agents,
+                      self.layoutStore.agentStackSwipeAction != nil else { return }
+                action(direction)
+            }
             return true
         }
     }

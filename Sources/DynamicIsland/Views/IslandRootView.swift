@@ -619,7 +619,21 @@ struct IslandRootView: View {
         Group {
             if let compactPermission {
                 AgentCompactPermissionView(permission: compactPermission, approvals: modules.agentApprovalControl,
-                    topBandHeight: max(layoutStore.collapsedSize.height - layoutStore.collapsedPresentationProfile.heightDelta, 20))
+                    topBandHeight: max(layoutStore.collapsedSize.height - layoutStore.collapsedPresentationProfile.heightDelta, 20),
+                    openFeed: {
+                        modules.agentProjects.selectedProjectKey = nil
+                        modules.agentManagedControl.selectSession(compactPermission.session.id)
+                        if let customization = modules.customization {
+                            var configuration = customization.configuration
+                            configuration.navigation.hidden.remove(.agents)
+                            if configuration.customizedSurfaces.contains(.agents) { configuration.add(.feed, on: .agents) }
+                            customization.commit(configuration)
+                            modules.navigation.applyConfiguration(configuration, using: settings)
+                        }
+                        modules.agentWorkspacePresentation?.select(.feed)
+                        modules.navigation.showAgents()
+                        islandState.expand()
+                    })
             } else {
         CompactIslandView(
             settings: settings,
@@ -1602,6 +1616,7 @@ struct IslandSurface<Content: View>: View {
     var systemHUDActivity: DynamicIslandLiveActivity? = nil
     @ViewBuilder var content: Content
     @Environment(\.isNotchIntegratedShell) private var isNotchIntegratedShell
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.isShellMorphing) private var isShellMorphing
     @Environment(\.isCollapseShellOnly) private var isCollapseShellOnly
 
@@ -1641,7 +1656,8 @@ struct IslandSurface<Content: View>: View {
                             topCornerRadius: radii.top,
                             bottomCornerRadius: radii.bottom,
                             glowColor: collapsedGlowColor,
-                            brightColor: collapsedBrightGlowColor
+                            brightColor: collapsedBrightGlowColor,
+                            reduceMotion: reduceMotion || settings.reduceExtraMotion
                         )
                         .opacity(
                             collapsedPresentationProfile.glowStrength > 0
@@ -1715,15 +1731,16 @@ private struct AgentNotchGlowBorder: View {
     let bottomCornerRadius: CGFloat
     let glowColor: Color
     let brightColor: Color
+    let reduceMotion: Bool
 
     private var frameInterval: Double {
         ProcessInfo.processInfo.isLowPowerModeEnabled ? (1.0 / 15.0) : (1.0 / 25.0)
     }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: frameInterval)) { timeline in
+        TimelineView(.animation(minimumInterval: frameInterval, paused: reduceMotion)) { timeline in
             let time = timeline.date.timeIntervalSinceReferenceDate
-            let rotation = (time.truncatingRemainder(dividingBy: 2.0)) / 2.0 * 360
+            let rotation = reduceMotion ? 0 : (time.truncatingRemainder(dividingBy: 2.0)) / 2.0 * 360
             IslandShellShape(
                 topCornerRadius: topCornerRadius,
                 bottomCornerRadius: bottomCornerRadius
@@ -3026,6 +3043,9 @@ struct ExpandedIslandView: View {
     @State private var isFilesTargeted = false
     @State private var clipboardPresentation = ClipboardHistoryPresentationState()
     @State private var pagePresentation: ExpandedPageTransitionState
+    @ObservedObject private var customization: WorkspaceCustomizationStore
+    @State private var editingWidgets = false
+    @State private var editingNavigation = false
 
     init(
         settings: AppSettings,
@@ -3059,6 +3079,7 @@ struct ExpandedIslandView: View {
         self.islandGestureContext = islandGestureContext
         self.islandGestureCallbacks = islandGestureCallbacks
         self.islandSwipeSensitivity = islandSwipeSensitivity
+        customization = modules.customization ?? WorkspaceCustomizationStore()
         navigation = modules.navigation
         liveActivities = modules.liveActivities
         agentEvents = modules.agentEvents
@@ -3102,11 +3123,19 @@ struct ExpandedIslandView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear {
+            navigation.applyConfiguration(customization.configuration, using: settings)
             synchronizeExpandedScrollSuppression()
             synchronizeClipboardEscapeRegistration()
             synchronizeStatsPolling()
         }
+        .onChange(of: customization.configuration) { _, configuration in
+            navigation.applyConfiguration(configuration, using: settings)
+        }
+        .onChange(of: editingWidgets) { _, _ in synchronizeCustomizationEditing() }
+        .onChange(of: editingNavigation) { _, _ in synchronizeCustomizationEditing() }
         .onChange(of: navigation.selectedPage) { _, page in
+            editingWidgets = false
+            editingNavigation = false
             handleSelectedPageChange(page)
             closeClipboardHistoryImmediately()
             synchronizeExpandedScrollSuppression()
@@ -3114,6 +3143,9 @@ struct ExpandedIslandView: View {
         }
         .onChange(of: contentVisible) { _, isVisible in
             if !isVisible {
+                editingWidgets = false
+                editingNavigation = false
+                synchronizeCustomizationEditing()
                 closeClipboardHistoryImmediately()
             }
             // Expansion/collapse owns content visibility; never leave a tab
@@ -3136,6 +3168,9 @@ struct ExpandedIslandView: View {
             synchronizeStatsPolling()
         }
         .onDisappear {
+            editingWidgets = false
+            editingNavigation = false
+            layoutStore.setTransientInteraction(false, owner: .workspaceEditor)
             closeClipboardHistoryImmediately()
             escapeRouter.setTopmostPresentation(nil)
             layoutStore.setExpandedScrollGestureSuppressed(false)
@@ -3178,6 +3213,27 @@ struct ExpandedIslandView: View {
 
                 HStack(spacing: 6) {
                     if rendersExpandedVisualContent && shouldRenderContent && !isCollapseShellOnly {
+                        ExpandedHeaderButton(systemImage: "square.grid.2x2", help: "Customize workspace", accessibilityLabel: "Customize workspace") {
+                            closeClipboardHistoryImmediately()
+                            if navigation.selectedPage == .island || navigation.selectedPage == .agents {
+                                editingNavigation = false
+                                editingWidgets.toggle()
+                            } else {
+                                editingWidgets = false
+                                editingNavigation.toggle()
+                            }
+                        }
+                        .contextMenu {
+                            Button("Customize tabs") {
+                                editingWidgets = false
+                                editingNavigation = true
+                            }
+                            Button("Reset to Default Layout") {
+                                customization.reset()
+                                editingWidgets = false
+                                editingNavigation = false
+                            }
+                        }
                         if settings.clipboardHistoryEnabled {
                             ExpandedHeaderButton(
                                 systemImage: "clipboard",
@@ -3215,6 +3271,12 @@ struct ExpandedIslandView: View {
                 } else {
                     if let page = pagePresentation.mountedPage {
                         pageView(page, metrics: metrics)
+                            .overlay(alignment: .top) {
+                                if editingNavigation {
+                                    WorkspaceNavigationEditor(store: customization, eligiblePages: navigation.eligiblePages(using: settings), editing: $editingNavigation, extraMotion: !settings.reduceExtraMotion)
+                                        .padding(8).background(.black.opacity(0.96), in: RoundedRectangle(cornerRadius: 12))
+                                }
+                            }
                             .expandedPageMotion(
                                 pageMotionPlan,
                                 animatesEntrance: pagePresentation.animatesEntrance,
@@ -3375,7 +3437,7 @@ struct ExpandedIslandView: View {
     }
 
     private func synchronizeExpandedScrollSuppression() {
-        layoutStore.setExpandedScrollGestureSuppressed(clipboardPresentation.isMounted)
+        layoutStore.setExpandedScrollGestureSuppressed(clipboardPresentation.isMounted || editingWidgets || editingNavigation)
         if navigation.selectedPage != .agents {
             layoutStore.setExpandedContentScrollRegion(.zero)
         }
@@ -3477,7 +3539,76 @@ struct ExpandedIslandView: View {
         }
     }
 
+    @ViewBuilder
     private func islandPage(metrics: ExpandedIslandLayoutMetrics) -> some View {
+        if editingWidgets || customization.configuration.customizedSurfaces.contains(.media) {
+            IslandWidgetEditor(store: customization, surface: .media, editing: $editingWidgets, eligibleWidgets: eligibleMediaWidgets, extraMotion: !settings.reduceExtraMotion) { region, height in
+                AnyView(islandWidget(region.widgets[0].kind, height: height))
+            }
+        } else {
+            standardIslandPage(metrics: metrics)
+        }
+    }
+
+    private var eligibleMediaWidgets: [IslandWidget] {
+        IslandWidget.allCases.filter { widget in
+            switch widget {
+            case .media: settings.mediaEnabled
+            case .files: settings.trayEnabled && settings.fileShelfEnabled
+            case .clipboard: settings.clipboardHistoryEnabled
+            case .timer: settings.timerEnabled
+            case .calendar, .workspace: true
+            case .shortcuts: settings.shortcutsEnabled
+            case .activities: settings.liveActivitiesEnabled
+            case .chat, .terminal, .feed: false
+            }
+        }
+    }
+
+    private func synchronizeCustomizationEditing() {
+        layoutStore.setTransientInteraction(editingWidgets || editingNavigation, owner: .workspaceEditor)
+        synchronizeExpandedScrollSuppression()
+    }
+
+    @ViewBuilder
+    private func islandWidget(_ widget: IslandWidget, height: CGFloat) -> some View {
+        switch widget {
+        case .workspace:
+            RightWorkspaceView(store: modules.rightWorkspace, layoutStore: layoutStore, reduceMotion: reduceMotion || settings.reduceExtraMotion,
+                overview: {
+                    VStack(spacing: 8) {
+                        LiveActivitiesModuleView(liveActivities: liveActivities, navigation: navigation, rightWorkspace: modules.rightWorkspace, settings: settings, availableHeight: height * 0.6, compactScale: 1)
+                        ShortcutsModuleView(shortcuts: modules.shortcuts, availableHeight: height * 0.4, compactScale: 1, onShortcutLaunched: onShortcutLaunched)
+                    }
+                }, productivity: {
+                    ProductivityDeckView(productivity: modules.productivity, fileShelf: modules.fileShelf, tools: modules.rightWorkspace.configuration.visibleTools, reduceMotion: reduceMotion || settings.reduceExtraMotion, layoutStore: layoutStore)
+                }, appsMedia: {
+                    AppsMediaDeckView(services: modules.workspaceServices, media: modules.media, sections: modules.rightWorkspace.configuration.visibleSections, layoutStore: layoutStore, onOpenSettings: onOpenSettings)
+                })
+        case .chat, .terminal, .feed:
+            EmptyView()
+        case .media:
+            MediaModuleView(settings: settings, media: modules.media, availableHeight: height, onLauncherActivated: onShortcutLaunched, onMediaSourceOpened: onShortcutLaunched)
+        case .files:
+            FileShelfModuleView(settings: settings, fileShelf: modules.fileShelf, backgroundOperations: modules.backgroundOperations)
+                .onDrop(of: FileDropProviderLoader.acceptedTypes, isTargeted: filesTargetBinding) { providers in
+                    loadDroppedFiles(from: providers)
+                }
+        case .timer:
+            FocusTimerView(timer: modules.timer, settings: settings, onStarted: onTimerStarted)
+        case .calendar:
+            CalendarSectionView(controller: modules.workspaceServices.calendar, layoutStore: layoutStore)
+                .padding(10)
+        case .clipboard:
+            ClipboardWidgetView(store: modules.clipboardHistory, enabled: settings.clipboardHistoryEnabled, onOpen: openClipboardHistory, onEnable: onOpenSettings)
+        case .shortcuts:
+            ShortcutsModuleView(shortcuts: modules.shortcuts, availableHeight: height, compactScale: 1, onShortcutLaunched: onShortcutLaunched)
+        case .activities:
+            LiveActivitiesModuleView(liveActivities: liveActivities, navigation: navigation, rightWorkspace: modules.rightWorkspace, settings: settings, availableHeight: height, compactScale: 1)
+        }
+    }
+
+    private func standardIslandPage(metrics: ExpandedIslandLayoutMetrics) -> some View {
         let visibility = ExpandedIslandRightStackVisibility.resolve(
             liveActivitiesEnabled: settings.liveActivitiesEnabled,
             showExpandedLiveActivitiesSection: settings.showExpandedLiveActivitiesSection,
@@ -3620,6 +3751,8 @@ struct ExpandedIslandView: View {
             workspaceFeed: modules.agentWorkspaceFeed,
             workspacePresentation: modules.agentWorkspacePresentation,
             terminal: modules.productivity.terminal,
+            customization: customization, editingWorkspace: $editingWidgets,
+            timerWidget: AnyView(FocusTimerView(timer: modules.timer, settings: settings)),
             availableHeight: metrics.pageHeight,
             contentVisible: contentVisible,
             isContentRemoving: isContentRemoving
@@ -3921,7 +4054,7 @@ private struct SettingsGearButton: View {
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
         .animation(.easeOut(duration: 0.14), value: isHovering)
-        .help("Settings")
+        .nativeHelp("Settings")
         .accessibilityLabel("Open Settings")
     }
 }
@@ -3950,7 +4083,7 @@ private struct ExpandedHeaderButton: View {
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
         .animation(.easeOut(duration: 0.14), value: isHovering)
-        .help(help)
+        .nativeHelp(help)
         .accessibilityLabel(accessibilityLabel)
     }
 }
@@ -4006,7 +4139,7 @@ private struct ExpandedIslandPageButton: View {
         .accessibilityLabel(page.accessibilityLabel)
         .accessibilityValue(selected ? "Selected" : "Not selected")
         .accessibilityAddTraits(selected ? .isSelected : [])
-        .help(page.title)
+        .nativeHelp(page.title)
     }
 
     private var foregroundOpacity: Double {
@@ -4711,11 +4844,18 @@ struct DedicatedTimerPageView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: usesCompactLayout ? 7 : 8) {
-            Label("Timer", systemImage: "timer")
-                .font(.system(size: titleFontSize, weight: .bold, design: .rounded))
-                .foregroundStyle(.white)
-
-            if settings.showTimerProgressRing {
+            FocusTimerView(timer: timer, settings: settings, onStarted: onTimerStarted)
+            if settings.timerPresetsEnabled {
+                HStack(spacing: controlsSpacing) {
+                    Button("\(settings.timerPreset1Minutes)m") { startTimer(settings.timerPreset1Minutes) }
+                    Button("\(settings.timerPreset2Minutes)m") { startTimer(settings.timerPreset2Minutes) }
+                    Button("\(settings.timerPreset3Minutes)m") { startTimer(settings.timerPreset3Minutes) }
+                }
+                .buttonStyle(.borderless)
+                .font(.system(size: controlsFontSize, weight: .semibold))
+                .frame(maxWidth: .infinity)
+            }
+            if settings.showTimerProgressRing && pageHeight >= 250 {
                 TimerProgressRingView(
                     progress: TimerProgressFormatting.progress(
                         remainingSeconds: timer.remainingSeconds,
@@ -4723,17 +4863,10 @@ struct DedicatedTimerPageView: View {
                     ),
                     remainingText: timer.displayText,
                     isRunning: timer.isRunning,
-                    ringSize: ringSize,
+                    ringSize: min(ringSize, pageHeight - 150),
                     animationEnabled: settings.timerRingAnimationEnabled
                 )
                 .frame(maxWidth: .infinity)
-            }
-
-            if settings.timerPresetsEnabled {
-                ViewThatFits(in: .horizontal) {
-                    timerControlRow
-                    timerControlStack
-                }
             }
 
             Spacer(minLength: 0)

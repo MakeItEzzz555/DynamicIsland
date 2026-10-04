@@ -42,6 +42,9 @@ final class AgentApprovalController: ObservableObject {
     private var completedRequests: [AgentApprovalControlKey: Date] = [:]
     private var deliveryDecisions: [AgentApprovalControlKey: AgentBridgePermissionDecision] = [:]
     private var deliveryFailures: [AgentApprovalControlKey: String] = [:]
+    // Controller registration order is authoritative, not provider IDs or expiry.
+    private var arrivalOrder: [AgentApprovalControlKey: UInt64] = [:]
+    private var nextArrival: UInt64 = 0
     private let now: @Sendable () -> Date
 
     init(now: @escaping @Sendable () -> Date = Date.init) {
@@ -59,6 +62,8 @@ final class AgentApprovalController: ObservableObject {
         guard request.expiresAt > now(),
               continuations[request.key] == nil,
               completedRequests[request.key] == nil else { return nil }
+        nextArrival &+= 1
+        arrivalOrder[request.key] = nextArrival
         if automaticallyApproves(request) {
             completedRequests[request.key] = request.expiresAt
             deliveringRequests[request.key] = request
@@ -131,18 +136,23 @@ final class AgentApprovalController: ObservableObject {
         completedRequests = completedRequests.filter { $0.key.session.sessionID != sessionID }
     }
 
+    /// Pending/delivering presentation is stable through acknowledgement.
+    var presentedRequestsInArrivalOrder: [AgentApprovalControlRequest] {
+        ordered(Array(pendingRequests.values) + Array(deliveringRequests.values))
+    }
+
     func pendingRequest(for session: AgentSessionInstanceID) -> AgentApprovalControlRequest? {
-        pendingRequests.values
-            .filter { $0.key.session == session && $0.expiresAt > now() }
-            .sorted { $0.expiresAt < $1.expiresAt }
-            .first
+        ordered(Array(pendingRequests.values)).first { $0.key.session == session }
     }
 
     func presentedRequest(for session: AgentSessionInstanceID) -> AgentApprovalControlRequest? {
-        (Array(pendingRequests.values) + Array(deliveringRequests.values))
-            .filter { $0.key.session == session && $0.expiresAt > now() }
-            .sorted { $0.expiresAt < $1.expiresAt }
-            .first
+        presentedRequestsInArrivalOrder.first { $0.key.session == session }
+    }
+
+    private func ordered(_ requests: [AgentApprovalControlRequest]) -> [AgentApprovalControlRequest] {
+        requests.filter { $0.expiresAt > now() }.sorted {
+            (arrivalOrder[$0.key] ?? .max) < (arrivalOrder[$1.key] ?? .max)
+        }
     }
 
     func deliveryState(for key: AgentApprovalControlKey) -> AgentApprovalDeliveryState? {
@@ -155,6 +165,8 @@ final class AgentApprovalController: ObservableObject {
 
     /// The provider acknowledged this exact decision.
     func confirmDelivery(_ key: AgentApprovalControlKey) {
+        guard deliveringRequests[key] != nil else { return }
+        arrivalOrder.removeValue(forKey: key)
         deliveringRequests.removeValue(forKey: key)
         deliveryDecisions.removeValue(forKey: key)
         deliveryFailures.removeValue(forKey: key)
@@ -174,13 +186,7 @@ final class AgentApprovalController: ObservableObject {
     }
 
     func nextPendingRequest() -> AgentApprovalControlRequest? {
-        pendingRequests.values
-            .filter { $0.expiresAt > now() }
-            .sorted { lhs, rhs in
-                if lhs.expiresAt != rhs.expiresAt { return lhs.expiresAt < rhs.expiresAt }
-                return lhs.key.requestID.rawValue < rhs.key.requestID.rawValue
-            }
-            .first
+        ordered(Array(pendingRequests.values)).first
     }
 
     func approvalPolicy(for session: AgentSessionInstanceID) -> AgentApprovalPolicyMode {
@@ -189,6 +195,7 @@ final class AgentApprovalController: ObservableObject {
 
     func setAutoApprove(_ enabled: Bool, for session: AgentSessionInstanceID) {
         let key = AgentApprovalPolicyKey(session: session)
+        guard (approvalPolicies[key] != nil) != enabled else { return }
         if enabled {
             approvalPolicies[key] = AgentApprovalPolicyState(key: key, mode: .autoApprove)
         } else {
@@ -208,24 +215,28 @@ final class AgentApprovalController: ObservableObject {
     }
 
     func retainPolicies(for sessions: Set<AgentSessionInstanceID>) {
-        approvalPolicies = approvalPolicies.filter { sessions.contains($0.key.session) }
+        let retained = approvalPolicies.filter { sessions.contains($0.key.session) }
+        guard retained != approvalPolicies else { return }
+        approvalPolicies = retained
     }
 
     func clearPolicies() {
+        guard !approvalPolicies.isEmpty else { return }
         approvalPolicies.removeAll()
     }
 
     func clearPolicies(for provider: AgentProvider) {
-        approvalPolicies = approvalPolicies.filter {
-            $0.key.session.sessionID.provider != provider
-        }
+        let retained = approvalPolicies.filter { $0.key.session.sessionID.provider != provider }
+        guard retained != approvalPolicies else { return }
+        approvalPolicies = retained
     }
 
     func cancelAll() {
         for key in Array(continuations.keys) {
             finish(key, decision: nil)
         }
-        deliveringRequests.removeAll()
+        if !deliveringRequests.isEmpty { deliveringRequests.removeAll() }
+        arrivalOrder.removeAll()
         deliveryDecisions.removeAll()
         deliveryFailures.removeAll()
     }
@@ -238,6 +249,7 @@ final class AgentApprovalController: ObservableObject {
             completedRequests[key] = request.expiresAt
         }
         expirationTasks.removeValue(forKey: key)?.cancel()
+        arrivalOrder.removeValue(forKey: key)
         pendingRequests.removeValue(forKey: key)
         deliveringRequests.removeValue(forKey: key)
         deliveryDecisions.removeValue(forKey: key)

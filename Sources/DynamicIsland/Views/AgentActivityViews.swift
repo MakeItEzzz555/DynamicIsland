@@ -199,6 +199,9 @@ struct AgentActivityDashboardView: View {
     var workspaceFeed: AgentWorkspaceFeedStore? = nil
     var workspacePresentation: AgentWorkspacePresentation? = nil
     var terminal: TerminalSessionController? = nil
+    var customization: WorkspaceCustomizationStore? = nil
+    var editingWorkspace: Binding<Bool> = .constant(false)
+    var timerWidget: AnyView? = nil
     let availableHeight: CGFloat
     let contentVisible: Bool
     let isContentRemoving: Bool
@@ -225,7 +228,8 @@ struct AgentActivityDashboardView: View {
             transcriptPresentationReady: presentation.transcriptReady,
             presentationGeneration: presentation.generation,
             transcriptLoadDelay: 0,
-            workspaceFeed: workspaceFeed, workspacePresentation: workspacePresentation, terminal: terminal
+            workspaceFeed: workspaceFeed, workspacePresentation: workspacePresentation, terminal: terminal,
+            customization: customization, editingWorkspace: editingWorkspace, timerWidget: timerWidget
         )
         .environment(\.agentProjectLocations, projects.index)
         .environment(\.agentProjectSelection, AgentProjectSelectionBinding(
@@ -311,6 +315,9 @@ struct AgentDashboardContentView: View {
     private let suppliedFeed: AgentWorkspaceFeedStore?
     private let suppliedPresentation: AgentWorkspacePresentation?
     private let terminal: TerminalSessionController?
+    private let customization: WorkspaceCustomizationStore?
+    private let editingWorkspace: Binding<Bool>
+    private let timerWidget: AnyView?
     @StateObject private var localFeed = AgentWorkspaceFeedStore()
     @StateObject private var localPresentation = AgentWorkspacePresentation()
     private var feed: AgentWorkspaceFeedStore { suppliedFeed ?? localFeed }
@@ -339,7 +346,10 @@ struct AgentDashboardContentView: View {
         transcriptLoadDelay: TimeInterval = 0,
         workspaceFeed: AgentWorkspaceFeedStore? = nil,
         workspacePresentation: AgentWorkspacePresentation? = nil,
-        terminal: TerminalSessionController? = nil
+        terminal: TerminalSessionController? = nil,
+        customization: WorkspaceCustomizationStore? = nil,
+        editingWorkspace: Binding<Bool> = .constant(false),
+        timerWidget: AnyView? = nil
     ) {
         self.sessions = sessions
         self.accountUsage = accountUsage
@@ -360,6 +370,9 @@ struct AgentDashboardContentView: View {
         self.suppliedFeed = workspaceFeed
         self.suppliedPresentation = workspacePresentation
         self.terminal = terminal
+        self.customization = customization
+        self.editingWorkspace = editingWorkspace
+        self.timerWidget = timerWidget
     }
 
     var body: some View {
@@ -484,7 +497,6 @@ struct AgentDashboardContentView: View {
         verticalLayout: AgentWorkspaceVerticalLayoutProjection,
         composerControls: AnyView
     ) -> some View {
-        let controlSessions = workspace.controlSessions
         let selectedSession = workspace.selectedSession
         if launchFlow.isPresented {
             AgentSessionLauncherView(
@@ -508,12 +520,59 @@ struct AgentDashboardContentView: View {
             .layoutPriority(2)
         } else {
             stagedAgentContent(index: 3) {
+                if let customization, editingWorkspace.wrappedValue || customization.configuration.customizedSurfaces.contains(.agents) {
+                    IslandWidgetEditor(store: customization, surface: .agents, editing: editingWorkspace,
+                        eligibleWidgets: [.chat, .feed] + (terminal != nil ? [.terminal] : []) + (settings?.timerEnabled != false && timerWidget != nil ? [.timer] : []), extraMotion: !(settings?.reduceExtraMotion ?? false)) { region, _ in
+                        if region.isStack {
+                            return AnyView(AgentChatTerminalStack(presentation: workspacePresentation, isVisible: contentVisible && transcriptPresentationReady && !editingWorkspace.wrappedValue, reduceMotion: reduceMotion || (settings?.reduceExtraMotion ?? false), layoutStore: layoutStore,
+                                chat: { AnyView(chatContent(workspace: workspace, newSessionFolder: newSessionFolder, verticalLayout: verticalLayout, composerControls: composerControls, visible: contentVisible && workspacePresentation.stackPage == .chat && !editingWorkspace.wrappedValue)) },
+                                terminal: { AnyView(terminalContent(session: selectedSession, visible: contentVisible && transcriptPresentationReady && workspacePresentation.stackPage == .terminal && !editingWorkspace.wrappedValue)) }))
+                        }
+                        switch region.widgets[0].kind {
+                        case .chat:
+                            return AnyView(chatContent(workspace: workspace, newSessionFolder: newSessionFolder, verticalLayout: verticalLayout, composerControls: composerControls, visible: contentVisible && !editingWorkspace.wrappedValue))
+                        case .terminal:
+                            return AnyView(terminalContent(session: selectedSession, visible: contentVisible && transcriptPresentationReady && !editingWorkspace.wrappedValue))
+                        case .feed:
+                            return AnyView(customizedFeed(selectedSession: selectedSession))
+                        case .timer:
+                            return timerWidget ?? AnyView(EmptyView())
+                        default:
+                            return AnyView(EmptyView())
+                        }
+                    }
+                } else {
                 AgentWorkspaceSplitView(presentation: workspacePresentation, reduceMotion: reduceMotion) {
+                    chatContent(workspace: workspace, newSessionFolder: newSessionFolder, verticalLayout: verticalLayout, composerControls: composerControls, visible: contentVisible)
+                } workspace: { canEmphasize in
+                    AgentRightWorkspace(
+                        presentation: workspacePresentation, feed: feed, approvals: approvalControl,
+                        terminal: terminal, sessions: sessions, selectedSession: selectedSession,
+                        onSelect: managedControl.selectSession,
+                        onSelectAttention: selectAttentionSession,
+                        canEmphasize: canEmphasize,
+                        isVisible: contentVisible && transcriptPresentationReady, layoutStore: layoutStore
+                    )
+                }
+                .layoutPriority(2)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func chatContent(workspace: AgentWorkspaceProjection, newSessionFolder: String?, verticalLayout: AgentWorkspaceVerticalLayoutProjection, composerControls: AnyView, visible: Bool) -> some View {
+        let controlSessions = workspace.controlSessions
+        Group {
                     if case .session(let selectedSession, let controlSurface) = workspace.surface {
                         AgentChatSurface(
                             session: selectedSession, controller: managedControl,
-                            presentation: workspacePresentation, isVisible: contentVisible,
-                            onNewSession: { openNewSession(folder: newSessionFolder) }
+                            presentation: workspacePresentation, isVisible: visible,
+                            onNewSession: { openNewSession(folder: newSessionFolder) },
+                            onSelectInteraction: customizedInteractionHandler,
+                            approvalAttention: customization != nil && (editingWorkspace.wrappedValue || customization!.configuration.customizedSurfaces.contains(.agents))
+                                ? AnyView(AgentWorkspaceApprovalAttentionControl(approvals: approvalControl,
+                                    selectedSessionID: selectedSession.id, onSelect: selectAttentionSession)) : nil
                         ) {
                             AgentSelectedSessionControlView(
                                 session: selectedSession,
@@ -543,18 +602,48 @@ struct AgentDashboardContentView: View {
                         .transition(.opacity)
                         .accessibilityIdentifier("agents.newChatFallback")
                     }
-                } workspace: { canEmphasize in
-                    AgentRightWorkspace(
-                        presentation: workspacePresentation, feed: feed, approvals: approvalControl,
-                        terminal: terminal, sessions: sessions, selectedSession: selectedSession,
-                        onSelect: managedControl.selectSession,
-                        onSelectAttention: selectAttentionSession,
-                        canEmphasize: canEmphasize,
-                        isVisible: contentVisible && transcriptPresentationReady, layoutStore: layoutStore
-                    )
+        }.environment(\.rightWorkspacePageIsActive, visible)
+    }
+
+    private var customizedInteractionHandler: ((AgentInteractionMode) -> Void)? {
+        guard let customization, customization.configuration.customizedSurfaces.contains(.agents) else { return nil }
+        return { mode in
+            if customization.configuration.regions(on: .agents).contains(where: \.isStack) {
+                workspacePresentation.showStack(mode == .chat ? .chat : .terminal)
+            } else if mode == .terminal {
+                var configuration = customization.configuration
+                if !configuration.widgets(on: .agents).contains(where: { $0.kind == .terminal }) {
+                    configuration.add(.terminal, on: .agents)
+                    customization.commit(configuration)
                 }
-                .layoutPriority(2)
+                workspacePresentation.interact(.terminal)
+            } else {
+                workspacePresentation.interact(.chat)
             }
+        }
+    }
+
+    private func customizedFeed(selectedSession: AgentSession?) -> some View {
+        VStack(spacing: 5) {
+            HStack {
+                Text("Feed").font(.system(size: 10, weight: .semibold))
+                Spacer(minLength: 4)
+                AgentWorkspaceApprovalAttentionControl(approvals: approvalControl,
+                    selectedSessionID: selectedSession?.id, onSelect: selectAttentionSession)
+            }
+            .padding(.horizontal, 5)
+            AgentWorkspaceFeedView(feed: feed, approvals: approvalControl, sessions: sessions,
+                selectedSessionID: selectedSession?.id, onSelect: managedControl.selectSession,
+                isVisible: contentVisible && !editingWorkspace.wrappedValue)
+        }
+    }
+
+    @ViewBuilder
+    private func terminalContent(session: AgentSession?, visible: Bool) -> some View {
+        if let terminal, visible {
+            AgentWorkspaceTerminalView(controller: terminal, session: session, isVisible: visible, focusRequest: workspacePresentation.terminalFocusRequest, layoutStore: layoutStore)
+        } else {
+            Color.clear.accessibilityLabel("Terminal presentation paused")
         }
     }
 
@@ -566,6 +655,11 @@ struct AgentDashboardContentView: View {
         }
         managedControl.selectSession(instance)
         workspacePresentation.select(.feed)
+        if let customization, customization.configuration.customizedSurfaces.contains(.agents) {
+            var configuration = customization.configuration
+            configuration.add(.feed, on: .agents)
+            customization.commit(configuration)
+        }
         launchFlow.dismiss()
     }
 

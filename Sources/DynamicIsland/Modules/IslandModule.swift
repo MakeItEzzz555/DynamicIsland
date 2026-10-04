@@ -40,6 +40,7 @@ struct IslandModules {
     let basketPresenter: BasketPresenter
     var agentWorkspaceFeed: AgentWorkspaceFeedStore? = nil
     var agentWorkspacePresentation: AgentWorkspacePresentation? = nil
+    var customization: WorkspaceCustomizationStore? = nil
 }
 
 /// Real data sources for the right workspace's Apps & Media page.

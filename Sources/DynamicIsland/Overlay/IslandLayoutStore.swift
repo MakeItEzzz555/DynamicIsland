@@ -20,6 +20,7 @@ enum IslandCanvasCoordinateSpace {
 }
 
 enum TransientInteractionOwner: Hashable, Sendable {
+    case workspaceEditor
     case agentsLauncher
     case calendarDatePicker
     case unspecified
@@ -56,6 +57,31 @@ final class IslandLayoutStore: ObservableObject {
     /// Separate from the transcript: neither viewport may steal the other's
     /// trackpad sequence or turn vertical history scrolling into shell collapse.
     @Published private(set) var agentWorkspaceScrollRegion: CGRect = .zero
+    @Published private(set) var agentStackSwipeRegion: CGRect = .zero
+    var agentStackSwipeAction: ((Int) -> Void)?
+    private var agentStackSwipeOwner: UUID?
+
+    func installAgentStackSwipe(owner: UUID, action: @escaping (Int) -> Void) {
+        agentStackSwipeOwner = owner
+        agentStackSwipeAction = action
+    }
+
+    func setAgentStackSwipeRegion(_ region: CGRect, owner: UUID) {
+        guard agentStackSwipeOwner == owner else { return }
+        setAgentStackSwipeRegion(region)
+    }
+
+    func removeAgentStackSwipe(owner: UUID) {
+        guard agentStackSwipeOwner == owner else { return }
+        agentStackSwipeOwner = nil
+        agentStackSwipeAction = nil
+        setAgentStackSwipeRegion(.zero)
+    }
+
+    func setAgentStackSwipeRegion(_ region: CGRect) {
+        let next = region.isNull || region.isInfinite || region.width <= 0 || region.height <= 0 ? .zero : region.integral
+        if agentStackSwipeRegion != next { agentStackSwipeRegion = next }
+    }
     /// Owners of an in-island transient interaction (Agents launcher,
     /// Calendar date popover). The island stays expanded while any owner is
     /// active; each owner clears only its own claim, so two surfaces can
