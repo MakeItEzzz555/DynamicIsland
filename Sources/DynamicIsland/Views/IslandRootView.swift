@@ -353,6 +353,7 @@ struct IslandRootView: View {
     @ObservedObject private var navigation: IslandNavigationStore
     @ObservedObject private var fileDragSession: FileDragSessionController
     @ObservedObject private var liveActivities: LiveActivityStore
+    @ObservedObject private var agentApprovals: AgentApprovalController
     @ObservedObject private var agentAttention: AgentAttentionCoordinator
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var contentPhase: IslandContentPhase = .compact
@@ -391,6 +392,7 @@ struct IslandRootView: View {
         navigation = modules.navigation
         fileDragSession = modules.fileDragSession
         liveActivities = modules.liveActivities
+        agentApprovals = modules.agentApprovalControl
         agentAttention = modules.agentAttention
     }
 
@@ -439,7 +441,7 @@ struct IslandRootView: View {
                     collapsedPresentationProfile: layoutStore.collapsedPresentationProfile,
                     collapsedGlowColor: collapsedAgentGlowColor,
                     collapsedBrightGlowColor: collapsedAgentBrightGlowColor,
-                    forcesCollapsedGlow: shouldShowCollapsedAgentGlow,
+                    forcesCollapsedGlow: shouldShowCollapsedAgentGlow && compactPermission == nil,
                     systemHUDActivity: activeInteractiveSystemHUD
                 ) {
                     islandSurfaceContent
@@ -448,6 +450,9 @@ struct IslandRootView: View {
                 .shellMorphing(layoutStore.isShellMorphing)
                 .collapseShellOnly(layoutStore.isCollapseShellOnly)
                 .frame(width: surfaceSize.width, height: surfaceSize.height)
+                .shadow(color: .black.opacity(!isExpanded && compactPermission != nil && layoutStore.compactPermissionHovered ? AgentCompactPermissionMotion.shadowOpacity : 0),
+                    radius: AgentCompactPermissionMotion.shadowRadius, y: AgentCompactPermissionMotion.shadowY)
+                .animation(AgentCompactPermissionMotion.animation(reduceMotion: reduceMotion || settings.reduceExtraMotion), value: layoutStore.compactPermissionHovered)
                 .position(
                     x: surfaceFrame.midX,
                     y: layoutStore.canvasSize.height - surfaceFrame.midY
@@ -483,6 +488,7 @@ struct IslandRootView: View {
             }
             .onChange(of: islandState.state) { _, newValue in
                 handleStateChange(newValue)
+                layoutStore.compactPermissionHovered = false
                 synchronizeCollapsedSidecarGeometry()
             }
             .onChange(of: isCollapsedPreviewActive) { _, _ in
@@ -494,6 +500,13 @@ struct IslandRootView: View {
             }
             .onChange(of: agentAttention.presentation != nil) { _, _ in
                 synchronizeCollapsedSidecarGeometry()
+            }
+            .onChange(of: compactPermission?.request.key) { _, key in
+                if key == nil {
+                    withAnimation(AgentCompactPermissionMotion.animation(reduceMotion: reduceMotion || settings.reduceExtraMotion)) {
+                        layoutStore.compactPermissionHovered = false
+                    }
+                }
             }
     }
 
@@ -563,8 +576,8 @@ struct IslandRootView: View {
         interactionObservedCanvas
             .animation(shellAnimation, value: islandState.state)
             .animation(shellAnimation, value: layoutStore.isShellMorphing)
-            .animation(shellAnimation, value: layoutStore.collapsedSurfaceFrame)
-            .animation(shellAnimation, value: layoutStore.collapsedPresentationProfile)
+            .animation(compactPermission != nil ? AgentCompactPermissionMotion.animation(reduceMotion: reduceMotion || settings.reduceExtraMotion) : shellAnimation, value: layoutStore.collapsedSurfaceFrame)
+            .animation(compactPermission != nil ? AgentCompactPermissionMotion.animation(reduceMotion: reduceMotion || settings.reduceExtraMotion) : shellAnimation, value: layoutStore.collapsedPresentationProfile)
             .animation(collapsedPreviewAnimation, value: isCollapsedPreviewActive)
     }
 
@@ -597,7 +610,17 @@ struct IslandRootView: View {
         }
     }
 
+    private var compactPermission: AgentCompactPermission? {
+        AgentCompactPermission.current(sessions: modules.agentEvents.sessions,
+            approvals: modules.agentApprovalControl, managed: modules.agentManagedControl)
+    }
+
     private var compactIslandContent: some View {
+        Group {
+            if let compactPermission {
+                AgentCompactPermissionView(permission: compactPermission, approvals: modules.agentApprovalControl,
+                    topBandHeight: max(layoutStore.collapsedSize.height - layoutStore.collapsedPresentationProfile.heightDelta, 20))
+            } else {
         CompactIslandView(
             settings: settings,
             modules: modules,
@@ -614,11 +637,13 @@ struct IslandRootView: View {
             collapsedRightRegionWidth: layoutStore.collapsedRightRegionWidth,
             isNotchIntegratedShell: layoutStore.hasHardwareNotch
         )
+            }
+        }
         .environment(\.agentVisualPreferences, settings.agentVisualPreferences)
         .contentShape(Rectangle())
         .onHover(perform: handleCollapsedHover)
         .onTapGesture {
-            guard settings.expandOnClick else { return }
+            guard settings.expandOnClick, compactPermission == nil else { return }
             deactivateCollapsedPreview()
             if let attention = agentAttention.presentation,
                let primary = attention.primary {
@@ -978,7 +1003,8 @@ struct IslandRootView: View {
     }
 
     private var isCollapsedPreviewAllowed: Bool {
-        islandState.state == .collapsed &&
+        guard compactPermission == nil else { return false }
+        return islandState.state == .collapsed &&
             settings.collapsedHoverPreviewEnabled &&
             collapsedPreviewContent != nil &&
             !navigation.isFileDropTargeted &&
@@ -1333,6 +1359,13 @@ struct IslandRootView: View {
     private func handleCollapsedHover(_ isHovering: Bool) {
         guard settings.overlayEnabled else { return }
         let sessionGeneration = layoutStore.overlayPresentationGeneration
+        if compactPermission != nil {
+            withAnimation(AgentCompactPermissionMotion.animation(reduceMotion: reduceMotion || settings.reduceExtraMotion)) {
+                layoutStore.compactPermissionHovered = isHovering
+            }
+            return
+        }
+        layoutStore.compactPermissionHovered = false
         isCollapsedHovering = isHovering
         collapsedPreviewGeneration += 1
         let generation = collapsedPreviewGeneration

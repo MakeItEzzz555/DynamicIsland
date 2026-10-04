@@ -92,7 +92,8 @@ final class AgentApprovalController: ObservableObject {
         decision: AgentBridgePermissionDecision
     ) -> AgentApprovalControlResult {
         let key = AgentApprovalControlKey(session: session, requestID: requestID)
-        guard let request = pendingRequests[key], request.expiresAt > now() else {
+        guard let request = pendingRequests[key] else { return .missing }
+        guard request.expiresAt > now() else {
             finish(key, decision: nil)
             return .missing
         }

@@ -42,6 +42,14 @@ case "${1:-focused}" in
     DYNAMIC_ISLAND_AGENT_PERF=1 DYNAMIC_ISLAND_AGENT_PERF_REPORT="$output/performance.json" swift test --skip-build --filter 'AgentsPerformanceHarnessTests/testMeasureAgentsPage' > "$output/performance.log" 2>&1
     tail -12 "$output/performance.log"
     ;;
+  layout)
+    DYNAMIC_ISLAND_WORKSPACE_SNAPSHOT_DIR="$output/workspace" swift test --filter 'AgentCompactPermissionGeometryTests|AgentWorkspaceSnapshotTests|AgentApprovalControllerTests|AgentHoverAndComposerTests|AgentComposerReachabilityTests' > "$output/layout.log" 2>&1
+    tail -12 "$output/layout.log"
+    ;;
+  compact-live)
+    DYNAMIC_ISLAND_LIVE_COMPACT_PERMISSION=1 DYNAMIC_ISLAND_LIVE_APPROVAL_E2E=1 DYNAMIC_ISLAND_LIVE_AGENT_ROOT="$output/live-codex" DYNAMIC_ISLAND_LIVE_AGENT_PROVIDERS=codex swift test --skip-build --filter 'AgentLiveApprovalEndToEndTests/testCodexLiveDenyThenAllowThroughApprovalController' > "$output/compact-live.log" 2>&1
+    tail -18 "$output/compact-live.log"
+    ;;
   motion)
     DYNAMIC_ISLAND_AGENT_PERF=1 DYNAMIC_ISLAND_AGENT_MOTION_REPORT="$output/motion.json" swift test --filter 'AgentsPerformanceHarnessTests/testMeasureShellRendererHandoffs|AgentStreamingTextTests|NativeMetalFxTests|AgentWorkspaceSnapshotTests/testNativeTranscriptKeepsLatestVisibleDuringStreamingAndRespectsHistoryScroll' > "$output/motion.log" 2>&1
     tail -12 "$output/motion.log"
@@ -59,5 +67,5 @@ case "${1:-focused}" in
     codesign --verify --deep --strict --verbose=2 dist/DynamicIsland.app > "$output/signature.log" 2>&1
     cat "$output/signature.log"
     ;;
-  *) echo 'usage: validate_agent_visual_fidelity.sh focused|parity|full|native|codex|approval|semantics|soak|performance|motion|capture|camera|release [output-directory]' >&2; exit 64 ;;
+  *) echo 'usage: validate_agent_visual_fidelity.sh focused|parity|full|native|codex|approval|semantics|soak|performance|layout|compact-live|motion|capture|camera|release [output-directory]' >&2; exit 64 ;;
 esac

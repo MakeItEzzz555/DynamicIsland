@@ -33,6 +33,7 @@ struct AgentWorkspaceUsageStrip: View {
     }
 
     var body: some View {
+        let _ = AgentPerformanceProbe.count("agents.usage.body")
         GeometryReader { geometry in
             let side = Self.diameter(for: geometry.size.width)
             HStack(spacing: 0) {
@@ -314,16 +315,7 @@ struct AgentChatSurface<Conversation: View>: View {
                 .padding(.horizontal, 9).padding(.top, 7).padding(.bottom, 3)
                 conversation()
                     .frame(maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
-                if controller.isManaged(session),
-                   controller.mode(for: session).showsComposer,
-                   !controller.availableReasoningEfforts(for: session).isEmpty {
-                    HStack(spacing: 5) {
-                        reasoningControl
-                        Spacer(minLength: 0)
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.bottom, 7)
-                }
+
             }
             .background(.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 12))
             .overlay { RoundedRectangle(cornerRadius: 12).strokeBorder(.primary.opacity(0.055), lineWidth: 1).allowsHitTesting(false) }
@@ -366,72 +358,7 @@ struct AgentChatSurface<Conversation: View>: View {
         .accessibilityAddTraits(presentation.interactionMode == mode ? [.isSelected, .isButton] : .isButton)
     }
 
-    @ViewBuilder private var modelControl: some View {
-        let options = controller.availableModels(for: session)
-        let model = controller.pendingModel(for: session) ?? controller.selectedModel(for: session)
-        let name = options.first { $0.model == model }?.displayName ?? model ?? "Model unavailable"
-        if !options.isEmpty, controller.isManaged(session) {
-            Menu {
-                if controller.modelSelectionScope(for: session) != nil {
-                    Button("Use thread model") { controller.selectModel(nil, for: session) }
-                    ForEach(options) { option in
-                        Button { controller.selectModel(option.model, for: session) } label: {
-                            Label(option.displayName, systemImage: model == option.model ? "checkmark" : "cpu")
-                        }
-                    }
-                } else {
-                    Text("This provider keeps the current session model")
-                    ForEach(options) { option in
-                        Button("New session with \(option.displayName)") {
-                            controller.selectProvider(session.id.sessionID.provider)
-                            if controller.selectNewSessionModel(option.model, for: session.id.sessionID.provider) { onNewSession() }
-                        }
-                    }
-                }
-            } label: { controlLabel(name, icon: "cpu") }
-            .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden)
-            .disabled(controller.modelSelectionScope(for: session) != nil && !controller.canSelectModel(for: session))
-            .help("Selected model; supported changes apply to a future turn")
-            .accessibilityLabel("Agent model: \(name)")
-        } else {
-            controlLabel(name, icon: "cpu").accessibilityLabel("Agent model: \(name)")
-        }
-    }
 
-    @ViewBuilder private var reasoningControl: some View {
-        let efforts = controller.availableReasoningEfforts(for: session)
-        let selected = controller.selectedReasoningEffort(for: session)
-        if !efforts.isEmpty {
-            Menu {
-                Button("Use model default") { controller.selectReasoningEffort(nil, for: session) }
-                ForEach(efforts) { option in
-                    Button { controller.selectReasoningEffort(option.id, for: session) } label: {
-                        Label(option.id.capitalized, systemImage: selected == option.id ? "checkmark" : "brain")
-                    }
-                }
-            } label: { controlLabel(selected?.capitalized ?? "Default", icon: "brain") }
-            .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden)
-            .disabled(!controller.canSelectReasoningEffort(for: session))
-            .help("Reasoning effort for the next turn; unavailable while a turn is active")
-            .accessibilityLabel("Next-turn reasoning effort: \(selected ?? "model default")")
-        } else {
-            controlLabel("Provider default", icon: "brain")
-                .foregroundStyle(.secondary)
-                .help("This provider/model does not advertise selectable reasoning effort")
-                .accessibilityLabel("Reasoning effort: provider default; selection unsupported")
-        }
-    }
-
-    private func controlLabel(_ text: String, icon: String) -> some View {
-        HStack(spacing: 3) {
-            Image(systemName: icon)
-            Text(text).lineLimit(1).truncationMode(.middle)
-        }
-        .font(.system(size: 8.5, weight: .medium))
-        .padding(.horizontal, 6).frame(height: 24)
-        .background(.primary.opacity(0.04), in: Capsule())
-        .contentShape(Capsule())
-    }
 }
 
 struct AgentRightWorkspace: View {

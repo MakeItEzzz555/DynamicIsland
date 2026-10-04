@@ -413,6 +413,23 @@ final class OverlayWindowController {
             }
             .store(in: &cancellables)
 
+        modules.agentApprovalControl.objectWillChange
+            .merge(with: modules.agentManagedControl.objectWillChange)
+            .sink { [weak self] _ in
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.canPresentOverlay, self.islandState.state == .collapsed else { return }
+                    self.reposition(animated: true, reason: "compactExactPermissionChanged")
+                }
+            }.store(in: &cancellables)
+
+        layoutStore.$compactPermissionHovered.removeDuplicates().dropFirst()
+            .sink { [weak self] _ in
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.canPresentOverlay, self.islandState.state == .collapsed else { return }
+                    self.reposition(animated: true, reason: "compactPermissionHover")
+                }
+            }.store(in: &cancellables)
+
         layoutStore.$isExpandedScrollGestureSuppressed
             .removeDuplicates()
             .sink { [weak self] _ in
@@ -731,6 +748,11 @@ final class OverlayWindowController {
     private func collapsedPresentationProfile(
         activities: [DynamicIslandLiveActivity]
     ) -> CollapsedPresentationProfile {
+        if AgentCompactPermission.current(sessions: modules.agentEvents.sessions,
+            approvals: modules.agentApprovalControl, managed: modules.agentManagedControl) != nil {
+            return .agentPermission(hovered: layoutStore.compactPermissionHovered,
+                reduceMotion: settings.reduceExtraMotion || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+        }
         if let attention = modules.agentAttention.presentation {
             let session = attention.primary.flatMap { modules.agentEvents.session(for: $0.session) }
             return AgentCollapsedShellPresentation.attention(attention, session: session)
@@ -985,7 +1007,11 @@ final class OverlayWindowController {
         #endif
         NSAnimationContext.runAnimationGroup { context in
             context.duration = duration
-            context.timingFunction = ExpandedShellMorph.panelTimingFunction
+            context.timingFunction = islandState.state == .collapsed &&
+                AgentCompactPermission.current(sessions: modules.agentEvents.sessions,
+                    approvals: modules.agentApprovalControl, managed: modules.agentManagedControl) != nil
+                ? CAMediaTimingFunction(controlPoints: 0.22, 1, 0.36, 1)
+                : ExpandedShellMorph.panelTimingFunction
             context.allowsImplicitAnimation = true
             islandPanel.animator().setFrame(frame, display: true)
         }
@@ -1001,6 +1027,11 @@ final class OverlayWindowController {
     private var expandedPageMorphDuration: TimeInterval {
         let reduceMotion = settings.reduceExtraMotion ||
             NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        if islandState.state == .collapsed,
+           AgentCompactPermission.current(sessions: modules.agentEvents.sessions,
+               approvals: modules.agentApprovalControl, managed: modules.agentManagedControl) != nil {
+            return reduceMotion ? 0.01 : AgentCompactPermissionMotion.duration
+        }
         return IslandContentTransitionTiming.shellDuration(
             settings: settings,
             reduceMotion: reduceMotion
@@ -1040,7 +1071,10 @@ final class OverlayWindowController {
             // Same curve and duration as the NSPanel frame animation in
             // applyCanonicalPanelFrame, so the SwiftUI canvas tracks the
             // physical window on every frame.
-            withAnimation(ExpandedShellMorph.canvasAnimation(duration: duration)) {
+            let permissionMotion = islandState.state == .collapsed &&
+                AgentCompactPermission.current(sessions: modules.agentEvents.sessions,
+                    approvals: modules.agentApprovalControl, managed: modules.agentManagedControl) != nil
+            withAnimation(permissionMotion ? AgentCompactPermissionMotion.animation(reduceMotion: reduceMotion) : ExpandedShellMorph.canvasAnimation(duration: duration)) {
                 updates()
             }
         } else {

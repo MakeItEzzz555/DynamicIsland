@@ -39,6 +39,7 @@ final class IslandLayoutStore: ObservableObject {
     @Published private(set) var collapsedNotchCoreWidth: CGFloat = 0
     @Published private(set) var collapsedRightRegionWidth: CGFloat = 0
     @Published private(set) var collapsedPresentationProfile: CollapsedPresentationProfile = .normal
+    @Published var compactPermissionHovered = false
     @Published var isShellMorphing = false
     @Published var isCollapseShellOnly = false
     @Published var isExpandedContentExiting = false

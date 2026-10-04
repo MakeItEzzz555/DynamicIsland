@@ -588,6 +588,136 @@ final class AgentWorkspaceSnapshotTests: XCTestCase {
         XCTAssertTrue(String(decoding: fixture.runner.handle.input, as: UTF8.self).contains("stress-46"))
     }
 
+    func testIntegratedComposerRegionsAtNormalAndNarrowWidths() async throws {
+        let fixture = try await makeFixture()
+        defer { fixture.controller.stop(); fixture.approvals.cancelAll(); fixture.terminal.terminate() }
+        let session = try XCTUnwrap(fixture.store.sessions.first)
+        fixture.controller.selectSession(session.id)
+        final class Frames { var value: [String: CGRect] = [:] }
+        for width: CGFloat in [560, 360, 240] {
+            let frames = Frames()
+            let controls = AgentCLIControlBar(sessions: fixture.store.sessions, managedControl: fixture.controller,
+                approvalControl: fixture.approvals,
+                projectOptions: AgentProjectFilter.options(for: fixture.store.sessions, locations: .empty, activeManagedSessionIDs: fixture.controller.activeManagedSessionIDs),
+                launcherOpen: false, onToggleLauncher: {})
+            let view = AgentEmbeddedConsoleView(session: session, mode: .interactive(canInterrupt: true),
+                interactionState: .ready, showsOperationalTraffic: false, showsActivityOrb: false,
+                transcriptEntries: fixture.controller.transcript(for: session), approvalControl: fixture.approvals,
+                onSelectSession: { _ in }, onSubmit: { _ in true }, onInterrupt: {}, composerControls: AnyView(controls))
+                .frame(width: width, height: 330)
+                .onPreferenceChange(AgentComposerLayoutFrames.self) { frames.value = $0 }
+            let hosting = NSHostingView(rootView: view)
+            hosting.frame = CGRect(x: 0, y: 0, width: width, height: 330)
+            for _ in 0..<15 {
+                hosting.layoutSubtreeIfNeeded()
+                try await Task.sleep(for: .milliseconds(5))
+            }
+            if width == 560 { XCTAssertNotNil(frames.value["controls.named"], "normal composer must show named controls") }
+            let container = try XCTUnwrap(frames.value["composer"])
+            let strip = try XCTUnwrap(frames.value["controls"])
+            let editor = try XCTUnwrap(frames.value["editor"])
+            let transcript = try XCTUnwrap(frames.value["transcript"])
+            XCTAssertTrue(container.insetBy(dx: -1, dy: -1).contains(strip), "width \(width): \(strip), \(container)")
+            XCTAssertTrue(container.insetBy(dx: -1, dy: -1).contains(editor))
+            XCTAssertLessThanOrEqual(strip.maxY, editor.minY)
+            XCTAssertLessThanOrEqual(strip.height, 36, "controls must stay on one integrated line")
+            XCTAssertGreaterThan(transcript.height, 200)
+            XCTAssertTrue(CGRect(x: 0, y: 0, width: width, height: 330).contains(container), "width \(width): composer \(container), strip \(strip)")
+        }
+        XCTAssertEqual(AgentWorkspaceUsageStrip.diameter(for: 900), 48)
+        XCTAssertEqual(AgentWorkspaceUsageStrip.rowHeight(for: 900), 66)
+    }
+
+    func testCompactPermissionExactOwnershipOneShotAndAcknowledgement() async throws {
+        let fixture = try await makeFixture()
+        defer { fixture.controller.stop(); fixture.approvals.cancelAll(); fixture.terminal.terminate() }
+        let session = try XCTUnwrap(fixture.store.sessions.first)
+        let request = AgentApprovalControlRequest(key: .init(session: session.id, requestID: .init(rawValue: "compact-exact")),
+            summary: "Read a test-owned file", expiresAt: AgentTestFixture.baseDate.addingTimeInterval(600))
+        let waiter = Task { await fixture.approvals.request(request, maximumWait: nil) }
+        for _ in 0..<100 where fixture.approvals.pendingRequests[request.key] == nil { await Task.yield() }
+        let permission = try XCTUnwrap(AgentCompactPermission.current(sessions: fixture.store.sessions, approvals: fixture.approvals, managed: fixture.controller))
+        XCTAssertEqual(permission.request.key, request.key)
+        var observed = session
+        observed.capabilities = AgentCapabilities()
+        XCTAssertNil(AgentCompactPermission.current(sessions: [observed], approvals: fixture.approvals, managed: fixture.controller))
+        let selection = fixture.controller.selectedSessionID
+        XCTAssertEqual(permission.decide(.deny, approvals: fixture.approvals), .accepted)
+        let decision = await waiter.value
+        XCTAssertEqual(decision, .deny)
+        XCTAssertEqual(fixture.controller.selectedSessionID, selection)
+        XCTAssertEqual(permission.decide(.allow, approvals: fixture.approvals), .missing)
+        XCTAssertNotNil(AgentCompactPermission.current(sessions: fixture.store.sessions, approvals: fixture.approvals, managed: fixture.controller))
+        XCTAssertEqual(fixture.approvals.deliveryState(for: request.key), .submitting(.deny))
+        fixture.approvals.failDelivery(request.key, reason: "Test transport failure")
+        XCTAssertNotNil(AgentCompactPermission.current(sessions: fixture.store.sessions, approvals: fixture.approvals, managed: fixture.controller))
+        XCTAssertEqual(permission.decide(.allow, approvals: fixture.approvals), .missing)
+        fixture.approvals.confirmDelivery(request.key)
+        XCTAssertNil(AgentCompactPermission.current(sessions: fixture.store.sessions, approvals: fixture.approvals, managed: fixture.controller))
+    }
+
+    func testCompactPermissionButtonsKeepFixedFramesDuringHoverAndDelivery() async throws {
+        let fixture = try await makeFixture()
+        defer { fixture.controller.stop(); fixture.approvals.cancelAll(); fixture.terminal.terminate() }
+        let session = try XCTUnwrap(fixture.store.sessions.first)
+        let request = AgentApprovalControlRequest(key: .init(session: session.id, requestID: .init(rawValue: "compact-layout")),
+            summary: "Read harmless fixture context " + String(repeating: "long context ", count: 20),
+            expiresAt: AgentTestFixture.baseDate.addingTimeInterval(600))
+        let waiter = Task { await fixture.approvals.request(request, maximumWait: nil) }
+        for _ in 0..<100 where fixture.approvals.pendingRequests[request.key] == nil { await Task.yield() }
+        let permission = try XCTUnwrap(AgentCompactPermission.current(sessions: fixture.store.sessions, approvals: fixture.approvals, managed: fixture.controller))
+        final class Frames { var value: [String: CGRect] = [:]; var expansions = 0 }
+        var baseline: [String: CGRect] = [:]
+        for (index, size) in [CGSize(width: 360, height: 102), CGSize(width: 380, height: 110), CGSize(width: 360, height: 102)].enumerated() {
+            let frames = Frames()
+            let root = AgentCompactPermissionView(permission: permission, approvals: fixture.approvals, topBandHeight: 29)
+                .frame(width: size.width, height: size.height)
+                .coordinateSpace(name: AgentComposerActionFrameKey.coordinateSpace)
+                .onPreferenceChange(AgentComposerLayoutFrames.self) { frames.value = $0 }
+                .onTapGesture { frames.expansions += 1 }
+            let host = NSHostingView(rootView: root)
+            host.frame = CGRect(origin: .zero, size: size)
+            let window = NSWindow(contentRect: CGRect(origin: CGPoint(x: -5000, y: -5000), size: size),
+                styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.contentView = host
+            window.orderFrontRegardless()
+            defer { window.orderOut(nil); window.contentView = nil }
+            for _ in 0..<8 { host.layoutSubtreeIfNeeded(); try await Task.sleep(for: .milliseconds(5)) }
+            for title in ["approve", "deny"] {
+                let frame = try XCTUnwrap(frames.value[title])
+                XCTAssertEqual(frame.size, CGSize(width: 78, height: 28))
+                XCTAssertTrue(CGRect(origin: .zero, size: size).contains(frame))
+                XCTAssertGreaterThanOrEqual(frame.minY, 50, "buttons must clear physical notch")
+                let centered = frame.offsetBy(dx: -size.width / 2, dy: 0)
+                if index == 0 { baseline[title] = centered }
+                else { XCTAssertEqual(centered, baseline[title], "hover/delivery cannot move controls") }
+            }
+            if index == 0 {
+                let approve = try XCTUnwrap(frames.value["approve"])
+                let point = CGPoint(x: approve.midX, y: size.height - approve.midY)
+                for kind in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                    let event = try XCTUnwrap(NSEvent.mouseEvent(with: kind, location: point, modifierFlags: [],
+                        timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                        context: nil, eventNumber: 0, clickCount: 1, pressure: kind == .leftMouseDown ? 1 : 0))
+                    window.sendEvent(event)
+                    try await Task.sleep(for: .milliseconds(20))
+                }
+                XCTAssertEqual(fixture.approvals.deliveryState(for: request.key), .submitting(.allow))
+                XCTAssertEqual(frames.expansions, 0, "button owns the click")
+            }
+            if index == 1 { fixture.approvals.failDelivery(request.key, reason: "Not confirmed") }
+            if let path = ProcessInfo.processInfo.environment["DYNAMIC_ISLAND_WORKSPACE_SNAPSHOT_DIR"] {
+                let directory = URL(fileURLWithPath: path)
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                try await hosted(root, size: size, reduceMotion: false, light: false,
+                    to: directory.appendingPathComponent("compact-permission-\(index).png"))
+            }
+        }
+        let decision = await waiter.value
+        XCTAssertEqual(decision, .allow)
+    }
+
     private static func findPromptEditor(in view: NSView) -> NSTextView? {
         if let text = view as? NSTextView, text.accessibilityLabel() == "Agent prompt" {
             return text

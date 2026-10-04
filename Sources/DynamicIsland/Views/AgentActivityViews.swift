@@ -336,7 +336,7 @@ struct AgentDashboardContentView: View {
         reduceMotion: Bool = false,
         transcriptPresentationReady: Bool = true,
         presentationGeneration: Int = 0,
-        transcriptLoadDelay: TimeInterval = 0.4,
+        transcriptLoadDelay: TimeInterval = 0,
         workspaceFeed: AgentWorkspaceFeedStore? = nil,
         workspacePresentation: AgentWorkspacePresentation? = nil,
         terminal: TerminalSessionController? = nil
@@ -407,30 +407,25 @@ struct AgentDashboardContentView: View {
                     }
                 }
 
-                stagedAgentContent(index: 2) {
-                    AgentCLIControlBar(
-                    sessions: controlSessions,
-                    managedControl: managedControl,
-                    approvalControl: approvalControl,
-                    projectOptions: projectOptions,
-                    selectedProjectKey: effectiveProjectKey,
-                    onSelectProject: { key in
-                        selectProject(key, among: providerSessions)
-                    },
-                    launcherOpen: launchFlow.isPresented,
+                workspaceContent(
+                    workspace: workspace,
+                    newSessionFolder: newSessionFolder,
+                    verticalLayout: verticalLayout,
+                    composerControls: AnyView(AgentCLIControlBar(
+                        sessions: controlSessions,
+                        managedControl: managedControl,
+                        approvalControl: approvalControl,
+                        projectOptions: projectOptions,
+                        selectedProjectKey: effectiveProjectKey,
+                        onSelectProject: { key in selectProject(key, among: providerSessions) },
+                        launcherOpen: launchFlow.isPresented,
                         onToggleLauncher: {
                             withAnimation(AgentWorkspaceMotion.selection(reduceMotion: reduceMotion)) {
                                 launchFlow.toggle(provider: managedControl.selectedProvider)
                             }
                         },
                         onNewSession: { openNewSession(folder: newSessionFolder) }
-                    )
-                }
-
-                workspaceContent(
-                    workspace: workspace,
-                    newSessionFolder: newSessionFolder,
-                    verticalLayout: verticalLayout
+                    ))
                 )
             }
             .frame(maxWidth: .infinity, maxHeight: proxy.size.height, alignment: .topLeading)
@@ -486,7 +481,8 @@ struct AgentDashboardContentView: View {
     private func workspaceContent(
         workspace: AgentWorkspaceProjection,
         newSessionFolder: String?,
-        verticalLayout: AgentWorkspaceVerticalLayoutProjection
+        verticalLayout: AgentWorkspaceVerticalLayoutProjection,
+        composerControls: AnyView
     ) -> some View {
         let controlSessions = workspace.controlSessions
         let selectedSession = workspace.selectedSession
@@ -526,7 +522,8 @@ struct AgentDashboardContentView: View {
                                 approvalControl: approvalControl,
                                 detailHeight: max(verticalLayout.selectedDetailHeight, 138),
                                 activityLimit: 0, layoutStore: layoutStore,
-                                transcriptReady: transcriptLoadGate.isReady(for: selectedSession.id)
+                                transcriptReady: transcriptLoadGate.isReady(for: selectedSession.id),
+                                composerControls: composerControls
                             )
                         }
                     } else {
@@ -697,7 +694,7 @@ private struct AgentTranscriptPresentationRequest: Hashable {
     let isAllowed: Bool
 }
 
-private struct AgentCLIControlBar: View {
+struct AgentCLIControlBar: View {
     let sessions: [AgentSession]
     @ObservedObject var managedControl: AgentManagedSessionController
     @ObservedObject var approvalControl: AgentApprovalController
@@ -725,14 +722,17 @@ private struct AgentCLIControlBar: View {
         let _ = AgentPerformanceProbe.count("agents.controlbar.body")
         ViewThatFits(in: .horizontal) {
             controls(compact: false)
+                .agentComposerRegion("controls.named")
                 .fixedSize(horizontal: true, vertical: false)
             controls(compact: true)
+                .fixedSize(horizontal: true, vertical: false)
+            controls(compact: true, singleProvider: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .frame(minHeight: 31)
-        .padding(.horizontal, 10)
-        .padding(.bottom, 3)
+        .padding(.horizontal, 6)
+        .padding(.top, 4)
         .overlay(alignment: .bottom) {
             Rectangle()
                 .fill(.white.opacity(0.055))
@@ -740,23 +740,40 @@ private struct AgentCLIControlBar: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Agent console controls")
+        .accessibilityLabel("Agent composer controls")
+        .accessibilityIdentifier("agents.composer.controls")
+        .agentComposerRegion("controls")
     }
 
-    private func controls(compact: Bool) -> some View {
-        HStack(spacing: compact ? 5 : 8) {
+    private func controls(compact: Bool, singleProvider: Bool = false) -> some View {
+        HStack(spacing: 5) {
             // Provider, model, repository/session discovery and New Chat are
-            // the only persistent controls in the primary Agents toolbar.
-            ViewThatFits(in: .horizontal) {
-                AgentProviderButtons(managedControl: managedControl)
-                    .fixedSize()
-                AgentProviderButtons(managedControl: managedControl, compact: true)
+            // integrated controls in the selected agent composer.
+            Group {
+                if singleProvider {
+                    Menu {
+                        ForEach([AgentProvider.codex, .claude], id: \.self) { provider in
+                            Button { managedControl.selectProvider(provider) } label: {
+                                Label(provider.stableName.capitalized, systemImage: AgentVisualStyle.providerSymbol(provider))
+                            }
+                        }
+                    } label: {
+                        Image(systemName: AgentVisualStyle.providerSymbol(managedControl.selectedProvider ?? .codex))
+                            .frame(width: 26, height: 26)
+                    }
+                    .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden)
+                    .accessibilityLabel("Agent provider: \(managedControl.selectedProvider?.stableName.capitalized ?? "Codex")")
+                } else {
+                    AgentProviderButtons(managedControl: managedControl, compact: compact, namedWidth: 60)
+                        .fixedSize()
+                }
             }
             .layoutPriority(4)
 
             if let session = selectedSession {
                 modelControl(for: session, compact: compact)
                     .layoutPriority(3)
+                reasoningControl(for: session, compact: compact)
             }
 
             launcherButton(compact: compact)
@@ -815,7 +832,7 @@ private struct AgentCLIControlBar: View {
 
     @ViewBuilder
     private func projectMenu(compact: Bool) -> some View {
-        if projectOptions.count > 1 || selectedProjectKey != nil {
+        if !projectOptions.isEmpty || selectedProjectKey != nil {
             let selected = projectOptions.first { $0.id == selectedProjectKey }
             Menu {
                 Button {
@@ -838,8 +855,7 @@ private struct AgentCLIControlBar: View {
                 HStack(spacing: 4) {
                     Image(systemName: "folder")
                     if !compact {
-                        Text(selected?.title ?? "All projects")
-                            .lineLimit(1)
+                        Text("Project").lineLimit(1)
                     }
                     Image(systemName: "chevron.down")
                         .font(.system(size: 6.5, weight: .bold))
@@ -898,6 +914,7 @@ private struct AgentCLIControlBar: View {
             .menuIndicator(.hidden)
             .fixedSize()
             .help("This session keeps its model. Choose a model to start a new session.")
+            .accessibilityLabel("Agent model: \(modelLabel(for: session))")
         } else if managedControl.capabilities(for: provider).contains(.selectModel),
            !models.isEmpty {
             Menu {
@@ -928,6 +945,7 @@ private struct AgentCLIControlBar: View {
             .menuIndicator(.hidden)
             .fixedSize()
             .disabled(!managedControl.canSelectModel(for: session))
+            .accessibilityLabel("Agent model: \(modelLabel(for: session))")
             .help(
                 managedControl.canSelectModel(for: session)
                     ? modelSelectionHelp(for: session)
@@ -954,9 +972,10 @@ private struct AgentCLIControlBar: View {
 
     private func compactModelLabel(for session: AgentSession, compact: Bool) -> some View {
         HStack(spacing: 3) {
-            if compact { Image(systemName: "cpu") }
-            Text(modelLabel(for: session))
-                .lineLimit(1)
+            Image(systemName: "cpu")
+            if !compact {
+                Text("Model").lineLimit(1)
+            }
             Image(systemName: "chevron.down")
                 .font(.system(size: 6.5, weight: .semibold))
         }
@@ -966,6 +985,31 @@ private struct AgentCLIControlBar: View {
         .frame(height: 22)
         .background(Color.white.opacity(0.03), in: Capsule(style: .continuous))
         .contentShape(Capsule(style: .continuous))
+    }
+
+    @ViewBuilder
+    private func reasoningControl(for session: AgentSession, compact: Bool) -> some View {
+        let efforts = managedControl.availableReasoningEfforts(for: session)
+        let selected = managedControl.selectedReasoningEffort(for: session)
+        if !efforts.isEmpty, managedControl.isManaged(session) {
+            Menu {
+                Button("Use model default") { managedControl.selectReasoningEffort(nil, for: session) }
+                ForEach(efforts) { option in
+                    Button { managedControl.selectReasoningEffort(option.id, for: session) } label: {
+                        Label(option.id.capitalized, systemImage: selected == option.id ? "checkmark" : "brain")
+                    }
+                }
+            } label: {
+                adaptiveLabel(selected?.capitalized ?? "Default", systemImage: "brain", compact: compact)
+                    .font(.system(size: 9, weight: .medium))
+                    .padding(.horizontal, 5).frame(height: 25)
+                    .background(.white.opacity(0.035), in: Capsule())
+            }
+            .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden)
+            .disabled(!managedControl.canSelectReasoningEffort(for: session))
+            .help("Reasoning effort for the next turn")
+            .accessibilityLabel("Reasoning effort: \(selected ?? "model default")")
+        }
     }
 
     private func modelSelectionHelp(for session: AgentSession) -> String {
@@ -1135,6 +1179,7 @@ struct AgentProviderButtons: View {
 
     @ObservedObject var managedControl: AgentManagedSessionController
     var compact = false
+    var namedWidth: CGFloat = Self.minimumNamedWidth
 
     var body: some View {
         let _ = AgentPerformanceProbe.count("agents.providerbuttons.body")
@@ -1165,7 +1210,7 @@ struct AgentProviderButtons: View {
                     .font(.system(size: 10.5, weight: .semibold))
                     .foregroundStyle(selected ? color : .white.opacity(0.55))
                     .padding(.horizontal, compact ? 7 : 10)
-                    .frame(minWidth: compact ? Self.minimumHitHeight : Self.minimumNamedWidth)
+                    .frame(minWidth: compact ? Self.minimumHitHeight : namedWidth)
                     .frame(height: Self.minimumHitHeight)
                     .background(
                         selected ? color.opacity(0.15) : Color.white.opacity(0.035),
@@ -1213,6 +1258,7 @@ private struct AgentSelectedSessionControlView: View {
     let activityLimit: Int
     let layoutStore: IslandLayoutStore?
     let transcriptReady: Bool
+    var composerControls: AnyView? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -1244,7 +1290,8 @@ private struct AgentSelectedSessionControlView: View {
                     onSubmit: { await managedControl.submit($0, for: session) },
                     onInterrupt: { managedControl.interrupt(session) },
                     loadDraft: managedControl.composerDraft(for:),
-                    saveDraft: managedControl.setComposerDraft(_:for:)
+                    saveDraft: managedControl.setComposerDraft(_:for:),
+                    composerControls: composerControls
                 )
                 }
                 // Ideal, not minimum: under height pressure the transcript
@@ -1275,6 +1322,10 @@ private struct AgentSelectedSessionControlView: View {
                     }
                 }
                 .frame(minHeight: 0, idealHeight: detailHeight, maxHeight: .infinity)
+                .safeAreaInset(edge: .bottom) {
+                    AgentComposerContainer { if let composerControls { composerControls } }
+                        .padding(.horizontal, 10).padding(.bottom, 8)
+                }
             }
         }
         .animation(AgentWorkspaceMotion.selection(reduceMotion: reduceMotion), value: transcriptReady)

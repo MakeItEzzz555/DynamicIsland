@@ -183,6 +183,8 @@ struct AgentEmbeddedConsoleView: View {
     var loadDraft: ((AgentSessionInstanceID) -> String)? = nil
     var saveDraft: ((String, AgentSessionInstanceID) -> Void)? = nil
 
+    var composerControls: AnyView? = nil
+
     @State private var transcriptTail = AgentTranscriptTailAnchor()
 
     @State private var follow = AgentTranscriptFollowState()
@@ -191,20 +193,23 @@ struct AgentEmbeddedConsoleView: View {
     var body: some View {
         let _ = AgentPerformanceProbe.count("agents.console.body")
         VStack(alignment: .leading, spacing: 7) {
-            transcript
+            transcript.agentComposerRegion("transcript")
             if mode.showsComposer {
                 managedInteractionFooter
                 // Its own view owning the draft: typing re-renders only the
                 // composer, never the transcript above it.
-                AgentConsoleComposer(
-                    session: session,
-                    interactionState: interactionState,
-                    layoutStore: layoutStore,
-                    onSubmit: onSubmit,
-                    onInterrupt: onInterrupt,
-                    loadDraft: loadDraft,
-                    saveDraft: saveDraft
-                )
+                AgentComposerContainer {
+                    if let composerControls { composerControls }
+                    AgentConsoleComposer(
+                        session: session,
+                        interactionState: interactionState,
+                        layoutStore: layoutStore,
+                        onSubmit: onSubmit,
+                        onInterrupt: onInterrupt,
+                        loadDraft: loadDraft,
+                        saveDraft: saveDraft
+                    )
+                }
             } else {
                 observedFooter
             }
@@ -576,6 +581,35 @@ struct AgentEmbeddedConsoleView: View {
 
 }
 
+/// Native layout evidence; regions share the console's coordinate space.
+struct AgentComposerLayoutFrames: PreferenceKey {
+    static let defaultValue: [String: CGRect] = [:]
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+extension View {
+    func agentComposerRegion(_ name: String) -> some View {
+        background(GeometryReader { geometry in
+            Color.clear.preference(key: AgentComposerLayoutFrames.self,
+                value: [name: geometry.frame(in: .named(AgentComposerActionFrameKey.coordinateSpace))])
+        })
+    }
+}
+
+/// Controls are siblings of the draft-owning editor: typing does not rebuild them.
+struct AgentComposerContainer<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+    var body: some View {
+        VStack(spacing: 3, content: content)
+            .background(Color.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 9))
+            .overlay { RoundedRectangle(cornerRadius: 9).stroke(.white.opacity(0.08), lineWidth: 1).allowsHitTesting(false) }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("agents.composer")
+            .agentComposerRegion("composer")
+    }
+}
+
 /// Prompt editor and Send/Stop. Owns the draft so keystrokes invalidate only
 /// this view. Drafts belong to one exact session instance: switching
 /// session, provider or project stores the draft and restores that
@@ -618,6 +652,7 @@ private struct AgentConsoleComposer: View {
             )
             .id(session.id)
             .frame(minWidth: 40, maxWidth: .infinity, minHeight: 30, maxHeight: 48)
+            .agentComposerRegion("editor")
 
             if interactionState.canInterrupt {
                 Button(action: onInterrupt) {
@@ -648,14 +683,7 @@ private struct AgentConsoleComposer: View {
         }
         .padding(.trailing, 5)
         .padding(.bottom, 3)
-        .background(
-            Color.white.opacity(0.045),
-            in: RoundedRectangle(cornerRadius: 9, style: .continuous)
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
-        }
+
     }
 
     private var composerPlaceholder: String {

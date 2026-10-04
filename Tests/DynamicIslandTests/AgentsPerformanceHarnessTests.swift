@@ -140,7 +140,12 @@ final class AgentsPerformanceHarnessTests: XCTestCase {
             await host.settle()
         }
 
-        // 2b. Typing 40 characters into the real composer text view.
+        // Finish turn/focus publications before the isolated 38-key workload.
+        // Otherwise the last provider completion is misattributed to typing.
+        for _ in 0..<4 { await host.settle() }
+        if let editor = host.firstTextView() { host.window.makeFirstResponder(editor) }
+        await host.settle()
+        // 2b. Typing 38 characters into the real composer text view.
         AgentPerformanceProbe.reset()
         let typing = try await measure(host) {
             guard let editor = host.firstTextView() else { return XCTFail("composer text view not found") }
@@ -150,6 +155,11 @@ final class AgentsPerformanceHarnessTests: XCTestCase {
                 await host.settle()
             }
         } until: { true }
+        let typed = AgentPerformanceProbe.snapshot().counters
+        XCTAssertLessThanOrEqual(typed["agents.console.body"] ?? 0, 3)
+        for isolated in ["agents.controlbar.body", "agents.usage.body", "agents.feed.body", "agents.managed.publish", "publish.agentEvents"] {
+            XCTAssertEqual(typed[isolated] ?? 0, 0, "typing must not invalidate \(isolated)")
+        }
         report["typing"] = typing.json(probe: AgentPerformanceProbe.snapshot(), marks: [:], parameters: ["keystrokes": 38])
 
         // 3. Session switch (x10).

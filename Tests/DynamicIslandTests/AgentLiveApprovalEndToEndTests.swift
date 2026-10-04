@@ -1,5 +1,7 @@
 import AgentBridgeShared
 import Foundation
+import AppKit
+import SwiftUI
 import XCTest
 @testable import DynamicIsland
 
@@ -184,9 +186,43 @@ final class AgentLiveApprovalEndToEndTests: XCTestCase {
         }
     }
 
-    /// Submits one turn and answers every real approval request of that
-    /// turn with `decision`, through the public resolve API only. Returns
-    /// the exact request ids that were answered.
+    /// Real provider request, production compact view, native mouse delivery.
+    /// This is live compact-view evidence; it does not impersonate a packaged shell.
+    @MainActor
+    private func clickCompactPermission(_ request: AgentApprovalControlRequest, choice: AgentBridgePermissionDecision,
+        controller: AgentManagedSessionController, store: AgentEventStore, approvals: AgentApprovalController) async throws {
+        let permission = try XCTUnwrap(AgentCompactPermission.current(sessions: store.sessions, approvals: approvals, managed: controller))
+        XCTAssertEqual(permission.request.key, request.key)
+        final class Frames { var value: [String: CGRect] = [:]; var expansions = 0 }
+        let frames = Frames(), size = CGSize(width: 360, height: 106)
+        let view = AgentCompactPermissionView(permission: permission, approvals: approvals, topBandHeight: 38)
+            .frame(width: size.width, height: size.height)
+            .coordinateSpace(name: AgentComposerActionFrameKey.coordinateSpace)
+            .onPreferenceChange(AgentComposerLayoutFrames.self) { frames.value = $0 }
+            .onTapGesture { frames.expansions += 1 }
+        let host = NSHostingView(rootView: view)
+        let window = NSWindow(contentRect: CGRect(origin: CGPoint(x: -5000, y: -5000), size: size),
+            styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host; window.orderFrontRegardless()
+        defer { window.orderOut(nil); window.contentView = nil }
+        for _ in 0..<20 where frames.value["approve"] == nil {
+            host.layoutSubtreeIfNeeded(); try await Task.sleep(for: .milliseconds(10))
+        }
+        let target = try XCTUnwrap(frames.value[choice == .allow ? "approve" : "deny"])
+        let point = CGPoint(x: target.midX, y: size.height - target.midY)
+        for kind in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            let event = try XCTUnwrap(NSEvent.mouseEvent(with: kind, location: point, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                context: nil, eventNumber: 0, clickCount: 1, pressure: kind == .leftMouseDown ? 1 : 0))
+            window.sendEvent(event); try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(frames.expansions, 0)
+        XCTAssertTrue(approvals.hasHandled(request.key))
+        log("LIVE compact native \(choice == .allow ? "Approve" : "Deny") click, exact key, no parent expansion")
+    }
+
+    /// Test-owned explicit decisions; all other operations are denied.
     @MainActor
     private func runTurn(
         prompt: String,
@@ -226,11 +262,13 @@ final class AgentLiveApprovalEndToEndTests: XCTestCase {
                     : pending.summary.contains("Approval acceptance: create the allowed scratch file")
                 let choice: AgentBridgePermissionDecision =
                     decision == .allow && isFileWrite ? .allow : .deny
-                let result = approvals.resolve(
-                    session: pending.key.session,
-                    requestID: pending.key.requestID,
-                    decision: choice
-                )
+                let result: AgentApprovalControlResult
+                if ProcessInfo.processInfo.environment["DYNAMIC_ISLAND_LIVE_COMPACT_PERMISSION"] == "1" {
+                    try await clickCompactPermission(pending, choice: choice, controller: controller, store: store, approvals: approvals)
+                    result = approvals.hasHandled(pending.key) ? .accepted : .missing
+                } else {
+                    result = approvals.resolve(session: pending.key.session, requestID: pending.key.requestID, decision: choice)
+                }
                 log("\(label) resolve(\(choice == .allow ? "allow" : "deny")) → \(result)")
                 XCTAssertEqual(result, .accepted)
                 // One-shot: a second click is refused.

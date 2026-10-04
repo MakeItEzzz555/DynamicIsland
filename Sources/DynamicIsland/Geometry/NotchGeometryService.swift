@@ -53,6 +53,7 @@ public enum CollapsedPresentationKind: String, Equatable, Sendable {
     case screenRecording
     case agentRoutine
     case agentAttention
+    case agentPermission
 }
 
 /// Transient visual geometry for the collapsed shell. These profiles never become
@@ -139,6 +140,17 @@ public struct CollapsedPresentationProfile: Equatable, Sendable {
             bottomCornerRadius: 24,
             horizontalContentInset: 16,
             glowStrength: 1.0
+        )
+    }
+
+    public static func agentPermission(hovered: Bool, reduceMotion: Bool) -> Self {
+        let grows = hovered && !reduceMotion
+        return Self(
+            kind: .agentPermission,
+            contentProfile: .init(leftContentWidth: 32 + (grows ? 10 : 0), rightContentWidth: 32 + (grows ? 10 : 0)),
+            widthDelta: 120 + (grows ? AgentCompactPermissionMotion.hoverWidth : 0),
+            heightDelta: 68 + (grows ? AgentCompactPermissionMotion.hoverHeight : 0),
+            bottomCornerRadius: 20, horizontalContentInset: 16, glowStrength: 0
         )
     }
 
@@ -406,7 +418,7 @@ public final class NotchGeometryService {
                 collapsedSize.width + collapsedPresentationProfile.widthDelta,
                 collapsedPresentationProfile.minimumFloatingWidth
             ),
-            height: collapsedPresentationProfile.kind == .systemHUD
+            height: (collapsedPresentationProfile.kind == .systemHUD || collapsedPresentationProfile.kind == .agentPermission)
                 // Only a notch-integrated island shares its top band with
                 // the hardware notch; a floating island is never occluded.
                 ? max(collapsedSize.height, useAdaptiveNotchSizing ? (notchRect?.height ?? 0) : 0)
