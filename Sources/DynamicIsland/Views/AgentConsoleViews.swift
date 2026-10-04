@@ -262,7 +262,7 @@ struct AgentEmbeddedConsoleView: View {
                     }
                     .onChange(of: scrollToLatestRequest) { _, _ in
                         follow.jumpToLatest()
-                        withAnimation(.easeOut(duration: 0.16)) {
+                        withAnimation(AgentWorkspaceMotion.transcriptJump(reduceMotion: reduceMotion)) {
                             proxy.scrollTo(latestScrollTarget, anchor: .bottom)
                         }
                     }
@@ -322,7 +322,7 @@ struct AgentEmbeddedConsoleView: View {
             await Task.yield()
             guard follow.isFollowing else { return }
             if animated {
-                withAnimation(.easeOut(duration: 0.16)) {
+                withAnimation(AgentWorkspaceMotion.transcriptJump(reduceMotion: reduceMotion)) {
                     proxy.scrollTo(target, anchor: .bottom)
                 }
             } else {
@@ -1238,7 +1238,7 @@ struct AgentConsoleApprovalRow: View {
             Text(request.summary)
                 .font(.system(size: 10.5, weight: .medium))
                 .foregroundStyle(.white.opacity(0.78))
-                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
 
             if let failure {

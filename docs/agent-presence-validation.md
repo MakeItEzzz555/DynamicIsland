@@ -1046,3 +1046,43 @@ The selected conversation no longer scrolls on unrelated provider/session/approv
 The Release source build completed successfully with only existing unrelated warnings. The synced `dist` directory again reattached Finder/FileProvider metadata; no security setting or signing policy was changed. A clean `ditto --norsrc` staging copy at `/tmp/DynamicIsland-streaming-refine-final.app`, signed with the existing ad-hoc policy, passed deep/strict verification for the app and all three helpers and launched successfully. The October 3 22:26 crash remains the newest DynamicIsland diagnostic report after the launch smoke.
 
 **NOT VERIFIED / external:** this phase does not claim a fresh uninterrupted packaged animation trace for every BotAvatar semantic tuning, an actual macOS Reduce Motion OFF→ON→OFF human toggle, fresh Claude/concurrent-provider live acceptance, consent-dependent microphone/human-speech closure, or whole-app/GPU frame-pacing closure. Those evidence boundaries remain unchanged rather than being inferred from fixtures.
+
+
+## October 4 — hierarchy acceptance closure follow-up
+
+Baseline audited: `135932d052f21f045e58a5e4ee11dc7ced0d2316`, a compatible newer commit than the supplied checkpoint. Its reduced toolbar, full-width 48/40-point usage gauges, top-left ThinkingOrb, inline semantic BotAvatar and one-pass latest-message scroll target were preserved. Backend observation remains non-owning, normal Feed filtering remains exact, and Record Activities remains in Settings with unchanged privacy/retention limits.
+
+### Demonstrated corrections and deterministic evidence
+
+- Explicit Jump to latest previously used an unconditional animated scroll. It now uses transitions-dev/transitions-polish's quiet 150 ms handoff and suppresses spatial animation under Reduce Motion. Stream-delta settling remains unanimated.
+- Approval context previously stopped after three lines. It now wraps to the full supplied context height; privacy projection and exact decisions are unchanged. Both-provider 240/440-point native review images show the full twelve-line stress context and reachable Deny/Approve controls. This is **PASS — automated/fixture**, not live provider permission acknowledgement.
+- A native NSHostingView/NSScrollView regression waits for measured document growth before inspecting every streamed increment. Six growing deltas retain the latest response near the viewport bottom; manual history scrolling stays in place; returning near the bottom resumes following. The latest-message anchor leaves the existing padding/sentinel below it, rather than forcing a second scroll into decorative space. **PASS — automated/fixture**.
+- The focused workspace/Feed/approval/avatar/terminal/publication suite initially recorded **79 passed / 0 failed / 1 opt-in snapshot skip**. Three new tests cover Reduce Motion jump policy, actual viewport growth/follow/history/resume, and native approval wrapping/exact ownership. No skip policy changed.
+
+### Actual package/provider observations
+
+**PASS — live:** the clean packaged hierarchy checkpoint at `/tmp/DynamicIsland-streaming-refine-final.app` displayed the enlarged equal usage pairs and concise control row without the Record Activities tail. An exact Codex session resumed, accepted native Return, and produced real 40- and 60-line responses ending in `STREAM_ACCEPTANCE_END` and `FOLLOW_BOTTOM_END`. After Jump to latest, the 60-line response ended visibly at the chat lower edge without overshoot. Manual upward scrolling retained the earlier response and exposed New activity; the explicit jump recovered the latest response. This pass does not establish uninterrupted animation for every semantic state. A subsequent short synthetic-key attempt did not establish a new visible response and is not counted as a live PASS.
+
+### Performance and bounded lifecycle
+
+**PASS — automated/fixture:** `DYNAMIC_ISLAND_AGENT_PERF=1` retained publication isolation. 200 streamed deltas → 6 surrounding Agents/Feed evaluations, 2 managed-controller publications, 46 coalesced transcript publications, 98 console evaluations; streaming main-thread CPU 352.1 ms. 38 typed keys → 3 console evaluations. Report: `/tmp/dynamicisland-hierarchy-closure/performance.json`.
+
+**PASS — automated/fixture:** 110 controlled cycles in 100 seconds, retaining 32 sessions and 80 transcript entries. Physical footprint bytes at cycles 10/30/50/70/90/110: 43,043,584 / 44,944,128 / 46,779,264 / 48,417,664 / 48,532,352 / 47,270,784. After teardown: 42,060,672; controller released. This is physical footprint of the fixture, not whole-app RSS. Offscreen CAMetalLayer drawable-allocation warnings limit presentation evidence. Report: `/tmp/dynamicisland-hierarchy-closure/soak.json`.
+
+**NOT VERIFIED:** whole-app memory closure, GPU/frame pacing, every uninterrupted live semantic avatar animation, and actual OS Reduce Motion OFF→ON→OFF. Actual OFF was preserved. **BLOCKED — external acceptance dependency:** Claude quota/concurrent-provider execution and consent-dependent microphone/controlled human speech retain their prior blockers; no security, TCC or Keychain setting was altered.
+
+
+### Final regression accounting
+
+Full suite: **1,665 passed / 0 failed / 38 skipped** (1,703 total), versus the audited hierarchy baseline of 1,662 passed / 0 failed / 38 skipped. The +3 are the new jump-policy, real native viewport and approval-context tests. The first full run had one existing rapid mount/unmount harness terminal-mount deadline failure; it passed in isolation and in the second complete run. The assertion now includes cycle/Agents/workspace/emulator-owner diagnostics; its five-second deadline and all assertions remain intact. No failure was converted to a skip. Final full log: `/tmp/dynamicisland-hierarchy-closure-final/full.log`.
+
+Native acceptance: **7 passed / 0 failed / 1 skipped**, unchanged; microphone authorization status 0 prevented the live-recording test. This skip is the existing external consent gate. The native performance repeat retained 200 deltas → 6 surrounding evaluations / 2 managed publications / 51 coalesced transcript publications / 108 console evaluations; streaming main-thread CPU 496.3 ms, and 38 typed keys → 3 console evaluations. Both runs preserve isolation; wall/CPU variation is reported rather than interpreted as GPU/frame-pacing acceptance. Final native log and report: `/tmp/dynamicisland-hierarchy-closure-final/native.log` and `performance.json`.
+
+
+### Final package and boundaries
+
+Release build: **PASS — automated/fixture**, 130.05 seconds, with existing unrelated compiler warnings. `Scripts/package_app.sh` passed under the unchanged ad-hoc policy. The synced `dist/DynamicIsland.app` immediately reacquired `com.apple.FinderInfo`, so its direct strict verification failed. A generated `ditto --norsrc` copy at `/tmp/DynamicIsland-hierarchy-closure.app` passed **deep/strict signature verification**, including all three helpers, without re-signing that staging copy or changing any security/signing setting. The distinction is intentional; the synced original is not reported as signature-clean.
+
+**PASS — live:** final staged package launch, Agents usage/control hierarchy, Feed→Terminal→Feed controls, real PTY `pwd` output with the correct `~/Documents/DynamicIsland %` prompt, and exact Codex resume control. The final package's fresh streamed prompt was **NOT VERIFIED**: the guarded temporary native-input helper could not locate the intended Agent prompt accessibility element and refused to send, even with a deeper traversal. No keys were redirected to another control. The earlier real 40/60-line Codex acceptance and final native viewport regression remain separate evidence. No Keychain dialog was bypassed.
+
+PR #24 was checked Draft/open/unmerged; unrelated summary, graph outputs, local skill/config files and research recordings are preserved and excluded from this phase commit. Graphify AST update completed. No provider, approval, camera, audio, terminal-process or recorder-privacy implementation was modified by this follow-up.

@@ -93,3 +93,14 @@ SwiftTerm owns the only scrollback buffer; text export and accessibility viewpor
 - **PASS — live:** packaged managed Codex creation, native Return submission, reasoning/connection/command/composition/completion Feed, interruption and subsequent usable interaction. Real provider deny/allow acknowledgement passed through the existing controller acceptance harness; this does not claim a fresh manual packaged approval-card flow.
 - **PASS — automated/fixture:** performance harness preserves 200 deltas → six surrounding Agents/Feed evaluations and two managed-controller publications; 38 typed keys → three console evaluations. The bounded 110-cycle fixture released its controller after teardown.
 - **BLOCKED — external acceptance dependency:** Claude execution/concurrent providers and consent-dependent microphone/human speech remain separate external gates. **NOT VERIFIED:** fresh actual OS Reduce Motion toggle, detailed uninterrupted motion/GPU pacing and whole-app memory closure. See `agent-presence-validation.md` for measurements and live workload boundaries.
+
+
+## October 4 — hierarchy acceptance follow-up
+
+Continued from the compatible `135932d052f21f045e58a5e4ee11dc7ced0d2316` hierarchy commit, preserving its toolbar, usage, inline-avatar and latest-message anchoring changes. Record Activities remains reachable through Settings with unchanged opt-in/privacy/retention bounds. The usage row owns three equal provider-paired groups; the selected chat header owns the single ThinkingOrb, and Chat/Feed share deterministic session BotAvatar identity.
+
+Cross-session approval attention is now in the right workspace header, using the existing exact-session navigation callback. Moving it out of the primary toolbar does not hide background managed requests or mix their activity into the selected Feed.
+
+Transcript follow is tested in a real NSHostingView/NSScrollView fixture, including measured document growth for each streamed delta, latest-row anchoring, manual history reading, and resumption after returning near the bottom. The message anchor intentionally precedes padding and the measurement sentinel; forcing document-bottom equality would target decorative space instead of the actual response. Automatic delta settling stays unanimated. Explicit Jump to latest uses a 150 ms quiet transition with no spatial animation under Reduce Motion, applying transitions-dev/transitions-polish guidance without adding delays or per-token effects.
+
+Approval context now wraps to its full supplied height rather than truncating after three lines. Existing request privacy projection remains authoritative. Short requests remain compact; long/narrow requests use the vertical space needed for readable context and reachable decisions. Neither layout nor navigation delivers a decision. Exact provider/session/generation/request routing and provider acknowledgement remain unchanged. Native layout fixtures at 240 and 440 points cover both providers.

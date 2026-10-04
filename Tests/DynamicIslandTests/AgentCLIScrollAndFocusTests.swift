@@ -92,6 +92,10 @@ final class CameraMirrorScrollRoutingPolicyTests: XCTestCase {
 }
 
 final class AgentTranscriptFollowStateTests: XCTestCase {
+    func testExplicitJumpSuppressesSpatialScrollingUnderReduceMotion() {
+        XCTAssertNil(AgentWorkspaceMotion.transcriptJump(reduceMotion: true))
+        XCTAssertNotNil(AgentWorkspaceMotion.transcriptJump(reduceMotion: false))
+    }
     func testFollowsNewContentWhileAtBottom() {
         var state = AgentTranscriptFollowState()
         state.observeViewport(distanceFromBottom: 0, contentToken: "a")

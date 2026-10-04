@@ -216,6 +216,129 @@ final class AgentWorkspaceSnapshotTests: XCTestCase {
         )
     }
 
+    func testNativeTranscriptKeepsLatestVisibleDuringStreamingAndRespectsHistoryScroll() async throws {
+        let fixture = try await makeFixture()
+        defer { fixture.controller.stop(); fixture.approvals.cancelAll(); fixture.terminal.terminate() }
+        let session = try XCTUnwrap(fixture.store.sessions.first)
+        let state = TranscriptViewportFixtureState()
+        state.entries = (0..<8).map { index in
+            AgentManagedTranscriptEntry(id: "viewport-\(index)", nativeSessionID: session.id.sessionID.nativeID,
+                turnID: "viewport-turn", role: .agent,
+                text: (0..<12).map { "History \(index) line \($0)" }.joined(separator: "\n"), timestamp: fixtureDate)
+        }
+        let root = TranscriptViewportFixtureView(state: state, session: session, approvals: fixture.approvals)
+        let hosting = NSHostingView(rootView: root.frame(width: 440, height: 300))
+        hosting.frame = CGRect(x: 0, y: 0, width: 440, height: 300)
+        let window = NSWindow(contentRect: hosting.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = hosting
+        window.orderFrontRegardless()
+        defer { window.orderOut(nil); window.contentView = nil }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while Self.findTranscriptScrollView(in: hosting) == nil, ContinuousClock.now < deadline {
+            hosting.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let scroll = try XCTUnwrap(Self.findTranscriptScrollView(in: hosting))
+        func distanceFromBottom() -> CGFloat {
+            guard let document = scroll.documentView else { return .greatestFiniteMagnitude }
+            return document.bounds.maxY - scroll.contentView.bounds.maxY
+        }
+        func waitForBottom() async throws {
+            let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+            // The actual message is the anchor. Padding and the measuring
+            // sentinel follow it, so document-bottom equality is not required.
+            while distanceFromBottom() > AgentTranscriptFollowState.nearBottomThreshold, ContinuousClock.now < deadline {
+                hosting.layoutSubtreeIfNeeded()
+                try await Task.sleep(for: .milliseconds(5))
+            }
+            XCTAssertLessThanOrEqual(distanceFromBottom(), AgentTranscriptFollowState.nearBottomThreshold,
+                                     "Latest response must remain within the near-bottom viewport")
+            XCTAssertGreaterThanOrEqual(distanceFromBottom(), -1, "The viewport must not overshoot below the document")
+        }
+        func waitForContentGrowth(from previousHeight: CGFloat) async throws {
+            let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+            while (scroll.documentView?.bounds.height ?? 0) <= previousHeight, ContinuousClock.now < deadline {
+                hosting.layoutSubtreeIfNeeded()
+                try await Task.sleep(for: .milliseconds(5))
+            }
+            XCTAssertGreaterThan(scroll.documentView?.bounds.height ?? 0, previousHeight,
+                                 "Observe the new content layout before checking its scroll position")
+        }
+        try await waitForBottom()
+        for index in 0..<6 {
+            let previousHeight = scroll.documentView?.bounds.height ?? 0
+            var latest = try XCTUnwrap(state.entries.last)
+            latest = AgentManagedTranscriptEntry(id: latest.id, nativeSessionID: latest.nativeSessionID,
+                turnID: latest.turnID, role: latest.role, text: latest.text + "\nStreamed line \(index)", timestamp: latest.timestamp)
+            state.entries[state.entries.count - 1] = latest
+            try await waitForContentGrowth(from: previousHeight)
+            try await waitForBottom()
+        }
+        scroll.contentView.scroll(to: CGPoint(x: 0, y: 0))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        hosting.layoutSubtreeIfNeeded()
+        // Wait for the measured viewport to report this actual user-owned scroll.
+        for _ in 0..<8 { await Task.yield(); hosting.layoutSubtreeIfNeeded() }
+        let historyOffset = scroll.contentView.bounds.origin.y
+        let historyHeight = scroll.documentView?.bounds.height ?? 0
+        state.entries.append(AgentManagedTranscriptEntry(id: "viewport-next", nativeSessionID: session.id.sessionID.nativeID,
+            turnID: "viewport-next-turn", role: .agent, text: "New response while reading history", timestamp: fixtureDate))
+        try await waitForContentGrowth(from: historyHeight)
+        XCTAssertEqual(scroll.contentView.bounds.origin.y, historyOffset, accuracy: 8,
+                       "Streaming must not yank a reader away from history")
+        if let document = scroll.documentView {
+            scroll.contentView.scroll(to: CGPoint(x: 0, y: max(0, document.bounds.maxY - scroll.contentView.bounds.height)))
+            scroll.reflectScrolledClipView(scroll.contentView)
+        }
+        for _ in 0..<8 { await Task.yield(); hosting.layoutSubtreeIfNeeded() }
+        let resumedHeight = scroll.documentView?.bounds.height ?? 0
+        state.entries.append(AgentManagedTranscriptEntry(id: "viewport-resumed", nativeSessionID: session.id.sessionID.nativeID,
+            turnID: "viewport-resumed-turn", role: .agent, text: "Following resumed\nLatest response", timestamp: fixtureDate))
+        try await waitForContentGrowth(from: resumedHeight)
+        try await waitForBottom()
+    }
+
+    private static func findTranscriptScrollView(in view: NSView) -> NSScrollView? {
+        if let scroll = view as? NSScrollView { return scroll }
+        for child in view.subviews {
+            if let scroll = findTranscriptScrollView(in: child) { return scroll }
+        }
+        return nil
+    }
+
+    func testLongApprovalContextWrapsWithoutTruncationAndPreservesExactRequest() async throws {
+        let fixture = try await makeFixture()
+        defer { fixture.controller.stop(); fixture.approvals.cancelAll(); fixture.terminal.terminate() }
+        let summary = (1...12).map { "Validation step \($0): read the selected repository without changing its files." }.joined(separator: "\n")
+        for provider in [AgentProvider.codex, .claude] {
+            let session = try XCTUnwrap(fixture.store.sessions.first { $0.id.sessionID.provider == provider })
+            let key = AgentApprovalControlKey(session: session.id, requestID: AgentTestFixture.correlation("long-context-\(provider.stableName)"))
+            let request = AgentApprovalControlRequest(key: key, summary: summary, expiresAt: .distantFuture)
+            for width: CGFloat in [240, 440] {
+                let hosting = NSHostingView(rootView: AgentConsoleApprovalRow(request: request, session: session,
+                    approvalControl: fixture.approvals).frame(width: width).fixedSize(horizontal: false, vertical: true))
+                hosting.frame = CGRect(x: 0, y: 0, width: width, height: 1000)
+                let window = NSWindow(contentRect: hosting.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false
+                window.contentView = hosting
+                window.orderFrontRegardless()
+                defer { window.orderOut(nil); window.contentView = nil }
+                for _ in 0..<8 { await Task.yield(); hosting.layoutSubtreeIfNeeded() }
+                XCTAssertGreaterThan(hosting.fittingSize.height, 220, "All twelve context lines must be readable instead of truncated at three")
+                XCTAssertEqual(hosting.fittingSize.width, width, accuracy: 1, "Context must wrap within its assigned width")
+                let bitmap = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
+                hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+                let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+                try png.write(to: URL(fileURLWithPath: NSTemporaryDirectory())
+                    .appendingPathComponent("dynamicisland-approval-\(provider.stableName)-\(Int(width)).png"))
+                XCTAssertEqual(request.key, key)
+                XCTAssertNil(fixture.approvals.deliveryState(for: key), "Layout must never deliver a decision")
+            }
+        }
+    }
+
+
     func testTerminalReturnSendsInputToOnePersistentNativeShell() async throws {
         let fixture = try await makeFixture()
         defer {
@@ -339,7 +462,8 @@ final class AgentWorkspaceSnapshotTests: XCTestCase {
                     try await Task.sleep(for: .milliseconds(1))
                     hosting.layoutSubtreeIfNeeded()
                 }
-                let terminal = try XCTUnwrap(Self.findInteractiveTerminal(in: hosting))
+                let terminal = try XCTUnwrap(Self.findInteractiveTerminal(in: hosting),
+                    "Cycle \(cycle), Agents mounted: \(state.showsAgents), workspace: \(fixture.presentation.mode), emulator owner: \(String(describing: fixture.terminal.terminalView.superview))")
                 XCTAssertTrue(terminal === fixture.terminal.terminalView)
                 XCTAssertTrue(window.makeFirstResponder(terminal))
                 terminal.insertText("stress-\(cycle)", replacementRange: NSRange(location: NSNotFound, length: 0))
@@ -483,6 +607,24 @@ final class AgentWorkspaceSnapshotTests: XCTestCase {
 private final class AgentWorkspaceMountStressState: ObservableObject {
     @Published var showsAgents = true
     @Published var generation = 0
+}
+
+@MainActor
+private final class TranscriptViewportFixtureState: ObservableObject {
+    @Published var entries: [AgentManagedTranscriptEntry] = []
+}
+
+private struct TranscriptViewportFixtureView: View {
+    @ObservedObject var state: TranscriptViewportFixtureState
+    let session: AgentSession
+    let approvals: AgentApprovalController
+
+    var body: some View {
+        AgentEmbeddedConsoleView(session: session, showsOperationalTraffic: false, showsActivityOrb: false,
+            transcriptEntries: state.entries, approvalControl: approvals,
+            onSelectSession: { _ in }, onSubmit: { _ in false }, onInterrupt: {})
+            .environment(\.nativeVisualSnapshotTime, 1.35)
+    }
 }
 
 private struct AgentWorkspaceMountStressHarness: View {

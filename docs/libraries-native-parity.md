@@ -146,3 +146,13 @@ The pinned Libraries.dev ThinkingOrb/BotAvatar/BorderBeam engines, body paths, m
 - Feed approval cards retain the existing readable multi-line layout. No single-row permission rendering requirement was added.
 
 The native fidelity gaps already documented for fabric fringe/lighting, accessory depth/occlusion, whirl sampling and browser/CoreGraphics rasterization remain unchanged.
+
+
+## October 4 — native hierarchy acceptance follow-up
+
+- **PASS — live:** packaged `135932d` usage/control hierarchy, exact Codex resume, 40- and 60-line real assistant responses, latest-response endpoint without overshoot, manual history navigation, and Jump to latest. This is actual provider/package evidence, distinct from fixture screenshots.
+- **PASS — automated/fixture:** native transcript viewport growth/follow/history/resume regression, stable message-target tests, semantic latest-response avatar tuning, frozen historical identity, and both-provider readable long approval context at 240/440 points.
+- Explicit transcript jump now suppresses its 150 ms spatial transition under Reduce Motion. Approval context no longer cuts off after three lines. Pinned Libraries.dev engines, body paths, materials, Metal equations and upstream revisions are unchanged.
+- **NOT VERIFIED:** uninterrupted live avatar motion for every semantic activity, actual OS Reduce Motion OFF→ON→OFF, whole-app memory closure and GPU frame pacing. Original OFF was preserved. Offscreen CAMetalLayer drawable-allocation diagnostics during the fixture soak are a presentation limitation, not live GPU acceptance or proof of a renderer leak.
+
+Previously documented fabric fringe/lighting, accessory mesh/pose occlusion, whirl sampling and rasterization differences remain.

@@ -55,6 +55,9 @@ struct AgentWorkspaceColumns: Equatable, Sendable {
 /// reversible 250ms content handoff, 300ms resize, smooth-out easing; no delays
 /// and no spatial motion when accessibility Reduce Motion is enabled.
 enum AgentWorkspaceMotion {
+    static func transcriptJump(reduceMotion: Bool) -> Animation? {
+        reduceMotion ? nil : .easeOut(duration: 0.15)
+    }
     static func selection(reduceMotion: Bool) -> Animation? {
         reduceMotion ? nil : .timingCurve(0.22, 1, 0.36, 1, duration: 0.25)
     }
