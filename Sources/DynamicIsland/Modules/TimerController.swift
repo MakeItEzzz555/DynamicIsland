@@ -52,11 +52,38 @@ enum TimerProgressFormatting {
     }
 }
 
+/// Low-frequency, presentation-ready timing truth. A running phase stores the
+/// deadline rather than the remaining time, so it only changes on lifecycle
+/// transitions; views derive smooth positions with `remaining(at:)`.
+struct TimerTimingSnapshot: Equatable, Sendable {
+    enum Phase: Equatable, Sendable {
+        case idle
+        case ready(remaining: Duration)
+        case running(deadline: Duration)
+        case paused(remaining: Duration)
+    }
+
+    var generation: UInt64 = 0
+    var total: Duration = .zero
+    var phase: Phase = .idle
+
+    var isRunning: Bool { if case .running = phase { true } else { false } }
+
+    func remaining(at now: Duration) -> Duration {
+        switch phase {
+        case .idle: .zero
+        case .ready(let remaining), .paused(let remaining): remaining
+        case .running(let deadline): max(.zero, deadline - now)
+        }
+    }
+}
+
 @MainActor
 final class TimerController: ObservableObject {
     @Published private(set) var remainingSeconds = 0
     @Published private(set) var totalSeconds = 0
     @Published private(set) var isRunning = false
+    @Published private(set) var timingSnapshot = TimerTimingSnapshot()
 
     private let clock: any CountdownClock
     private let refreshInterval: Duration?
@@ -78,6 +105,9 @@ final class TimerController: ObservableObject {
         self.refreshInterval = refreshInterval
         self.onCompletion = onCompletion
     }
+
+    /// Reads the injected clock; publishes nothing.
+    var clockNow: Duration { clock.now }
 
     var displayText: String {
         let minutes = remainingSeconds / 60
@@ -105,6 +135,7 @@ final class TimerController: ObservableObject {
         completionHandled = false
         isRunning = true
         activeGeneration = currentGeneration
+        publishSnapshot(.running(deadline: deadline ?? clock.now + duration), total: duration)
         lifecycleHandler(.scheduled(generation: currentGeneration, remaining: duration))
         runCountdown(generation: currentGeneration)
     }
@@ -116,6 +147,7 @@ final class TimerController: ObservableObject {
         invalidateCurrentRun()
         deadline = nil
         isRunning = false
+        publishSnapshot(.paused(remaining: preciseRemaining))
     }
 
     func resume() {
@@ -125,6 +157,7 @@ final class TimerController: ObservableObject {
         completionHandled = false
         isRunning = true
         activeGeneration = currentGeneration
+        publishSnapshot(.running(deadline: deadline ?? clock.now + preciseRemaining))
         lifecycleHandler(.scheduled(generation: currentGeneration, remaining: preciseRemaining))
         runCountdown(generation: currentGeneration)
     }
@@ -136,6 +169,7 @@ final class TimerController: ObservableObject {
         remainingSeconds = totalSeconds
         completionHandled = false
         isRunning = false
+        publishSnapshot(totalSeconds > 0 ? .ready(remaining: preciseRemaining) : .idle)
     }
 
     func stop() {
@@ -145,6 +179,7 @@ final class TimerController: ObservableObject {
         remainingSeconds = 0
         completionHandled = false
         isRunning = false
+        publishSnapshot(.idle)
     }
 
     func refresh() {
@@ -190,8 +225,15 @@ final class TimerController: ObservableObject {
         remainingSeconds = 0
         isRunning = false
         activeGeneration = nil
+        publishSnapshot(.idle)
         lifecycleHandler(.completed(generation: generation))
         onCompletion()
+    }
+
+    private func publishSnapshot(_ phase: TimerTimingSnapshot.Phase, total: Duration? = nil) {
+        let next = TimerTimingSnapshot(generation: currentGeneration,
+                                       total: total ?? timingSnapshot.total, phase: phase)
+        if next != timingSnapshot { timingSnapshot = next }
     }
 
     private func invalidateCurrentRun() {

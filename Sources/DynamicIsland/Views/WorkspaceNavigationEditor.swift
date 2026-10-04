@@ -30,76 +30,9 @@ struct WorkspaceNavigationEditor: View {
 
     var body: some View {
         let _ = AgentPerformanceProbe.count("workspace.navigation.editor.body")
-        VStack(alignment: .leading, spacing: 6) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(shown, id: \.self) { page in
-                        HStack(spacing: 3) {
-                            WorkspaceNativeDragHandle(title: page.title, payload: "tab.\(page.rawValue)", began: { begin(page) }, ended: finish)
-                                .frame(width: 78, height: 27)
-                                .accessibilityLabel("Drag \(page.title) tab")
-                            Menu {
-                                Button("Move left") { shift(page, by: -1) }
-                                Button("Move right") { shift(page, by: 1) }
-                                if page != .island { Button("Hide tab") { hide(page) } }
-                            } label: { Image(systemName: "ellipsis").frame(width: 18, height: 24) }
-                            .menuStyle(.borderlessButton).fixedSize()
-                            .accessibilityLabel("Arrange \(page.title) tab")
-                            if page != .island {
-                                Button { hide(page) } label: { Image(systemName: "minus.circle.fill").foregroundStyle(.red) }
-                                    .buttonStyle(.plain).frame(width: 20, height: 24)
-                                    .accessibilityLabel("Hide \(page.title) tab")
-                            }
-                        }
-                        .padding(.horizontal, 4)
-                        .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
-                        .overlay { RoundedRectangle(cornerRadius: 8).strokeBorder(.white.opacity(0.25), style: StrokeStyle(lineWidth: 1, dash: [3, 3])).allowsHitTesting(false) }
-                        .overlay(alignment: .leading) {
-                            if targetActive, target == page {
-                                RoundedRectangle(cornerRadius: 2).fill(.blue).frame(width: 3).allowsHitTesting(false)
-                            }
-                        }
-                        .background {
-                            GeometryReader { geometry in
-                                Color.clear.preference(key: WorkspaceNavigationFrames.self, value: [page: geometry.frame(in: .named("workspace-navigation-editor"))])
-                            }
-                        }
-                        .accessibilityValue("Position \((visible.firstIndex(of: page) ?? 0) + 1)")
-                        .accessibilityAction(named: "Move left") { shift(page, by: -1) }
-                        .accessibilityAction(named: "Move right") { shift(page, by: 1) }
-                    }
-                }
-                .onDrop(of: [WorkspaceNativeDragHandle.type], delegate: NavigationEditorDrop(updated: update, dropped: drop, exited: { targetActive = false; target = nil }))
-            }
-            .coordinateSpace(name: "workspace-navigation-editor")
-            .onPreferenceChange(WorkspaceNavigationFrames.self) { value in
-                measurements.frames = value
-            }
-            HStack(spacing: 8) {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 7) {
-                        ForEach(eligiblePages.filter { $0 != .messages && draft.navigation.hidden.contains($0) }, id: \.self) { page in
-                            HStack(spacing: 3) {
-                                Button { add(page) } label: { Label(page.title, systemImage: "plus") }
-                                    .buttonStyle(.plain).font(.system(size: 10, weight: .medium))
-                                    .accessibilityLabel("Add \(page.title) tab")
-                                WorkspaceNativeDragHandle(title: "Drag", payload: "tab.\(page.rawValue)", began: { begin(page) }, ended: finish)
-                                    .frame(width: 42, height: 20)
-                            }.padding(.horizontal, 5)
-                        }
-                    }
-                }
-                Button("Reset tabs") {
-                    withAnimation(motion) { draft.navigation = .initial }
-                    announcement = "Default tabs restored"
-                    WorkspaceEditorAccessibility.announce(announcement)
-                }.buttonStyle(.plain).font(.system(size: 10))
-                Button("Cancel") { finish(); editing = false; WorkspaceEditorAccessibility.announce("Tab changes cancelled") }.buttonStyle(.plain).font(.system(size: 10))
-                    .accessibilityLabel("Cancel tab changes")
-                Button("Done") { finish(); store.commit(draft); editing = false; WorkspaceEditorAccessibility.announce("Tab layout saved") }
-                    .buttonStyle(.borderedProminent).controlSize(.small)
-                    .accessibilityLabel("Save tab layout")
-            }
+        VStack(alignment: .leading, spacing: 10) {
+            tabStrip
+            palette
         }
         .onAppear { draft = store.configuration }
         .onChange(of: editing) { _, value in
@@ -110,6 +43,158 @@ struct WorkspaceNavigationEditor: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Customize navigation tabs")
         .accessibilityValue(announcement)
+    }
+
+    private var tabStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(shown, id: \.self) { page in tabPill(page) }
+            }
+            .padding(.top, WorkspaceEditorChrome.badgeInset)
+            .padding(.trailing, WorkspaceEditorChrome.badgeInset)
+            .padding(.leading, 2)
+            .onDrop(of: [WorkspaceNativeDragHandle.type], delegate: NavigationEditorDrop(updated: update, dropped: drop, exited: { withAnimation(motion) { targetActive = false; target = nil } }))
+        }
+        .coordinateSpace(name: "workspace-navigation-editor")
+        .onPreferenceChange(WorkspaceNavigationFrames.self) { value in
+            measurements.frames = value
+        }
+    }
+
+    private func tabPill(_ page: ExpandedIslandPage) -> some View {
+        let isDragged = dragged == page && targetActive
+        let pill = Capsule(style: .continuous)
+        return HStack(spacing: 6) {
+            Image(systemName: page.symbolName).font(.system(size: 11, weight: .semibold))
+            Text(page.title).font(.system(size: 11, weight: .semibold)).lineLimit(1)
+        }
+        .foregroundStyle(.white.opacity(isDragged ? 0.35 : 0.9))
+        .padding(.horizontal, 12)
+        .frame(height: 30)
+        .background(pill.fill(isDragged ? WorkspaceEditorChrome.accent.opacity(0.10) : .white.opacity(0.08)))
+        .overlay {
+            pill.strokeBorder(isDragged ? WorkspaceEditorChrome.accent : .white.opacity(0.30),
+                              style: StrokeStyle(lineWidth: isDragged ? 1.5 : 1, dash: [4, 3]))
+                .allowsHitTesting(false)
+        }
+        .overlay {
+            WorkspaceNativeDragHandle(title: page.title, symbol: page.symbolName, payload: "tab.\(page.rawValue)",
+                                      began: { begin(page) }, ended: finish)
+                .accessibilityHidden(true)
+        }
+        .overlay(alignment: .leading) {
+            if targetActive, target == page, dragged != page {
+                Capsule().fill(WorkspaceEditorChrome.accent).frame(width: 3, height: 22)
+                    .offset(x: -6).allowsHitTesting(false)
+                    .transition(.opacity)
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            if page != .island && !isDragged {
+                Button { hide(page) } label: {
+                    ZStack {
+                        Circle().fill(Color(red: 1, green: 0.27, blue: 0.23))
+                        Capsule().fill(.white).frame(width: 7, height: 2)
+                    }
+                    .frame(width: 16, height: 16)
+                    .overlay(Circle().strokeBorder(.black.opacity(0.55), lineWidth: 1.5))
+                    .contentShape(Circle().inset(by: -4))
+                }
+                .buttonStyle(.plain)
+                .offset(x: 5, y: -5)
+                .accessibilityLabel("Hide \(page.title) tab")
+                .help("Hide \(page.title) tab")
+            }
+        }
+        .background {
+            GeometryReader { geometry in
+                Color.clear.preference(key: WorkspaceNavigationFrames.self, value: [page: geometry.frame(in: .named("workspace-navigation-editor"))])
+            }
+        }
+        .contextMenu {
+            Button("Move Left") { shift(page, by: -1) }
+            Button("Move Right") { shift(page, by: 1) }
+            if page != .island { Divider(); Button("Hide Tab", role: .destructive) { hide(page) } }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(Text("\(page.title) tab"))
+        .accessibilityValue(Text("Position \((visible.firstIndex(of: page) ?? 0) + 1)"))
+        .accessibilityAction(named: Text("Move left")) { shift(page, by: -1) }
+        .accessibilityAction(named: Text("Move right")) { shift(page, by: 1) }
+    }
+
+    private var hiddenPages: [ExpandedIslandPage] {
+        eligiblePages.filter { $0 != .messages && draft.navigation.hidden.contains($0) }
+    }
+
+    private var palette: some View {
+        HStack(alignment: .center, spacing: 10) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 4) {
+                    ForEach(hiddenPages, id: \.self) { page in hiddenTile(page) }
+                    if hiddenPages.isEmpty {
+                        Text("All tabs are shown").font(.system(size: 10)).foregroundStyle(.white.opacity(0.4))
+                            .padding(.leading, 4)
+                    }
+                }
+            }
+            HStack(spacing: 8) {
+                Button {
+                    withAnimation(motion) { draft.navigation = .initial }
+                    announcement = "Default tabs restored"
+                    WorkspaceEditorAccessibility.announce(announcement)
+                } label: {
+                    Image(systemName: "arrow.counterclockwise").font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.6)).frame(width: 26, height: 26).contentShape(Circle())
+                }
+                .buttonStyle(.plain).help("Reset tabs").accessibilityLabel("Reset tabs")
+                Button { finish(); editing = false; WorkspaceEditorAccessibility.announce("Tab changes cancelled") } label: {
+                    Image(systemName: "xmark").font(.system(size: 10, weight: .bold)).foregroundStyle(.white.opacity(0.85))
+                        .frame(width: 26, height: 26)
+                        .overlay(Circle().strokeBorder(.white.opacity(0.35), lineWidth: 1))
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain).help("Cancel").accessibilityLabel("Cancel tab changes")
+                Button { finish(); store.commit(draft); editing = false; WorkspaceEditorAccessibility.announce("Tab layout saved") } label: {
+                    Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)).foregroundStyle(.white)
+                        .frame(width: 26, height: 26)
+                        .background(WorkspaceEditorChrome.accent, in: Circle())
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain).help("Done").accessibilityLabel("Save tab layout")
+            }
+        }
+        .frame(height: WorkspaceEditorChrome.paletteHeight)
+    }
+
+    private func hiddenTile(_ page: ExpandedIslandPage) -> some View {
+        VStack(spacing: 3) {
+            ZStack(alignment: .bottomTrailing) {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(.white.opacity(0.12))
+                    .overlay { Image(systemName: page.symbolName).font(.system(size: 14, weight: .semibold)).foregroundStyle(.white.opacity(0.9)) }
+                    .frame(width: 32, height: 32)
+                Image(systemName: "plus.circle.fill")
+                    .font(.system(size: 12, weight: .bold))
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(.white, WorkspaceEditorChrome.accent)
+                    .background(Circle().fill(.black).padding(1))
+                    .offset(x: 4, y: 4)
+            }
+            Text(page.title).font(.system(size: 8, weight: .medium)).foregroundStyle(.white.opacity(0.75))
+                .lineLimit(1).frame(width: 50)
+        }
+        .frame(width: 52)
+        .overlay {
+            WorkspaceNativeDragHandle(title: page.title, symbol: page.symbolName, payload: "tab.\(page.rawValue)",
+                                      clicked: { add(page) }, began: { begin(page) }, ended: finish)
+                .accessibilityHidden(true)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Add \(page.title) tab")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { add(page) }
+        .help("Click or drag to add the \(page.title) tab")
     }
 
     private func begin(_ page: ExpandedIslandPage) { dragged = page; target = page; targetActive = false; frozenFrames = measurements.frames }

@@ -10,10 +10,12 @@ final class ClaudeInteractiveProviderTests: XCTestCase {
 
         XCTAssertEqual(provider.provider, .claude)
         XCTAssertEqual(provider.interactiveCapabilities, [
-            .startSession, .resumeSession, .submitPrompt, .interrupt, .selectModel,
+            .startSession, .resumeSession, .loadHistory, .submitPrompt, .interrupt, .selectModel,
             .resolveApprovals, .accountUsage, .contextUsage, .streamMessages, .streamToolActivity
         ])
-        XCTAssertFalse(provider.interactiveCapabilities.contains(.loadHistory))
+        // History comes from Claude Code's own session transcript (user and
+        // assistant text only), so a resumed session shows its conversation.
+        XCTAssertTrue(provider.interactiveCapabilities.contains(.loadHistory))
         // Model is chosen at session start only; no in-place switching claimed.
         XCTAssertNil(provider.modelSelectionScope)
     }

@@ -173,6 +173,22 @@ struct NativeBeamMetalLayer: NSViewRepresentable {
         required init(coder: NSCoder) { fatalError("init(coder:) is not supported") }
         override var isOpaque: Bool { false }
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
+        private var layoutDrawnSize: CGSize = .zero
+        override func layout() {
+            super.layout()
+            // updateNSView can run before AppKit assigns the drawable size.
+            // Paused/static beams still need their first nonzero layout frame,
+            // but only once per size: ancestors re-layout continuously while a
+            // transcript streams, and acquiring a drawable can block the main
+            // thread, so a draw on every layout pass stalls the whole island.
+            // An occluded window (locked screen, another Space) cannot vend a
+            // drawable; asking would block the main thread for its timeout.
+            guard let window, window.isVisible, window.occlusionState.contains(.visible),
+                  !isHiddenOrHasHiddenAncestor,
+                  !bounds.isEmpty, parameters != nil, bounds.size != layoutDrawnSize else { return }
+            layoutDrawnSize = bounds.size
+            draw()
+        }
         func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
         func releaseDrawableResources() { parameters = nil; banks = [] }
 

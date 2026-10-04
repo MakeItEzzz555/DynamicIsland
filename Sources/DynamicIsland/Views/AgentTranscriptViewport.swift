@@ -135,6 +135,11 @@ struct AgentTranscriptViewportProbe: NSViewRepresentable {
         private weak var tail: AgentTranscriptTailAnchor?
         private var realizeLatest: () -> Void = { }
         private var realizationWidth: CGFloat?
+        /// A scrollTo issued in the same update that inserts the latest row is
+        /// silently ignored by SwiftUI. Retry, a frame apart and bounded, until
+        /// the realized tail marker reports geometry.
+        private var realizationAttempts = 0
+        static let maximumRealizationAttempts = 8
         private var realizationID: String?
         private var realizeReadingAnchor: (String) -> Bool = { _ in false }
         private var requestedReadingRealization = false
@@ -163,6 +168,7 @@ struct AgentTranscriptViewportProbe: NSViewRepresentable {
                 AgentTranscriptViewportStore.shared.setRestoringHistory(restoringReadingAnchor, for: sessionID)
                 token = nil; reported = nil
                 realizationWidth = nil
+                realizationAttempts = 0
                 requestedReadingRealization = false
             }
             if jump != jumpRequest {
@@ -173,6 +179,7 @@ struct AgentTranscriptViewportProbe: NSViewRepresentable {
             if self.realizationID != realizationID {
                 self.realizationID = realizationID
                 realizationWidth = nil
+                realizationAttempts = 0
             }
             if token != contentToken { token = contentToken; scheduleLayoutCorrection() }
         }
@@ -259,11 +266,20 @@ struct AgentTranscriptViewportProbe: NSViewRepresentable {
                 defer { correcting = false }
                 let clip = scroll.contentView.bounds
                 if position.followingLatest, tail?.end(in: document) == nil {
-                    // A layout-ready structural realization, once per width.
-                    // Never scroll blindly into unmeasured lazy estimates.
+                    // A layout-ready structural realization per width and
+                    // latest row. Never scroll blindly into unmeasured lazy
+                    // estimates; retry until the tail marker is realized.
                     if realizationWidth != clip.width {
                         realizationWidth = clip.width
+                        realizationAttempts = 0
+                    }
+                    if realizationAttempts < Self.maximumRealizationAttempts {
+                        realizationAttempts += 1
                         realizeLatest()
+                        AgentPerformanceProbe.count("agents.viewport.realizeLatest")
+                        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(16)) { [weak self] in
+                            self?.scheduleLayoutCorrection()
+                        }
                     }
                     return
                 }

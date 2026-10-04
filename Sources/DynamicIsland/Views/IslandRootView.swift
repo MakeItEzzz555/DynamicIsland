@@ -3595,7 +3595,7 @@ struct ExpandedIslandView: View {
                     loadDroppedFiles(from: providers)
                 }
         case .timer:
-            FocusTimerView(timer: modules.timer, settings: settings, onStarted: onTimerStarted)
+            FocusTimerView(timer: modules.timer, settings: settings, onStarted: onTimerStarted, showsPanel: false)
         case .calendar:
             CalendarSectionView(controller: modules.workspaceServices.calendar, layoutStore: layoutStore)
                 .padding(10)
@@ -3752,7 +3752,7 @@ struct ExpandedIslandView: View {
             workspacePresentation: modules.agentWorkspacePresentation,
             terminal: modules.productivity.terminal,
             customization: customization, editingWorkspace: $editingWidgets,
-            timerWidget: AnyView(FocusTimerView(timer: modules.timer, settings: settings)),
+            timerWidget: AnyView(FocusTimerView(timer: modules.timer, settings: settings, showsPanel: false)),
             availableHeight: metrics.pageHeight,
             contentVisible: contentVisible,
             isContentRemoving: isContentRemoving

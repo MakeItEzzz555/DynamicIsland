@@ -32,7 +32,7 @@ struct IslandWidgetEditor: View {
             workspace(size: geometry.size)
         }
         .coordinateSpace(name: WorkspaceEditorActionFrames.coordinateSpace)
-        .animation(WorkspaceEditorMotion.resize(reduceMotion: reduceMotion || !extraMotion), value: editing)
+        .animation(WorkspaceEditorMotion.chrome(opening: editing, reduceMotion: reduceMotion || !extraMotion), value: editing)
         .onAppear { draft = store.configuration }
         .onChange(of: editing) { _, active in
             drag = nil; target = nil; dragFrames = [:]
@@ -46,9 +46,10 @@ struct IslandWidgetEditor: View {
 
     private func workspace(size: CGSize) -> some View {
         let visibleRegions = regions(in: visibleConfiguration)
-        let height = max(0, size.height - (editing ? 70 : 0))
+        let chromeInset = editing ? WorkspaceEditorChrome.badgeInset : 0
+        let height = max(0, size.height - (editing ? WorkspaceEditorChrome.paletteHeight + 8 : 0) - chromeInset)
         let gaps = CGFloat(max(visibleRegions.count - 1, 0)) * 8
-        let width = max(180, (size.width - gaps) / CGFloat(max(1, min(visibleRegions.count, 3))))
+        let width = max(180, (size.width - gaps - chromeInset) / CGFloat(max(1, min(visibleRegions.count, 3))))
         return VStack(spacing: 8) {
             widgetStrip(regions: visibleRegions, width: width, height: height, availableWidth: size.width)
             if editing { palette }
@@ -66,8 +67,11 @@ struct IslandWidgetEditor: View {
                 }
             }
             .padding(.horizontal, 1)
+            // Room for corner remove badges, which overhang each card.
+            .padding(.top, editing ? WorkspaceEditorChrome.badgeInset : 0)
+            .padding(.trailing, editing ? WorkspaceEditorChrome.badgeInset : 0)
             .frame(minWidth: max(0, availableWidth - 2), alignment: .leading)
-            .frame(height: height, alignment: .top)
+            .frame(height: height + (editing ? WorkspaceEditorChrome.badgeInset : 0), alignment: .top)
             .background {
                 if editing {
                     GeometryReader { canvas in
@@ -86,151 +90,281 @@ struct IslandWidgetEditor: View {
     }
 
     private func card(_ region: WorkspaceWidgetRegion, width: CGFloat, height: CGFloat) -> some View {
-        let title = region.widgets.map { $0.kind.title }.joined(separator: " and ")
-        let stackedTarget = target == .combine(chat: region.widgets.first(where: { $0.kind == .chat })?.id ?? region.id)
-        return VStack(spacing: editing ? 5 : 0) {
-            if editing {
-                HStack(spacing: 5) {
-                    WorkspaceNativeDragHandle(title: title, payload: region.id.rawValue, began: {
-                        begin(.existing(region.id))
-                    }, ended: finishDrag)
-                    .frame(width: max(48, region.isStack ? (width - 72) / 2 : width - 72), height: 25)
-                    .accessibilityLabel("Drag \(title) widget")
-                    if region.isStack, let terminal = region.widgets.first(where: { $0.kind == .terminal }) {
-                        WorkspaceNativeDragHandle(title: "Terminal ↗", payload: terminal.id.rawValue, began: {
-                            begin(.existing(terminal.id))
-                        }, ended: finishDrag)
-                        .frame(width: max(48, (width - 72) / 2), height: 25)
-                        .accessibilityLabel("Drag Terminal out of stack")
-                    }
-                    menu(region)
-                    Button { modify(region.isStack ? "Removed Terminal from stack" : "Removed \(title)") { configuration in
-                        for widget in region.widgets { configuration.remove(widget.id) }
-                    } } label: { Image(systemName: "minus.circle.fill").foregroundStyle(.red) }
-                        .buttonStyle(.plain).frame(width: 24, height: 24)
-                        .disabled(region.widgets.count == 1 && region.widgets.first?.kind == .chat)
-                        .accessibilityLabel(region.isStack ? "Remove Terminal from stack" : "Remove \(title) widget")
-                }
-            }
-            if case .palette(let kind) = drag, region.widgets.first?.kind == kind,
-               !draft.widgets(on: surface).contains(where: { $0.kind == kind }) {
-                Label("Add \(kind.title) here", systemImage: kind.symbol)
-                    .font(.system(size: 12, weight: .medium))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(.blue.opacity(0.10), in: RoundedRectangle(cornerRadius: 14))
-                    .allowsHitTesting(false)
-            } else {
-                content(region, max(0, height - (editing ? 30 : 0)))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                    .allowsHitTesting(!editing)
-            }
-        }
-        .frame(width: width, height: height, alignment: .top)
-        .clipped()
-        .opacity(editing && drag == .existing(region.id) ? 0.55 : 1)
-        .overlay {
-            if editing {
-                RoundedRectangle(cornerRadius: 16)
-                    .strokeBorder(stackedTarget ? Color.blue : .white.opacity(0.25), style: StrokeStyle(lineWidth: stackedTarget ? 2 : 1, dash: stackedTarget ? [] : [4, 4]))
-                    .allowsHitTesting(false)
-                if stackedTarget {
-                    Label("Combine Chat + Terminal", systemImage: "square.stack")
-                        .font(.system(size: 11, weight: .semibold))
-                        .padding(8).background(.black.opacity(0.85), in: Capsule())
-                        .allowsHitTesting(false)
-                }
-            }
-        }
-        .overlay(alignment: .leading) {
-            if editing, case .insert(_, let before) = target, before == region.id {
-                RoundedRectangle(cornerRadius: 2).fill(.blue)
-                    .frame(width: 3).padding(.vertical, 12).allowsHitTesting(false)
-            }
-        }
-        .overlay(alignment: .trailing) {
-            if editing, case .insert(_, nil) = target, regions(in: visibleConfiguration).last?.id == region.id {
-                RoundedRectangle(cornerRadius: 2).fill(.blue)
-                    .frame(width: 3).padding(.vertical, 12).allowsHitTesting(false)
-            }
-        }
-        .background {
-            if editing {
-                GeometryReader { geometry in
-                    Color.clear.preference(key: WorkspaceEditorFrameKey.self, value: [region.id: geometry.frame(in: .named("workspace-widget-editor"))])
-                }
-            }
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(title) widget")
-        .accessibilityValue("Position \((regions(in: configuration).firstIndex(where: { $0.id == region.id }) ?? 0) + 1)")
-        .accessibilityAction(named: "Move left") { shift(region, by: -1) }
-        .accessibilityAction(named: "Move right") { shift(region, by: 1) }
+        let title: String = region.widgets.map { $0.kind.title }.joined(separator: " and ")
+        let position: Int = (regions(in: configuration).firstIndex(where: { $0.id == region.id }) ?? 0) + 1
+        let removeName: String = region.isStack ? "Remove Terminal from stack" : "Remove"
+        let visual = cardVisual(region, title: title, width: width, height: height)
+        return visual
+            .contextMenu { if editing { arrangeMenu(region) } }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(Text("\(title) widget"))
+            .accessibilityValue(Text("Position \(position)"))
+            .accessibilityAction(named: Text("Move left")) { shift(region, by: -1) }
+            .accessibilityAction(named: Text("Move right")) { shift(region, by: 1) }
+            .accessibilityAction(named: Text(removeName)) { remove(region) }
     }
 
-    private func menu(_ region: WorkspaceWidgetRegion) -> some View {
-        Menu {
-            Button("Move left") { shift(region, by: -1) }
-            Button("Move right") { shift(region, by: 1) }
-            if surface == .agents, region.widgets.contains(where: { $0.kind == .terminal }), !region.isStack,
-               draft.widgets(on: surface).contains(where: { $0.kind == .chat }) {
-                Button("Combine with Chat") { modify("Combined Chat and Terminal") { $0.combineTerminalWithChat(on: surface) } }
-            }
-            if region.isStack {
-                Button("Separate from Stack") { modify("Separated Chat and Terminal") { $0.separateStack(region.id) } }
+    private func cardVisual(_ region: WorkspaceWidgetRegion, title: String, width: CGFloat, height: CGFloat) -> some View {
+        let chatID: WidgetID = region.widgets.first(where: { $0.kind == .chat })?.id ?? region.id
+        let stackedTarget: Bool = target == .combine(chat: chatID)
+        let placeholder: Bool = isPlaceholder(region)
+        let layers = cardLayers(region, title: title, height: height, placeholder: placeholder)
+            .frame(width: width, height: height, alignment: .top)
+        return layers
+            .background { cardFill(placeholder: placeholder) }
+            .overlay { cardOutline(placeholder: placeholder, stackedTarget: stackedTarget) }
+            .overlay { combineHint(stackedTarget) }
+            .overlay(alignment: .topTrailing) { badgeOverlay(region, title: title, placeholder: placeholder) }
+            .background { frameReporter(region.id) }
+    }
 
+    private var cardShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: WorkspaceEditorChrome.cornerRadius, style: .continuous)
+    }
+
+    private func isPlaceholder(_ region: WorkspaceWidgetRegion) -> Bool {
+        guard editing else { return false }
+        if drag == .existing(region.id) { return true }
+        guard case .palette(let kind) = drag, region.widgets.first?.kind == kind else { return false }
+        return !draft.widgets(on: surface).contains(where: { $0.kind == kind })
+    }
+
+    @ViewBuilder
+    private func cardLayers(_ region: WorkspaceWidgetRegion, title: String, height: CGFloat, placeholder: Bool) -> some View {
+        ZStack(alignment: .topLeading) {
+            content(region, height)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .allowsHitTesting(!editing)
+                .opacity(placeholder ? 0.18 : 1)
+                .clipShape(cardShape)
+            if editing {
+                // Input layers never animate: they exist exactly while editing,
+                // so no invisible drag surface outlives Done/Cancel.
+                dragSurfaces(region, title: title).transition(.identity)
             }
-        } label: { Image(systemName: "ellipsis.circle").frame(width: 24, height: 24) }
-        .menuStyle(.borderlessButton).fixedSize()
-        .accessibilityLabel("Arrange \(region.widgets.map { $0.kind.title }.joined(separator: " and "))")
+            if placeholder, case .palette(let kind) = drag { paletteLandingLabel(kind) }
+        }
+    }
+
+    @ViewBuilder
+    private func dragSurfaces(_ region: WorkspaceWidgetRegion, title: String) -> some View {
+        // The whole card is the drag source; content stays visible and inert.
+        WorkspaceNativeDragHandle(title: title, symbol: region.widgets.first?.kind.symbol ?? "square",
+                                  payload: region.id.rawValue, began: { begin(.existing(region.id)) }, ended: finishDrag)
+            .accessibilityHidden(true)
+        if region.isStack, let terminal = region.widgets.first(where: { $0.kind == .terminal }) {
+            WorkspaceNativeDragHandle(title: "Terminal", symbol: IslandWidget.terminal.symbol, payload: terminal.id.rawValue,
+                                      style: .chip, began: { begin(.existing(terminal.id)) }, ended: finishDrag)
+                .frame(width: 92, height: 24)
+                .padding(8)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                .accessibilityLabel("Drag Terminal out of stack")
+        }
+    }
+
+    private func paletteLandingLabel(_ kind: IslandWidget) -> some View {
+        Label("Add \(kind.title)", systemImage: kind.symbol)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(WorkspaceEditorChrome.accent)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .allowsHitTesting(false)
+    }
+
+    @ViewBuilder
+    private func cardFill(placeholder: Bool) -> some View {
+        if placeholder { cardShape.fill(WorkspaceEditorChrome.accent.opacity(0.08)) }
+    }
+
+    @ViewBuilder
+    private func cardOutline(placeholder: Bool, stackedTarget: Bool) -> some View {
+        if editing {
+            let emphasized = placeholder || stackedTarget
+            let color: Color = emphasized ? WorkspaceEditorChrome.accent : .white.opacity(0.30)
+            let style = StrokeStyle(lineWidth: emphasized ? 1.5 : 1, dash: stackedTarget ? [] : [5, 4])
+            cardShape.strokeBorder(color, style: style)
+                .allowsHitTesting(false)
+                .transition(.opacity)
+        }
+    }
+
+    @ViewBuilder
+    private func combineHint(_ stackedTarget: Bool) -> some View {
+        if editing && stackedTarget {
+            Label("Combine Chat + Terminal", systemImage: "square.stack")
+                .font(.system(size: 11, weight: .semibold))
+                .padding(.horizontal, 10).padding(.vertical, 6)
+                .background(.black.opacity(0.85), in: Capsule())
+                .overlay(Capsule().strokeBorder(WorkspaceEditorChrome.accent.opacity(0.6)))
+                .allowsHitTesting(false)
+                .transition(.opacity.combined(with: .scale(scale: 0.97)))
+        }
+    }
+
+    @ViewBuilder
+    private func badgeOverlay(_ region: WorkspaceWidgetRegion, title: String, placeholder: Bool) -> some View {
+        if editing && !placeholder {
+            removeBadge(region, title: title)
+                .offset(x: 6, y: -6)
+                .transition(reduceMotion || !extraMotion ? .opacity : .scale(scale: 0.4).combined(with: .opacity))
+        }
+    }
+
+    private func frameReporter(_ id: WidgetID) -> some View {
+        GeometryReader { geometry in
+            Color.clear.preference(key: WorkspaceEditorFrameKey.self, value: [id: geometry.frame(in: .named("workspace-widget-editor"))])
+        }
+    }
+
+    private func removeBadge(_ region: WorkspaceWidgetRegion, title: String) -> some View {
+        let locked = region.widgets.count == 1 && region.widgets.first?.kind == .chat
+        return Button { remove(region) } label: {
+            ZStack {
+                Circle().fill(Color(red: 1, green: 0.27, blue: 0.23))
+                Capsule().fill(.white).frame(width: 8, height: 2)
+            }
+            .frame(width: 18, height: 18)
+            .overlay(Circle().strokeBorder(.black.opacity(0.55), lineWidth: 1.5))
+            .shadow(color: .black.opacity(0.35), radius: 2, y: 1)
+            .contentShape(Circle().inset(by: -4))
+        }
+        .buttonStyle(.plain)
+        .opacity(locked ? 0 : 1)
+        .disabled(locked)
+        .accessibilityLabel(region.isStack ? "Remove Terminal from stack" : "Remove \(title) widget")
+        .help(region.isStack ? "Remove Terminal from stack" : "Remove \(title)")
+    }
+
+    private func remove(_ region: WorkspaceWidgetRegion) {
+        guard !(region.widgets.count == 1 && region.widgets.first?.kind == .chat) else { return }
+        let title = region.widgets.map { $0.kind.title }.joined(separator: " and ")
+        modify(region.isStack ? "Removed Terminal from stack" : "Removed \(title)") { configuration in
+            if region.isStack {
+                for widget in region.widgets where widget.kind == .terminal { configuration.remove(widget.id) }
+            } else {
+                for widget in region.widgets { configuration.remove(widget.id) }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func arrangeMenu(_ region: WorkspaceWidgetRegion) -> some View {
+        Button("Move Left") { shift(region, by: -1) }
+        Button("Move Right") { shift(region, by: 1) }
+        if surface == .agents, region.widgets.contains(where: { $0.kind == .terminal }), !region.isStack,
+           draft.widgets(on: surface).contains(where: { $0.kind == .chat }) {
+            Button("Combine with Chat") { modify("Combined Chat and Terminal") { $0.combineTerminalWithChat(on: surface) } }
+        }
+        if region.isStack {
+            Button("Separate from Stack") { modify("Separated Chat and Terminal") { $0.separateStack(region.id) } }
+        }
+        if !(region.widgets.count == 1 && region.widgets.first?.kind == .chat) {
+            Divider()
+            Button(region.isStack ? "Remove Terminal" : "Remove", role: .destructive) { remove(region) }
+        }
     }
 
     private var palette: some View {
-        HStack(spacing: 8) {
+        HStack(alignment: .center, spacing: 10) {
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
+                HStack(spacing: 4) {
                     ForEach(eligibleWidgets.filter { $0.isEligible(on: surface) }) { kind in
-                        let present = draft.widgets(on: surface).contains { $0.kind == kind }
-                        VStack(spacing: 2) {
-                            Button { modify("Added \(kind.title)") { $0.add(kind, on: surface) } } label: {
-                                Label(kind.title, systemImage: present ? "checkmark.circle.fill" : kind.symbol)
-                                    .font(.system(size: 10, weight: .medium)).lineLimit(1)
-                            }
-                            .buttonStyle(.plain).disabled(present)
-                            .accessibilityLabel("Add \(kind.title) widget")
-                            .accessibilityValue(present ? "Already added" : "Available")
-                            .workspaceEditorAction("add.\(kind.rawValue)")
-                            if !present {
-                                WorkspaceNativeDragHandle(title: "Drag to add", payload: kind.rawValue, began: {
-                                    begin(.palette(kind))
-                                }, ended: finishDrag).frame(width: 70, height: 20)
-                            }
-                        }
-                        .padding(6).background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+                        paletteTile(kind, present: draft.widgets(on: surface).contains { $0.kind == kind })
                     }
                 }
+                .padding(.horizontal, 2)
             }
-            Button {
-                withAnimation(motion) { draft.resetWidgets(on: surface) }
-                announcement = "Default layout restored"
-                WorkspaceEditorAccessibility.announce(announcement)
-            } label: { Image(systemName: "arrow.counterclockwise").frame(width: 24, height: 24) }
-            .buttonStyle(.plain).accessibilityLabel("Reset to Default Layout")
-            .workspaceEditorAction("reset")
-            Button("Cancel", action: cancel).buttonStyle(.plain)
+            HStack(spacing: 8) {
+                Button {
+                    withAnimation(motion) { draft.resetWidgets(on: surface) }
+                    announcement = "Default layout restored"
+                    WorkspaceEditorAccessibility.announce(announcement)
+                } label: {
+                    Image(systemName: "arrow.counterclockwise").font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.6)).frame(width: 26, height: 26).contentShape(Circle())
+                }
+                .buttonStyle(.plain).help("Reset to Default Layout")
+                .accessibilityLabel("Reset to Default Layout")
+                .workspaceEditorAction("reset")
+                Button(action: cancel) {
+                    Image(systemName: "xmark").font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.85))
+                        .frame(width: 26, height: 26)
+                        .overlay(Circle().strokeBorder(.white.opacity(0.35), lineWidth: 1))
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain).help("Cancel")
                 .accessibilityLabel("Cancel widget changes")
                 .workspaceEditorAction("cancel")
-            Button("Done") {
-                finishDrag()
-                draft.markCustomized(surface)
-                store.commit(draft)
-                editing = false
-                WorkspaceEditorAccessibility.announce("Widget layout saved")
-            }.buttonStyle(.borderedProminent).controlSize(.small)
+                Button {
+                    finishDrag()
+                    draft.markCustomized(surface)
+                    store.commit(draft)
+                    editing = false
+                    WorkspaceEditorAccessibility.announce("Widget layout saved")
+                } label: {
+                    Image(systemName: "checkmark").font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 26, height: 26)
+                        .background(WorkspaceEditorChrome.accent, in: Circle())
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain).help("Done")
                 .accessibilityLabel("Save widget layout")
                 .workspaceEditorAction("done")
+            }
         }
-        .frame(height: 62)
-        .transition(.opacity)
+        .frame(height: WorkspaceEditorChrome.paletteHeight)
+        // Reveal animates in; on Done/Cancel the palette (and its drag
+        // sources) leaves immediately while the shell itself shrinks.
+        .transition(.asymmetric(insertion: reduceMotion || !extraMotion ? .opacity : .opacity.combined(with: .offset(y: 8)),
+                                removal: .identity))
+    }
+
+    private func paletteTile(_ kind: IslandWidget, present: Bool) -> some View {
+        VStack(spacing: 3) {
+            ZStack(alignment: .bottomTrailing) {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(LinearGradient(colors: [kind.paletteTint.opacity(0.95), kind.paletteTint.opacity(0.70)],
+                                         startPoint: .top, endPoint: .bottom))
+                    .overlay {
+                        Image(systemName: kind.symbol).font(.system(size: 14, weight: .semibold)).foregroundStyle(.white)
+                    }
+                    .frame(width: 32, height: 32)
+                if present {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 12, weight: .bold))
+                        .symbolRenderingMode(.palette)
+                        .foregroundStyle(.white, WorkspaceEditorChrome.accent)
+                        .background(Circle().fill(.black).padding(1))
+                        .offset(x: 4, y: 4)
+                        .transition(reduceMotion || !extraMotion ? .opacity : .scale(scale: 0.4).combined(with: .opacity))
+                }
+            }
+            Text(kind.title)
+                .font(.system(size: 8, weight: .medium))
+                .foregroundStyle(.white.opacity(present ? 0.45 : 0.75))
+                .lineLimit(1).truncationMode(.tail)
+                .frame(width: 50)
+        }
+        .frame(width: 52)
+        .opacity(present ? 0.6 : 1)
+        .overlay {
+            if !present && editing {
+                // Click adds; dragging places a live preview where it drops.
+                WorkspaceNativeDragHandle(title: kind.title, symbol: kind.symbol, payload: kind.rawValue,
+                                          clicked: { modify("Added \(kind.title)") { $0.add(kind, on: surface) } },
+                                          began: { begin(.palette(kind)) }, ended: finishDrag)
+                    .accessibilityHidden(true)
+                    .transition(.identity)
+            }
+        }
+        .workspaceEditorAction("add.\(kind.rawValue)")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Add \(kind.title) widget")
+        .accessibilityValue(present ? "Already added" : "Available")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { if !present { modify("Added \(kind.title)") { $0.add(kind, on: surface) } } }
+        .help(present ? "\(kind.title) is already placed" : "Click or drag to add \(kind.title)")
     }
 
     private func regions(in configuration: WorkspaceConfiguration) -> [WorkspaceWidgetRegion] {
@@ -306,6 +440,14 @@ enum WorkspaceEditorMotion {
     static func resize(reduceMotion: Bool) -> Animation? {
         reduceMotion ? nil : .timingCurve(0.22, 1, 0.36, 1, duration: resizeDuration)
     }
+    /// transitions.dev panel reveal: open 400 ms, close 350 ms (smooth-out,
+    /// never bouncing a close). Reduce Motion applies chrome directly.
+    static let chromeOpenDuration = 0.40
+    static let chromeCloseDuration = 0.35
+    static func chrome(opening: Bool, reduceMotion: Bool) -> Animation? {
+        if reduceMotion { return nil }
+        return .timingCurve(0.22, 1, 0.36, 1, duration: opening ? chromeOpenDuration : chromeCloseDuration)
+    }
 }
 
 enum WorkspaceEditorDrag: Equatable {
@@ -347,32 +489,60 @@ private struct WorkspaceEditorDrop: DropDelegate {
 /// No global event monitor, live renderer snapshot or orphan drag state.
 struct WorkspaceNativeDragHandle: NSViewRepresentable {
     static let type = UTType(exportedAs: "app.dynamicisland.workspace-widget")
+    enum Style { case surface, chip }
     let title: String
+    var symbol: String = "square"
     let payload: String
+    var style: Style = .surface
+    var clicked: (() -> Void)? = nil
     var began: () -> Void
     var ended: () -> Void
     func makeNSView(context: Context) -> WorkspaceNativeDragView { WorkspaceNativeDragView() }
     func updateNSView(_ view: WorkspaceNativeDragView, context: Context) {
-        view.title = title; view.payload = payload; view.began = began; view.ended = ended
+        let restyled = view.style != style || view.title != title
+        view.title = title; view.symbol = symbol; view.payload = payload; view.style = style
+        view.clicked = clicked; view.began = began; view.ended = ended
         view.setAccessibilityLabel(title)
-        view.needsDisplay = true
+        if restyled { view.needsDisplay = true }
     }
     static func dismantleNSView(_ view: WorkspaceNativeDragView, coordinator: ()) {
-        view.began = {}; view.ended = {}
+        view.began = {}; view.ended = {}; view.clicked = nil
     }
 }
 final class WorkspaceNativeDragView: NSView, NSDraggingSource {
     var title = ""
+    var symbol = "square"
     var payload = ""
+    var style: WorkspaceNativeDragHandle.Style = .surface
+    var clicked: (() -> Void)?
     var began: () -> Void = {}
     var ended: () -> Void = {}
     private var down: NSEvent?
     private var dragging = false
     override var isFlipped: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-    override func resetCursorRects() { addCursorRect(bounds, cursor: .openHand) }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: clicked == nil ? .openHand : .pointingHand) }
     override func draw(_ dirtyRect: NSRect) {
-        ("⠿ " + title).draw(in: bounds.insetBy(dx: 3, dy: 5), withAttributes: [.font: NSFont.systemFont(ofSize: 10, weight: .medium), .foregroundColor: NSColor.white.withAlphaComponent(0.8)])
+        // A full-card surface is invisible; only the stack's Terminal chip draws.
+        guard style == .chip else { return }
+        let chip = bounds.insetBy(dx: 0.5, dy: 0.5)
+        NSColor.black.withAlphaComponent(0.78).setFill()
+        let path = NSBezierPath(roundedRect: chip, xRadius: chip.height / 2, yRadius: chip.height / 2)
+        path.fill()
+        NSColor.white.withAlphaComponent(0.28).setStroke()
+        path.lineWidth = 1
+        path.stroke()
+        let font = NSFont.systemFont(ofSize: 10, weight: .semibold)
+        let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.white.withAlphaComponent(0.9)]
+        let label = NSAttributedString(string: title, attributes: attributes)
+        var x = chip.minX + 9
+        if let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 10, weight: .semibold)) {
+            let tinted = image.tinted(.white.withAlphaComponent(0.9))
+            tinted.draw(in: NSRect(x: x, y: chip.midY - 6, width: 12, height: 12))
+            x += 16
+        }
+        label.draw(at: NSPoint(x: x, y: chip.midY - label.size().height / 2))
     }
     override func mouseDown(with event: NSEvent) { down = event; dragging = false }
     override func mouseDragged(with event: NSEvent) {
@@ -385,17 +555,39 @@ final class WorkspaceNativeDragView: NSView, NSDraggingSource {
         let item = NSPasteboardItem()
         item.setString(payload, forType: NSPasteboard.PasteboardType(WorkspaceNativeDragHandle.type.identifier))
         let dragItem = NSDraggingItem(pasteboardWriter: item)
-        let image = NSImage(size: NSSize(width: 150, height: 32))
-        image.lockFocus()
-        NSColor.black.withAlphaComponent(0.88).setFill()
-        NSBezierPath(roundedRect: NSRect(x: 0, y: 0, width: 150, height: 32), xRadius: 9, yRadius: 9).fill()
-        title.draw(at: NSPoint(x: 10, y: 10), withAttributes: [.font: NSFont.systemFont(ofSize: 11, weight: .semibold), .foregroundColor: NSColor.white])
-        image.unlockFocus()
-        dragItem.setDraggingFrame(NSRect(origin: convert(down.locationInWindow, from: nil), size: image.size), contents: image)
+        let image = Self.dragImage(title: title, symbol: symbol)
+        let origin = convert(down.locationInWindow, from: nil)
+        dragItem.setDraggingFrame(NSRect(x: origin.x - image.size.width / 2, y: origin.y - image.size.height / 2,
+                                         width: image.size.width, height: image.size.height), contents: image)
         let session = beginDraggingSession(with: [dragItem], event: down, source: self)
         session.animatesToStartingPositionsOnCancelOrFail = true
     }
-    override func mouseUp(with event: NSEvent) { down = nil }
+    override func mouseUp(with event: NSEvent) {
+        defer { down = nil }
+        guard down != nil, !dragging, let clicked else { return }
+        // Click (no drag): deliver after the AppKit event finishes.
+        DispatchQueue.main.async { clicked() }
+    }
+    /// Lightweight proxy: icon + title pill. The live renderer never follows the pointer.
+    static func dragImage(title: String, symbol: String) -> NSImage {
+        let font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+        let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.white]
+        let label = NSAttributedString(string: title, attributes: attributes)
+        let width = min(220, ceil(label.size().width) + 48)
+        let size = NSSize(width: width, height: 36)
+        return NSImage(size: size, flipped: false) { rect in
+            let pill = rect.insetBy(dx: 1, dy: 1)
+            let path = NSBezierPath(roundedRect: pill, xRadius: 11, yRadius: 11)
+            NSColor(white: 0.08, alpha: 0.94).setFill(); path.fill()
+            NSColor.white.withAlphaComponent(0.22).setStroke(); path.lineWidth = 1; path.stroke()
+            if let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+                .withSymbolConfiguration(.init(pointSize: 13, weight: .semibold)) {
+                image.tinted(.white).draw(in: NSRect(x: 12, y: rect.midY - 8, width: 16, height: 16))
+            }
+            label.draw(at: NSPoint(x: 36, y: rect.midY - label.size().height / 2))
+            return true
+        }
+    }
     func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
         context == .withinApplication ? .move : []
     }
@@ -433,5 +625,45 @@ enum WorkspaceEditorAccessibility {
         guard let application = NSApp else { return }
         NSAccessibility.post(element: application, notification: .announcementRequested,
             userInfo: [.announcement: message, .priority: NSAccessibilityPriorityLevel.medium.rawValue])
+    }
+}
+
+/// Shared reference-style edit chrome tokens.
+enum WorkspaceEditorChrome {
+    static let accent = Color(red: 0.04, green: 0.52, blue: 1.0)
+    static let cornerRadius: CGFloat = 16
+    static let paletteHeight: CGFloat = 54
+    static let badgeInset: CGFloat = 7
+}
+
+extension IslandWidget {
+    /// Palette tile tint, app-icon style.
+    var paletteTint: Color {
+        switch self {
+        case .media: Color(red: 1.0, green: 0.27, blue: 0.42)
+        case .files: Color(red: 0.16, green: 0.55, blue: 1.0)
+        case .clipboard: Color(red: 0.15, green: 0.72, blue: 0.80)
+        case .timer: Color(red: 1.0, green: 0.58, blue: 0.10)
+        case .calendar: Color(red: 0.95, green: 0.25, blue: 0.22)
+        case .shortcuts: Color(red: 0.98, green: 0.74, blue: 0.10)
+        case .activities: Color(red: 0.56, green: 0.36, blue: 0.98)
+        case .chat: Color(red: 0.30, green: 0.47, blue: 1.0)
+        case .terminal: Color(white: 0.32)
+        case .feed: Color(red: 0.20, green: 0.75, blue: 0.45)
+        case .workspace: Color(white: 0.4)
+        }
+    }
+}
+
+private extension NSImage {
+    func tinted(_ color: NSColor) -> NSImage {
+        let image = NSImage(size: size, flipped: false) { rect in
+            self.draw(in: rect)
+            color.set()
+            rect.fill(using: .sourceAtop)
+            return true
+        }
+        image.isTemplate = false
+        return image
     }
 }

@@ -34,6 +34,7 @@ actor ClaudeInteractiveProvider: AgentInteractiveProvider {
     nonisolated let interactiveCapabilities: Set<AgentInteractiveCapability> = [
         .startSession,
         .resumeSession,
+        .loadHistory,
         .submitPrompt,
         .interrupt,
         .selectModel,
@@ -145,7 +146,13 @@ actor ClaudeInteractiveProvider: AgentInteractiveProvider {
         )
     }
 
-    func readTranscript(nativeSessionID: String, limit: Int) async throws -> [AgentManagedTranscriptEntry] { [] }
+    /// Visible conversation for a resumed session, read from Claude Code's
+    /// own transcript (bounded tail, user/assistant text only). A missing
+    /// or unreadable file hydrates nothing rather than failing the resume.
+    func readTranscript(nativeSessionID: String, limit: Int) async throws -> [AgentManagedTranscriptEntry] {
+        guard let file = catalog.transcriptFile(nativeSessionID: nativeSessionID) else { return [] }
+        return (try? ClaudeConversationHistory.read(file: file, nativeSessionID: nativeSessionID, limit: limit)) ?? []
+    }
 
     func listModels() async throws -> [AgentManagedModelDescriptor] {
         Self.modelAliases
@@ -612,6 +619,11 @@ struct ClaudeCatalogEntry: Equatable, Sendable {
 protocol ClaudeSessionCataloging: Sendable {
     func recentSessions(limit: Int) throws -> [ClaudeCatalogEntry]
     func session(nativeSessionID: String) throws -> ClaudeCatalogEntry?
+    func transcriptFile(nativeSessionID: String) -> URL?
+}
+
+extension ClaudeSessionCataloging {
+    func transcriptFile(nativeSessionID: String) -> URL? { nil }
 }
 
 /// Lists Claude Code's own session transcripts (`~/.claude/projects/*/<id>.jsonl`)
@@ -655,6 +667,14 @@ struct ClaudeSessionCatalog: ClaudeSessionCataloging {
         return nil
     }
 
+    func transcriptFile(nativeSessionID: String) -> URL? {
+        guard Self.isSessionID(nativeSessionID),
+              let projects = try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) else { return nil }
+        return projects.lazy
+            .map { $0.appendingPathComponent("\(nativeSessionID).jsonl") }
+            .first { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
     static func isSessionID(_ value: String) -> Bool {
         UUID(uuidString: value) != nil
     }
@@ -671,4 +691,92 @@ struct ClaudeSessionCatalog: ClaudeSessionCataloging {
         }
         return nil
     }
+}
+
+// MARK: - Conversation history
+
+/// Projects Claude Code's transcript JSONL into the visible conversation:
+/// user prompts and assistant text only. Thinking, tool calls/results,
+/// meta/command plumbing and sidechains are never shown.
+enum ClaudeConversationHistory {
+    static let defaultMaximumBytes = 2 * 1_024 * 1_024
+
+    static func read(file: URL, nativeSessionID: String, limit: Int,
+                     maximumBytes: Int = defaultMaximumBytes) throws -> [AgentManagedTranscriptEntry] {
+        let handle = try FileHandle(forReadingFrom: file)
+        defer { try? handle.close() }
+        let size = try handle.seekToEnd()
+        let start = size > UInt64(maximumBytes) ? size - UInt64(maximumBytes) : 0
+        try handle.seek(toOffset: start)
+        var data = try handle.readToEnd() ?? Data()
+        if start > 0, let newline = data.firstIndex(of: 0x0A) {
+            data = data.suffix(from: data.index(after: newline)) // drop the partial first line
+        }
+        return entries(from: data, nativeSessionID: nativeSessionID, limit: limit)
+    }
+
+    static func entries(from data: Data, nativeSessionID: String, limit: Int) -> [AgentManagedTranscriptEntry] {
+        var result: [AgentManagedTranscriptEntry] = []
+        var agentIndex: [String: Int] = [:] // message id -> result index (text blocks join)
+        for line in data.split(separator: 0x0A, omittingEmptySubsequences: true) {
+            guard let object = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
+                  let type = object["type"] as? String,
+                  object["isMeta"] as? Bool != true,
+                  object["isSidechain"] as? Bool != true,
+                  let message = object["message"] as? [String: Any] else { continue }
+            let timestamp = (object["timestamp"] as? String).flatMap(ISO8601DateFormatter.withFractionalSeconds.date(from:)) ?? .distantPast
+            let uuid = object["uuid"] as? String ?? UUID().uuidString
+            switch type {
+            case "user":
+                guard let text = userText(message["content"]),
+                      let bounded = AgentManagedTranscriptEntry.boundedText(text) else { continue }
+                result.append(AgentManagedTranscriptEntry(id: "history-user:\(uuid)", nativeSessionID: nativeSessionID,
+                                                          turnID: nil, role: .user, text: bounded, timestamp: timestamp))
+            case "assistant":
+                let blocks = message["content"] as? [[String: Any]] ?? []
+                let text = blocks.filter { $0["type"] as? String == "text" }
+                    .compactMap { $0["text"] as? String }.joined(separator: "\n\n")
+                guard !text.isEmpty else { continue }
+                let messageID = message["id"] as? String ?? uuid
+                if let index = agentIndex[messageID] {
+                    let existing = result[index]
+                    let joined = AgentManagedTranscriptEntry.boundedText(existing.text + "\n\n" + text, preservingWhitespace: true) ?? existing.text
+                    result[index] = AgentManagedTranscriptEntry(id: existing.id, nativeSessionID: nativeSessionID, turnID: nil,
+                                                                role: .agent, text: joined, timestamp: existing.timestamp)
+                } else if let bounded = AgentManagedTranscriptEntry.boundedText(text, preservingWhitespace: true) {
+                    agentIndex[messageID] = result.count
+                    result.append(AgentManagedTranscriptEntry(id: "history-agent:\(messageID)", nativeSessionID: nativeSessionID,
+                                                              turnID: nil, role: .agent, text: bounded, timestamp: timestamp))
+                }
+            default:
+                continue
+            }
+        }
+        return Array(result.suffix(max(0, limit)))
+    }
+
+    /// Typed prompts only: tool results and slash-command/system plumbing
+    /// (tagged `<...>` payloads) are not conversation.
+    private static func userText(_ content: Any?) -> String? {
+        let text: String
+        if let string = content as? String {
+            text = string
+        } else if let blocks = content as? [[String: Any]] {
+            guard !blocks.contains(where: { $0["type"] as? String == "tool_result" }) else { return nil }
+            text = blocks.filter { $0["type"] as? String == "text" }.compactMap { $0["text"] as? String }.joined(separator: "\n")
+        } else {
+            return nil
+        }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmed.hasPrefix("<") else { return nil }
+        return trimmed
+    }
+}
+
+extension ISO8601DateFormatter {
+    nonisolated(unsafe) static let withFractionalSeconds: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
 }

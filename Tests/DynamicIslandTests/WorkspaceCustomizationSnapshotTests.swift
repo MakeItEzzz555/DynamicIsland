@@ -30,7 +30,7 @@ final class WorkspaceCustomizationSnapshotTests: XCTestCase {
         let mediaContent: (WorkspaceWidgetRegion, CGFloat) -> AnyView = { region, height in
             switch region.widgets.first?.kind {
             case .media: return AnyView(MediaModuleView(settings: settings, media: media, availableHeight: height))
-            case .timer: return AnyView(FocusTimerView(timer: timer, settings: settings))
+            case .timer: return AnyView(FocusTimerView(timer: timer, settings: settings, showsPanel: false))
             default: return AnyView(Self.proxy("Unavailable fixture"))
             }
         }
@@ -68,7 +68,7 @@ final class WorkspaceCustomizationSnapshotTests: XCTestCase {
                         terminal: { AnyView(Self.proxy("Terminal fixture — renderer proxy, no PTY")) }))
                 }
                 if region.widgets.first?.kind == .timer {
-                    return AnyView(FocusTimerView(timer: timer, settings: settings))
+                    return AnyView(FocusTimerView(timer: timer, settings: settings, showsPanel: false))
                 }
                 return AnyView(Self.proxy("\(region.widgets.first?.kind.title ?? "Widget") fixture"))
             }
