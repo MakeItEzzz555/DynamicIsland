@@ -1980,7 +1980,7 @@ final class AgentManagedSessionController: ObservableObject {
         var entries = transcripts[sessionID] ?? []
         if let index = entries.firstIndex(where: { $0.id == itemID }) {
             let combined = entries[index].text + delta
-            let bounded = AgentManagedTranscriptEntry.boundedText(combined) ?? entries[index].text
+            let bounded = AgentManagedTranscriptEntry.boundedText(combined, preservingWhitespace: true) ?? entries[index].text
             entries[index] = AgentManagedTranscriptEntry(
                 id: itemID,
                 nativeSessionID: sessionID.nativeID,
@@ -1989,7 +1989,7 @@ final class AgentManagedSessionController: ObservableObject {
                 text: bounded,
                 timestamp: entries[index].timestamp
             )
-        } else if let bounded = AgentManagedTranscriptEntry.boundedText(delta) {
+        } else if let bounded = AgentManagedTranscriptEntry.boundedText(delta, preservingWhitespace: true) {
             entries.append(AgentManagedTranscriptEntry(
                 id: itemID,
                 nativeSessionID: sessionID.nativeID,

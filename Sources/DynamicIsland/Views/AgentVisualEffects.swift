@@ -1,6 +1,7 @@
 import SwiftUI
 import Foundation
 import AppKit
+import LibrariesNative
 
 enum AgentPresenceIndicatorStyle: String, CaseIterable, Codable, Identifiable, Sendable {
     case automatic
@@ -447,17 +448,22 @@ struct VoiceBeamGeometry: Equatable {
 struct MetalSendButton: View {
     var configuration: MetalSendConfiguration
     var isEnabled: Bool
+    var sessionID: AgentSessionInstanceID? = nil
     var action: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var hovering = false
+    @State private var visible = false
+    @StateObject private var localMetal = MetalFxModel()
+
+    private var metal: MetalFxModel { sessionID.map(AgentMetalModelStore.model(for:)) ?? localMetal }
 
     var body: some View {
         let config = configuration.normalized()
         Button(action: action) {
             Image(systemName: "arrow.up")
                 .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(isEnabled ? (config.enabled && config.strength >= 0.5 ? Color.black.opacity(0.9) : Color.white) : Color.white.opacity(0.45))
+                .foregroundStyle(isEnabled ? (config.enabled && config.strength >= 0.5 ? Color.white.opacity(0.95) : Color.white) : Color.white.opacity(0.45))
                 .frame(width: 30, height: 30)
                 .background {
                     if config.enabled {
@@ -479,22 +485,14 @@ struct MetalSendButton: View {
 
     @ViewBuilder
     private func metalSurface(_ config: MetalSendConfiguration) -> some View {
-        AgentVisualTimeline(interval: 1.0 / 24.0, paused: reduceMotion || !config.animationEnabled || !isEnabled || !hovering) { t in
-            let colors: [Color] = switch config.preset {
-            case .chromatic: [.cyan, .white, .pink, .purple, .cyan]
-            case .silver: [.white.opacity(0.9), .gray.opacity(0.55), .white, .gray.opacity(0.72)]
-            case .gold: [.yellow.opacity(0.9), .orange.opacity(0.85), .white.opacity(0.78), .yellow]
-            }
-            Circle()
-                .fill(AngularGradient(colors: colors, center: .center, angle: .degrees(t * 34)))
-                .opacity(isEnabled ? config.strength : 0.20)
-                .overlay {
-                    if config.innerShadow {
-                        Circle().stroke(LinearGradient(colors:[.white.opacity(0.86),.clear,.black.opacity(0.28)],startPoint:.top,endPoint:.bottom),lineWidth:1)
-                    }
-                }
-                .shadow(color: config.glowEnabled && isEnabled ? colors.first!.opacity(0.32 * config.glowGain) : .clear, radius: 7 * config.glowGain)
-        }
+        NativeMetalFx(model: metal, preset: MetalPreset(rawValue: config.preset.rawValue) ?? .chromatic,
+            strength: isEnabled ? config.strength : 0.20,
+            innerShadow: config.innerShadow, glow: config.glowEnabled && isEnabled,
+            glowGain: config.glowGain,
+            paused: reduceMotion || !config.animationEnabled || !isEnabled || !visible)
+        .background { NativeVisualVisibility { visible = $0 } }
+        .background { NativeMetalPointer(model: metal, enabled: visible && isEnabled && !reduceMotion) }
+
         .allowsHitTesting(false)
     }
 }
@@ -505,7 +503,7 @@ private struct MetalSendPressStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .scaleEffect(reduceMotion ? 1 : configuration.isPressed ? 0.92 : hovering ? 1.05 : 1)
+            .opacity(configuration.isPressed ? 0.78 : 1)
             .animation(reduceMotion ? nil : .spring(response: 0.18, dampingFraction: 0.72), value: configuration.isPressed)
     }
 }

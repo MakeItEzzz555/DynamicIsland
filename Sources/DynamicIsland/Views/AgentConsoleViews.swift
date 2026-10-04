@@ -73,6 +73,17 @@ struct AgentTranscriptFollowState: Equatable, Sendable {
     mutating func reset() {
         self = AgentTranscriptFollowState()
     }
+
+    mutating func restoreIntent(following: Bool) {
+        isFollowing = following
+        pendingAutoScrollPasses = 0
+        if following { hasUnseenContent = false }
+    }
+
+    mutating func noteUnseenContent() {
+        guard !isFollowing else { return }
+        hasUnseenContent = true
+    }
 }
 
 enum AgentTranscriptScrollTarget {
@@ -172,12 +183,10 @@ struct AgentEmbeddedConsoleView: View {
     var loadDraft: ((AgentSessionInstanceID) -> String)? = nil
     var saveDraft: ((String, AgentSessionInstanceID) -> Void)? = nil
 
+    @State private var transcriptTail = AgentTranscriptTailAnchor()
+
     @State private var follow = AgentTranscriptFollowState()
     @State private var scrollToLatestRequest = 0
-    /// At most one bottom-settle in flight: a burst of streamed output
-    /// produces one scroll, not one per delta.
-    @State private var settlePending = false
-    @State private var settleRequestedAgain = false
 
     var body: some View {
         let _ = AgentPerformanceProbe.count("agents.console.body")
@@ -211,8 +220,7 @@ struct AgentEmbeddedConsoleView: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Selected session details for \(AgentSessionPresentation.primaryTitle(for: session))")
         .onChange(of: session.id) { _, _ in
-            follow.reset()
-            scrollToLatestRequest &+= 1
+            follow.restoreIntent(following: AgentTranscriptViewportStore.shared.position(for: session.id).followingLatest)
         }
     }
 
@@ -225,50 +233,60 @@ struct AgentEmbeddedConsoleView: View {
                         transcriptContent
                             .padding(.vertical, 2)
 
-                        Color.clear
-                            .frame(height: 1)
-                            .id(AgentConsoleScrollAnchor.bottom)
-                            .background {
-                                GeometryReader { bottomProxy in
-                                    // Whole points: sub-pixel jitter from lazy row
-                                    // height estimates must not feed back into state.
-                                    Color.clear.preference(
-                                        key: AgentConsoleBottomPositionPreferenceKey.self,
-                                        value: bottomProxy.frame(
-                                            in: .named(AgentConsoleCoordinateSpace.transcript)
-                                        ).maxY.rounded()
-                                    )
-                                }
-                            }
                     }
                     .coordinateSpace(name: AgentConsoleCoordinateSpace.transcript)
-                    .defaultScrollAnchor(.bottom)
                     .scrollBounceBehavior(.basedOnSize)
-                    .onPreferenceChange(AgentConsoleBottomPositionPreferenceKey.self) { bottomY in
-                        // Write state only on a real change: an unconditional write
-                        // re-renders the transcript, which re-measures the lazy
-                        // stack and can report another bottom position — a layout
-                        // feedback loop that could livelock while output streams.
-                        var next = follow
-                        next.observeViewport(
-                            distanceFromBottom: bottomY - viewport.size.height.rounded(),
-                            contentToken: transcriptFollowToken
-                        )
-                        if next != follow { follow = next }
+                    .background {
+                        AgentTranscriptViewportProbe(
+                            sessionID: session.id, contentToken: transcriptFollowToken,
+                            jumpRequest: scrollToLatestRequest, realizationID: String(describing: latestTranscriptAnchor), tail: transcriptTail,
+                            realizeLatest: { proxy.scrollTo(latestTranscriptAnchor, anchor: .bottom) }
+                        ) { following in
+                            follow.restoreIntent(following: following)
+                        }
                     }
-                    .onChange(of: transcriptFollowToken) { _, token in
-                        guard follow.contentDidChange(to: token) else { return }
-                        settleAtLatest(proxy, target: latestScrollTarget, animated: false)
+                    .onPreferenceChange(AgentTranscriptReadingAnchorKey.self) { frames in
+                        guard !follow.isFollowing else { return }
+                        let intersecting = frames.filter { $0.value.minY <= 0 && $0.value.maxY > 0 }
+                        guard let anchor = (intersecting.isEmpty ? frames : intersecting)
+                            .min(by: { abs($0.value.minY) < abs($1.value.minY) }) else { return }
+                        var position = AgentTranscriptViewportStore.shared.position(for: session.id)
+                        position.readingEntryID = anchor.key
+                        position.readingEntryOffset = max(0, -anchor.value.minY)
+                        AgentTranscriptViewportStore.shared.save(position, for: session.id)
+                    }
+                    .onChange(of: transcriptFollowToken) { _, _ in
+                        if follow.isFollowing && !AgentTranscriptViewportStore.shared.position(for: session.id).followingLatest {
+                            follow.restoreIntent(following: false)
+                        }
+                        // Native geometry already follows growing text. Do
+                        // not republish view-local token bookkeeping for each
+                        // coalesced delta and evaluate the console twice.
+                        if !follow.isFollowing && !follow.hasUnseenContent { follow.noteUnseenContent() }
                     }
                     .onChange(of: scrollToLatestRequest) { _, _ in
                         follow.jumpToLatest()
-                        withAnimation(AgentWorkspaceMotion.transcriptJump(reduceMotion: reduceMotion)) {
-                            proxy.scrollTo(latestScrollTarget, anchor: .bottom)
+                        proxy.scrollTo(latestTranscriptAnchor, anchor: .bottom)
+                    }
+                    .onChange(of: transcriptEntries.last?.id) { _, _ in
+                        // Realize the current lazy tail on structural changes.
+                        // Native measured geometry owns continuous following;
+                        // token deltas never enqueue scrollTo animations.
+                        if AgentTranscriptViewportStore.shared.position(for: session.id).followingLatest {
+                            proxy.scrollTo(latestTranscriptAnchor, anchor: .bottom)
                         }
                     }
                     .onAppear {
-                        follow.jumpToLatest()
-                        settleAtLatest(proxy, target: latestScrollTarget, animated: false)
+                        let saved = AgentTranscriptViewportStore.shared.position(for: session.id)
+                        if saved.followingLatest {
+                            follow.jumpToLatest()
+                            proxy.scrollTo(latestTranscriptAnchor, anchor: .bottom)
+                        } else {
+                            follow.restoreIntent(following: false)
+                            if abs(saved.width - viewport.size.width) > 1, let id = saved.readingEntryID {
+                                proxy.scrollTo(id, anchor: .top)
+                            }
+                        }
                     }
                 }
             }
@@ -295,47 +313,6 @@ struct AgentEmbeddedConsoleView: View {
                 .help("Jump to latest agent output")
             }
         }
-    }
-
-    private func settleAtLatest(_ proxy: ScrollViewProxy, target: AnyHashable, animated: Bool) {
-        guard !settlePending else {
-            settleRequestedAgain = true
-            return
-        }
-        settlePending = true
-        AgentPerformanceProbe.count("agents.console.autoscroll")
-        Task { @MainActor in
-            defer {
-                settlePending = false
-                if settleRequestedAgain, follow.isFollowing {
-                    // Coalesce a burst of streamed deltas into at most one
-                    // additional settle against the newest stable row.
-                    settleRequestedAgain = false
-                    settleAtLatest(proxy, target: latestScrollTarget, animated: false)
-                } else {
-                    settleRequestedAgain = false
-                }
-            }
-            // One layout yield is enough for the growing LazyVStack row. A
-            // second unconditional bottom scroll could run against newer
-            // geometry and overshoot below the response the user is reading.
-            await Task.yield()
-            guard follow.isFollowing else { return }
-            if animated {
-                withAnimation(AgentWorkspaceMotion.transcriptJump(reduceMotion: reduceMotion)) {
-                    proxy.scrollTo(target, anchor: .bottom)
-                }
-            } else {
-                proxy.scrollTo(target, anchor: .bottom)
-            }
-        }
-    }
-
-    private var latestScrollTarget: AnyHashable {
-        if let entryID = AgentTranscriptScrollTarget.latestConversationEntryID(transcriptEntries) {
-            return AnyHashable(entryID)
-        }
-        return AnyHashable(AgentConsoleScrollAnchor.bottom)
     }
 
     private var transcriptFollowToken: String {
@@ -365,6 +342,11 @@ struct AgentEmbeddedConsoleView: View {
         ].joined(separator: "|")
     }
 
+    private var latestTranscriptAnchor: AnyHashable {
+        if !showsOperationalTraffic, let latest = conversationEntries.last { return AnyHashable(latest.id) }
+        return AnyHashable(AgentConsoleScrollAnchor.bottom)
+    }
+
     private var transcriptContent: some View {
         let timeline = AgentPerformanceProbe.measure("agents.timeline.projection") {
             AgentConsoleTimelineProjectionCache.entries(
@@ -376,6 +358,7 @@ struct AgentEmbeddedConsoleView: View {
         }
         let displayedEntries = showsOperationalTraffic ? timeline : conversationEntries
         let latestAgentEntryID = displayedEntries.last(where: { $0.kind == .agent })?.id
+        let hasApprovalTail = showsOperationalTraffic && (actionableApproval != nil || externalPendingApproval != nil)
         let _ = AgentPerformanceProbe.gauge("agents.timeline.rows", displayedEntries.count)
 
         return LazyVStack(alignment: .leading, spacing: 7) {
@@ -412,6 +395,19 @@ struct AgentEmbeddedConsoleView: View {
                     )
                     .equatable()
                     .id(entry.id)
+                    .background(alignment: .bottom) {
+                        if entry.id == displayedEntries.last?.id && !hasApprovalTail {
+                            AgentTranscriptTailMarker(anchor: transcriptTail).frame(height: 1)
+                        }
+                    }
+                    .background {
+                        if !follow.isFollowing {
+                            GeometryReader { row in
+                                Color.clear.preference(key: AgentTranscriptReadingAnchorKey.self,
+                                    value: [entry.id: row.frame(in: .named(AgentConsoleCoordinateSpace.transcript))])
+                            }
+                        }
+                    }
                     .transition(
                         .opacity.combined(
                             with: .scale(scale: 0.995, anchor: .topLeading)
@@ -429,12 +425,16 @@ struct AgentEmbeddedConsoleView: View {
                     session: session,
                     approvalControl: approvalControl
                 )
+                .background(alignment: .bottom) { AgentTranscriptTailMarker(anchor: transcriptTail).frame(height: 1) }
             } else if showsOperationalTraffic, let approval = externalPendingApproval {
                 AgentConsoleExternalApprovalRow(
                     approval: approval,
                     sourceTarget: AgentSourceAssociationResolver.openTarget(for: session)
                 )
+                .background(alignment: .bottom) { AgentTranscriptTailMarker(anchor: transcriptTail).frame(height: 1) }
             }
+
+            Color.clear.frame(height: 1).id(AgentConsoleScrollAnchor.bottom)
 
         }
         .font(.system(size: displayMetrics.transcriptFontSize, weight: .medium))
@@ -637,6 +637,7 @@ private struct AgentConsoleComposer: View {
                     isEnabled: submissionValue != nil &&
                         interactionState.allowsPromptSubmission &&
                         !submissionInFlight,
+                    sessionID: session.id,
                     action: { _ = submitDraft() }
                 )
                 .keyboardShortcut(.return, modifiers: [.command])
@@ -774,10 +775,14 @@ private struct AgentConsoleEntryRow: View, Equatable {
                         .font(.system(size: 9, weight: .bold))
                         .foregroundStyle(Color.cyan.opacity(0.72))
                     if let text = entry.text {
-                        Text(text)
-                            .font(.system(size: 10.5, weight: .regular, design: .monospaced))
-                            .foregroundStyle(.white.opacity(0.88))
-                            .textSelection(.enabled)
+                        if isLatestAgentResponse {
+                            AgentStreamingText(sessionID: sessionID, responseID: entry.id, text: text, active: AgentVisualMotion.animates(sessionState))
+                        } else {
+                            Text(text)
+                                .font(.system(size: 10.5, weight: .regular, design: .monospaced))
+                                .foregroundStyle(.white.opacity(0.88))
+                                .textSelection(.enabled)
+                        }
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1164,11 +1169,10 @@ private enum AgentConsoleScrollAnchor: Hashable {
     case bottom
 }
 
-private struct AgentConsoleBottomPositionPreferenceKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
+private struct AgentTranscriptReadingAnchorKey: PreferenceKey {
+    static let defaultValue: [String: CGRect] = [:]
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, next in next })
     }
 }
 

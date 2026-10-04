@@ -120,7 +120,11 @@ final class AgentsPerformanceHarnessTests: XCTestCase {
             }
         } until: {
             AgentPerformanceProbe.snapshot().counters["agents.stream.delta"] ?? 0 >= deltas
+                && host.streamingText()?.string.hasSuffix("token199 ") == true
+                && host.streamingText()?.visibleRect.isEmpty == false
         }
+        XCTAssertTrue(host.streamingText()?.string.hasSuffix("token199 ") == true,
+                      "Performance evidence must include the rendered current response: \(host.streamingText()?.string.suffix(60) ?? "missing")")
         report["streaming"] = streaming.json(probe: AgentPerformanceProbe.snapshot(), marks: [:], parameters: ["deltas": deltas])
 
         // End the synthetic provider turn before measuring typing. A real
@@ -235,6 +239,91 @@ final class AgentsPerformanceHarnessTests: XCTestCase {
 
     // MARK: Measurement
 
+    /// Production views + a real PTY, deterministic provider traffic. This is
+    /// a child-work/ownership measurement, not a claim about display FPS.
+    func testMeasureShellRendererHandoffs() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["DYNAMIC_ISLAND_AGENT_PERF"] == "1" else {
+            throw XCTSkip("Set DYNAMIC_ISLAND_AGENT_PERF=1 for shell renderer handoff measurements.")
+        }
+        let provider = PerfFakeProvider(provider: .codex, sessionCount: 12)
+        let store = AgentEventStore(), approvals = AgentApprovalController()
+        let controller = AgentManagedSessionController(providers: [provider],
+            coordinator: AgentIngestionCoordinator(eventStore: store), eventStore: store, approvals: approvals)
+        controller.startObserving()
+        let terminal = TerminalSessionController(liveActivities: LiveActivityStore(), capabilities: IslandCapabilityRegistry(), workingDirectoryPath: "/tmp")
+        defer { controller.stop(); terminal.terminate() }
+        await controller.refreshPersistentSnapshot()
+        let session = try XCTUnwrap(store.sessions.first)
+        controller.connect(session)
+        for _ in 0..<200 where !controller.isManaged(session) { await Task.yield() }
+        controller.selectSession(session.id)
+        await controller.refreshTranscript(for: session)
+        try terminal.startShell(initialDirectory: "/tmp")
+        let pid = try XCTUnwrap(terminal.processID)
+        let settings = AppSettings(defaults: UserDefaults(suiteName: "ShellHandoff-\(UUID().uuidString)")!)
+        let host = PerfHost(size: CGSize(width: 820, height: 430))
+        defer { host.window.orderOut(nil); host.window.contentView = nil }
+        let workspace = AgentWorkspacePresentation(), feed = AgentWorkspaceFeedStore()
+        let projects = AgentProjectProjectionStore(), layout = IslandLayoutStore()
+        func page(_ visible: Bool) -> AnyView {
+            AnyView(AgentActivityDashboardView(settings: settings, agentEvents: store,
+                projects: projects, approvalControl: approvals, managedControl: controller,
+                layoutStore: layout, workspaceFeed: feed, workspacePresentation: workspace,
+                terminal: terminal, availableHeight: 410, contentVisible: visible, isContentRemoving: false))
+        }
+        var report: [String: Any] = [:], samples: [[String: Any]] = []
+        for cycle in 0..<20 {
+            AgentPerformanceProbe.reset()
+            let cold = try await measure(host) { host.show(page(false)) } until: { true }
+            let phaseA = AgentPerformanceProbe.snapshot()
+            XCTAssertNil(terminal.terminalView.superview, "Hidden/Feed presentation cannot mount the emulator")
+            XCTAssertEqual(phaseA.counters["agents.console.body"] ?? 0, 0, "Shell-only phase does not construct transcript rows")
+            if cycle == 0 { report["shellOnly"] = cold.json(probe: phaseA, marks: [:]) }
+            AgentPerformanceProbe.reset()
+            let enter = try await measure(host) { host.show(page(true)) } until: {
+                AgentPerformanceProbe.snapshot().marks["agents.transcript.gate.open"] != nil
+            }
+            if cycle == 0 { report["expandChildren"] = enter.json(probe: AgentPerformanceProbe.snapshot(), marks: [:]) }
+            for mode in [AgentWorkspaceMode.terminal, .feed] {
+                AgentPerformanceProbe.reset()
+                let swap = try await measure(host) { workspace.select(mode) } until: {
+                    mode == .terminal ? terminal.terminalView.superview != nil : terminal.terminalView.superview == nil
+                }
+                if cycle == 0 { report[mode == .terminal ? "feedToTerminal" : "terminalToFeed"] = swap.json(probe: AgentPerformanceProbe.snapshot(), marks: [:]) }
+                XCTAssertEqual(terminal.processID, pid)
+            }
+            samples.append(["cycle": cycle, "physicalFootprintBytes": try Self.physicalFootprint(), "enterCPUms": enter.mainThreadCPU * 1000])
+        }
+        let turn = "long-motion-turn"
+        await provider.yield(.turnStarted(.init(nativeSessionID: session.id.sessionID.nativeID, turnID: turn)))
+        AgentPerformanceProbe.reset()
+        let stream = try await measure(host) {
+            for word in 0..<500 {
+                await provider.yield(.transcriptDelta(nativeSessionID: session.id.sessionID.nativeID,
+                    turnID: turn, itemID: "long-stream", delta: "word\(word) "))
+                if word.isMultiple(of: 4) { await host.settle() }
+            }
+        } until: {
+            AgentPerformanceProbe.snapshot().counters["agents.stream.delta"] ?? 0 >= 500
+                && host.streamingText()?.string.hasSuffix("word499 ") == true
+                && host.streamingText()?.visibleRect.isEmpty == false
+        }
+        XCTAssertTrue(host.streamingText()?.string.hasSuffix("word499 ") == true,
+                      "Rendered: \(host.streamingText()?.string.suffix(60) ?? "missing"); canonical: \(controller.transcript(for: session).last?.text.suffix(60) ?? "missing")")
+        report["stream500"] = stream.json(probe: AgentPerformanceProbe.snapshot(), marks: [:], parameters: ["words": 500])
+        await provider.yield(.turnCompleted(.init(nativeSessionID: session.id.sessionID.nativeID, turnID: turn), state: .completed, summary: nil))
+        host.show(AnyView(Color.black)); await host.settle()
+        XCTAssertEqual(terminal.processID, pid)
+        XCTAssertNil(terminal.terminalView.superview)
+        report["samples"] = samples
+        report["samePTY"] = terminal.processID == pid
+        report["classification"] = "automated/fixture native views and real PTY; not packaged display frame pacing"
+        let data = try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
+        if let path = environment["DYNAMIC_ISLAND_AGENT_MOTION_REPORT"] { try data.write(to: URL(fileURLWithPath: path)) }
+        print("AGENTS-MOTION-REPORT\n" + String(decoding: data, as: UTF8.self))
+    }
+
     private struct Measurement {
         let wall: TimeInterval
         let mainThreadCPU: TimeInterval
@@ -338,6 +427,15 @@ private final class PerfHost {
             for child in view.subviews {
                 if let found = search(child) { return found }
             }
+            return nil
+        }
+        return search(hosting)
+    }
+
+    func streamingText() -> AgentStreamingTextView? {
+        func search(_ view: NSView) -> AgentStreamingTextView? {
+            if let text = view as? AgentStreamingTextView { return text }
+            for child in view.subviews { if let found = search(child) { return found } }
             return nil
         }
         return search(hosting)

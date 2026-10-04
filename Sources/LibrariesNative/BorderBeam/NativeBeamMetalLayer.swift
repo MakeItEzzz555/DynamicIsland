@@ -12,7 +12,7 @@ enum BeamMetalResources {
     static let device = MTLCreateSystemDefaultDevice()
     static let result: Result<[MTLRenderPipelineState], Error> = Result {
         guard let device,
-              let url = Bundle.module.url(forResource: "BeamShaders", withExtension: "metal", subdirectory: "Resources")
+              let url = NativeResources.bundle.url(forResource: "BeamShaders", withExtension: "metal", subdirectory: "Resources")
         else { throw NSError(domain: "BorderBeam", code: 1, userInfo: [NSLocalizedDescriptionKey: "Metal device or bundled official shader unavailable"]) }
         // SwiftUI links stitchable functions through its visible-function
         // table. Our fragment entry points call the same equations directly,

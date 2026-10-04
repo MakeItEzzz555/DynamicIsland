@@ -977,10 +977,17 @@ final class AgentManagedSessionControllerTests: XCTestCase {
             nativeSessionID: "managed",
             turnID: "turn-1",
             itemID: "agent-1",
-            delta: "lo"
+            delta: "lo "
         ))
-        try await Task.sleep(for: .milliseconds(20))
-        XCTAssertEqual(controller.transcript(for: session).last?.text, "hello")
+        for delta in ["world\n", "\n", "```swift\n  let x = 1\n```\n"] {
+            await provider.yield(.transcriptDelta(nativeSessionID: "managed", turnID: "turn-1", itemID: "agent-1", delta: delta))
+        }
+        let exactStream = "hello world\n\n```swift\n  let x = 1\n```\n"
+        let streamDeadline = ContinuousClock.now.advanced(by: .seconds(1))
+        while controller.transcript(for: session).last?.text != exactStream, ContinuousClock.now < streamDeadline {
+            await Task.yield()
+        }
+        XCTAssertEqual(controller.transcript(for: session).last?.text, exactStream)
 
         await provider.yield(.transcript(AgentManagedTranscriptEntry(
             id: "agent-1",

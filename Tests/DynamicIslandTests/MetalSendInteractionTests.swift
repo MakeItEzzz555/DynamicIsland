@@ -2,9 +2,44 @@ import AppKit
 import SwiftUI
 import XCTest
 @testable import DynamicIsland
+@testable import LibrariesNative
+import AgentBridgeShared
 
 @MainActor
 final class MetalSendInteractionTests: XCTestCase {
+    func testEnabledNativeHostUnpausesClockAndUnmountPausesIt() async throws {
+        let id = AgentSessionInstanceID(sessionID: .init(provider: .codex, nativeID: "metal-visible-host"), generation: .init(rawValue: 1))
+        let model = AgentMetalModelStore.model(for: id)
+        model.setPaused(true, now: Date().timeIntervalSinceReferenceDate)
+        let window = NSWindow(contentRect: CGRect(x: 40, y: 40, width: 100, height: 100), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        window.contentView = NSHostingView(rootView: MetalSendButton(configuration: .init(), isEnabled: true, sessionID: id) {}.frame(width: 100, height: 100))
+        window.makeKeyAndOrderFront(nil)
+        window.contentView?.layoutSubtreeIfNeeded()
+        func advancing() -> Bool {
+            let now = Date().timeIntervalSinceReferenceDate
+            return model.time(now: now + 1) - model.time(now: now) > 0.9
+        }
+        let deadline = ContinuousClock.now + .seconds(3)
+        while !advancing(), ContinuousClock.now < deadline { await Task.yield() }
+        XCTAssertTrue(advancing(), "A visible enabled Send must not remain paused")
+        func surface(in view: NSView) -> NativeMetalSheet.Surface? {
+            if let surface = view as? NativeMetalSheet.Surface { return surface }
+            for child in view.subviews { if let value = surface(in: child) { return value } }
+            return nil
+        }
+        let renderer = try XCTUnwrap(window.contentView.flatMap(surface(in:)))
+        let firstTime = renderer.parameters?.uniforms.first?.z
+        let redrawDeadline = ContinuousClock.now + .seconds(3)
+        while renderer.parameters?.uniforms.first?.z == firstTime, ContinuousClock.now < redrawDeadline { await Task.yield() }
+        XCTAssertNotEqual(renderer.parameters?.uniforms.first?.z, firstTime, "Visible Timeline must deliver new material frames")
+        window.contentView = nil
+        let cleanupDeadline = ContinuousClock.now + .seconds(3)
+        while advancing(), ContinuousClock.now < cleanupDeadline { await Task.yield() }
+        XCTAssertFalse(advancing(), "Detached Send must stop its decorative clock")
+    }
+
     func testVisibleSendTargetClicksIncludingPaddingAndDisabledFallback() async throws {
         var sent = 0
         let window = NSWindow(contentRect: CGRect(x: 40, y: 40, width: 100, height: 100), styleMask: [.borderless], backing: .buffered, defer: false)

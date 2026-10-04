@@ -273,7 +273,7 @@ struct BeamSpec: Decodable {
     /// Shared instance decoded once from the bundled resource.
     static let shared: BeamSpec = {
         guard
-            let url = Bundle.module.url(forResource: "beam-spec", withExtension: "json", subdirectory: "Resources"),
+            let url = NativeResources.bundle.url(forResource: "beam-spec", withExtension: "json", subdirectory: "Resources"),
             let data = try? Data(contentsOf: url),
             let spec = try? JSONDecoder().decode(BeamSpec.self, from: data)
         else {

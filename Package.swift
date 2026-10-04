@@ -15,7 +15,7 @@ let package = Package(
     ],
     dependencies: [.package(url: "https://github.com/migueldeicaza/SwiftTerm.git", exact: "1.20.0")],
     targets: [
-        .target(name: "LibrariesNative", path: "Sources/LibrariesNative", resources: [.copy("LICENSE.txt"), .copy("BorderBeam/Resources")], swiftSettings: [.swiftLanguageMode(.v5)]),
+        .target(name: "LibrariesNative", path: "Sources/LibrariesNative", resources: [.copy("LICENSE.txt"), .copy("BorderBeam/Resources"), .copy("MetalFx/MetalResources")], swiftSettings: [.swiftLanguageMode(.v5)]),
         .target(
             name: "AgentBridgeShared",
             path: "Sources/AgentBridgeShared"

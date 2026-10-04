@@ -95,7 +95,11 @@ final class ClaudeInteractiveProviderTests: XCTestCase {
         let delta = await provider.project(envelope(type: "stream_event", event: .object([
             "type": .string("content_block_delta"),
             "index": .integer(0),
-            "delta": .object(["type": .string("text_delta"), "text": .string("Hello")])
+            "delta": .object(["type": .string("text_delta"), "text": .string("Hello ")])
+        ])))
+        let whitespace = await provider.project(envelope(type: "stream_event", event: .object([
+            "type": .string("content_block_delta"), "index": .integer(0),
+            "delta": .object(["type": .string("text_delta"), "text": .string("\n  ")])
         ])))
         let completed = await provider.project(ClaudeCodeStreamEnvelope(
             nativeSessionID: "session-1",
@@ -105,18 +109,22 @@ final class ClaudeInteractiveProviderTests: XCTestCase {
                 "message": .object([
                     "id": .string("message-1"),
                     "content": .array([
-                        .object(["type": .string("text"), "text": .string("Hello world")])
+                        .object(["type": .string("text"), "text": .string("Hello world\n")])
                     ])
                 ])
             ])
         ))
 
-        guard case .transcriptDelta(_, _, let deltaID, _) = try XCTUnwrap(delta.first),
+        guard case .transcriptDelta(_, _, let deltaID, let deltaText) = try XCTUnwrap(delta.first),
+              case .transcriptDelta(_, _, let whitespaceID, let whitespaceText) = try XCTUnwrap(whitespace.first),
               case .transcript(let final) = try XCTUnwrap(completed.first) else {
             return XCTFail("Expected delta and completed transcript")
         }
         XCTAssertEqual(deltaID, final.id)
-        XCTAssertEqual(final.text, "Hello world")
+        XCTAssertEqual(whitespaceID, deltaID)
+        XCTAssertEqual(deltaText, "Hello ")
+        XCTAssertEqual(whitespaceText, "\n  ")
+        XCTAssertEqual(final.text, "Hello world\n")
     }
 
     /// Verified shape from Claude Code 2.1.285 with --include-partial-messages:

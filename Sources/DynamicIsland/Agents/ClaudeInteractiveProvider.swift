@@ -476,7 +476,7 @@ actor ClaudeInteractiveProvider: AgentInteractiveProvider {
         }
         guard eventType == "content_block_delta",
               event["delta"]?["type"]?.stringValue == "text_delta",
-              let text = AgentManagedTranscriptEntry.boundedText(event["delta"]?["text"]?.stringValue),
+              let text = AgentManagedTranscriptEntry.boundedText(event["delta"]?["text"]?.stringValue, preservingWhitespace: true),
               let messageID = streamMessageIDs[envelope.nativeSessionID] else {
             return []
         }
@@ -501,7 +501,7 @@ actor ClaudeInteractiveProvider: AgentInteractiveProvider {
             let index = streamedIndex ?? position
             switch block["type"]?.stringValue {
             case "text":
-                guard let text = AgentManagedTranscriptEntry.boundedText(block["text"]?.stringValue) else { continue }
+                guard let text = AgentManagedTranscriptEntry.boundedText(block["text"]?.stringValue, preservingWhitespace: true) else { continue }
                 mapped.append(.transcript(AgentManagedTranscriptEntry(
                     id: "\(messageID):text:\(index)",
                     nativeSessionID: envelope.nativeSessionID,

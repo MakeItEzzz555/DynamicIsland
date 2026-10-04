@@ -74,11 +74,12 @@ final class AgentsPerformanceArchitectureTests: XCTestCase {
                 delta: "t\(index) "
             ))
         }
-        for _ in 0..<100 where !(controller.transcript(for: session).first?.text.hasSuffix("t29") ?? false) {
+        let exactText = (0..<30).map { "t\($0) " }.joined()
+        for _ in 0..<100 where controller.transcript(for: session).first?.text != exactText {
             try await Task.sleep(for: .milliseconds(5))
         }
         controller.flushTranscriptPublications()
-        XCTAssertTrue(controller.transcript(for: session).first?.text.hasSuffix("t29") ?? false)
+        XCTAssertEqual(controller.transcript(for: session).first?.text, exactText)
         XCTAssertEqual(feed.entries.first?.text, controller.transcript(for: session).first?.text)
         XCTAssertEqual(chromePublications, 0, "deltas must not invalidate provider/project/usage chrome")
         XCTAssertEqual(storePublications, 0)

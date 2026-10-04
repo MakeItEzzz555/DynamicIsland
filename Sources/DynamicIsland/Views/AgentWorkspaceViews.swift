@@ -472,17 +472,19 @@ struct AgentRightWorkspace: View {
                             onSelect: onSelect, isVisible: isVisible && presentation.mode == .feed
                         )
                     case .terminal:
-                        if let terminal {
+                        if let terminal, isVisible && presentation.mode == .terminal {
                             AgentWorkspaceTerminalView(
                                 controller: terminal, session: selectedSession,
                                 isVisible: isVisible && presentation.mode == .terminal,
                                 focusRequest: presentation.terminalFocusRequest,
                                 layoutStore: layoutStore
                             )
-                        } else {
+                        } else if terminal == nil {
                             Text("Terminal is unavailable in this preview")
                                 .font(.system(size: 10)).foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        } else {
+                            Color.clear
                         }
                     }
                 }

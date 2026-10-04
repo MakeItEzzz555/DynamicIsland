@@ -224,10 +224,10 @@ final class AgentWorkspaceSnapshotTests: XCTestCase {
         state.entries = (0..<8).map { index in
             AgentManagedTranscriptEntry(id: "viewport-\(index)", nativeSessionID: session.id.sessionID.nativeID,
                 turnID: "viewport-turn", role: .agent,
-                text: (0..<12).map { "History \(index) line \($0)" }.joined(separator: "\n"), timestamp: fixtureDate)
+                text: (0..<12).map { "History \(index) line \($0)" }.joined(separator: "\n"), timestamp: fixtureDate.addingTimeInterval(Double(index)))
         }
         let root = TranscriptViewportFixtureView(state: state, session: session, approvals: fixture.approvals)
-        let hosting = NSHostingView(rootView: root.frame(width: 440, height: 300))
+        var hosting = NSHostingView(rootView: root.frame(width: 440, height: 300))
         hosting.frame = CGRect(x: 0, y: 0, width: 440, height: 300)
         let window = NSWindow(contentRect: hosting.frame, styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -239,31 +239,36 @@ final class AgentWorkspaceSnapshotTests: XCTestCase {
             hosting.layoutSubtreeIfNeeded()
             try await Task.sleep(for: .milliseconds(5))
         }
-        let scroll = try XCTUnwrap(Self.findTranscriptScrollView(in: hosting))
+        var scroll = try XCTUnwrap(Self.findTranscriptScrollView(in: hosting))
+        func tailMarker(in view: NSView) -> AgentTranscriptTailMarker.Marker? {
+            if let marker = view as? AgentTranscriptTailMarker.Marker { return marker }
+            for child in view.subviews { if let marker = tailMarker(in: child) { return marker } }
+            return nil
+        }
         func distanceFromBottom() -> CGFloat {
-            guard let document = scroll.documentView else { return .greatestFiniteMagnitude }
-            return document.bounds.maxY - scroll.contentView.bounds.maxY
+            guard let document = scroll.documentView, let marker = tailMarker(in: hosting) else { return .greatestFiniteMagnitude }
+            return marker.convert(marker.bounds, to: document).maxY - scroll.contentView.bounds.maxY
         }
         func waitForBottom() async throws {
             let deadline = ContinuousClock.now.advanced(by: .seconds(3))
             // The actual message is the anchor. Padding and the measuring
             // sentinel follow it, so document-bottom equality is not required.
-            while distanceFromBottom() > AgentTranscriptFollowState.nearBottomThreshold, ContinuousClock.now < deadline {
+            while (distanceFromBottom() > AgentTranscriptFollowState.nearBottomThreshold || distanceFromBottom() < -1), ContinuousClock.now < deadline {
                 hosting.layoutSubtreeIfNeeded()
                 try await Task.sleep(for: .milliseconds(5))
             }
             XCTAssertLessThanOrEqual(distanceFromBottom(), AgentTranscriptFollowState.nearBottomThreshold,
                                      "Latest response must remain within the near-bottom viewport")
-            XCTAssertGreaterThanOrEqual(distanceFromBottom(), -1, "The viewport must not overshoot below the document")
+            XCTAssertGreaterThanOrEqual(distanceFromBottom(), -1, "The viewport must not overshoot below actual content")
         }
-        func waitForContentGrowth(from previousHeight: CGFloat) async throws {
+        func waitForContentGrowth(from previousHeight: CGFloat, line: UInt = #line) async throws {
             let deadline = ContinuousClock.now.advanced(by: .seconds(3))
-            while (scroll.documentView?.bounds.height ?? 0) <= previousHeight, ContinuousClock.now < deadline {
+            while (scroll.documentView?.bounds.height ?? 0) == previousHeight, ContinuousClock.now < deadline {
                 hosting.layoutSubtreeIfNeeded()
                 try await Task.sleep(for: .milliseconds(5))
             }
-            XCTAssertGreaterThan(scroll.documentView?.bounds.height ?? 0, previousHeight,
-                                 "Observe the new content layout before checking its scroll position")
+            XCTAssertNotEqual(scroll.documentView?.bounds.height ?? 0, previousHeight,
+                              "Observe layout changing; a lazy document estimate may shrink as text is realized", line: line)
         }
         try await waitForBottom()
         for index in 0..<6 {
@@ -275,28 +280,99 @@ final class AgentWorkspaceSnapshotTests: XCTestCase {
             try await waitForContentGrowth(from: previousHeight)
             try await waitForBottom()
         }
+        NotificationCenter.default.post(name: NSScrollView.willStartLiveScrollNotification, object: scroll)
         scroll.contentView.scroll(to: CGPoint(x: 0, y: 0))
         scroll.reflectScrolledClipView(scroll.contentView)
+        NotificationCenter.default.post(name: NSScrollView.didEndLiveScrollNotification, object: scroll)
         hosting.layoutSubtreeIfNeeded()
         // Wait for the measured viewport to report this actual user-owned scroll.
         for _ in 0..<8 { await Task.yield(); hosting.layoutSubtreeIfNeeded() }
         let historyOffset = scroll.contentView.bounds.origin.y
         let historyHeight = scroll.documentView?.bounds.height ?? 0
         state.entries.append(AgentManagedTranscriptEntry(id: "viewport-next", nativeSessionID: session.id.sessionID.nativeID,
-            turnID: "viewport-next-turn", role: .agent, text: "New response while reading history", timestamp: fixtureDate))
+            turnID: "viewport-next-turn", role: .agent, text: "New response while reading history", timestamp: fixtureDate.addingTimeInterval(10)))
         try await waitForContentGrowth(from: historyHeight)
         XCTAssertEqual(scroll.contentView.bounds.origin.y, historyOffset, accuracy: 8,
                        "Streaming must not yank a reader away from history")
         if let document = scroll.documentView {
+            NotificationCenter.default.post(name: NSScrollView.willStartLiveScrollNotification, object: scroll)
             scroll.contentView.scroll(to: CGPoint(x: 0, y: max(0, document.bounds.maxY - scroll.contentView.bounds.height)))
             scroll.reflectScrolledClipView(scroll.contentView)
+            NotificationCenter.default.post(name: NSScrollView.didEndLiveScrollNotification, object: scroll)
         }
         for _ in 0..<8 { await Task.yield(); hosting.layoutSubtreeIfNeeded() }
         let resumedHeight = scroll.documentView?.bounds.height ?? 0
         state.entries.append(AgentManagedTranscriptEntry(id: "viewport-resumed", nativeSessionID: session.id.sessionID.nativeID,
-            turnID: "viewport-resumed-turn", role: .agent, text: "Following resumed\nLatest response", timestamp: fixtureDate))
+            turnID: "viewport-resumed-turn", role: .agent, text: "Following resumed\nLatest response", timestamp: fixtureDate.addingTimeInterval(11)))
         try await waitForContentGrowth(from: resumedHeight)
         try await waitForBottom()
+
+        func remount() async throws {
+            window.contentView = nil
+            hosting = NSHostingView(rootView: root.frame(width: 440, height: 300))
+            hosting.frame = CGRect(x: 0, y: 0, width: 440, height: 300)
+            window.contentView = hosting
+            let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+            while Self.findTranscriptScrollView(in: hosting) == nil, ContinuousClock.now < deadline {
+                hosting.layoutSubtreeIfNeeded(); await Task.yield()
+            }
+            scroll = try XCTUnwrap(Self.findTranscriptScrollView(in: hosting))
+            try await waitForBottom()
+            XCTAssertEqual(distanceFromBottom(), 0, accuracy: 1,
+                           "The realized latest row, rather than estimated document space, owns following")
+        }
+        try await remount()
+        window.contentView = nil
+        state.entries.append(AgentManagedTranscriptEntry(id: "arrived-while-collapsed", nativeSessionID: session.id.sessionID.nativeID,
+            turnID: "collapsed-turn", role: .agent, text: String(repeating: "New actual latest\n", count: 16), timestamp: fixtureDate.addingTimeInterval(12)))
+        try await remount()
+        NotificationCenter.default.post(name: NSScrollView.willStartLiveScrollNotification, object: scroll)
+        scroll.contentView.scroll(to: CGPoint(x: 0, y: 50))
+        scroll.reflectScrolledClipView(scroll.contentView)
+        NotificationCenter.default.post(name: NSScrollView.didEndLiveScrollNotification, object: scroll)
+        for _ in 0..<8 { await Task.yield(); hosting.layoutSubtreeIfNeeded() }
+        let savedReading = scroll.contentView.bounds.origin.y
+        XCTAssertFalse(AgentTranscriptViewportStore.shared.position(for: session.id).followingLatest)
+        window.contentView = nil
+        hosting = NSHostingView(rootView: root.frame(width: 440, height: 300))
+        hosting.frame = CGRect(x: 0, y: 0, width: 440, height: 300)
+        window.contentView = hosting
+        for _ in 0..<20 { await Task.yield(); hosting.layoutSubtreeIfNeeded() }
+        scroll = try XCTUnwrap(Self.findTranscriptScrollView(in: hosting))
+        XCTAssertEqual(scroll.contentView.bounds.origin.y, savedReading, accuracy: 1, "History intent survives unmount")
+
+        // Three substantially different tall responses expose lazy document
+        // estimates that a document-bottom-only assertion can falsely accept.
+        func latestText(in view: NSView) -> AgentStreamingTextView? {
+            if let text = view as? AgentStreamingTextView { return text }
+            for child in view.subviews { if let text = latestText(in: child) { return text } }
+            return nil
+        }
+        for index in 0..<3 {
+            var saved = AgentTranscriptViewportStore.shared.position(for: session.id)
+            saved.followingLatest = true
+            AgentTranscriptViewportStore.shared.save(saved, for: session.id)
+            state.entries.append(AgentManagedTranscriptEntry(id: "tall-response-\(index)", nativeSessionID: session.id.sessionID.nativeID,
+                turnID: "tall-turn-\(index)", role: .agent,
+                text: (0..<(60 + index * 20)).map { "\($0). Long response words wrap accurately without an empty viewport." }.joined(separator: "\n"), timestamp: fixtureDate.addingTimeInterval(Double(100 + index))))
+            window.contentView = nil
+            hosting = NSHostingView(rootView: root.frame(width: 440, height: 300))
+            hosting.frame = CGRect(x: 0, y: 0, width: 440, height: 300)
+            window.contentView = hosting
+            let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+            var distance = CGFloat.greatestFiniteMagnitude
+            repeat {
+                hosting.layoutSubtreeIfNeeded(); await Task.yield()
+                if let text = latestText(in: hosting), let nativeScroll = Self.findTranscriptScrollView(in: hosting), let document = nativeScroll.documentView,
+                   let manager = text.layoutManager, let container = text.textContainer {
+                    let inkEnd = manager.usedRect(for: container).maxY
+                    let end = text.convert(CGPoint(x: 0, y: inkEnd), to: document).y
+                    distance = end - nativeScroll.contentView.bounds.maxY
+                }
+            } while (distance > 8 || distance < -24) && ContinuousClock.now < deadline
+            XCTAssertGreaterThanOrEqual(distance, -24, "The actual latest glyphs, not estimated blank document space, must be visible")
+            XCTAssertLessThanOrEqual(distance, 8, "A tall remounted response must restore its actual text end")
+        }
     }
 
     private static func findTranscriptScrollView(in view: NSView) -> NSScrollView? {

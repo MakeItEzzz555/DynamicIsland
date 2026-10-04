@@ -224,7 +224,7 @@ struct AgentActivityDashboardView: View {
             reduceMotion: reduceMotion,
             transcriptPresentationReady: presentation.transcriptReady,
             presentationGeneration: presentation.generation,
-            transcriptLoadDelay: reduceMotion ? 0 : 0.04,
+            transcriptLoadDelay: 0,
             workspaceFeed: workspaceFeed, workspacePresentation: workspacePresentation, terminal: terminal
         )
         .environment(\.agentProjectLocations, projects.index)
@@ -553,7 +553,7 @@ struct AgentDashboardContentView: View {
                         onSelect: managedControl.selectSession,
                         onSelectAttention: selectAttentionSession,
                         canEmphasize: canEmphasize,
-                        isVisible: contentVisible, layoutStore: layoutStore
+                        isVisible: contentVisible && transcriptPresentationReady, layoutStore: layoutStore
                     )
                 }
                 .layoutPriority(2)
@@ -636,7 +636,16 @@ struct AgentDashboardContentView: View {
         index: Int,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        if let settings {
+        if !contentVisible && !isContentRemoving {
+            // Rendering is gated, not merely its opacity. Shell/chrome can
+            // commit geometry without constructing a hidden transcript/PTY.
+            Color.clear
+        } else if index == 3 {
+            // Never blur the whole transcript/terminal during shell morphing.
+            content()
+                .opacity(contentVisible ? 1 : 0)
+                .animation(AgentWorkspaceMotion.selection(reduceMotion: reduceMotion), value: contentVisible)
+        } else if let settings {
             content()
                 .innerBlurScaleClean(
                     settings: settings,

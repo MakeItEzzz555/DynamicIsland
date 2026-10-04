@@ -650,7 +650,7 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
             return nil
         }
 
-        guard let text = AgentManagedTranscriptEntry.boundedText(rawText) else { return nil }
+        guard let text = AgentManagedTranscriptEntry.boundedText(rawText, preservingWhitespace: role == .agent) else { return nil }
         return AgentManagedTranscriptEntry(
             id: itemID,
             nativeSessionID: nativeSessionID,

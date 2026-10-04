@@ -86,9 +86,11 @@ struct AgentManagedTranscriptEntry: Identifiable, Equatable, Sendable {
     let text: String
     let timestamp: Date
 
-    static func boundedText(_ value: String?) -> String? {
+    static func boundedText(_ value: String?, preservingWhitespace: Bool = false) -> String? {
         guard let value else { return nil }
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Streaming fragments are not complete messages: trimming each one
+        // joins words and destroys Markdown indentation/blank lines.
+        let trimmed = preservingWhitespace ? value : value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         if trimmed.count <= maximumTextLength { return trimmed }
         return String(trimmed.prefix(maximumTextLength - 1)) + "…"

@@ -6,7 +6,7 @@ output="${2:-/tmp/dynamicisland-phase3}"
 mkdir -p "$output"
 case "${1:-focused}" in
   focused)
-    swift test --filter 'LibrariesNativeFidelityTests|LibrariesOrbGoldenTests|AgentVisualEffectsTests|AgentProcessingSemanticTests|LiveActivityLayoutResolverTests|ExpandedIslandMotionTests|MetalSendInteractionTests' > "$output/focused.log" 2>&1
+    swift test --filter 'LibrariesNativeFidelityTests|LibrariesOrbGoldenTests|AgentVisualEffectsTests|AgentProcessingSemanticTests|LiveActivityLayoutResolverTests|ExpandedIslandMotionTests|MetalSendInteractionTests|AgentStreamingTextTests|NativeMetalFxTests' > "$output/focused.log" 2>&1
     tail -12 "$output/focused.log"
     ;;
   parity)
@@ -42,6 +42,10 @@ case "${1:-focused}" in
     DYNAMIC_ISLAND_AGENT_PERF=1 DYNAMIC_ISLAND_AGENT_PERF_REPORT="$output/performance.json" swift test --skip-build --filter 'AgentsPerformanceHarnessTests/testMeasureAgentsPage' > "$output/performance.log" 2>&1
     tail -12 "$output/performance.log"
     ;;
+  motion)
+    DYNAMIC_ISLAND_AGENT_PERF=1 DYNAMIC_ISLAND_AGENT_MOTION_REPORT="$output/motion.json" swift test --filter 'AgentsPerformanceHarnessTests/testMeasureShellRendererHandoffs|AgentStreamingTextTests|NativeMetalFxTests|AgentWorkspaceSnapshotTests/testNativeTranscriptKeepsLatestVisibleDuringStreamingAndRespectsHistoryScroll' > "$output/motion.log" 2>&1
+    tail -12 "$output/motion.log"
+    ;;
   capture)
     DYNAMIC_ISLAND_LIVE_SCREEN_RECORDING=1 swift test --skip-build --filter 'ScreenRecordingLiveTests' > "$output/capture.log" 2>&1
     tail -12 "$output/capture.log"
@@ -55,5 +59,5 @@ case "${1:-focused}" in
     codesign --verify --deep --strict --verbose=2 dist/DynamicIsland.app > "$output/signature.log" 2>&1
     cat "$output/signature.log"
     ;;
-  *) echo 'usage: validate_agent_visual_fidelity.sh focused|parity|full|native|codex|approval|semantics|soak|performance|capture|camera|release [output-directory]' >&2; exit 64 ;;
+  *) echo 'usage: validate_agent_visual_fidelity.sh focused|parity|full|native|codex|approval|semantics|soak|performance|motion|capture|camera|release [output-directory]' >&2; exit 64 ;;
 esac
