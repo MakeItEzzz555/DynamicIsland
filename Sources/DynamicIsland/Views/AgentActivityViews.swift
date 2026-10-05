@@ -409,14 +409,16 @@ struct AgentDashboardContentView: View {
                       let session = sessions.first(where: { $0.id == id }) else { return nil }
                 return (provider, session)
             })
-            let usage = AgentWorkspaceUsageProjection.make(
-                accountUsage: managedControl.accountUsageByProvider,
-                selectedSessions: selectedByProvider
-            )
+            let _ = selectedByProvider
+            // A usage widget placed in a customized layout replaces the row.
+            let usageWidgetPlaced = customization.map { store in
+                store.configuration.customizedSurfaces.contains(.agents)
+                    && store.configuration.widgets(on: .agents).contains { $0.kind.isUsage }
+            } ?? false
             VStack(alignment: .leading, spacing: 6) {
-                if showsUsage {
+                if showsUsage && !usageWidgetPlaced {
                     stagedAgentContent(index: 1) {
-                        AgentWorkspaceUsageStrip(groups: usage, availableWidth: proxy.size.width)
+                        AgentWorkspaceUsageStrip(managedControl: managedControl, availableWidth: proxy.size.width)
                     }
                 }
 
@@ -522,7 +524,8 @@ struct AgentDashboardContentView: View {
             stagedAgentContent(index: 3) {
                 if let customization, editingWorkspace.wrappedValue || customization.configuration.customizedSurfaces.contains(.agents) {
                     IslandWidgetEditor(store: customization, surface: .agents, editing: editingWorkspace,
-                        eligibleWidgets: [.chat, .feed] + (terminal != nil ? [.terminal] : []) + (settings?.timerEnabled != false && timerWidget != nil ? [.timer] : []), extraMotion: !(settings?.reduceExtraMotion ?? false),
+                        eligibleWidgets: [.chat, .feed] + (terminal != nil ? [.terminal] : []) + (settings?.timerEnabled != false && timerWidget != nil ? [.timer] : [])
+                            + (showsUsage ? [.agentUsage, .codexUsage, .claudeUsage] : []), extraMotion: !(settings?.reduceExtraMotion ?? false),
                         onLayoutPreview: { layoutStore?.setWorkspaceLayoutPreview($0, surface: .agents) }) { region, height in
                         if region.isStack {
                             return AnyView(AgentChatTerminalStack(presentation: workspacePresentation, isVisible: contentVisible && transcriptPresentationReady && !editingWorkspace.wrappedValue, reduceMotion: reduceMotion || (settings?.reduceExtraMotion ?? false), layoutStore: layoutStore,
@@ -538,6 +541,9 @@ struct AgentDashboardContentView: View {
                             return AnyView(customizedFeed(selectedSession: selectedSession))
                         case .timer:
                             return timerWidget ?? AnyView(EmptyView())
+                        case .agentUsage, .codexUsage, .claudeUsage:
+                            return AnyView(AgentUsageWidgetView(managedControl: managedControl,
+                                                                scope: AgentUsageWidgetView.Scope(widget: region.widgets[0].kind) ?? .combined))
                         default:
                             return AnyView(EmptyView())
                         }

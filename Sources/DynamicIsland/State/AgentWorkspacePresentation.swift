@@ -114,4 +114,18 @@ enum AgentWorkspaceUsageProjection {
         }
         return (0..<3).map { index in values.map { $0[index] } }
     }
+
+    /// Quota indicators grouped by provider (5h, Week). Context is excluded
+    /// from production presentation: its per-provider semantics differ and it
+    /// is unavailable for most selections (see context.md).
+    static func providerGroups(
+        accountUsage: [AgentProvider: AgentUsage],
+        now: Date = Date()
+    ) -> [AgentProvider: [AgentUsageIndicator]] {
+        Dictionary(uniqueKeysWithValues: [AgentProvider.codex, .claude].map { provider in
+            (provider, AgentUsageIndicatorPresentation.make(
+                provider: provider, accountUsage: accountUsage[provider] ?? AgentUsage(), selectedSession: nil, now: now
+            ).filter { $0.kind != .context })
+        })
+    }
 }

@@ -101,12 +101,11 @@ final class AgentWorkspaceSnapshotTests: XCTestCase {
                 try await hosted(compact(selected), size: CGSize(width: 410, height: 70), reduceMotion: false, light: false,
                                  to: output.appendingPathComponent(name + ".png"))
             } else if name == "19-six-usage-indicators" {
-                let selectedByProvider = Dictionary(uniqueKeysWithValues: fixture.store.sessions.map { ($0.id.sessionID.provider, $0) })
-                let groups = AgentWorkspaceUsageProjection.make(accountUsage: fixture.controller.accountUsageByProvider,
-                                                               selectedSessions: selectedByProvider, now: fixtureDate)
-                XCTAssertEqual(groups.count, 3)
-                XCTAssertEqual(groups.map(\.count), [2, 2, 2])
-                try await hosted(AgentWorkspaceUsageStrip(groups: groups).padding(20), size: CGSize(width: 700, height: 120),
+                // Provider-grouped quota usage; Context is not presented.
+                let groups = AgentWorkspaceUsageProjection.providerGroups(accountUsage: fixture.controller.accountUsageByProvider, now: fixtureDate)
+                XCTAssertEqual(groups[.codex]?.map(\.kind), [.fiveHour, .week])
+                XCTAssertEqual(groups[.claude]?.map(\.kind), [.fiveHour, .week])
+                try await hosted(AgentWorkspaceUsageStrip(managedControl: fixture.controller).padding(20), size: CGSize(width: 700, height: 120),
                                  reduceMotion: false, light: false, to: output.appendingPathComponent(name + ".png"))
             } else {
                 let columns = AgentWorkspaceColumns.make(width: width - 28, emphasized: fixture.presentation.isEmphasized)
@@ -625,7 +624,7 @@ final class AgentWorkspaceSnapshotTests: XCTestCase {
             XCTAssertTrue(CGRect(x: 0, y: 0, width: width, height: 330).contains(container), "width \(width): composer \(container), strip \(strip)")
         }
         XCTAssertEqual(AgentWorkspaceUsageStrip.diameter(for: 900), 48)
-        XCTAssertEqual(AgentWorkspaceUsageStrip.rowHeight(for: 900), 66)
+        XCTAssertEqual(AgentWorkspaceUsageStrip.rowHeight(for: 900), 64) // 48pt rings + caption; provider identity beside rings
     }
 
     func testCompactPermissionExactOwnershipOneShotAndAcknowledgement() async throws {

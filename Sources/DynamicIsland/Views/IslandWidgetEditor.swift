@@ -17,6 +17,8 @@ struct IslandWidgetEditor: View {
     @State private var draft = WorkspaceConfiguration.initial
     @State private var drag: WorkspaceEditorDrag?
     @State private var target: WorkspaceDropTarget?
+    /// Hovered widget + insertion edge for the interior target glow.
+    @State private var intent: WorkspaceDropIntent?
     @State private var measurements = WorkspaceEditorMeasurements()
     @State private var dragFrames: [WidgetID: CGRect] = [:]
     @State private var announcement = ""
@@ -24,8 +26,12 @@ struct IslandWidgetEditor: View {
     private var motion: Animation? { WorkspaceEditorMotion.reorder(reduceMotion: reduceMotion || !extraMotion) }
     private var configuration: WorkspaceConfiguration { editing ? draft : store.configuration }
     private var visibleConfiguration: WorkspaceConfiguration {
-        guard let drag, let target, case .insert = target else { return configuration }
-        return preview(configuration, drag: drag, target: target)
+        // The prospective layout: neighbours move to exactly the result of a drop.
+        guard let drag, let target else { return configuration }
+        switch target {
+        case .insert, .stack: return preview(configuration, drag: drag, target: target)
+        case .combine, .invalid: return configuration
+        }
     }
 
     var body: some View {
@@ -46,6 +52,11 @@ struct IslandWidgetEditor: View {
         }
         .onChange(of: draft) { _, configuration in
             if editing { onLayoutPreview?(configuration) }
+        }
+        // The shell creates/reclaims space for the prospective layout while
+        // dragging; cancelling returns it to the draft. Discrete per target.
+        .onChange(of: target) { _, _ in
+            if editing { onLayoutPreview?(visibleConfiguration) }
         }
         .onDisappear { onLayoutPreview?(nil) }
         .onExitCommand(perform: editing ? { cancel() } : nil)
@@ -121,12 +132,18 @@ struct IslandWidgetEditor: View {
         let chatID: WidgetID = region.widgets.first(where: { $0.kind == .chat })?.id ?? region.id
         let stackedTarget: Bool = target == .combine(chat: chatID)
         let placeholder: Bool = isPlaceholder(region)
+        let placement = WorkspaceWidgetPlacementContext(
+            isSole: regions(in: visibleConfiguration).count == 1,
+            size: CGSize(width: width, height: height),
+            fillsRow: height > (region.widgets.first?.kind.layoutTraits.preferred.height ?? height) * displayMetrics.expandedCardScale + 1)
         let layers = cardLayers(region, title: title, height: height, placeholder: placeholder)
+            .environment(\.workspaceWidgetPlacement, placement)
             .transformEnvironment(\.timerRulerInteractionRegistration) { if editing { $0.enabled = false } }
             .frame(width: width, height: height, alignment: .top)
         return layers
             .background { cardFill(placeholder: placeholder) }
             .overlay { cardOutline(placeholder: placeholder, stackedTarget: stackedTarget) }
+            .overlay { targetGlow(region) }
             .overlay { combineHint(stackedTarget) }
             .overlay(alignment: .topTrailing) { badgeOverlay(region, title: title, placeholder: placeholder) }
             .background { frameReporter(region.id) }
@@ -198,6 +215,28 @@ struct IslandWidgetEditor: View {
             cardShape.strokeBorder(color, style: style)
                 .allowsHitTesting(false)
                 .transition(.opacity)
+        }
+    }
+
+    /// Subtle interior glow on the hovered widget, strongest at the edge where
+    /// the dragged widget will land. Stays inside the card's shape.
+    @ViewBuilder
+    private func targetGlow(_ region: WorkspaceWidgetRegion) -> some View {
+        if editing, let intent, intent.hovered == region.id, let edge = intent.edge, edge != .center {
+            let (start, end): (UnitPoint, UnitPoint) = switch edge {
+            case .leading: (.leading, .trailing)
+            case .trailing: (.trailing, .leading)
+            case .top: (.top, .bottom)
+            case .bottom: (.bottom, .top)
+            case .center: (.center, .center)
+            }
+            cardShape
+                .fill(LinearGradient(colors: [WorkspaceEditorChrome.accent.opacity(0.22), WorkspaceEditorChrome.accent.opacity(0)],
+                                     startPoint: start, endPoint: UnitPoint(x: (start.x + end.x * 1.5) / 2.5, y: (start.y + end.y * 1.5) / 2.5)))
+                .overlay { cardShape.strokeBorder(WorkspaceEditorChrome.accent.opacity(0.28), lineWidth: 1) }
+                .allowsHitTesting(false)
+                .transition(.opacity)
+                .id(edge.hashValue)
         }
     }
 
@@ -412,8 +451,8 @@ struct IslandWidgetEditor: View {
         drag = source
         target = nil
     }
-    private func finishDrag() { drag = nil; target = nil; dragFrames = [:] }
-    private func clearTarget() { withAnimation(motion) { target = nil } }
+    private func finishDrag() { drag = nil; target = nil; intent = nil; dragFrames = [:] }
+    private func clearTarget() { withAnimation(motion) { target = nil; intent = nil } }
     private func cancel() { finishDrag(); editing = false; WorkspaceEditorAccessibility.announce("Widget changes cancelled") }
     private func resize(_ region: WorkspaceWidgetRegion, to size: WidgetPresentationSize) {
         modify("Widget size \(size.title.lowercased())") { $0.setSize(size, for: region.id) }
@@ -441,12 +480,15 @@ struct IslandWidgetEditor: View {
         case .existing(let id): draft.widgets(on: surface).first(where: { $0.id == id })?.kind ?? (draft.regions(on: surface).first(where: { $0.id == id })?.isStack == true ? .chat : nil)
         }
         guard let draggedKind else { return false }
-        let resolved = WorkspaceDropResolver.resolve(point: location, bounds: bounds, surface: surface,
-                                                      slots: slots, draggedKind: draggedKind, previous: target)
-        let next: WorkspaceDropTarget? = resolved == .invalid ? nil : resolved
-        guard next != target else { return next != nil }
+        let draggedID: WidgetID? = if case .existing(let id) = drag { id } else { nil }
+        let resolved = WorkspaceDropResolver.resolveIntent(point: location, bounds: bounds, surface: surface,
+                                                            slots: slots, draggedKind: draggedKind, draggedID: draggedID,
+                                                            previous: intent)
+        let next: WorkspaceDropTarget? = resolved.target == .invalid ? nil : resolved.target
+        let nextIntent: WorkspaceDropIntent? = next == nil ? nil : resolved
+        guard next != target || nextIntent != intent else { return next != nil }
         AgentPerformanceProbe.count("workspace.editor.target.changed")
-        withAnimation(motion) { target = next }
+        withAnimation(motion) { target = next; intent = nextIntent }
         return next != nil
     }
     private func commitDrop(_ location: CGPoint) -> Bool {
@@ -680,6 +722,9 @@ extension IslandWidget {
         case .terminal: Color(white: 0.32)
         case .feed: Color(red: 0.20, green: 0.75, blue: 0.45)
         case .workspace: Color(white: 0.4)
+        case .agentUsage: Color(red: 0.36, green: 0.62, blue: 1.0)
+        case .codexUsage: Color(red: 0.22, green: 0.58, blue: 0.95)
+        case .claudeUsage: Color(red: 0.86, green: 0.47, blue: 0.30)
         }
     }
 }
@@ -694,5 +739,27 @@ private extension NSImage {
         }
         image.isTemplate = false
         return image
+    }
+}
+
+
+/// What the workspace layout allocated to one widget. Widgets use it to
+/// compose for their real cell (e.g. a centered solo composition) instead of
+/// assuming the multi-widget footprint.
+struct WorkspaceWidgetPlacementContext: Equatable {
+    var isSole = false
+    var size: CGSize = .zero
+    /// The cell is taller than the widget's preferred height (shared row).
+    var fillsRow = false
+}
+
+private struct WorkspaceWidgetPlacementKey: EnvironmentKey {
+    static let defaultValue = WorkspaceWidgetPlacementContext()
+}
+
+extension EnvironmentValues {
+    var workspaceWidgetPlacement: WorkspaceWidgetPlacementContext {
+        get { self[WorkspaceWidgetPlacementKey.self] }
+        set { self[WorkspaceWidgetPlacementKey.self] = newValue }
     }
 }

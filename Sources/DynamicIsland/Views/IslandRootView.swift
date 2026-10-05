@@ -386,6 +386,7 @@ struct IslandRootView: View {
     @State private var expandedContentMounted = false
     @State private var isContentRemoving = false
     @State private var sequenceGeneration = 0
+    @State private var childExitTracker = ExpandedChildExitTracker()
     @State private var workspaceContentVisible = true
     @State private var workspaceExitGeneration: Int?
     @State private var isCollapsedHovering = false
@@ -569,12 +570,18 @@ struct IslandRootView: View {
             }
             .onChange(of: layoutStore.isExpandedContentExiting) { _, newValue in
                 if newValue {
-                    beginContentExitSequence()
+                    driveChildExit()
                 } else if islandState.state == .expanded, contentPhase == .contentCollapsing {
                     // The pending collapse was cancelled by an expansion before
                     // the shell contracted: bring the children back.
+                    childExitTracker.reset()
                     cancelContentExitSequence()
                 }
+            }
+            // The generation, not the Bool edge, drives the exit: SwiftUI can
+            // coalesce collapse -> cancel -> collapse into true -> true.
+            .onChange(of: layoutStore.expandedChildExitGeneration) { _, _ in
+                driveChildExit()
             }
             .onChange(of: layoutStore.isCollapseShellOnly) { _, newValue in
                 if !newValue, islandState.state == .collapsed {
@@ -1387,10 +1394,30 @@ struct IslandRootView: View {
         }
     }
 
+    /// Children exit -> acknowledgement -> shell collapse. Acknowledges the
+    /// current collapse generation from actual visual state, so a coalesced,
+    /// cancelled or interrupted exit can never leave the shell waiting.
+    private func driveChildExit() {
+        let childrenHidden = !contentVisible
+        switch childExitTracker.drive(generation: layoutStore.expandedChildExitGeneration,
+                                      isExiting: layoutStore.isExpandedContentExiting,
+                                      childrenHidden: childrenHidden) {
+        case .beginExit:
+            beginContentExitSequence()
+        case .acknowledge(let generation):
+            sequenceGeneration += 1
+            renderedContentMode = .expanded
+            contentPhase = .contentCollapsing
+            isContentRemoving = expandedContentMounted
+            layoutStore.acknowledgeExpandedChildExit(generation: generation)
+        case .none:
+            break
+        }
+    }
+
     private func beginContentExitSequence() {
         sequenceGeneration += 1
-        let sequence = sequenceGeneration
-        let exitGeneration = layoutStore.expandedChildExitGeneration
+        let token = childExitTracker.beginAnimation()
         let plan = ExpandedIslandMotion.collapsePlan(settings: settings, reduceMotion: reduceMotion)
         renderedContentMode = .expanded
         contentPhase = .contentCollapsing
@@ -1398,8 +1425,13 @@ struct IslandRootView: View {
             contentVisible = false
             isContentRemoving = expandedContentMounted
         } completion: {
-            guard sequence == sequenceGeneration, layoutStore.isExpandedContentExiting else { return }
-            layoutStore.acknowledgeExpandedChildExit(generation: exitGeneration)
+            if let generation = childExitTracker.animationFinished(
+                token: token,
+                currentGeneration: layoutStore.expandedChildExitGeneration,
+                isExiting: layoutStore.isExpandedContentExiting
+            ) {
+                layoutStore.acknowledgeExpandedChildExit(generation: generation)
+            }
         }
     }
 
@@ -1421,6 +1453,7 @@ struct IslandRootView: View {
     }
 
     private func finalizeCompactPresentation() {
+        childExitTracker.reset()
         renderedContentMode = .compact
         expandedContentMounted = false
         contentVisible = false
@@ -3647,6 +3680,10 @@ struct ExpandedIslandView: View {
                 })
         case .chat, .terminal, .feed:
             EmptyView()
+        case .agentUsage, .codexUsage, .claudeUsage:
+            if let scope = AgentUsageWidgetView.Scope(widget: widget) {
+                AgentUsageWidgetView(managedControl: modules.agentManagedControl, scope: scope)
+            }
         case .media:
             MediaModuleView(settings: settings, media: modules.media, availableHeight: height, onLauncherActivated: onShortcutLaunched, onMediaSourceOpened: onShortcutLaunched)
         case .files:

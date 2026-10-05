@@ -383,9 +383,15 @@ final class OverlayWindowController {
                     let state = self.islandState.state
                     self.debugLog("state committed as \(state)")
                     self.debugLog("state changed to \(state)")
-                    if state == .expanded {
+                    // A committed state ends the child-exit phase in both
+                    // directions. Clearing it here (not in a delayed,
+                    // morph-generation-gated block that a collapsed live
+                    // activity morph can supersede) keeps the collapsed pill
+                    // hit-testable, so the island can always expand again.
+                    if IslandCollapseRequest.exitPhaseEnds(at: state) {
                         self.layoutStore.isExpandedContentExiting = false
-                    } else {
+                    }
+                    if state != .expanded {
                         self.resetExpandedContentScrollTracking()
                         self.layoutStore.setExpandedContentScrollRegion(.zero)
                     }
@@ -941,7 +947,14 @@ final class OverlayWindowController {
                 clipboardEnabled: settings.clipboardHistoryEnabled))
     }
 
+    /// While editing (and for the change that ends editing), shell geometry
+    /// follows the prospective layout directly: the editor canvas lays out in
+    /// the shell's own animated frame, so children move with it and never need
+    /// the exit-then-resize handoff used for committed configuration changes.
+    private var workspaceEditGeometryLive = false
+
     private func scheduleWorkspaceGeometryCheck() {
+        if layoutStore.workspaceLayoutPreview != nil { workspaceEditGeometryLive = true }
         guard !workspaceGeometryCheckScheduled else { return }
         workspaceGeometryCheckScheduled = true
         DispatchQueue.main.async { [weak self] in
@@ -950,7 +963,13 @@ final class OverlayWindowController {
             guard self.canPresentOverlay else { return }
             let size = self.desiredExpandedSize
             let current = self.targetExpandedFrame?.size ?? self.layoutStore.expandedSize
-            if self.islandState.state == .expanded, !self.layoutStore.isExpandedContentExiting,
+            let liveEdit = self.workspaceEditGeometryLive
+            if self.layoutStore.workspaceLayoutPreview == nil { self.workspaceEditGeometryLive = false }
+            if liveEdit, self.islandState.state == .expanded, !self.layoutStore.isExpandedContentExiting,
+               abs(size.width - current.width) > 1 || abs(size.height - current.height) > 1 {
+                if self.layoutStore.workspaceGeometryTransition.phase != .idle { self.layoutStore.cancelWorkspaceGeometry() }
+                self.reposition(animated: true, reason: "workspaceEditPreview", force: true)
+            } else if self.islandState.state == .expanded, !self.layoutStore.isExpandedContentExiting,
                abs(size.width - current.width) > 1 || abs(size.height - current.height) > 1 {
                 let transition = self.layoutStore.workspaceGeometryTransition
                 if transition.phase == .idle || transition.targetSize != size {
@@ -1676,7 +1695,15 @@ final class OverlayWindowController {
     private func requestCollapseWithSequencing() {
         guard canPresentOverlay else { return }
         guard islandState.state == .expanded else { return }
-        guard !layoutStore.isExpandedContentExiting else { return }
+        if layoutStore.isExpandedContentExiting {
+            // Already exiting: re-drive with a fresh generation instead of
+            // ignoring the request. The root acknowledges from actual visual
+            // state, so a lost acknowledgement always recovers here.
+            let generation = collapseRequest.begin()
+            layoutStore.expandedChildExitGeneration = generation
+            debugLog("requestCollapseWithSequencing re-driven generation \(generation)")
+            return
+        }
         layoutStore.cancelWorkspaceGeometry()
 
         debugLog("requestCollapseWithSequencing started")

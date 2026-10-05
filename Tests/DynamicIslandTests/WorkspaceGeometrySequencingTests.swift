@@ -77,8 +77,9 @@ final class WorkspaceGeometrySequencingTests: XCTestCase {
     }
 
     @MainActor func testUsageRowHasBoundedHeightRatherThanAbsorbingTranscriptSpace() {
-        XCTAssertEqual(AgentWorkspaceUsageStrip.rowHeight(for: 1000), 66)
-        XCTAssertEqual(AgentWorkspaceUsageStrip.rowHeight(for: 500), 58)
+        // Provider-grouped row: ring + metric caption, identity beside the rings.
+        XCTAssertEqual(AgentWorkspaceUsageStrip.rowHeight(for: 1000), 64)
+        XCTAssertEqual(AgentWorkspaceUsageStrip.rowHeight(for: 500), 56)
     }
 
     @MainActor func testCollapseAcknowledgementRejectsRetiredAndDuplicateExits() {

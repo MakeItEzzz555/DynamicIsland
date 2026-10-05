@@ -21,8 +21,10 @@ struct AgentWorkspaceSplitView<Chat: View, Workspace: View>: View {
     }
 }
 
+/// Default Agents usage row: the same provider-grouped composition as the
+/// Agent Usage widget, centered, with a bounded intrinsic height.
 struct AgentWorkspaceUsageStrip: View {
-    let groups: [[AgentUsageIndicator]]
+    @ObservedObject var managedControl: AgentManagedSessionController
     var availableWidth: CGFloat = 960
 
     static func diameter(for width: CGFloat) -> CGFloat {
@@ -30,39 +32,14 @@ struct AgentWorkspaceUsageStrip: View {
     }
 
     static func rowHeight(for width: CGFloat) -> CGFloat {
-        diameter(for: width) + 18
+        // ring + metric caption; provider identity sits beside the rings
+        diameter(for: width) + 16
     }
 
     var body: some View {
-        let _ = AgentPerformanceProbe.count("agents.usage.body")
-        GeometryReader { geometry in
-            let side = Self.diameter(for: geometry.size.width)
-            HStack(spacing: 0) {
-                ForEach(Array(groups.enumerated()), id: \.offset) { _, pair in
-                    VStack(spacing: 3) {
-                        HStack(spacing: side >= 48 ? 12 : 8) {
-                            ForEach(pair) { value in
-                                AgentUsageIndicatorCircle(
-                                    indicator: value,
-                                    metrics: .init(quotaDiameter: side, contextDiameter: side),
-                                    showsLabels: false
-                                )
-                            }
-                        }
-                        Text(pair.first.map { "\($0.label) · \($0.directionLabel)" } ?? "")
-                            .font(.system(size: side >= 48 ? 9 : 8, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.82)
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-        }
-        .frame(height: Self.rowHeight(for: availableWidth))
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Both providers: five-hour, weekly and selected-session context usage")
+        AgentUsageWidgetView(managedControl: managedControl, scope: .combined, compact: availableWidth < 620)
+            .frame(height: Self.rowHeight(for: availableWidth))
+            .accessibilityLabel("Codex and Claude five-hour and weekly usage remaining")
     }
 }
 

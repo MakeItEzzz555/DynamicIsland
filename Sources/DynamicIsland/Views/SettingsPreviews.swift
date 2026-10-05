@@ -607,7 +607,7 @@ struct AgentsSettingsPreview: View {
                             provider: provider,
                             accountUsage: managedControl.accountUsage,
                             selectedSession: nil
-                        ),
+                        ).filter { $0.kind != .context },
                         spacing: 10
                     )
                 }

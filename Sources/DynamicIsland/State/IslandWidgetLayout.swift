@@ -4,12 +4,14 @@ import CoreGraphics
 
 enum IslandWidget: String, CaseIterable, Codable, Identifiable {
     case media, files, clipboard, timer, calendar, shortcuts, activities, chat, terminal, feed, workspace
+    case agentUsage, codexUsage, claudeUsage
     func isEligible(on surface: WorkspaceSurface) -> Bool {
         switch surface {
         case .media: return ![.chat, .terminal, .feed].contains(self)
-        case .agents: return [.chat, .terminal, .feed, .timer].contains(self)
+        case .agents: return [.chat, .terminal, .feed, .timer, .agentUsage, .codexUsage, .claudeUsage].contains(self)
         }
     }
+    var isUsage: Bool { [.agentUsage, .codexUsage, .claudeUsage].contains(self) }
 
     var id: String { rawValue }
     var title: String {
@@ -25,6 +27,9 @@ enum IslandWidget: String, CaseIterable, Codable, Identifiable {
         case .terminal: "Terminal"
         case .feed: "Feed"
         case .workspace: "Workspace"
+        case .agentUsage: "Agent Usage"
+        case .codexUsage: "Codex Usage"
+        case .claudeUsage: "Claude Usage"
         }
     }
     var symbol: String {
@@ -40,6 +45,44 @@ enum IslandWidget: String, CaseIterable, Codable, Identifiable {
         case .terminal: "terminal.fill"
         case .feed: "list.bullet.rectangle"
         case .workspace: "rectangle.split.2x1"
+        case .agentUsage: "gauge.with.dots.needle.50percent"
+        case .codexUsage: "sparkle"
+        case .claudeUsage: "brain"
+        }
+    }
+}
+
+/// Measurable layout capabilities. The one place widget kinds describe their
+/// size needs; the workspace projection decides placement from these traits,
+/// never from widget-name conditionals in views.
+struct WidgetLayoutTraits: Equatable {
+    /// Comfortable size in a multi-widget composition.
+    var preferred: CGSize
+    /// Smallest readable size; controls keep their hit targets.
+    var minimum: CGSize
+    /// Size when the widget is alone on its surface (centered composition).
+    var solo: CGSize
+    /// May grow taller than `preferred` to share a row's height.
+    var fillsHeight: Bool
+    /// May share a column with another stackable widget beside a taller one.
+    var stackable: Bool
+}
+
+extension IslandWidget {
+    var layoutTraits: WidgetLayoutTraits {
+        switch self {
+        case .media: .init(preferred: .init(width: 360, height: 220), minimum: .init(width: 260, height: 180), solo: .init(width: 330, height: 176), fillsHeight: true, stackable: false)
+        case .files, .clipboard: .init(preferred: .init(width: 260, height: 210), minimum: .init(width: 200, height: 170), solo: .init(width: 300, height: 210), fillsHeight: true, stackable: false)
+        case .timer: .init(preferred: .init(width: 360, height: 160), minimum: .init(width: 280, height: 150), solo: .init(width: 360, height: 160), fillsHeight: true, stackable: true)
+        case .calendar: .init(preferred: .init(width: 320, height: 240), minimum: .init(width: 260, height: 200), solo: .init(width: 320, height: 240), fillsHeight: true, stackable: false)
+        case .shortcuts: .init(preferred: .init(width: 240, height: 120), minimum: .init(width: 180, height: 100), solo: .init(width: 260, height: 140), fillsHeight: false, stackable: true)
+        case .activities: .init(preferred: .init(width: 260, height: 140), minimum: .init(width: 190, height: 110), solo: .init(width: 280, height: 180), fillsHeight: true, stackable: true)
+        case .workspace: .init(preferred: .init(width: 340, height: 240), minimum: .init(width: 260, height: 180), solo: .init(width: 340, height: 240), fillsHeight: true, stackable: false)
+        case .chat: .init(preferred: .init(width: 700, height: 360), minimum: .init(width: 480, height: 300), solo: .init(width: 700, height: 360), fillsHeight: true, stackable: false)
+        case .terminal: .init(preferred: .init(width: 500, height: 320), minimum: .init(width: 360, height: 240), solo: .init(width: 500, height: 320), fillsHeight: true, stackable: false)
+        case .feed: .init(preferred: .init(width: 330, height: 320), minimum: .init(width: 230, height: 220), solo: .init(width: 330, height: 320), fillsHeight: true, stackable: false)
+        case .agentUsage: .init(preferred: .init(width: 420, height: 92), minimum: .init(width: 340, height: 84), solo: .init(width: 420, height: 92), fillsHeight: false, stackable: true)
+        case .codexUsage, .claudeUsage: .init(preferred: .init(width: 200, height: 92), minimum: .init(width: 170, height: 84), solo: .init(width: 220, height: 92), fillsHeight: false, stackable: true)
         }
     }
 }
@@ -119,13 +162,17 @@ struct WidgetPlacement: Codable, Equatable, Identifiable {
     var isVisible: Bool
     var groupID: WidgetID?
     var size: WidgetPresentationSize
+    /// Shares a column with the preceding region (placed directly below it).
+    var stacksBelowPrevious: Bool
     init(id: WidgetID? = nil, kind: IslandWidget, surface: WorkspaceSurface,
-         order: Int, isVisible: Bool = true, groupID: WidgetID? = nil, size: WidgetPresentationSize = .standard) {
+         order: Int, isVisible: Bool = true, groupID: WidgetID? = nil, size: WidgetPresentationSize = .standard,
+         stacksBelowPrevious: Bool = false) {
         self.id = id ?? WidgetID("\(surface.rawValue).\(kind.rawValue)")
         self.kind = kind; self.surface = surface; self.order = order
         self.isVisible = isVisible; self.groupID = groupID; self.size = size
+        self.stacksBelowPrevious = stacksBelowPrevious
     }
-    private enum CodingKeys: String, CodingKey { case id, kind, surface, order, isVisible, groupID, size }
+    private enum CodingKeys: String, CodingKey { case id, kind, surface, order, isVisible, groupID, size, stacksBelowPrevious }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         let kind = try values.decode(IslandWidget.self, forKey: .kind)
@@ -134,7 +181,8 @@ struct WidgetPlacement: Codable, Equatable, Identifiable {
                   surface: surface, order: try values.decodeIfPresent(Int.self, forKey: .order) ?? 0,
                   isVisible: try values.decodeIfPresent(Bool.self, forKey: .isVisible) ?? true,
                   groupID: try values.decodeIfPresent(WidgetID.self, forKey: .groupID),
-                  size: (try? values.decode(WidgetPresentationSize.self, forKey: .size)) ?? .standard)
+                  size: (try? values.decode(WidgetPresentationSize.self, forKey: .size)) ?? .standard,
+                  stacksBelowPrevious: (try? values.decode(Bool.self, forKey: .stacksBelowPrevious)) ?? false)
     }
 }
 
@@ -148,6 +196,8 @@ struct WorkspaceWidgetRegion: Equatable, Identifiable {
     var id: WidgetID
     var widgets: [WidgetPlacement]
     var isStack: Bool { widgets.count > 1 }
+    /// Column membership with the preceding region (vertical composition).
+    var stacksBelowPrevious: Bool { widgets.first?.stacksBelowPrevious ?? false }
 }
 
 struct NavigationTabConfiguration: Codable, Equatable {
@@ -290,6 +340,15 @@ struct WorkspaceConfiguration: Codable, Equatable {
             for (offset, id) in order.enumerated() {
                 if let index = result.placements.firstIndex(where: { $0.id == id }) { result.placements[index].order = offset }
             }
+            // A column needs a visible predecessor; stack segments never split vertically.
+            let visibleIDs = result.regions(on: surface).map(\.id)
+            for index in result.placements.indices where result.placements[index].surface == surface {
+                let placement = result.placements[index]
+                let regionID = placement.groupID ?? placement.id
+                if !placement.isVisible || placement.groupID != nil || visibleIDs.first == regionID {
+                    result.placements[index].stacksBelowPrevious = false
+                }
+            }
         }
         return result
     }
@@ -334,6 +393,7 @@ struct WorkspaceConfiguration: Codable, Equatable {
             for member in group.members { remove(member) }
             groups.removeAll { $0.id == id }
         } else if let index = placements.firstIndex(where: { $0.id == id }), placements[index].kind != .chat {
+            releaseColumn(of: [id], on: placements[index].surface)
             placements[index].isVisible = false
             if let groupID = placements[index].groupID { separateStack(groupID) }
         }
@@ -347,6 +407,7 @@ struct WorkspaceConfiguration: Codable, Equatable {
               moving.allSatisfy({ item in !placements.contains { !ids.contains($0.id) && $0.surface == surface && $0.kind == item.kind } }) else { return }
         let targetMember = groups.first(where: { $0.id == target })?.members.first ?? target
         guard !ids.contains(where: { $0 == targetMember }) else { return }
+        releaseColumn(of: ids, on: surface)
         placements.removeAll { ids.contains($0.id) }
         let insertion = targetMember.flatMap { targetID in placements.firstIndex { $0.id == targetID && $0.surface == surface } } ?? placements.endIndex
         var moved = moving
@@ -356,6 +417,40 @@ struct WorkspaceConfiguration: Codable, Equatable {
         if let groupIndex = groups.firstIndex(where: { $0.id == id }) { groups[groupIndex].surface = surface }
         self = normalized()
     }
+    /// Leaving a column: the moved widget stands alone and a widget that was
+    /// stacked below it inherits its column position.
+    private mutating func releaseColumn(of ids: [WidgetID], on surface: WorkspaceSurface) {
+        let regions = regions(on: surface)
+        guard let index = regions.firstIndex(where: { region in region.widgets.contains { ids.contains($0.id) } }) else { return }
+        let inherited = regions[index].stacksBelowPrevious
+        if index + 1 < regions.count, regions[index + 1].stacksBelowPrevious {
+            for widget in regions[index + 1].widgets {
+                if let at = placements.firstIndex(where: { $0.id == widget.id }) { placements[at].stacksBelowPrevious = inherited }
+            }
+        }
+        for at in placements.indices where ids.contains(placements[at].id) { placements[at].stacksBelowPrevious = false }
+    }
+
+    /// Places `id` directly above or below `target` in one column.
+    mutating func stack(_ id: WidgetID, onto target: WidgetID, below: Bool, on surface: WorkspaceSurface) {
+        guard id != target,
+              let targetRegion = regions(on: surface).first(where: { $0.id == target }), !targetRegion.isStack,
+              groups.first(where: { $0.id == id }) == nil else { return }
+        let regionIDs = regions(on: surface).map(\.id)
+        guard let targetIndex = regionIDs.firstIndex(of: target) else { return }
+        if below {
+            let after = regionIDs.dropFirst(targetIndex + 1).first { $0 != id }
+            move(id, before: after, on: surface)
+            if let at = placements.firstIndex(where: { $0.id == id }) { placements[at].stacksBelowPrevious = true }
+        } else {
+            let targetStacks = targetRegion.stacksBelowPrevious
+            move(id, before: target, on: surface)
+            if let at = placements.firstIndex(where: { $0.id == id }) { placements[at].stacksBelowPrevious = targetStacks }
+            if let at = placements.firstIndex(where: { $0.id == target }) { placements[at].stacksBelowPrevious = true }
+        }
+        self = normalized()
+    }
+
     mutating func shift(_ id: WidgetID, by delta: Int) {
         guard let surface = placements.first(where: { $0.id == id })?.surface ?? groups.first(where: { $0.id == id })?.surface else { return }
         let regions = regions(on: surface)
@@ -440,8 +535,19 @@ final class WorkspaceCustomizationStore: ObservableObject {
 
 enum WorkspaceDropTarget: Equatable {
     case insert(surface: WorkspaceSurface, before: WidgetID?)
+    /// Above/below an existing widget, sharing its column.
+    case stack(surface: WorkspaceSurface, onto: WidgetID, below: Bool)
     case combine(chat: WidgetID)
     case invalid
+}
+
+/// Spatial intent while dragging: which widget is hovered and on which edge
+/// the dragged widget will land. Drives the preview and the target glow.
+struct WorkspaceDropIntent: Equatable {
+    enum Edge: Equatable { case leading, trailing, top, bottom, center }
+    var target: WorkspaceDropTarget
+    var hovered: WidgetID?
+    var edge: Edge?
 }
 
 struct WorkspaceDropSlot: Equatable {
@@ -506,6 +612,45 @@ enum WorkspaceDropResolver {
         return .insert(surface: surface, before: before)
     }
 
+    /// Directional spatial intent. Inside a hovered widget the dominant axis of
+    /// the pointer's offset from its center decides left/right (insert, same
+    /// midpoint semantics as `resolve`) versus above/below (share its column).
+    /// The previous axis is kept within `axisBias` so the center never flickers.
+    static func resolveIntent(point: CGPoint, bounds: CGRect, surface: WorkspaceSurface,
+                              slots: [WorkspaceDropSlot], draggedKind: IslandWidget, draggedID: WidgetID?,
+                              previous: WorkspaceDropIntent? = nil, hysteresis: CGFloat = 8,
+                              axisBias: CGFloat = 0.18) -> WorkspaceDropIntent {
+        let base = resolve(point: point, bounds: bounds, surface: surface, slots: slots.filter { $0.id != draggedID },
+                           draggedKind: draggedKind, previous: previous?.target, hysteresis: hysteresis)
+        switch base {
+        case .invalid: return .init(target: .invalid, hovered: nil, edge: nil)
+        case .combine(let chat): return .init(target: base, hovered: chat, edge: .center)
+        default: break
+        }
+        guard let hovered = slots.first(where: { $0.id != draggedID && $0.frame.contains(point) }),
+              hovered.frame.width > 1, hovered.frame.height > 1 else {
+            return .init(target: base, hovered: nil, edge: nil)
+        }
+        let nx = (point.x - hovered.frame.midX) / (hovered.frame.width / 2)
+        let ny = (point.y - hovered.frame.midY) / (hovered.frame.height / 2)
+        let wasVertical = previous?.hovered == hovered.id && (previous?.edge == .top || previous?.edge == .bottom)
+        let vertical = canShareColumn(draggedKind, hovered: hovered, surface: surface)
+            && (wasVertical ? abs(ny) + axisBias >= abs(nx) : abs(ny) > abs(nx) + axisBias)
+        if vertical {
+            return .init(target: .stack(surface: surface, onto: hovered.id, below: ny > 0),
+                         hovered: hovered.id, edge: ny > 0 ? .bottom : .top)
+        }
+        return .init(target: base, hovered: hovered.id, edge: nx >= 0 ? .trailing : .leading)
+    }
+
+    /// Large primary surfaces (Chat, Terminal, Feed, a Chat/Terminal stack)
+    /// never share a column; every compact widget can.
+    static func canShareColumn(_ dragged: IslandWidget, hovered: WorkspaceDropSlot, surface: WorkspaceSurface) -> Bool {
+        let large: Set<IslandWidget> = [.chat, .terminal, .feed]
+        if large.contains(dragged) || large.contains(hovered.kind) { return false }
+        return !(surface == .agents && hovered.kind == .workspace)
+    }
+
     static func applying(_ target: WorkspaceDropTarget, to original: WorkspaceConfiguration,
                          draggedID: WidgetID?, paletteKind: IslandWidget?) -> WorkspaceConfiguration? {
         var draft = original
@@ -527,6 +672,21 @@ enum WorkspaceDropResolver {
                 guard paletteKind.isEligible(on: surface) else { return nil }
                 draft.add(paletteKind, on: surface, before: before)
             } else { return nil }
+        case .stack(let surface, let onto, let below):
+            guard draft.regions(on: surface).contains(where: { $0.id == onto && !$0.isStack }) else { return nil }
+            let id: WidgetID
+            if let draggedID {
+                guard draggedID != onto, draft.groups.first(where: { $0.id == draggedID }) == nil,
+                      let moving = draft.placements.first(where: { $0.id == draggedID }), moving.kind.isEligible(on: surface),
+                      !draft.placements.contains(where: { $0.id != draggedID && $0.surface == surface && $0.kind == moving.kind }) else { return nil }
+                if let groupID = moving.groupID { draft.separateStack(groupID) }
+                id = draggedID
+            } else if let paletteKind, paletteKind.isEligible(on: surface) {
+                draft.add(paletteKind, on: surface)
+                guard let added = draft.placement(kind: paletteKind, on: surface) else { return nil }
+                id = added.id
+            } else { return nil }
+            draft.stack(id, onto: onto, below: below, on: surface)
         case .combine(let chat):
             guard draft.placements.contains(where: { $0.id == chat && $0.kind == .chat && $0.isVisible }) else { return nil }
             let terminalKind = draggedID.flatMap { id in draft.placements.first(where: { $0.id == id })?.kind } ?? paletteKind
@@ -547,6 +707,14 @@ struct WorkspaceWidgetFrame: Equatable, Identifiable {
 
 /// Content requirements are shared by the editor and the existing island shell
 /// resolver. This projection never owns screen anchoring or shell state.
+///
+/// Rules (from `WidgetLayoutTraits`, never widget names):
+/// - a widget alone on its surface uses its centered `solo` composition size;
+/// - explicit columns (`stacksBelowPrevious`) and two small stackable widgets
+///   beside a taller anchor share one column instead of stretching;
+/// - every unit in a row receives the row height; widgets that can fill
+///   height do so, others keep their preferred height centered in the row;
+/// - column members split the row height in proportion to their preference.
 struct WorkspaceWidgetLayoutProjection: Equatable {
     let frames: [WorkspaceWidgetFrame]
     let contentSize: CGSize
@@ -558,24 +726,29 @@ struct WorkspaceWidgetLayoutProjection: Equatable {
         let region: WorkspaceWidgetRegion
         let preferred: CGSize
         let minimum: CGSize
+        let fillsHeight: Bool
+        let stackable: Bool
     }
+    /// One horizontal slot: a single region or a vertical column of regions.
+    private struct Unit {
+        var members: [Requirement]
+        func preferred(gap: CGFloat) -> CGSize {
+            .init(width: members.map(\.preferred.width).max() ?? 1,
+                  height: members.map(\.preferred.height).reduce(0, +) + CGFloat(max(0, members.count - 1)) * gap)
+        }
+        func minimum(gap: CGFloat) -> CGSize {
+            .init(width: members.map(\.minimum.width).max() ?? 1,
+                  height: members.map(\.minimum.height).reduce(0, +) + CGFloat(max(0, members.count - 1)) * gap)
+        }
+    }
+
     private static func requirements(_ regions: [WorkspaceWidgetRegion], metrics: ResolvedIslandMetrics) -> [Requirement] {
-        regions.map { region in
+        let solo = regions.count == 1
+        return regions.map { region in
             let sizes = region.widgets.map { widget -> (CGSize, CGSize) in
-                let preferred: CGSize
-                let minimum: CGSize
-                switch widget.kind {
-                case .media: preferred = .init(width: 360, height: 220); minimum = .init(width: 260, height: 180)
-                case .files, .clipboard: preferred = .init(width: 260, height: 210); minimum = .init(width: 200, height: 170)
-                case .timer: preferred = .init(width: 360, height: 160); minimum = .init(width: 280, height: 150)
-                case .calendar: preferred = .init(width: 320, height: 240); minimum = .init(width: 260, height: 200)
-                case .shortcuts: preferred = .init(width: 240, height: 180); minimum = .init(width: 180, height: 140)
-                case .activities: preferred = .init(width: 260, height: 200); minimum = .init(width: 190, height: 150)
-                case .workspace: preferred = .init(width: 340, height: 240); minimum = .init(width: 260, height: 180)
-                case .chat: preferred = .init(width: 700, height: 360); minimum = .init(width: 480, height: 300)
-                case .terminal: preferred = .init(width: 500, height: 320); minimum = .init(width: 360, height: 240)
-                case .feed: preferred = .init(width: 330, height: 320); minimum = .init(width: 230, height: 220)
-                }
+                let traits = widget.kind.layoutTraits
+                let preferred = solo && !region.isStack ? traits.solo : traits.preferred
+                let minimum = CGSize(width: min(traits.minimum.width, preferred.width), height: min(traits.minimum.height, preferred.height))
                 let scale = metrics.expandedCardScale * widget.size.scale
                 // Compact sizing preserves the minimum readable controls.
                 let minScale = metrics.expandedCardScale * max(1, widget.size.scale)
@@ -584,26 +757,55 @@ struct WorkspaceWidgetLayoutProjection: Equatable {
                         .init(width: minimum.width * minScale, height: minimum.height * minScale))
             }
             let stackHeader: CGFloat = region.isStack ? 30 * metrics.spacingScale : 0
+            let traits = region.widgets.map(\.kind.layoutTraits)
             return Requirement(region: region,
                 preferred: .init(width: sizes.map { $0.0.width }.max() ?? 1, height: (sizes.map { $0.0.height }.max() ?? 1) + stackHeader),
-                minimum: .init(width: sizes.map { $0.1.width }.max() ?? 1, height: (sizes.map { $0.1.height }.max() ?? 1) + stackHeader))
+                minimum: .init(width: sizes.map { $0.1.width }.max() ?? 1, height: (sizes.map { $0.1.height }.max() ?? 1) + stackHeader),
+                fillsHeight: region.isStack || traits.allSatisfy(\.fillsHeight),
+                stackable: !region.isStack && traits.allSatisfy(\.stackable))
         }
     }
-    private static func packedRows(_ requirements: [Requirement], width: CGFloat, gap: CGFloat) -> [[Requirement]] {
-        var rows: [[Requirement]] = []
-        var current: [Requirement] = []
-        var used: CGFloat = 0
+
+    private static func units(_ requirements: [Requirement], gap: CGFloat) -> [Unit] {
+        var units: [Unit] = []
         for requirement in requirements {
-            let next = min(requirement.minimum.width, width)
+            if requirement.region.stacksBelowPrevious, !units.isEmpty { units[units.count - 1].members.append(requirement) }
+            else { units.append(Unit(members: [requirement])) }
+        }
+        // Two adjacent small stackable widgets form a column when a taller
+        // anchor exists and the column fits within its height.
+        guard let anchor = units.filter({ $0.members.count == 1 && !$0.members[0].stackable })
+            .map({ $0.preferred(gap: gap).height }).max() else { return units }
+        var index = 0
+        while index + 1 < units.count {
+            let a = units[index], b = units[index + 1]
+            if a.members.count == 1, b.members.count == 1, a.members[0].stackable, b.members[0].stackable,
+               !b.members[0].region.stacksBelowPrevious,
+               a.members[0].preferred.height + gap + b.members[0].preferred.height <= anchor + 1 {
+                units[index].members.append(b.members[0])
+                units.remove(at: index + 1)
+            }
+            index += 1
+        }
+        return units
+    }
+
+    private static func packedRows(_ units: [Unit], width: CGFloat, gap: CGFloat) -> [[Unit]] {
+        var rows: [[Unit]] = []
+        var current: [Unit] = []
+        var used: CGFloat = 0
+        for unit in units {
+            let next = min(unit.minimum(gap: gap).width, width)
             if !current.isEmpty, used + gap + next > width {
                 rows.append(current); current = []; used = 0
             }
             used += (current.isEmpty ? 0 : gap) + next
-            current.append(requirement)
+            current.append(unit)
         }
         if !current.isEmpty { rows.append(current) }
         return rows
     }
+
     static func preferredContentSize(regions: [WorkspaceWidgetRegion], maximumSize: CGSize,
                                      metrics: ResolvedIslandMetrics, editing: Bool = false) -> CGSize {
         let width = finite(maximumSize.width)
@@ -611,13 +813,14 @@ struct WorkspaceWidgetLayoutProjection: Equatable {
         let gap = metrics.spacing(8)
         let inset: CGFloat = editing ? 7 : 0
         let palette: CGFloat = editing ? 54 + gap : 0
-        let rows = packedRows(requirements(regions, metrics: metrics), width: max(1, width - inset * 2), gap: gap)
-        let preferredWidth = rows.map { $0.reduce(0) { $0 + $1.preferred.width } + CGFloat(max(0, $0.count - 1)) * gap }.max() ?? 0
-        let preferredHeight = rows.reduce(CGFloat.zero) { $0 + ($1.map(\.preferred.height).max() ?? 0) } + CGFloat(max(0, rows.count - 1)) * gap
+        let rows = packedRows(units(requirements(regions, metrics: metrics), gap: gap), width: max(1, width - inset * 2), gap: gap)
+        let preferredWidth = rows.map { $0.reduce(0) { $0 + $1.preferred(gap: gap).width } + CGFloat(max(0, $0.count - 1)) * gap }.max() ?? 0
+        let preferredHeight = rows.reduce(CGFloat.zero) { $0 + ($1.map { $0.preferred(gap: gap).height }.max() ?? 0) } + CGFloat(max(0, rows.count - 1)) * gap
         // An empty enabled-feature projection remains a readable recovery surface.
         return .init(width: min(width, max(260 * metrics.expandedCardScale, preferredWidth) + inset * 2),
                      height: min(height, max(120 * metrics.expandedCardScale, preferredHeight) + inset + palette))
     }
+
     static func make(regions: [WorkspaceWidgetRegion], availableSize: CGSize,
                      metrics: ResolvedIslandMetrics, editing: Bool = false) -> Self {
         let width = finite(availableSize.width)
@@ -627,9 +830,9 @@ struct WorkspaceWidgetLayoutProjection: Equatable {
         let palette: CGFloat = editing ? 54 + gap : 0
         let cardWidth = max(1, width - inset * 2)
         let cardHeight = max(1, height - inset - palette)
-        let rows = packedRows(requirements(regions, metrics: metrics), width: cardWidth, gap: gap)
-        let preferredHeights = rows.map { $0.map(\.preferred.height).max() ?? 0 }
-        let minimumHeights = rows.map { $0.map(\.minimum.height).max() ?? 0 }
+        let rows = packedRows(units(requirements(regions, metrics: metrics), gap: gap), width: cardWidth, gap: gap)
+        let preferredHeights = rows.map { $0.map { $0.preferred(gap: gap).height }.max() ?? 0 }
+        let minimumHeights = rows.map { $0.map { $0.minimum(gap: gap).height }.max() ?? 0 }
         let totalGap = CGFloat(max(0, rows.count - 1)) * gap
         let minimumHeight = minimumHeights.reduce(0, +) + totalGap
         let preferredHeight = preferredHeights.reduce(0, +) + totalGap
@@ -642,8 +845,8 @@ struct WorkspaceWidgetLayoutProjection: Equatable {
         for (index, row) in rows.enumerated() {
             let rowHeight = scroll ? preferredHeights[index] : minimumHeights[index] + (heightSlack > 0 ? extraHeight * (preferredHeights[index] - minimumHeights[index]) / heightSlack : 0)
             let gaps = CGFloat(max(0, row.count - 1)) * gap
-            let minimumWidths = row.map { min($0.minimum.width, cardWidth) }
-            let preferredWidths = row.map { min($0.preferred.width, cardWidth) }
+            let minimumWidths = row.map { min($0.minimum(gap: gap).width, cardWidth) }
+            let preferredWidths = row.map { min($0.preferred(gap: gap).width, cardWidth) }
             let minimumWidth = minimumWidths.reduce(0, +)
             let preferredWidth = preferredWidths.reduce(0, +)
             let usable = max(0, cardWidth - gaps)
@@ -651,15 +854,35 @@ struct WorkspaceWidgetLayoutProjection: Equatable {
             let extra = max(0, rowWidth - minimumWidth)
             let slack = max(0, preferredWidth - minimumWidth)
             var x = inset + max(0, (cardWidth - rowWidth - gaps) / 2)
-            for (column, requirement) in row.enumerated() {
-                let itemWidth = minimumWidths[column] + (slack > 0 ? extra * (preferredWidths[column] - minimumWidths[column]) / slack : 0)
-                frames.append(.init(id: requirement.region.id, frame: .init(x: x, y: y, width: itemWidth, height: rowHeight)))
-                x += itemWidth + gap
+            for (column, unit) in row.enumerated() {
+                let unitWidth = minimumWidths[column] + (slack > 0 ? extra * (preferredWidths[column] - minimumWidths[column]) / slack : 0)
+                frames += memberFrames(unit, x: x, y: y, width: unitWidth, height: rowHeight, gap: gap)
+                x += unitWidth + gap
             }
             y += rowHeight + gap
         }
         return Self(frames: frames, contentSize: .init(width: width, height: max(height - palette, y - gap)),
                     columns: rows.map(\.count).max() ?? 0, rows: rows.count, requiresScrolling: scroll)
+    }
+
+    private static func memberFrames(_ unit: Unit, x: CGFloat, y: CGFloat, width: CGFloat,
+                                     height: CGFloat, gap: CGFloat) -> [WorkspaceWidgetFrame] {
+        if unit.members.count == 1 {
+            let member = unit.members[0]
+            // Fill the shared row height when the widget can compose taller;
+            // otherwise keep its preferred height, centered in the row.
+            let itemHeight = member.fillsHeight ? height : min(height, member.preferred.height)
+            return [.init(id: member.region.id, frame: .init(x: x, y: y + (height - itemHeight) / 2, width: width, height: itemHeight))]
+        }
+        let available = max(0, height - CGFloat(unit.members.count - 1) * gap)
+        let total = max(1, unit.members.map(\.preferred.height).reduce(0, +))
+        var cursor = y
+        return unit.members.map { member in
+            let itemHeight = max(member.minimum.height.rounded(.down) > available ? available / CGFloat(unit.members.count) : 0,
+                                 available * member.preferred.height / total)
+            defer { cursor += itemHeight + gap }
+            return .init(id: member.region.id, frame: .init(x: x, y: cursor, width: width, height: itemHeight))
+        }
     }
     private static func finite(_ value: CGFloat) -> CGFloat { value.isFinite ? max(1, value) : 1 }
 }

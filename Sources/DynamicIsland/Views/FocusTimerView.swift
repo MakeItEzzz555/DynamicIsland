@@ -33,9 +33,13 @@ struct FocusTimerView: View {
         previewSeconds = nil
     }
     private var snapshot: TimerTimingSnapshot { timer.timingSnapshot }
+    @Environment(\.workspaceWidgetPlacement) private var widgetPlacement
+    /// In a shared row taller than the timer's own composition, distribute
+    /// the three rows so the controls align with the neighbours' bottoms.
+    private var distributesRows: Bool { !showsPanel && widgetPlacement.fillsRow }
 
     var body: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: distributesRows ? 0 : 6) {
             HStack(spacing: 5) {
                 ForEach(FocusTimerMode.allCases) { item in
                     Button(item.title) { storedMode = item.rawValue }
@@ -58,10 +62,12 @@ struct FocusTimerView: View {
                 .accessibilityLabel(resolution == .seconds ? "Zoom timer ruler out to minutes" : "Zoom timer ruler in to seconds")
                 .accessibilityValue(resolution == .seconds ? "Second precision" : "Minute overview")
             }
+            if distributesRows { Spacer(minLength: 6) }
             TimerRuler(snapshot: snapshot, now: { [timer] in timer.clockNow }, seconds: selectedSeconds,
                        resolution: resolution, extraMotion: !settings.reduceExtraMotion, onCommit: commitSelection, onDragging: { dragging = $0 })
                 .id(mode)
                 .frame(height: TimerRulerScale.rulerHeight)
+            if distributesRows { Spacer(minLength: 6) }
             HStack(spacing: 6) {
                 control(timer.isRunning ? "pause.fill" : "play.fill", label: timer.isRunning ? "Pause timer" : "Start or resume timer", selected: true) {
                     if timer.isRunning { timer.pause() }
@@ -77,7 +83,7 @@ struct FocusTimerView: View {
             }
         }
         .padding(showsPanel ? 12 : 4)
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: distributesRows ? .infinity : nil)
         .background {
             if showsPanel { RoundedRectangle(cornerRadius: 16).fill(.white.opacity(0.035)) }
         }

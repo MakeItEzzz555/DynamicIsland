@@ -633,6 +633,55 @@ extension ExpandedIslandMotion {
     }
 }
 
+/// Root-side child-exit bookkeeping for a pending collapse. The overlay
+/// publishes a monotonic collapse generation; the root answers with "children
+/// are hidden as of generation N". Driving from the generation (not from a
+/// Bool edge SwiftUI may coalesce) and acknowledging the *current* generation
+/// from the actual visual state means no exit can wait for an
+/// acknowledgement that can no longer arrive.
+struct ExpandedChildExitTracker: Equatable {
+    enum Action: Equatable {
+        /// Start (or restart) the child exit animation.
+        case beginExit
+        /// Children are already hidden and nothing is animating: acknowledge now.
+        case acknowledge(Int)
+        case none
+    }
+
+    /// Identity of the newest exit animation; older completions are ignored.
+    private(set) var animationToken = 0
+    private(set) var exitInFlight = false
+
+    /// Called whenever the collapse generation or exiting flag changes.
+    mutating func drive(generation: Int, isExiting: Bool, childrenHidden: Bool) -> Action {
+        guard isExiting else { return .none }
+        if exitInFlight { return .none } // its completion acknowledges the current generation
+        if childrenHidden { return .acknowledge(generation) }
+        return .beginExit
+    }
+
+    /// Marks a new exit animation; returns its token.
+    mutating func beginAnimation() -> Int {
+        animationToken &+= 1
+        exitInFlight = true
+        return animationToken
+    }
+
+    /// The exit animation finished. Only the newest animation counts, and it
+    /// acknowledges whichever collapse generation is current right now.
+    mutating func animationFinished(token: Int, currentGeneration: Int, isExiting: Bool) -> Int? {
+        guard token == animationToken else { return nil }
+        exitInFlight = false
+        return isExiting ? currentGeneration : nil
+    }
+
+    /// An expansion cancelled the exit or the shell finished collapsing.
+    mutating func reset() {
+        animationToken &+= 1
+        exitInFlight = false
+    }
+}
+
 /// Generation-guarded pending collapse. The island stays expanded while its
 /// children exit; the collapse commits only if it is still the newest request
 /// and was not cancelled by an expansion in the meantime.
@@ -655,6 +704,15 @@ struct IslandCollapseRequest: Equatable {
         pending = nil
         generation += 1
         return true
+    }
+
+    /// The child-exit phase belongs to the expanded state only: committing
+    /// either state ends it. (Expanded: a cancelled collapse; collapsed: the
+    /// children already exited and the shell is contracting.)
+    static func exitPhaseEnds(at state: IslandPresentationState) -> Bool {
+        switch state {
+        case .expanded, .collapsed: true
+        }
     }
 
     /// Consumes the pending collapse if `expected` is still current.

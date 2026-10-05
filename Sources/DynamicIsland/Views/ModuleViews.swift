@@ -209,6 +209,7 @@ struct CompactShelfBadge: View {
 }
 
 struct MediaModuleView: View {
+    @Environment(\.workspaceWidgetPlacement) private var widgetPlacement
     @ObservedObject var settings: AppSettings
     @ObservedObject var media: MediaController
     let availableHeight: CGFloat?
@@ -369,11 +370,27 @@ struct MediaModuleView: View {
 
     @ViewBuilder
     private var activePlayerView: some View {
-        if usesCompactExpandedLayout {
+        if usesCompactExpandedLayout && widgetPlacement.isSole {
+            soloActivePlayerView
+        } else if usesCompactExpandedLayout {
             constrainedActivePlayerView
         } else {
             regularActivePlayerView
         }
+    }
+
+    /// The only widget on its surface: one centered composition sized from
+    /// the allocated cell, with full-size controls (not a scaled-down copy).
+    private var soloActivePlayerView: some View {
+        let width = widgetPlacement.size.width > 0 ? min(330, widgetPlacement.size.width - 28) : 300
+        return ViewThatFits(in: .vertical) {
+            constrainedActivePlayerLayout(artworkSize: 62, transportButtonSize: 32, transportSymbolSize: 13,
+                                          sectionSpacing: 7, headerSpacing: 12, inlineVisualizerTopPadding: 1, centered: true)
+            constrainedActivePlayerLayout(artworkSize: 50, transportButtonSize: 28, transportSymbolSize: 12,
+                                          sectionSpacing: 4, headerSpacing: 10, inlineVisualizerTopPadding: 0, centered: true)
+        }
+        .frame(maxWidth: max(200, width))
+        .frame(maxWidth: .infinity, alignment: .center)
     }
 
     @ViewBuilder
@@ -537,10 +554,11 @@ struct MediaModuleView: View {
         transportSymbolSize: CGFloat,
         sectionSpacing: CGFloat,
         headerSpacing: CGFloat,
-        inlineVisualizerTopPadding: CGFloat
+        inlineVisualizerTopPadding: CGFloat,
+        centered: Bool = false
     ) -> some View {
         return VStack(alignment: .leading, spacing: sectionSpacing) {
-            HStack(alignment: .top, spacing: headerSpacing) {
+            HStack(alignment: centered ? .center : .top, spacing: headerSpacing) {
                 if settings.showAlbumArtwork {
                     ClickableAlbumArtworkButton(
                         settings: settings,
@@ -594,11 +612,12 @@ struct MediaModuleView: View {
                     }
                 }
 
-                Spacer(minLength: 0)
+                if !centered { Spacer(minLength: 0) }
             }
+            .frame(maxWidth: .infinity, alignment: centered ? .center : .leading)
 
             if settings.showPlaybackControls {
-                HStack(spacing: 9) {
+                HStack(spacing: centered ? 14 : 9) {
                     MediaButton(
                         symbol: "backward.fill",
                         label: "Previous track",
@@ -624,6 +643,7 @@ struct MediaModuleView: View {
                         action: media.nextTrack
                     )
                 }
+                .frame(maxWidth: .infinity, alignment: centered ? .center : .leading)
             }
 
             if settings.showProgressSlider {
