@@ -296,6 +296,7 @@ struct AgentActivityDashboardView: View {
 }
 
 struct AgentDashboardContentView: View {
+    @Environment(\.workspaceApplyCompletion) private var applyCompletion
     let sessions: [AgentSession]
     let accountUsage: AgentUsage
     let showsUsage: Bool
@@ -471,6 +472,14 @@ struct AgentDashboardContentView: View {
         .onChange(of: managedControl.selectedProvider) { _, _ in
             reconcileWorkspaceSelection()
         }
+        // Terminal page or edit mode: Chat no longer drives the shell height;
+        // the Terminal keeps its useful native height (trait size).
+        .onChange(of: workspacePresentation.stackPage) { _, page in
+            if page != .chat { layoutStore?.setAgentChatHeightHint(nil) }
+        }
+        .onChange(of: editingWorkspace.wrappedValue) { _, editing in
+            if editing { layoutStore?.setAgentChatHeightHint(nil) }
+        }
         .onChange(of: managedControl.selectedSessionID) { _, _ in
             reconcileWorkspaceSelection()
         }
@@ -490,6 +499,9 @@ struct AgentDashboardContentView: View {
             }
         }
         .onDisappear {
+            // The quantized Chat height hint is kept across collapse/page
+            // changes so re-expanding Agents opens at the right height in one
+            // motion; the first measurement corrects it if content changed.
             transcriptLoadGate.cancel()
             layoutStore?.setTransientInteraction(false, owner: .agentsLauncher)
             layoutStore?.setExpandedScrollGestureSuppressed(false)
@@ -532,15 +544,20 @@ struct AgentDashboardContentView: View {
                         eligibleWidgets: [.chat, .feed] + (terminal != nil ? [.terminal] : []) + (settings?.timerEnabled != false && timerWidget != nil ? [.timer] : [])
                             + (showsUsage ? [.agentUsage, .codexUsage, .claudeUsage] : []), extraMotion: !(settings?.reduceExtraMotion ?? false),
                         onLayoutPreview: { layoutStore?.setWorkspaceLayoutPreview($0, surface: .agents) },
-                        onDragActive: { layoutStore?.setWorkspaceDragActive($0) }) { region, height in
+                        onDragActive: { layoutStore?.setWorkspaceDragActive($0) },
+                        chatHeightHint: { [weak layoutStore] in layoutStore?.agentChatHeightHint },
+                        onApplyCompleted: applyCompletion?.action) { region, height in
                         if region.isStack {
                             return AnyView(AgentChatTerminalStack(presentation: workspacePresentation, isVisible: contentVisible && transcriptPresentationReady && !editingWorkspace.wrappedValue, reduceMotion: reduceMotion || (settings?.reduceExtraMotion ?? false), layoutStore: layoutStore,
-                                chat: { AnyView(chatContent(workspace: workspace, newSessionFolder: newSessionFolder, verticalLayout: AgentWorkspaceVerticalLayoutProjection.make(availableHeight: max(0, height - 30)), composerControls: composerControls, visible: contentVisible && workspacePresentation.stackPage == .chat && !editingWorkspace.wrappedValue)) },
+                                chat: { AnyView(chatContent(workspace: workspace, newSessionFolder: newSessionFolder, verticalLayout: AgentWorkspaceVerticalLayoutProjection.make(availableHeight: max(0, height - 30)), composerControls: composerControls, visible: contentVisible && workspacePresentation.stackPage == .chat && !editingWorkspace.wrappedValue)
+                                    .environment(\.agentChatHeightReporter, chatHeightReporter(stacked: true,
+                                        enabled: workspacePresentation.stackPage == .chat && !editingWorkspace.wrappedValue))) },
                                 terminal: { AnyView(terminalContent(session: selectedSession, visible: contentVisible && transcriptPresentationReady && workspacePresentation.stackPage == .terminal && !editingWorkspace.wrappedValue)) }))
                         }
                         switch region.widgets[0].kind {
                         case .chat:
-                            return AnyView(chatContent(workspace: workspace, newSessionFolder: newSessionFolder, verticalLayout: AgentWorkspaceVerticalLayoutProjection.make(availableHeight: height), composerControls: composerControls, visible: contentVisible && !editingWorkspace.wrappedValue))
+                            return AnyView(chatContent(workspace: workspace, newSessionFolder: newSessionFolder, verticalLayout: AgentWorkspaceVerticalLayoutProjection.make(availableHeight: height), composerControls: composerControls, visible: contentVisible && !editingWorkspace.wrappedValue)
+                                .environment(\.agentChatHeightReporter, chatHeightReporter(stacked: false, enabled: !editingWorkspace.wrappedValue)))
                         case .terminal:
                             return AnyView(terminalContent(session: selectedSession, visible: contentVisible && transcriptPresentationReady && !editingWorkspace.wrappedValue))
                         case .feed:
@@ -570,6 +587,18 @@ struct AgentDashboardContentView: View {
                 .layoutPriority(2)
                 }
             }
+        }
+    }
+
+    /// Content-adaptive Chat height reporting for the customized grid. Nil
+    /// (no reporting) while editing or when Terminal is the visible page.
+    private func chatHeightReporter(stacked: Bool, enabled: Bool) -> AgentChatHeightReporter? {
+        guard enabled, let layoutStore else { return nil }
+        let metrics = layoutStore.displayMetrics
+        let cap = IslandWidget.chat.layoutTraits.preferred.height * metrics.expandedCardScale
+            + (stacked ? 30 * metrics.spacingScale : 0)
+        return AgentChatHeightReporter(cap: cap) { [weak layoutStore] height in
+            layoutStore?.setAgentChatHeightHint(height)
         }
     }
 
@@ -1367,6 +1396,20 @@ private struct AgentSelectedSessionControlView: View {
     let transcriptReady: Bool
     var composerControls: AnyView? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.workspaceWidgetPlacement) private var widgetPlacement
+    @Environment(\.agentChatHeightReporter) private var heightReporter
+    @State private var surplusProbe = AgentSurplusProbe()
+
+    /// Resumable/attaching surfaces have no transcript: their spacers are pure
+    /// surplus. Reporting `cell - surplus` sizes the Chat to banner + message +
+    /// composer controls (stable while the shell animates).
+    private func reportSurplus(_ surplus: CGFloat) {
+        surplusProbe.surplus = surplus
+        guard let heightReporter, widgetPlacement.size.height > 0, surplus.isFinite else { return }
+        let desired = widgetPlacement.size.height - max(0, surplus) + 2 * AgentSelectedSessionSurplusKey.breathing
+        let quantized = (desired / AgentChatHeightPolicy.quantum).rounded(.up) * AgentChatHeightPolicy.quantum
+        heightReporter.report(quantized < heightReporter.cap ? quantized : nil)
+    }
 
     var body: some View {
         let _ = AgentPerformanceProbe.count("agents.selected.body")
@@ -1420,15 +1463,19 @@ private struct AgentSelectedSessionControlView: View {
                     if surface == .attaching {
                         AgentTranscriptLoadingView(session: session)
                     } else {
-                        Spacer(minLength: 0)
+                        Spacer(minLength: 0).background { AgentSelectedSessionSurplusKey.reader }
                         Text("Resume this exact session to continue the conversation")
                             .font(.system(size: 10, weight: .medium))
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
-                        Spacer(minLength: 0)
+                        Spacer(minLength: 0).background { AgentSelectedSessionSurplusKey.reader }
                     }
                 }
                 .frame(minHeight: 0, idealHeight: detailHeight, maxHeight: .infinity)
+                .onPreferenceChange(AgentSelectedSessionSurplusKey.self) { surplus in reportSurplus(surplus) }
+                // Terminal -> Chat re-enables reporting: re-publish the
+                // retained measurement (the preference itself did not change).
+                .onChange(of: heightReporter) { _, _ in reportSurplus(surplusProbe.surplus) }
                 .safeAreaInset(edge: .bottom) {
                     AgentComposerContainer { if let composerControls { composerControls } }
                         .padding(.horizontal, 10).padding(.bottom, 8)
@@ -2379,3 +2426,16 @@ enum AgentWorkspaceHeaderLayout {
 private enum ProviderIconCache {
     static var icons: [String: NSImage?] = [:]
 }
+
+/// Sum of the empty-state spacers in a session surface without a transcript.
+private struct AgentSelectedSessionSurplusKey: PreferenceKey {
+    static let breathing: CGFloat = 14
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value += nextValue() }
+    static var reader: some View {
+        GeometryReader { proxy in Color.clear.preference(key: Self.self, value: proxy.size.height) }
+    }
+}
+
+/// Plain storage for the last measured surplus (no view publication).
+private final class AgentSurplusProbe { var surplus: CGFloat = 0 }

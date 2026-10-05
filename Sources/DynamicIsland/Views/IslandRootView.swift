@@ -3719,7 +3719,8 @@ struct ExpandedIslandView: View {
             IslandWidgetEditor(store: customization, surface: .media, editing: $editingWidgets,
                 eligibleWidgets: eligibleMediaWidgets, extraMotion: !settings.reduceExtraMotion,
                 onLayoutPreview: { layoutStore.setWorkspaceLayoutPreview($0, surface: .media) },
-                onDragActive: { layoutStore.setWorkspaceDragActive($0) }) { region, height in
+                onDragActive: { layoutStore.setWorkspaceDragActive($0) },
+                onApplyCompleted: onShortcutLaunched) { region, height in
                 AnyView(islandWidget(region.widgets[0].kind, height: height))
             }
             .innerBlurScaleClean(settings: settings, isVisible: contentVisible,
@@ -3932,6 +3933,8 @@ struct ExpandedIslandView: View {
             isContentRemoving: isContentRemoving
         )
         .environment(\.agentVisualPreferences, settings.agentVisualPreferences)
+        // Apply in the Agents editor collapses through the same request path.
+        .environment(\.workspaceApplyCompletion, WorkspaceApplyCompletion(action: onShortcutLaunched))
         .frame(maxWidth: .infinity, maxHeight: metrics.pageHeight, alignment: .topLeading)
     }
 

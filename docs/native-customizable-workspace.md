@@ -134,3 +134,10 @@ The interrupted Claude pass found a resumed large transcript pinning the app nea
 - Collapse and workspace children-exit acknowledgements use isolated exit clocks; a newer collapse request recovers immediately when children are hidden.
 - Timer selection is >= 1 s for every input path and zoom level; pointer and wheel sessions never share a rebased anchor.
 - Packaged evidence: typing (Chat/Terminal/switching), 24/24 Terminal-active collapse cycles with the same PTY PID, Timer lower-bound flicks at all three zoom levels and a 1 s countdown completion. See context.md for details.
+
+
+## Adaptive Agent Chat, Send and Apply validation (2026-10-05, after c684dcf)
+
+- Agent Chat height is content-adaptive between a readable floor and the previous fixed height (`AgentChatHeightPolicy`, `agentChatHeightHint`); long transcripts keep the previous geometry and scroll; the Terminal stack page keeps its native height.
+- Apply commits once, ends editing and collapses the island through the normal sequence; Cancel never collapses.
+- Packaged: resumable Chat 408 -> 212 pt, Terminal 408 pt, Chat/Terminal round trip stable, long transcript 408 pt; Send by mouse click and by Return; Apply/Cancel cycles. See context.md.

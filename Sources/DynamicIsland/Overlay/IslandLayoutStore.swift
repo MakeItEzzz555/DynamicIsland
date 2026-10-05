@@ -59,6 +59,14 @@ final class IslandLayoutStore: ObservableObject {
     /// regrow -> oscillation). Cleared on drop/cancel so the exact committed
     /// geometry applies.
     @Published private(set) var workspaceDragFloor: CGSize?
+    /// Measured preferred height of the visible Agent Chat cell (nil when Chat
+    /// is not the visible conversation surface, e.g. the Terminal stack page).
+    /// Quantized by `AgentChatHeightPolicy`; never published per token.
+    @Published private(set) var agentChatHeightHint: CGFloat?
+    func setAgentChatHeightHint(_ height: CGFloat?) {
+        guard AgentChatHeightPolicy.shouldPublish(previous: agentChatHeightHint, next: height) else { return }
+        agentChatHeightHint = height
+    }
     func setWorkspaceDragActive(_ active: Bool) {
         let next: CGSize? = active ? (workspaceDragFloor ?? expandedSize) : nil
         if next != workspaceDragFloor { workspaceDragFloor = next }

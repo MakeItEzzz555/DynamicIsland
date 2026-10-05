@@ -777,29 +777,44 @@ struct WorkspaceWidgetLayoutProjection: Equatable {
         }
     }
 
-    private static func requirements(_ regions: [WorkspaceWidgetRegion], metrics: ResolvedIslandMetrics) -> [Requirement] {
+    private static func requirements(_ regions: [WorkspaceWidgetRegion], metrics: ResolvedIslandMetrics,
+                                     chatHeightHint: CGFloat? = nil) -> [Requirement] {
         let solo = regions.count == 1
         return regions.map { region in
-            let sizes = region.widgets.map { widget -> (CGSize, CGSize) in
-                let traits = widget.kind.layoutTraits
-                let preferred = solo && !region.isStack ? traits.solo : traits.preferred
-                let minimum = CGSize(width: min(traits.minimum.width, preferred.width), height: min(traits.minimum.height, preferred.height))
-                let scale = metrics.expandedCardScale * widget.size.scale
-                // Compact sizing preserves the minimum readable controls.
-                let minScale = metrics.expandedCardScale * max(1, widget.size.scale)
-                return (.init(width: max(preferred.width * scale, minimum.width * minScale),
-                              height: max(preferred.height * scale, minimum.height * minScale)),
-                        .init(width: minimum.width * minScale, height: minimum.height * minScale))
-            }
-            let stackHeader: CGFloat = region.isStack ? 30 * metrics.spacingScale : 0
-            let traits = region.widgets.map(\.kind.layoutTraits)
+            let requirement = baseRequirement(region, solo: solo, metrics: metrics)
+            // Content-adaptive Chat: the measured cell height (chrome + actual
+            // transcript) replaces the static preferred height, bounded by a
+            // readable floor and the trait height (the previous fixed size).
+            guard let hint = chatHeightHint, hint.isFinite, region.widgets.contains(where: { $0.kind == .chat }) else { return requirement }
+            let floor = AgentChatHeightPolicy.minimumCellHeight * metrics.expandedCardScale
+            let height = min(requirement.preferred.height, max(floor, hint))
             return Requirement(region: region,
-                preferred: .init(width: sizes.map { $0.0.width }.max() ?? 1, height: (sizes.map { $0.0.height }.max() ?? 1) + stackHeader),
-                minimum: .init(width: sizes.map { $0.1.width }.max() ?? 1, height: (sizes.map { $0.1.height }.max() ?? 1) + stackHeader),
-                fillsHeight: region.isStack || traits.allSatisfy(\.fillsHeight),
-                stackable: !region.isStack && traits.allSatisfy(\.stackable),
-                band: !region.isStack && traits.allSatisfy(\.band))
+                               preferred: .init(width: requirement.preferred.width, height: height),
+                               minimum: .init(width: requirement.minimum.width, height: min(requirement.minimum.height, height)),
+                               fillsHeight: requirement.fillsHeight, stackable: requirement.stackable, band: requirement.band)
         }
+    }
+
+    private static func baseRequirement(_ region: WorkspaceWidgetRegion, solo: Bool, metrics: ResolvedIslandMetrics) -> Requirement {
+        let sizes = region.widgets.map { widget -> (CGSize, CGSize) in
+            let traits = widget.kind.layoutTraits
+            let preferred = solo && !region.isStack ? traits.solo : traits.preferred
+            let minimum = CGSize(width: min(traits.minimum.width, preferred.width), height: min(traits.minimum.height, preferred.height))
+            let scale = metrics.expandedCardScale * widget.size.scale
+            // Compact sizing preserves the minimum readable controls.
+            let minScale = metrics.expandedCardScale * max(1, widget.size.scale)
+            return (.init(width: max(preferred.width * scale, minimum.width * minScale),
+                          height: max(preferred.height * scale, minimum.height * minScale)),
+                    .init(width: minimum.width * minScale, height: minimum.height * minScale))
+        }
+        let stackHeader: CGFloat = region.isStack ? 30 * metrics.spacingScale : 0
+        let traits = region.widgets.map(\.kind.layoutTraits)
+        return Requirement(region: region,
+            preferred: .init(width: sizes.map { $0.0.width }.max() ?? 1, height: (sizes.map { $0.0.height }.max() ?? 1) + stackHeader),
+            minimum: .init(width: sizes.map { $0.1.width }.max() ?? 1, height: (sizes.map { $0.1.height }.max() ?? 1) + stackHeader),
+            fillsHeight: region.isStack || traits.allSatisfy(\.fillsHeight),
+            stackable: !region.isStack && traits.allSatisfy(\.stackable),
+            band: !region.isStack && traits.allSatisfy(\.band))
     }
 
     private static func units(_ requirements: [Requirement], gap: CGFloat) -> [Unit] {
@@ -844,13 +859,15 @@ struct WorkspaceWidgetLayoutProjection: Equatable {
     }
 
     static func preferredContentSize(regions: [WorkspaceWidgetRegion], maximumSize: CGSize,
-                                     metrics: ResolvedIslandMetrics, editing: Bool = false) -> CGSize {
+                                     metrics: ResolvedIslandMetrics, editing: Bool = false,
+                                     chatHeightHint: CGFloat? = nil) -> CGSize {
         let width = finite(maximumSize.width)
         let height = finite(maximumSize.height)
         let gap = metrics.spacing(8)
         let inset: CGFloat = editing ? 7 : 0
         let palette: CGFloat = editing ? 54 + gap : 0
-        let rows = packedRows(units(requirements(regions, metrics: metrics), gap: gap), width: max(1, width - inset * 2), gap: gap)
+        let rows = packedRows(units(requirements(regions, metrics: metrics, chatHeightHint: editing ? nil : chatHeightHint), gap: gap),
+                              width: max(1, width - inset * 2), gap: gap)
         let preferredWidth = rows.map { $0.reduce(0) { $0 + $1.preferred(gap: gap).width } + CGFloat(max(0, $0.count - 1)) * gap }.max() ?? 0
         let preferredHeight = rows.reduce(CGFloat.zero) { $0 + ($1.map { $0.preferred(gap: gap).height }.max() ?? 0) } + CGFloat(max(0, rows.count - 1)) * gap
         // An empty enabled-feature projection remains a readable recovery surface.
@@ -859,7 +876,7 @@ struct WorkspaceWidgetLayoutProjection: Equatable {
     }
 
     static func make(regions: [WorkspaceWidgetRegion], availableSize: CGSize,
-                     metrics: ResolvedIslandMetrics, editing: Bool = false) -> Self {
+                     metrics: ResolvedIslandMetrics, editing: Bool = false, chatHeightHint: CGFloat? = nil) -> Self {
         let width = finite(availableSize.width)
         let height = finite(availableSize.height)
         let gap = metrics.spacing(8)
@@ -867,7 +884,8 @@ struct WorkspaceWidgetLayoutProjection: Equatable {
         let palette: CGFloat = editing ? 54 + gap : 0
         let cardWidth = max(1, width - inset * 2)
         let cardHeight = max(1, height - inset - palette)
-        let rows = packedRows(units(requirements(regions, metrics: metrics), gap: gap), width: cardWidth, gap: gap)
+        let rows = packedRows(units(requirements(regions, metrics: metrics, chatHeightHint: editing ? nil : chatHeightHint), gap: gap),
+                              width: cardWidth, gap: gap)
         let preferredHeights = rows.map { $0.map { $0.preferred(gap: gap).height }.max() ?? 0 }
         let minimumHeights = rows.map { $0.map { $0.minimum(gap: gap).height }.max() ?? 0 }
         let totalGap = CGFloat(max(0, rows.count - 1)) * gap
@@ -924,4 +942,34 @@ struct WorkspaceWidgetLayoutProjection: Equatable {
         }
     }
     private static func finite(_ value: CGFloat) -> CGFloat { value.isFinite ? max(1, value) : 1 }
+}
+
+/// Content-adaptive Agent Chat height. The chat cell's chrome (headers,
+/// status footer, composer, paddings) is `cell - transcriptViewport`; the
+/// preferred cell is that chrome plus the transcript's measured content
+/// height. It is stable while the shell animates (cell and viewport shrink
+/// together) and quantized so streaming deltas only publish on real growth.
+enum AgentChatHeightPolicy {
+    /// Readable floor for a near-empty conversation (header + a few lines +
+    /// status + composer), before display scaling.
+    static let minimumCellHeight: CGFloat = 200
+    static let breathingRoom: CGFloat = 8
+    static let quantum: CGFloat = 4
+
+    static func preferredCellHeight(cellHeight: CGFloat, viewportHeight: CGFloat, contentHeight: CGFloat) -> CGFloat? {
+        guard cellHeight.isFinite, viewportHeight.isFinite, contentHeight.isFinite,
+              cellHeight > 0, viewportHeight > 0, contentHeight >= 0 else { return nil }
+        let chrome = max(0, cellHeight - viewportHeight)
+        let desired = chrome + contentHeight + breathingRoom
+        return (desired / quantum).rounded(.up) * quantum
+    }
+
+    /// Publication threshold: sub-quantum jitter never republishes geometry.
+    static func shouldPublish(previous: CGFloat?, next: CGFloat?) -> Bool {
+        switch (previous, next) {
+        case (nil, nil): return false
+        case let (old?, new?): return abs(old - new) >= quantum
+        default: return true
+        }
+    }
 }

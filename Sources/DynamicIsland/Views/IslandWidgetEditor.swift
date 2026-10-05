@@ -13,6 +13,12 @@ struct IslandWidgetEditor: View {
     var onLayoutPreview: ((WorkspaceConfiguration?) -> Void)? = nil
     /// Drag in flight: the host keeps the shell from shrinking under the pointer.
     var onDragActive: ((Bool) -> Void)? = nil
+    /// Same content-adaptive Chat height the shell resolver uses (Agents).
+    var chatHeightHint: () -> CGFloat? = { nil }
+    /// Semantic completion: the layout was saved and editing ended. The owner
+    /// decides what follows (the island collapses through its normal
+    /// children-exit sequence); the editor never touches shell state.
+    var onApplyCompleted: (() -> Void)? = nil
     var content: (WorkspaceWidgetRegion, CGFloat) -> AnyView
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.islandDisplayMetrics) private var displayMetrics
@@ -72,7 +78,7 @@ struct IslandWidgetEditor: View {
         measurements.size = size
         let visibleRegions = regions(in: visibleConfiguration)
         let projection = WorkspaceWidgetLayoutProjection.make(regions: visibleRegions, availableSize: size,
-            metrics: displayMetrics, editing: editing)
+            metrics: displayMetrics, editing: editing, chatHeightHint: chatHeightHint())
         let height = max(1, size.height - (editing ? WorkspaceEditorChrome.paletteHeight + displayMetrics.spacing(8) : 0))
         let canvas = widgetGrid(regions: visibleRegions, projection: projection)
         return VStack(spacing: displayMetrics.spacing(8)) {
@@ -369,13 +375,7 @@ struct IslandWidgetEditor: View {
                 .buttonStyle(.plain).help("Cancel")
                 .accessibilityLabel("Cancel widget changes")
                 .workspaceEditorAction("cancel")
-                Button {
-                    finishDrag()
-                    draft.markCustomized(surface)
-                    store.commit(draft)
-                    editing = false
-                    WorkspaceEditorAccessibility.announce("Widget layout saved")
-                } label: {
+                Button(action: apply) {
                     Image(systemName: "checkmark").font(.system(size: 11, weight: .bold))
                         .foregroundStyle(.white)
                         .frame(width: 26, height: 26)
@@ -467,6 +467,18 @@ struct IslandWidgetEditor: View {
     }
     private func clearTarget() { withAnimation(motion) { target = nil; intent = nil } }
     private func cancel() { finishDrag(); editing = false; WorkspaceEditorAccessibility.announce("Widget changes cancelled") }
+    /// Apply: commit once, end editing, then hand off to the owner (collapse).
+    /// A second tap after editing ended is ignored, so it can never commit or
+    /// request collapse twice.
+    private func apply() {
+        guard editing else { return }
+        finishDrag()
+        var isEditing = editing
+        guard WorkspaceEditorApply.apply(draft: &draft, surface: surface, store: store,
+                                         editing: &isEditing, completion: onApplyCompleted) else { return }
+        editing = isEditing
+        WorkspaceEditorAccessibility.announce("Widget layout saved")
+    }
     private func resize(_ region: WorkspaceWidgetRegion, to size: WidgetPresentationSize) {
         modify("Widget size \(size.title.lowercased())") { $0.setSize(size, for: region.id) }
     }
@@ -542,9 +554,14 @@ enum WorkspaceEditorMotion {
     /// never bouncing a close). Reduce Motion applies chrome directly.
     static let chromeOpenDuration = 0.40
     static let chromeCloseDuration = 0.35
+    /// Asymmetric springs (Droppy `expandOpen` / `expandClose` principle): the
+    /// reveal is responsive, the dismissal (Done/Apply) is critically damped so
+    /// editor chrome settles without wobble while the shell collapses.
     static func chrome(opening: Bool, reduceMotion: Bool) -> Animation? {
         if reduceMotion { return nil }
-        return .timingCurve(0.22, 1, 0.36, 1, duration: opening ? chromeOpenDuration : chromeCloseDuration)
+        return opening
+            ? .spring(response: chromeOpenDuration, dampingFraction: 0.92)
+            : .spring(response: chromeCloseDuration, dampingFraction: 0.98)
     }
 }
 
@@ -552,6 +569,36 @@ enum WorkspaceEditorDrag: Equatable {
     case existing(WidgetID)
     case palette(IslandWidget)
 }
+/// Apply semantics, independent of the view: commit the draft exactly once,
+/// end editing, then run the owner's completion exactly once.
+enum WorkspaceEditorApply {
+    @MainActor @discardableResult
+    static func apply(draft: inout WorkspaceConfiguration, surface: WorkspaceSurface,
+                      store: WorkspaceCustomizationStore, editing: inout Bool,
+                      completion: (() -> Void)?) -> Bool {
+        guard editing else { return false }
+        draft.markCustomized(surface)
+        store.commit(draft)
+        editing = false
+        completion?()
+        return true
+    }
+}
+
+/// Owner-provided follow-up for a saved layout (the island collapses).
+struct WorkspaceApplyCompletion {
+    let action: () -> Void
+}
+private struct WorkspaceApplyCompletionKey: EnvironmentKey {
+    static var defaultValue: WorkspaceApplyCompletion? { nil }
+}
+extension EnvironmentValues {
+    var workspaceApplyCompletion: WorkspaceApplyCompletion? {
+        get { self[WorkspaceApplyCompletionKey.self] }
+        set { self[WorkspaceApplyCompletionKey.self] = newValue }
+    }
+}
+
 private final class WorkspaceEditorMeasurements {
     var frames: [WidgetID: CGRect] = [:]
     var size: CGSize = .zero

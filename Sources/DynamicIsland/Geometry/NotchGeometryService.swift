@@ -351,7 +351,7 @@ struct ExpandedPresentationProfile: Equatable, Sendable {
     func resolvedSize(from base: CGSize, page: ExpandedIslandPage,
                       configuration: WorkspaceConfiguration?, editing: Bool,
                       settings: AppSettings, metrics: ResolvedIslandMetrics,
-                      minimumHeaderWidth: CGFloat = 0) -> CGSize {
+                      minimumHeaderWidth: CGFloat = 0, chatHeightHint: CGFloat? = nil) -> CGSize {
         let surface: WorkspaceSurface? = page == .island ? .media : (page == .agents ? .agents : nil)
         guard let surface, let configuration,
               editing || configuration.customizedSurfaces.contains(surface) else {
@@ -376,7 +376,8 @@ struct ExpandedPresentationProfile: Equatable, Sendable {
         let maximum = CGSize(width: max(1, max(520, metrics.logicalSize.width - 280) - horizontal),
                              height: max(1, metrics.visibleLogicalSize.height - 24 * metrics.spacingScale - vertical))
         let content = WorkspaceWidgetLayoutProjection.preferredContentSize(regions: regions,
-            maximumSize: maximum, metrics: metrics, editing: editing)
+            maximumSize: maximum, metrics: metrics, editing: editing,
+            chatHeightHint: surface == .agents ? chatHeightHint : nil)
         return CGSize(width: max(content.width, min(minimumHeaderWidth, maximum.width)) + horizontal,
                       height: content.height + vertical)
     }

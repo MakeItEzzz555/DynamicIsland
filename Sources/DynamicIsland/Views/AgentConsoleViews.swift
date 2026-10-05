@@ -161,6 +161,34 @@ enum AgentConsoleTimelineProjectionCache {
     }
 }
 
+/// Injected by the Agents grid only while Chat is the visible conversation
+/// surface in a customized layout (not while editing). At or beyond `cap`
+/// (the trait cell height) the reporter publishes nil: the previous fixed
+/// geometry applies, the transcript scrolls, and streaming stops republishing.
+struct AgentChatHeightReporter: Equatable {
+    let cap: CGFloat
+    let report: @MainActor (CGFloat?) -> Void
+    static func == (lhs: Self, rhs: Self) -> Bool { lhs.cap == rhs.cap }
+}
+private struct AgentChatHeightReporterKey: EnvironmentKey {
+    static let defaultValue: AgentChatHeightReporter? = nil
+}
+extension EnvironmentValues {
+    var agentChatHeightReporter: AgentChatHeightReporter? {
+        get { self[AgentChatHeightReporterKey.self] }
+        set { self[AgentChatHeightReporterKey.self] = newValue }
+    }
+}
+/// Plain storage: measurements never trigger a console body evaluation.
+private final class AgentChatHeightProbe {
+    var contentHeight: CGFloat = 0
+    var viewportHeight: CGFloat = 0
+}
+private struct AgentTranscriptContentHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
 struct AgentEmbeddedConsoleView: View {
     @Environment(\.agentVisualPreferences) private var visualPreferences
     @Environment(\.islandDisplayMetrics) private var displayMetrics
@@ -190,6 +218,21 @@ struct AgentEmbeddedConsoleView: View {
 
     @State private var follow = AgentTranscriptFollowState()
     @State private var scrollToLatestRequest = 0
+    @Environment(\.workspaceWidgetPlacement) private var widgetPlacement
+    @Environment(\.agentChatHeightReporter) private var heightReporter
+    @State private var heightProbe = AgentChatHeightProbe()
+
+    /// Content-adaptive Chat height: chrome (cell - transcript viewport) plus
+    /// the measured transcript content, capped at the previous fixed height.
+    private func reportPreferredHeight() {
+        guard let heightReporter else { return }
+        let cell = widgetPlacement.size.height
+        guard let desired = AgentChatHeightPolicy.preferredCellHeight(cellHeight: cell,
+                viewportHeight: heightProbe.viewportHeight, contentHeight: heightProbe.contentHeight) else { return }
+        // At or past the cap there is no hint at all: long transcripts keep
+        // exactly the previous geometry and scroll; only shorter content shrinks.
+        heightReporter.report(desired < heightReporter.cap ? desired : nil)
+    }
 
     var body: some View {
         let _ = AgentPerformanceProbe.count("agents.console.body")
@@ -238,8 +281,25 @@ struct AgentEmbeddedConsoleView: View {
                     ScrollView(.vertical, showsIndicators: true) {
                         transcriptContent
                             .padding(.vertical, 2)
+                            .background {
+                                if heightReporter != nil {
+                                    GeometryReader { content in
+                                        Color.clear.preference(key: AgentTranscriptContentHeightKey.self, value: content.size.height)
+                                    }
+                                }
+                            }
 
                     }
+                    .onPreferenceChange(AgentTranscriptContentHeightKey.self) { height in
+                        guard abs(height - heightProbe.contentHeight) >= 0.5 else { return }
+                        heightProbe.contentHeight = height
+                        reportPreferredHeight()
+                    }
+                    .onChange(of: viewport.size.height, initial: true) { _, height in
+                        heightProbe.viewportHeight = height
+                        reportPreferredHeight()
+                    }
+                    .onChange(of: heightReporter) { _, _ in reportPreferredHeight() }
                     .coordinateSpace(name: AgentConsoleCoordinateSpace.transcript)
                     .scrollBounceBehavior(.basedOnSize)
                     .background {
