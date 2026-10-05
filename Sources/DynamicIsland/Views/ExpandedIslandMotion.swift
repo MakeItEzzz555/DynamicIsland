@@ -661,19 +661,32 @@ struct ExpandedChildExitTracker: Equatable {
     /// Identity of the newest exit animation; older completions are ignored.
     private(set) var animationToken = 0
     private(set) var exitInFlight = false
+    /// Collapse generation the in-flight exit animation was started for.
+    private var exitGeneration: Int?
 
     /// Called whenever the collapse generation or exiting flag changes.
     mutating func drive(generation: Int, isExiting: Bool, childrenHidden: Bool) -> Action {
         guard isExiting else { return .none }
-        if exitInFlight { return .none } // its completion acknowledges the current generation
+        if exitInFlight {
+            // A *newer* collapse request while the children are already hidden
+            // recovers immediately: if every completion of the in-flight exit
+            // was lost, waiting on it would hold the shell forever.
+            if let exitGeneration, generation != exitGeneration, childrenHidden {
+                exitInFlight = false
+                animationToken &+= 1
+                return .acknowledge(generation)
+            }
+            return .none // its completion acknowledges the current generation
+        }
         if childrenHidden { return .acknowledge(generation) }
         return .beginExit
     }
 
     /// Marks a new exit animation; returns its token.
-    mutating func beginAnimation() -> Int {
+    mutating func beginAnimation(generation: Int? = nil) -> Int {
         animationToken &+= 1
         exitInFlight = true
+        exitGeneration = generation
         return animationToken
     }
 

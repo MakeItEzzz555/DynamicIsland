@@ -2878,11 +2878,39 @@ private final class IslandOverlayPanel: NSPanel {
         true
     }
 
+    /// The island is a non-activating panel: another app stays active while it
+    /// is expanded. A click that lands in a native text input (Agent composer,
+    /// SwiftTerm) made it first responder, but keyboard focus stayed with the
+    /// active app, so typing went nowhere. Claim key status one run-loop turn
+    /// after such a click - the same path the Terminal page's programmatic
+    /// focus already used successfully - without activating the app.
+    override func sendEvent(_ event: NSEvent) {
+        super.sendEvent(event)
+        guard event.type == .leftMouseDown,
+              IslandKeyboardFocusPolicy.claimsKeyboard(firstResponder) else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isVisible, IslandKeyboardFocusPolicy.claimsKeyboard(self.firstResponder) else { return }
+            self.makeKey()
+        }
+    }
+
     override var canBecomeMain: Bool {
         false
     }
 }
 
+
+/// Which first responders own typed input (and therefore need key status).
+enum IslandKeyboardFocusPolicy {
+    @MainActor
+    static func claimsKeyboard(_ responder: NSResponder?) -> Bool {
+        // Explicit types only: the SwiftUI hosting view is itself a text-input
+        // client, and claiming key for ordinary button clicks would steal the
+        // keyboard from the user's active app.
+        if let text = responder as? NSTextView { return text.isEditable }
+        return responder is InteractiveTerminalView
+    }
+}
 
 private final class IslandHostingView<Content: View>: NSHostingView<Content> {
     var onMouseExited: (() -> Void)?

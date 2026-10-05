@@ -1518,16 +1518,21 @@ private final class AgentPromptTextView: NSTextView {
     var focusHandler: ((Bool) -> Void)?
     var placeholder = ""
 
-    override func becomeFirstResponder() -> Bool {
-        let accepted = super.becomeFirstResponder()
-        if accepted { publishFocus(true) }
-        return accepted
-    }
+    /// Text-input focus (which holds the expanded island open) is published
+    /// only once the user engages - click or keystroke - never for automatic
+    /// first-responder changes.
+    private var publishedEngagement = false
 
     override func resignFirstResponder() -> Bool {
         let resigned = super.resignFirstResponder()
-        if resigned { publishFocus(false) }
+        if resigned, publishedEngagement { publishedEngagement = false; publishFocus(false) }
         return resigned
+    }
+
+    private func publishEngagement() {
+        guard !publishedEngagement, window?.firstResponder === self else { return }
+        publishedEngagement = true
+        publishFocus(true)
     }
 
     /// NSViewRepresentable can be dismantled while SwiftUI/AppKit is already
@@ -1544,6 +1549,7 @@ private final class AgentPromptTextView: NSTextView {
             window?.makeFirstResponder(nil)
             return
         }
+        publishEngagement()
         if event.keyCode == 36, AgentPromptDraftPolicy.submitsReturn(with: event.modifierFlags) {
             _ = submitHandler?()
             return
@@ -1568,6 +1574,7 @@ private final class AgentPromptTextView: NSTextView {
         if isEditable {
             window?.makeKey()
             window?.makeFirstResponder(self)
+            publishEngagement()
         }
         super.mouseDown(with: event)
     }

@@ -173,3 +173,123 @@ final class TimerRulerOverscrollAndZoomTests: XCTestCase {
         XCTAssertEqual(TimerRulerInteractionGeometry.acceleratedWheelDelta(.nan), 0)
     }
 }
+
+/// P0-C: idle selection can never reach 0 through any input path or zoom
+/// level; countdown completion may present 0 safely.
+@MainActor
+final class TimerRulerLowerBoundTests: XCTestCase {
+    func testHugeDragAndWheelFlicksFromOneSecondStayAtOneInEveryResolution() {
+        for resolution in TimerRulerResolution.allCases {
+            var drag = TimerRulerDragSelection(seconds: 1, resolution: resolution)
+            XCTAssertEqual(drag.update(translation: 1_000_000).selectedSeconds, 1, "\(resolution)")
+            // Accelerated wheel momentum: dozens of large deltas toward zero,
+            // continuing the same session's cumulative translation.
+            var translation = 1_000_000.0
+            for _ in 0..<200 {
+                translation += TimerRulerInteractionGeometry.acceleratedWheelDelta(120)
+                let change = drag.update(translation: translation)
+                XCTAssertEqual(change.selectedSeconds, 1)
+                XCTAssertGreaterThanOrEqual(change.value, 1)
+                XCTAssertTrue(change.value.isFinite)
+            }
+            // Immediate reversal: no banked dead zone.
+            let reversed = drag.update(translation: translation - Double(resolution.pointsPerTick))
+            XCTAssertGreaterThan(reversed.selectedSeconds, 1, "\(resolution) reverses immediately")
+        }
+    }
+
+    func testFastFlickFromThreeSecondsStopsAtOne() {
+        var drag = TimerRulerDragSelection(seconds: 3, resolution: .seconds)
+        XCTAssertEqual(drag.update(translation: TimerRulerInteractionGeometry.acceleratedWheelDelta(400)).selectedSeconds, 1)
+    }
+
+    func testRapidAlternatingFlicksNearMinimumStayInBounds() {
+        var drag = TimerRulerDragSelection(seconds: 2, resolution: .seconds)
+        var translation = 0.0
+        for step in 0..<400 {
+            translation += (step.isMultiple(of: 2) ? 1 : -1) * TimerRulerInteractionGeometry.acceleratedWheelDelta(Double(step % 37) + 1)
+            let change = drag.update(translation: translation)
+            XCTAssertGreaterThanOrEqual(change.selectedSeconds, 1)
+            XCTAssertLessThanOrEqual(change.selectedSeconds, TimerDurationSelection.maximumSeconds)
+        }
+    }
+
+    func testTapKeyboardAccessibilityAndPersistenceCannotSelectZero() {
+        // Tap left of the zero landmark, keyboard/accessibility decrement at 1 s.
+        for value in [-500.0, -1, 0, 0.4, -.infinity, .nan] {
+            XCTAssertGreaterThanOrEqual(TimerDurationSelection.seconds(value), 1)
+        }
+        XCTAssertEqual(TimerDurationSelection.seconds(Double(1 - TimerRulerResolution.overview.stepSeconds)), 1)
+        XCTAssertGreaterThanOrEqual(TimerDurationSelection.restored(seconds: 0, legacyMinutes: 0), 1)
+        XCTAssertGreaterThanOrEqual(TimerDurationSelection.restored(seconds: -7, legacyMinutes: -3), 1)
+    }
+
+    func testPresentedValueSeparatesIdleMinimumFromCountdownCompletion() {
+        let idle = TimerRulerInteractionGeometry.presentedValue(countingDown: false, countdownSeconds: 0, dragValue: 0, selectedSeconds: 0)
+        XCTAssertEqual(idle, 1, "idle selection never presents 0")
+        XCTAssertEqual(TimerRulerInteractionGeometry.presentedValue(countingDown: false, countdownSeconds: 0, dragValue: .nan, selectedSeconds: 5), 5)
+        XCTAssertEqual(TimerRulerInteractionGeometry.presentedValue(countingDown: true, countdownSeconds: 0.35, dragValue: nil, selectedSeconds: 1), 0.35,
+                       "subsecond countdown is presented")
+        XCTAssertEqual(TimerRulerInteractionGeometry.presentedValue(countingDown: true, countdownSeconds: 0, dragValue: nil, selectedSeconds: 1), 0,
+                       "completion presents 0")
+        XCTAssertEqual(TimerRulerInteractionGeometry.presentedValue(countingDown: true, countdownSeconds: -0.2, dragValue: nil, selectedSeconds: 1), 0)
+        XCTAssertEqual(TimerRulerInteractionGeometry.presentedValue(countingDown: true, countdownSeconds: .infinity, dragValue: nil, selectedSeconds: 1), 0)
+    }
+
+    func testZeroLandmarkTickGeometryIsValidAtCompletionAndMinimum() {
+        for resolution in TimerRulerResolution.allCases {
+            for value in [0.0, 0.25, 1] {
+                let ticks = TimerRulerInteractionGeometry.visibleTicks(valueSeconds: value, width: 260, resolution: resolution)
+                XCTAssertGreaterThanOrEqual(ticks.lowerBound, 0, "no negative ticks")
+                XCTAssertTrue(ticks.contains(0), "zero landmark stays visible")
+                for tick in ticks {
+                    let x = TimerRulerInteractionGeometry.x(forTick: tick, valueSeconds: value, center: 130, resolution: resolution)
+                    XCTAssertTrue(x.isFinite)
+                }
+            }
+        }
+    }
+
+    func testOneSecondCountdownProgressesThroughSubsecondToCompletion() {
+        let clock = ManualCountdownClock()
+        let timer = TimerController(clock: clock, refreshInterval: nil)
+        timer.start(seconds: 1)
+        clock.advance(by: .milliseconds(400))
+        let mid = TimerCountdownPresentation.rulerSeconds(snapshot: timer.timingSnapshot, now: timer.clockNow, selectedSeconds: 1)
+        XCTAssertEqual(mid, 0.6, accuracy: 0.001)
+        clock.advance(by: .milliseconds(700))
+        let done = TimerCountdownPresentation.remainingSeconds(timer.timingSnapshot, now: timer.clockNow)
+        XCTAssertGreaterThanOrEqual(done, 0)
+        XCTAssertEqual(TimerCountdownPresentation.displayText(remaining: max(0, done)), "0:00")
+    }
+}
+
+final class TimerRulerInputOwnershipTests: XCTestCase {
+    func testForeignOrStaleSessionsAreSettledBeforeANewGesture() {
+        var ownership = TimerRulerInputOwnership()
+        XCTAssertFalse(ownership.begin(.wheel, newGesture: true, hasSession: false))
+        XCTAssertEqual(ownership.source, .wheel)
+        // A wheel gesture whose `ended` never arrived: the next wheel gesture settles it.
+        XCTAssertTrue(ownership.begin(.wheel, newGesture: true, hasSession: true))
+        // A pointer drag never continues a wheel session (different translation origin).
+        XCTAssertTrue(ownership.begin(.pointer, newGesture: true, hasSession: true))
+        XCTAssertEqual(ownership.source, .pointer)
+        ownership.end()
+        XCTAssertNil(ownership.source)
+        XCTAssertFalse(ownership.begin(.pointer, newGesture: true, hasSession: false))
+    }
+
+    func testSettledLowerBoundSessionNeverLeaksItsRebasedAnchor() {
+        // Wheel overscroll toward zero rebases the anchor far past the minimum.
+        var wheel = TimerRulerDragSelection(seconds: 1, resolution: .seconds)
+        _ = wheel.update(translation: 50_000)
+        let committed = TimerDurationSelection.seconds(1)
+        // Settling commits 1 s; the pointer session starts from the committed value.
+        var pointer = TimerRulerDragSelection(seconds: committed, resolution: .seconds)
+        XCTAssertEqual(pointer.update(translation: 9).selectedSeconds, 1)
+        XCTAssertEqual(pointer.update(translation: -9).selectedSeconds, 3, "18 pt reversal from the clamp = 2 ticks")
+        // Without settling, a fresh 0-based translation against the rebased
+        // anchor would jump toward the maximum - the regression this prevents.
+        XCTAssertGreaterThan(wheel.update(translation: -9).selectedSeconds, 1_000)
+    }
+}

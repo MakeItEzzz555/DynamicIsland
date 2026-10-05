@@ -171,7 +171,35 @@ struct TimerRulerDragSelection: Equatable {
     }
 }
 
+/// Each input source owns its own selection session. Pointer drags and wheel
+/// gestures measure translation from different origins, so a session left by
+/// one source (or a wheel gesture whose `ended` event went to another window)
+/// must be settled before another gesture starts; otherwise a lower-bound
+/// rebased anchor is reused and the selection jumps far from 1 s.
+struct TimerRulerInputOwnership: Equatable {
+    enum Source: Equatable { case pointer, wheel }
+    private(set) var source: Source?
+    /// Returns true when the existing session must be committed and cleared first.
+    mutating func begin(_ next: Source, newGesture: Bool, hasSession: Bool) -> Bool {
+        let settle = hasSession && (source != next || newGesture)
+        source = next
+        return settle
+    }
+    mutating func end() { source = nil }
+}
+
 enum TimerRulerInteractionGeometry {
+    /// The value under the pointer. Idle selection is never below 1 s; an
+    /// active countdown may reach 0 as completion. Never NaN/infinite.
+    static func presentedValue(countingDown: Bool, countdownSeconds: Double, dragValue: Double?, selectedSeconds: Int) -> Double {
+        let limit = Double(TimerDurationSelection.maximumSeconds)
+        if countingDown {
+            return countdownSeconds.isFinite ? min(limit, max(0, countdownSeconds)) : 0
+        }
+        let selected = Double(TimerDurationSelection.seconds(Double(selectedSeconds)))
+        guard let dragValue, dragValue.isFinite else { return selected }
+        return min(limit, max(1, dragValue))
+    }
     static func x(forTick tick: Int, valueSeconds: Double, center: CGFloat, resolution: TimerRulerResolution) -> CGFloat {
         center + CGFloat(Double(tick * resolution.stepSeconds) - valueSeconds) * resolution.pointsPerSecond
     }

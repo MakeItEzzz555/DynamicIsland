@@ -425,6 +425,9 @@ struct IslandRootView: View {
     @State private var childExitTracker = ExpandedChildExitTracker()
     @State private var workspaceContentVisible = true
     @State private var workspaceExitGeneration: Int?
+    /// Isolated clock for the workspace geometry children-exit (same reason as
+    /// `childExitClock`: content-tree completions can be lost with live sessions).
+    @State private var workspaceExitClock: Double = 0
     @State private var isCollapsedHovering = false
     @State private var collapsedPreviewVisible = false
     @State private var collapsedPreviewGeneration = 0
@@ -688,7 +691,7 @@ struct IslandRootView: View {
                 // Isolated exit clock: animated with the exact child-exit curve in
                 // its own transaction, so its completion cannot be captured by
                 // live session subtrees (see context.md 2026-10-05 Resume fix).
-                Color.black.opacity(0.001 * childExitClock)
+                Color.black.opacity(0.001 * childExitClock + 0.0005 * workspaceExitClock)
                     .frame(width: 1, height: 1)
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
@@ -1428,10 +1431,16 @@ struct IslandRootView: View {
             workspaceExitGeneration = transition.generation
             let plan = ExpandedIslandMotion.collapsePlan(settings: settings, reduceMotion: reduceMotion)
             let animation: Animation? = plan.childExitDuration > 0 ? .easeIn(duration: plan.childExitDuration) : nil
+            let generation = transition.generation
+            withAnimation(animation, completionCriteria: .logicallyComplete) {
+                workspaceExitClock = ExpandedChildExitVisualClock.next(after: workspaceExitClock)
+            } completion: {
+                layoutStore.workspaceChildrenExited(generation: generation)
+            }
             withAnimation(animation, completionCriteria: .removed) {
                 workspaceContentVisible = false
             } completion: {
-                layoutStore.workspaceChildrenExited(generation: transition.generation)
+                layoutStore.workspaceChildrenExited(generation: generation)
             }
         case .shellResizing: break
         case .idle:
@@ -1463,7 +1472,7 @@ struct IslandRootView: View {
 
     private func beginContentExitSequence() {
         sequenceGeneration += 1
-        let token = childExitTracker.beginAnimation()
+        let token = childExitTracker.beginAnimation(generation: layoutStore.expandedChildExitGeneration)
         let plan = ExpandedIslandMotion.collapsePlan(settings: settings, reduceMotion: reduceMotion)
         renderedContentMode = .expanded
         contentPhase = .contentCollapsing

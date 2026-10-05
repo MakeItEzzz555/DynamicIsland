@@ -277,3 +277,29 @@ final class ResumedSessionCollapseTests: XCTestCase {
         XCTAssertFalse(root.store.isExpandedContentExiting, "collapsed island is interactive")
     }
 }
+
+/// If every completion of an in-flight exit is lost, a *newer* collapse
+/// request must recover once the children are hidden; same-generation drives
+/// (provider/Feed publications) keep waiting for the real animation.
+final class ExitTrackerRedriveRecoveryTests: XCTestCase {
+    func testNewerCollapseRequestRecoversWhenAllCompletionsWereLost() {
+        var tracker = ExpandedChildExitTracker()
+        XCTAssertEqual(tracker.drive(generation: 4, isExiting: true, childrenHidden: false), .beginExit)
+        let token = tracker.beginAnimation(generation: 4)
+        // Same generation re-entries never short-circuit the running exit.
+        XCTAssertEqual(tracker.drive(generation: 4, isExiting: true, childrenHidden: true), .none)
+        // No completion ever arrives; the pointer leaves again -> generation 5.
+        XCTAssertEqual(tracker.drive(generation: 5, isExiting: true, childrenHidden: true), .acknowledge(5))
+        XCTAssertFalse(tracker.exitInFlight)
+        // A late completion of the lost animation is ignored (no double ack).
+        XCTAssertNil(tracker.animationFinished(token: token, currentGeneration: 5, isExiting: true))
+    }
+
+    func testNewerRequestWhileChildrenStillVisibleKeepsWaiting() {
+        var tracker = ExpandedChildExitTracker()
+        _ = tracker.drive(generation: 1, isExiting: true, childrenHidden: false)
+        _ = tracker.beginAnimation(generation: 1)
+        XCTAssertEqual(tracker.drive(generation: 2, isExiting: true, childrenHidden: false), .none)
+        XCTAssertTrue(tracker.exitInFlight)
+    }
+}

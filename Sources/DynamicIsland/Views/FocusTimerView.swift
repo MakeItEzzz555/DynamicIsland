@@ -151,6 +151,7 @@ struct TimerRuler: View {
     @State private var drag: TimerRulerDragSelection?
     @State private var dragValue: Double?
     @State private var wheelTranslation: Double = 0
+    @State private var ownership = TimerRulerInputOwnership()
     @State private var visible = false
     @Environment(\.displayScale) private var displayScale
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -161,21 +162,24 @@ struct TimerRuler: View {
         let interval = TimerCountdownPresentation.frameInterval(snapshot: snapshot, displayScale: displayScale, resolution: resolution)
         GeometryReader { geometry in
             TimelineView(.animation(minimumInterval: interval ?? 1, paused: interval == nil || !visible)) { _ in
-                let value = countingDown ? TimerCountdownPresentation.rulerSeconds(snapshot: snapshot, now: now(), selectedSeconds: seconds)
-                    : dragValue ?? Double(seconds)
+                let value = TimerRulerInteractionGeometry.presentedValue(
+                    countingDown: countingDown,
+                    countdownSeconds: countingDown ? TimerCountdownPresentation.rulerSeconds(snapshot: snapshot, now: now(), selectedSeconds: seconds) : 0,
+                    dragValue: dragValue, selectedSeconds: seconds)
                 Canvas { context, size in draw(in: &context, size: size, value: value) }
             }
             .background {
                 TimerRulerWheelInput(enabled: visible && !countingDown && interactionRegistration.enabled,
-                    changed: wheelChanged, finished: wheelFinished).allowsHitTesting(false)
+                    began: wheelBegan, changed: wheelChanged, finished: wheelFinished).allowsHitTesting(false)
                 Color.clear.preference(key: TimerRulerInteractionFrameKey.self,
                     value: geometry.frame(in: .named(IslandCanvasCoordinateSpace.name)))
             }
             .contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance: 3).onChanged { change in
                 guard !countingDown, interactionRegistration.enabled else { return }
-                if drag == nil {
+                if ownership.source != .pointer {
                     guard abs(change.translation.width) >= abs(change.translation.height) * 1.3 else { return }
+                    if ownership.begin(.pointer, newGesture: true, hasSession: drag != nil) { settleSession() }
                     drag = TimerRulerDragSelection(seconds: seconds, resolution: resolution)
                     onDragging(true)
                 }
@@ -188,9 +192,10 @@ struct TimerRuler: View {
                 // ticks and must not queue dozens of feedback requests.
                 if !update.crossedTicks.isEmpty { tickFeedback() }
             }.onEnded { _ in
-                guard drag != nil else { return }
+                guard drag != nil, ownership.source == .pointer else { return }
                 onCommit(seconds)
                 drag = nil
+                ownership.end()
                 onDragging(false)
                 withAnimation(reduceMotion || !extraMotion ? nil : .timingCurve(0.22, 1, 0.36, 1, duration: 0.15)) { dragValue = nil }
             })
@@ -238,8 +243,14 @@ struct TimerRuler: View {
         }
     }
 
+    /// A new physical wheel gesture never continues an older session.
+    private func wheelBegan() {
+        guard visible, !countingDown, interactionRegistration.enabled else { return }
+        if ownership.begin(.wheel, newGesture: true, hasSession: drag != nil) { settleSession() }
+    }
     private func wheelChanged(_ translation: Double) {
         guard visible, !countingDown, interactionRegistration.enabled else { return }
+        if ownership.source != .wheel, ownership.begin(.wheel, newGesture: true, hasSession: drag != nil) { settleSession() }
         if drag == nil {
             drag = TimerRulerDragSelection(seconds: seconds, resolution: resolution)
             wheelTranslation = 0
@@ -253,7 +264,7 @@ struct TimerRuler: View {
         if !update.crossedTicks.isEmpty { tickFeedback() }
     }
     private func wheelFinished(_ cancelled: Bool) {
-        guard let session = drag else { return }
+        guard let session = drag, ownership.source == .wheel else { return }
         if cancelled { seconds = session.originSeconds }
         else { onCommit(seconds) }
         cancelDrag()
@@ -266,7 +277,15 @@ struct TimerRuler: View {
     }
     private func cancelDrag() {
         drag = nil; dragValue = nil; wheelTranslation = 0
+        ownership.end()
         onDragging(false)
+    }
+    /// Commits whatever the previous session selected (always within bounds)
+    /// and clears it, so the next gesture starts from that committed value.
+    private func settleSession() {
+        guard drag != nil else { return }
+        onCommit(seconds)
+        drag = nil; dragValue = nil; wheelTranslation = 0
     }
     private func draw(in context: inout GraphicsContext, size: CGSize, value: Double) {
         let center = size.width / 2
@@ -318,15 +337,19 @@ enum TimerRulerNativeFeedback {
 /// the visible ruler. Click-drag, buttons and text selection remain SwiftUI-owned.
 struct TimerRulerWheelInput: NSViewRepresentable {
     var enabled: Bool
+    var began: () -> Void = {}
     var changed: (Double) -> Void
     var finished: (Bool) -> Void
     func makeNSView(context: Context) -> WheelView { WheelView() }
     func updateNSView(_ view: WheelView, context: Context) {
-        view.enabled = enabled; view.changed = changed; view.finished = finished
+        view.enabled = enabled; view.began = began; view.changed = changed; view.finished = finished
     }
-    static func dismantleNSView(_ view: WheelView, coordinator: ()) { view.stop(); view.changed = { _ in }; view.finished = { _ in } }
+    static func dismantleNSView(_ view: WheelView, coordinator: ()) {
+        view.stop(); view.began = {}; view.changed = { _ in }; view.finished = { _ in }
+    }
     final class WheelView: NSView {
         var enabled = false
+        var began: () -> Void = {}
         var changed: (Double) -> Void = { _ in }
         var finished: (Bool) -> Void = { _ in }
         private let lifetime = TimerRulerWheelMonitor()
@@ -371,14 +394,19 @@ struct TimerRulerWheelInput: NSViewRepresentable {
             }
             guard abs(event.scrollingDeltaX) > 0.05,
                   abs(event.scrollingDeltaX) >= abs(event.scrollingDeltaY) * 1.3 else { return event }
+            let starts = !tracking
             tracking = true; ownedMomentum = true
             let delta = event.hasPreciseScrollingDeltas
                 ? TimerRulerInteractionGeometry.acceleratedWheelDelta(event.scrollingDeltaX)
                 : event.scrollingDeltaX * 9 // a mouse-wheel notch moves one tick
             let update = changed
             let finish = finished
+            let begin = began
             let discrete = event.phase.isEmpty
+            // FIFO main-queue order keeps began -> changed -> finished for one
+            // sequence ahead of any later sequence's callbacks.
             DispatchQueue.main.async {
+                if starts { begin() }
                 update(delta)
                 if discrete { finish(false) }
             }

@@ -126,3 +126,11 @@ The interrupted Claude pass found a resumed large transcript pinning the app nea
 - `Scripts/validate_agent_visual_fidelity.sh release`: PASS. App and all three helpers passed strict/deep signature verification without xattr recovery on the final run.
 - Fresh `dist/DynamicIsland.app` launched and was used for the packaged GUI checks above.
 - Remaining distinctions: physical Timer haptic sensation, sustained display/GPU frame pacing, packaged long-duration memory soak, and actual macOS Reduce Motion OFF -> ON -> OFF remain NOT VERIFIED. Deterministic Reduce Motion/accessibility/lifecycle tests pass. No TCC/security setting was bypassed.
+
+
+## Input, collapse and Timer recovery validation (2026-10-05, after 37f72b0)
+
+- Native text inputs in the non-activating island claim key status after a click (`IslandKeyboardFocusPolicy`); only user-engaged text focus holds the island open, so the automatically focused Terminal stack page no longer vetoes pointer-exit collapse.
+- Collapse and workspace children-exit acknowledgements use isolated exit clocks; a newer collapse request recovers immediately when children are hidden.
+- Timer selection is >= 1 s for every input path and zoom level; pointer and wheel sessions never share a rebased anchor.
+- Packaged evidence: typing (Chat/Terminal/switching), 24/24 Terminal-active collapse cycles with the same PTY PID, Timer lower-bound flicks at all three zoom levels and a 1 s countdown completion. See context.md for details.

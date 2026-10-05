@@ -68,11 +68,19 @@ final class TerminalMountView: NSView {
         }]
     }
     private func checkFocus() {
-        let focused = wasVisible && terminal?.superview === self && window?.firstResponder === terminal
+        // Only user-engaged focus publishes text-input focus (which holds the
+        // expanded island open on pointer exit). The Terminal page focuses the
+        // emulator automatically so typing works immediately; that alone must
+        // never veto collapse.
+        let isResponder = wasVisible && terminal?.superview === self && window?.firstResponder === terminal
+        if !isResponder { terminal?.userEngaged = false }
+        let focused = isResponder && terminal?.userEngaged == true
         guard focused != publishedFocus else { return }
         publishedFocus = focused
         DispatchQueue.main.async { [weak self] in
-            guard let self, publishedFocus == focused, (wasVisible && terminal?.superview === self && window?.firstResponder === terminal) == focused else { return }
+            guard let self, publishedFocus == focused,
+                  (wasVisible && terminal?.superview === self && window?.firstResponder === terminal
+                   && terminal?.userEngaged == true) == focused else { return }
             onFocusChange(focused)
         }
     }

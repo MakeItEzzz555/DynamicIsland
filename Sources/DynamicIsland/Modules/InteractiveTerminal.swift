@@ -10,6 +10,9 @@ final class InteractiveTerminalView: LocalProcessTerminalView {
     var onSend: (([UInt8]) -> Void)?
     private(set) var receivedByteCount = 0
     private(set) var lastInputByte: UInt8?
+    /// Set by a click or typed input; cleared when focus leaves. Automatic
+    /// focus (showing the Terminal page) never holds the island open.
+    var userEngaged = false
     private var safeDelegate: InteractiveTerminalDelegate?
 
     init() {
@@ -39,7 +42,13 @@ final class InteractiveTerminalView: LocalProcessTerminalView {
         }.joined(separator: "\n")
     }
 
+    override func mouseDown(with event: NSEvent) {
+        userEngaged = true
+        super.mouseDown(with: event)
+    }
+
     override func send(source: TerminalView, data: ArraySlice<UInt8>) {
+        userEngaged = true
         lastInputByte = data.last
         if let onSend { onSend(Array(data)) } else { super.send(source: source, data: data) }
     }
