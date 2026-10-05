@@ -907,12 +907,20 @@ struct WorkspaceWidgetLayoutProjection: Equatable {
             let minimumWidth = minimumWidths.reduce(0, +)
             let preferredWidth = preferredWidths.reduce(0, +)
             let usable = max(0, cardWidth - gaps)
-            let rowWidth = min(preferredWidth, usable)
+            // Outside editing, primary rows always span the shell: when the
+            // shell is wider than the content (e.g. the notch-safe header sets
+            // its minimum width), widgets absorb the surplus in proportion to
+            // their preferred width instead of leaving empty side gutters.
+            // Band strips (usage) stay centered; editing keeps drag geometry.
+            let fillsWidth = !editing && !row.allSatisfy(\.band) && usable > preferredWidth
+            let rowWidth = fillsWidth ? usable : min(preferredWidth, usable)
             let extra = max(0, rowWidth - minimumWidth)
             let slack = max(0, preferredWidth - minimumWidth)
             var x = inset + max(0, (cardWidth - rowWidth - gaps) / 2)
             for (column, unit) in row.enumerated() {
-                let unitWidth = minimumWidths[column] + (slack > 0 ? extra * (preferredWidths[column] - minimumWidths[column]) / slack : 0)
+                let unitWidth = fillsWidth
+                    ? preferredWidths[column] + (rowWidth - preferredWidth) * preferredWidths[column] / max(1, preferredWidth)
+                    : minimumWidths[column] + (slack > 0 ? extra * (preferredWidths[column] - minimumWidths[column]) / slack : 0)
                 frames += memberFrames(unit, x: x, y: y, width: unitWidth, height: rowHeight, gap: gap)
                 x += unitWidth + gap
             }

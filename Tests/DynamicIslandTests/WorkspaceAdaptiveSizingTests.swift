@@ -19,7 +19,9 @@ final class WorkspaceAdaptiveSizingTests: XCTestCase {
         let frame = try XCTUnwrap(projection.frames.first?.frame)
         XCTAssertEqual(frame.midX, 450, accuracy: 0.01)
         XCTAssertEqual(frame.midY, 200, accuracy: 0.01)
-        XCTAssertEqual(frame.width, required.width, accuracy: 0.01)
+        // The shell is sized to the intrinsic footprint; if it is wider anyway
+        // (e.g. the notch-safe header minimum), the widget spans it - no gutters.
+        XCTAssertEqual(frame.width, 900, accuracy: 0.01)
         XCTAssertEqual(frame.height, required.height, accuracy: 0.01)
         XCTAssertEqual(projection.rows, 1)
         XCTAssertFalse(projection.requiresScrolling)

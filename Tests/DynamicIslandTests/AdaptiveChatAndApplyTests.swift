@@ -131,3 +131,51 @@ final class WorkspaceEditorApplyTests: XCTestCase {
         XCTAssertEqual(store.configuration, saved)
     }
 }
+
+/// The island always hugs its children: when the notch-safe header makes the
+/// shell wider than a lone widget, the widget spans the width (no gutters).
+@MainActor
+final class WorkspaceRowFillTests: XCTestCase {
+    private let metrics = ResolvedIslandMetrics.fallback
+
+    func testSoloMediaSpansAShellWidenedByTheHeader() throws {
+        let config = WorkspaceConfiguration(placements: [.init(kind: .media, surface: .media, order: 0)],
+                                            customizedSurfaces: [.media]).normalized()
+        let regions = config.regions(on: .media)
+        let intrinsic = WorkspaceWidgetLayoutProjection.preferredContentSize(regions: regions,
+            maximumSize: .init(width: 1200, height: 800), metrics: metrics)
+        let headerWidened = intrinsic.width + 120
+        let projection = WorkspaceWidgetLayoutProjection.make(regions: regions,
+            availableSize: .init(width: headerWidened, height: intrinsic.height), metrics: metrics)
+        let frame = try XCTUnwrap(projection.frames.first?.frame)
+        XCTAssertEqual(frame.minX, 0, accuracy: 0.5)
+        XCTAssertEqual(frame.maxX, headerWidened, accuracy: 0.5, "no left/right gap between island and widget")
+    }
+
+    func testMultiWidgetRowsShareSurplusProportionallyAndBandsStayCentered() throws {
+        let config = WorkspaceConfiguration(placements: [
+            .init(kind: .agentUsage, surface: .agents, order: 0),
+            .init(kind: .chat, surface: .agents, order: 1), .init(kind: .feed, surface: .agents, order: 2)],
+            customizedSurfaces: [.agents]).normalized()
+        let projection = WorkspaceWidgetLayoutProjection.make(regions: config.regions(on: .agents),
+            availableSize: .init(width: 1400, height: 520), metrics: metrics)
+        let chat = try XCTUnwrap(projection.frames.first { $0.id == config.placement(kind: .chat, on: .agents)?.id }?.frame)
+        let feed = try XCTUnwrap(projection.frames.first { $0.id == config.placement(kind: .feed, on: .agents)?.id }?.frame)
+        let usage = try XCTUnwrap(projection.frames.first { $0.id == config.placement(kind: .agentUsage, on: .agents)?.id }?.frame)
+        XCTAssertEqual(chat.minX, 0, accuracy: 0.5)
+        XCTAssertEqual(feed.maxX, 1400, accuracy: 0.5)
+        XCTAssertGreaterThan(chat.width, feed.width, "surplus follows preferred proportions")
+        XCTAssertEqual(usage.midX, 700, accuracy: 1, "usage band stays a centered strip")
+        XCTAssertLessThan(usage.width, 700)
+    }
+
+    func testEditingKeepsIntrinsicCenteredGeometryForDragStability() throws {
+        let config = WorkspaceConfiguration(placements: [.init(kind: .timer, surface: .media, order: 0),
+                                                         .init(kind: .shortcuts, surface: .media, order: 1)],
+                                            customizedSurfaces: [.media]).normalized()
+        let projection = WorkspaceWidgetLayoutProjection.make(regions: config.regions(on: .media),
+            availableSize: .init(width: 1400, height: 400), metrics: metrics, editing: true)
+        let first = try XCTUnwrap(projection.frames.first?.frame)
+        XCTAssertGreaterThan(first.minX, 7.5, "edit mode is unchanged (drag reference geometry)")
+    }
+}
