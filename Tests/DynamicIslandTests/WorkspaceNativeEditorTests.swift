@@ -81,8 +81,9 @@ final class WorkspaceNativeEditorTests: XCTestCase {
         XCTAssertEqual(WorkspaceNativeDragHandle.type.identifier, "app.dynamicisland.workspace-widget")
         XCTAssertNotEqual(WorkspaceNativeDragHandle.type.identifier, "public.text")
         XCTAssertNil(WorkspaceEditorMotion.reorder(reduceMotion: true))
-        XCTAssertEqual(WorkspaceEditorMotion.reorderDuration, 0.25)
-        XCTAssertEqual(WorkspaceEditorMotion.resizeDuration, 0.30)
+        XCTAssertEqual(WorkspaceEditorMotion.reorderDuration, 0.32)
+        XCTAssertEqual(WorkspaceEditorMotion.resizeDuration, 0.36)
+        XCTAssertNil(WorkspaceEditorMotion.resize(reduceMotion: true))
     }
 
     func testTwoHundredHoverResolutionsNeverPublishOrPersistGlobalState() throws {

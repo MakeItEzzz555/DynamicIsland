@@ -224,3 +224,64 @@ final class WorkspaceCombineZoneTests: XCTestCase {
         XCTAssertNotEqual(intent(70).target, .combine(chat: chat.id))
     }
 }
+
+/// Stack-below preview must stay stable while the preview resizes the shell
+/// (previously: preview -> taller shell -> re-centered slots -> pointer leaves
+/// the bottom band -> preview reverts -> oscillation).
+final class WorkspaceStackBelowStabilityTests: XCTestCase {
+    private let metrics = ResolvedIslandMetrics.fallback
+
+    private func config() -> WorkspaceConfiguration {
+        WorkspaceConfiguration(placements: [.init(kind: .media, surface: .media, order: 0),
+            .init(kind: .shortcuts, surface: .media, order: 1), .init(kind: .activities, surface: .media, order: 2)],
+            customizedSurfaces: [.media]).normalized()
+    }
+
+    func testEditingProjectionIsTopAnchoredSoGrowthNeverMovesCards() {
+        let regions = config().regions(on: .media)
+        let small = WorkspaceWidgetLayoutProjection.make(regions: regions, availableSize: .init(width: 900, height: 320),
+                                                         metrics: metrics, editing: true)
+        let tall = WorkspaceWidgetLayoutProjection.make(regions: regions, availableSize: .init(width: 900, height: 520),
+                                                        metrics: metrics, editing: true)
+        for frame in small.frames {
+            let grown = tall.frames.first { $0.id == frame.id }
+            XCTAssertEqual(frame.frame.minY, grown?.frame.minY ?? -1, accuracy: 0.5, "editing growth must not shift \(frame.id)")
+        }
+    }
+
+    func testBottomBandStaysStackBelowWhileThePreviewGrowsTheShell() throws {
+        let configuration = config()
+        let regions = configuration.regions(on: .media)
+        let start = CGSize(width: 900, height: 320)
+        let projection = WorkspaceWidgetLayoutProjection.make(regions: regions, availableSize: start, metrics: metrics, editing: true)
+        let slots = regions.compactMap { region -> WorkspaceDropSlot? in
+            guard let frame = projection.frames.first(where: { $0.id == region.id })?.frame else { return nil }
+            return WorkspaceDropSlot(id: region.id, frame: frame, kind: region.widgets[0].kind)
+        }
+        let shortcuts = try XCTUnwrap(slots.first { $0.kind == .shortcuts })
+        let dragged = try XCTUnwrap(slots.first { $0.kind == .activities })
+        let bounds = slots.reduce(CGRect.null) { $0.union($1.frame) }.insetBy(dx: -12, dy: -12)
+        // Pointer in the bottom band of Shortcuts.
+        let onScreen = CGPoint(x: shortcuts.frame.midX, y: shortcuts.frame.maxY - shortcuts.frame.height * 0.15)
+        var previous: WorkspaceDropIntent?
+        // The preview grows the shell wider and taller, step by step.
+        for step in 0...12 {
+            let current = CGSize(width: start.width + CGFloat(step) * 10, height: start.height + CGFloat(step) * 20)
+            // On screen the committed cards moved right by half the width growth.
+            let live = CGPoint(x: onScreen.x + (current.width - start.width) / 2, y: onScreen.y)
+            let point = WorkspaceDropResolver.dragReferencePoint(live, currentSize: current, startSize: start)
+            let intent = WorkspaceDropResolver.resolveIntent(point: point, bounds: bounds, surface: .media, slots: slots,
+                                                             draggedKind: .activities, draggedID: dragged.id, previous: previous)
+            XCTAssertEqual(intent.target, .stack(surface: .media, onto: shortcuts.id, below: true), "step \(step)")
+            XCTAssertEqual(intent.edge, .bottom)
+            previous = intent
+        }
+    }
+
+    func testDragReferencePointIgnoresDegenerateSizes() {
+        let point = CGPoint(x: 40, y: 50)
+        XCTAssertEqual(WorkspaceDropResolver.dragReferencePoint(point, currentSize: .init(width: 500, height: 300), startSize: .zero), point)
+        XCTAssertEqual(WorkspaceDropResolver.dragReferencePoint(point, currentSize: .init(width: 520, height: 400),
+                                                                startSize: .init(width: 500, height: 300)), CGPoint(x: 30, y: 50))
+    }
+}

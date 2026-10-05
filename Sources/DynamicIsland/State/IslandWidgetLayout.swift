@@ -663,6 +663,17 @@ enum WorkspaceDropResolver {
         return .init(target: base, hovered: hovered.id, edge: nx >= 0 ? .trailing : .leading)
     }
 
+    /// Maps a drop location in the live (possibly preview-resized) editor into
+    /// the drag-start frame of reference. The shell grows symmetrically around
+    /// the notch and editing rows are top-anchored, so only half of the width
+    /// change moves the committed cards. Resolving against the drag-start
+    /// projection removes the preview -> resize -> retarget feedback loop that
+    /// made the stack-below band unstable.
+    static func dragReferencePoint(_ location: CGPoint, currentSize: CGSize, startSize: CGSize) -> CGPoint {
+        guard startSize.width > 0, startSize.height > 0, currentSize.width.isFinite, startSize.width.isFinite else { return location }
+        return CGPoint(x: location.x - (currentSize.width - startSize.width) / 2, y: location.y)
+    }
+
     /// Large primary surfaces (Chat, Terminal, Feed, a Chat/Terminal stack)
     /// never share a column; every compact widget can.
     static func canShareColumn(_ dragged: IslandWidget, hovered: WorkspaceDropSlot, surface: WorkspaceSurface) -> Bool {
@@ -866,7 +877,9 @@ struct WorkspaceWidgetLayoutProjection: Equatable {
         let actualHeight = scroll ? preferredHeight : min(preferredHeight, cardHeight)
         let extraHeight = max(0, actualHeight - minimumHeight)
         let heightSlack = max(0, preferredHeight - minimumHeight)
-        var y: CGFloat = inset + (scroll ? 0 : max(0, (cardHeight - actualHeight) / 2))
+        // Editing is top-anchored: a prospective layout that grows the shell
+        // adds space below and never shifts the cards the pointer is over.
+        var y: CGFloat = inset + (scroll || editing ? 0 : max(0, (cardHeight - actualHeight) / 2))
         var frames: [WorkspaceWidgetFrame] = []
         for (index, row) in rows.enumerated() {
             let rowHeight = scroll ? preferredHeights[index] : minimumHeights[index] + (heightSlack > 0 ? extraHeight * (preferredHeights[index] - minimumHeights[index]) / heightSlack : 0)

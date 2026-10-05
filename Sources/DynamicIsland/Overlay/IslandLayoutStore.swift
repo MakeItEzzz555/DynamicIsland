@@ -53,6 +53,20 @@ final class IslandLayoutStore: ObservableObject {
         let next = configuration.map { WorkspaceLayoutPreview(configuration: $0, surface: surface) }
         if workspaceLayoutPreview != next { workspaceLayoutPreview = next }
     }
+    /// While a widget drag is in flight the shell may grow for the prospective
+    /// layout but never shrinks below its drag-start size: shrinking would pull
+    /// the surface out from under the pointer (drop exit -> preview revert ->
+    /// regrow -> oscillation). Cleared on drop/cancel so the exact committed
+    /// geometry applies.
+    @Published private(set) var workspaceDragFloor: CGSize?
+    func setWorkspaceDragActive(_ active: Bool) {
+        let next: CGSize? = active ? (workspaceDragFloor ?? expandedSize) : nil
+        if next != workspaceDragFloor { workspaceDragFloor = next }
+    }
+    static func dragFloored(_ size: CGSize, floor: CGSize?) -> CGSize {
+        guard let floor else { return size }
+        return CGSize(width: max(size.width, floor.width), height: max(size.height, floor.height))
+    }
     func requestWorkspaceGeometry(_ size: CGSize) { workspaceGeometryTransition.request(size) }
     func workspaceChildrenExited(generation: Int) {
         var next = workspaceGeometryTransition

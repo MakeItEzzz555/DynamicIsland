@@ -521,6 +521,9 @@ final class OverlayWindowController {
         layoutStore.$workspaceLayoutPreview.removeDuplicates().sink { [weak self] _ in
             self?.scheduleWorkspaceGeometryCheck()
         }.store(in: &cancellables)
+        layoutStore.$workspaceDragFloor.removeDuplicates().sink { [weak self] _ in
+            self?.scheduleWorkspaceGeometryCheck()
+        }.store(in: &cancellables)
         layoutStore.$workspaceGeometryTransition.removeDuplicates().sink { [weak self] transition in
             guard transition.phase == .shellResizing else { return }
             DispatchQueue.main.async { [weak self] in
@@ -939,13 +942,14 @@ final class OverlayWindowController {
         let page = modules.navigation.selectedPage
         let surface: WorkspaceSurface? = page == .island ? .media : page == .agents ? .agents : nil
         let preview = layoutStore.workspaceLayoutPreview.flatMap { $0.surface == surface ? $0 : nil }
-        return expandedPresentationProfile.resolvedSize(from: settings.expandedSize, page: page,
+        let size = expandedPresentationProfile.resolvedSize(from: settings.expandedSize, page: page,
             configuration: preview?.configuration ?? modules.customization?.configuration,
             editing: preview != nil, settings: settings, metrics: layoutStore.displayMetrics,
             minimumHeaderWidth: ExpandedIslandHeaderMetrics.minimumContentWidth(
                 pageCount: modules.navigation.availablePages(using: settings).count,
                 clipboardEnabled: settings.clipboardHistoryEnabled,
                 hardwareNotchWidth: layoutStore.hardwareNotchWidth))
+        return preview == nil ? size : IslandLayoutStore.dragFloored(size, floor: layoutStore.workspaceDragFloor)
     }
 
     /// While editing (and for the change that ends editing), shell geometry

@@ -3709,7 +3709,8 @@ struct ExpandedIslandView: View {
         if editingWidgets || customization.configuration.customizedSurfaces.contains(.media) {
             IslandWidgetEditor(store: customization, surface: .media, editing: $editingWidgets,
                 eligibleWidgets: eligibleMediaWidgets, extraMotion: !settings.reduceExtraMotion,
-                onLayoutPreview: { layoutStore.setWorkspaceLayoutPreview($0, surface: .media) }) { region, height in
+                onLayoutPreview: { layoutStore.setWorkspaceLayoutPreview($0, surface: .media) },
+                onDragActive: { layoutStore.setWorkspaceDragActive($0) }) { region, height in
                 AnyView(islandWidget(region.widgets[0].kind, height: height))
             }
             .innerBlurScaleClean(settings: settings, isVisible: contentVisible,

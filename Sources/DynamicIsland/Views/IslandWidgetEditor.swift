@@ -11,6 +11,8 @@ struct IslandWidgetEditor: View {
     let eligibleWidgets: [IslandWidget]
     var extraMotion = true
     var onLayoutPreview: ((WorkspaceConfiguration?) -> Void)? = nil
+    /// Drag in flight: the host keeps the shell from shrinking under the pointer.
+    var onDragActive: ((Bool) -> Void)? = nil
     var content: (WorkspaceWidgetRegion, CGFloat) -> AnyView
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.islandDisplayMetrics) private var displayMetrics
@@ -57,7 +59,7 @@ struct IslandWidgetEditor: View {
         .onChange(of: target) { _, _ in
             if editing { onLayoutPreview?(visibleConfiguration) }
         }
-        .onDisappear { onLayoutPreview?(nil) }
+        .onDisappear { onLayoutPreview?(nil); onDragActive?(false) }
         .onExitCommand(perform: editing ? { cancel() } : nil)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(editing ? "Customize \(surface.rawValue) widgets" : "\(surface.rawValue) widgets")
@@ -454,10 +456,15 @@ struct IslandWidgetEditor: View {
         return WorkspaceDropResolver.applying(target, to: configuration, draggedID: id, paletteKind: kind) ?? configuration
     }
     private func begin(_ source: WorkspaceEditorDrag) {
+        measurements.dragStartSize = measurements.size
+        onDragActive?(true)
         drag = source
         target = nil
     }
-    private func finishDrag() { drag = nil; target = nil; intent = nil }
+    private func finishDrag() {
+        drag = nil; target = nil; intent = nil; measurements.dragStartSize = .zero
+        onDragActive?(false)
+    }
     private func clearTarget() { withAnimation(motion) { target = nil; intent = nil } }
     private func cancel() { finishDrag(); editing = false; WorkspaceEditorAccessibility.announce("Widget changes cancelled") }
     private func resize(_ region: WorkspaceWidgetRegion, to size: WidgetPresentationSize) {
@@ -481,8 +488,10 @@ struct IslandWidgetEditor: View {
         // the pointer resolved against cards that were no longer there and
         // the target flickered back to nil: no glow, no prospective motion.
         let committed = regions(in: draft)
-        let projection = WorkspaceWidgetLayoutProjection.make(regions: committed, availableSize: measurements.size,
+        let reference = measurements.dragStartSize == .zero ? measurements.size : measurements.dragStartSize
+        let projection = WorkspaceWidgetLayoutProjection.make(regions: committed, availableSize: reference,
             metrics: displayMetrics, editing: editing)
+        let location = WorkspaceDropResolver.dragReferencePoint(location, currentSize: measurements.size, startSize: reference)
         let slots = committed.compactMap { region -> WorkspaceDropSlot? in
             guard let frame = projection.frames.first(where: { $0.id == region.id })?.frame,
                   let kind = region.widgets.first?.kind else { return nil }
@@ -517,13 +526,17 @@ struct IslandWidgetEditor: View {
 
 /// Shared semantic tokens translated from transitions.dev resize/tabs guidance.
 enum WorkspaceEditorMotion {
-    static let reorderDuration = 0.25
-    static let resizeDuration = 0.30
+    /// Interactive reorder/resize use critically damped springs (no bounce).
+    /// Unlike a timing curve, a spring retargeted mid-flight keeps its
+    /// velocity, so neighbours glide continuously as the hover target changes
+    /// (the iOS home-screen feel) instead of restarting from rest.
+    static let reorderDuration = 0.32
+    static let resizeDuration = 0.36
     static func reorder(reduceMotion: Bool) -> Animation? {
-        reduceMotion ? nil : .timingCurve(0.22, 1, 0.36, 1, duration: reorderDuration)
+        reduceMotion ? nil : .smooth(duration: reorderDuration, extraBounce: 0)
     }
     static func resize(reduceMotion: Bool) -> Animation? {
-        reduceMotion ? nil : .timingCurve(0.22, 1, 0.36, 1, duration: resizeDuration)
+        reduceMotion ? nil : .smooth(duration: resizeDuration, extraBounce: 0)
     }
     /// transitions.dev panel reveal: open 400 ms, close 350 ms (smooth-out,
     /// never bouncing a close). Reduce Motion applies chrome directly.
@@ -542,6 +555,8 @@ enum WorkspaceEditorDrag: Equatable {
 private final class WorkspaceEditorMeasurements {
     var frames: [WidgetID: CGRect] = [:]
     var size: CGSize = .zero
+    /// Editor size when the current drag began (the resolver's reference frame).
+    var dragStartSize: CGSize = .zero
 }
 
 private struct WorkspaceEditorFrameKey: PreferenceKey {

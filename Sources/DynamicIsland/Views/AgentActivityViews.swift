@@ -531,7 +531,8 @@ struct AgentDashboardContentView: View {
                     IslandWidgetEditor(store: customization, surface: .agents, editing: editingWorkspace,
                         eligibleWidgets: [.chat, .feed] + (terminal != nil ? [.terminal] : []) + (settings?.timerEnabled != false && timerWidget != nil ? [.timer] : [])
                             + (showsUsage ? [.agentUsage, .codexUsage, .claudeUsage] : []), extraMotion: !(settings?.reduceExtraMotion ?? false),
-                        onLayoutPreview: { layoutStore?.setWorkspaceLayoutPreview($0, surface: .agents) }) { region, height in
+                        onLayoutPreview: { layoutStore?.setWorkspaceLayoutPreview($0, surface: .agents) },
+                        onDragActive: { layoutStore?.setWorkspaceDragActive($0) }) { region, height in
                         if region.isStack {
                             return AnyView(AgentChatTerminalStack(presentation: workspacePresentation, isVisible: contentVisible && transcriptPresentationReady && !editingWorkspace.wrappedValue, reduceMotion: reduceMotion || (settings?.reduceExtraMotion ?? false), layoutStore: layoutStore,
                                 chat: { AnyView(chatContent(workspace: workspace, newSessionFolder: newSessionFolder, verticalLayout: AgentWorkspaceVerticalLayoutProjection.make(availableHeight: max(0, height - 30)), composerControls: composerControls, visible: contentVisible && workspacePresentation.stackPage == .chat && !editingWorkspace.wrappedValue)) },
