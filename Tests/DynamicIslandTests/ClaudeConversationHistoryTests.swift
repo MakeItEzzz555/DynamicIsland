@@ -84,4 +84,39 @@ final class ClaudeConversationHistoryTests: XCTestCase {
         let missing = try await provider.readTranscript(nativeSessionID: UUID().uuidString.lowercased(), limit: 80)
         XCTAssertTrue(missing.isEmpty, "unknown sessions hydrate nothing, never fail")
     }
+    func testLegacyRowsHaveStableIdentityAndDuplicateRecordsDoNotReplay() {
+        let legacy: [String: Any] = ["type": "user", "timestamp": "2026-10-01T09:32:26Z",
+                                     "sessionId": session, "message": ["content": "A legacy prompt"]]
+        let assistant: [String: Any] = ["type": "assistant", "uuid": "same-record",
+            "sessionId": session, "message": ["id": "stable-message", "content": [["type": "text", "text": "One response"]]]]
+        let data = Data([line(legacy), line(assistant), line(assistant)].joined(separator: "\n").utf8)
+        let first = ClaudeConversationHistory.entries(from: data, nativeSessionID: session, limit: 50)
+        let second = ClaudeConversationHistory.entries(from: data, nativeSessionID: session, limit: 50)
+        XCTAssertEqual(first, second)
+        XCTAssertEqual(first.map(\.text), ["A legacy prompt", "One response"])
+        XCTAssertEqual(first.first?.timestamp, ISO8601DateFormatter().date(from: "2026-10-01T09:32:26Z"))
+    }
+
+    func testForeignSessionRowsNeverAcquireRequestedSessionIdentity() {
+        let data = Data(line(["type": "user", "uuid": "foreign", "sessionId": "another-exact-session",
+                              "message": ["content": "Foreign session prompt"]]).utf8)
+        XCTAssertTrue(ClaudeConversationHistory.entries(from: data, nativeSessionID: session, limit: 50).isEmpty)
+    }
+
+    func testZeroAndInvalidByteBudgetsFailClosedWithoutReading() throws {
+        let missing = URL(fileURLWithPath: "/tmp/does-not-exist-claude-history-\(UUID().uuidString)")
+        XCTAssertTrue(try ClaudeConversationHistory.read(file: missing, nativeSessionID: session, limit: 10, maximumBytes: -1).isEmpty)
+        XCTAssertTrue(try ClaudeConversationHistory.read(file: missing, nativeSessionID: session, limit: 10, maximumBytes: 0).isEmpty)
+        XCTAssertTrue(try ClaudeConversationHistory.read(file: missing, nativeSessionID: session, limit: 0).isEmpty)
+    }
+
+    func testUserMarkupRemainsConversationWhileCommandPlumbingIsOmitted() {
+        let data = Data([
+            line(["type": "user", "uuid": "html", "message": ["content": "<html>please improve this page</html>"]]),
+            line(["type": "user", "uuid": "command", "message": ["content": "<local-command-stdout>command output</local-command-stdout>"]])
+        ].joined(separator: "\n").utf8)
+        XCTAssertEqual(ClaudeConversationHistory.entries(from: data, nativeSessionID: session, limit: 10).map(\.text),
+                       ["<html>please improve this page</html>"])
+    }
+
 }

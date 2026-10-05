@@ -345,12 +345,62 @@ struct ExpandedPresentationProfile: Equatable, Sendable {
         )
     }
 
+    /// Widget content contributes requirements to the existing shell resolver;
+    /// notch anchoring, display limits and attached sidecars stay in this path.
+    @MainActor
+    func resolvedSize(from base: CGSize, page: ExpandedIslandPage,
+                      configuration: WorkspaceConfiguration?, editing: Bool,
+                      settings: AppSettings, metrics: ResolvedIslandMetrics,
+                      minimumHeaderWidth: CGFloat = 0) -> CGSize {
+        let surface: WorkspaceSurface? = page == .island ? .media : (page == .agents ? .agents : nil)
+        guard let surface, let configuration,
+              editing || configuration.customizedSurfaces.contains(surface) else {
+            let size = resolvedSize(from: base)
+            return CGSize(width: size.width * metrics.expandedShellScale, height: size.height * metrics.expandedShellScale)
+        }
+        let allowed = WorkspaceWidgetAvailability.eligible(on: surface, settings: settings)
+        let regions = configuration.regions(on: surface).compactMap { region -> WorkspaceWidgetRegion? in
+            let widgets = region.widgets.filter { allowed.contains($0.kind) }
+            guard !widgets.isEmpty else { return nil }
+            return WorkspaceWidgetRegion(id: widgets.count > 1 ? region.id : widgets[0].id, widgets: widgets)
+        }
+        let horizontal = IslandShellLayout.expandedHorizontalPadding(isNotchIntegrated: metrics.hasHardwareNotch && settings.respectHardwareNotch) * 2
+        let chrome = ExpandedIslandLayoutMetrics(containerSize: base, horizontalPadding: horizontal / 2, displayMetrics: metrics)
+        let usage = page == .agents && settings.agentUsageMetricsEnabled
+            ? AgentWorkspaceUsageStrip.rowHeight(for: min(base.width, metrics.visibleLogicalSize.width)) + 6 : 0
+        let vertical = chrome.topPadding + chrome.bottomPadding + chrome.tabSwitcherHeight + chrome.tabToPageSpacing + usage
+        let maximum = CGSize(width: max(1, max(520, metrics.logicalSize.width - 280) - horizontal),
+                             height: max(1, metrics.visibleLogicalSize.height - 24 * metrics.spacingScale - vertical))
+        let content = WorkspaceWidgetLayoutProjection.preferredContentSize(regions: regions,
+            maximumSize: maximum, metrics: metrics, editing: editing)
+        return CGSize(width: max(content.width, min(minimumHeaderWidth, maximum.width)) + horizontal,
+                      height: content.height + vertical)
+    }
+
     private static func stableScaled(_ value: CGFloat, by scale: CGFloat) -> CGFloat {
         stableValue(value * scale)
     }
 
     private static func stableValue(_ value: CGFloat) -> CGFloat {
         (value * 1_000).rounded() / 1_000
+    }
+}
+
+@MainActor
+enum WorkspaceWidgetAvailability {
+    static func eligible(on surface: WorkspaceSurface, settings: AppSettings) -> [IslandWidget] {
+        IslandWidget.allCases.filter { kind in
+            guard kind.isEligible(on: surface) else { return false }
+            switch kind {
+            case .media: return settings.mediaEnabled
+            case .files: return settings.trayEnabled && settings.fileShelfEnabled
+            case .clipboard: return settings.clipboardHistoryEnabled
+            case .timer: return settings.timerEnabled
+            case .shortcuts: return settings.shortcutsEnabled
+            case .activities: return settings.liveActivitiesEnabled
+            case .calendar, .workspace, .chat, .terminal, .feed: return true
+            }
+        }
     }
 }
 

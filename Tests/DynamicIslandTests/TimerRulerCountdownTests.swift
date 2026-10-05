@@ -163,15 +163,19 @@ final class TimerRulerSnapshotTests: XCTestCase {
         }
         let clock = ManualCountdownClock()
         let timer = TimerController(clock: clock, refreshInterval: nil)
-        let settings = AppSettings(defaults: UserDefaults(suiteName: "TimerRulerSnapshot.\(UUID().uuidString)")!)
+        let suite = "TimerRulerSnapshot.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = AppSettings(defaults: defaults)
+        try FileManager.default.createDirectory(at: URL(fileURLWithPath: path), withIntermediateDirectories: true)
         let directory = URL(fileURLWithPath: path)
-        try await render(FocusTimerView(timer: timer, settings: settings, showsPanel: false), to: directory.appendingPathComponent("timer-idle.png"))
+        try await render(FocusTimerView(timer: timer, settings: settings, showsPanel: false).defaultAppStorage(defaults), to: directory.appendingPathComponent("timer-idle.png"))
         timer.start(minutes: 25)
         clock.advance(by: .seconds(7 * 60 + 18))
         timer.refresh()
-        try await render(FocusTimerView(timer: timer, settings: settings, showsPanel: false), to: directory.appendingPathComponent("timer-running.png"))
+        try await render(FocusTimerView(timer: timer, settings: settings, showsPanel: false).defaultAppStorage(defaults), to: directory.appendingPathComponent("timer-running.png"))
         timer.pause()
-        try await render(FocusTimerView(timer: timer, settings: settings), to: directory.appendingPathComponent("timer-paused-panel.png"))
+        try await render(FocusTimerView(timer: timer, settings: settings).defaultAppStorage(defaults), to: directory.appendingPathComponent("timer-paused-panel.png"))
     }
 
     private func render<Content: View>(_ content: Content, to url: URL) async throws {

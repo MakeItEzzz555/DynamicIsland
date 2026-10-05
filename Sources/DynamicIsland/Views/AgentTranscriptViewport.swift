@@ -135,10 +135,12 @@ struct AgentTranscriptViewportProbe: NSViewRepresentable {
         private weak var tail: AgentTranscriptTailAnchor?
         private var realizeLatest: () -> Void = { }
         private var realizationWidth: CGFloat?
-        /// A scrollTo issued in the same update that inserts the latest row is
-        /// silently ignored by SwiftUI. Retry, a frame apart and bounded, until
-        /// the realized tail marker reports geometry.
+        /// A structural scrollTo can precede lazy row realization. Retry only
+        /// after another native layout boundary, never through timer polling.
         private var realizationAttempts = 0
+        private var layoutEpoch: UInt64 = 0
+        private var realizationEpoch: UInt64?
+        private var isConfigured = false
         static let maximumRealizationAttempts = 8
         private var realizationID: String?
         private var realizeReadingAnchor: (String) -> Bool = { _ in false }
@@ -146,18 +148,23 @@ struct AgentTranscriptViewportProbe: NSViewRepresentable {
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
+            geometryDidChange()
+        }
+        override func layout() { super.layout(); geometryDidChange() }
+        private func geometryDidChange() {
+            layoutEpoch &+= 1
             scheduleLayoutCorrection()
         }
-        override func layout() { super.layout(); scheduleLayoutCorrection() }
 
         func configure(sessionID: AgentSessionInstanceID, contentToken: String,
                        jumpRequest: Int, realizationID: String, tail: AgentTranscriptTailAnchor, realizeLatest: @escaping () -> Void, realizeReadingAnchor: @escaping (String) -> Bool = { _ in false }, changed: @escaping (Bool) -> Void) {
+            isConfigured = true
             self.changed = changed
             self.realizeLatest = realizeLatest
             self.realizeReadingAnchor = realizeReadingAnchor
             self.tail = tail
             tail.geometryOwner = self
-            tail.geometryChanged = { [weak self] in self?.scheduleLayoutCorrection() }
+            tail.geometryChanged = { [weak self] in self?.geometryDidChange() }
             if self.sessionID != sessionID {
                 save();
                 if let previousID = self.sessionID { AgentTranscriptViewportStore.shared.setRestoringHistory(false, for: previousID) }
@@ -168,7 +175,7 @@ struct AgentTranscriptViewportProbe: NSViewRepresentable {
                 AgentTranscriptViewportStore.shared.setRestoringHistory(restoringReadingAnchor, for: sessionID)
                 token = nil; reported = nil
                 realizationWidth = nil
-                realizationAttempts = 0
+                realizationAttempts = 0; realizationEpoch = nil
                 requestedReadingRealization = false
             }
             if jump != jumpRequest {
@@ -179,7 +186,7 @@ struct AgentTranscriptViewportProbe: NSViewRepresentable {
             if self.realizationID != realizationID {
                 self.realizationID = realizationID
                 realizationWidth = nil
-                realizationAttempts = 0
+                realizationAttempts = 0; realizationEpoch = nil
             }
             if token != contentToken { token = contentToken; scheduleLayoutCorrection() }
         }
@@ -209,7 +216,7 @@ struct AgentTranscriptViewportProbe: NSViewRepresentable {
                     },
                 NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification,
                     object: document, queue: .main) { [weak self] _ in
-                        MainActor.assumeIsolated { self?.scheduleLayoutCorrection() }
+                        MainActor.assumeIsolated { self?.geometryDidChange() }
                     },
                 NotificationCenter.default.addObserver(forName: NSScrollView.willStartLiveScrollNotification,
                     object: scroll, queue: .main) { [weak self] _ in
@@ -254,9 +261,9 @@ struct AgentTranscriptViewportProbe: NSViewRepresentable {
         }
 
         private func scheduleLayoutCorrection() {
-            guard correction == nil else { return }
+            guard isConfigured, correction == nil else { return }
             let work = DispatchWorkItem { [weak self] in
-                guard let self else { return }
+                guard let self, isConfigured else { return }
                 correction = nil
                 attach()
                 guard let scroll, let document = scroll.documentView,
@@ -266,20 +273,18 @@ struct AgentTranscriptViewportProbe: NSViewRepresentable {
                 defer { correcting = false }
                 let clip = scroll.contentView.bounds
                 if position.followingLatest, tail?.end(in: document) == nil {
-                    // A layout-ready structural realization per width and
-                    // latest row. Never scroll blindly into unmeasured lazy
-                    // estimates; retry until the tail marker is realized.
+                    // One attempt per native geometry boundary, bounded per
+                    // width/latest row. Layout and row marker notifications own
+                    // subsequent attempts; no per-token/frame retry chain.
                     if realizationWidth != clip.width {
                         realizationWidth = clip.width
-                        realizationAttempts = 0
+                        realizationAttempts = 0; realizationEpoch = nil
                     }
-                    if realizationAttempts < Self.maximumRealizationAttempts {
+                    if realizationAttempts < Self.maximumRealizationAttempts, realizationEpoch != layoutEpoch {
+                        realizationEpoch = layoutEpoch
                         realizationAttempts += 1
                         realizeLatest()
                         AgentPerformanceProbe.count("agents.viewport.realizeLatest")
-                        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(16)) { [weak self] in
-                            self?.scheduleLayoutCorrection()
-                        }
                     }
                     return
                 }
@@ -338,6 +343,7 @@ struct AgentTranscriptViewportProbe: NSViewRepresentable {
             }
         }
         func detach() {
+            isConfigured = false
             if let id = sessionID { AgentTranscriptViewportStore.shared.setRestoringHistory(false, for: id) }
             save(); correction?.cancel(); correction = nil
             if tail?.geometryOwner === self {

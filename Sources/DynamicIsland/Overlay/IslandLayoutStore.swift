@@ -28,6 +28,56 @@ enum TransientInteractionOwner: Hashable, Sendable {
 
 @MainActor
 final class IslandLayoutStore: ObservableObject {
+    struct WorkspaceLayoutPreview: Equatable {
+        let configuration: WorkspaceConfiguration
+        let surface: WorkspaceSurface
+    }
+    @Published private(set) var workspaceLayoutPreview: WorkspaceLayoutPreview?
+    @Published private(set) var workspaceGeometryTransition = WorkspaceGeometryTransition()
+    @Published private(set) var nativeControlRegions: [UUID: CGRect] = [:]
+    @Published var expandedChildExitGeneration = 0
+    @Published private(set) var expandedChildExitAcknowledgement = 0
+    func acknowledgeExpandedChildExit(generation: Int) {
+        guard generation == expandedChildExitGeneration, expandedChildExitAcknowledgement != generation else { return }
+        expandedChildExitAcknowledgement = generation
+    }
+    func expandedPresentationSize(desired: CGSize, committed: CGSize, isExpanded: Bool) -> CGSize {
+        if (isExpanded && isExpandedContentExiting) || workspaceGeometryTransition.phase == .childrenExiting {
+            return committed
+        }
+        return desired
+    }
+
+    func setWorkspaceLayoutPreview(_ configuration: WorkspaceConfiguration?, surface: WorkspaceSurface) {
+        if configuration == nil && workspaceLayoutPreview?.surface != surface { return }
+        let next = configuration.map { WorkspaceLayoutPreview(configuration: $0, surface: surface) }
+        if workspaceLayoutPreview != next { workspaceLayoutPreview = next }
+    }
+    func requestWorkspaceGeometry(_ size: CGSize) { workspaceGeometryTransition.request(size) }
+    func workspaceChildrenExited(generation: Int) {
+        var next = workspaceGeometryTransition
+        if next.childrenExited(generation: generation) { workspaceGeometryTransition = next }
+    }
+    func finishWorkspaceGeometry(generation: Int) {
+        var next = workspaceGeometryTransition
+        next.complete(generation: generation)
+        if next != workspaceGeometryTransition { workspaceGeometryTransition = next }
+    }
+    func cancelWorkspaceGeometry() {
+        guard workspaceGeometryTransition.phase != .idle else { return }
+        workspaceGeometryTransition.cancel()
+    }
+    /// SwiftUI canvas coordinates. Owners remove only their own control, so a
+    /// retiring ruler cannot clear a newly mounted widget's input claim.
+    func setNativeControlRegion(_ frame: CGRect?, owner: UUID) {
+        var next = nativeControlRegions
+        if let frame, !frame.isEmpty, !frame.isNull, !frame.isInfinite { next[owner] = frame.integral }
+        else { next.removeValue(forKey: owner) }
+        if next != nativeControlRegions { nativeControlRegions = next }
+    }
+    func containsNativeControlPoint(_ point: CGPoint) -> Bool {
+        nativeControlRegions.values.contains { $0.contains(point) }
+    }
     @Published var overlayPresentationGeneration = 0
     @Published var canvasSize: CGSize = CGSize(width: 760, height: 260)
     @Published var collapsedSurfaceFrame: CGRect = CGRect(x: 272, y: 226, width: 216, height: 34)

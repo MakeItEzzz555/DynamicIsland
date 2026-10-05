@@ -23,6 +23,7 @@ struct AgentWorkspaceSplitView<Chat: View, Workspace: View>: View {
 
 struct AgentWorkspaceUsageStrip: View {
     let groups: [[AgentUsageIndicator]]
+    var availableWidth: CGFloat = 960
 
     static func diameter(for width: CGFloat) -> CGFloat {
         width < 620 ? 40 : 48
@@ -59,7 +60,7 @@ struct AgentWorkspaceUsageStrip: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         }
-        .frame(minHeight: 58, idealHeight: 66)
+        .frame(height: Self.rowHeight(for: availableWidth))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Both providers: five-hour, weekly and selected-session context usage")
     }

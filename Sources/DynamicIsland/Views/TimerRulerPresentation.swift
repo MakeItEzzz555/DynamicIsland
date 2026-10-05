@@ -10,10 +10,10 @@ extension TimerRulerScale {
         let labelled: Bool
     }
 
-    static let majorTickHeight: CGFloat = 22
-    static let minuteTickHeight: CGFloat = 13
-    static let tickBaseline: CGFloat = 38
-    static let rulerHeight: CGFloat = 52
+    static let majorTickHeight: CGFloat = 28
+    static let minuteTickHeight: CGFloat = 14
+    static let tickBaseline: CGFloat = 44
+    static let rulerHeight: CGFloat = 62
 
     static func x(forMinute minute: Int, value: Double, center: CGFloat) -> CGFloat {
         center + CGFloat(Double(minute) - value) * pointsPerMinute
@@ -87,3 +87,134 @@ enum TimerCountdownPresentation {
         return Double(parts.seconds) + Double(parts.attoseconds) / 1e18
     }
 }
+
+/// Persist exact seconds; older minute preferences migrate without changing
+/// the selected duration. These values never own an active countdown.
+enum TimerDurationSelection {
+    static let maximumSeconds = 180 * 60
+    static func seconds(_ value: Double) -> Int {
+        guard value.isFinite else { return 25 * 60 }
+        return Int(min(Double(maximumSeconds), max(1, value)).rounded())
+    }
+    static func restored(seconds stored: Int, legacyMinutes: Int) -> Int {
+        stored > 0 ? seconds(Double(stored)) : TimerRulerScale.minutes(Double(legacyMinutes)) * 60
+    }
+}
+
+enum TimerRulerResolution: String, CaseIterable {
+    case seconds, minutes
+    var stepSeconds: Int { self == .seconds ? 1 : 60 }
+    var pointsPerTick: CGFloat { 9 }
+    var pointsPerSecond: CGFloat { pointsPerTick / CGFloat(stepSeconds) }
+    var title: String { self == .seconds ? "1s" : "1m" }
+}
+
+/// Captured once per drag. Translation is always relative to the original
+/// duration/scale, so a mode or scale change cannot compound each delta.
+struct TimerRulerDragSelection: Equatable {
+    let originSeconds: Int
+    let resolution: TimerRulerResolution
+    private(set) var previousValue: Double
+    init(seconds: Int, resolution: TimerRulerResolution) {
+        originSeconds = TimerDurationSelection.seconds(Double(seconds))
+        self.resolution = resolution
+        previousValue = Double(originSeconds)
+    }
+    struct Change: Equatable {
+        var value: Double
+        var selectedSeconds: Int
+        var crossedTicks: [Int]
+    }
+    mutating func update(translation: Double) -> Change {
+        guard translation.isFinite else {
+            return Change(value: previousValue, selectedSeconds: TimerDurationSelection.seconds(previousValue), crossedTicks: [])
+        }
+        let value = min(Double(TimerDurationSelection.maximumSeconds), max(1,
+            Double(originSeconds) - translation / Double(resolution.pointsPerSecond)))
+        let ticks = TimerRulerInteractionGeometry.crossedTicks(from: previousValue, to: value, resolution: resolution)
+        previousValue = value
+        return Change(value: value, selectedSeconds: TimerDurationSelection.seconds(value), crossedTicks: ticks)
+    }
+}
+
+enum TimerRulerInteractionGeometry {
+    static func x(forTick tick: Int, valueSeconds: Double, center: CGFloat, resolution: TimerRulerResolution) -> CGFloat {
+        center + CGFloat(Double(tick * resolution.stepSeconds) - valueSeconds) * resolution.pointsPerSecond
+    }
+    static func visibleTicks(valueSeconds: Double, width: CGFloat, resolution: TimerRulerResolution) -> ClosedRange<Int> {
+        let value = min(Double(TimerDurationSelection.maximumSeconds), max(0, valueSeconds.isFinite ? valueSeconds : 0))
+        let center = value / Double(resolution.stepSeconds)
+        let safeWidth = width.isFinite ? max(0, width) : 0
+        let span = min(Double(TimerDurationSelection.maximumSeconds / resolution.stepSeconds),
+                       Double(safeWidth / resolution.pointsPerTick / 2) + 1)
+        let lower = max(0, Int((center - span).rounded(.down)))
+        let upper = min(TimerDurationSelection.maximumSeconds / resolution.stepSeconds, Int((center + span).rounded(.up)))
+        return lower...max(lower, upper)
+    }
+    static func tick(_ index: Int, resolution: TimerRulerResolution) -> TimerRulerScale.Tick {
+        if resolution == .minutes { return TimerRulerScale.tick(forMinute: index) }
+        if index.isMultiple(of: 60) { return .init(height: 32, labelled: true) }
+        if index.isMultiple(of: 15) { return .init(height: 28, labelled: true) }
+        if index.isMultiple(of: 5) { return .init(height: 22, labelled: false) }
+        return .init(height: 14, labelled: false)
+    }
+    /// Excludes the starting boundary, includes the newly reached boundary.
+    /// Fast deltas enumerate every crossed tick once; repeated deltas enumerate none.
+    static func crossedTicks(from previous: Double, to current: Double, resolution: TimerRulerResolution) -> [Int] {
+        guard previous.isFinite, current.isFinite, previous != current else { return [] }
+        let limit = Double(TimerDurationSelection.maximumSeconds)
+        let old = min(limit, max(1, previous)) / Double(resolution.stepSeconds)
+        let new = min(limit, max(1, current)) / Double(resolution.stepSeconds)
+        if new > old {
+            let first = Int(old.rounded(.down)) + 1
+            let last = Int(new.rounded(.down))
+            return first <= last ? Array(first...last) : []
+        }
+        let first = Int(old.rounded(.up)) - 1
+        let last = Int(new.rounded(.up))
+        return first >= last ? Array(stride(from: first, through: last, by: -1)) : []
+    }
+}
+
+extension TimerCountdownPresentation {
+    static func rulerSeconds(snapshot: TimerTimingSnapshot, now: Duration, selectedSeconds: Int) -> Double {
+        isCountingDown(snapshot) ? remainingSeconds(snapshot, now: now) : Double(TimerDurationSelection.seconds(Double(selectedSeconds)))
+    }
+    static func accessibilityValue(snapshot: TimerTimingSnapshot, now: Duration, selectedSeconds: Int) -> String {
+        if isCountingDown(snapshot) {
+            return accessibilityValue(snapshot: snapshot, now: now, selectedMinutes: 0)
+        }
+        let value = TimerDurationSelection.seconds(Double(selectedSeconds))
+        return "\(value / 60) minutes \(value % 60) seconds selected"
+    }
+    static func frameInterval(snapshot: TimerTimingSnapshot, displayScale: CGFloat, resolution: TimerRulerResolution) -> Double? {
+        guard snapshot.isRunning else { return nil }
+        let pixelsPerSecond = Double(resolution.pointsPerSecond * max(1, displayScale))
+        return min(0.25, max(1.0 / 30, 0.5 / pixelsPerSecond))
+    }
+}
+
+// Scoped input ownership shared with the island's navigation arbiter.
+import SwiftUI
+
+struct TimerRulerInteractionRegistration {
+    var enabled: Bool
+    var report: @MainActor (UUID, CGRect?) -> Void
+    init(enabled: Bool = true, _ report: @escaping @MainActor (UUID, CGRect?) -> Void = { _, _ in }) {
+        self.enabled = enabled; self.report = report
+    }
+}
+private struct TimerRulerInteractionRegistrationKey: EnvironmentKey {
+    static var defaultValue: TimerRulerInteractionRegistration { .init() }
+}
+extension EnvironmentValues {
+    var timerRulerInteractionRegistration: TimerRulerInteractionRegistration {
+        get { self[TimerRulerInteractionRegistrationKey.self] }
+        set { self[TimerRulerInteractionRegistrationKey.self] = newValue }
+    }
+}
+struct TimerRulerInteractionFrameKey: PreferenceKey {
+    static var defaultValue: CGRect { .zero }
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) { value = nextValue() }
+}
+final class TimerRulerMeasuredFrame { var frame: CGRect = .zero }

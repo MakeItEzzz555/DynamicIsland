@@ -105,6 +105,12 @@ enum WorkspaceSurface: String, CaseIterable, Codable, Identifiable {
     var id: String { rawValue }
 }
 
+enum WidgetPresentationSize: String, CaseIterable, Codable {
+    case compact, standard, large
+    var title: String { switch self { case .compact: "Compact"; case .standard: "Standard"; case .large: "Large" } }
+    var scale: CGFloat { switch self { case .compact: 0.85; case .standard: 1; case .large: 1.15 } }
+}
+
 struct WidgetPlacement: Codable, Equatable, Identifiable {
     var id: WidgetID
     var kind: IslandWidget
@@ -112,13 +118,14 @@ struct WidgetPlacement: Codable, Equatable, Identifiable {
     var order: Int
     var isVisible: Bool
     var groupID: WidgetID?
+    var size: WidgetPresentationSize
     init(id: WidgetID? = nil, kind: IslandWidget, surface: WorkspaceSurface,
-         order: Int, isVisible: Bool = true, groupID: WidgetID? = nil) {
+         order: Int, isVisible: Bool = true, groupID: WidgetID? = nil, size: WidgetPresentationSize = .standard) {
         self.id = id ?? WidgetID("\(surface.rawValue).\(kind.rawValue)")
         self.kind = kind; self.surface = surface; self.order = order
-        self.isVisible = isVisible; self.groupID = groupID
+        self.isVisible = isVisible; self.groupID = groupID; self.size = size
     }
-    private enum CodingKeys: String, CodingKey { case id, kind, surface, order, isVisible, groupID }
+    private enum CodingKeys: String, CodingKey { case id, kind, surface, order, isVisible, groupID, size }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         let kind = try values.decode(IslandWidget.self, forKey: .kind)
@@ -126,7 +133,8 @@ struct WidgetPlacement: Codable, Equatable, Identifiable {
         self.init(id: try values.decodeIfPresent(WidgetID.self, forKey: .id), kind: kind,
                   surface: surface, order: try values.decodeIfPresent(Int.self, forKey: .order) ?? 0,
                   isVisible: try values.decodeIfPresent(Bool.self, forKey: .isVisible) ?? true,
-                  groupID: try values.decodeIfPresent(WidgetID.self, forKey: .groupID))
+                  groupID: try values.decodeIfPresent(WidgetID.self, forKey: .groupID),
+                  size: (try? values.decode(WidgetPresentationSize.self, forKey: .size)) ?? .standard)
     }
 }
 
@@ -357,6 +365,11 @@ struct WorkspaceConfiguration: Codable, Equatable {
         let before = destination > index ? (destination + 1 < regions.count ? regions[destination + 1].id : nil) : regions[destination].id
         move(id, before: before, on: surface)
     }
+    mutating func setSize(_ size: WidgetPresentationSize, for id: WidgetID) {
+        let members = groups.first(where: { $0.id == id })?.members ?? [id]
+        for index in placements.indices where members.contains(placements[index].id) { placements[index].size = size }
+    }
+
     mutating func combineTerminalWithChat(on surface: WorkspaceSurface = .agents) {
         guard surface == .agents,
               let chat = placement(kind: .chat, on: surface), chat.isVisible,
@@ -444,28 +457,55 @@ enum WorkspaceDropResolver {
                         slots: [WorkspaceDropSlot], draggedKind: IslandWidget,
                         previous: WorkspaceDropTarget? = nil, hysteresis: CGFloat = 8) -> WorkspaceDropTarget {
         guard bounds.contains(point), draggedKind.isEligible(on: surface) else { return .invalid }
-        let ordered = slots.sorted { $0.frame.minX == $1.frame.minX ? $0.id.rawValue < $1.id.rawValue : $0.frame.minX < $1.frame.minX }
+        let ordered = slots.sorted {
+            if abs($0.frame.minY - $1.frame.minY) > 1 { return $0.frame.minY < $1.frame.minY }
+            return $0.frame.minX == $1.frame.minX ? $0.id.rawValue < $1.id.rawValue : $0.frame.minX < $1.frame.minX
+        }
         if surface == .agents, draggedKind == .terminal,
            let chat = ordered.first(where: { $0.kind == .chat }) {
             var combineFrame = chat.frame.insetBy(dx: min(30, chat.frame.width * 0.2), dy: min(20, chat.frame.height * 0.15))
             if previous == .combine(chat: chat.id) { combineFrame = combineFrame.insetBy(dx: -hysteresis, dy: -hysteresis) }
             if combineFrame.contains(point) { return .combine(chat: chat.id) }
         }
-        if case .insert(let priorSurface, nil) = previous, priorSurface == surface,
-           let last = ordered.last, point.x >= last.frame.midX - hysteresis {
-            return .insert(surface: surface, before: nil)
+        var rows: [[WorkspaceDropSlot]] = []
+        for slot in ordered {
+            if let last = rows.indices.last, let first = rows[last].first,
+               abs(first.frame.minY - slot.frame.minY) <= 1 { rows[last].append(slot) }
+            else { rows.append([slot]) }
         }
-        if case .insert(let priorSurface, let before) = previous, priorSurface == surface,
-           let before, let index = ordered.firstIndex(where: { $0.id == before }) {
-            let left = index == 0 ? bounds.minX : ordered[index - 1].frame.midX
-            let right = ordered[index].frame.midX
-            if point.x >= left - hysteresis && point.x <= right + hysteresis {
-                return .insert(surface: surface, before: before)
+        guard !rows.isEmpty else { return .insert(surface: surface, before: nil) }
+        func distance(to row: [WorkspaceDropSlot]) -> CGFloat {
+            let low = row.map { $0.frame.minY }.min() ?? 0
+            let high = row.map { $0.frame.maxY }.max() ?? 0
+            return max(low - point.y, point.y - high, 0)
+        }
+        var rowIndex = rows.indices.min { distance(to: rows[$0]) < distance(to: rows[$1]) } ?? 0
+        if case .insert(let previousSurface, let before) = previous, previousSurface == surface {
+            let previousRow = before.flatMap { id in rows.firstIndex { $0.contains { $0.id == id } } } ?? (before == nil ? rows.count - 1 : nil)
+            if let previousRow {
+                let low = rows[previousRow].map { $0.frame.minY }.min() ?? 0
+                let high = rows[previousRow].map { $0.frame.maxY }.max() ?? 0
+                if point.y >= low - hysteresis && point.y <= high + hysteresis { rowIndex = previousRow }
             }
         }
-        let before = ordered.first(where: { point.x < $0.frame.midX })?.id
+        let row = rows[rowIndex]
+        let nextRowFirst = rowIndex + 1 < rows.count ? rows[rowIndex + 1].first?.id : nil
+        if case .insert(let priorSurface, let before) = previous, priorSurface == surface {
+            if before == nextRowFirst, let last = row.last, point.x >= last.frame.midX - hysteresis {
+                return .insert(surface: surface, before: nextRowFirst)
+            }
+            if let before, let index = row.firstIndex(where: { $0.id == before }) {
+                let left = index == 0 ? bounds.minX : row[index - 1].frame.midX
+                let right = row[index].frame.midX
+                if point.x >= left - hysteresis && point.x <= right + hysteresis {
+                    return .insert(surface: surface, before: before)
+                }
+            }
+        }
+        let before = row.first(where: { point.x < $0.frame.midX })?.id ?? nextRowFirst
         return .insert(surface: surface, before: before)
     }
+
     static func applying(_ target: WorkspaceDropTarget, to original: WorkspaceConfiguration,
                          draggedID: WidgetID?, paletteKind: IslandWidget?) -> WorkspaceConfiguration? {
         var draft = original
@@ -496,4 +536,130 @@ enum WorkspaceDropResolver {
         }
         return draft.normalized()
     }
+}
+
+// MARK: - Composition-derived content requirements
+
+struct WorkspaceWidgetFrame: Equatable, Identifiable {
+    let id: WidgetID
+    let frame: CGRect
+}
+
+/// Content requirements are shared by the editor and the existing island shell
+/// resolver. This projection never owns screen anchoring or shell state.
+struct WorkspaceWidgetLayoutProjection: Equatable {
+    let frames: [WorkspaceWidgetFrame]
+    let contentSize: CGSize
+    let columns: Int
+    let rows: Int
+    let requiresScrolling: Bool
+
+    private struct Requirement {
+        let region: WorkspaceWidgetRegion
+        let preferred: CGSize
+        let minimum: CGSize
+    }
+    private static func requirements(_ regions: [WorkspaceWidgetRegion], metrics: ResolvedIslandMetrics) -> [Requirement] {
+        regions.map { region in
+            let sizes = region.widgets.map { widget -> (CGSize, CGSize) in
+                let preferred: CGSize
+                let minimum: CGSize
+                switch widget.kind {
+                case .media: preferred = .init(width: 360, height: 220); minimum = .init(width: 260, height: 180)
+                case .files, .clipboard: preferred = .init(width: 260, height: 210); minimum = .init(width: 200, height: 170)
+                case .timer: preferred = .init(width: 360, height: 160); minimum = .init(width: 280, height: 150)
+                case .calendar: preferred = .init(width: 320, height: 240); minimum = .init(width: 260, height: 200)
+                case .shortcuts: preferred = .init(width: 240, height: 180); minimum = .init(width: 180, height: 140)
+                case .activities: preferred = .init(width: 260, height: 200); minimum = .init(width: 190, height: 150)
+                case .workspace: preferred = .init(width: 340, height: 240); minimum = .init(width: 260, height: 180)
+                case .chat: preferred = .init(width: 700, height: 360); minimum = .init(width: 480, height: 300)
+                case .terminal: preferred = .init(width: 500, height: 320); minimum = .init(width: 360, height: 240)
+                case .feed: preferred = .init(width: 330, height: 320); minimum = .init(width: 230, height: 220)
+                }
+                let scale = metrics.expandedCardScale * widget.size.scale
+                // Compact sizing preserves the minimum readable controls.
+                let minScale = metrics.expandedCardScale * max(1, widget.size.scale)
+                return (.init(width: max(preferred.width * scale, minimum.width * minScale),
+                              height: max(preferred.height * scale, minimum.height * minScale)),
+                        .init(width: minimum.width * minScale, height: minimum.height * minScale))
+            }
+            let stackHeader: CGFloat = region.isStack ? 30 * metrics.spacingScale : 0
+            return Requirement(region: region,
+                preferred: .init(width: sizes.map { $0.0.width }.max() ?? 1, height: (sizes.map { $0.0.height }.max() ?? 1) + stackHeader),
+                minimum: .init(width: sizes.map { $0.1.width }.max() ?? 1, height: (sizes.map { $0.1.height }.max() ?? 1) + stackHeader))
+        }
+    }
+    private static func packedRows(_ requirements: [Requirement], width: CGFloat, gap: CGFloat) -> [[Requirement]] {
+        var rows: [[Requirement]] = []
+        var current: [Requirement] = []
+        var used: CGFloat = 0
+        for requirement in requirements {
+            let next = min(requirement.minimum.width, width)
+            if !current.isEmpty, used + gap + next > width {
+                rows.append(current); current = []; used = 0
+            }
+            used += (current.isEmpty ? 0 : gap) + next
+            current.append(requirement)
+        }
+        if !current.isEmpty { rows.append(current) }
+        return rows
+    }
+    static func preferredContentSize(regions: [WorkspaceWidgetRegion], maximumSize: CGSize,
+                                     metrics: ResolvedIslandMetrics, editing: Bool = false) -> CGSize {
+        let width = finite(maximumSize.width)
+        let height = finite(maximumSize.height)
+        let gap = metrics.spacing(8)
+        let inset: CGFloat = editing ? 7 : 0
+        let palette: CGFloat = editing ? 54 + gap : 0
+        let rows = packedRows(requirements(regions, metrics: metrics), width: max(1, width - inset * 2), gap: gap)
+        let preferredWidth = rows.map { $0.reduce(0) { $0 + $1.preferred.width } + CGFloat(max(0, $0.count - 1)) * gap }.max() ?? 0
+        let preferredHeight = rows.reduce(CGFloat.zero) { $0 + ($1.map(\.preferred.height).max() ?? 0) } + CGFloat(max(0, rows.count - 1)) * gap
+        // An empty enabled-feature projection remains a readable recovery surface.
+        return .init(width: min(width, max(260 * metrics.expandedCardScale, preferredWidth) + inset * 2),
+                     height: min(height, max(120 * metrics.expandedCardScale, preferredHeight) + inset + palette))
+    }
+    static func make(regions: [WorkspaceWidgetRegion], availableSize: CGSize,
+                     metrics: ResolvedIslandMetrics, editing: Bool = false) -> Self {
+        let width = finite(availableSize.width)
+        let height = finite(availableSize.height)
+        let gap = metrics.spacing(8)
+        let inset: CGFloat = editing ? 7 : 0
+        let palette: CGFloat = editing ? 54 + gap : 0
+        let cardWidth = max(1, width - inset * 2)
+        let cardHeight = max(1, height - inset - palette)
+        let rows = packedRows(requirements(regions, metrics: metrics), width: cardWidth, gap: gap)
+        let preferredHeights = rows.map { $0.map(\.preferred.height).max() ?? 0 }
+        let minimumHeights = rows.map { $0.map(\.minimum.height).max() ?? 0 }
+        let totalGap = CGFloat(max(0, rows.count - 1)) * gap
+        let minimumHeight = minimumHeights.reduce(0, +) + totalGap
+        let preferredHeight = preferredHeights.reduce(0, +) + totalGap
+        let scroll = minimumHeight > cardHeight
+        let actualHeight = scroll ? preferredHeight : min(preferredHeight, cardHeight)
+        let extraHeight = max(0, actualHeight - minimumHeight)
+        let heightSlack = max(0, preferredHeight - minimumHeight)
+        var y: CGFloat = inset + (scroll ? 0 : max(0, (cardHeight - actualHeight) / 2))
+        var frames: [WorkspaceWidgetFrame] = []
+        for (index, row) in rows.enumerated() {
+            let rowHeight = scroll ? preferredHeights[index] : minimumHeights[index] + (heightSlack > 0 ? extraHeight * (preferredHeights[index] - minimumHeights[index]) / heightSlack : 0)
+            let gaps = CGFloat(max(0, row.count - 1)) * gap
+            let minimumWidths = row.map { min($0.minimum.width, cardWidth) }
+            let preferredWidths = row.map { min($0.preferred.width, cardWidth) }
+            let minimumWidth = minimumWidths.reduce(0, +)
+            let preferredWidth = preferredWidths.reduce(0, +)
+            let usable = max(0, cardWidth - gaps)
+            let rowWidth = min(preferredWidth, usable)
+            let extra = max(0, rowWidth - minimumWidth)
+            let slack = max(0, preferredWidth - minimumWidth)
+            var x = inset + max(0, (cardWidth - rowWidth - gaps) / 2)
+            for (column, requirement) in row.enumerated() {
+                let itemWidth = minimumWidths[column] + (slack > 0 ? extra * (preferredWidths[column] - minimumWidths[column]) / slack : 0)
+                frames.append(.init(id: requirement.region.id, frame: .init(x: x, y: y, width: itemWidth, height: rowHeight)))
+                x += itemWidth + gap
+            }
+            y += rowHeight + gap
+        }
+        return Self(frames: frames, contentSize: .init(width: width, height: max(height - palette, y - gap)),
+                    columns: rows.map(\.count).max() ?? 0, rows: rows.count, requiresScrolling: scroll)
+    }
+    private static func finite(_ value: CGFloat) -> CGFloat { value.isFinite ? max(1, value) : 1 }
 }

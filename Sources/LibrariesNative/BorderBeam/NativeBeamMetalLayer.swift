@@ -156,6 +156,8 @@ struct NativeBeamMetalLayer: NSViewRepresentable {
         private let inFlight = DispatchSemaphore(value: 3)
         private var banks: [[MTLBuffer?]] = Array(repeating: Array(repeating: nil, count: 5), count: 3)
         private var nextBank = 0
+        private let visibilityObservations = BeamVisibilityObservations()
+        private(set) var submittedDrawCount = 0
 
         init() {
             super.init(frame: .zero, device: BeamMetalResources.device)
@@ -174,6 +176,27 @@ struct NativeBeamMetalLayer: NSViewRepresentable {
         override var isOpaque: Bool { false }
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
         private var layoutDrawnSize: CGSize = .zero
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            visibilityObservations.clear()
+            layoutDrawnSize = .zero
+            needsLayout = true
+            guard let window else { return }
+            visibilityObservations.tokens = [NotificationCenter.default.addObserver(
+                forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.layoutDrawnSize = .zero
+                    self.needsLayout = true
+                }
+            }]
+        }
+        override func viewDidUnhide() {
+            super.viewDidUnhide()
+            layoutDrawnSize = .zero
+            needsLayout = true
+        }
         override func layout() {
             super.layout()
             // updateNSView can run before AppKit assigns the drawable size.
@@ -186,14 +209,21 @@ struct NativeBeamMetalLayer: NSViewRepresentable {
             guard let window, window.isVisible, window.occlusionState.contains(.visible),
                   !isHiddenOrHasHiddenAncestor,
                   !bounds.isEmpty, parameters != nil, bounds.size != layoutDrawnSize else { return }
-            layoutDrawnSize = bounds.size
             draw()
         }
         func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
-        func releaseDrawableResources() { parameters = nil; banks = [] }
+        func releaseDrawableResources() {
+            visibilityObservations.clear()
+            parameters = nil; banks = []; layoutDrawnSize = .zero
+        }
 
         func draw(in view: MTKView) {
-            guard !banks.isEmpty,
+            // updateNSView and explicit static draws share the same guard as
+            // layout; hidden/occluded surfaces must never acquire a drawable.
+            guard let window, window.isVisible, window.occlusionState.contains(.visible),
+                  !isHiddenOrHasHiddenAncestor, !bounds.isEmpty,
+                  drawableSize.width > 0, drawableSize.height > 0,
+                  !banks.isEmpty,
                   let parameters, let device,
                   case let .success(pipelines) = BeamMetalResources.result,
                   let commandQueue,
@@ -225,6 +255,15 @@ struct NativeBeamMetalLayer: NSViewRepresentable {
             encoder.endEncoding()
             command.present(drawable)
             command.commit()
+            layoutDrawnSize = bounds.size
+            submittedDrawCount += 1
         }
     }
+}
+
+/// Notification removal remains safe during native view teardown.
+private final class BeamVisibilityObservations: @unchecked Sendable {
+    var tokens: [NSObjectProtocol] = []
+    func clear() { tokens.forEach(NotificationCenter.default.removeObserver); tokens.removeAll() }
+    deinit { clear() }
 }

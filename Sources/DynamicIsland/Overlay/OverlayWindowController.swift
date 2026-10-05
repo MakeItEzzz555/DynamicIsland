@@ -233,6 +233,8 @@ final class OverlayWindowController {
     private var targetExpandedFrame: NSRect?
     private var lastAppliedGeometrySignature: OverlayGeometrySignature?
     private var permissionGeometryCheckScheduled = false
+    private var workspaceGeometryCheckScheduled = false
+    private var nativeControlScrollOwned = false
     private var canonicalPanelFrame: NSRect = .zero
     private var lastOrderedVisibilityState: IslandPresentationState?
     private var presentationSession = OverlayPresentationSession()
@@ -502,10 +504,32 @@ final class OverlayWindowController {
                 let generation = self?.presentationSession.generation
                 DispatchQueue.main.async { [weak self] in
                     guard let self, self.allowsOverlayWork(generation: generation) else { return }
-                    self.reposition(animated: false, reason: "settingsChanged")
+                    self.scheduleWorkspaceGeometryCheck()
                 }
             }
             .store(in: &cancellables)
+
+        modules.customization?.$configuration.removeDuplicates().sink { [weak self] _ in
+            self?.scheduleWorkspaceGeometryCheck()
+        }.store(in: &cancellables)
+        layoutStore.$workspaceLayoutPreview.removeDuplicates().sink { [weak self] _ in
+            self?.scheduleWorkspaceGeometryCheck()
+        }.store(in: &cancellables)
+        layoutStore.$workspaceGeometryTransition.removeDuplicates().sink { [weak self] transition in
+            guard transition.phase == .shellResizing else { return }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.canPresentOverlay, self.islandState.state == .expanded,
+                      self.layoutStore.workspaceGeometryTransition == transition else { return }
+                self.beginExpandedPageMorph()
+                self.reposition(animated: true, reason: "workspaceConfiguration", force: true)
+            }
+        }.store(in: &cancellables)
+        layoutStore.$expandedChildExitAcknowledgement.removeDuplicates().dropFirst().sink { [weak self] generation in
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.canPresentOverlay, self.layoutStore.isExpandedContentExiting else { return }
+                self.commitCollapse(generation: generation)
+            }
+        }.store(in: &cancellables)
 
         layoutStore.$collapsedPreviewActive
             .combineLatest(layoutStore.$collapsedPreviewSurfaceFrame)
@@ -613,6 +637,7 @@ final class OverlayWindowController {
             layoutStore.isShellMorphing = false
             layoutStore.isCollapseShellOnly = false
             layoutStore.isExpandedContentExiting = false
+            layoutStore.cancelWorkspaceGeometry()
             layoutStore.updateCollapsedPreview(active: false, frame: .zero)
             layoutStore.setExpandedScrollGestureSuppressed(false)
             escapeRouter.setTopmostPresentation(nil)
@@ -899,9 +924,44 @@ final class OverlayWindowController {
     }
 
     private var resolvedExpandedSize: CGSize {
-        let nominal = expandedPresentationProfile.resolvedSize(from: settings.expandedSize)
-        let scale = layoutStore.displayMetrics.expandedShellScale
-        return CGSize(width: nominal.width * scale, height: nominal.height * scale)
+        layoutStore.expandedPresentationSize(desired: desiredExpandedSize,
+            committed: targetExpandedFrame?.size ?? layoutStore.expandedSize,
+            isExpanded: islandState.state == .expanded)
+    }
+
+    private var desiredExpandedSize: CGSize {
+        let page = modules.navigation.selectedPage
+        let surface: WorkspaceSurface? = page == .island ? .media : page == .agents ? .agents : nil
+        let preview = layoutStore.workspaceLayoutPreview.flatMap { $0.surface == surface ? $0 : nil }
+        return expandedPresentationProfile.resolvedSize(from: settings.expandedSize, page: page,
+            configuration: preview?.configuration ?? modules.customization?.configuration,
+            editing: preview != nil, settings: settings, metrics: layoutStore.displayMetrics,
+            minimumHeaderWidth: ExpandedIslandHeaderMetrics.minimumContentWidth(
+                pageCount: modules.navigation.availablePages(using: settings).count,
+                clipboardEnabled: settings.clipboardHistoryEnabled))
+    }
+
+    private func scheduleWorkspaceGeometryCheck() {
+        guard !workspaceGeometryCheckScheduled else { return }
+        workspaceGeometryCheckScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.workspaceGeometryCheckScheduled = false
+            guard self.canPresentOverlay else { return }
+            let size = self.desiredExpandedSize
+            let current = self.targetExpandedFrame?.size ?? self.layoutStore.expandedSize
+            if self.islandState.state == .expanded, !self.layoutStore.isExpandedContentExiting,
+               abs(size.width - current.width) > 1 || abs(size.height - current.height) > 1 {
+                let transition = self.layoutStore.workspaceGeometryTransition
+                if transition.phase == .idle || transition.targetSize != size {
+                    self.layoutStore.requestWorkspaceGeometry(size)
+                }
+            } else if self.layoutStore.workspaceGeometryTransition.phase == .childrenExiting {
+                self.layoutStore.cancelWorkspaceGeometry()
+            } else if self.layoutStore.workspaceGeometryTransition.phase == .idle {
+                self.reposition(animated: false, reason: "workspaceSettings")
+            }
+        }
     }
 
     private var currentGeometrySignature: OverlayGeometrySignature {
@@ -1523,6 +1583,7 @@ final class OverlayWindowController {
         let sessionGeneration = presentationSession.generation
         morphGeneration += 1
         let generation = morphGeneration
+        let workspaceGeneration = layoutStore.workspaceGeometryTransition.generation
         layoutStore.isShellMorphing = true
         layoutStore.isCollapseShellOnly = false
 
@@ -1535,6 +1596,7 @@ final class OverlayWindowController {
             guard let self else { return }
             guard self.allowsOverlayWork(generation: sessionGeneration), generation == self.morphGeneration else { return }
             self.layoutStore.isShellMorphing = false
+            self.layoutStore.finishWorkspaceGeometry(generation: workspaceGeneration)
             self.updateWindowVisibility()
         }
     }
@@ -1604,6 +1666,7 @@ final class OverlayWindowController {
         hostingView?.needsLayout = true
         updateMousePassthrough()
 
+        layoutStore.isShellMorphing = true
         islandState.expand()
     }
 
@@ -1614,25 +1677,19 @@ final class OverlayWindowController {
         guard canPresentOverlay else { return }
         guard islandState.state == .expanded else { return }
         guard !layoutStore.isExpandedContentExiting else { return }
+        layoutStore.cancelWorkspaceGeometry()
 
         debugLog("requestCollapseWithSequencing started")
         stopMouseContainmentTimer()
+        let generation = collapseRequest.begin()
+        layoutStore.expandedChildExitGeneration = generation
         layoutStore.isExpandedContentExiting = true
         resetExpandedContentScrollTracking()
         layoutStore.setExpandedContentScrollRegion(.zero)
         updateMousePassthrough()
 
-        let plan = ExpandedIslandMotion.collapsePlan(settings: settings, reduceMotion: overlayReducesMotion)
-        let generation = collapseRequest.begin()
-        guard plan.shellCommitDelay > 0 else {
-            commitCollapse(generation: generation)
-            return
-        }
-        let sessionGeneration = presentationSession.generation
-        DispatchQueue.main.asyncAfter(deadline: .now() + plan.shellCommitDelay) { [weak self] in
-            guard let self, self.allowsOverlayWork(generation: sessionGeneration) else { return }
-            self.commitCollapse(generation: generation)
-        }
+        // The root acknowledges its actual removal animation. A timer started
+        // before SwiftUI processes this publication can race a delayed exit.
     }
 
     private func commitCollapse(generation: Int) {
@@ -1663,12 +1720,14 @@ final class OverlayWindowController {
     private func commitExpandedPageGeometry(for page: ExpandedIslandPage) {
         pageGeometryCommitGeneration += 1
         let generation = pageGeometryCommitGeneration
-        let source = committedExpandedPage ?? page
-        let shrinks = ExpandedIslandMotion.pageChangeShrinksShell(from: source, to: page, expandedSize: settings.expandedSize)
+        layoutStore.cancelWorkspaceGeometry()
+        let oldSize = targetExpandedFrame?.size ?? layoutStore.expandedSize
+        let nextSize = desiredExpandedSize
+        let shrinks = nextSize.width < oldSize.width || nextSize.height < oldSize.height
         let plan = ExpandedIslandMotion.plan(settings: settings, reduceMotion: overlayReducesMotion)
         let delay = shrinks ? ExpandedIslandMotion.shrinkingPagePlan(plan).shellCommitDelay : 0
         let sessionGeneration = presentationSession.generation
-        let commit = { [weak self] in
+        let commit: @MainActor @Sendable () -> Void = { [weak self] in
             guard let self,
                   self.allowsOverlayWork(generation: sessionGeneration),
                   generation == self.pageGeometryCommitGeneration,
@@ -1782,8 +1841,25 @@ final class OverlayWindowController {
         }
     }
 
+    private func nativeControlOwnsScroll(_ event: NSEvent) -> Bool {
+        let point = NSEvent.mouseLocation
+        let overControl = layoutStore.nativeControlRegions.values.contains { frame in
+            screenRect(for: IslandCanvasCoordinateSpace.appKitLocalRect(
+                fromSwiftUI: frame, canvasHeight: layoutStore.canvasSize.height)).contains(point)
+        }
+        if event.phase.contains(.began) || (event.phase.isEmpty && event.momentumPhase.isEmpty) {
+            nativeControlScrollOwned = overControl
+        }
+        let owns = nativeControlScrollOwned || overControl
+        if event.phase.contains(.cancelled) || event.momentumPhase.contains(.ended) || event.momentumPhase.contains(.cancelled) {
+            nativeControlScrollOwned = false
+        }
+        return owns
+    }
+
     private func handleExpandedScrollWheelFromMonitor(_ event: NSEvent, source: String) -> Bool {
         guard acceptsOverlayScroll(event) else { return false }
+        guard !nativeControlOwnsScroll(event) else { return false }
 
         // The right workspace owns its own two-axis gesture arbitration.
         // Ask it first so vertical intent can be delivered to its nested
@@ -1822,6 +1898,7 @@ final class OverlayWindowController {
 
     private func handleExpandedScrollWheel(_ event: NSEvent, source: String) -> Bool {
         guard acceptsOverlayScroll(event) else { return false }
+        guard !nativeControlOwnsScroll(event) else { return false }
 
         if let stackRoute = routeAgentStackSwipe(event) {
             return stackRoute

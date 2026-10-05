@@ -10,8 +10,10 @@ struct IslandWidgetEditor: View {
     @Binding var editing: Bool
     let eligibleWidgets: [IslandWidget]
     var extraMotion = true
+    var onLayoutPreview: ((WorkspaceConfiguration?) -> Void)? = nil
     var content: (WorkspaceWidgetRegion, CGFloat) -> AnyView
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.islandDisplayMetrics) private var displayMetrics
     @State private var draft = WorkspaceConfiguration.initial
     @State private var drag: WorkspaceEditorDrag?
     @State private var target: WorkspaceDropTarget?
@@ -33,11 +35,19 @@ struct IslandWidgetEditor: View {
         }
         .coordinateSpace(name: WorkspaceEditorActionFrames.coordinateSpace)
         .animation(WorkspaceEditorMotion.chrome(opening: editing, reduceMotion: reduceMotion || !extraMotion), value: editing)
-        .onAppear { draft = store.configuration }
+        .onAppear {
+            draft = store.configuration
+            if editing { onLayoutPreview?(draft) }
+        }
         .onChange(of: editing) { _, active in
             drag = nil; target = nil; dragFrames = [:]
             if active { draft = store.configuration }
+            onLayoutPreview?(active ? draft : nil)
         }
+        .onChange(of: draft) { _, configuration in
+            if editing { onLayoutPreview?(configuration) }
+        }
+        .onDisappear { onLayoutPreview?(nil) }
         .onExitCommand(perform: editing ? { cancel() } : nil)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(editing ? "Customize \(surface.rawValue) widgets" : "\(surface.rawValue) widgets")
@@ -46,47 +56,47 @@ struct IslandWidgetEditor: View {
 
     private func workspace(size: CGSize) -> some View {
         let visibleRegions = regions(in: visibleConfiguration)
-        let chromeInset = editing ? WorkspaceEditorChrome.badgeInset : 0
-        let height = max(0, size.height - (editing ? WorkspaceEditorChrome.paletteHeight + 8 : 0) - chromeInset)
-        let gaps = CGFloat(max(visibleRegions.count - 1, 0)) * 8
-        let width = max(180, (size.width - gaps - chromeInset) / CGFloat(max(1, min(visibleRegions.count, 3))))
-        return VStack(spacing: 8) {
-            widgetStrip(regions: visibleRegions, width: width, height: height, availableWidth: size.width)
+        let projection = WorkspaceWidgetLayoutProjection.make(regions: visibleRegions, availableSize: size,
+            metrics: displayMetrics, editing: editing)
+        let height = max(1, size.height - (editing ? WorkspaceEditorChrome.paletteHeight + displayMetrics.spacing(8) : 0))
+        let canvas = widgetGrid(regions: visibleRegions, projection: projection)
+        return VStack(spacing: displayMetrics.spacing(8)) {
+            Group {
+                if projection.requiresScrolling {
+                    ScrollView(.vertical, showsIndicators: true) { canvas }
+                } else { canvas }
+            }
+            .frame(height: height)
             if editing { palette }
         }
     }
 
-    private func widgetStrip(regions: [WorkspaceWidgetRegion], width: CGFloat, height: CGFloat, availableWidth: CGFloat) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(alignment: .top, spacing: 8) {
-                ForEach(regions) { region in card(region, width: width, height: height) }
-                if regions.isEmpty {
-                    Text(editing ? "Add an available widget from the palette" : "Customize to add an available widget")
-                        .foregroundStyle(.secondary)
-                        .frame(width: max(0, availableWidth - 2), height: height)
+    private func widgetGrid(regions: [WorkspaceWidgetRegion], projection: WorkspaceWidgetLayoutProjection) -> some View {
+        ZStack(alignment: .topLeading) {
+            ForEach(regions) { region in
+                if let item = projection.frames.first(where: { $0.id == region.id }) {
+                    card(region, width: item.frame.width, height: item.frame.height)
+                        .position(x: item.frame.midX, y: item.frame.midY)
                 }
             }
-            .padding(.horizontal, 1)
-            // Room for corner remove badges, which overhang each card.
-            .padding(.top, editing ? WorkspaceEditorChrome.badgeInset : 0)
-            .padding(.trailing, editing ? WorkspaceEditorChrome.badgeInset : 0)
-            .frame(minWidth: max(0, availableWidth - 2), alignment: .leading)
-            .frame(height: height + (editing ? WorkspaceEditorChrome.badgeInset : 0), alignment: .top)
-            .background {
-                if editing {
-                    GeometryReader { canvas in
-                        Color.clear.preference(key: WorkspaceEditorFrameKey.self,
-                            value: [WidgetID("__editor.canvas"): canvas.frame(in: .named("workspace-widget-editor"))])
-                    }
-                }
+            if regions.isEmpty {
+                Text(editing ? "Add an available widget from the palette" : "Customize to add an available widget")
+                    .foregroundStyle(.secondary)
+                    .frame(width: projection.contentSize.width, height: projection.contentSize.height)
             }
-            .modifier(WorkspaceEditorDropModifier(enabled: editing, updated: updateTarget, dropped: commitDrop, exited: clearTarget))
         }
+        .frame(width: projection.contentSize.width, height: projection.contentSize.height, alignment: .topLeading)
+        .background {
+            if editing {
+                GeometryReader { canvas in
+                    Color.clear.preference(key: WorkspaceEditorFrameKey.self,
+                        value: [WidgetID("__editor.canvas"): canvas.frame(in: .named("workspace-widget-editor"))])
+                }
+            }
+        }
+        .modifier(WorkspaceEditorDropModifier(enabled: editing, updated: updateTarget, dropped: commitDrop, exited: clearTarget))
         .coordinateSpace(name: "workspace-widget-editor")
-        .onPreferenceChange(WorkspaceEditorFrameKey.self) { measured in
-            // Plain bounded measurements do not publish native layout changes.
-            measurements.frames = measured
-        }
+        .onPreferenceChange(WorkspaceEditorFrameKey.self) { measured in measurements.frames = measured }
     }
 
     private func card(_ region: WorkspaceWidgetRegion, width: CGFloat, height: CGFloat) -> some View {
@@ -98,10 +108,13 @@ struct IslandWidgetEditor: View {
             .contextMenu { if editing { arrangeMenu(region) } }
             .accessibilityElement(children: .contain)
             .accessibilityLabel(Text("\(title) widget"))
-            .accessibilityValue(Text("Position \(position)"))
+            .accessibilityValue(Text("Position \(position), \(region.widgets.first?.size.title ?? "Standard") size"))
             .accessibilityAction(named: Text("Move left")) { shift(region, by: -1) }
             .accessibilityAction(named: Text("Move right")) { shift(region, by: 1) }
             .accessibilityAction(named: Text(removeName)) { remove(region) }
+            .accessibilityAction(named: Text("Use compact size")) { resize(region, to: .compact) }
+            .accessibilityAction(named: Text("Use standard size")) { resize(region, to: .standard) }
+            .accessibilityAction(named: Text("Use large size")) { resize(region, to: .large) }
     }
 
     private func cardVisual(_ region: WorkspaceWidgetRegion, title: String, width: CGFloat, height: CGFloat) -> some View {
@@ -109,6 +122,7 @@ struct IslandWidgetEditor: View {
         let stackedTarget: Bool = target == .combine(chat: chatID)
         let placeholder: Bool = isPlaceholder(region)
         let layers = cardLayers(region, title: title, height: height, placeholder: placeholder)
+            .transformEnvironment(\.timerRulerInteractionRegistration) { if editing { $0.enabled = false } }
             .frame(width: width, height: height, alignment: .top)
         return layers
             .background { cardFill(placeholder: placeholder) }
@@ -250,6 +264,18 @@ struct IslandWidgetEditor: View {
     private func arrangeMenu(_ region: WorkspaceWidgetRegion) -> some View {
         Button("Move Left") { shift(region, by: -1) }
         Button("Move Right") { shift(region, by: 1) }
+        Menu("Widget Size") {
+            ForEach(WidgetPresentationSize.allCases, id: \.self) { size in
+                Button {
+                    modify("Sized \(region.widgets.map { $0.kind.title }.joined(separator: " and ")) \(size.title.lowercased())") {
+                        $0.setSize(size, for: region.id)
+                    }
+                } label: {
+                    if region.widgets.allSatisfy({ $0.size == size }) { Label(size.title, systemImage: "checkmark") }
+                    else { Text(size.title) }
+                }
+            }
+        }
         if surface == .agents, region.widgets.contains(where: { $0.kind == .terminal }), !region.isStack,
            draft.widgets(on: surface).contains(where: { $0.kind == .chat }) {
             Button("Combine with Chat") { modify("Combined Chat and Terminal") { $0.combineTerminalWithChat(on: surface) } }
@@ -389,6 +415,9 @@ struct IslandWidgetEditor: View {
     private func finishDrag() { drag = nil; target = nil; dragFrames = [:] }
     private func clearTarget() { withAnimation(motion) { target = nil } }
     private func cancel() { finishDrag(); editing = false; WorkspaceEditorAccessibility.announce("Widget changes cancelled") }
+    private func resize(_ region: WorkspaceWidgetRegion, to size: WidgetPresentationSize) {
+        modify("Widget size \(size.title.lowercased())") { $0.setSize(size, for: region.id) }
+    }
     private func shift(_ region: WorkspaceWidgetRegion, by offset: Int) {
         guard editing else { return }
         modify("Moved \(region.widgets.map { $0.kind.title }.joined(separator: " and "))") { $0.shift(region.id, by: offset) }

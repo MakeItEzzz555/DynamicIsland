@@ -13,6 +13,35 @@
 import AppKit
 import SwiftUI
 
+/// An in-place configuration handoff keeps the page/controllers mounted. The
+/// child animation acknowledges its exit before the existing shell resolver
+/// commits new bounds; generation checks reject rapid/stale reconfigurations.
+struct WorkspaceGeometryTransition: Equatable {
+    enum Phase { case idle, childrenExiting, shellResizing }
+    private(set) var generation = 0
+    private(set) var phase: Phase = .idle
+    private(set) var targetSize: CGSize = .zero
+
+    mutating func request(_ size: CGSize) {
+        targetSize = size
+        // A changed target during exit joins the same removal transaction.
+        // Once hidden, newer geometry can resize directly without replaying it.
+        if phase == .childrenExiting { return }
+        generation &+= 1
+        if phase == .idle { phase = .childrenExiting }
+    }
+    mutating func childrenExited(generation expected: Int) -> Bool {
+        guard expected == generation, phase == .childrenExiting else { return false }
+        phase = .shellResizing
+        return true
+    }
+    mutating func complete(generation expected: Int) {
+        guard expected == generation, phase == .shellResizing else { return }
+        phase = .idle
+    }
+    mutating func cancel() { generation &+= 1; phase = .idle }
+}
+
 /// Single source of truth for expanded tab-to-tab content choreography.
 ///
 /// Sequence (Normal preset, 0.40 s shell, 120 Hz):

@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// A configured agent/profile Claude Code itself exposes (system/init
@@ -703,29 +704,47 @@ enum ClaudeConversationHistory {
 
     static func read(file: URL, nativeSessionID: String, limit: Int,
                      maximumBytes: Int = defaultMaximumBytes) throws -> [AgentManagedTranscriptEntry] {
+        let byteLimit = min(max(0, maximumBytes), defaultMaximumBytes)
+        guard byteLimit > 0, limit > 0 else { return [] }
         let handle = try FileHandle(forReadingFrom: file)
         defer { try? handle.close() }
         let size = try handle.seekToEnd()
-        let start = size > UInt64(maximumBytes) ? size - UInt64(maximumBytes) : 0
+        let start = size > UInt64(byteLimit) ? size - UInt64(byteLimit) : 0
         try handle.seek(toOffset: start)
-        var data = try handle.readToEnd() ?? Data()
-        if start > 0, let newline = data.firstIndex(of: 0x0A) {
+        // A live transcript can grow after seekToEnd. Never read its unbounded
+        // new suffix; this snapshot has a hard byte budget.
+        var data = try handle.read(upToCount: byteLimit) ?? Data()
+        if start > 0 {
+            guard let newline = data.firstIndex(of: 0x0A) else { return [] }
             data = data.suffix(from: data.index(after: newline)) // drop the partial first line
         }
         return entries(from: data, nativeSessionID: nativeSessionID, limit: limit)
     }
 
     static func entries(from data: Data, nativeSessionID: String, limit: Int) -> [AgentManagedTranscriptEntry] {
+        guard limit > 0 else { return [] }
         var result: [AgentManagedTranscriptEntry] = []
+        var seenRecords = Set<String>()
+        let fractionalDate = ISO8601DateFormatter()
+        fractionalDate.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let wholeSecondDate = ISO8601DateFormatter()
         var agentIndex: [String: Int] = [:] // message id -> result index (text blocks join)
         for line in data.split(separator: 0x0A, omittingEmptySubsequences: true) {
             guard let object = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
                   let type = object["type"] as? String,
+                  (object["sessionId"] as? String).map({ $0 == nativeSessionID }) ?? true,
                   object["isMeta"] as? Bool != true,
                   object["isSidechain"] as? Bool != true,
                   let message = object["message"] as? [String: Any] else { continue }
-            let timestamp = (object["timestamp"] as? String).flatMap(ISO8601DateFormatter.withFractionalSeconds.date(from:)) ?? .distantPast
-            let uuid = object["uuid"] as? String ?? UUID().uuidString
+            let timestamp = (object["timestamp"] as? String).flatMap {
+                fractionalDate.date(from: $0) ?? wholeSecondDate.date(from: $0)
+            } ?? .distantPast
+            // Legacy records without a UUID still need repeatable row identity.
+            // Canonical JSON makes whitespace/key ordering irrelevant.
+            let canonical = (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])) ?? Data(line)
+            let uuid = (object["uuid"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+                ?? "record-" + SHA256.hash(data: canonical).map { String(format: "%02x", $0) }.joined()
+            guard seenRecords.insert(uuid).inserted else { continue }
             switch type {
             case "user":
                 guard let text = userText(message["content"]),
@@ -756,7 +775,7 @@ enum ClaudeConversationHistory {
     }
 
     /// Typed prompts only: tool results and slash-command/system plumbing
-    /// (tagged `<...>` payloads) are not conversation.
+    /// (known command/system tags) are not conversation. User HTML/XML is.
     private static func userText(_ content: Any?) -> String? {
         let text: String
         if let string = content as? String {
@@ -768,7 +787,9 @@ enum ClaudeConversationHistory {
             return nil
         }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !trimmed.hasPrefix("<") else { return nil }
+        let plumbingPrefixes = ["<command-name>", "<local-command", "<system-reminder>",
+                                "<task-notification>", "<ide_opened_file>", "<ide_selection>", "<bash-input>"]
+        guard !trimmed.isEmpty, !plumbingPrefixes.contains(where: trimmed.hasPrefix) else { return nil }
         return trimmed
     }
 }

@@ -167,6 +167,7 @@ private struct IslandPointerGestureModifier: ViewModifier {
     let context: IslandGestureContext
     let callbacks: IslandGestureCallbacks
     let swipeSensitivity: Double
+    var layoutStore: IslandLayoutStore? = nil
 
     @ViewBuilder
     func body(content: Content) -> some View {
@@ -183,6 +184,7 @@ private struct IslandPointerGestureModifier: ViewModifier {
     private var doubleClickGesture: some Gesture {
         TapGesture(count: 2)
             .onEnded {
+                guard !pointerOwnedByControl else { return }
                 coordinator.handle(
                     .doubleClick,
                     settings: settings,
@@ -193,8 +195,10 @@ private struct IslandPointerGestureModifier: ViewModifier {
     }
 
     private var swipeGesture: some Gesture {
-        DragGesture(minimumDistance: 12, coordinateSpace: .local)
+        DragGesture(minimumDistance: 12, coordinateSpace: .named(IslandCanvasCoordinateSpace.name))
             .onEnded { value in
+                guard layoutStore?.containsNativeControlPoint(value.startLocation) != true,
+                      layoutStore?.transientInteractionOwners.contains(.workspaceEditor) != true else { return }
                 guard let gesture = IslandPointerGesture.detected(
                     from: value.translation,
                     sensitivity: swipeSensitivity
@@ -213,7 +217,7 @@ private struct IslandPointerGestureModifier: ViewModifier {
     private var longPressGesture: some Gesture {
         LongPressGesture(minimumDuration: 0.55, maximumDistance: 10)
             .onEnded { completed in
-                guard completed else { return }
+                guard completed, !pointerOwnedByControl else { return }
                 coordinator.handle(
                     .longPress,
                     settings: settings,
@@ -221,6 +225,14 @@ private struct IslandPointerGestureModifier: ViewModifier {
                     callbacks: callbacks
                 )
             }
+    }
+
+    private var pointerOwnedByControl: Bool {
+        guard let layoutStore else { return false }
+        let mouse = NSEvent.mouseLocation
+        let point = CGPoint(x: mouse.x - layoutStore.panelFrame.minX,
+            y: layoutStore.canvasSize.height - (mouse.y - layoutStore.panelFrame.minY))
+        return layoutStore.containsNativeControlPoint(point) || layoutStore.transientInteractionOwners.contains(.workspaceEditor)
     }
 }
 
@@ -255,6 +267,18 @@ enum IslandShellMotion {
             ? 0.01
             : settings.animationPreset.shellDuration / max(settings.shellAnimationSpeed, 0.25)
         return .smooth(duration: duration)
+    }
+}
+
+enum ExpandedIslandHeaderMetrics {
+    static let buttonWidth: CGFloat = 30
+    static let tabSpacing: CGFloat = 4
+    static let tabPadding: CGFloat = 4
+    static func minimumContentWidth(pageCount: Int, clipboardEnabled: Bool) -> CGFloat {
+        let count = max(1, pageCount)
+        let actionCount = clipboardEnabled ? 3 : 2
+        return CGFloat(count) * buttonWidth + CGFloat(count - 1) * tabSpacing + tabPadding * 2
+            + CGFloat(actionCount) * buttonWidth + CGFloat(actionCount - 1) * 6 + 8
     }
 }
 
@@ -362,6 +386,8 @@ struct IslandRootView: View {
     @State private var expandedContentMounted = false
     @State private var isContentRemoving = false
     @State private var sequenceGeneration = 0
+    @State private var workspaceContentVisible = true
+    @State private var workspaceExitGeneration: Int?
     @State private var isCollapsedHovering = false
     @State private var collapsedPreviewVisible = false
     @State private var collapsedPreviewGeneration = 0
@@ -426,6 +452,9 @@ struct IslandRootView: View {
     var body: some View {
         animatedIslandCanvas
             .environment(\.islandDisplayMetrics, layoutStore.displayMetrics)
+            .environment(\.timerRulerInteractionRegistration, TimerRulerInteractionRegistration { owner, frame in
+                layoutStore.setNativeControlRegion(frame, owner: owner)
+            })
             .environment(\.basketShelfTransfer, BasketShelfTransfer { [presenter = modules.basketPresenter] urls in
                 presenter.moveShelfFilesToBasket(urls)
             })
@@ -490,6 +519,12 @@ struct IslandRootView: View {
                 handleStateChange(newValue)
                 layoutStore.compactPermissionHovered = false
                 synchronizeCollapsedSidecarGeometry()
+            }
+            .onChange(of: layoutStore.isShellMorphing) { _, morphing in
+                if !morphing { revealExpandedContentIfReady() }
+            }
+            .onChange(of: layoutStore.workspaceGeometryTransition) { _, transition in
+                handleWorkspaceGeometryTransition(transition)
             }
             .onChange(of: isCollapsedPreviewActive) { _, _ in
                 updateCollapsedPreviewLayout()
@@ -587,9 +622,9 @@ struct IslandRootView: View {
             ExpandedIslandView(
                 settings: settings,
                 modules: modules,
-                contentVisible: contentVisible,
+                contentVisible: contentVisible && workspaceContentVisible,
                 shouldRenderContent: expandedContentMounted,
-                isContentRemoving: isContentRemoving,
+                isContentRemoving: isContentRemoving || layoutStore.workspaceGeometryTransition.phase != .idle,
                 onShortcutLaunched: onRequestCollapse,
                 onTimerStarted: {
                     if settings.collapseAfterStartingTimer {
@@ -605,6 +640,7 @@ struct IslandRootView: View {
                 islandGestureCallbacks: gestureCallbacks,
                 islandSwipeSensitivity: settings.gestureSensitivity
             )
+            .opacity(contentVisible && workspaceContentVisible ? 1 : 0)
         } else {
             compactIslandContent
         }
@@ -672,7 +708,7 @@ struct IslandRootView: View {
                 coordinator: gestureCoordinator,
                 context: gestureContext,
                 callbacks: gestureCallbacks,
-                swipeSensitivity: settings.gestureSensitivity
+                swipeSensitivity: settings.gestureSensitivity, layoutStore: layoutStore
             )
         )
     }
@@ -1297,7 +1333,6 @@ struct IslandRootView: View {
 
     private func startExpansionSequence() {
         guard settings.overlayEnabled else { return }
-        let sessionGeneration = layoutStore.overlayPresentationGeneration
         sequenceGeneration += 1
         let generation = sequenceGeneration
         if !modules.navigation.isFileDropTargeted {
@@ -1316,32 +1351,56 @@ struct IslandRootView: View {
         isContentRemoving = false
         contentPhase = .shellExpanding
 
-        let shellDuration = IslandContentTransitionTiming.shellDuration(
-            settings: settings,
-            reduceMotion: reduceMotion
-        )
-        // Children appear only after the shell has fully expanded, including
-        // under Reduce Motion (where the shell duration is already short).
-        let revealDelay = !settings.contentAnimationEnabled || settings.animationPreset == .instant
-            ? 0
-            : IslandContentTransitionTiming.expansionContentDelay(shellDuration: shellDuration)
-        DispatchQueue.main.asyncAfter(deadline: .now() + revealDelay) {
-            guard settings.overlayEnabled, sessionGeneration == layoutStore.overlayPresentationGeneration,
-                  generation == sequenceGeneration else { return }
-            guard islandState.state == .expanded else { return }
-            guard !layoutStore.isExpandedContentExiting else { return }
-            isContentRemoving = false
-            contentVisible = true
-            contentPhase = .expandedContentVisible
+        // The overlay owns shell completion. One deferred turn supports an
+        // already-expanded static fixture without racing its state subscriber.
+        DispatchQueue.main.async {
+            guard generation == sequenceGeneration else { return }
+            revealExpandedContentIfReady()
+        }
+    }
+
+    private func revealExpandedContentIfReady() {
+        guard settings.overlayEnabled, islandState.state == .expanded,
+              contentPhase == .shellExpanding, !layoutStore.isShellMorphing,
+              !layoutStore.isExpandedContentExiting else { return }
+        isContentRemoving = false
+        contentVisible = true
+        contentPhase = .expandedContentVisible
+    }
+
+    private func handleWorkspaceGeometryTransition(_ transition: WorkspaceGeometryTransition) {
+        switch transition.phase {
+        case .childrenExiting:
+            guard workspaceExitGeneration != transition.generation else { return }
+            workspaceExitGeneration = transition.generation
+            let plan = ExpandedIslandMotion.collapsePlan(settings: settings, reduceMotion: reduceMotion)
+            let animation: Animation? = plan.childExitDuration > 0 ? .easeIn(duration: plan.childExitDuration) : nil
+            withAnimation(animation, completionCriteria: .removed) {
+                workspaceContentVisible = false
+            } completion: {
+                layoutStore.workspaceChildrenExited(generation: transition.generation)
+            }
+        case .shellResizing: break
+        case .idle:
+            workspaceExitGeneration = nil
+            workspaceContentVisible = true
         }
     }
 
     private func beginContentExitSequence() {
         sequenceGeneration += 1
+        let sequence = sequenceGeneration
+        let exitGeneration = layoutStore.expandedChildExitGeneration
+        let plan = ExpandedIslandMotion.collapsePlan(settings: settings, reduceMotion: reduceMotion)
         renderedContentMode = .expanded
-        contentVisible = false
-        isContentRemoving = expandedContentMounted
         contentPhase = .contentCollapsing
+        withAnimation(plan.childExitDuration > 0 ? .easeIn(duration: plan.childExitDuration) : nil, completionCriteria: .removed) {
+            contentVisible = false
+            isContentRemoving = expandedContentMounted
+        } completion: {
+            guard sequence == sequenceGeneration, layoutStore.isExpandedContentExiting else { return }
+            layoutStore.acknowledgeExpandedChildExit(generation: exitGeneration)
+        }
     }
 
     private func cancelContentExitSequence() {
@@ -1349,8 +1408,8 @@ struct IslandRootView: View {
         renderedContentMode = .expanded
         expandedContentMounted = true
         isContentRemoving = false
-        contentVisible = true
-        contentPhase = .expandedContentVisible
+        contentVisible = !layoutStore.isShellMorphing
+        contentPhase = contentVisible ? .expandedContentVisible : .shellExpanding
     }
 
     private func beginShellCollapseSequence() {
@@ -3017,6 +3076,7 @@ private struct SafeSystemImage: View {
 }
 
 struct ExpandedIslandView: View {
+    @Environment(\.timerRulerInteractionRegistration) private var rulerRegistration
     @ObservedObject var settings: AppSettings
     let modules: IslandModules
     let contentVisible: Bool
@@ -3104,7 +3164,7 @@ struct ExpandedIslandView: View {
                             coordinator: islandGestureCoordinator,
                             context: islandGestureContext,
                             callbacks: islandGestureCallbacks,
-                            swipeSensitivity: islandSwipeSensitivity
+                            swipeSensitivity: islandSwipeSensitivity, layoutStore: layoutStore
                         )
                     )
 
@@ -3122,6 +3182,8 @@ struct ExpandedIslandView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .environment(\.timerRulerInteractionRegistration, TimerRulerInteractionRegistration(
+            enabled: !editingWidgets && !editingNavigation, rulerRegistration.report))
         .onAppear {
             navigation.applyConfiguration(customization.configuration, using: settings)
             synchronizeExpandedScrollSuppression()
@@ -3143,9 +3205,11 @@ struct ExpandedIslandView: View {
         }
         .onChange(of: contentVisible) { _, isVisible in
             if !isVisible {
-                editingWidgets = false
-                editingNavigation = false
-                synchronizeCustomizationEditing()
+                if layoutStore.isExpandedContentExiting || isCollapseShellOnly {
+                    editingWidgets = false
+                    editingNavigation = false
+                    synchronizeCustomizationEditing()
+                }
                 closeClipboardHistoryImmediately()
             }
             // Expansion/collapse owns content visibility; never leave a tab
@@ -3329,11 +3393,12 @@ struct ExpandedIslandView: View {
         let plan = pageMotionPlan
         // Toward a smaller shell the outgoing page leaves first, the shell
         // contracts, and only then does the incoming page mount.
-        let shrinks = ExpandedIslandMotion.pageChangeShrinksShell(
-            from: presentation.targetPage,
-            to: page,
-            expandedSize: settings.expandedSize
-        )
+        let nextSize = ExpandedPresentationProfile.resolve(for: page).resolvedSize(
+            from: settings.expandedSize, page: page, configuration: customization.configuration,
+            editing: false, settings: settings, metrics: layoutStore.displayMetrics,
+            minimumHeaderWidth: ExpandedIslandHeaderMetrics.minimumContentWidth(
+                pageCount: navigation.availablePages(using: settings).count, clipboardEnabled: settings.clipboardHistoryEnabled))
+        let shrinks = nextSize.width < layoutStore.expandedSize.width || nextSize.height < layoutStore.expandedSize.height
         let effect = presentation.select(
             page,
             plan: plan,
@@ -3542,27 +3607,22 @@ struct ExpandedIslandView: View {
     @ViewBuilder
     private func islandPage(metrics: ExpandedIslandLayoutMetrics) -> some View {
         if editingWidgets || customization.configuration.customizedSurfaces.contains(.media) {
-            IslandWidgetEditor(store: customization, surface: .media, editing: $editingWidgets, eligibleWidgets: eligibleMediaWidgets, extraMotion: !settings.reduceExtraMotion) { region, height in
+            IslandWidgetEditor(store: customization, surface: .media, editing: $editingWidgets,
+                eligibleWidgets: eligibleMediaWidgets, extraMotion: !settings.reduceExtraMotion,
+                onLayoutPreview: { layoutStore.setWorkspaceLayoutPreview($0, surface: .media) }) { region, height in
                 AnyView(islandWidget(region.widgets[0].kind, height: height))
             }
+            .innerBlurScaleClean(settings: settings, isVisible: contentVisible,
+                isRemoval: isContentRemoving, index: 0, reduceMotion: reduceMotion)
+            .allowsHitTesting(contentVisible)
+            .environment(\.rightWorkspacePageIsActive, contentVisible)
         } else {
             standardIslandPage(metrics: metrics)
         }
     }
 
     private var eligibleMediaWidgets: [IslandWidget] {
-        IslandWidget.allCases.filter { widget in
-            switch widget {
-            case .media: settings.mediaEnabled
-            case .files: settings.trayEnabled && settings.fileShelfEnabled
-            case .clipboard: settings.clipboardHistoryEnabled
-            case .timer: settings.timerEnabled
-            case .calendar, .workspace: true
-            case .shortcuts: settings.shortcutsEnabled
-            case .activities: settings.liveActivitiesEnabled
-            case .chat, .terminal, .feed: false
-            }
-        }
+        WorkspaceWidgetAvailability.eligible(on: .media, settings: settings)
     }
 
     private func synchronizeCustomizationEditing() {
@@ -4040,7 +4100,7 @@ private struct SettingsGearButton: View {
             Image(systemName: "gearshape.fill")
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(.white.opacity(isHovering ? 0.95 : 0.62))
-                .frame(width: 30, height: 30)
+                .frame(width: ExpandedIslandHeaderMetrics.buttonWidth, height: 30)
                 .background {
                     Circle()
                         .fill(.white.opacity(isHovering ? 0.14 : 0.08))
@@ -4071,7 +4131,7 @@ private struct ExpandedHeaderButton: View {
             Image(systemName: systemImage)
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(.white.opacity(isHovering ? 0.95 : 0.62))
-                .frame(width: 30, height: 30)
+                .frame(width: ExpandedIslandHeaderMetrics.buttonWidth, height: 30)
                 .background {
                     Circle().fill(.white.opacity(isHovering ? 0.14 : 0.08))
                 }
@@ -4093,7 +4153,7 @@ struct ExpandedIslandPageSwitcher: View {
     @ObservedObject var navigation: IslandNavigationStore
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: ExpandedIslandHeaderMetrics.tabSpacing) {
             ForEach(navigation.availablePages(using: settings), id: \.self) { page in
                 ExpandedIslandPageButton(
                     page: page,
@@ -4103,7 +4163,7 @@ struct ExpandedIslandPageSwitcher: View {
                 }
             }
         }
-        .padding(4)
+        .padding(ExpandedIslandHeaderMetrics.tabPadding)
         .background(.white.opacity(0.07), in: Capsule(style: .continuous))
         .overlay {
             Capsule(style: .continuous)
@@ -4124,7 +4184,7 @@ private struct ExpandedIslandPageButton: View {
         Button(action: action) {
             Image(systemName: page.symbolName)
                 .font(.system(size: 13, weight: .bold))
-                .frame(width: 30, height: 26)
+                .frame(width: ExpandedIslandHeaderMetrics.buttonWidth, height: 26)
                 .foregroundStyle(.white.opacity(foregroundOpacity))
                 .background {
                     Capsule(style: .continuous)

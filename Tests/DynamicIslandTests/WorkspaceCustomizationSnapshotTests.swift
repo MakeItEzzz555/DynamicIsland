@@ -45,6 +45,41 @@ final class WorkspaceCustomizationSnapshotTests: XCTestCase {
             try await render(editor, size: CGSize(width: width, height: 300), reduced: reduced,
                 to: directory.appendingPathComponent(name + ".png"))
         }
+        // Actual resolver dimensions, rather than a fixed multi-widget canvas.
+        let fixtureNavigation = IslandNavigationStore()
+        let metrics = ResolvedIslandMetrics.fallback
+        let headerWidth = ExpandedIslandHeaderMetrics.minimumContentWidth(
+            pageCount: fixtureNavigation.availablePages(using: settings).count, clipboardEnabled: settings.clipboardHistoryEnabled)
+        for (name, kinds) in [("adaptive-one", [IslandWidget.timer]),
+                              ("adaptive-two", [.media, .timer]),
+                              ("adaptive-many", [.media, .timer, .calendar, .shortcuts, .workspace])] {
+            let configuration = WorkspaceConfiguration(placements: kinds.enumerated().map {
+                .init(kind: $0.element, surface: .media, order: $0.offset)
+            }, customizedSurfaces: [.media])
+            store.commit(configuration)
+            let size = ExpandedPresentationProfile.resolve(for: .island).resolvedSize(
+                from: .init(width: 960, height: 600), page: .island, configuration: configuration,
+                editing: false, settings: settings, metrics: metrics, minimumHeaderWidth: headerWidth)
+            let chrome = ExpandedIslandLayoutMetrics(containerSize: size,
+                horizontalPadding: IslandShellLayout.expandedHorizontalPadding(isNotchIntegrated: metrics.hasHardwareNotch && settings.respectHardwareNotch),
+                displayMetrics: metrics)
+            let editor = IslandWidgetEditor(store: store, surface: .media, editing: .constant(false),
+                eligibleWidgets: kinds, extraMotion: false) { region, height in
+                    if region.widgets[0].kind == .media || region.widgets[0].kind == .timer { return mediaContent(region, height) }
+                    return AnyView(Self.proxy("\(region.widgets[0].kind.title) native layout proxy"))
+                }
+            let shell = VStack(spacing: chrome.tabToPageSpacing) {
+                HStack(spacing: 8) {
+                    ExpandedIslandPageSwitcher(settings: settings, navigation: fixtureNavigation)
+                    HStack(spacing: 6) {
+                        ForEach(0..<3) { _ in Color.white.opacity(0.10).frame(width: 30, height: 30).clipShape(Circle()) }
+                    }
+                }.frame(height: chrome.tabSwitcherHeight)
+                editor.frame(width: chrome.innerWidth, height: chrome.pageHeight)
+            }.padding(.horizontal, chrome.horizontalPadding)
+                .padding(.top, chrome.topPadding).padding(.bottom, chrome.bottomPadding)
+            try await render(shell, size: size, reduced: true, to: directory.appendingPathComponent(name + ".png"))
+        }
         var stacked = store.configuration
         stacked.add(.terminal, on: .agents)
         stacked.add(.timer, on: .agents)

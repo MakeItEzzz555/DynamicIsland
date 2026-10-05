@@ -416,7 +416,7 @@ struct AgentDashboardContentView: View {
             VStack(alignment: .leading, spacing: 6) {
                 if showsUsage {
                     stagedAgentContent(index: 1) {
-                        AgentWorkspaceUsageStrip(groups: usage)
+                        AgentWorkspaceUsageStrip(groups: usage, availableWidth: proxy.size.width)
                     }
                 }
 
@@ -522,15 +522,16 @@ struct AgentDashboardContentView: View {
             stagedAgentContent(index: 3) {
                 if let customization, editingWorkspace.wrappedValue || customization.configuration.customizedSurfaces.contains(.agents) {
                     IslandWidgetEditor(store: customization, surface: .agents, editing: editingWorkspace,
-                        eligibleWidgets: [.chat, .feed] + (terminal != nil ? [.terminal] : []) + (settings?.timerEnabled != false && timerWidget != nil ? [.timer] : []), extraMotion: !(settings?.reduceExtraMotion ?? false)) { region, _ in
+                        eligibleWidgets: [.chat, .feed] + (terminal != nil ? [.terminal] : []) + (settings?.timerEnabled != false && timerWidget != nil ? [.timer] : []), extraMotion: !(settings?.reduceExtraMotion ?? false),
+                        onLayoutPreview: { layoutStore?.setWorkspaceLayoutPreview($0, surface: .agents) }) { region, height in
                         if region.isStack {
                             return AnyView(AgentChatTerminalStack(presentation: workspacePresentation, isVisible: contentVisible && transcriptPresentationReady && !editingWorkspace.wrappedValue, reduceMotion: reduceMotion || (settings?.reduceExtraMotion ?? false), layoutStore: layoutStore,
-                                chat: { AnyView(chatContent(workspace: workspace, newSessionFolder: newSessionFolder, verticalLayout: verticalLayout, composerControls: composerControls, visible: contentVisible && workspacePresentation.stackPage == .chat && !editingWorkspace.wrappedValue)) },
+                                chat: { AnyView(chatContent(workspace: workspace, newSessionFolder: newSessionFolder, verticalLayout: AgentWorkspaceVerticalLayoutProjection.make(availableHeight: max(0, height - 30)), composerControls: composerControls, visible: contentVisible && workspacePresentation.stackPage == .chat && !editingWorkspace.wrappedValue)) },
                                 terminal: { AnyView(terminalContent(session: selectedSession, visible: contentVisible && transcriptPresentationReady && workspacePresentation.stackPage == .terminal && !editingWorkspace.wrappedValue)) }))
                         }
                         switch region.widgets[0].kind {
                         case .chat:
-                            return AnyView(chatContent(workspace: workspace, newSessionFolder: newSessionFolder, verticalLayout: verticalLayout, composerControls: composerControls, visible: contentVisible && !editingWorkspace.wrappedValue))
+                            return AnyView(chatContent(workspace: workspace, newSessionFolder: newSessionFolder, verticalLayout: AgentWorkspaceVerticalLayoutProjection.make(availableHeight: height), composerControls: composerControls, visible: contentVisible && !editingWorkspace.wrappedValue))
                         case .terminal:
                             return AnyView(terminalContent(session: selectedSession, visible: contentVisible && transcriptPresentationReady && !editingWorkspace.wrappedValue))
                         case .feed:
