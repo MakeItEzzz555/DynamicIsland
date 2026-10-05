@@ -66,6 +66,10 @@ struct WidgetLayoutTraits: Equatable {
     var fillsHeight: Bool
     /// May share a column with another stackable widget beside a taller one.
     var stackable: Bool
+    /// A short full-width strip (usage gauges): consecutive band widgets form
+    /// their own centered row and never stretch to a neighbour's height, so
+    /// they never force the primary row to wrap.
+    var band = false
 }
 
 extension IslandWidget {
@@ -78,11 +82,14 @@ extension IslandWidget {
         case .shortcuts: .init(preferred: .init(width: 240, height: 120), minimum: .init(width: 180, height: 100), solo: .init(width: 260, height: 140), fillsHeight: false, stackable: true)
         case .activities: .init(preferred: .init(width: 260, height: 140), minimum: .init(width: 190, height: 110), solo: .init(width: 280, height: 180), fillsHeight: true, stackable: true)
         case .workspace: .init(preferred: .init(width: 340, height: 240), minimum: .init(width: 260, height: 180), solo: .init(width: 340, height: 240), fillsHeight: true, stackable: false)
-        case .chat: .init(preferred: .init(width: 700, height: 360), minimum: .init(width: 480, height: 300), solo: .init(width: 700, height: 360), fillsHeight: true, stackable: false)
-        case .terminal: .init(preferred: .init(width: 500, height: 320), minimum: .init(width: 360, height: 240), solo: .init(width: 500, height: 320), fillsHeight: true, stackable: false)
+        // Minimums match the readable widths the native Agents split already
+        // uses on small displays (~420 / ~300 pt), so a compact screen keeps
+        // Chat and Terminal side by side instead of wrapping into tall rows.
+        case .chat: .init(preferred: .init(width: 700, height: 360), minimum: .init(width: 420, height: 300), solo: .init(width: 700, height: 360), fillsHeight: true, stackable: false)
+        case .terminal: .init(preferred: .init(width: 500, height: 320), minimum: .init(width: 300, height: 240), solo: .init(width: 500, height: 320), fillsHeight: true, stackable: false)
         case .feed: .init(preferred: .init(width: 330, height: 320), minimum: .init(width: 230, height: 220), solo: .init(width: 330, height: 320), fillsHeight: true, stackable: false)
-        case .agentUsage: .init(preferred: .init(width: 420, height: 92), minimum: .init(width: 340, height: 84), solo: .init(width: 420, height: 92), fillsHeight: false, stackable: true)
-        case .codexUsage, .claudeUsage: .init(preferred: .init(width: 200, height: 92), minimum: .init(width: 170, height: 84), solo: .init(width: 220, height: 92), fillsHeight: false, stackable: true)
+        case .agentUsage: .init(preferred: .init(width: 420, height: 72), minimum: .init(width: 340, height: 64), solo: .init(width: 420, height: 72), fillsHeight: false, stackable: false, band: true)
+        case .codexUsage, .claudeUsage: .init(preferred: .init(width: 210, height: 72), minimum: .init(width: 180, height: 64), solo: .init(width: 220, height: 72), fillsHeight: false, stackable: false, band: true)
         }
     }
 }
@@ -241,7 +248,8 @@ struct NavigationTabConfiguration: Codable, Equatable {
 
 /// One persisted source of truth; drag state and stack selection remain presentation-local.
 struct WorkspaceConfiguration: Codable, Equatable {
-    static let currentVersion = 1
+    /// 2: the Agents usage row became the Combined Usage widget (migrated).
+    static let currentVersion = 2
     var schemaVersion = currentVersion
     var placements: [WidgetPlacement]
     var groups: [WidgetGroup]
@@ -251,7 +259,8 @@ struct WorkspaceConfiguration: Codable, Equatable {
     static let initial = Self(
         placements: IslandWidgetLayout.initial.widgets.enumerated().map {
             WidgetPlacement(kind: $0.element, surface: .media, order: $0.offset)
-        } + [.init(kind: .chat, surface: .agents, order: 0), .init(kind: .feed, surface: .agents, order: 1)],
+        } + [.init(kind: .agentUsage, surface: .agents, order: 0), .init(kind: .chat, surface: .agents, order: 1),
+             .init(kind: .feed, surface: .agents, order: 2)],
         groups: [], navigation: .initial, customizedSurfaces: [])
 
     init(schemaVersion: Int = currentVersion, placements: [WidgetPlacement], groups: [WidgetGroup] = [],
@@ -483,7 +492,16 @@ struct WorkspaceConfiguration: Codable, Equatable {
     static func decoded(_ data: Data) -> Self {
         guard let decoded = try? JSONDecoder().decode(Self.self, from: data),
               decoded.schemaVersion <= currentVersion, decoded.schemaVersion >= 0 else { return .initial }
-        return decoded.normalized()
+        return decoded.migrated().normalized()
+    }
+    /// v1 drew a permanent usage row above Agents. It is now the Combined
+    /// Usage widget, inserted once; a later removal (hidden placement) sticks.
+    func migrated() -> Self {
+        guard schemaVersion < 2, !placements.contains(where: { $0.surface == .agents && $0.kind.isUsage }) else { return self }
+        var result = self
+        let first = placements.filter { $0.surface == .agents }.map(\.order).min() ?? 0
+        result.placements.append(.init(id: result.uniqueID("agents.agentUsage"), kind: .agentUsage, surface: .agents, order: first - 1))
+        return result
     }
 }
 
@@ -569,7 +587,9 @@ enum WorkspaceDropResolver {
         }
         if surface == .agents, draggedKind == .terminal,
            let chat = ordered.first(where: { $0.kind == .chat }) {
-            var combineFrame = chat.frame.insetBy(dx: min(30, chat.frame.width * 0.2), dy: min(20, chat.frame.height * 0.15))
+            // Combine is the card's center; the outer bands stay directional
+            // (left/right insertion) so moving toward an edge never feels dead.
+            var combineFrame = chat.frame.insetBy(dx: chat.frame.width * 0.3, dy: chat.frame.height * 0.22)
             if previous == .combine(chat: chat.id) { combineFrame = combineFrame.insetBy(dx: -hysteresis, dy: -hysteresis) }
             if combineFrame.contains(point) { return .combine(chat: chat.id) }
         }
@@ -714,7 +734,9 @@ struct WorkspaceWidgetFrame: Equatable, Identifiable {
 ///   beside a taller anchor share one column instead of stretching;
 /// - every unit in a row receives the row height; widgets that can fill
 ///   height do so, others keep their preferred height centered in the row;
-/// - column members split the row height in proportion to their preference.
+/// - column members split the row height in proportion to their preference;
+/// - consecutive `band` widgets (usage) form their own centered strip row, so
+///   removing every band widget reserves no strip height at all.
 struct WorkspaceWidgetLayoutProjection: Equatable {
     let frames: [WorkspaceWidgetFrame]
     let contentSize: CGSize
@@ -728,10 +750,12 @@ struct WorkspaceWidgetLayoutProjection: Equatable {
         let minimum: CGSize
         let fillsHeight: Bool
         let stackable: Bool
+        let band: Bool
     }
     /// One horizontal slot: a single region or a vertical column of regions.
     private struct Unit {
         var members: [Requirement]
+        var band: Bool { members.allSatisfy(\.band) }
         func preferred(gap: CGFloat) -> CGSize {
             .init(width: members.map(\.preferred.width).max() ?? 1,
                   height: members.map(\.preferred.height).reduce(0, +) + CGFloat(max(0, members.count - 1)) * gap)
@@ -762,7 +786,8 @@ struct WorkspaceWidgetLayoutProjection: Equatable {
                 preferred: .init(width: sizes.map { $0.0.width }.max() ?? 1, height: (sizes.map { $0.0.height }.max() ?? 1) + stackHeader),
                 minimum: .init(width: sizes.map { $0.1.width }.max() ?? 1, height: (sizes.map { $0.1.height }.max() ?? 1) + stackHeader),
                 fillsHeight: region.isStack || traits.allSatisfy(\.fillsHeight),
-                stackable: !region.isStack && traits.allSatisfy(\.stackable))
+                stackable: !region.isStack && traits.allSatisfy(\.stackable),
+                band: !region.isStack && traits.allSatisfy(\.band))
         }
     }
 
@@ -796,7 +821,8 @@ struct WorkspaceWidgetLayoutProjection: Equatable {
         var used: CGFloat = 0
         for unit in units {
             let next = min(unit.minimum(gap: gap).width, width)
-            if !current.isEmpty, used + gap + next > width {
+            // Band strips (usage) and primary widgets never share a row.
+            if !current.isEmpty, used + gap + next > width || current[0].band != unit.band {
                 rows.append(current); current = []; used = 0
             }
             used += (current.isEmpty ? 0 : gap) + next

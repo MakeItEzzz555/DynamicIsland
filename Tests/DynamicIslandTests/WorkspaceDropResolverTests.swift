@@ -30,9 +30,12 @@ final class WorkspaceDropResolverTests: XCTestCase {
         XCTAssertEqual(WorkspaceDropResolver.resolve(point: .init(x: 450, y: 5), bounds: bounds,
             surface: .agents, slots: slots, draggedKind: .timer,
             previous: .insert(surface: .agents, before: nil)), .insert(surface: .agents, before: nil))
-        XCTAssertEqual(WorkspaceDropResolver.resolve(point: .init(x: 25, y: 150), bounds: bounds,
+        // Combine is Chat's center (x 87...203 here); hysteresis keeps it 8 pt beyond.
+        XCTAssertEqual(WorkspaceDropResolver.resolve(point: .init(x: 82, y: 150), bounds: bounds,
             surface: .agents, slots: slots, draggedKind: .terminal,
             previous: .combine(chat: WidgetID("agents.chat"))), .combine(chat: WidgetID("agents.chat")))
+        XCTAssertNotEqual(WorkspaceDropResolver.resolve(point: .init(x: 82, y: 150), bounds: bounds,
+            surface: .agents, slots: slots, draggedKind: .terminal), .combine(chat: WidgetID("agents.chat")))
     }
 
     func testCenterCombinesTerminalAndEdgeInsertsBesideChat() {
@@ -59,7 +62,7 @@ final class WorkspaceDropResolverTests: XCTestCase {
         let original = WorkspaceConfiguration.initial
         let target = WorkspaceDropTarget.insert(surface: .agents, before: WidgetID("agents.feed"))
         let preview = try XCTUnwrap(WorkspaceDropResolver.applying(target, to: original, draggedID: nil, paletteKind: .terminal))
-        XCTAssertEqual(preview.widgets(on: .agents).map(\.kind), [.chat, .terminal, .feed])
+        XCTAssertEqual(preview.widgets(on: .agents).map(\.kind), [.agentUsage, .chat, .terminal, .feed])
         XCTAssertFalse(original.widgets(on: .agents).contains { $0.kind == .terminal })
         let repeated = try XCTUnwrap(WorkspaceDropResolver.applying(target, to: preview, draggedID: nil, paletteKind: .terminal))
         XCTAssertEqual(repeated, preview)

@@ -21,10 +21,12 @@ struct AgentWorkspaceSplitView<Chat: View, Workspace: View>: View {
     }
 }
 
-/// Default Agents usage row: the same provider-grouped composition as the
-/// Agent Usage widget, centered, with a bounded intrinsic height.
+/// The default (uncustomized) Agents layout's usage band: the configured
+/// usage widgets (Combined by default) in their shared composition, centered,
+/// with a bounded intrinsic height. Not drawn when no usage widget is placed.
 struct AgentWorkspaceUsageStrip: View {
     @ObservedObject var managedControl: AgentManagedSessionController
+    var widgets: [IslandWidget] = [.agentUsage]
     var availableWidth: CGFloat = 960
 
     static func diameter(for width: CGFloat) -> CGFloat {
@@ -37,9 +39,17 @@ struct AgentWorkspaceUsageStrip: View {
     }
 
     var body: some View {
-        AgentUsageWidgetView(managedControl: managedControl, scope: .combined, compact: availableWidth < 620)
-            .frame(height: Self.rowHeight(for: availableWidth))
-            .accessibilityLabel("Codex and Claude five-hour and weekly usage remaining")
+        HStack(spacing: 24) {
+            ForEach(widgets, id: \.self) { widget in
+                AgentUsageWidgetView(managedControl: managedControl, scope: AgentUsageWidgetView.Scope(widget: widget) ?? .combined,
+                                     compact: availableWidth < 620)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: Self.rowHeight(for: availableWidth))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Codex and Claude five-hour and weekly usage remaining")
     }
 }
 

@@ -20,7 +20,6 @@ struct IslandWidgetEditor: View {
     /// Hovered widget + insertion edge for the interior target glow.
     @State private var intent: WorkspaceDropIntent?
     @State private var measurements = WorkspaceEditorMeasurements()
-    @State private var dragFrames: [WidgetID: CGRect] = [:]
     @State private var announcement = ""
 
     private var motion: Animation? { WorkspaceEditorMotion.reorder(reduceMotion: reduceMotion || !extraMotion) }
@@ -46,7 +45,7 @@ struct IslandWidgetEditor: View {
             if editing { onLayoutPreview?(draft) }
         }
         .onChange(of: editing) { _, active in
-            drag = nil; target = nil; dragFrames = [:]
+            drag = nil; target = nil
             if active { draft = store.configuration }
             onLayoutPreview?(active ? draft : nil)
         }
@@ -66,6 +65,9 @@ struct IslandWidgetEditor: View {
     }
 
     private func workspace(size: CGSize) -> some View {
+        // Plain storage (no publication): the drop resolver reads the size the
+        // committed layout is projected into right now.
+        measurements.size = size
         let visibleRegions = regions(in: visibleConfiguration)
         let projection = WorkspaceWidgetLayoutProjection.make(regions: visibleRegions, availableSize: size,
             metrics: displayMetrics, editing: editing)
@@ -140,7 +142,9 @@ struct IslandWidgetEditor: View {
             .environment(\.workspaceWidgetPlacement, placement)
             .transformEnvironment(\.timerRulerInteractionRegistration) { if editing { $0.enabled = false } }
             .frame(width: width, height: height, alignment: .top)
+        let hovered = editing && intent?.hovered == region.id
         return layers
+            .scaleEffect(hovered ? 0.975 : 1)
             .background { cardFill(placeholder: placeholder) }
             .overlay { cardOutline(placeholder: placeholder, stackedTarget: stackedTarget) }
             .overlay { targetGlow(region) }
@@ -230,10 +234,13 @@ struct IslandWidgetEditor: View {
             case .bottom: (.bottom, .top)
             case .center: (.center, .center)
             }
-            cardShape
-                .fill(LinearGradient(colors: [WorkspaceEditorChrome.accent.opacity(0.22), WorkspaceEditorChrome.accent.opacity(0)],
-                                     startPoint: start, endPoint: UnitPoint(x: (start.x + end.x * 1.5) / 2.5, y: (start.y + end.y * 1.5) / 2.5)))
-                .overlay { cardShape.strokeBorder(WorkspaceEditorChrome.accent.opacity(0.28), lineWidth: 1) }
+            ZStack {
+                cardShape.fill(WorkspaceEditorChrome.accent.opacity(0.10))
+                cardShape
+                    .fill(LinearGradient(colors: [WorkspaceEditorChrome.accent.opacity(0.42), WorkspaceEditorChrome.accent.opacity(0)],
+                                         startPoint: start, endPoint: UnitPoint(x: (start.x + end.x * 1.5) / 2.5, y: (start.y + end.y * 1.5) / 2.5)))
+                cardShape.strokeBorder(WorkspaceEditorChrome.accent.opacity(0.75), lineWidth: 1.5)
+            }
                 .allowsHitTesting(false)
                 .transition(.opacity)
                 .id(edge.hashValue)
@@ -447,11 +454,10 @@ struct IslandWidgetEditor: View {
         return WorkspaceDropResolver.applying(target, to: configuration, draggedID: id, paletteKind: kind) ?? configuration
     }
     private func begin(_ source: WorkspaceEditorDrag) {
-        dragFrames = measurements.frames
         drag = source
         target = nil
     }
-    private func finishDrag() { drag = nil; target = nil; intent = nil; dragFrames = [:] }
+    private func finishDrag() { drag = nil; target = nil; intent = nil }
     private func clearTarget() { withAnimation(motion) { target = nil; intent = nil } }
     private func cancel() { finishDrag(); editing = false; WorkspaceEditorAccessibility.announce("Widget changes cancelled") }
     private func resize(_ region: WorkspaceWidgetRegion, to size: WidgetPresentationSize) {
@@ -469,12 +475,20 @@ struct IslandWidgetEditor: View {
     }
     private func updateTarget(_ location: CGPoint) -> Bool {
         guard editing, let drag else { return false }
-        let measured = dragFrames.isEmpty ? measurements.frames : dragFrames
-        let slots = regions(in: draft).compactMap { region -> WorkspaceDropSlot? in
-            guard let frame = measured[region.id], let kind = region.widgets.first?.kind else { return nil }
+        // Slots come from the same projection that draws the committed draft
+        // at the editor's *current* size. Frames measured at drag start went
+        // stale as soon as the preview resized the shell (rows re-center), so
+        // the pointer resolved against cards that were no longer there and
+        // the target flickered back to nil: no glow, no prospective motion.
+        let committed = regions(in: draft)
+        let projection = WorkspaceWidgetLayoutProjection.make(regions: committed, availableSize: measurements.size,
+            metrics: displayMetrics, editing: editing)
+        let slots = committed.compactMap { region -> WorkspaceDropSlot? in
+            guard let frame = projection.frames.first(where: { $0.id == region.id })?.frame,
+                  let kind = region.widgets.first?.kind else { return nil }
             return .init(id: region.id, frame: frame, kind: region.isStack ? .workspace : kind)
         }
-        let bounds = measured.values.reduce(CGRect.null) { $0.union($1) }
+        let bounds = slots.reduce(CGRect.null) { $0.union($1.frame) }.insetBy(dx: -12, dy: -12)
         let draggedKind: IslandWidget? = switch drag {
         case .palette(let kind): kind
         case .existing(let id): draft.widgets(on: surface).first(where: { $0.id == id })?.kind ?? (draft.regions(on: surface).first(where: { $0.id == id })?.isStack == true ? .chat : nil)
@@ -525,7 +539,10 @@ enum WorkspaceEditorDrag: Equatable {
     case existing(WidgetID)
     case palette(IslandWidget)
 }
-private final class WorkspaceEditorMeasurements { var frames: [WidgetID: CGRect] = [:] }
+private final class WorkspaceEditorMeasurements {
+    var frames: [WidgetID: CGRect] = [:]
+    var size: CGSize = .zero
+}
 
 private struct WorkspaceEditorFrameKey: PreferenceKey {
     static var defaultValue: [WidgetID: CGRect] { [:] }

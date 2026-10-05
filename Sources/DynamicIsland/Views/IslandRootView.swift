@@ -270,15 +270,47 @@ enum IslandShellMotion {
     }
 }
 
+/// Header geometry. Invariant: no interactive header control intersects the
+/// resolved hardware-notch exclusion. The leading (tabs) and trailing (actions)
+/// groups live in equal halves around a centered exclusion gap — the shell is
+/// centered on the notch — and the shell minimum width guarantees both fit.
+/// Notchless displays reserve no gap.
 enum ExpandedIslandHeaderMetrics {
     static let buttonWidth: CGFloat = 30
     static let tabSpacing: CGFloat = 4
     static let tabPadding: CGFloat = 4
-    static func minimumContentWidth(pageCount: Int, clipboardEnabled: Bool) -> CGFloat {
+    /// Clearance on each side of the physical notch.
+    static let notchClearance: CGFloat = 10
+
+    static func leadingGroupWidth(pageCount: Int) -> CGFloat {
         let count = max(1, pageCount)
-        let actionCount = clipboardEnabled ? 3 : 2
         return CGFloat(count) * buttonWidth + CGFloat(count - 1) * tabSpacing + tabPadding * 2
-            + CGFloat(actionCount) * buttonWidth + CGFloat(actionCount - 1) * 6 + 8
+    }
+    static func trailingGroupWidth(clipboardEnabled: Bool) -> CGFloat {
+        let actionCount = clipboardEnabled ? 3 : 2
+        return CGFloat(actionCount) * buttonWidth + CGFloat(actionCount - 1) * 6
+    }
+    static func notchExclusionWidth(hardwareNotchWidth: CGFloat) -> CGFloat {
+        guard hardwareNotchWidth.isFinite, hardwareNotchWidth > 0 else { return 0 }
+        return hardwareNotchWidth + notchClearance * 2
+    }
+    static func minimumContentWidth(pageCount: Int, clipboardEnabled: Bool, hardwareNotchWidth: CGFloat = 0) -> CGFloat {
+        let leading = leadingGroupWidth(pageCount: pageCount)
+        let trailing = trailingGroupWidth(clipboardEnabled: clipboardEnabled)
+        let exclusion = notchExclusionWidth(hardwareNotchWidth: hardwareNotchWidth)
+        guard exclusion > 0 else { return leading + trailing + 8 }
+        return 2 * max(leading, trailing) + exclusion
+    }
+    /// Frames (header-local x ranges) of the leading group, the trailing group
+    /// and the notch exclusion for a header of `innerWidth`.
+    static func frames(innerWidth: CGFloat, pageCount: Int, clipboardEnabled: Bool,
+                       hardwareNotchWidth: CGFloat) -> (leading: ClosedRange<CGFloat>, trailing: ClosedRange<CGFloat>, exclusion: ClosedRange<CGFloat>) {
+        let exclusion = notchExclusionWidth(hardwareNotchWidth: hardwareNotchWidth)
+        let half = max(0, (innerWidth - exclusion) / 2)
+        let leading = min(leadingGroupWidth(pageCount: pageCount), half)
+        let trailing = min(trailingGroupWidth(clipboardEnabled: clipboardEnabled), half)
+        return (0...leading, (innerWidth - trailing)...innerWidth,
+                (innerWidth / 2 - exclusion / 2)...(innerWidth / 2 + exclusion / 2))
     }
 }
 
@@ -383,6 +415,10 @@ struct IslandRootView: View {
     @State private var contentPhase: IslandContentPhase = .compact
     @State private var renderedContentMode: RenderedContentMode = .compact
     @State private var contentVisible = false
+    /// Alternating presentation-only clock edge. Every collapse toggles it so
+    /// the exit owns a real animation even if an expansion/collapse pair occurs
+    /// before SwiftUI commits another presentation pass.
+    @State private var childExitClock: Double = 0
     @State private var expandedContentMounted = false
     @State private var isContentRemoving = false
     @State private var sequenceGeneration = 0
@@ -648,6 +684,16 @@ struct IslandRootView: View {
                 islandSwipeSensitivity: settings.gestureSensitivity
             )
             .opacity(contentVisible && workspaceContentVisible ? 1 : 0)
+            .background(alignment: .topLeading) {
+                // Isolated exit clock: animated with the exact child-exit curve in
+                // its own transaction, so its completion cannot be captured by
+                // live session subtrees (see context.md 2026-10-05 Resume fix).
+                Color.black.opacity(0.001 * childExitClock)
+                    .frame(width: 1, height: 1)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+            .onDisappear { finishChildExitAnimation(token: childExitTracker.animationToken) }
         } else {
             compactIslandContent
         }
@@ -1421,17 +1467,31 @@ struct IslandRootView: View {
         let plan = ExpandedIslandMotion.collapsePlan(settings: settings, reduceMotion: reduceMotion)
         renderedContentMode = .expanded
         contentPhase = .contentCollapsing
-        withAnimation(plan.childExitDuration > 0 ? .easeIn(duration: plan.childExitDuration) : nil, completionCriteria: .removed) {
+        let exitAnimation: Animation? = plan.childExitDuration > 0 ? .easeIn(duration: plan.childExitDuration) : nil
+        let nextExitClock = ExpandedChildExitVisualClock.next(after: childExitClock)
+        withAnimation(exitAnimation, completionCriteria: .logicallyComplete) {
+            childExitClock = nextExitClock
+        } completion: {
+            finishChildExitAnimation(token: token)
+        }
+        withAnimation(exitAnimation, completionCriteria: .logicallyComplete) {
             contentVisible = false
             isContentRemoving = expandedContentMounted
         } completion: {
-            if let generation = childExitTracker.animationFinished(
-                token: token,
-                currentGeneration: layoutStore.expandedChildExitGeneration,
-                isExiting: layoutStore.isExpandedContentExiting
-            ) {
-                layoutStore.acknowledgeExpandedChildExit(generation: generation)
-            }
+            finishChildExitAnimation(token: token)
+        }
+    }
+
+    /// The newest exit animation finished (rendered progress reached zero, its
+    /// container unmounted, or SwiftUI's completion fired — whichever is first).
+    private func finishChildExitAnimation(token: Int) {
+        guard childExitTracker.exitInFlight else { return }
+        if let generation = childExitTracker.animationFinished(
+            token: token,
+            currentGeneration: layoutStore.expandedChildExitGeneration,
+            isExiting: layoutStore.isExpandedContentExiting
+        ) {
+            layoutStore.acknowledgeExpandedChildExit(generation: generation)
         }
     }
 
@@ -3291,7 +3351,7 @@ struct ExpandedIslandView: View {
 
     private func expandedBaseLayer(metrics: ExpandedIslandLayoutMetrics) -> some View {
         VStack(alignment: .leading, spacing: metrics.tabToPageSpacing) {
-            HStack(alignment: .center, spacing: 8) {
+            HStack(alignment: .center, spacing: 0) {
                 ZStack(alignment: .leading) {
                     if rendersExpandedVisualContent && shouldRenderContent && !isCollapseShellOnly {
                         ExpandedIslandPageSwitcher(settings: settings, navigation: navigation)
@@ -3305,8 +3365,13 @@ struct ExpandedIslandView: View {
                     }
                 }
                 .frame(height: metrics.tabSwitcherHeight)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-                Spacer(minLength: 0)
+                // Hardware-notch exclusion: equal flexible halves keep this gap
+                // centered on the notch; nothing interactive is placed in it.
+                Color.clear
+                    .frame(width: ExpandedIslandHeaderMetrics.notchExclusionWidth(hardwareNotchWidth: layoutStore.hardwareNotchWidth))
+                    .accessibilityHidden(true)
 
                 HStack(spacing: 6) {
                     if rendersExpandedVisualContent && shouldRenderContent && !isCollapseShellOnly {
@@ -3354,6 +3419,7 @@ struct ExpandedIslandView: View {
                     reduceMotion: reduceMotion
                 )
                 .frame(height: metrics.tabSwitcherHeight)
+                .frame(maxWidth: .infinity, alignment: .trailing)
             }
             .frame(height: metrics.tabSwitcherHeight)
 
@@ -3430,7 +3496,8 @@ struct ExpandedIslandView: View {
             from: settings.expandedSize, page: page, configuration: customization.configuration,
             editing: false, settings: settings, metrics: layoutStore.displayMetrics,
             minimumHeaderWidth: ExpandedIslandHeaderMetrics.minimumContentWidth(
-                pageCount: navigation.availablePages(using: settings).count, clipboardEnabled: settings.clipboardHistoryEnabled))
+                pageCount: navigation.availablePages(using: settings).count, clipboardEnabled: settings.clipboardHistoryEnabled,
+                hardwareNotchWidth: layoutStore.hardwareNotchWidth))
         let shrinks = nextSize.width < layoutStore.expandedSize.width || nextSize.height < layoutStore.expandedSize.height
         let effect = presentation.select(
             page,

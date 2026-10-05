@@ -17,6 +17,12 @@ struct AgentStreamingTextState: Equatable {
     private var nextStart: TimeInterval = 0
 
     mutating func update(_ value: String, active: Bool, reduceMotion: Bool, now: TimeInterval) {
+        // Re-renders with identical text are common (layout/preference passes)
+        // and must not rescan a very long transcript entry.
+        if value == text {
+            if !active || reduceMotion { settle() } else { runs.removeAll { now >= $0.start + Self.duration } }
+            return
+        }
         let old = text as NSString
         let new = value as NSString
         guard active, !reduceMotion, value.hasPrefix(text), new.length >= old.length else {
@@ -129,6 +135,10 @@ final class AgentStreamingTextView: NSTextView {
     private var reduced = false
     private let ink = NSColor.white.withAlphaComponent(0.88)
     private var lastWidth: CGFloat = 0
+    /// Last Swift value applied to TextKit. SwiftUI/AppKit can call updateNSView
+    /// repeatedly with unchanged transcript text during layout/preference passes;
+    /// keeping this value avoids bridging/rescanning the full NSTextView string.
+    private var appliedText = ""
     private var initialUpdate = true
     private let resolvesInitialText: Bool
 
@@ -165,7 +175,11 @@ final class AgentStreamingTextView: NSTextView {
     }
 
     func update(_ text: String, active: Bool, reduceMotion: Bool) {
-        let changed = string != text
+        // Compare against the last applied Swift string (same storage is an
+        // O(1) identity check) instead of bridging NSTextView.string each pass.
+        let changed = initialUpdate || text != appliedText
+        if !changed, active == self.active, reduceMotion == reduced, stream.runs.isEmpty { return }
+        appliedText = text
         let now = CACurrentMediaTime()
         // Initial/historical content is already resolved. Remounting never
         // replays a response that arrived while the island was collapsed.

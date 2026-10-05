@@ -356,7 +356,11 @@ struct ExpandedPresentationProfile: Equatable, Sendable {
         guard let surface, let configuration,
               editing || configuration.customizedSurfaces.contains(surface) else {
             let size = resolvedSize(from: base)
-            return CGSize(width: size.width * metrics.expandedShellScale, height: size.height * metrics.expandedShellScale)
+            // Header invariant holds on every page: the shell is never narrower
+            // than its notch-safe header.
+            let horizontal = IslandShellLayout.expandedHorizontalPadding(isNotchIntegrated: metrics.hasHardwareNotch && settings.respectHardwareNotch) * 2
+            return CGSize(width: max(size.width * metrics.expandedShellScale, minimumHeaderWidth + horizontal),
+                          height: size.height * metrics.expandedShellScale)
         }
         let allowed = WorkspaceWidgetAvailability.eligible(on: surface, settings: settings)
         let regions = configuration.regions(on: surface).compactMap { region -> WorkspaceWidgetRegion? in
@@ -366,9 +370,9 @@ struct ExpandedPresentationProfile: Equatable, Sendable {
         }
         let horizontal = IslandShellLayout.expandedHorizontalPadding(isNotchIntegrated: metrics.hasHardwareNotch && settings.respectHardwareNotch) * 2
         let chrome = ExpandedIslandLayoutMetrics(containerSize: base, horizontalPadding: horizontal / 2, displayMetrics: metrics)
-        let usage = page == .agents && settings.agentUsageMetricsEnabled
-            ? AgentWorkspaceUsageStrip.rowHeight(for: min(base.width, metrics.visibleLogicalSize.width)) + 6 : 0
-        let vertical = chrome.topPadding + chrome.bottomPadding + chrome.tabSwitcherHeight + chrome.tabToPageSpacing + usage
+        // Usage is a configured band widget inside the projection: nothing is
+        // reserved for it outside the configuration (zero when removed).
+        let vertical = chrome.topPadding + chrome.bottomPadding + chrome.tabSwitcherHeight + chrome.tabToPageSpacing
         let maximum = CGSize(width: max(1, max(520, metrics.logicalSize.width - 280) - horizontal),
                              height: max(1, metrics.visibleLogicalSize.height - 24 * metrics.spacingScale - vertical))
         let content = WorkspaceWidgetLayoutProjection.preferredContentSize(regions: regions,

@@ -225,6 +225,7 @@ private struct CustomizationRenderHarness: View {
                             switch region.widgets.first?.kind {
                             case .chat: chat(active: true)
                             case .terminal: terminal(active: true)
+                            case .agentUsage, .codexUsage, .claudeUsage: Text("Usage fixture").frame(height: 20)
                             default: Text("Feed fixture").frame(maxWidth: .infinity)
                             }
                         }

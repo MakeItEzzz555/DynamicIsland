@@ -410,15 +410,20 @@ struct AgentDashboardContentView: View {
                 return (provider, session)
             })
             let _ = selectedByProvider
-            // A usage widget placed in a customized layout replaces the row.
-            let usageWidgetPlaced = customization.map { store in
-                store.configuration.customizedSurfaces.contains(.agents)
-                    && store.configuration.widgets(on: .agents).contains { $0.kind.isUsage }
+            // Usage is owned by WorkspaceConfiguration. A customized layout
+            // projects usage widgets itself; the default layout renders the
+            // configured usage band (Combined by default) above the split.
+            let customizedLayout = customization.map { store in
+                editingWorkspace.wrappedValue || store.configuration.customizedSurfaces.contains(.agents)
             } ?? false
+            let usageBand: [IslandWidget] = customization.map { store in
+                store.configuration.widgets(on: .agents).map(\.kind).filter(\.isUsage)
+            } ?? [.agentUsage]
             VStack(alignment: .leading, spacing: 6) {
-                if showsUsage && !usageWidgetPlaced {
+                if showsUsage && !customizedLayout && !usageBand.isEmpty {
                     stagedAgentContent(index: 1) {
-                        AgentWorkspaceUsageStrip(managedControl: managedControl, availableWidth: proxy.size.width)
+                        AgentWorkspaceUsageStrip(managedControl: managedControl, widgets: usageBand,
+                                                 availableWidth: proxy.size.width)
                     }
                 }
 

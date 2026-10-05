@@ -70,6 +70,7 @@ final class WorkspaceAdaptiveSizingTests: XCTestCase {
         XCTAssertGreaterThan(chat.frame.width, feed.frame.width * 1.5)
         XCTAssertGreaterThanOrEqual(chat.frame.width, 480 * metrics.expandedCardScale - 0.01)
         var configuration = WorkspaceConfiguration.initial
+        configuration.remove(configuration.placement(kind: .agentUsage, on: .agents)!.id)
         configuration.remove(configuration.placement(kind: .feed, on: .agents)!.id)
         configuration.add(.terminal, on: .agents)
         configuration.combineTerminalWithChat()

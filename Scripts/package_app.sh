@@ -96,6 +96,22 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <string>DynamicIsland transcribes your Voice Transcribe recordings on this Mac when on-device recognition is available. Apple's speech service is used only if you explicitly allow it.</string>
   <key>NSRemindersUsageDescription</key>
   <string>After you grant access, DynamicIsland reads your reminder lists and upcoming reminders to show them in the island, and creates or completes reminders only when you ask it to.</string>
+  <!-- Native widget-editor drags carry this private pasteboard type. It must
+       be exported, or AppKit/SwiftUI drop registration never matches it and
+       the editor receives no hover updates before release. -->
+  <key>UTExportedTypeDeclarations</key>
+  <array>
+    <dict>
+      <key>UTTypeIdentifier</key>
+      <string>app.dynamicisland.workspace-widget</string>
+      <key>UTTypeDescription</key>
+      <string>DynamicIsland Workspace Widget</string>
+      <key>UTTypeConformsTo</key>
+      <array>
+        <string>public.data</string>
+      </array>
+    </dict>
+  </array>
 </dict>
 </plist>
 PLIST

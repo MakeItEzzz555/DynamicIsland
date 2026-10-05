@@ -145,3 +145,135 @@ final class CollapseSequencingRecoveryTests: XCTestCase {
         XCTAssertTrue(IslandCollapseRequest.exitPhaseEnds(at: .expanded))
     }
 }
+
+/// Resume -> collapse regression (2026-10-05). After a session Resume the
+/// expanded content's `withAnimation` completion was observed to never fire
+/// (95 of 96 packaged exits), so the root acknowledges from an isolated exit
+/// clock animated in its own transaction, plus container unmount. These model
+/// the root's three completion sources against overlay generations.
+@MainActor
+final class ResumedSessionCollapseTests: XCTestCase {
+    @MainActor private struct Root {
+        let store = IslandLayoutStore()
+        var request = IslandCollapseRequest()
+        var tracker = ExpandedChildExitTracker()
+        var contentVisible = true
+        var acknowledged: [Int] = []
+        var token: Int?
+
+        mutating func collapse() {
+            store.expandedChildExitGeneration = request.begin()
+            store.isExpandedContentExiting = true
+            drive()
+        }
+        mutating func expand() {
+            if request.cancel() { store.isExpandedContentExiting = false; tracker.reset(); contentVisible = true }
+        }
+        mutating func drive() {
+            switch tracker.drive(generation: store.expandedChildExitGeneration,
+                                 isExiting: store.isExpandedContentExiting, childrenHidden: !contentVisible) {
+            case .beginExit: token = tracker.beginAnimation(); contentVisible = false
+            case .acknowledge(let generation): acknowledged.append(generation)
+            case .none: break
+            }
+        }
+        /// Any of: exit clock completion, content completion, container unmount.
+        mutating func completion(_ token: Int?) {
+            guard let token, tracker.exitInFlight else { return }
+            if let generation = tracker.animationFinished(token: token, currentGeneration: store.expandedChildExitGeneration,
+                                                          isExiting: store.isExpandedContentExiting) {
+                acknowledged.append(generation)
+            }
+        }
+        mutating func commitIfAcknowledged() -> Bool {
+            guard let last = acknowledged.last, request.isPending, last == request.generation else { return false }
+            store.isExpandedContentExiting = false
+            tracker.reset()
+            return true
+        }
+    }
+
+    func testResumeThenCollapseAcknowledgesFromTheClockWhenContentCompletionIsLost() {
+        var root = Root()
+        root.collapse()
+        root.completion(root.token) // exit clock; the content completion never arrives
+        XCTAssertTrue(root.commitIfAcknowledged())
+    }
+
+    func testVisualClockAlwaysCreatesANewAnimationEdgeAcrossRapidCycles() {
+        var clock = 0.0
+        for cycle in 0..<200 {
+            let next = ExpandedChildExitVisualClock.next(after: clock)
+            XCTAssertNotEqual(next, clock, "cycle \(cycle) must own a real animatable edge")
+            clock = next
+        }
+    }
+
+    func testDuplicateCompletionSourcesAcknowledgeExactlyOnce() {
+        var root = Root()
+        root.collapse()
+        let token = root.token
+        root.completion(token)      // clock
+        root.completion(token)      // late content completion
+        root.completion(token)      // container unmount
+        XCTAssertEqual(root.acknowledged.count, 1)
+        XCTAssertTrue(root.commitIfAcknowledged())
+    }
+
+    func testResumeCollapseExpandAndRepeatNeverLeavesAStuckGeneration() {
+        var root = Root()
+        for cycle in 0..<200 {
+            root.collapse()
+            let token = root.token
+            if cycle % 3 == 0 { root.expand(); root.completion(token); XCTAssertFalse(root.commitIfAcknowledged()); continue }
+            root.completion(token)
+            XCTAssertTrue(root.commitIfAcknowledged(), "cycle \(cycle)")
+            root.contentVisible = true
+        }
+    }
+
+    func testProviderOrFeedPublicationDuringCollapseOnlyRedrivesTheCurrentGeneration() {
+        var root = Root()
+        root.collapse()
+        let token = root.token
+        // Live session/Feed updates re-enter the root while the exit runs and a
+        // repeated collapse request issues a newer generation.
+        root.drive(); root.drive()
+        root.store.expandedChildExitGeneration = root.request.begin()
+        root.drive()
+        root.completion(token)
+        XCTAssertEqual(root.acknowledged, [root.request.generation], "stale generations never block the current one")
+        XCTAssertTrue(root.commitIfAcknowledged())
+    }
+
+    func testStaleExitTokensFromAnInterruptedExitAreIgnored() {
+        var root = Root()
+        root.collapse()
+        let stale = root.token
+        root.expand()
+        root.collapse()
+        root.completion(stale)
+        XCTAssertTrue(root.acknowledged.isEmpty)
+        root.completion(root.token)
+        XCTAssertTrue(root.commitIfAcknowledged())
+    }
+
+    func testChildUnmountBeforeCompletionStillAcknowledges() {
+        var root = Root()
+        root.collapse()
+        // The expanded container disappears (e.g. its subtree is replaced
+        // after Resume) before any animation callback.
+        root.completion(root.tracker.animationToken)
+        XCTAssertTrue(root.commitIfAcknowledged())
+    }
+
+    func testRapidCollapseExpandAlternationEndsInteractive() {
+        var root = Root()
+        for _ in 0..<50 { root.collapse(); root.expand() }
+        XCTAssertFalse(root.store.isExpandedContentExiting)
+        root.collapse()
+        root.completion(root.token)
+        XCTAssertTrue(root.commitIfAcknowledged())
+        XCTAssertFalse(root.store.isExpandedContentExiting, "collapsed island is interactive")
+    }
+}

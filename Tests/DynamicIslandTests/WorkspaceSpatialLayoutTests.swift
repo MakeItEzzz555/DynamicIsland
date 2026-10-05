@@ -125,22 +125,23 @@ final class WorkspaceSpatialLayoutTests: XCTestCase {
     }
 
     func testNonFillingWidgetKeepsItsHeightCenteredInATallerRow() throws {
-        let projection = WorkspaceWidgetLayoutProjection.make(regions: configuration([.media, .agentUsage]).regions(on: .media),
+        let projection = WorkspaceWidgetLayoutProjection.make(regions: configuration([.media, .shortcuts]).regions(on: .media),
             availableSize: .init(width: 1100, height: 500), metrics: metrics)
-        let media = try XCTUnwrap(frame(projection, .media)), usage = try XCTUnwrap(frame(projection, .agentUsage))
-        XCTAssertLessThan(usage.height, media.height, "usage is not stretched into an empty tall box")
-        XCTAssertEqual(usage.midY, media.midY, accuracy: 0.5)
+        let media = try XCTUnwrap(frame(projection, .media)), shortcuts = try XCTUnwrap(frame(projection, .shortcuts))
+        XCTAssertLessThan(shortcuts.height, media.height, "a non-filling widget is not stretched into an empty tall box")
+        XCTAssertEqual(shortcuts.midY, media.midY, accuracy: 0.5)
     }
 
     func testTwoSmallWidgetsStackBesideALargerAnchorInsteadOfStretching() throws {
-        let projection = WorkspaceWidgetLayoutProjection.make(
-            regions: configuration([.calendar, .codexUsage, .claudeUsage]).regions(on: .media),
-            availableSize: .init(width: 1100, height: 500), metrics: metrics)
-        let codex = try XCTUnwrap(frame(projection, .codexUsage)), claude = try XCTUnwrap(frame(projection, .claudeUsage))
+        var config = configuration([.calendar, .shortcuts, .activities])
+        config.setSize(.large, for: try XCTUnwrap(config.placement(kind: .calendar, on: .media)).id)
+        let projection = WorkspaceWidgetLayoutProjection.make(regions: config.regions(on: .media),
+            availableSize: .init(width: 1100, height: 600), metrics: metrics)
+        let shortcuts = try XCTUnwrap(frame(projection, .shortcuts)), activities = try XCTUnwrap(frame(projection, .activities))
         let calendar = try XCTUnwrap(frame(projection, .calendar))
-        XCTAssertEqual(codex.minX, claude.minX, accuracy: 0.5, "small widgets form one column")
-        XCTAssertGreaterThanOrEqual(claude.minY, codex.maxY - 0.5)
-        XCTAssertLessThanOrEqual(claude.maxY, calendar.maxY + 0.5)
+        XCTAssertEqual(shortcuts.minX, activities.minX, accuracy: 0.5, "small widgets form one column")
+        XCTAssertGreaterThanOrEqual(activities.minY, shortcuts.maxY - 0.5)
+        XCTAssertLessThanOrEqual(activities.maxY, calendar.maxY + 0.5)
         XCTAssertEqual(projection.rows, 1)
     }
 

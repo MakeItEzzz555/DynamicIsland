@@ -102,11 +102,38 @@ enum TimerDurationSelection {
 }
 
 enum TimerRulerResolution: String, CaseIterable {
-    case seconds, minutes
-    var stepSeconds: Int { self == .seconds ? 1 : 60 }
+    case seconds, minutes, overview
+    var stepSeconds: Int {
+        switch self {
+        case .seconds: 1
+        case .minutes: 60
+        case .overview: 300
+        }
+    }
     var pointsPerTick: CGFloat { 9 }
     var pointsPerSecond: CGFloat { pointsPerTick / CGFloat(stepSeconds) }
-    var title: String { self == .seconds ? "1s" : "1m" }
+    var title: String {
+        switch self {
+        case .seconds: "1s"
+        case .minutes: "1m"
+        case .overview: "5m"
+        }
+    }
+    /// The zoom button cycles fine -> coarse -> fine.
+    var next: TimerRulerResolution {
+        switch self {
+        case .seconds: .minutes
+        case .minutes: .overview
+        case .overview: .seconds
+        }
+    }
+    func label(forTick index: Int) -> String {
+        switch self {
+        case .seconds: TimerCountdownPresentation.displayText(remaining: Double(index))
+        case .minutes: "\(index)"
+        case .overview: "\(index * 5)"
+        }
+    }
 }
 
 /// Captured once per drag. Translation is always relative to the original
@@ -115,10 +142,15 @@ struct TimerRulerDragSelection: Equatable {
     let originSeconds: Int
     let resolution: TimerRulerResolution
     private(set) var previousValue: Double
+    /// Value at translation zero. Starts at the origin and is rebased only when
+    /// the selection is clamped, so overscrolling past 0:01 / 3:00:00 never
+    /// banks a dead zone: reversing direction responds immediately.
+    private var anchor: Double
     init(seconds: Int, resolution: TimerRulerResolution) {
         originSeconds = TimerDurationSelection.seconds(Double(seconds))
         self.resolution = resolution
         previousValue = Double(originSeconds)
+        anchor = Double(originSeconds)
     }
     struct Change: Equatable {
         var value: Double
@@ -129,8 +161,10 @@ struct TimerRulerDragSelection: Equatable {
         guard translation.isFinite else {
             return Change(value: previousValue, selectedSeconds: TimerDurationSelection.seconds(previousValue), crossedTicks: [])
         }
-        let value = min(Double(TimerDurationSelection.maximumSeconds), max(1,
-            Double(originSeconds) - translation / Double(resolution.pointsPerSecond)))
+        let offset = translation / Double(resolution.pointsPerSecond)
+        let raw = anchor - offset
+        let value = min(Double(TimerDurationSelection.maximumSeconds), max(1, raw))
+        if raw != value { anchor = value + offset }
         let ticks = TimerRulerInteractionGeometry.crossedTicks(from: previousValue, to: value, resolution: resolution)
         previousValue = value
         return Change(value: value, selectedSeconds: TimerDurationSelection.seconds(value), crossedTicks: ticks)
@@ -153,10 +187,21 @@ enum TimerRulerInteractionGeometry {
     }
     static func tick(_ index: Int, resolution: TimerRulerResolution) -> TimerRulerScale.Tick {
         if resolution == .minutes { return TimerRulerScale.tick(forMinute: index) }
+        if resolution == .overview {
+            // One tick per 5 minutes; labelled every 30 minutes.
+            if index.isMultiple(of: 6) { return .init(height: 28, labelled: true) }
+            return .init(height: index.isMultiple(of: 3) ? 20 : 14, labelled: false)
+        }
         if index.isMultiple(of: 60) { return .init(height: 32, labelled: true) }
         if index.isMultiple(of: 15) { return .init(height: 28, labelled: true) }
         if index.isMultiple(of: 5) { return .init(height: 22, labelled: false) }
         return .init(height: 14, labelled: false)
+    }
+    /// Trackpad/wheel acceleration: slow, precise scrolling stays 1:1 for
+    /// second-accurate picking; fast flicks travel up to 4x farther.
+    static func acceleratedWheelDelta(_ delta: Double) -> Double {
+        guard delta.isFinite else { return 0 }
+        return delta * min(4, max(1, abs(delta) / 6))
     }
     /// Excludes the starting boundary, includes the newly reached boundary.
     /// Fast deltas enumerate every crossed tick once; repeated deltas enumerate none.

@@ -132,3 +132,44 @@ final class TimerRulerInteractionTests: XCTestCase {
         XCTAssertEqual(timer.totalSeconds, 125)
     }
 }
+
+@MainActor
+final class TimerRulerOverscrollAndZoomTests: XCTestCase {
+    func testOverscrollPastMinimumDoesNotBankADeadZone() {
+        var drag = TimerRulerDragSelection(seconds: 3, resolution: .seconds)
+        XCTAssertEqual(drag.update(translation: 18).selectedSeconds, 1)
+        XCTAssertEqual(drag.update(translation: 900).selectedSeconds, 1, "Keeps clamping while overscrolling")
+        let back = drag.update(translation: 891)
+        XCTAssertEqual(back.selectedSeconds, 2, "Reversing must respond immediately after overscroll")
+        XCTAssertEqual(back.crossedTicks, [2])
+        XCTAssertEqual(drag.originSeconds, 3, "Cancel still restores the original selection")
+    }
+
+    func testOverscrollPastMaximumReversesImmediately() {
+        var drag = TimerRulerDragSelection(seconds: 10_790, resolution: .seconds)
+        XCTAssertEqual(drag.update(translation: -5_000).selectedSeconds, 10_800)
+        XCTAssertEqual(drag.update(translation: -4_991).selectedSeconds, 10_799)
+    }
+
+    func testOverviewZoomReachesLongDurationsQuickly() {
+        XCTAssertEqual(TimerRulerResolution.seconds.next, .minutes)
+        XCTAssertEqual(TimerRulerResolution.minutes.next, .overview)
+        XCTAssertEqual(TimerRulerResolution.overview.next, .seconds)
+        var drag = TimerRulerDragSelection(seconds: 300, resolution: .overview)
+        XCTAssertEqual(drag.update(translation: -90).selectedSeconds, 300 + 10 * 300, "Ten 5-minute ticks per 90pt")
+        XCTAssertEqual(TimerRulerResolution.overview.label(forTick: 6), "30")
+        XCTAssertTrue(TimerRulerInteractionGeometry.tick(6, resolution: .overview).labelled)
+        XCTAssertFalse(TimerRulerInteractionGeometry.tick(3, resolution: .overview).labelled)
+        let ticks = TimerRulerInteractionGeometry.visibleTicks(valueSeconds: 5_400, width: 280, resolution: .overview)
+        XCTAssertLessThanOrEqual(ticks.upperBound, 36)
+        XCTAssertLessThanOrEqual(ticks.count, 35)
+    }
+
+    func testWheelAccelerationKeepsSlowScrollsExactAndBoundsFastFlicks() {
+        XCTAssertEqual(TimerRulerInteractionGeometry.acceleratedWheelDelta(3), 3)
+        XCTAssertEqual(TimerRulerInteractionGeometry.acceleratedWheelDelta(-6), -6)
+        XCTAssertEqual(TimerRulerInteractionGeometry.acceleratedWheelDelta(12), 24)
+        XCTAssertEqual(TimerRulerInteractionGeometry.acceleratedWheelDelta(-60), -240, "Capped at 4x")
+        XCTAssertEqual(TimerRulerInteractionGeometry.acceleratedWheelDelta(.nan), 0)
+    }
+}

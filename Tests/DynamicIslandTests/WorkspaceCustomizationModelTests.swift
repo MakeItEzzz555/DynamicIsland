@@ -11,7 +11,7 @@ final class WorkspaceCustomizationModelTests: XCTestCase {
     func testDefaultsStableIDsAndLegacyTimerTypesRemainCompatible() {
         let config = WorkspaceConfiguration.initial.normalized()
         XCTAssertEqual(config.widgets(on: .media).map(\.kind), [.media, .files, .clipboard])
-        XCTAssertEqual(config.widgets(on: .agents).map(\.kind), [.chat, .feed])
+        XCTAssertEqual(config.widgets(on: .agents).map(\.kind), [.agentUsage, .chat, .feed])
         XCTAssertEqual(config, config.normalized())
         XCTAssertEqual(config.placements.map(\.id), WorkspaceConfiguration.initial.placements.map(\.id))
         XCTAssertTrue(config.customizedSurfaces.isEmpty)
@@ -61,7 +61,7 @@ final class WorkspaceCustomizationModelTests: XCTestCase {
         let store = WorkspaceCustomizationStore(defaults: preferences)
         XCTAssertEqual(store.configuration.widgets(on: .media).map(\.kind), [.timer, .calendar])
         XCTAssertEqual(store.configuration.customizedSurfaces, [.media])
-        XCTAssertEqual(store.configuration.widgets(on: .agents).map(\.kind), [.chat, .feed])
+        XCTAssertEqual(store.configuration.widgets(on: .agents).map(\.kind), [.agentUsage, .chat, .feed])
         store.reset()
         XCTAssertEqual(store.configuration, .initial)
         XCTAssertEqual(WorkspaceCustomizationStore(defaults: preferences).configuration, .initial)
@@ -76,7 +76,7 @@ final class WorkspaceCustomizationModelTests: XCTestCase {
         old.schemaVersion = 0
         old.navigation.setVisible(.timer, visible: false)
         let migrated = WorkspaceConfiguration.decoded(try JSONEncoder().encode(old))
-        XCTAssertEqual(migrated.schemaVersion, 1)
+        XCTAssertEqual(migrated.schemaVersion, WorkspaceConfiguration.currentVersion)
         XCTAssertTrue(migrated.navigation.hidden.contains(.timer))
     }
 
@@ -199,7 +199,7 @@ final class WorkspaceCustomizationModelTests: XCTestCase {
         config.resetWidgets(on: .agents)
         XCTAssertEqual(config.navigation, navigation)
         XCTAssertEqual(config.widgets(on: .media), media)
-        XCTAssertEqual(config.widgets(on: .agents).map(\.kind), [.chat, .feed])
+        XCTAssertEqual(config.widgets(on: .agents).map(\.kind), [.agentUsage, .chat, .feed])
         XCTAssertTrue(config.groups.isEmpty)
         XCTAssertTrue(config.customizedSurfaces.contains(.agents))
         config.add(.terminal, on: .agents)

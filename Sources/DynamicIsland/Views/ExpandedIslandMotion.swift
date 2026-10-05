@@ -633,6 +633,16 @@ extension ExpandedIslandMotion {
     }
 }
 
+/// Presentation-local clock edge used to guarantee that every child-exit
+/// generation owns a real animatable value change. Expansion deliberately does
+/// not reset this value: rapid resume/expand/collapse cycles can otherwise make
+/// a fixed 1 -> 0 clock a no-op before SwiftUI renders the reset.
+enum ExpandedChildExitVisualClock {
+    static func next(after current: Double) -> Double {
+        current < 0.5 ? 1 : 0
+    }
+}
+
 /// Root-side child-exit bookkeeping for a pending collapse. The overlay
 /// publishes a monotonic collapse generation; the root answers with "children
 /// are hidden as of generation N". Driving from the generation (not from a

@@ -944,7 +944,8 @@ final class OverlayWindowController {
             editing: preview != nil, settings: settings, metrics: layoutStore.displayMetrics,
             minimumHeaderWidth: ExpandedIslandHeaderMetrics.minimumContentWidth(
                 pageCount: modules.navigation.availablePages(using: settings).count,
-                clipboardEnabled: settings.clipboardHistoryEnabled))
+                clipboardEnabled: settings.clipboardHistoryEnabled,
+                hardwareNotchWidth: layoutStore.hardwareNotchWidth))
     }
 
     /// While editing (and for the change that ends editing), shell geometry

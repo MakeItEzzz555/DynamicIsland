@@ -379,18 +379,23 @@ struct MediaModuleView: View {
         }
     }
 
-    /// The only widget on its surface: one centered composition sized from
-    /// the allocated cell, with full-size controls (not a scaled-down copy).
+    /// The only widget on its surface, composed from the allocated cell with
+    /// full-size controls: the artwork/title group keeps its left-weighted
+    /// structure but sits a cell-proportional step in from the edge (never
+    /// centered); transport is centered; progress and volume use the width.
     private var soloActivePlayerView: some View {
-        let width = widgetPlacement.size.width > 0 ? min(330, widgetPlacement.size.width - 28) : 300
+        let width = widgetPlacement.size.width > 0 ? widgetPlacement.size.width : 330
+        let headerInset = MediaSoloComposition.headerInset(cellWidth: width)
         return ViewThatFits(in: .vertical) {
             constrainedActivePlayerLayout(artworkSize: 62, transportButtonSize: 32, transportSymbolSize: 13,
-                                          sectionSpacing: 7, headerSpacing: 12, inlineVisualizerTopPadding: 1, centered: true)
+                                          sectionSpacing: 7, headerSpacing: 12, inlineVisualizerTopPadding: 1,
+                                          centered: true, headerLeadingInset: headerInset)
             constrainedActivePlayerLayout(artworkSize: 50, transportButtonSize: 28, transportSymbolSize: 12,
-                                          sectionSpacing: 4, headerSpacing: 10, inlineVisualizerTopPadding: 0, centered: true)
+                                          sectionSpacing: 4, headerSpacing: 10, inlineVisualizerTopPadding: 0,
+                                          centered: true, headerLeadingInset: headerInset)
         }
-        .frame(maxWidth: max(200, width))
-        .frame(maxWidth: .infinity, alignment: .center)
+        .padding(.horizontal, MediaSoloComposition.horizontalPadding)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder
@@ -534,7 +539,8 @@ struct MediaModuleView: View {
                 transportSymbolSize: 12,
                 sectionSpacing: 4,
                 headerSpacing: 8,
-                inlineVisualizerTopPadding: 1
+                inlineVisualizerTopPadding: 1,
+                distributes: distributesInWidgetCell
             )
             constrainedActivePlayerLayout(
                 artworkSize: 40,
@@ -542,11 +548,15 @@ struct MediaModuleView: View {
                 transportSymbolSize: 11,
                 sectionSpacing: 3,
                 headerSpacing: 7,
-                inlineVisualizerTopPadding: 0
+                inlineVisualizerTopPadding: 0,
+                distributes: distributesInWidgetCell
             )
         }
-        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, maxHeight: distributesInWidgetCell ? .infinity : nil, alignment: .topLeading)
     }
+
+    /// Inside a workspace widget cell (not the legacy fixed layout).
+    private var distributesInWidgetCell: Bool { widgetPlacement.size.height > 0 }
 
     private func constrainedActivePlayerLayout(
         artworkSize: CGFloat,
@@ -555,7 +565,9 @@ struct MediaModuleView: View {
         sectionSpacing: CGFloat,
         headerSpacing: CGFloat,
         inlineVisualizerTopPadding: CGFloat,
-        centered: Bool = false
+        centered: Bool = false,
+        headerLeadingInset: CGFloat = 0,
+        distributes: Bool = false
     ) -> some View {
         return VStack(alignment: .leading, spacing: sectionSpacing) {
             HStack(alignment: centered ? .center : .top, spacing: headerSpacing) {
@@ -612,9 +624,14 @@ struct MediaModuleView: View {
                     }
                 }
 
-                if !centered { Spacer(minLength: 0) }
+                Spacer(minLength: 0)
             }
-            .frame(maxWidth: .infinity, alignment: centered ? .center : .leading)
+            .padding(.leading, headerLeadingInset)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            // In a shared widget row the composition spans its whole cell, so
+            // its top and bottom align with row neighbours (e.g. the Timer).
+            if distributes { Spacer(minLength: 0) }
 
             if settings.showPlaybackControls {
                 HStack(spacing: centered ? 14 : 9) {
@@ -645,6 +662,8 @@ struct MediaModuleView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: centered ? .center : .leading)
             }
+
+            if distributes { Spacer(minLength: 0) }
 
             if settings.showProgressSlider {
                 VStack(spacing: 3) {
@@ -1537,5 +1556,17 @@ struct ShortcutsModuleView: View {
         let fittedRowHeight = availableHeight - headerAndPadding
         let clampedRowHeight = min(max(fittedRowHeight, 46), 68)
         return min(clampedRowHeight, max(fittedRowHeight, 0))
+    }
+}
+
+/// Solo Media composition metrics derived from the allocated cell width.
+enum MediaSoloComposition {
+    static let horizontalPadding: CGFloat = 14
+    /// A modest rightward step for the artwork/title group: proportional to the
+    /// cell so wide cells don't leave the group hugging the edge, bounded so it
+    /// never drifts toward the center.
+    static func headerInset(cellWidth: CGFloat) -> CGFloat {
+        guard cellWidth.isFinite, cellWidth > 0 else { return 0 }
+        return min(44, max(6, (cellWidth - 2 * horizontalPadding) * 0.07))
     }
 }

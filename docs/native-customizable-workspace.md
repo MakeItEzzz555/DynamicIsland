@@ -8,7 +8,7 @@ Customize workspace enters a transient edit transaction on Media/Island or Agent
 
 ## One model, independent configuration
 
-`WorkspaceConfiguration` schema 1 contains stable `WidgetID`, kind, surface, order, visibility, composition groups, navigation order/visibility and customized hosts. It persists JSON through `WorkspaceCustomizationStore`; safe decoding, legacy CSV migration, normalization, duplicate/unknown item handling and defaults keep corrupt preferences recoverable. Chat and the primary home surface remain available. Widget visibility never depends on a standalone tab's visibility: hiding Timer's tab leaves Timer placements intact. Existing global feature/settings availability still gates the palette and navigation.
+`WorkspaceConfiguration` schema 2 contains stable `WidgetID`, kind, surface, order, visibility, composition groups, navigation order/visibility, customized hosts and the usage-widget migration. It persists JSON through `WorkspaceCustomizationStore`; safe decoding, legacy CSV migration, normalization, duplicate/unknown item handling and defaults keep corrupt preferences recoverable. Chat and the primary home surface remain available. Widget visibility never depends on a standalone tab's visibility: hiding Timer's tab leaves Timer placements intact. Existing global feature/settings availability still gates the palette and navigation.
 
 The editor adopts the existing `IslandWidgetLayout` / `IslandWidgetEditor` files. It does not add a competing engine. Legacy uncustomized surfaces retain their established layout until editing is committed. Surface reset preserves navigation and other hosts; the header's full reset restores all defaults.
 
@@ -83,6 +83,46 @@ Baseline `0c913a3`. See context.md 2026-10-05 for the collapse-deadlock root cau
 - Drag intent: `resolveIntent` keeps the established midpoint insertion for left/right and adds above/below as `.stack` (shared column) inside a hovered compact widget; the previous axis wins inside an 0.18 bias band so the diagonal never flickers. Frames used for hit resolution stay frozen at drag start; the visible cards animate to the previewed configuration, the hovered card shows an interior edge glow, and the shell follows the prospective size (direct animated reposition while editing). Outside drops cancel; drops commit the preview exactly.
 - Model: one optional persisted relation, `stacksBelowPrevious`; legacy layouts decode standalone. Leaving a column promotes the widget below.
 - Projection: `WidgetLayoutTraits` per kind (preferred/minimum/solo, fillsHeight, stackable). Units (region or column) pack into rows; small stackable neighbors form a column beside a taller anchor; filling widgets take the row height, others stay centered; a sole widget uses its solo footprint. Widgets receive `WorkspaceWidgetPlacementContext`.
-- Media solo: centered artwork/metadata/transport/sliders sized to the allocated cell (full-size controls, not a scaled copy). Timer: rows distribute so controls align with row neighbors.
+- Media solo: full-size controls are composed from the allocated cell; artwork/title stays deliberately left-weighted with a bounded width-derived inset while transport remains centered and sliders span the available width. Timer rows distribute so controls align with row neighbors.
 - Usage widgets: Combined, Codex and Claude quota widgets on Agents and Media share `AgentUsageComposition` with the default Agents row.
-- Not visually accepted in the packaged app this pass (a Keychain prompt from ad-hoc signing blocked GUI automation): single-widget Media, live drag glow/preview and shell resize during drag. Model/projection/resolver behavior is covered by `WorkspaceSpatialLayoutTests`.
+- Later packaged acceptance closed the remaining visual gates: the exported `app.dynamicisland.workspace-widget` UTType restored pre-release drag-hover delivery; a held palette drag showed the accent target and prospective layout before release while the shell resized; a draft-only single-Media layout contracted the shell and kept its left-weighted composition; Cancel restored the saved layout.
+
+
+## Final continuation closure, 2026-10-05
+
+Baseline `c21258c94df14cf9c7d98dead5c0434438192c1b`.
+
+### Resume -> Collapse P0
+
+The resumed-session collapse deadlock had two independent causes. First, child exit was keyed to a Boolean edge instead of the exit generation: a resume/provider publication combined with collapse/cancel/collapse could coalesce `true -> true`, so the new generation never owned a real child-exit completion and a stale acknowledgement was rejected. `ExpandedChildExitTracker` now follows `expandedChildExitGeneration`, acknowledges only the current generation from actual visual removal state, and a repeated collapse re-drives a fresh generation. Second, a successfully committed collapse could leave `isExpandedContentExiting` true because cleanup was delayed behind a morph-generation check; a later collapsed live-activity morph superseded that generation and permanently zeroed the collapsed gesture region. The committed island state now owns ending the exit phase through `IslandCollapseRequest.exitPhaseEnds(at:)`; no timer controls correctness.
+
+Packaged stress performed before this continuation already completed 105 cycles across seven collapse/race scenarios with zero stuck shells after reproducing the pre-fix failure at cycles 9 and 2. The freshly rebuilt final package was additionally exercised through the exact user path: expand Agents -> Resume exact Codex session -> observe `Connected · ready for prompt` -> expanded swipe-up -> compact agent activity -> click compact surface -> same session re-expanded. No black expanded shell, dead interaction state or new crash report occurred. Historical 12:48/12:49 `.ips` files predate the final package run.
+
+### Editor / usage / drag runtime
+
+- Fresh packaged Agents edit mode: 867 x 575 pt shell, horizontal palette, centered 396 x 76 pt usage band, 532.5 x 368.5 pt Chat/Terminal region and 265 x 368.5 pt Feed. The layout remains wider than tall.
+- Removing the Combined Usage widget in a draft shrank the shell to 867 x 501 pt and made Add Agent Usage available: usage is a normal removable widget and reserves no hidden permanent band. Cancel restored the saved layout.
+- `Scripts/package_app.sh` now exports the private `app.dynamicisland.workspace-widget` UTType. This was the runtime cause of missing drag-hover callbacks: the editor could start a native drag, but packaged drop registration never matched before release without the declaration.
+- On the final package a held Focus Timer palette drag over Agents showed the blue target outline and `Add Focus Timer` feedback before release. The prospective layout was visible before drop (Chat/Terminal resized, Timer occupied the prospective slot, Feed moved below) and the shell grew to about 867 x 617 pt. Releasing outside cancelled and left Focus Timer available.
+- The Terminal-over-Chat combine region is restricted to Chat's center; outer bands retain directional insertion, with hysteresis only around the active target.
+
+### Media / Timer / notch / adaptive sizing runtime
+
+- Saved Media+Timer packaged layout: 751 x 276 pt shell, two 331 x 202 pt cells; the Timer ruler renders its taller hierarchy and live indicator beside Media.
+- Draft-only single Media: shell contracted to 523 x 304 pt, Now Playing to 313 x 175.5 pt. Artwork/title remained left-weighted inside the card, transport centered, full-size controls preserved. Cancel restored the exact saved Media+Timer composition.
+- Agents and Media headers were inspected through AX geometry on the packaged app. Navigation and utility controls remained outside the hardware-notch exclusion; the header minimum-width invariant also applies on non-customized pages.
+- Trait-driven projection remains authoritative for Compact/Standard/Large sizing, rows/columns, solo intrinsic bounds and fill-height behavior. No widget-name sizing conditionals were added to the views.
+
+### Large transcript continuation
+
+The interrupted Claude pass found a resumed large transcript pinning the app near 99% CPU because `NSViewRepresentable.updateNSView` repeatedly received identical text and paid an O(transcript) bridge/prefix comparison each pass. `AgentStreamingTextView` now caches the last applied Swift `String`, and `AgentStreamingTextState.update` exits early on identical content while still processing active/Reduce-Motion state and run expiry. The fast path does not alter message identity or replay resolved text. On the final package, Agents settled to about 6.4-6.5% CPU after transition in the tested resumable session.
+
+### Final validation
+
+- Focused workspace/collapse/drag/Timer/Streaming set: 78 passed, 0 failed.
+- Performance/lifecycle selection: 20 executed, 0 failed, 1 gated skip. Shell-only main-thread CPU ~5.9 ms. The 500-word stream kept four surrounding content evaluations, two managed publications and 20 transcript publications; streaming overlay work totaled ~6.75 ms.
+- Full suite: **1,860 tests, 0 failures, 41 gated skips**, 54.096 s suite wall time.
+- Release build: PASS.
+- `Scripts/validate_agent_visual_fidelity.sh release`: PASS. App and all three helpers passed strict/deep signature verification without xattr recovery on the final run.
+- Fresh `dist/DynamicIsland.app` launched and was used for the packaged GUI checks above.
+- Remaining distinctions: physical Timer haptic sensation, sustained display/GPU frame pacing, packaged long-duration memory soak, and actual macOS Reduce Motion OFF -> ON -> OFF remain NOT VERIFIED. Deterministic Reduce Motion/accessibility/lifecycle tests pass. No TCC/security setting was bypassed.

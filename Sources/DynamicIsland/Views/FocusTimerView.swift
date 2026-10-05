@@ -52,15 +52,16 @@ struct FocusTimerView: View {
                 }
                 Spacer(minLength: 3)
                 Button {
-                    resolution = resolution == .seconds ? .minutes : .seconds
+                    resolution = resolution.next
                 } label: {
-                    Label(resolution.title, systemImage: resolution == .seconds ? "plus.magnifyingglass" : "minus.magnifyingglass")
+                    Label(resolution.title, systemImage: resolution == .seconds ? "plus.magnifyingglass"
+                        : resolution == .minutes ? "magnifyingglass" : "minus.magnifyingglass")
                         .font(.system(size: 9, weight: .medium))
                         .padding(.horizontal, 5).frame(height: 23)
                 }
                 .buttonStyle(.plain).disabled(dragging)
-                .accessibilityLabel(resolution == .seconds ? "Zoom timer ruler out to minutes" : "Zoom timer ruler in to seconds")
-                .accessibilityValue(resolution == .seconds ? "Second precision" : "Minute overview")
+                .accessibilityLabel("Change timer ruler zoom")
+                .accessibilityValue("\(resolution.title) per tick")
             }
             if distributesRows { Spacer(minLength: 6) }
             TimerRuler(snapshot: snapshot, now: { [timer] in timer.clockNow }, seconds: selectedSeconds,
@@ -183,7 +184,9 @@ struct TimerRuler: View {
                 drag = session
                 dragValue = update.value
                 if seconds != update.selectedSeconds { seconds = update.selectedSeconds }
-                for _ in update.crossedTicks { tickFeedback() }
+                // One haptic per input event: a fast flick can cross dozens of
+                // ticks and must not queue dozens of feedback requests.
+                if !update.crossedTicks.isEmpty { tickFeedback() }
             }.onEnded { _ in
                 guard drag != nil else { return }
                 onCommit(seconds)
@@ -247,7 +250,7 @@ struct TimerRuler: View {
         let update = session.update(translation: wheelTranslation)
         drag = session; dragValue = update.value
         if seconds != update.selectedSeconds { seconds = update.selectedSeconds }
-        for _ in update.crossedTicks { tickFeedback() }
+        if !update.crossedTicks.isEmpty { tickFeedback() }
     }
     private func wheelFinished(_ cancelled: Bool) {
         guard let session = drag else { return }
@@ -257,7 +260,7 @@ struct TimerRuler: View {
     }
     private func select(_ value: Double) {
         let selected = TimerDurationSelection.seconds(value)
-        for _ in TimerRulerInteractionGeometry.crossedTicks(from: Double(seconds), to: Double(selected), resolution: resolution) { tickFeedback() }
+        if !TimerRulerInteractionGeometry.crossedTicks(from: Double(seconds), to: Double(selected), resolution: resolution).isEmpty { tickFeedback() }
         seconds = selected
         onCommit(selected)
     }
@@ -282,8 +285,7 @@ struct TimerRuler: View {
             context.stroke(path, with: .color((selected ? Color.white : Color.orange).opacity(opacity)),
                 style: StrokeStyle(lineWidth: selected ? 2 : (tick.labelled ? 1.6 : 1.2), lineCap: .round))
             if tick.labelled {
-                let tickSeconds = tickIndex * resolution.stepSeconds
-                let label = resolution == .minutes ? "\(tickIndex)" : TimerCountdownPresentation.displayText(remaining: Double(tickSeconds))
+                let label = resolution.label(forTick: tickIndex)
                 context.draw(Text(label).font(.system(size: 9, weight: .semibold))
                     .foregroundColor(selected ? .white : .orange.opacity(opacity)), at: CGPoint(x: x, y: 6))
             }
@@ -370,7 +372,9 @@ struct TimerRulerWheelInput: NSViewRepresentable {
             guard abs(event.scrollingDeltaX) > 0.05,
                   abs(event.scrollingDeltaX) >= abs(event.scrollingDeltaY) * 1.3 else { return event }
             tracking = true; ownedMomentum = true
-            let delta = event.scrollingDeltaX
+            let delta = event.hasPreciseScrollingDeltas
+                ? TimerRulerInteractionGeometry.acceleratedWheelDelta(event.scrollingDeltaX)
+                : event.scrollingDeltaX * 9 // a mouse-wheel notch moves one tick
             let update = changed
             let finish = finished
             let discrete = event.phase.isEmpty
