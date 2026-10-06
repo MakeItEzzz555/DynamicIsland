@@ -314,10 +314,12 @@ enum AgentOrbStateMapper {
     }
 
     /// Provider semantics remain authoritative. A visual-only fallback rotates
-    /// every 45 seconds only while the provider exposes a coarse active state
-    /// (generic working/reasoning/executing) with no more specific semantic
-    /// evidence. Labels/feed state remain provider-derived; only the decorative
-    /// orb changes so long-running turns do not look frozen on one animation.
+    /// the decorative orb every 45 seconds only while the provider exposes a
+    /// coarse active state (generic working/reasoning/executing) with no more
+    /// specific semantic evidence, and only after that coarse phase has been
+    /// shown exactly for one full interval. Labels, Feed and session state
+    /// stay provider-derived; only the decorative orb changes so a long turn
+    /// does not look frozen on one animation.
     static let fallbackRotationInterval: TimeInterval = 45
 
     private static let fallbackActivePalette: [AgentOrbVisualState] = [
@@ -325,7 +327,8 @@ enum AgentOrbStateMapper {
     ]
 
     static func usesFallbackRotation(for session: AgentSession) -> Bool {
-        guard AgentVisualMotion.animates(session.state) else { return false }
+        // Planning is a semantic state of its own (shaping), never coarse.
+        guard AgentVisualMotion.animates(session.state), session.state != .planning else { return false }
         switch session.currentProcessingKind {
         case nil:
             return session.state == .thinking || session.state == .working ||
@@ -337,28 +340,47 @@ enum AgentOrbStateMapper {
         }
     }
 
-    static func liveState(for session: AgentSession, at date: Date) -> AgentOrbVisualState {
+    /// When the current coarse phase began, from domain evidence (the active
+    /// command, tool or processing activity); nil when the provider gave no
+    /// timestamped phase (the live view then anchors on when it began showing it).
+    static func coarsePhaseStart(for session: AgentSession) -> Date? {
+        switch session.state {
+        case .runningCommand:
+            return session.commands.values.filter { $0.status == .active }.map(\.startedAt).max()
+        case .runningTool:
+            return session.tools.values.filter { $0.status == .active }.map(\.startedAt).max()
+        case .thinking, .working:
+            return session.processingActivities.values.map(\.startedAt).max()
+        default:
+            return nil
+        }
+    }
+
+    /// The exact provider state for the first interval of a coarse phase,
+    /// then a deterministic per-session rotation through the other states.
+    /// Without an anchor there is no rotation.
+    static func liveState(for session: AgentSession, at date: Date, since start: Date?) -> AgentOrbVisualState {
         let exact = state(for: session)
-        guard usesFallbackRotation(for: session), !fallbackActivePalette.isEmpty else { return exact }
-        let slot = Int(floor(date.timeIntervalSinceReferenceDate / fallbackRotationInterval))
+        guard usesFallbackRotation(for: session), let start else { return exact }
+        let slot = Int(floor(date.timeIntervalSince(start) / fallbackRotationInterval))
+        guard slot >= 1 else { return exact }
+        let others = fallbackActivePalette.filter { $0 != exact }
+        guard !others.isEmpty else { return exact }
         let seed = Int((BotAvatarDeterminism.seed(for: session.id) * 10_000).rounded(.down))
-        return fallbackActivePalette[(slot + seed) % fallbackActivePalette.count]
+        return others[(slot - 1 + seed) % others.count]
     }
 
     static func liveState(
         for interaction: AgentManagedInteractionState,
         session: AgentSession,
-        at date: Date
+        at date: Date,
+        since start: Date?
     ) -> AgentOrbVisualState {
         switch interaction {
-        case .connecting, .checkingAttachment, .stopping:
-            return .connecting
-        case .submitting:
-            return .composing
-        case .failed:
-            return .breathing
+        case .connecting, .checkingAttachment, .stopping, .submitting, .failed:
+            return state(for: interaction, session: session)
         case .working, .observed, .ready:
-            return liveState(for: session, at: date)
+            return liveState(for: session, at: date, since: start)
         }
     }
 

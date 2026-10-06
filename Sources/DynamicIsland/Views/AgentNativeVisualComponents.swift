@@ -28,8 +28,10 @@ extension EnvironmentValues {
 }
 
 /// Live-session orb wrapper. Exact provider semantics update immediately;
-/// coarse long-running states receive a presentation-only 45-second rotation.
-/// The domain/session state is never mutated by this view.
+/// a coarse active phase shows its exact state for one full interval and
+/// only then receives the presentation-only 45-second rotation. The domain
+/// state is never mutated; the accessibility label always names the exact
+/// state; Reduce Motion, snapshots and paused/terminal orbs never rotate.
 struct AgentLiveOrbView: View {
     let session: AgentSession
     var interaction: AgentManagedInteractionState? = nil
@@ -38,28 +40,45 @@ struct AgentLiveOrbView: View {
     var paused = false
     var terminal = false
     var frozenTime: Double? = nil
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.nativeVisualSnapshotTime) private var snapshotTime
+    /// When this view began showing the current exact state (view-local).
+    @State private var observedSince: Date?
 
-    var body: some View {
-        if AgentOrbStateMapper.usesFallbackRotation(for: session), !paused, !terminal, frozenTime == nil {
-            TimelineView(.periodic(from: .now, by: AgentOrbStateMapper.fallbackRotationInterval)) { tick in
-                orb(at: tick.date)
-            }
-        } else {
-            orb(at: .now)
-        }
+    private var exactState: AgentOrbVisualState {
+        interaction.map { AgentOrbStateMapper.state(for: $0, session: session) } ?? AgentOrbStateMapper.state(for: session)
     }
 
-    @ViewBuilder
-    private func orb(at date: Date) -> some View {
-        AgentOrbView(
-            state: interaction.map { AgentOrbStateMapper.liveState(for: $0, session: session, at: date) }
-                ?? AgentOrbStateMapper.liveState(for: session, at: date),
-            size: size,
-            speed: speed,
-            paused: paused,
-            terminal: terminal,
-            frozenTime: frozenTime
-        )
+    private var rotationAnchor: Date? {
+        guard AgentOrbStateMapper.usesFallbackRotation(for: session), !paused, !terminal, !reduceMotion,
+              frozenTime == nil, snapshotTime == nil else { return nil }
+        if let interaction {
+            switch interaction {
+            case .working, .observed, .ready: break
+            case .connecting, .checkingAttachment, .stopping, .submitting, .failed: return nil
+            }
+        }
+        return AgentOrbStateMapper.coarsePhaseStart(for: session) ?? observedSince
+    }
+
+    var body: some View {
+        Group {
+            if let anchor = rotationAnchor {
+                TimelineView(.periodic(from: anchor, by: AgentOrbStateMapper.fallbackRotationInterval)) { tick in
+                    orb(interaction.map { AgentOrbStateMapper.liveState(for: $0, session: session, at: tick.date, since: anchor) }
+                        ?? AgentOrbStateMapper.liveState(for: session, at: tick.date, since: anchor))
+                }
+            } else {
+                orb(exactState)
+            }
+        }
+        .onAppear { if observedSince == nil { observedSince = .now } }
+        .onChange(of: exactState) { _, _ in observedSince = .now }
+        .accessibilityLabel("\(exactState.displayName) agent activity")
+    }
+
+    private func orb(_ state: AgentOrbVisualState) -> some View {
+        AgentOrbView(state: state, size: size, speed: speed, paused: paused, terminal: terminal, frozenTime: frozenTime)
     }
 }
 

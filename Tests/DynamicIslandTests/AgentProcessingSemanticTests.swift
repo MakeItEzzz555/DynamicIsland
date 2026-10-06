@@ -275,9 +275,11 @@ final class AgentProcessingSemanticTests: XCTestCase {
         let states = (0..<7).map {
             AgentOrbStateMapper.liveState(
                 for: session,
-                at: start.addingTimeInterval(Double($0) * AgentOrbStateMapper.fallbackRotationInterval)
+                at: start.addingTimeInterval(Double($0) * AgentOrbStateMapper.fallbackRotationInterval),
+                since: start
             )
         }
+        XCTAssertEqual(states[0], .working, "the exact coarse state is shown for the first interval")
         XCTAssertEqual(
             Set(states),
             Set([.solving, .shaping, .searching, .listening, .working, .weaving, .composing])
@@ -286,23 +288,76 @@ final class AgentProcessingSemanticTests: XCTestCase {
         session.processingActivities[AgentCorrelationID(rawValue: "search")] =
             AgentProcessingActivity(kind: .searching, startedAt: start)
         XCTAssertFalse(AgentOrbStateMapper.usesFallbackRotation(for: session))
-        XCTAssertEqual(AgentOrbStateMapper.liveState(for: session, at: start), .searching)
+        XCTAssertEqual(AgentOrbStateMapper.liveState(for: session, at: start, since: start), .searching)
         XCTAssertEqual(
             AgentOrbStateMapper.liveState(
                 for: session,
-                at: start.addingTimeInterval(AgentOrbStateMapper.fallbackRotationInterval * 4)
+                at: start.addingTimeInterval(AgentOrbStateMapper.fallbackRotationInterval * 4),
+                since: start
             ),
             .searching
         )
 
         XCTAssertEqual(
-            AgentOrbStateMapper.liveState(for: .connecting, session: session, at: start),
+            AgentOrbStateMapper.liveState(for: .connecting, session: session, at: start, since: start),
             .connecting
         )
         XCTAssertEqual(
-            AgentOrbStateMapper.liveState(for: .submitting, session: session, at: start),
+            AgentOrbStateMapper.liveState(for: .submitting, session: session, at: start, since: start),
             .composing
         )
     }
 
+
+    /// Validation of f8cc4f1 (2026-10-07): rotation is anchored, limited to
+    /// coarse active states, isolated per session and never claims a state
+    /// before the exact one has been shown for a full interval.
+    func testFallbackIsAnchoredScopedAndIsolated() throws {
+        var session = try started()
+        session.state = .working
+        session.isWorking = true
+        session.processingActivities.removeAll()
+        let start = Date(timeIntervalSinceReferenceDate: 50_000)
+        let interval = AgentOrbStateMapper.fallbackRotationInterval
+        XCTAssertEqual(interval, 45)
+        XCTAssertEqual(AgentOrbStateMapper.liveState(for: session, at: start.addingTimeInterval(interval - 0.01), since: start), .working)
+        XCTAssertNotEqual(AgentOrbStateMapper.liveState(for: session, at: start.addingTimeInterval(interval), since: start), .working,
+                          "only after one full interval")
+        XCTAssertEqual(AgentOrbStateMapper.liveState(for: session, at: start.addingTimeInterval(interval * 9), since: nil), .working,
+                       "no anchor, no rotation")
+
+        // Planning stays shaping even with a reasoning activity underneath.
+        var planning = session
+        planning.state = .planning
+        planning.processingActivities[AgentCorrelationID(rawValue: "r")] = AgentProcessingActivity(kind: .reasoning, startedAt: start)
+        XCTAssertFalse(AgentOrbStateMapper.usesFallbackRotation(for: planning))
+
+        // Typed provider semantics never rotate.
+        for kind in [AgentProcessingKind.planning, .searching, .connecting, .listening, .composing, .synthesizing, .background] {
+            var typed = session
+            typed.state = .thinking
+            typed.processingActivities = [AgentCorrelationID(rawValue: "k"): AgentProcessingActivity(kind: kind, startedAt: start)]
+            XCTAssertFalse(AgentOrbStateMapper.usesFallbackRotation(for: typed), "\(kind)")
+            XCTAssertEqual(AgentOrbStateMapper.liveState(for: typed, at: start.addingTimeInterval(interval * 5), since: start),
+                           AgentOrbStateMapper.state(for: kind))
+            XCTAssertEqual(AgentOrbStateMapper.coarsePhaseStart(for: typed), start)
+        }
+
+        // Idle, terminal and waiting states never rotate.
+        for state in [AgentState.idle, .completed, .failed, .interrupted, .waitingForApproval, .waitingForUser, .planReady] {
+            var quiet = session
+            quiet.state = state
+            XCTAssertFalse(AgentOrbStateMapper.usesFallbackRotation(for: quiet), "\(state)")
+            XCTAssertEqual(AgentOrbStateMapper.liveState(for: quiet, at: start.addingTimeInterval(interval * 3), since: start),
+                           AgentOrbStateMapper.state(for: quiet))
+        }
+
+        // A pure function of (session, time, anchor): no shared state, so
+        // sessions/providers/generations cannot affect each other.
+        let a = AgentOrbStateMapper.liveState(for: session, at: start.addingTimeInterval(interval * 3), since: start)
+        _ = AgentOrbStateMapper.liveState(for: planning, at: start.addingTimeInterval(interval * 3), since: start)
+        XCTAssertEqual(AgentOrbStateMapper.liveState(for: session, at: start.addingTimeInterval(interval * 3), since: start), a)
+        XCTAssertEqual(AgentOrbStateMapper.liveState(for: .failed("x"), session: session, at: start.addingTimeInterval(interval * 3), since: start),
+                       .breathing, "a failed interaction never rotates")
+    }
 }
