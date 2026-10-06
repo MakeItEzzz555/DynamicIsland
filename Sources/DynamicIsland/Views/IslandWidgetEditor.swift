@@ -154,6 +154,9 @@ struct IslandWidgetEditor: View {
         let hovered = editing && intent?.hovered == region.id
         return layers
             .scaleEffect(hovered ? 0.975 : 1)
+            // Target feedback is a press/release, not a layout move: quick
+            // in, softer out (Droppy press/release), independent of reflow.
+            .animation(WorkspaceEditorMotion.hover(entering: hovered, reduceMotion: reduceMotion || !extraMotion), value: hovered)
             .background { cardFill(placeholder: placeholder) }
             .overlay { cardOutline(placeholder: placeholder, stackedTarget: stackedTarget) }
             .overlay { targetGlow(region) }
@@ -568,6 +571,17 @@ enum WorkspaceEditorMotion {
     }
     static func resize(reduceMotion: Bool) -> Animation? {
         reduceMotion ? nil : .smooth(duration: resizeDuration, extraBounce: 0)
+    }
+    /// Droppy AnimationTokens press (0.14 / 0.82) and release (0.24 / 0.74):
+    /// hover-target feedback answers immediately and settles softly, while
+    /// neighbours keep the slower reorder reflow.
+    static let pressResponse = 0.14, pressDamping = 0.82
+    static let releaseResponse = 0.24, releaseDamping = 0.74
+    static func hover(entering: Bool, reduceMotion: Bool) -> Animation? {
+        guard !reduceMotion else { return nil }
+        return entering
+            ? .spring(response: pressResponse, dampingFraction: pressDamping)
+            : .spring(response: releaseResponse, dampingFraction: releaseDamping)
     }
     /// transitions.dev panel reveal: open 400 ms, close 350 ms (smooth-out,
     /// never bouncing a close). Reduce Motion applies chrome directly.

@@ -28,3 +28,22 @@ final class IslandFrameCadenceTests: XCTestCase {
         }
     }
 }
+
+/// Editor motion tokens (Droppy press/release vs. reorder reflow).
+@MainActor
+final class WorkspaceEditorMotionTokenTests: XCTestCase {
+    func testReduceMotionRemovesEverySpatialAnimation() {
+        XCTAssertNil(WorkspaceEditorMotion.hover(entering: true, reduceMotion: true))
+        XCTAssertNil(WorkspaceEditorMotion.hover(entering: false, reduceMotion: true))
+        XCTAssertNil(WorkspaceEditorMotion.reorder(reduceMotion: true))
+        XCTAssertNil(WorkspaceEditorMotion.resize(reduceMotion: true))
+    }
+
+    func testPressIsQuickerThanReleaseAndBothQuickerThanReflow() {
+        XCTAssertNotNil(WorkspaceEditorMotion.hover(entering: true, reduceMotion: false))
+        XCTAssertLessThan(WorkspaceEditorMotion.pressResponse, WorkspaceEditorMotion.releaseResponse)
+        XCTAssertLessThan(WorkspaceEditorMotion.releaseResponse, WorkspaceEditorMotion.reorderDuration,
+                          "target feedback answers before neighbours finish moving")
+        XCTAssertGreaterThan(WorkspaceEditorMotion.pressDamping, WorkspaceEditorMotion.releaseDamping)
+    }
+}
