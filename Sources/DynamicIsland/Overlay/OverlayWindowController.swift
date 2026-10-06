@@ -518,7 +518,10 @@ final class OverlayWindowController {
         modules.customization?.$configuration.removeDuplicates().sink { [weak self] _ in
             self?.scheduleWorkspaceGeometryCheck()
         }.store(in: &cancellables)
-        layoutStore.$workspaceLayoutPreview.removeDuplicates().sink { [weak self] _ in
+        layoutStore.$workspaceLayoutPreview.removeDuplicates().sink { [weak self] preview in
+            // @Published delivers in willSet: the store still holds the old
+            // value here, so liveness must come from the emitted value.
+            self?.workspaceGeometryLiveness.previewChanged(isPresent: preview != nil)
             self?.scheduleWorkspaceGeometryCheck()
         }.store(in: &cancellables)
         layoutStore.$workspaceDragFloor.removeDuplicates().sink { [weak self] _ in
@@ -529,7 +532,7 @@ final class OverlayWindowController {
         // children-exit handoff, which would flash on every height change.
         layoutStore.$agentChatHeightHint.removeDuplicates().dropFirst().sink { [weak self] _ in
             guard let self else { return }
-            self.contentGeometryLive = true
+            self.workspaceGeometryLiveness.contentResized()
             self.pointerAtContentResize = self.currentMouseScreenLocation()
             self.scheduleWorkspaceGeometryCheck()
         }.store(in: &cancellables)
@@ -966,16 +969,13 @@ final class OverlayWindowController {
     /// follows the prospective layout directly: the editor canvas lays out in
     /// the shell's own animated frame, so children move with it and never need
     /// the exit-then-resize handoff used for committed configuration changes.
-    private var workspaceEditGeometryLive = false
-    /// A content-driven (adaptive Chat) geometry change is pending.
-    private var contentGeometryLive = false
+    private var workspaceGeometryLiveness = WorkspaceGeometryLiveness()
     /// Pointer location when content last resized the shell. Until the pointer
     /// moves, a shell that shrank away from a stationary pointer is not treated
     /// as the user leaving the island.
     private var pointerAtContentResize: CGPoint?
 
     private func scheduleWorkspaceGeometryCheck() {
-        if layoutStore.workspaceLayoutPreview != nil { workspaceEditGeometryLive = true }
         guard !workspaceGeometryCheckScheduled else { return }
         workspaceGeometryCheckScheduled = true
         DispatchQueue.main.async { [weak self] in
@@ -984,9 +984,7 @@ final class OverlayWindowController {
             guard self.canPresentOverlay else { return }
             let size = self.desiredExpandedSize
             let current = self.targetExpandedFrame?.size ?? self.layoutStore.expandedSize
-            let liveEdit = self.workspaceEditGeometryLive || self.contentGeometryLive
-            self.contentGeometryLive = false
-            if self.layoutStore.workspaceLayoutPreview == nil { self.workspaceEditGeometryLive = false }
+            let liveEdit = self.workspaceGeometryLiveness.consume(previewPresent: self.layoutStore.workspaceLayoutPreview != nil)
             if liveEdit, self.islandState.state == .expanded, !self.layoutStore.isExpandedContentExiting,
                abs(size.width - current.width) > 1 || abs(size.height - current.height) > 1 {
                 if self.layoutStore.workspaceGeometryTransition.phase != .idle { self.layoutStore.cancelWorkspaceGeometry() }

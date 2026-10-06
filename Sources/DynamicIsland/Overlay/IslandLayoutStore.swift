@@ -405,3 +405,32 @@ final class IslandLayoutStore: ObservableObject {
         }
     }
 }
+
+/// Whether the next workspace geometry change follows the shell live (edit
+/// preview, adaptive Chat content) instead of the committed-layout
+/// children-exit -> resize -> reveal handoff, which blanks the content while
+/// the shell moves. Fed from the *emitted* publisher values: `@Published`
+/// subscribers run in willSet, before the store holds the new value, so
+/// reading the store there saw no preview on edit entry and the editor
+/// opened on a pitch-black shell.
+struct WorkspaceGeometryLiveness: Equatable {
+    private(set) var editPreview = false
+    private(set) var contentChange = false
+
+    mutating func previewChanged(isPresent: Bool) {
+        // Present: editing geometry is live. Absent: the change that ends
+        // editing (Apply/Cancel) is still live; `consume` clears it after.
+        if isPresent { editPreview = true }
+    }
+
+    mutating func contentResized() { contentChange = true }
+
+    /// Liveness for one geometry check. A content change is one-shot; edit
+    /// liveness lasts while a preview exists plus the change that ends it.
+    mutating func consume(previewPresent: Bool) -> Bool {
+        let live = editPreview || contentChange || previewPresent
+        contentChange = false
+        if !previewPresent { editPreview = false }
+        return live
+    }
+}
