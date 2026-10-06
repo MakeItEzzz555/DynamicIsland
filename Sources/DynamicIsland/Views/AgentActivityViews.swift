@@ -542,26 +542,35 @@ struct AgentDashboardContentView: View {
                         // Controllers, the PTY and the transcript stay alive:
                         // only the heavy surface is unmounted, exactly as when
                         // the stack shows its other page.
-                        if WorkspaceWidgetLayoutProjection.presentationSize(of: region) == .compact,
-                           region.isStack || region.widgets[0].kind == .chat || region.widgets[0].kind == .terminal {
-                            let role: AgentCompactSessionSummary.Role = region.isStack ? .stack
-                                : region.widgets[0].kind == .terminal ? .terminal : .chat
-                            return AnyView(AgentCompactSessionSummary(session: selectedSession, role: role,
-                                isVisible: contentVisible && !editingWorkspace.wrappedValue,
-                                attention: AnyView(AgentWorkspaceApprovalAttentionControl(approvals: approvalControl,
-                                    selectedSessionID: selectedSession?.id, onSelect: selectAttentionSession)),
-                                conversation: role == .terminal ? nil : compactConversation(workspace: workspace, height: height)))
+                        let isConsole = region.isStack || region.widgets[0].kind == .chat || region.widgets[0].kind == .terminal
+                        if WorkspaceWidgetLayoutProjection.presentationSize(of: region) == .compact, isConsole {
+                            if region.isStack {
+                                return AnyView(AgentCompactSessionSummary(session: selectedSession, role: .stack,
+                                    isVisible: contentVisible && !editingWorkspace.wrappedValue,
+                                    attention: AnyView(AgentWorkspaceApprovalAttentionControl(approvals: approvalControl,
+                                        selectedSessionID: selectedSession?.id, onSelect: selectAttentionSession)),
+                                    conversation: compactConversation(workspace: workspace, height: height)))
+                            }
+                            return AnyView(AgentConsoleRegionView(presentation: workspacePresentation, region: region,
+                                chat: { AnyView(AgentCompactSessionSummary(session: selectedSession, role: .chat,
+                                    isVisible: contentVisible && !editingWorkspace.wrappedValue,
+                                    attention: AnyView(AgentWorkspaceApprovalAttentionControl(approvals: approvalControl,
+                                        selectedSessionID: selectedSession?.id, onSelect: selectAttentionSession)),
+                                    conversation: compactConversation(workspace: workspace, height: height))) },
+                                terminal: { compactTerminal(region: region, session: selectedSession) }))
                         }
                         if region.isStack {
                             return AnyView(AgentChatTerminalStack(presentation: workspacePresentation, isVisible: contentVisible && transcriptPresentationReady && !editingWorkspace.wrappedValue, reduceMotion: reduceMotion || (settings?.reduceExtraMotion ?? false), layoutStore: layoutStore,
-                                chat: { AnyView(chatContent(workspace: workspace, newSessionFolder: newSessionFolder, verticalLayout: AgentWorkspaceVerticalLayoutProjection.make(availableHeight: max(0, height - 30)), composerControls: composerControls, visible: contentVisible && workspacePresentation.stackPage == .chat && !editingWorkspace.wrappedValue)) },
+                                chat: { AnyView(chatContent(workspace: workspace, newSessionFolder: newSessionFolder, verticalLayout: AgentWorkspaceVerticalLayoutProjection.make(availableHeight: max(0, height - 30)), composerControls: composerControls, visible: contentVisible && workspacePresentation.stackPage == .chat && !editingWorkspace.wrappedValue, onSelectInteraction: consoleSwitch(region))) },
                                 terminal: { AnyView(terminalContent(session: selectedSession, visible: contentVisible && transcriptPresentationReady && workspacePresentation.stackPage == .terminal && !editingWorkspace.wrappedValue)) }))
                         }
                         switch region.widgets[0].kind {
-                        case .chat:
-                            return AnyView(chatContent(workspace: workspace, newSessionFolder: newSessionFolder, verticalLayout: AgentWorkspaceVerticalLayoutProjection.make(availableHeight: height), composerControls: composerControls, visible: contentVisible && !editingWorkspace.wrappedValue))
-                        case .terminal:
-                            return AnyView(terminalContent(session: selectedSession, visible: contentVisible && transcriptPresentationReady && !editingWorkspace.wrappedValue))
+                        case .chat, .terminal:
+                            // One rectangle, two surfaces: the embedded switch
+                            // changes presentation only (never the layout).
+                            return AnyView(AgentConsoleRegionView(presentation: workspacePresentation, region: region,
+                                chat: { AnyView(chatContent(workspace: workspace, newSessionFolder: newSessionFolder, verticalLayout: AgentWorkspaceVerticalLayoutProjection.make(availableHeight: height), composerControls: composerControls, visible: contentVisible && !editingWorkspace.wrappedValue, onSelectInteraction: consoleSwitch(region), activeInteraction: .chat)) },
+                                terminal: { consoleTerminal(region: region, session: selectedSession) }))
                         case .feed:
                             return AnyView(customizedFeed(selectedSession: selectedSession))
                         case .timer:
@@ -607,7 +616,8 @@ struct AgentDashboardContentView: View {
     }
 
     @ViewBuilder
-    private func chatContent(workspace: AgentWorkspaceProjection, newSessionFolder: String?, verticalLayout: AgentWorkspaceVerticalLayoutProjection, composerControls: AnyView, visible: Bool) -> some View {
+    private func chatContent(workspace: AgentWorkspaceProjection, newSessionFolder: String?, verticalLayout: AgentWorkspaceVerticalLayoutProjection, composerControls: AnyView, visible: Bool,
+                             onSelectInteraction: ((AgentInteractionMode) -> Void)? = nil, activeInteraction: AgentInteractionMode? = nil) -> some View {
         let controlSessions = workspace.controlSessions
         Group {
                     if case .session(let selectedSession, let controlSurface) = workspace.surface {
@@ -615,7 +625,8 @@ struct AgentDashboardContentView: View {
                             session: selectedSession, controller: managedControl,
                             presentation: workspacePresentation, isVisible: visible,
                             onNewSession: { openNewSession(folder: newSessionFolder) },
-                            onSelectInteraction: customizedInteractionHandler,
+                            onSelectInteraction: onSelectInteraction,
+                            activeInteraction: activeInteraction,
                             approvalAttention: customization != nil && (editingWorkspace.wrappedValue || customization!.configuration.customizedSurfaces.contains(.agents))
                                 ? AnyView(AgentWorkspaceApprovalAttentionControl(approvals: approvalControl,
                                     selectedSessionID: selectedSession.id, onSelect: selectAttentionSession)) : nil
@@ -651,22 +662,35 @@ struct AgentDashboardContentView: View {
         }.environment(\.rightWorkspacePageIsActive, visible)
     }
 
-    private var customizedInteractionHandler: ((AgentInteractionMode) -> Void)? {
-        guard let customization, customization.configuration.customizedSurfaces.contains(.agents) else { return nil }
-        return { mode in
-            if customization.configuration.regions(on: .agents).contains(where: \.isStack) {
-                workspacePresentation.showStack(mode == .chat ? .chat : .terminal)
-            } else if mode == .terminal {
-                var configuration = customization.configuration
-                if !configuration.widgets(on: .agents).contains(where: { $0.kind == .terminal }) {
-                    configuration.add(.terminal, on: .agents)
-                    customization.commit(configuration)
-                }
-                workspacePresentation.interact(.terminal)
-            } else {
-                workspacePresentation.interact(.chat)
-            }
+    /// The embedded Chat / Terminal switch for one customized region.
+    /// Presentation only: it never commits a configuration (the former
+    /// handler added a Terminal widget below the Chat on every switch).
+    private func consoleSwitch(_ region: WorkspaceWidgetRegion) -> (AgentInteractionMode) -> Void {
+        let presentation = workspacePresentation
+        return { mode in presentation.switchConsole(to: mode, in: region) }
+    }
+
+    /// Terminal shown in a Standard/Large console region.
+    private func consoleTerminal(region: WorkspaceWidgetRegion, session: AgentSession?) -> AnyView {
+        guard let terminal else {
+            return AnyView(Color.clear.accessibilityLabel("Terminal unavailable"))
         }
+        return AnyView(AgentConsoleTerminalPane(controller: terminal, onSelectInteraction: consoleSwitch(region)) {
+            terminalContent(session: session, visible: contentVisible && transcriptPresentationReady && !editingWorkspace.wrappedValue,
+                            compact: true)
+        })
+    }
+
+    /// Compact Terminal: the same retained controller and PTY in a square
+    /// terminal viewport (never a second shell, never an agent summary).
+    private func compactTerminal(region: WorkspaceWidgetRegion, session: AgentSession?) -> AnyView {
+        guard let terminal else {
+            return AnyView(Color.clear.accessibilityLabel("Terminal unavailable"))
+        }
+        return AnyView(AgentConsoleTerminalPane(controller: terminal, onSelectInteraction: consoleSwitch(region), compact: true) {
+            terminalContent(session: session, visible: contentVisible && transcriptPresentationReady && !editingWorkspace.wrappedValue,
+                            compact: true)
+        })
     }
 
     private func customizedFeed(selectedSession: AgentSession?) -> some View {
@@ -685,9 +709,9 @@ struct AgentDashboardContentView: View {
     }
 
     @ViewBuilder
-    private func terminalContent(session: AgentSession?, visible: Bool) -> some View {
+    private func terminalContent(session: AgentSession?, visible: Bool, compact: Bool = false) -> some View {
         if let terminal, visible {
-            AgentWorkspaceTerminalView(controller: terminal, session: session, isVisible: visible, focusRequest: workspacePresentation.terminalFocusRequest, layoutStore: layoutStore)
+            AgentWorkspaceTerminalView(controller: terminal, session: session, isVisible: visible, focusRequest: workspacePresentation.terminalFocusRequest, layoutStore: layoutStore, compact: compact)
         } else {
             Color.clear.accessibilityLabel("Terminal presentation paused")
         }

@@ -276,11 +276,13 @@ struct AgentChatSurface<Conversation: View>: View {
     let isVisible: Bool
     let onNewSession: () -> Void
     var onSelectInteraction: ((AgentInteractionMode) -> Void)? = nil
+    /// The mode this surface's region shows (standalone regions switch in
+    /// place); nil falls back to the shared workspace interaction mode.
+    var activeInteraction: AgentInteractionMode? = nil
     var approvalAttention: AnyView? = nil
     @ViewBuilder let conversation: () -> Conversation
     @Environment(\.agentVisualPreferences) private var visuals
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var hoveredInteractionMode: AgentInteractionMode?
 
     var body: some View {
         let interaction = controller.interactionState(for: session)
@@ -309,11 +311,9 @@ struct AgentChatSurface<Conversation: View>: View {
                     }
                     Spacer(minLength: 0)
                     if let approvalAttention { approvalAttention }
-                    HStack(spacing: 1) {
-                        interactionButton(.chat, icon: "bubble.left", title: "Chat")
-                        interactionButton(.terminal, icon: "terminal", title: "Terminal")
+                    AgentInteractionToggle(active: activeInteraction ?? presentation.interactionMode) { mode in
+                        if let onSelectInteraction { onSelectInteraction(mode) } else { presentation.interact(mode) }
                     }
-                    .background(.primary.opacity(0.04), in: Capsule())
                 }
                 .padding(.horizontal, 9).padding(.top, 7).padding(.bottom, 3)
                 conversation()
@@ -326,45 +326,6 @@ struct AgentChatSurface<Conversation: View>: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(session.id.sessionID.provider.stableName.capitalized) conversation")
     }
-
-    private func interactionButton(_ mode: AgentInteractionMode, icon: String, title: String) -> some View {
-        Button {
-            withAnimation(AgentWorkspaceMotion.selection(reduceMotion: reduceMotion)) {
-                if let onSelectInteraction { onSelectInteraction(mode) }
-                else { presentation.interact(mode) }
-            }
-        } label: {
-            let highlighted = presentation.interactionMode == mode || hoveredInteractionMode == mode
-            Image(systemName: icon)
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(highlighted ? .primary : .secondary)
-                .frame(width: 28, height: 25)
-                .background(
-                    presentation.interactionMode == mode
-                        ? Color.primary.opacity(0.10)
-                        : hoveredInteractionMode == mode
-                            ? Color.primary.opacity(0.06)
-                            : Color.clear,
-                    in: Capsule()
-                )
-                .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            withAnimation(AgentWorkspaceMotion.selection(reduceMotion: reduceMotion)) {
-                if hovering {
-                    hoveredInteractionMode = mode
-                } else if hoveredInteractionMode == mode {
-                    hoveredInteractionMode = nil
-                }
-            }
-        }
-        .help(mode == .chat ? "Use selected agent chat" : "Focus the project terminal without interrupting the agent")
-        .accessibilityLabel("Selected agent \(title) interaction")
-        .accessibilityAddTraits(presentation.interactionMode == mode ? [.isSelected, .isButton] : .isButton)
-    }
-
-
 }
 
 struct AgentRightWorkspace: View {
@@ -455,9 +416,12 @@ struct AgentWorkspaceTerminalView: View {
     let isVisible: Bool
     let focusRequest: Int
     let layoutStore: IslandLayoutStore?
+    /// Compact: the terminal viewport only (the console pane owns the header).
+    var compact = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
+            if !compact {
             HStack(spacing: 4) {
                 Text(URL(fileURLWithPath: controller.shellPath).lastPathComponent)
                     .font(.system(size: 9, design: .monospaced)).foregroundStyle(.secondary)
@@ -472,6 +436,7 @@ struct AgentWorkspaceTerminalView: View {
                     Image(systemName: "arrow.clockwise").frame(width: 24, height: 24).contentShape(Rectangle())
                 }.buttonStyle(.plain).accessibilityLabel("Restart embedded shell")
             }
+            }
             NativeTerminalHost(controller: controller,
                                initialDirectory: session?.project.workingDirectory,
                                isVisible: isVisible, focusRequest: focusRequest,
@@ -485,5 +450,114 @@ struct AgentWorkspaceTerminalView: View {
         .padding(.horizontal, 4)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Embedded interactive project terminal")
+    }
+}
+
+/// The embedded Chat / Terminal switch shared by every console header.
+struct AgentInteractionToggle: View {
+    let active: AgentInteractionMode
+    let onSelect: (AgentInteractionMode) -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var hovered: AgentInteractionMode?
+
+    var body: some View {
+        HStack(spacing: 1) {
+            button(.chat, icon: "bubble.left", title: "Chat")
+            button(.terminal, icon: "terminal", title: "Terminal")
+        }
+        .background(.primary.opacity(0.04), in: Capsule())
+    }
+
+    private func button(_ mode: AgentInteractionMode, icon: String, title: String) -> some View {
+        Button {
+            withAnimation(AgentWorkspaceMotion.selection(reduceMotion: reduceMotion)) { onSelect(mode) }
+        } label: {
+            let highlighted = active == mode || hovered == mode
+            Image(systemName: icon)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(highlighted ? .primary : .secondary)
+                .frame(width: 28, height: 25)
+                .background(active == mode ? Color.primary.opacity(0.10)
+                            : hovered == mode ? Color.primary.opacity(0.06) : Color.clear, in: Capsule())
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(AgentWorkspaceMotion.selection(reduceMotion: reduceMotion)) {
+                if hovering { hovered = mode } else if hovered == mode { hovered = nil }
+            }
+        }
+        .help(mode == .chat ? "Show the agent chat here" : "Show the project terminal here without interrupting the agent")
+        .accessibilityLabel("Selected agent \(title) interaction")
+        .accessibilityAddTraits(active == mode ? [.isSelected, .isButton] : .isButton)
+    }
+}
+
+/// A standalone Chat or Terminal region: one rectangle that shows either
+/// surface. Observes the presentation so the in-place switch re-renders it.
+struct AgentConsoleRegionView: View {
+    @ObservedObject var presentation: AgentWorkspacePresentation
+    let region: WorkspaceWidgetRegion
+    let chat: () -> AnyView
+    let terminal: () -> AnyView
+
+    var body: some View {
+        Group {
+            switch presentation.consoleMode(for: region) {
+            case .chat: chat()
+            case .terminal: terminal()
+            }
+        }
+        .transition(.opacity)
+    }
+}
+
+/// Terminal shown in a console region: a minimal terminal header (with the
+/// same Chat / Terminal switch) above the retained native terminal.
+struct AgentConsoleTerminalPane<Content: View>: View {
+    @ObservedObject var controller: TerminalSessionController
+    let onSelectInteraction: (AgentInteractionMode) -> Void
+    var compact = false
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(spacing: compact ? 3 : 4) {
+            HStack(spacing: 5) {
+                Image(systemName: "apple.terminal").font(.system(size: compact ? 9 : 10, weight: .semibold))
+                Text("Terminal").font(.system(size: compact ? 9 : 10, weight: .semibold))
+                Text(AgentConsoleTerminalPane<Content>.directoryLabel(controller.workingDirectoryPath))
+                    .font(.system(size: compact ? 8 : 9, design: .monospaced)).foregroundStyle(.secondary)
+                    .lineLimit(1).truncationMode(.head)
+                Spacer(minLength: 0)
+                if !compact {
+                    Button { controller.interrupt() } label: {
+                        Image(systemName: "stop.fill").frame(width: 24, height: 24).contentShape(Rectangle())
+                    }.buttonStyle(.plain).accessibilityLabel("Interrupt foreground terminal command")
+                    Button { controller.resetOutput() } label: {
+                        Image(systemName: "eraser").frame(width: 24, height: 24).contentShape(Rectangle())
+                    }.buttonStyle(.plain).accessibilityLabel("Clear terminal display")
+                    Button { controller.terminate(); try? controller.startShell() } label: {
+                        Image(systemName: "arrow.clockwise").frame(width: 24, height: 24).contentShape(Rectangle())
+                    }.buttonStyle(.plain).accessibilityLabel("Restart embedded shell")
+                }
+                AgentInteractionToggle(active: .terminal, onSelect: onSelectInteraction)
+            }
+            .font(.system(size: 9))
+            .padding(.horizontal, compact ? 6 : 9).padding(.top, compact ? 5 : 7)
+            content()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .background(Color.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 12))
+        .overlay { RoundedRectangle(cornerRadius: 12).strokeBorder(.primary.opacity(0.055), lineWidth: 1).allowsHitTesting(false) }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Terminal")
+    }
+
+    /// The last path component (home shown as ~); never a full path.
+    static func directoryLabel(_ path: String) -> String {
+        let expanded = NSString(string: path).expandingTildeInPath
+        if expanded == FileManager.default.homeDirectoryForCurrentUser.path { return "~" }
+        let last = URL(fileURLWithPath: expanded).lastPathComponent
+        return last.isEmpty ? "~" : last
     }
 }

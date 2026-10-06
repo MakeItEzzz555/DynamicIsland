@@ -9,6 +9,29 @@ enum AgentWorkspaceMode: String, CaseIterable, Identifiable, Sendable {
 
 enum AgentInteractionMode: String, Sendable { case chat, terminal }
 
+/// Which surface a standalone Chat or Terminal region currently shows. This
+/// is presentation state only: switching never mutates `WorkspaceConfiguration`
+/// (the region keeps its id, rectangle and semantic size).
+typealias AgentConsolePresentationMode = AgentInteractionMode
+
+/// Where an embedded Chat/Terminal switch applies for a region.
+enum AgentConsoleSwitchTarget: Equatable {
+    /// An explicit Chat+Terminal stack pages between its two surfaces.
+    case stack
+    /// A standalone Chat or Terminal region switches its own presentation.
+    case region(WidgetID)
+    /// Not a console region.
+    case none
+
+    static func resolve(_ region: WorkspaceWidgetRegion) -> Self {
+        if region.isStack { return .stack }
+        switch region.widgets.first?.kind {
+        case .chat?, .terminal?: return .region(region.id)
+        default: return .none
+        }
+    }
+}
+
 enum AgentStackPage: String, CaseIterable, Identifiable {
     case chat, terminal
     var id: Self { self }
@@ -26,6 +49,27 @@ final class AgentWorkspacePresentation: ObservableObject {
     @Published private(set) var terminalFocusRequest = 0
     @Published private(set) var stackPage: AgentStackPage = .chat
     @Published private(set) var stackDirection = 1
+    /// Per-region console presentation (keyed by the stable region id).
+    @Published private(set) var consoleModes: [WidgetID: AgentConsolePresentationMode] = [:]
+
+    /// The surface a standalone console region shows; defaults to its kind.
+    func consoleMode(for region: WorkspaceWidgetRegion) -> AgentConsolePresentationMode {
+        consoleModes[region.id] ?? (region.widgets.first?.kind == .terminal ? .terminal : .chat)
+    }
+
+    /// The embedded Chat/Terminal switch. Presentation only: it never adds,
+    /// removes or reorders workspace widgets.
+    func switchConsole(to mode: AgentConsolePresentationMode, in region: WorkspaceWidgetRegion) {
+        switch AgentConsoleSwitchTarget.resolve(region) {
+        case .stack:
+            showStack(mode == .chat ? .chat : .terminal)
+        case .region(let id):
+            if consoleModes[id] != mode { consoleModes[id] = mode }
+            if interactionMode != mode { interactionMode = mode }
+        case .none:
+            break
+        }
+    }
 
     func showStack(_ page: AgentStackPage) {
         guard stackPage != page else { return }
