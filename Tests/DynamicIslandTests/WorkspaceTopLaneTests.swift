@@ -45,12 +45,23 @@ final class WorkspaceTopLaneTests: XCTestCase {
         XCTAssertGreaterThan(chat.minY, usage.maxY)
     }
 
+    /// Live regression (2026-10-06): [usage, feed, chat] made Feed a wing, so
+    /// the lane became a full unit tall and left ~125 pt blank above Chat.
+    func testAWingThatWouldMakeTheContentTallerIsNotUsed() throws {
+        let regions = [region(.agentUsage, .standard, order: 0), region(.feed, .compact, order: 1),
+                       region(.chat, .standard, order: 2)]
+        let f = frames(regions)
+        let usage = try XCTUnwrap(f[.agentUsage]), feed = try XCTUnwrap(f[.feed]), chat = try XCTUnwrap(f[.chat])
+        XCTAssertEqual(feed.minY, chat.minY, accuracy: 0.01, "Feed stays beside Chat")
+        XCTAssertEqual(chat.minY, usage.maxY + grid.gutter, accuracy: 0.01, "no blank band above Chat")
+    }
+
     func testCompactNeighboursOfTheBandBecomeWings() throws {
         let regions = [region(.timer, .compact, order: 0), region(.agentUsage, .standard, order: 1),
-                       region(.feed, .compact, order: 2), region(.chat, .standard, order: 3)]
+                       region(.feed, .compact, order: 2), region(.terminal, .standard, order: 3)]
         let f = frames(regions)
         let usage = try XCTUnwrap(f[.agentUsage]), timer = try XCTUnwrap(f[.timer])
-        let feed = try XCTUnwrap(f[.feed]), chat = try XCTUnwrap(f[.chat])
+        let feed = try XCTUnwrap(f[.feed]), chat = try XCTUnwrap(f[.terminal])
         XCTAssertEqual(timer.minY, usage.minY, accuracy: 0.01, "wings are top-aligned with the band")
         XCTAssertEqual(feed.minY, usage.minY, accuracy: 0.01)
         XCTAssertLessThanOrEqual(timer.maxX + grid.gutter, usage.minX + 0.01, "left wing")
@@ -63,7 +74,7 @@ final class WorkspaceTopLaneTests: XCTestCase {
     }
 
     func testASingleWingKeepsTheBandCentered() throws {
-        let regions = [region(.agentUsage, .standard, order: 0), region(.feed, .compact, order: 1), region(.chat, .standard, order: 2)]
+        let regions = [region(.agentUsage, .standard, order: 0), region(.feed, .compact, order: 1)]
         let f = frames(regions)
         let usage = try XCTUnwrap(f[.agentUsage]), feed = try XCTUnwrap(f[.feed])
         XCTAssertEqual(feed.minY, usage.minY, accuracy: 0.01)
@@ -88,7 +99,7 @@ final class WorkspaceTopLaneTests: XCTestCase {
 
     func testEditorPreviewMatchesTheCommittedArrangement() throws {
         let regions = [region(.timer, .compact, order: 0), region(.agentUsage, .standard, order: 1),
-                       region(.feed, .compact, order: 2), region(.chat, .standard, order: 3)]
+                       region(.feed, .compact, order: 2), region(.terminal, .standard, order: 3)]
         let committed = frames(regions), editing = frames(regions, editing: true)
         let c0 = try XCTUnwrap(committed[.agentUsage]).origin, e0 = try XCTUnwrap(editing[.agentUsage]).origin
         for kind in committed.keys {

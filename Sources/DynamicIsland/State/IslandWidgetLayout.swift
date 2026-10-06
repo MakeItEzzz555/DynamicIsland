@@ -851,8 +851,8 @@ struct WorkspaceWidgetLayoutProjection: Equatable {
     }
 
     private static func sections(_ regions: [WorkspaceWidgetRegion], columns: Int, grid: WidgetGridMetrics,
-                                 metrics: ResolvedIslandMetrics, availableWidth: CGFloat) -> [Section] {
-        let wings = laneWings(regions, grid: grid, metrics: metrics, availableWidth: availableWidth)
+                                 metrics: ResolvedIslandMetrics, availableWidth: CGFloat, allowWings: Bool = true) -> [Section] {
+        let wings = allowWings ? laneWings(regions, grid: grid, metrics: metrics, availableWidth: availableWidth) : []
         var result: [Section] = []
         var placed: [Placed] = []
         var occupied = Set<Cell>()
@@ -1040,6 +1040,13 @@ struct WorkspaceWidgetLayoutProjection: Equatable {
         let (grid, columns, minimum) = gridFor(regions, width: width, metrics: metrics)
         var laid = layout(sections(regions, columns: columns, grid: grid, metrics: metrics, availableWidth: width),
                           grid: grid, metrics: metrics, minimumColumns: minimum, availableWidth: width)
+        // Wings exist to pack the notch lane: they apply only when they make
+        // the content shorter (a Compact wing beside a short band otherwise
+        // makes the lane a full unit tall above a taller grid).
+        let plain = layout(sections(regions, columns: columns, grid: grid, metrics: metrics, availableWidth: width,
+                                    allowWings: false),
+                           grid: grid, metrics: metrics, minimumColumns: minimum, availableWidth: width)
+        if laid.size.height >= plain.size.height - 0.5 { laid = plain }
         applyNotchRise(&laid, lane: lane, headerInnerWidth: headerInnerWidth)
         return laid
     }
