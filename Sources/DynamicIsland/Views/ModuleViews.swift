@@ -2034,11 +2034,11 @@ struct MediaCompactLayout: Equatable {
 }
 
 
-/// Standard Media (2x1) geometry: the artwork on the left; title / artist /
-/// platform + visualizer sit directly above the transport, centered on the
-/// same axis as the controls (symmetric width that never meets the artwork);
-/// transport, progress and volume fill the rest of the rectangle.
-/// When the cell is short, volume then progress yield before the artwork
+/// Standard Media (2x1) geometry: two columns. Left: the artwork, vertically
+/// centered. Right: one tight, centered stack - title, artist, platform +
+/// visualizer directly above the transport, then progress, then volume. The
+/// stack is vertically centered, so the card has no detached metadata and no
+/// empty band. A short cell drops volume, then progress, before the artwork
 /// shrinks below its floor.
 struct MediaStandardLayout: Equatable {
     enum Slot: Hashable, CaseIterable { case artwork, title, artist, source, transport, progress, volume }
@@ -2050,14 +2050,14 @@ struct MediaStandardLayout: Equatable {
     static let verticalPadding: CGFloat = 8
     static let titleFont: CGFloat = 13, artistFont: CGFloat = 10.5, sourceFont: CGFloat = 9
     static let titleHeight: CGFloat = 16, artistHeight: CGFloat = 13, sourceHeight: CGFloat = 13
-    static let transportHeight: CGFloat = 28, transportSpacing: CGFloat = 8
+    static let transportHeight: CGFloat = 30, transportSpacing: CGFloat = 8
     static let progressHeight: CGFloat = 14, volumeHeight: CGFloat = 14, inlineTimesWidth: CGFloat = 26
-    static let headerGap: CGFloat = 4, sliderGap: CGFloat = 2, artworkTextGap: CGFloat = 8
-    /// Metadata sits this close above the transport (reads as one group).
-    static let metadataTransportGap: CGFloat = 2
-    /// The centered metadata keeps at least this share of the cell width.
-    static let metadataMinimumWidthRatio: CGFloat = 0.45
-    static let artworkMinimum: CGFloat = 40, artworkMaximumRatio: CGFloat = 0.30, artworkMaximum: CGFloat = 140
+    /// Gaps inside the right-hand stack (metadata -> transport -> sliders).
+    static let stackGap: CGFloat = 2
+    static let columnGap: CGFloat = 10
+    static let artworkMinimum: CGFloat = 40, artworkMaximumRatio: CGFloat = 0.36, artworkMaximum: CGFloat = 160
+    /// Without artwork the stack keeps the short-slider rule (<= 70% of the cell).
+    static let artworklessColumnRatio: CGFloat = 0.70
 
     let frames: [Slot: CGRect]
     let artworkSide: CGFloat
@@ -2069,44 +2069,42 @@ struct MediaStandardLayout: Equatable {
         let available = max(0, height - verticalPadding * 2)
         var progress = content.progress, volume = content.volume
         let meta = (content.title ? titleHeight : 0) + (content.artist ? artistHeight : 0) + (content.source ? sourceHeight : 0)
-        func controls() -> CGFloat {
-            transportHeight + (progress ? sliderGap + progressHeight : 0) + (volume ? sliderGap + volumeHeight : 0)
+        func stack() -> CGFloat {
+            (meta > 0 ? meta + stackGap : 0) + transportHeight
+                + (progress ? stackGap + progressHeight : 0) + (volume ? stackGap + volumeHeight : 0)
         }
-        // Header row: as tall as the room left by the controls.
-        var header = available - headerGap - controls()
-        let floor = content.artwork ? artworkMinimum : meta
-        if header < floor, volume { volume = false; header = available - headerGap - controls() }
-        if header < floor, progress { progress = false; header = available - headerGap - controls() }
-        header = max(0, header)
-        // The metadata is centered on the cell, so its width is symmetric
-        // around the center; the artwork yields just enough to keep it wide.
-        let symmetricLimit = (width * (1 - metadataMinimumWidthRatio)) / 2 - horizontalPadding - artworkTextGap
+        if stack() > available, volume { volume = false }
+        if stack() > available, progress { progress = false }
+
         let artwork = content.artwork
-            ? max(0, min(header, min(width * artworkMaximumRatio, artworkMaximum, max(artworkMinimum, symmetricLimit)))) : 0
-        let rowHeight = max(artwork, min(meta, header))
-        // Header row anchors to the top and the controls to the bottom; any
-        // unused height opens the gap between them (no empty band).
-        let slack = max(0, available - (rowHeight + headerGap + controls()))
-        var y = verticalPadding
-        var frames: [Slot: CGRect] = [:]
+            ? max(0, min(available, width * artworkMaximumRatio, artworkMaximum)) : 0
         let x0 = horizontalPadding
-        if content.artwork { frames[.artwork] = CGRect(x: x0, y: y + (rowHeight - artwork) / 2, width: artwork, height: artwork) }
-        let inset = content.artwork ? x0 + artwork + artworkTextGap : x0
-        let textWidth = max(0, width - 2 * inset)
-        let textX = (width - textWidth) / 2
-        // Directly above the transport (bottom of the header band).
-        let transportTop = y + rowHeight + headerGap + slack
-        var textY = max(y, transportTop - metadataTransportGap - meta)
-        for (slot, shown, h) in [(Slot.title, content.title, titleHeight), (.artist, content.artist, artistHeight),
-                                 (.source, content.source, sourceHeight)] where shown {
-            frames[slot] = CGRect(x: textX, y: textY, width: textWidth, height: h)
-            textY += h
+        let columnX: CGFloat
+        let columnWidth: CGFloat
+        if content.artwork {
+            columnX = x0 + artwork + columnGap
+            columnWidth = max(0, width - horizontalPadding - columnX)
+        } else {
+            columnWidth = min(inner, width * artworklessColumnRatio)
+            columnX = (width - columnWidth) / 2
         }
-        y += rowHeight + headerGap + slack
-        frames[.transport] = CGRect(x: x0, y: y, width: inner, height: transportHeight)
-        y += transportHeight
-        if progress { y += sliderGap; frames[.progress] = CGRect(x: x0, y: y, width: inner, height: progressHeight); y += progressHeight }
-        if volume { y += sliderGap; frames[.volume] = CGRect(x: x0, y: y, width: inner, height: volumeHeight) }
+
+        var frames: [Slot: CGRect] = [:]
+        if content.artwork {
+            frames[.artwork] = CGRect(x: x0, y: verticalPadding + (available - artwork) / 2, width: artwork, height: artwork)
+        }
+        var y = verticalPadding + max(0, (available - stack()) / 2)
+        func put(_ slot: Slot, _ h: CGFloat, gapAfter: CGFloat = 0) {
+            frames[slot] = CGRect(x: columnX, y: y, width: columnWidth, height: h)
+            y += h + gapAfter
+        }
+        if content.title { put(.title, titleHeight) }
+        if content.artist { put(.artist, artistHeight) }
+        if content.source { put(.source, sourceHeight) }
+        if meta > 0 { y += stackGap }
+        put(.transport, transportHeight)
+        if progress { y += stackGap; put(.progress, progressHeight) }
+        if volume { y += stackGap; put(.volume, volumeHeight) }
         return Self(frames: frames, artworkSide: artwork)
     }
 }

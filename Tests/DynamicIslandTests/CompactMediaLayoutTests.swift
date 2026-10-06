@@ -146,42 +146,38 @@ final class StandardMediaLayoutTests: XCTestCase {
         }
     }
 
-    func testArtworkLeftMetadataCenteredDirectlyAboveTheTransport() throws {
+    func testArtworkLeftAndOneCenteredStackOnTheRight() throws {
         for cell in cells {
             let f = MediaStandardLayout.make(cell: cell, content: .init()).frames
-            let art = try XCTUnwrap(f[.artwork]), transport = try XCTUnwrap(f[.transport])
-            let source = try XCTUnwrap(f[.source])
+            let art = try XCTUnwrap(f[.artwork])
             XCTAssertEqual(art.minX, MediaStandardLayout.horizontalPadding, accuracy: 0.01, "artwork is on the left")
             XCTAssertEqual(art.width, art.height, accuracy: 0.01)
             XCTAssertGreaterThanOrEqual(art.width, 44, "\(cell): artwork is not shrunk below the old 44 pt baseline")
-            for slot in [Slot.title, .artist, .source] {
-                let text = try XCTUnwrap(f[slot])
-                XCTAssertEqual(text.midX, transport.midX, accuracy: 0.5, "\(slot) is centered on the controls' axis")
-                XCTAssertGreaterThanOrEqual(text.minX, art.maxX, "\(slot) never overlaps the artwork")
-                XCTAssertGreaterThanOrEqual(text.width / cell.width, MediaStandardLayout.metadataMinimumWidthRatio - 0.01)
+            XCTAssertEqual(art.midY, cell.height / 2, accuracy: 0.5, "artwork is vertically centered")
+            let order: [Slot] = [.title, .artist, .source, .transport, .progress, .volume]
+            let column = try order.map { try XCTUnwrap(f[$0], "\(cell): \($0)") }
+            for frame in column {
+                XCTAssertEqual(frame.midX, column[0].midX, accuracy: 0.5, "one centered column")
+                XCTAssertGreaterThanOrEqual(frame.minX, art.maxX, "right of the artwork")
             }
-            XCTAssertEqual(transport.minY - source.maxY, MediaStandardLayout.metadataTransportGap, accuracy: 0.5,
-                           "\(cell): metadata sits directly above the transport")
+            for (a, b) in zip(column, column.dropFirst()) {
+                XCTAssertGreaterThanOrEqual(b.minY, a.maxY - 0.01)
+                XCTAssertLessThanOrEqual(b.minY - a.maxY, MediaStandardLayout.stackGap + 0.01, "\(cell): stacked tightly")
+            }
+            let top = column.first!.minY, bottom = column.last!.maxY
+            XCTAssertEqual(top, cell.height - bottom, accuracy: 0.5, "\(cell): the stack is vertically centered")
+            let progress = try XCTUnwrap(f[.progress])
+            XCTAssertLessThanOrEqual(progress.width / cell.width, 0.70, "\(cell): short sliders preserved")
         }
     }
 
-    func testControlsAndFullWidthSlidersFillTheRestOfTheRectangle() throws {
+    func testControlsStayInsideTheCardWithoutOverlap() throws {
         for cell in cells {
             let f = MediaStandardLayout.make(cell: cell, content: .init()).frames
-            let art = try XCTUnwrap(f[.artwork]), transport = try XCTUnwrap(f[.transport])
-            let progress = try XCTUnwrap(f[.progress]), volume = try XCTUnwrap(f[.volume])
-            XCTAssertGreaterThanOrEqual(transport.minY, art.maxY)
-            XCTAssertGreaterThanOrEqual(progress.minY, transport.maxY)
-            XCTAssertGreaterThanOrEqual(volume.minY, progress.maxY)
-            let inner = cell.width - MediaStandardLayout.horizontalPadding * 2
-            XCTAssertEqual(progress.width, inner, accuracy: 0.01); XCTAssertEqual(volume.width, inner, accuracy: 0.01)
-            XCTAssertEqual(transport.midX, cell.width / 2, accuracy: 0.5)
-            XCTAssertGreaterThanOrEqual(volume.maxY, cell.height - MediaStandardLayout.verticalPadding - 0.5,
-                                        "\(cell): no empty band below the controls")
             let bounds = CGRect(origin: .zero, size: cell).insetBy(dx: -0.01, dy: -0.01)
             let list = Array(f.values)
             for (i, a) in list.enumerated() {
-                XCTAssertTrue(bounds.contains(a))
+                XCTAssertTrue(bounds.contains(a), "\(cell): \(a) clips")
                 for b in list.dropFirst(i + 1) { XCTAssertFalse(a.insetBy(dx: 0.01, dy: 0.01).intersects(b.insetBy(dx: 0.01, dy: 0.01))) }
             }
         }
@@ -193,6 +189,7 @@ final class StandardMediaLayoutTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(short.artworkSide, MediaStandardLayout.artworkMinimum)
         let noArtwork = MediaStandardLayout.make(cell: .init(width: 300, height: 150), content: .init(artwork: false))
         XCTAssertNil(noArtwork.frames[.artwork])
-        XCTAssertEqual(noArtwork.frames[.title]?.minX ?? 0, MediaStandardLayout.horizontalPadding, accuracy: 0.01)
+        XCTAssertEqual(noArtwork.frames[.title]?.midX ?? 0, 150, accuracy: 0.5, "without artwork the stack centers in the card")
+        XCTAssertLessThanOrEqual(noArtwork.frames[.progress]?.width ?? 0, 300 * 0.70 + 0.01)
     }
 }
