@@ -329,10 +329,12 @@ struct ExpandedIslandLayoutMetrics {
         self.displayMetrics = displayMetrics
     }
 
-    var topPadding: CGFloat { 14 * displayMetrics.spacingScale }
+    /// Header rhythm (2026-10-06): a small intentional gap only. The header
+    /// row stays notch-safe through the horizontal exclusion, not padding.
+    var topPadding: CGFloat { 10 * displayMetrics.spacingScale }
     var bottomPadding: CGFloat { 20 * displayMetrics.spacingScale }
     var tabSwitcherHeight: CGFloat { 34 * displayMetrics.compactControlScale }
-    var tabToPageSpacing: CGFloat { 10 * displayMetrics.spacingScale }
+    var tabToPageSpacing: CGFloat { 4 * displayMetrics.spacingScale }
     var pageColumnSpacing: CGFloat { 10 * displayMetrics.spacingScale }
     var cardSpacing: CGFloat { 10 * displayMetrics.spacingScale }
 

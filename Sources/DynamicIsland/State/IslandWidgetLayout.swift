@@ -753,9 +753,11 @@ struct WidgetGridMetrics: Equatable {
     static func bandSize(_ kind: IslandWidget, _ presentation: WidgetPresentationSize, metrics: ResolvedIslandMetrics) -> CGSize {
         let combined = kind == .agentUsage
         let base: CGSize = switch presentation {
-        case .compact: combined ? .init(width: 300, height: 56) : .init(width: 160, height: 56)
-        case .standard: combined ? .init(width: 420, height: 72) : .init(width: 210, height: 72)
-        case .large: combined ? .init(width: 520, height: 96) : .init(width: 270, height: 96)
+        // Tight around the 40 / 48 / 64 pt gauges plus labels: no dead band
+        // between the header and the first row.
+        case .compact: combined ? .init(width: 300, height: 52) : .init(width: 160, height: 52)
+        case .standard: combined ? .init(width: 420, height: 64) : .init(width: 210, height: 64)
+        case .large: combined ? .init(width: 520, height: 84) : .init(width: 270, height: 84)
         }
         return .init(width: base.width * metrics.expandedCardScale, height: base.height * metrics.expandedCardScale)
     }
