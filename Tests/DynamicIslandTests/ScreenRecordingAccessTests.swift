@@ -91,12 +91,46 @@ final class ScreenRecordingAccessTests: XCTestCase {
         XCTAssertFalse(controller.statusText.isEmpty)
     }
 
-    private func makeController(_ auth: FakeScreenCaptureAuthorization, adHoc: Bool = false) -> ScreenRecordingController {
+    /// Regression: a stale entry made the UI loop Allow -> Relaunch -> Allow,
+    /// because "already requested" was forgotten by the relaunched process.
+    func testRelaunchedBuildWithAStaleEntryNeverReturnsToAllow() async {
+        let defaults = UserDefaults(suiteName: "ScreenRecordingAccessTests-\(UUID().uuidString)")!
+        let ledger = ScreenCaptureRequestLedger(defaults: defaults, buildIdentity: "build-A")
+        let auth = FakeScreenCaptureAuthorization()
+        let first = makeController(auth, adHoc: true, ledger: ledger)
+        await first.prepareTargets(requestPermission: false)
+        XCTAssertEqual(first.accessState, .notGranted, "a never-asked build offers Allow")
+        await first.prepareTargets(requestPermission: true)
+        XCTAssertEqual(first.accessState, .notActive)
+
+        // Relaunch of the same build: still not active, never Allow again.
+        let relaunched = makeController(auth, adHoc: true, ledger: ledger)
+        await relaunched.prepareTargets(requestPermission: false)
+        XCTAssertEqual(relaunched.accessState, .notActive)
+        XCTAssertTrue(relaunched.accessMessage.contains("remove DynamicIsland"), relaunched.accessMessage)
+
+        // A rebuilt (differently signed) copy starts fresh.
+        let rebuilt = makeController(auth, adHoc: true,
+                                     ledger: ScreenCaptureRequestLedger(defaults: defaults, buildIdentity: "build-B"))
+        await rebuilt.prepareTargets(requestPermission: false)
+        XCTAssertEqual(rebuilt.accessState, .notGranted)
+
+        // Once macOS grants the identity, the ledger no longer matters.
+        auth.preflightResult = true
+        let granted = makeController(auth, adHoc: true, ledger: ledger)
+        await granted.prepareTargets(requestPermission: false)
+        XCTAssertNotEqual(granted.accessState, .notGranted)
+    }
+
+    private func makeController(_ auth: FakeScreenCaptureAuthorization, adHoc: Bool = false,
+                                ledger: ScreenCaptureRequestLedger? = nil) -> ScreenRecordingController {
         ScreenRecordingController(
             liveActivities: LiveActivityStore(),
             capabilities: IslandCapabilityRegistry(),
             authorization: auth,
-            isAdHocSigned: adHoc
+            isAdHocSigned: adHoc,
+            requestLedger: ledger ?? ScreenCaptureRequestLedger(
+                defaults: UserDefaults(suiteName: "ScreenRecordingAccessTests-\(UUID().uuidString)")!, buildIdentity: nil)
         )
     }
 }

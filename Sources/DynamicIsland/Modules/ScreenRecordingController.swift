@@ -92,6 +92,19 @@ enum AppRelauncher {
         }
     }
 
+    /// The running bundle's code directory hash: the identity macOS privacy
+    /// grants are bound to for ad-hoc builds.
+    nonisolated static var buildIdentity: String? {
+        var staticCode: SecStaticCode?
+        guard SecStaticCodeCreateWithPath(Bundle.main.bundleURL as CFURL, [], &staticCode) == errSecSuccess,
+              let staticCode else { return nil }
+        var info: CFDictionary?
+        guard SecCodeCopySigningInformation(staticCode, SecCSFlags(rawValue: kSecCSSigningInformation), &info) == errSecSuccess,
+              let dictionary = info as? [String: Any],
+              let unique = dictionary[kSecCodeInfoUnique as String] as? Data else { return nil }
+        return unique.map { String(format: "%02x", $0) }.joined()
+    }
+
     /// True when the running bundle is ad-hoc signed (its identity changes
     /// with every rebuild, which invalidates existing privacy grants).
     static var isAdHocSigned: Bool {
@@ -103,6 +116,30 @@ enum AppRelauncher {
               let dictionary = info as? [String: Any],
               let flags = dictionary[kSecCodeInfoFlags as String] as? UInt32 else { return false }
         return flags & SecCodeSignatureFlags.adhoc.rawValue != 0
+    }
+}
+
+/// Remembers that this exact build already asked macOS for Screen Recording.
+/// `CGRequestScreenCaptureAccess` shows no prompt once an entry exists - even
+/// a stale one left by a previous (differently signed) build - so after a
+/// relaunch the in-memory flag alone sent the UI back to "Allow", which can
+/// never succeed: an endless Allow -> Relaunch -> Allow loop. Keyed by the
+/// code-signing identity (cdhash), so a rebuild starts fresh.
+struct ScreenCaptureRequestLedger {
+    static let key = "screenRecording.requestedBuildIdentity"
+    let defaults: UserDefaults
+    let buildIdentity: String?
+
+    static var standard: Self { Self(defaults: .standard, buildIdentity: AppRelauncher.buildIdentity) }
+
+    var wasRequestedForThisBuild: Bool {
+        guard let buildIdentity else { return false }
+        return defaults.string(forKey: Self.key) == buildIdentity
+    }
+
+    func recordRequest() {
+        guard let buildIdentity else { return }
+        defaults.set(buildIdentity, forKey: Self.key)
     }
 }
 
@@ -132,6 +169,7 @@ final class ScreenRecordingController: ObservableObject {
     private let capabilities: IslandCapabilityRegistry
     private let authorization: ScreenCaptureAuthorizing
     private var requestAttempted = false
+    private let requestLedger: ScreenCaptureRequestLedger
     private var machine = ScreenRecordingStateMachine()
     private var shareableContent: SCShareableContent?
     private var displayObjects: [CGDirectDisplayID: SCDisplay] = [:]
@@ -147,12 +185,15 @@ final class ScreenRecordingController: ObservableObject {
         liveActivities: LiveActivityStore,
         capabilities: IslandCapabilityRegistry,
         authorization: ScreenCaptureAuthorizing = SystemScreenCaptureAuthorization(),
-        isAdHocSigned: Bool = AppRelauncher.isAdHocSigned
+        isAdHocSigned: Bool = AppRelauncher.isAdHocSigned,
+        requestLedger: ScreenCaptureRequestLedger = .standard
     ) {
         self.liveActivities = liveActivities
         self.capabilities = capabilities
         self.authorization = authorization
         self.isAdHocSigned = isAdHocSigned
+        self.requestLedger = requestLedger
+        requestAttempted = requestLedger.wasRequestedForThisBuild
         publishCapability()
     }
 
@@ -230,6 +271,7 @@ final class ScreenRecordingController: ObservableObject {
         let preflight = authorization.preflight()
         if !preflight, requestPermission {
             requestAttempted = true
+            requestLedger.recordRequest()
             _ = authorization.request()
         }
         guard preflight || requestPermission else {

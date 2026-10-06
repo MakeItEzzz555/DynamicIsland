@@ -27,8 +27,9 @@ enum CameraPreviewPhase: Equatable, Sendable {
 /// change it; SwiftUI appear/disappear, page switches, island collapse/expand
 /// and Settings re-renders never do. View lifecycle is not intent.
 enum CameraUserIntent: Equatable, Sendable {
-    /// No explicit decision this launch: a visible mirror may auto-start an
-    /// already-authorized camera (Droppy previewDidAppear parity).
+    /// No active request. A visible mirror shows Start/Allow and never starts
+    /// capture by itself (appearing, re-expanding, tab switches and remounts
+    /// are not intent). Collapse and leaving the mirror return here.
     case undecided
     /// Explicit Open Mirror / Start / Allow / Retry / Open Preview.
     case wantsPreview
@@ -39,8 +40,10 @@ enum CameraUserIntent: Equatable, Sendable {
     /// A passive surface never retries on its own; Retry is explicit.
     case interrupted
 
+    /// A running preview may be restarted (device switch) only while the
+    /// user's request is still current.
     var allowsPassiveStart: Bool {
-        self == .undecided || self == .wantsPreview
+        self == .wantsPreview
     }
 }
 
@@ -278,8 +281,8 @@ final class CameraMirrorConsumerLease {
             isHeld = true
             await controller.attachPreviewConsumer()
         }
-        // A Close tapped while the attach was in flight wins.
-        guard isHeld, controller.userIntent != .closed else { return }
+        // A Close, collapse or surface change while the attach was in flight wins.
+        guard isHeld, controller.userIntent == .wantsPreview else { return }
         try await controller.startPreviewConsumer()
     }
 
@@ -568,22 +571,11 @@ final class CameraPreviewController: ObservableObject, IslandCapabilityAdapter {
     private var consumerStartedSession = false
     private var explicitOwnerActive = false
 
-    /// A visible preview surface appeared. Starts capture only when access
-    /// was already granted, so appearing never prompts for permission.
+    /// A visible preview surface appeared. Passive: it only registers the
+    /// consumer. Capture starts exclusively from an explicit Start/Allow
+    /// (`startPreviewConsumer`) or `open()`; view lifecycle is never intent.
     func attachPreviewConsumer() async {
         previewConsumers += 1
-        guard previewConsumers == 1,
-              userIntent.allowsPassiveStart,
-              isEnabled,
-              deviceProvider.permissionState == .authorized,
-              !isRunning,
-              phase != .starting else { return }
-        consumerStartedSession = true
-        do {
-            try await startCapture()
-        } catch {
-            consumerStartedSession = false
-        }
     }
 
     /// Explicit action from the mirror UI. Unlike attachPreviewConsumer(),
@@ -614,10 +606,28 @@ final class CameraPreviewController: ObservableObject, IslandCapabilityAdapter {
     /// surface started. An explicit user-opened preview is left alone.
     func detachPreviewConsumer() async {
         previewConsumers = max(0, previewConsumers - 1)
-        guard previewConsumers == 0, consumerStartedSession else { return }
+        guard previewConsumers == 0 else { return }
+        // The mirror's request ends with its last surface: showing a mirror
+        // again requires a new explicit Start.
+        if userIntent == .wantsPreview, !explicitOwnerActive { userIntent = .undecided }
+        guard consumerStartedSession else { return }
         consumerStartedSession = false
         // An explicit owner that joined the mirror's session keeps it.
         guard !explicitOwnerActive else { return }
+        await stopCapture()
+    }
+
+    /// The island collapsed. Every mirror preview ends regardless of whether
+    /// SwiftUI unmounted the mirror: capture the mirror started stops, an
+    /// in-flight mirror start is cancelled, and the request is cleared so
+    /// re-expanding never restarts the camera. An explicit owner outside the
+    /// island (the Settings preview's `open()`) is unaffected.
+    func islandDidCollapse() async {
+        guard !explicitOwnerActive else { return }
+        if userIntent == .wantsPreview { userIntent = .undecided }
+        let mirrorOwnsCapture = consumerStartedSession || phase == .starting || isRunning
+        consumerStartedSession = false
+        guard mirrorOwnsCapture else { return }
         await stopCapture()
     }
 

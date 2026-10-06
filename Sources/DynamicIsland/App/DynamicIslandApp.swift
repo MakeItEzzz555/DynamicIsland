@@ -461,6 +461,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] state in
                 if state == .expanded {
                     self?.agentAttention.dismissForExpansion()
+                } else if let camera = self?.cameraPreview {
+                    // Collapse ends Camera Mirror capture; re-expanding never
+                    // restarts it (explicit intent only).
+                    Task { await camera.islandDidCollapse() }
                 }
             }
             .store(in: &cancellables)

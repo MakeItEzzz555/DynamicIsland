@@ -118,11 +118,10 @@ struct ProductivityDeckView: View {
 
 // MARK: - Camera mirror
 
-/// Large circular mirror of the real camera. Capture runs only while this
-/// view is visible, access was already granted (Droppy
-/// previewDidAppear/previewDidDisappear) and the user has not closed it;
-/// access is requested only from the explicit Allow button. Appearing never
-/// counts as a user request after an explicit Close.
+/// Large circular mirror of the real camera. Capture starts only from the
+/// explicit Allow/Start button and stops when the mirror leaves the screen,
+/// the workspace page changes, the user closes it or the island collapses.
+/// Appearing, re-expanding and remounting never start the camera.
 struct CameraMirrorView: View {
     @ObservedObject var controller: CameraPreviewController
     let diameter: CGFloat
@@ -229,8 +228,8 @@ struct CameraMirrorView: View {
                 .font(.system(size: 9, weight: .semibold))
             case .authorized:
                 if controller.phase != .starting {
-                    // Capture normally starts on appear; this covers a
-                    // failed or externally stopped session.
+                    // The only way to start an authorized camera: appearing
+                    // never starts capture.
                     Button { Task { try? await lease.startExplicitly() } } label: { mirrorButtonLabel(controller.phase == .idle ? "Start" : "Retry") }
                         .buttonStyle(WorkspaceTileButtonStyle(cornerRadius: 8))
                         .font(.system(size: 9, weight: .semibold))
