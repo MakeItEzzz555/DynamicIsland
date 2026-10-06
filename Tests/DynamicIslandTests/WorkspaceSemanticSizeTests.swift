@@ -134,11 +134,13 @@ final class WorkspaceSemanticSizeTests: XCTestCase {
     }
 
     func testChatLargePlusFeedStandardOnAgents() throws {
-        let projection = layout([(.chat, .large), (.feed, .standard)], surface: .agents, columns: 4)
+        // Large Chat spans four columns: a six-column host fits Feed beside it.
+        let projection = layout([(.chat, .large), (.feed, .standard)], surface: .agents, columns: 6)
         let chat = try XCTUnwrap(projection.frames.first?.frame), feed = try XCTUnwrap(projection.frames.last?.frame)
         XCTAssertEqual(feed.minY, chat.minY, accuracy: 0.5)
         XCTAssertGreaterThan(feed.minX, chat.maxX)
-        XCTAssertEqual(projection.rows, 2)
+        let grid = WidgetGridMetrics.make(surface: .agents, metrics: metrics)
+        XCTAssertEqual(projection.rows, grid.span(kinds: [.chat], size: .large).rows)
         assertNoOverlap(projection)
     }
 
@@ -172,24 +174,23 @@ final class WorkspaceSemanticSizeTests: XCTestCase {
         assertNoOverlap(projection)
     }
 
-    func testFillingAWideShellKeepsCompactSquareAndStandardTwoByOne() throws {
+    func testAWiderShellCentersIntrinsicWidgetsAndNeverEnlargesThem() throws {
         let grid = WidgetGridMetrics.make(surface: .media, metrics: metrics)
         let header: CGFloat = 441
-        let compact = config([(.media, .compact)], surface: .media).regions(on: .media)
-        let square = try XCTUnwrap(WorkspaceWidgetLayoutProjection.make(regions: compact,
-            availableSize: .init(width: header, height: 600), metrics: metrics).frames.first?.frame)
-        XCTAssertEqual(square.width, square.height, accuracy: 0.01, "Compact stays a true square")
-        XCTAssertEqual(square.width, grid.side * WorkspaceWidgetLayoutProjection.fillScaleCap, accuracy: 0.01, "and never balloons")
-        XCTAssertEqual(square.midX, header / 2, accuracy: 0.5)
+        for size in WidgetPresentationSize.allCases {
+            let regions = config([(.media, size)], surface: .media).regions(on: .media)
+            let frame = try XCTUnwrap(WorkspaceWidgetLayoutProjection.make(regions: regions,
+                availableSize: .init(width: header, height: 800), metrics: metrics).frames.first?.frame)
+            XCTAssertEqual(frame.size.width, grid.size(for: size).width, accuracy: 0.01, "\(size): intrinsic width")
+            XCTAssertEqual(frame.size.height, grid.size(for: size).height, accuracy: 0.01, "\(size): intrinsic height")
+            XCTAssertEqual(frame.midX, header / 2, accuracy: 0.5, "\(size): centered in the wider shell")
+        }
+        // The shell hugs the content; the header minimum is added by the
+        // resolver, never fed back into widget scale.
         let standard = config([(.media, .standard)], surface: .media).regions(on: .media)
         let preferred = WorkspaceWidgetLayoutProjection.preferredContentSize(regions: standard,
-            maximumSize: .init(width: 1_200, height: 800), metrics: metrics, minimumWidth: header)
-        let filled = WorkspaceWidgetLayoutProjection.make(regions: standard, availableSize: preferred, metrics: metrics)
-        let frame = try XCTUnwrap(filled.frames.first?.frame)
-        XCTAssertEqual(frame.minX, 0, accuracy: 0.5); XCTAssertEqual(frame.maxX, header, accuracy: 0.5)
-        XCTAssertEqual(frame.height, (frame.width - grid.gutter) / 2, accuracy: 0.5, "Standard keeps its 2:1 shape")
-        XCTAssertFalse(filled.requiresScrolling, "the resolver and the projection agree on the filled height")
-        XCTAssertEqual(frame.height, preferred.height, accuracy: 0.5)
+            maximumSize: .init(width: 1_200, height: 800), metrics: metrics)
+        XCTAssertEqual(preferred.height, grid.side, accuracy: 0.5)
     }
 
     // MARK: Orphan rows
@@ -284,12 +285,104 @@ final class WorkspaceSemanticSizeTests: XCTestCase {
         XCTAssertLessThan(after.frames[1].frame.minX, before.frames[1].frame.minX, "the neighbour slides into the freed column")
     }
 
-    func testCompactChatIgnoresTheAdaptiveHeightHint() {
-        let value = config([(.chat, .compact)], surface: .agents)
-        let plain = WorkspaceWidgetLayoutProjection.make(regions: value.regions(on: .agents), availableSize: .init(width: 900, height: 600), metrics: metrics)
-        let hinted = WorkspaceWidgetLayoutProjection.make(regions: value.regions(on: .agents), availableSize: .init(width: 900, height: 600),
-                                                          metrics: metrics, chatHeightHint: 120)
-        XCTAssertEqual(plain.frames[0].frame.height, hinted.frames[0].frame.height, accuracy: 0.5)
+    // MARK: Geometry ownership invariant
+
+    private func frame(of kind: IslandWidget, _ specs: [Spec], surface: WorkspaceSurface, width: CGFloat = 1_400,
+                       editing: Bool = false) throws -> CGRect {
+        let value = config(specs, surface: surface)
+        let projection = WorkspaceWidgetLayoutProjection.make(regions: value.regions(on: surface),
+            availableSize: .init(width: width, height: 2_000), metrics: metrics, editing: editing)
+        let region = try XCTUnwrap(value.regions(on: surface).first { $0.widgets.contains { $0.kind == kind } })
+        return try XCTUnwrap(projection.frames.first { $0.id == region.id }?.frame)
+    }
+
+    /// The core invariant: persisted semantic size owns widget geometry;
+    /// siblings and the shell change position and shell size only.
+    func testWidgetSizeIsIndependentOfSiblingsEditingCommitAndShellWidth() throws {
+        for kind in [IslandWidget.media, .timer] {
+            let other: IslandWidget = kind == .media ? .timer : .media
+            for size in WidgetPresentationSize.allCases {
+                let alone = try frame(of: kind, [(kind, size)], surface: .media).size
+                var variants: [(String, CGSize)] = []
+                for neighbour in WidgetPresentationSize.allCases {
+                    variants.append(("+\(neighbour)", try frame(of: kind, [(kind, size), (other, neighbour)], surface: .media).size))
+                }
+                variants.append(("+files+calendar", try frame(of: kind, [(kind, size), (.files, .compact), (.calendar, .large)], surface: .media).size))
+                variants.append(("editor preview", try frame(of: kind, [(kind, size), (other, .standard)], surface: .media, editing: true).size))
+                variants.append(("narrower shell (re-expand)", try frame(of: kind, [(kind, size)], surface: .media, width: 480).size))
+                let value = config([(kind, size), (other, .compact)], surface: .media)
+                let committed = WorkspaceConfiguration.decoded(try JSONEncoder().encode(value))
+                let afterCommit = WorkspaceWidgetLayoutProjection.make(regions: committed.regions(on: .media),
+                    availableSize: .init(width: 900, height: 2_000), metrics: metrics)
+                let id = try XCTUnwrap(committed.regions(on: .media).first { $0.widgets.contains { $0.kind == kind } }?.id)
+                variants.append(("after commit", try XCTUnwrap(afterCommit.frames.first { $0.id == id }?.frame.size)))
+                for (label, variant) in variants {
+                    XCTAssertEqual(variant.width, alone.width, accuracy: 0.01, "\(kind) \(size) \(label): width")
+                    XCTAssertEqual(variant.height, alone.height, accuracy: 0.01, "\(kind) \(size) \(label): height")
+                }
+            }
+        }
+    }
+
+    func testAgentChatSizeIsIndependentOfSiblings() throws {
+        for size in WidgetPresentationSize.allCases {
+            let alone = try frame(of: .chat, [(.chat, size)], surface: .agents).size
+            for specs: [Spec] in [[(.chat, size), (.feed, .compact)], [(.chat, size), (.feed, .standard)],
+                                  [(.agentUsage, .standard), (.chat, size), (.feed, .compact)]] {
+                let with = try frame(of: .chat, specs, surface: .agents).size
+                XCTAssertEqual(with.width, alone.width, accuracy: 0.01, "chat \(size) \(specs.map(\.kind))")
+                XCTAssertEqual(with.height, alone.height, accuracy: 0.01, "chat \(size) \(specs.map(\.kind))")
+            }
+        }
+    }
+
+    func testRemovingANeighbourShrinksTheShellNotTheWidget() throws {
+        let both = config([(.media, .standard), (.timer, .standard)], surface: .media).regions(on: .media)
+        let alone = config([(.media, .standard)], surface: .media).regions(on: .media)
+        let maximum = CGSize(width: 1_200, height: 900)
+        let bothSize = WorkspaceWidgetLayoutProjection.preferredContentSize(regions: both, maximumSize: maximum, metrics: metrics)
+        let aloneSize = WorkspaceWidgetLayoutProjection.preferredContentSize(regions: alone, maximumSize: maximum, metrics: metrics)
+        XCTAssertLessThan(aloneSize.width, bothSize.width, "the shell shrinks")
+        XCTAssertEqual(try frame(of: .media, [(.media, .standard)], surface: .media).size,
+                       try frame(of: .media, [(.media, .standard), (.timer, .standard)], surface: .media).size, "Media keeps its size")
+    }
+
+    // MARK: Agent Chat size grammar
+
+    func testAgentChatSpansAreFunctionalAndDistinct() throws {
+        let grid = WidgetGridMetrics.make(surface: .agents, metrics: metrics)
+        let compact = try frame(of: .chat, [(.chat, .compact)], surface: .agents)
+        let standard = try frame(of: .chat, [(.chat, .standard)], surface: .agents)
+        let large = try frame(of: .chat, [(.chat, .large)], surface: .agents)
+        XCTAssertEqual(compact.width, compact.height, accuracy: 0.01, "Compact Chat is a true square")
+        XCTAssertEqual(compact.width, grid.side, accuracy: 0.01)
+        XCTAssertEqual(standard.width, grid.length(3), accuracy: 0.01, "Standard Chat is three columns")
+        XCTAssertGreaterThanOrEqual(standard.height, grid.length(2) - 0.01, "Standard Chat is at least two rows")
+        XCTAssertGreaterThan(large.width * large.height, standard.width * standard.height, "Large exceeds Standard")
+        XCTAssertLessThanOrEqual(large.height, grid.length(grid.maxRows) + 0.01, "Large stays within the display row budget")
+        // Other Agents widgets keep the default grammar.
+        let feed = try frame(of: .feed, [(.feed, .standard)], surface: .agents)
+        XCTAssertEqual(feed.size, grid.size(for: .standard))
+    }
+
+    func testChatTerminalStackInheritsTheChatSpan() throws {
+        var value = config([(.chat, .standard), (.terminal, .standard)], surface: .agents)
+        value.combineTerminalWithChat()
+        let grid = WidgetGridMetrics.make(surface: .agents, metrics: metrics)
+        let projection = WorkspaceWidgetLayoutProjection.make(regions: value.regions(on: .agents),
+            availableSize: .init(width: 1_400, height: 2_000), metrics: metrics)
+        let stack = try XCTUnwrap(projection.frames.first?.frame)
+        XCTAssertEqual(stack.size, grid.size(for: .standard, kinds: [.chat, .terminal]))
+        XCTAssertEqual(stack.width, grid.length(3), accuracy: 0.01, "never the generic 2x1")
+    }
+
+    func testLargeChatRowsFollowTheDisplayBudgetOnly() {
+        var grid = WidgetGridMetrics(side: 180, gutter: 8, maxRows: 2)
+        XCTAssertEqual(grid.span(kinds: [.chat], size: .large).rows, 2, "a short display bounds Large")
+        grid.maxRows = 6
+        XCTAssertEqual(grid.span(kinds: [.chat], size: .large).rows, 3)
+        XCTAssertTrue(grid.span(kinds: [.chat], size: .compact) == (1, 1))
+        XCTAssertTrue(grid.span(kinds: [.media], size: .large) == (2, 2), "default grammar elsewhere")
     }
 
     // MARK: Media

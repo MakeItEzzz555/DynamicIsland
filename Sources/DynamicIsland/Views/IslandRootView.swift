@@ -341,6 +341,14 @@ struct ExpandedIslandLayoutMetrics {
     var innerWidth: CGFloat { max(containerSize.width - (horizontalPadding * 2), 0) }
     var innerHeight: CGFloat { max(containerSize.height - topPadding - bottomPadding, 0) }
     var pageHeight: CGFloat { max(innerHeight - tabSwitcherHeight - tabToPageSpacing, 0) }
+    /// Header/footer chrome around a customized workspace page.
+    var workspaceVerticalChrome: CGFloat { topPadding + bottomPadding + tabSwitcherHeight + tabToPageSpacing }
+    /// The most workspace content height this display can present (shared by
+    /// the shell resolver and the grid's display row budget).
+    static func workspaceContentHeightBudget(metrics: ResolvedIslandMetrics) -> CGFloat {
+        let chrome = ExpandedIslandLayoutMetrics(containerSize: .zero, horizontalPadding: 0, displayMetrics: metrics)
+        return max(1, metrics.visibleLogicalSize.height - 24 * metrics.spacingScale - chrome.workspaceVerticalChrome)
+    }
     var responsiveScale: CGFloat {
         let localFit = min(pageHeight / 178, innerWidth / 720)
         return min(max(localFit * displayMetrics.uiScale, 0.76), 1.14)

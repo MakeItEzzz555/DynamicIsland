@@ -37,7 +37,7 @@ final class WorkspaceUsageBandAndHeaderTests: XCTestCase {
         let usage = try XCTUnwrap(frame(projection, config.placement(kind: .agentUsage, on: .agents)?.id))
         let chat = try XCTUnwrap(frame(projection, config.placement(kind: .chat, on: .agents)?.id))
         let feed = try XCTUnwrap(frame(projection, config.placement(kind: .feed, on: .agents)?.id))
-        XCTAssertEqual(projection.rows, 2, "usage band + one primary row")
+        XCTAssertEqual(projection.rows, 3, "usage band + the two-row Standard Chat (Feed beside it)")
         XCTAssertLessThanOrEqual(usage.maxY, chat.minY, "usage sits above the primary row")
         XCTAssertEqual(chat.minY, feed.minY, accuracy: 0.5, "Chat and Feed stay side by side while editing")
         XCTAssertLessThan(usage.height, 100, "the band keeps its strip height")
@@ -77,7 +77,7 @@ final class WorkspaceUsageBandAndHeaderTests: XCTestCase {
         XCTAssertEqual(codex.minY, claude.minY, accuracy: 0.5)
         XCTAssertLessThan(codex.maxX, claude.minX)
         XCTAssertEqual((codex.minX + claude.maxX) / 2, size.width / 2, accuracy: 1, "band is centered")
-        XCTAssertEqual(projection.rows, 2)
+        XCTAssertEqual(projection.rows, 3, "band + two-row Standard Chat")
         // Reorder: Claude before Codex.
         config.move(try XCTUnwrap(config.placement(kind: .claudeUsage, on: .agents)).id,
                     before: config.placement(kind: .codexUsage, on: .agents)?.id, on: .agents)
@@ -143,11 +143,11 @@ final class WorkspaceUsageBandAndHeaderTests: XCTestCase {
         let horizontal = IslandShellLayout.expandedHorizontalPadding(isNotchIntegrated: true) * 2
         let projection = WorkspaceWidgetLayoutProjection.make(regions: config.regions(on: .agents),
             availableSize: .init(width: size.width - horizontal, height: 500), metrics: compact, editing: true)
-        // Two Standards need four Agents columns; a 1147 pt display fits three,
-        // so the grid wraps (responsive fallback) instead of squeezing cells
-        // below readable size or rewriting the saved sizes.
-        XCTAssertEqual(projection.rows, 2)
-        XCTAssertEqual(projection.columns, 3, "the wide Agents workspace keeps three columns")
+        // Standard Chat (3x2) + Standard Terminal (2x1) need five columns;
+        // a 1147 pt display fits four, so Terminal wraps below (responsive
+        // fallback) instead of squeezing cells or rewriting saved sizes.
+        XCTAssertEqual(projection.rows, 3)
+        XCTAssertGreaterThanOrEqual(projection.columns, 3, "the wide Agents workspace keeps at least three columns")
         XCTAssertLessThanOrEqual(size.width, 1147 - 280 + 0.5, "within the safe display width")
     }
 

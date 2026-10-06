@@ -13,8 +13,6 @@ struct IslandWidgetEditor: View {
     var onLayoutPreview: ((WorkspaceConfiguration?) -> Void)? = nil
     /// Drag in flight: the host keeps the shell from shrinking under the pointer.
     var onDragActive: ((Bool) -> Void)? = nil
-    /// Same content-adaptive Chat height the shell resolver uses (Agents).
-    var chatHeightHint: () -> CGFloat? = { nil }
     /// Semantic completion: the layout was saved and editing ended. The owner
     /// decides what follows (the island collapses through its normal
     /// children-exit sequence); the editor never touches shell state.
@@ -78,7 +76,7 @@ struct IslandWidgetEditor: View {
         measurements.size = size
         let visibleRegions = regions(in: visibleConfiguration)
         let projection = WorkspaceWidgetLayoutProjection.make(regions: visibleRegions, availableSize: size,
-            metrics: displayMetrics, editing: editing, chatHeightHint: chatHeightHint())
+            metrics: displayMetrics, editing: editing)
         let height = max(1, size.height - (editing ? WorkspaceEditorChrome.paletteHeight + displayMetrics.spacing(8) : 0))
         let canvas = widgetGrid(regions: visibleRegions, projection: projection)
         return VStack(spacing: displayMetrics.spacing(8)) {

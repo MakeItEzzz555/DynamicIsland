@@ -527,15 +527,6 @@ final class OverlayWindowController {
         layoutStore.$workspaceDragFloor.removeDuplicates().sink { [weak self] _ in
             self?.scheduleWorkspaceGeometryCheck()
         }.store(in: &cancellables)
-        // Content-adaptive Chat height resizes the shell live (content stays
-        // mounted and grows/shrinks with it) instead of the committed-layout
-        // children-exit handoff, which would flash on every height change.
-        layoutStore.$agentChatHeightHint.removeDuplicates().dropFirst().sink { [weak self] _ in
-            guard let self else { return }
-            self.workspaceGeometryLiveness.contentResized()
-            self.pointerAtContentResize = self.currentMouseScreenLocation()
-            self.scheduleWorkspaceGeometryCheck()
-        }.store(in: &cancellables)
         layoutStore.$workspaceGeometryTransition.removeDuplicates().sink { [weak self] transition in
             guard transition.phase == .shellResizing else { return }
             DispatchQueue.main.async { [weak self] in
@@ -960,8 +951,7 @@ final class OverlayWindowController {
             minimumHeaderWidth: ExpandedIslandHeaderMetrics.minimumContentWidth(
                 pageCount: modules.navigation.availablePages(using: settings).count,
                 clipboardEnabled: settings.clipboardHistoryEnabled,
-                hardwareNotchWidth: layoutStore.hardwareNotchWidth),
-            chatHeightHint: layoutStore.agentChatHeightHint)
+                hardwareNotchWidth: layoutStore.hardwareNotchWidth))
         return preview == nil ? size : IslandLayoutStore.dragFloored(size, floor: layoutStore.workspaceDragFloor)
     }
 
@@ -970,10 +960,6 @@ final class OverlayWindowController {
     /// the shell's own animated frame, so children move with it and never need
     /// the exit-then-resize handoff used for committed configuration changes.
     private var workspaceGeometryLiveness = WorkspaceGeometryLiveness()
-    /// Pointer location when content last resized the shell. Until the pointer
-    /// moves, a shell that shrank away from a stationary pointer is not treated
-    /// as the user leaving the island.
-    private var pointerAtContentResize: CGPoint?
 
     private func scheduleWorkspaceGeometryCheck() {
         guard !workspaceGeometryCheckScheduled else { return }
@@ -1387,10 +1373,6 @@ final class OverlayWindowController {
         debugLog("collapse check grace passed elapsed=\(elapsedSinceExpansion)")
 
         let mouseLocation = currentMouseScreenLocation()
-        if let anchor = pointerAtContentResize {
-            if hypot(mouseLocation.x - anchor.x, mouseLocation.y - anchor.y) < 2 { return }
-            pointerAtContentResize = nil
-        }
         let canonicalFrame = visibleExpandedShellScreenFrame()
         // The safe region is the full rendered shell for the current page
         // profile. There is deliberately no absolute "distance below the

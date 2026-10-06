@@ -59,14 +59,6 @@ final class IslandLayoutStore: ObservableObject {
     /// regrow -> oscillation). Cleared on drop/cancel so the exact committed
     /// geometry applies.
     @Published private(set) var workspaceDragFloor: CGSize?
-    /// Measured preferred height of the visible Agent Chat cell (nil when Chat
-    /// is not the visible conversation surface, e.g. the Terminal stack page).
-    /// Quantized by `AgentChatHeightPolicy`; never published per token.
-    @Published private(set) var agentChatHeightHint: CGFloat?
-    func setAgentChatHeightHint(_ height: CGFloat?) {
-        guard AgentChatHeightPolicy.shouldPublish(previous: agentChatHeightHint, next: height) else { return }
-        agentChatHeightHint = height
-    }
     func setWorkspaceDragActive(_ active: Bool) {
         let next: CGSize? = active ? (workspaceDragFloor ?? expandedSize) : nil
         if next != workspaceDragFloor { workspaceDragFloor = next }
@@ -407,7 +399,7 @@ final class IslandLayoutStore: ObservableObject {
 }
 
 /// Whether the next workspace geometry change follows the shell live (edit
-/// preview, adaptive Chat content) instead of the committed-layout
+/// preview) instead of the committed-layout
 /// children-exit -> resize -> reveal handoff, which blanks the content while
 /// the shell moves. Fed from the *emitted* publisher values: `@Published`
 /// subscribers run in willSet, before the store holds the new value, so
@@ -415,7 +407,6 @@ final class IslandLayoutStore: ObservableObject {
 /// opened on a pitch-black shell.
 struct WorkspaceGeometryLiveness: Equatable {
     private(set) var editPreview = false
-    private(set) var contentChange = false
 
     mutating func previewChanged(isPresent: Bool) {
         // Present: editing geometry is live. Absent: the change that ends
@@ -423,13 +414,10 @@ struct WorkspaceGeometryLiveness: Equatable {
         if isPresent { editPreview = true }
     }
 
-    mutating func contentResized() { contentChange = true }
-
-    /// Liveness for one geometry check. A content change is one-shot; edit
-    /// liveness lasts while a preview exists plus the change that ends it.
+    /// Liveness for one geometry check: while a preview exists plus the
+    /// change that ends it.
     mutating func consume(previewPresent: Bool) -> Bool {
-        let live = editPreview || contentChange || previewPresent
-        contentChange = false
+        let live = editPreview || previewPresent
         if !previewPresent { editPreview = false }
         return live
     }

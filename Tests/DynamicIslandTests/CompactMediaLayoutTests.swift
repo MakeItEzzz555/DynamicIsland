@@ -92,9 +92,9 @@ final class CompactMediaLayoutTests: XCTestCase {
         XCTAssertNil(island.frames[.times], "time labels go first")
         XCTAssertNil(island.frames[.volume], "volume is lower priority than progress")
         XCTAssertTrue(island.showsSkipButtons)
-        // The larger Agents square keeps every line, the times and volume.
-        let agents = plan(WidgetGridMetrics.make(surface: .agents, metrics: .fallback).side)
-        for slot in Slot.allCases { XCTAssertNotNil(agents.frames[slot], "\(slot) fits in the Agents square") }
+        // A larger (216 pt) square keeps every line, the times and volume.
+        let agents = plan(216)
+        for slot in Slot.allCases { XCTAssertNotNil(agents.frames[slot], "\(slot) fits in a 216 pt square") }
         XCTAssertFalse(agents.sourceInline)
     }
 

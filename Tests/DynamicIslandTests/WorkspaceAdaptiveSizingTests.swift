@@ -19,14 +19,11 @@ final class WorkspaceAdaptiveSizingTests: XCTestCase {
         let frame = try XCTUnwrap(projection.frames.first?.frame)
         XCTAssertEqual(frame.midX, 450, accuracy: 0.01)
         XCTAssertEqual(frame.midY, 200, accuracy: 0.01)
-        // The shell is sized to the intrinsic footprint; if it is wider anyway
-        // (e.g. the notch-safe header minimum), the grid unit scales uniformly
-        // (capped), so the Standard keeps its 2:1 shape and stays centered.
+        // A shell wider than the footprint (e.g. the notch-safe header
+        // minimum) centers the widget at its intrinsic size; it never grows.
         let grid = WidgetGridMetrics.make(surface: .media, metrics: metrics)
-        let side = grid.side * WorkspaceWidgetLayoutProjection.fillScaleCap
-        XCTAssertEqual(frame.width, 2 * side + grid.gutter, accuracy: 0.01)
-        XCTAssertEqual(frame.height, side, accuracy: 0.01)
-        XCTAssertGreaterThan(frame.height, required.height)
+        XCTAssertEqual(frame.size, grid.size(for: .standard))
+        XCTAssertEqual(frame.height, required.height, accuracy: 0.01)
         XCTAssertEqual(projection.rows, 1)
         XCTAssertFalse(projection.requiresScrolling)
     }
@@ -73,10 +70,11 @@ final class WorkspaceAdaptiveSizingTests: XCTestCase {
         let grid = WidgetGridMetrics.make(surface: .agents, metrics: metrics)
         let projection = WorkspaceWidgetLayoutProjection.make(regions: pairConfig.regions(on: .agents),
             availableSize: .init(width: 860, height: 400), metrics: metrics, editing: true)
-        XCTAssertEqual(projection.rows, 1, "Standard Chat (2x1) + Compact Feed (1x1) share one row")
+        XCTAssertEqual(projection.rows, 2, "Standard Chat (3x2) + Compact Feed (1x1) share the first rows")
         let chat = try XCTUnwrap(projection.frames.first { $0.id == WidgetID("agents.chat") })
         let feed = try XCTUnwrap(projection.frames.first { $0.id == WidgetID("agents.feed") })
-        XCTAssertEqual(chat.frame.width, grid.size(for: .standard).width, accuracy: 0.5)
+        XCTAssertEqual(chat.frame.size, grid.size(for: .standard, kinds: [.chat]))
+        XCTAssertEqual(chat.frame.minY, feed.frame.minY, accuracy: 0.5, "Feed sits beside the Chat")
         XCTAssertEqual(feed.frame.width, feed.frame.height, accuracy: 0.5, "Compact is square")
         var configuration = WorkspaceConfiguration.initial
         configuration.remove(configuration.placement(kind: .agentUsage, on: .agents)!.id)
@@ -87,9 +85,9 @@ final class WorkspaceAdaptiveSizingTests: XCTestCase {
             availableSize: .init(width: 860, height: 500), metrics: metrics)
         XCTAssertEqual(stack.frames.count, 1)
         XCTAssertEqual(stack.frames.first?.id, configuration.groups.first?.id)
-        let gutter = WidgetGridMetrics.make(surface: .agents, metrics: metrics).gutter
-        XCTAssertEqual(stack.frames[0].frame.height, (stack.frames[0].frame.width - gutter) / 2, accuracy: 0.5,
-                       "a Standard stack keeps its 2:1 shape when the grid fills the shell")
+        XCTAssertEqual(stack.frames[0].frame.size,
+                       WidgetGridMetrics.make(surface: .agents, metrics: metrics).size(for: .standard, kinds: [.chat, .terminal]),
+                       "the Chat + Terminal stack keeps the functional Chat span")
     }
     func testConfiguredSizePersistsAndLegacyOrUnknownSizeDecodesToStandard() throws {
         var configuration = WorkspaceConfiguration.initial
@@ -121,8 +119,8 @@ final class WorkspaceAdaptiveSizingTests: XCTestCase {
         configuration.setSize(.large, for: groupID)
         let large = WorkspaceWidgetLayoutProjection.preferredContentSize(regions: configuration.regions(on: .agents),
             maximumSize: .init(width: 1800, height: 1000), metrics: metrics)
-        XCTAssertEqual(large.width, standard.width, accuracy: 0.5, "Standard 2x1 and Large 2x2 share width")
-        XCTAssertGreaterThan(large.height, standard.height, "Large adds a grid row")
+        XCTAssertGreaterThan(large.width, standard.width, "Large Chat spans more columns than Standard")
+        XCTAssertGreaterThanOrEqual(large.height, standard.height)
         XCTAssertEqual(configuration.placements.map(\.id), ids)
         XCTAssertEqual(configuration.groups[0].members, members)
         XCTAssertEqual(configuration.groups[0].id, groupID)

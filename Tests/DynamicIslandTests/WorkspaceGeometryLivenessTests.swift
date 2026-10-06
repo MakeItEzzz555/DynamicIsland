@@ -39,10 +39,4 @@ final class WorkspaceGeometryLivenessTests: XCTestCase {
         XCTAssertFalse(liveness.consume(previewPresent: false), "later committed changes use children exit")
     }
 
-    func testContentResizeIsOneShot() {
-        var liveness = WorkspaceGeometryLiveness()
-        liveness.contentResized()
-        XCTAssertTrue(liveness.consume(previewPresent: false))
-        XCTAssertFalse(liveness.consume(previewPresent: false))
-    }
 }
