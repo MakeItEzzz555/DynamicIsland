@@ -27,6 +27,42 @@ extension EnvironmentValues {
     }
 }
 
+/// Live-session orb wrapper. Exact provider semantics update immediately;
+/// coarse long-running states receive a presentation-only 45-second rotation.
+/// The domain/session state is never mutated by this view.
+struct AgentLiveOrbView: View {
+    let session: AgentSession
+    var interaction: AgentManagedInteractionState? = nil
+    var size: CGFloat = 20
+    var speed: Double = 1
+    var paused = false
+    var terminal = false
+    var frozenTime: Double? = nil
+
+    var body: some View {
+        if AgentOrbStateMapper.usesFallbackRotation(for: session), !paused, !terminal, frozenTime == nil {
+            TimelineView(.periodic(from: .now, by: AgentOrbStateMapper.fallbackRotationInterval)) { tick in
+                orb(at: tick.date)
+            }
+        } else {
+            orb(at: .now)
+        }
+    }
+
+    @ViewBuilder
+    private func orb(at date: Date) -> some View {
+        AgentOrbView(
+            state: interaction.map { AgentOrbStateMapper.liveState(for: $0, session: session, at: date) }
+                ?? AgentOrbStateMapper.liveState(for: session, at: date),
+            size: size,
+            speed: speed,
+            paused: paused,
+            terminal: terminal,
+            frozenTime: frozenTime
+        )
+    }
+}
+
 struct AgentOrbView: View {
     let state: AgentOrbVisualState
     var size: CGFloat = 20

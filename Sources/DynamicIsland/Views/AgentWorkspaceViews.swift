@@ -293,8 +293,8 @@ struct AgentChatSurface<Conversation: View>: View {
         ) {
             VStack(spacing: 0) {
                 HStack(spacing: 6) {
-                    AgentOrbView(
-                        state: AgentOrbStateMapper.state(for: interaction, session: session),
+                    AgentLiveOrbView(
+                        session: session, interaction: interaction,
                         size: 28, speed: visuals.orbSpeed, paused: !isVisible,
                         terminal: !AgentVisualMotion.animates(session.state)
                     )

@@ -313,6 +313,55 @@ enum AgentOrbStateMapper {
         return state(for: session.state)
     }
 
+    /// Provider semantics remain authoritative. A visual-only fallback rotates
+    /// every 45 seconds only while the provider exposes a coarse active state
+    /// (generic working/reasoning/executing) with no more specific semantic
+    /// evidence. Labels/feed state remain provider-derived; only the decorative
+    /// orb changes so long-running turns do not look frozen on one animation.
+    static let fallbackRotationInterval: TimeInterval = 45
+
+    private static let fallbackActivePalette: [AgentOrbVisualState] = [
+        .solving, .shaping, .searching, .listening, .working, .weaving, .composing
+    ]
+
+    static func usesFallbackRotation(for session: AgentSession) -> Bool {
+        guard AgentVisualMotion.animates(session.state) else { return false }
+        switch session.currentProcessingKind {
+        case nil:
+            return session.state == .thinking || session.state == .working ||
+                session.state == .runningTool || session.state == .runningCommand
+        case .reasoning, .executing:
+            return true
+        case .planning, .searching, .connecting, .listening, .composing, .synthesizing, .background:
+            return false
+        }
+    }
+
+    static func liveState(for session: AgentSession, at date: Date) -> AgentOrbVisualState {
+        let exact = state(for: session)
+        guard usesFallbackRotation(for: session), !fallbackActivePalette.isEmpty else { return exact }
+        let slot = Int(floor(date.timeIntervalSinceReferenceDate / fallbackRotationInterval))
+        let seed = Int((BotAvatarDeterminism.seed(for: session.id) * 10_000).rounded(.down))
+        return fallbackActivePalette[(slot + seed) % fallbackActivePalette.count]
+    }
+
+    static func liveState(
+        for interaction: AgentManagedInteractionState,
+        session: AgentSession,
+        at date: Date
+    ) -> AgentOrbVisualState {
+        switch interaction {
+        case .connecting, .checkingAttachment, .stopping:
+            return .connecting
+        case .submitting:
+            return .composing
+        case .failed:
+            return .breathing
+        case .working, .observed, .ready:
+            return liveState(for: session, at: date)
+        }
+    }
+
     static func state(for voicePhase: VoiceTranscriptionPhase) -> AgentOrbVisualState {
         switch voicePhase {
         case .recording: .listening
@@ -598,8 +647,8 @@ struct AgentPresenceGlyph: View {
     }
 
     private func orb(_ config: AgentVisualPreferences) -> some View {
-        AgentOrbView(
-            state: AgentOrbStateMapper.state(for: session),
+        AgentLiveOrbView(
+            session: session,
             size: size,
             speed: config.orbSpeed,
             paused: paused,

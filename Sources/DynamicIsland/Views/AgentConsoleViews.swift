@@ -515,7 +515,7 @@ struct AgentEmbeddedConsoleView: View {
     private var managedInteractionFooter: some View {
         HStack(spacing: 6) {
             if showsActivityOrb && (interactionState == .connecting || interactionState == .checkingAttachment || interactionState == .submitting || interactionState == .stopping || AgentVisualMotion.animates(session.state)) {
-                AgentOrbView(state: AgentOrbStateMapper.state(for: interactionState, session: session), size: 20, speed: visualPreferences.orbSpeed)
+                AgentLiveOrbView(session: session, interaction: interactionState, size: 20, speed: visualPreferences.orbSpeed)
             } else {
                 Image(systemName: interactionSymbol)
                     .font(.system(size: 7.5, weight: .semibold))

@@ -264,4 +264,45 @@ final class AgentProcessingSemanticTests: XCTestCase {
         }
         XCTAssertFalse(AgentVisualMotion.animates(current.state))
     }
+
+    func testCoarseActiveOrbFallbackRotatesButTypedSemanticsWin() throws {
+        var session = try started()
+        session.state = .working
+        session.isWorking = true
+        session.processingActivities.removeAll()
+
+        let start = Date(timeIntervalSinceReferenceDate: 10_000)
+        let states = (0..<7).map {
+            AgentOrbStateMapper.liveState(
+                for: session,
+                at: start.addingTimeInterval(Double($0) * AgentOrbStateMapper.fallbackRotationInterval)
+            )
+        }
+        XCTAssertEqual(
+            Set(states),
+            Set([.solving, .shaping, .searching, .listening, .working, .weaving, .composing])
+        )
+
+        session.processingActivities[AgentCorrelationID(rawValue: "search")] =
+            AgentProcessingActivity(kind: .searching, startedAt: start)
+        XCTAssertFalse(AgentOrbStateMapper.usesFallbackRotation(for: session))
+        XCTAssertEqual(AgentOrbStateMapper.liveState(for: session, at: start), .searching)
+        XCTAssertEqual(
+            AgentOrbStateMapper.liveState(
+                for: session,
+                at: start.addingTimeInterval(AgentOrbStateMapper.fallbackRotationInterval * 4)
+            ),
+            .searching
+        )
+
+        XCTAssertEqual(
+            AgentOrbStateMapper.liveState(for: .connecting, session: session, at: start),
+            .connecting
+        )
+        XCTAssertEqual(
+            AgentOrbStateMapper.liveState(for: .submitting, session: session, at: start),
+            .composing
+        )
+    }
+
 }

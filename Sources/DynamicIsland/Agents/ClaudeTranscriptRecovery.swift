@@ -179,7 +179,8 @@ struct ClaudeTranscriptRecoveryParser: Sendable {
                             payload: .command(AgentCommandEvent(
                                 executable: executable,
                                 success: nil,
-                                exitCode: nil
+                                exitCode: nil,
+                                processingKind: .executing
                             )),
                             recordID: uuid,
                             discriminator: "command-start"
@@ -196,7 +197,8 @@ struct ClaudeTranscriptRecoveryParser: Sendable {
                                 name: toolName,
                                 category: Self.toolCategory(toolName),
                                 summary: nil,
-                                success: nil
+                                success: nil,
+                                processingKind: Self.processingKind(forToolName: toolName)
                             )),
                             recordID: uuid,
                             discriminator: "tool-start"
@@ -223,7 +225,8 @@ struct ClaudeTranscriptRecoveryParser: Sendable {
                             payload: .command(AgentCommandEvent(
                                 executable: executable,
                                 success: success,
-                                exitCode: nil
+                                exitCode: nil,
+                                processingKind: .executing
                             )),
                             recordID: uuid,
                             discriminator: "command-end"
@@ -239,7 +242,8 @@ struct ClaudeTranscriptRecoveryParser: Sendable {
                                 name: name,
                                 category: Self.toolCategory(name),
                                 summary: nil,
-                                success: success
+                                success: success,
+                                processingKind: Self.processingKind(forToolName: name)
                             )),
                             recordID: uuid,
                             discriminator: "tool-end"
@@ -435,6 +439,21 @@ struct ClaudeTranscriptRecoveryParser: Sendable {
         if lower == "read" || lower.contains("search") || lower.contains("glob") || lower.contains("grep") { return "read" }
         if lower.contains("web") || lower.contains("browser") { return "web" }
         return "tool"
+    }
+
+    private static func processingKind(forToolName name: String) -> AgentProcessingKind {
+        let lower = name.lowercased()
+        if lower.contains("web") || lower.contains("browser") ||
+            lower.contains("search") || lower.contains("glob") || lower.contains("grep") {
+            return .searching
+        }
+        if lower == "read" || lower.contains("read") {
+            return .listening
+        }
+        if lower.contains("task") || lower.contains("agent") {
+            return .connecting
+        }
+        return .executing
     }
 
     private static func boundedString(_ value: Any?, maximumBytes: Int) -> String? {

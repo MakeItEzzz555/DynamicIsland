@@ -2392,8 +2392,8 @@ struct AgentCompactRoutineLeadingView: View {
         HStack(spacing: 5) {
             // Compact active-agent presence follows the chat visual language:
             // semantic ThinkingOrb for activity; BotAvatar remains Feed identity.
-            AgentOrbView(
-                state: AgentOrbStateMapper.state(for: session),
+            AgentLiveOrbView(
+                session: session,
                 size: 18,
                 speed: visualPreferences.orbSpeed,
                 terminal: !AgentVisualMotion.animates(session.state)
