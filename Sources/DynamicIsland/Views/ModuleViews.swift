@@ -17,6 +17,8 @@ struct AudioVisualizerView: View {
     var accentColor: Color = ArtworkAccentColorExtractor.fallbackColor
     var variant: AudioVisualizerVariant = .compact
     var barCount = 12
+    /// Collapsed (always-on) visualizers use the cheaper ambient cadence.
+    var cadence: IslandFrameCadence.Surface = .expandedDecoration
     var pauseDuringShellMorph = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.isShellMorphing) private var isShellMorphing
@@ -24,7 +26,7 @@ struct AudioVisualizerView: View {
     @State private var playbackHoldGeneration = 0
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 24.0, paused: !shouldAnimateContinuously)) { timeline in
+        TimelineView(.animation(minimumInterval: IslandFrameCadence.interval(cadence), paused: !shouldAnimateContinuously)) { timeline in
             bars(
                 tick: shouldAnimateContinuously ? timeline.date.timeIntervalSinceReferenceDate : nil,
                 opacity: visualizerOpacity

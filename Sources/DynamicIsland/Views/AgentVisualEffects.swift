@@ -382,7 +382,7 @@ struct VoiceBeamView: View {
 
     var body: some View {
         let config = configuration.normalized()
-        AgentVisualTimeline(interval: 1.0 / 30.0, paused: reduceMotion || !config.animationEnabled, runsWhileInactive: true) { time in
+        AgentVisualTimeline(interval: IslandFrameCadence.interval(.expandedDecoration), paused: reduceMotion || !config.animationEnabled, runsWhileInactive: true) { time in
             GeometryReader { proxy in
                 let t = time * config.flow
                 Canvas { context, size in

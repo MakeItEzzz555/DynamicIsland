@@ -45,7 +45,7 @@ struct AgentOrbView: View {
 
     var body: some View {
         let stopped = paused || terminal || reduceMotion || !visible || renderTime != nil
-        TimelineView(.animation(minimumInterval: 1 / 30, paused: stopped)) { tick in
+        TimelineView(.animation(minimumInterval: IslandFrameCadence.interval(.expandedDecoration), paused: stopped)) { tick in
             Canvas { context, _ in
                 let t = renderTime ?? (reduceMotion ? 0.6 : playback.sample(tick.date.timeIntervalSinceReferenceDate, paused: stopped))
                 let progress = stopped ? 1 : min(1, max(0, tick.date.timeIntervalSince(changedAt) / 0.24))
@@ -153,7 +153,7 @@ struct BotAvatarView: View {
         let box = side * (compact ? (config.hat == .none ? 0.82 : 0.68) : 1.0)
         let stopped = paused || fidelity.paused || reduceMotion || !visible || renderTime != nil || fidelity.poseEnabled || config.motionStrength == 0
         let interactive = config.interactive && interactionEnabled && !reduceMotion && !paused && !fidelity.paused && !fidelity.poseEnabled
-        TimelineView(.animation(minimumInterval: 1/30, paused: stopped)) { tick in
+        TimelineView(.animation(minimumInterval: IslandFrameCadence.interval(.expandedDecoration), paused: stopped)) { tick in
             Canvas { context, _ in
                 var pose: BotAvatarPose
                 if let frozenTime = renderTime {

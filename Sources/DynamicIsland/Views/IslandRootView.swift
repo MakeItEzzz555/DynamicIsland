@@ -1895,7 +1895,8 @@ private struct AgentNotchGlowBorder: View {
     let reduceMotion: Bool
 
     private var frameInterval: Double {
-        ProcessInfo.processInfo.isLowPowerModeEnabled ? (1.0 / 15.0) : (1.0 / 25.0)
+        // Always-on collapsed glow: ambient cadence (60 Hz, 30 in Low Power).
+        IslandFrameCadence.interval(.ambient)
     }
 
     var body: some View {
@@ -2189,6 +2190,7 @@ struct CompactIslandView: View {
                         accentColor: visualizerColor,
                         variant: .compact,
                         barCount: 7,
+                        cadence: .ambient,
                         pauseDuringShellMorph: settings.disableVisualizerDuringMorph
                     )
                 }
