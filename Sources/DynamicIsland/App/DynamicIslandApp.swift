@@ -526,10 +526,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             peekDuration: settings.agentPeekDurationSeconds,
             completionAlertsEnabled: settings.agentCompletionAlertsEnabled,
             approvalAlertsEnabled: settings.agentApprovalAlertsEnabled,
-            // AgentNotch plays no notification sound (see
-            // AgentNotificationFeedback.swift), so sound intents stay off.
-            soundsEnabled: false
+            // DynamicIsland's completion chime (AgentNotch itself is silent;
+            // see AgentNotificationFeedback.swift). The feedback policy lets
+            // only fresh completed-task intents through, once per event.
+            soundsEnabled: settings.agentCompletionSoundEnabled
         )
+        SystemAgentNotificationFeedback.shared.policy =
+            AgentNotificationFeedbackPolicy(completionSoundEnabled: settings.agentCompletionSoundEnabled)
         agentAttention.setEnabled(settings.overlayEnabled && settings.agentActivityEnabled)
     }
 

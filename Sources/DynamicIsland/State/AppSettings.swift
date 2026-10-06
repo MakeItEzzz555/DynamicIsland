@@ -222,6 +222,9 @@ public final class AppSettings: ObservableObject {
     @Published public var agentCompletionAlertsEnabled: Bool { didSet { save(agentCompletionAlertsEnabled, for: Key.agentCompletionAlertsEnabled) } }
     @Published public var agentApprovalAlertsEnabled: Bool { didSet { save(agentApprovalAlertsEnabled, for: Key.agentApprovalAlertsEnabled) } }
     @Published public var agentSoundsEnabled: Bool { didSet { save(agentSoundsEnabled, for: Key.agentSoundsEnabled) } }
+    /// One subtle system chime when an agent task completes (DynamicIsland
+    /// policy; AgentNotch itself is silent). New key, default on.
+    @Published public var agentCompletionSoundEnabled: Bool { didSet { save(agentCompletionSoundEnabled, for: Key.agentCompletionSoundEnabled) } }
     @Published public var agentUsageMetricsEnabled: Bool { didSet { save(agentUsageMetricsEnabled, for: Key.agentUsageMetricsEnabled) } }
     /// Record Activities: explicit opt-in, local normalized events only.
     @Published public var agentActivityRecordingEnabled: Bool { didSet { save(agentActivityRecordingEnabled, for: Key.agentActivityRecordingEnabled) } }
@@ -482,6 +485,7 @@ public final class AppSettings: ObservableObject {
         agentCompletionAlertsEnabled = Self.bool(defaults, Key.agentCompletionAlertsEnabled, true)
         agentApprovalAlertsEnabled = Self.bool(defaults, Key.agentApprovalAlertsEnabled, true)
         agentSoundsEnabled = Self.bool(defaults, Key.agentSoundsEnabled, true)
+        agentCompletionSoundEnabled = Self.bool(defaults, Key.agentCompletionSoundEnabled, true)
         agentUsageMetricsEnabled = Self.bool(defaults, Key.agentUsageMetricsEnabled, true)
         agentActivityRecordingEnabled = Self.bool(defaults, Key.agentActivityRecordingEnabled, false)
         agentPeekDurationSeconds = Self.double(defaults, Key.agentPeekDurationSeconds, 5.0)
@@ -713,7 +717,7 @@ public final class AppSettings: ObservableObject {
         reset(keys: [
             Key.showTrayTab, Key.showTimerTab, Key.showStatsTab, Key.showToolsTab, Key.showAgentsTab,
             Key.agentActivityEnabled, Key.agentCompletionAlertsEnabled, Key.agentApprovalAlertsEnabled,
-            Key.agentSoundsEnabled, Key.agentUsageMetricsEnabled, Key.agentActivityRecordingEnabled,
+            Key.agentSoundsEnabled, Key.agentCompletionSoundEnabled, Key.agentUsageMetricsEnabled, Key.agentActivityRecordingEnabled,
             Key.agentPeekDurationSeconds,
             Key.defaultExpandedTab,
             Key.mediaEnabled, Key.showMediaWhenPaused, Key.showMediaWhenNoSource,
@@ -807,6 +811,7 @@ public final class AppSettings: ObservableObject {
         agentCompletionAlertsEnabled = Self.bool(defaults, Key.agentCompletionAlertsEnabled, true)
         agentApprovalAlertsEnabled = Self.bool(defaults, Key.agentApprovalAlertsEnabled, true)
         agentSoundsEnabled = Self.bool(defaults, Key.agentSoundsEnabled, true)
+        agentCompletionSoundEnabled = Self.bool(defaults, Key.agentCompletionSoundEnabled, true)
         agentUsageMetricsEnabled = Self.bool(defaults, Key.agentUsageMetricsEnabled, true)
         agentActivityRecordingEnabled = Self.bool(defaults, Key.agentActivityRecordingEnabled, false)
         agentPeekDurationSeconds = Self.double(defaults, Key.agentPeekDurationSeconds, 5.0)
@@ -1378,6 +1383,7 @@ private enum Key {
     static let agentCompletionAlertsEnabled = "agentCompletionAlertsEnabled"
     static let agentApprovalAlertsEnabled = "agentApprovalAlertsEnabled"
     static let agentSoundsEnabled = "agentSoundsEnabled"
+    static let agentCompletionSoundEnabled = "agentCompletionSoundEnabled"
     static let agentUsageMetricsEnabled = "agentUsageMetricsEnabled"
     static let agentActivityRecordingEnabled = "agentActivityRecordingEnabled"
     static let agentPeekDurationSeconds = "agentPeekDurationSeconds"
@@ -1542,7 +1548,7 @@ private enum Key {
         shellAnimationSpeed, contentAnimationEnabled, contentStaggerEnabled, contentStaggerAmount,
         useBlurTransitions, useScaleTransitions, showIslandTab, showTrayTab,
         showTimerTab, showStatsTab, showToolsTab, showAgentsTab, agentActivityEnabled,
-        agentCompletionAlertsEnabled, agentApprovalAlertsEnabled, agentSoundsEnabled,
+        agentCompletionAlertsEnabled, agentApprovalAlertsEnabled, agentSoundsEnabled, agentCompletionSoundEnabled,
         agentUsageMetricsEnabled, agentActivityRecordingEnabled, agentPeekDurationSeconds,
         agentVisualPreferences, showActivitiesTab, showLiveActivitiesTab, showGesturesTab,
         rememberLastSelectedTab, defaultExpandedTab, mediaEnabled, showMediaWhenPaused,

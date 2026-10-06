@@ -448,6 +448,15 @@ struct SettingsView: View {
                     .disabled(!settings.agentActivityEnabled)
                 Toggle("Completion alerts", isOn: $settings.agentCompletionAlertsEnabled)
                     .disabled(!settings.agentActivityEnabled)
+                HStack {
+                    Toggle("Agent task completion sound", isOn: $settings.agentCompletionSoundEnabled)
+                        .disabled(!settings.agentActivityEnabled || !settings.agentCompletionAlertsEnabled)
+                    Spacer()
+                    Button("Preview") { SystemNotificationSoundPlayer.play(.completionChime) }
+                        .controlSize(.small)
+                        .disabled(!settings.agentActivityEnabled)
+                }
+                .help("One subtle system chime (Glass) when an agent finishes a task. Uses the completion alert, so it follows Completion alerts.")
                 Toggle("Input alerts", isOn: $settings.agentApprovalAlertsEnabled)
                     .disabled(!settings.agentActivityEnabled)
                 Toggle("Usage metrics", isOn: $settings.agentUsageMetricsEnabled)

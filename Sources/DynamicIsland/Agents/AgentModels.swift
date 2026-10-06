@@ -633,6 +633,9 @@ struct AgentAttentionSoundIntent: Equatable, Sendable {
     let generation: AgentAttentionGeneration
     let eventID: AgentEventID
     let reason: AgentAttentionReason
+    /// When the underlying event happened. Lets feedback stay silent for
+    /// recovered/replayed history that is only now being projected.
+    var occurredAt: Date = .distantPast
 }
 
 struct AgentAttentionPolicyOptions: Equatable, Sendable {
@@ -717,7 +720,8 @@ enum AgentAttentionPolicyEngine {
                 soundIntent = AgentAttentionSoundIntent(
                     generation: nextGeneration,
                     eventID: event.eventID,
-                    reason: event.reason
+                    reason: event.reason,
+                    occurredAt: event.timestamp
                 )
             }
         }

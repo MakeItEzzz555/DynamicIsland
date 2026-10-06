@@ -94,6 +94,8 @@ enum SettingsAuditCatalog {
         + visual(["agentUsageMetricsEnabled"], .agents)
         + entries(["agentActivityEnabled", "agentCompletionAlertsEnabled", "agentApprovalAlertsEnabled",
                    "agentPeekDurationSeconds"], .behavioral, "Agent monitoring and alert behavior.")
+        + entries(["agentCompletionSoundEnabled"], .behavioral,
+                  "Agent task completion sound: one system chime (Glass, referenced by name) per fresh completed task; deduplicated by exact event.")
         + entries(["agentActivityRecordingEnabled"], .behavioral,
                   "Record Activities: opt-in local JSON Lines of normalized agent events (no prompts or transcripts), 14 days / 20 MB.")
         + entries(["agentSoundsEnabled"], .deprecatedHidden,
