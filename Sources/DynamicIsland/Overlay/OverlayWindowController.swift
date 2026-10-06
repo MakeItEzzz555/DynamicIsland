@@ -698,7 +698,7 @@ final class OverlayWindowController {
         let previousExpanded = targetExpandedFrame
         targetCollapsedFrame = geometry.collapsedFrame
         targetExpandedFrame = geometry.expandedFrame
-        let targetPanel = expandedPresentationProfile.panelFrame(forExpandedFrame: geometry.expandedFrame)
+        let targetPanel = expandedPresentationProfile.panelFrame(forExpandedFrame: geometry.expandedFrame, collapsedFrame: geometry.collapsedFrame)
         if animated, let previousCollapsed, let previousExpanded {
             morphInsideStablePanel(geometry: geometry, targetPanel: targetPanel,
                                    previousCollapsed: previousCollapsed, previousExpanded: previousExpanded, reason: reason)
@@ -737,7 +737,7 @@ final class OverlayWindowController {
                 self.targetCollapsedFrame = correctedGeometry.collapsedFrame
                 self.targetExpandedFrame = correctedGeometry.expandedFrame
                 self.updateLayout(
-                    panelFrame: self.expandedPresentationProfile.panelFrame(forExpandedFrame: correctedGeometry.expandedFrame),
+                    panelFrame: self.expandedPresentationProfile.panelFrame(forExpandedFrame: correctedGeometry.expandedFrame, collapsedFrame: correctedGeometry.collapsedFrame),
                     collapsedFrame: correctedGeometry.collapsedFrame,
                     expandedFrame: correctedGeometry.expandedFrame,
                     hasHardwareNotch: correctedGeometry.hasHardwareNotch,
@@ -750,7 +750,7 @@ final class OverlayWindowController {
                     animated: false
                 )
                 self.applyCanonicalPanelFrame(
-                    self.expandedPresentationProfile.panelFrame(forExpandedFrame: correctedGeometry.expandedFrame),
+                    self.expandedPresentationProfile.panelFrame(forExpandedFrame: correctedGeometry.expandedFrame, collapsedFrame: correctedGeometry.collapsedFrame),
                     reason: "\(reason) corrected animated=\(animated)"
                 )
                 self.lastAppliedGeometrySignature = correctedSignature
@@ -1717,7 +1717,7 @@ final class OverlayWindowController {
         targetExpandedFrame = geometry.expandedFrame
 
         updateLayout(
-            panelFrame: expandedPresentationProfile.panelFrame(forExpandedFrame: geometry.expandedFrame),
+            panelFrame: expandedPresentationProfile.panelFrame(forExpandedFrame: geometry.expandedFrame, collapsedFrame: geometry.collapsedFrame),
             collapsedFrame: geometry.collapsedFrame,
             expandedFrame: geometry.expandedFrame,
             hasHardwareNotch: geometry.hasHardwareNotch,
@@ -1730,7 +1730,7 @@ final class OverlayWindowController {
         )
 
         applyCanonicalPanelFrame(
-            expandedPresentationProfile.panelFrame(forExpandedFrame: geometry.expandedFrame),
+            expandedPresentationProfile.panelFrame(forExpandedFrame: geometry.expandedFrame, collapsedFrame: geometry.collapsedFrame),
             reason: "expandFromCollapsedPreparingGeometry"
         )
         lastAppliedGeometrySignature = currentGeometrySignature

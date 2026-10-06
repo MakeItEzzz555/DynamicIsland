@@ -326,6 +326,16 @@ struct ExpandedPresentationProfile: Equatable, Sendable {
         }
     }
 
+    /// The panel must contain the collapsed shell as well as the expanded one
+    /// (+ accessory). With a narrow expanded page (compact header) a wide
+    /// collapsed live activity was wider than the panel, and the window edges
+    /// clipped its rounded ends, shoulders and glow square.
+    func panelFrame(forExpandedFrame expanded: CGRect, collapsedFrame collapsed: CGRect) -> CGRect {
+        let panel = panelFrame(forExpandedFrame: expanded)
+        guard collapsed.width > 0, collapsed.height > 0, collapsed.minX.isFinite, collapsed.maxX.isFinite else { return panel }
+        return panel.union(collapsed).integral
+    }
+
     /// Panel frame: the expanded shell frame extended downward by the
     /// accessory height (screen coordinates, origin bottom-left).
     func panelFrame(forExpandedFrame expanded: CGRect) -> CGRect {
