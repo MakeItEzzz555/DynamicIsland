@@ -191,3 +191,11 @@ Size contracts:
 - Shell inset 12 pt visible on each side; vertical notch clearance equals the horizontal one (`notchContentClearance`). A top row inside the free header gap sits exactly one clearance below the notch.
 - Agents top lane: a Compact widget placed directly before or after the usage band occupies that wing when it shortens the layout; otherwise it stays in the grid. Preview == commit.
 - Page morphs keep the shell's midX and top edge fixed in every frame (the canvas is pinned top-leading in its host; see context.md for the measurement).
+
+## Compact header, console switching and completion audio (2026-10-07, after 1859042)
+
+- A lone widget that is wide enough for the full control row moves the header into one row directly below the notch; the shell then hugs the widget instead of the notch-wide header. Otherwise the familiar winged header remains.
+- One bottom clearance (12 pt scaled) below the lowest widget.
+- Chat / Terminal buttons switch the surface inside the same widget; they never add widgets. Separate Chat and Terminal widgets swap rather than showing the same surface twice.
+- Compact Terminal is a real terminal on the shared shell session.
+- Agent task completion plays one subtle system chime (Settings > AI Agents > Agent task completion sound, with Preview).
