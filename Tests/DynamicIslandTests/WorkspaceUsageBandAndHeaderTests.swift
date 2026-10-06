@@ -53,7 +53,7 @@ final class WorkspaceUsageBandAndHeaderTests: XCTestCase {
         XCTAssertFalse(config.widgets(on: .agents).contains { $0.kind.isUsage })
         let without = WorkspaceWidgetLayoutProjection.preferredContentSize(regions: config.regions(on: .agents),
             maximumSize: maximum, metrics: metrics)
-        let band = IslandWidget.agentUsage.layoutTraits.preferred.height * metrics.expandedCardScale + metrics.spacing(8)
+        let band = WidgetGridMetrics.bandSize(.agentUsage, .standard, metrics: metrics).height + metrics.spacing(8)
         XCTAssertEqual(with.height - without.height, band, accuracy: 0.5)
         // The shell resolver adds nothing for usage outside the configuration.
         let settings = settings()
@@ -119,8 +119,11 @@ final class WorkspaceUsageBandAndHeaderTests: XCTestCase {
         let regions = config.regions(on: .agents)
         let projection = WorkspaceWidgetLayoutProjection.make(regions: regions, availableSize: .init(width: editing.width - 40,
             height: editing.height), metrics: metrics, editing: true)
-        XCTAssertEqual(projection.rows, 2, "Chat, Terminal and Feed stay in one row under the usage band")
-        XCTAssertGreaterThan(editing.width, editing.height * 1.6, "edit mode grows horizontally, not into tall blocks")
+        // Grid grammar: Standard Chat + Standard Terminal need four columns;
+        // the default Feed is Compact. Rows wrap only when the display is too
+        // narrow - never by rewriting the saved sizes.
+        XCTAssertLessThanOrEqual(projection.rows, 3)
+        XCTAssertGreaterThan(editing.width, editing.height, "edit mode stays wider than tall")
     }
 
     func testCompactNotchedDisplayKeepsChatAndTerminalSideBySideWhileEditing() {
@@ -140,8 +143,11 @@ final class WorkspaceUsageBandAndHeaderTests: XCTestCase {
         let horizontal = IslandShellLayout.expandedHorizontalPadding(isNotchIntegrated: true) * 2
         let projection = WorkspaceWidgetLayoutProjection.make(regions: config.regions(on: .agents),
             availableSize: .init(width: size.width - horizontal, height: 500), metrics: compact, editing: true)
-        XCTAssertEqual(projection.rows, 1, "edit mode widens instead of stacking Chat over Terminal")
-        XCTAssertGreaterThan(size.width, size.height)
+        // Two Standards need four Agents columns; a 1147 pt display fits three,
+        // so the grid wraps (responsive fallback) instead of squeezing cells
+        // below readable size or rewriting the saved sizes.
+        XCTAssertEqual(projection.rows, 2)
+        XCTAssertEqual(projection.columns, 3, "the wide Agents workspace keeps three columns")
         XCTAssertLessThanOrEqual(size.width, 1147 - 280 + 0.5, "within the safe display width")
     }
 

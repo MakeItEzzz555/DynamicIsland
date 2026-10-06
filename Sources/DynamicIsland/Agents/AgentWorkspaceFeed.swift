@@ -135,6 +135,27 @@ enum AgentWorkspaceFeedProjection {
     }
 }
 
+/// Feed density per semantic widget size. Presentation only: the store keeps
+/// its full bounded history at every size.
+enum AgentWorkspaceFeedDensity {
+    static let standardLimit = 12
+
+    /// Compact shows one row, preferring a pending approval over the latest
+    /// event so an actionable request is never hidden. `hidden` counts what
+    /// the size leaves out.
+    static func visible(_ items: [AgentWorkspaceFeedItem], size: WidgetPresentationSize?) -> (items: [AgentWorkspaceFeedItem], hidden: Int) {
+        switch size {
+        case .compact?:
+            guard let first = items.first(where: { $0.status == .pending }) ?? items.first else { return ([], 0) }
+            return ([first], items.count - 1)
+        case .standard?:
+            return (Array(items.prefix(standardLimit)), max(0, items.count - standardLimit))
+        case .large?, nil:
+            return (items, 0)
+        }
+    }
+}
+
 @MainActor
 final class AgentWorkspaceFeedStore: ObservableObject {
     @Published private(set) var items: [AgentWorkspaceFeedItem] = []

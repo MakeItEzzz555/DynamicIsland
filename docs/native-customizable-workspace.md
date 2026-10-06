@@ -141,3 +141,25 @@ The interrupted Claude pass found a resumed large transcript pinning the app nea
 - Agent Chat height is content-adaptive between a readable floor and the previous fixed height (`AgentChatHeightPolicy`, `agentChatHeightHint`); long transcripts keep the previous geometry and scroll; the Terminal stack page keeps its native height.
 - Apply commits once, ends editing and collapses the island through the normal sequence; Cancel never collapses.
 - Packaged: resumable Chat 408 -> 212 pt, Terminal 408 pt, Chat/Terminal round trip stable, long transcript 408 pt; Send by mouse click and by Return; Apply/Cancel cycles. See context.md.
+
+## Semantic widget sizes and compact Media (2026-10-06, after c6cbe6b)
+
+Replaces the 0.85 / 1.0 / 1.15 scale factors and `WidgetLayoutTraits` with Apple-style size classes. Persisted raw values are unchanged (`compact` / `standard` / `large`, schema 2).
+
+- Grid: `WidgetGridMetrics` is the single source. Unit S = 162 pt (Island) or 236 pt (Agents) x `expandedCardScale`; gutter `spacing(8)`. Compact = S x S, Standard = (2S + g) x S, Large = (2S + g) x (2S + g). A host narrower than a Standard shrinks the unit; narrow displays wrap instead of rewriting saved sizes.
+- Packing (`WorkspaceWidgetLayoutProjection`): a row-major cursor places each span in user order (no masonry reshuffle). `stacksBelowPrevious` places a region under its anchor, and packing continues beside the anchor so no cells are stranded. Usage widgets are band strips whose size changes density (56 / 72 / 96 pt), not span. Agents keeps at least three columns when they fit.
+- Fill: outside editing, a grid narrower than the notch-safe header minimum scales its unit uniformly (capped at 1.5x), so Compact stays square and Standard stays 2:1. `preferredContentSize(minimumWidth:)` uses the same fill, so resolver and projection heights agree. Editing keeps the intrinsic, top-anchored drag geometry.
+- Widgets read `\.workspaceWidgetPlacement.presentationSize` and compose a dedicated layout per class. Size never applies `scaleEffect` and never recreates a controller.
+- Editor: `WorkspaceWidgetSizeControl` (three glyphs drawn at 1x1 / 2x1 / 2x2, current size filled, VoiceOver "Compact" / "Standard" / "Large"), the context menu and the accessibility actions all change only the draft. Neighbours and the shell preview with the `.smooth` resize spring (none under Reduce Motion); Apply persists; Cancel restores.
+
+Size contracts:
+
+| Widget | Compact (1x1) | Standard (2x1) | Large (2x2) |
+| --- | --- | --- | --- |
+| Media | Artwork-first square (`MediaCompactLayout`): artwork 45-56% of width centered at the top; title / artist / source; prev / play-pause / next; short scrubbable progress. Content drops by priority (time labels, volume, separate source line folded into the artist line, progress, source, artist) | `MediaStandardLayout`: artwork on the left; title / artist / platform + visualizer centered beside it; transport, then full-width progress (inline times) and volume filling the rest of the rectangle | Larger artwork, two-line title, full metadata, roomier transport, progress with times beneath, volume |
+| Timer | Countdown, short ruler, play/pause, reset | Full mode row, ruler, controls | Mode row, prominent countdown, ruler, full control row |
+| Chat | Read-only summary (`AgentCompactSessionSummary`): orb, provider, live state, project, latest sanitized activity, approval attention | Transcript and composer, adaptive height | Same, taller cap |
+| Terminal | Summary; the PTY stays alive (the view unmounts like the stack's hidden page) | Interactive terminal | Interactive terminal |
+| Feed | One row, preferring a pending approval, plus an earlier-event count | Latest 12 rows | Full bounded history |
+| Usage | 40 pt rings, 56 pt strip | 48 pt rings, 72 pt strip | 64 pt rings, 96 pt strip |
+| Calendar, Files, Clipboard, Shortcuts, Activities, Workspace | Compose into the allocated cell; lists show what fits | Same | Same, more rows |

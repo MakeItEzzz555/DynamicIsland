@@ -39,6 +39,102 @@ struct FocusTimerView: View {
     private var distributesRows: Bool { !showsPanel && widgetPlacement.fillsRow }
 
     var body: some View {
+        // Workspace grid: dedicated Compact / Large compositions; Standard is
+        // the full functional layout below.
+        if !showsPanel && widgetPlacement.size.height > 0 && widgetPlacement.presentationSize == .compact {
+            compactBody
+        } else if !showsPanel && widgetPlacement.size.height > 0 && widgetPlacement.presentationSize == .large {
+            largeBody
+        } else {
+            standardBody
+        }
+    }
+
+    private var ruler: some View {
+        TimerRuler(snapshot: snapshot, now: { [timer] in timer.clockNow }, seconds: selectedSeconds,
+                   resolution: resolution, extraMotion: !settings.reduceExtraMotion, onCommit: commitSelection, onDragging: { dragging = $0 })
+            .id(mode)
+            .frame(height: TimerRulerScale.rulerHeight)
+    }
+
+    private var playPauseControl: some View {
+        control(timer.isRunning ? "pause.fill" : "play.fill", label: timer.isRunning ? "Pause timer" : "Start or resume timer", selected: true) {
+            if timer.isRunning { timer.pause() }
+            else if case .paused = snapshot.phase { timer.resume() }
+            else { let value = selectedSeconds.wrappedValue; commitSelection(value); timer.start(seconds: value); onStarted() }
+        }
+    }
+
+    /// Compact (1x1): countdown, a short ruler, the primary play/pause action.
+    private var compactBody: some View {
+        VStack(spacing: 4) {
+            TimerCountdownLabel(snapshot: snapshot, now: { [timer] in timer.clockNow },
+                                selectedSeconds: selectedSeconds.wrappedValue, fontSize: 22)
+            ruler
+            HStack(spacing: 6) {
+                playPauseControl
+                control("stopwatch.fill", label: "Reset timer", selected: false) { timer.stop() }
+            }
+        }
+        .padding(6)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Focus and break timer")
+    }
+
+    /// Large (2x2): mode selection, a prominent countdown, the ruler with room
+    /// to breathe, and the full control row with zoom.
+    private var largeBody: some View {
+        VStack(spacing: 10) {
+            standardModeRow
+            Spacer(minLength: 0)
+            TimerCountdownLabel(snapshot: snapshot, now: { [timer] in timer.clockNow },
+                                selectedSeconds: selectedSeconds.wrappedValue, fontSize: 34)
+            ruler
+            Spacer(minLength: 0)
+            HStack(spacing: 12) {
+                playPauseControl
+                control(settings.timerSoundEnabled ? "speaker.wave.2.fill" : "speaker.slash.fill", label: "Timer completion sound", selected: settings.timerSoundEnabled) {
+                    settings.timerSoundEnabled.toggle()
+                }
+                control("stopwatch.fill", label: "Reset timer", selected: false) { timer.stop() }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .animation(reduceMotion || settings.reduceExtraMotion ? nil : .timingCurve(0.22, 1, 0.36, 1, duration: 0.15), value: storedMode)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Focus and break timer")
+        .onChange(of: storedMode) { _, _ in previewSeconds = nil; dragging = false }
+    }
+
+    private var standardModeRow: some View {
+        HStack(spacing: 5) {
+            ForEach(FocusTimerMode.allCases) { item in
+                Button(item.title) { storedMode = item.rawValue }
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(item == mode ? Color.orange : Color.white.opacity(0.6))
+                    .padding(.horizontal, 10).frame(height: 23)
+                    .background(item == mode ? Color.orange.opacity(0.18) : Color.white.opacity(0.08), in: Capsule())
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(item == mode ? .isSelected : [])
+            }
+            Spacer(minLength: 3)
+            Button {
+                resolution = resolution.next
+            } label: {
+                Label(resolution.title, systemImage: resolution == .seconds ? "plus.magnifyingglass"
+                    : resolution == .minutes ? "magnifyingglass" : "minus.magnifyingglass")
+                    .font(.system(size: 9, weight: .medium))
+                    .padding(.horizontal, 5).frame(height: 23)
+            }
+            .buttonStyle(.plain).disabled(dragging)
+            .accessibilityLabel("Change timer ruler zoom")
+            .accessibilityValue("\(resolution.title) per tick")
+        }
+    }
+
+    private var standardBody: some View {
         VStack(spacing: distributesRows ? 0 : 6) {
             HStack(spacing: 5) {
                 ForEach(FocusTimerMode.allCases) { item in
@@ -115,6 +211,7 @@ private struct TimerCountdownLabel: View {
     let snapshot: TimerTimingSnapshot
     let now: () -> Duration
     let selectedSeconds: Int
+    var fontSize: CGFloat = 20
     @State private var visible = false
     @Environment(\.displayScale) private var displayScale
 
@@ -125,7 +222,7 @@ private struct TimerCountdownLabel: View {
                 ? TimerCountdownPresentation.displayText(remaining: TimerCountdownPresentation.remainingSeconds(snapshot, now: now()))
                 : TimerCountdownPresentation.displayText(remaining: Double(selectedSeconds))
             Text(text)
-                .font(.system(size: 20, weight: .semibold, design: .rounded)).monospacedDigit()
+                .font(.system(size: fontSize, weight: .semibold, design: .rounded)).monospacedDigit()
                 .foregroundStyle(.orange).lineLimit(1).minimumScaleFactor(0.75)
                 .contentTransition(.identity)
                 .accessibilityLabel("Timer, \(text)")

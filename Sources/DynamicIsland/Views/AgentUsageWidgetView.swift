@@ -31,11 +31,15 @@ struct AgentUsageWidgetView: View {
     let scope: Scope
     /// Smaller rings on narrow surfaces; hit targets are informational only.
     var compact = false
+    @Environment(\.workspaceWidgetPlacement) private var widgetPlacement
 
     var body: some View {
         let _ = AgentPerformanceProbe.count("agents.usage.body")
         let groups = AgentWorkspaceUsageProjection.providerGroups(accountUsage: managedControl.accountUsageByProvider)
-        AgentUsageComposition(groups: scope.providers.map { ($0, groups[$0] ?? []) }, compact: compact)
+        // Grid strips: size changes gauge density (56 / 72 / 96 pt strips).
+        let size = widgetPlacement.size.height > 0 ? widgetPlacement.presentationSize : .standard
+        AgentUsageComposition(groups: scope.providers.map { ($0, groups[$0] ?? []) },
+                              compact: compact || size == .compact, large: !compact && size == .large)
             .accessibilityElement(children: .contain)
             .accessibilityLabel(scope == .combined ? "Agent usage" : "\(scope.providers.first?.stableName.capitalized ?? "") usage")
     }
@@ -46,8 +50,9 @@ struct AgentUsageWidgetView: View {
 struct AgentUsageComposition: View {
     let groups: [(provider: AgentProvider, indicators: [AgentUsageIndicator])]
     var compact = false
+    var large = false
 
-    private var diameter: CGFloat { compact ? 40 : 48 }
+    private var diameter: CGFloat { compact ? 40 : large ? 64 : 48 }
 
     var body: some View {
         HStack(alignment: .center, spacing: compact ? 14 : 20) {

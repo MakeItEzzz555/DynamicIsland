@@ -145,7 +145,8 @@ struct IslandWidgetEditor: View {
         let placement = WorkspaceWidgetPlacementContext(
             isSole: regions(in: visibleConfiguration).count == 1,
             size: CGSize(width: width, height: height),
-            fillsRow: height > (region.widgets.first?.kind.layoutTraits.preferred.height ?? height) * displayMetrics.expandedCardScale + 1)
+            fillsRow: true,
+            presentationSize: WorkspaceWidgetLayoutProjection.presentationSize(of: region))
         let layers = cardLayers(region, title: title, height: height, placeholder: placeholder)
             .environment(\.workspaceWidgetPlacement, placement)
             .transformEnvironment(\.timerRulerInteractionRegistration) { if editing { $0.enabled = false } }
@@ -158,6 +159,7 @@ struct IslandWidgetEditor: View {
             .overlay { targetGlow(region) }
             .overlay { combineHint(stackedTarget) }
             .overlay(alignment: .topTrailing) { badgeOverlay(region, title: title, placeholder: placeholder) }
+            .overlay(alignment: .bottom) { sizeControlOverlay(region, title: title, placeholder: placeholder) }
             .background { frameReporter(region.id) }
     }
 
@@ -277,6 +279,16 @@ struct IslandWidgetEditor: View {
         }
     }
 
+    @ViewBuilder
+    private func sizeControlOverlay(_ region: WorkspaceWidgetRegion, title: String, placeholder: Bool) -> some View {
+        if editing && !placeholder && drag == nil {
+            WorkspaceWidgetSizeControl(selection: WorkspaceWidgetLayoutProjection.presentationSize(of: region),
+                                       widgetTitle: title) { resize(region, to: $0) }
+                .padding(.bottom, 6)
+                .transition(.opacity)
+        }
+    }
+
     private func frameReporter(_ id: WidgetID) -> some View {
         GeometryReader { geometry in
             Color.clear.preference(key: WorkspaceEditorFrameKey.self, value: [id: geometry.frame(in: .named("workspace-widget-editor"))])
@@ -321,9 +333,7 @@ struct IslandWidgetEditor: View {
         Menu("Widget Size") {
             ForEach(WidgetPresentationSize.allCases, id: \.self) { size in
                 Button {
-                    modify("Sized \(region.widgets.map { $0.kind.title }.joined(separator: " and ")) \(size.title.lowercased())") {
-                        $0.setSize(size, for: region.id)
-                    }
+                    resize(region, to: size)
                 } label: {
                     if region.widgets.allSatisfy({ $0.size == size }) { Label(size.title, systemImage: "checkmark") }
                     else { Text(size.title) }
@@ -479,8 +489,17 @@ struct IslandWidgetEditor: View {
         editing = isEditing
         WorkspaceEditorAccessibility.announce("Widget layout saved")
     }
+    /// Draft-only: neighbours and the shell preview the new grid at once;
+    /// Apply persists, Cancel restores the saved size.
     private func resize(_ region: WorkspaceWidgetRegion, to size: WidgetPresentationSize) {
-        modify("Widget size \(size.title.lowercased())") { $0.setSize(size, for: region.id) }
+        guard editing, WorkspaceWidgetLayoutProjection.presentationSize(of: region) != size
+                || !region.widgets.allSatisfy({ $0.size == size }) else { return }
+        let message = "\(region.widgets.map { $0.kind.title }.joined(separator: " and ")) size \(size.title)"
+        withAnimation(WorkspaceEditorMotion.resize(reduceMotion: reduceMotion || !extraMotion)) {
+            draft.setSize(size, for: region.id)
+        }
+        announcement = message
+        WorkspaceEditorAccessibility.announce(message)
     }
     private func shift(_ region: WorkspaceWidgetRegion, by offset: Int) {
         guard editing else { return }
@@ -828,8 +847,11 @@ private extension NSImage {
 struct WorkspaceWidgetPlacementContext: Equatable {
     var isSole = false
     var size: CGSize = .zero
-    /// The cell is taller than the widget's preferred height (shared row).
+    /// The widget owns an exact grid cell (distribute content over it).
     var fillsRow = false
+    /// Semantic size class: each widget composes a dedicated layout per class
+    /// (Compact square summary, Standard functional, Large expanded).
+    var presentationSize: WidgetPresentationSize = .standard
 }
 
 private struct WorkspaceWidgetPlacementKey: EnvironmentKey {
@@ -840,5 +862,47 @@ extension EnvironmentValues {
     var workspaceWidgetPlacement: WorkspaceWidgetPlacementContext {
         get { self[WorkspaceWidgetPlacementKey.self] }
         set { self[WorkspaceWidgetPlacementKey.self] = newValue }
+    }
+}
+
+/// Edit-mode size picker: three glyphs drawn at their grid aspect
+/// (1x1, 2x1, 2x2). The current size is filled; labels are spoken.
+struct WorkspaceWidgetSizeControl: View {
+    let selection: WidgetPresentationSize
+    let widgetTitle: String
+    let onSelect: (WidgetPresentationSize) -> Void
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(WidgetPresentationSize.allCases, id: \.self) { size in
+                let selected = size == selection
+                Button { onSelect(size) } label: {
+                    glyph(size, selected: selected)
+                        .frame(width: 26, height: 20)
+                        .background(selected ? Color.white.opacity(0.22) : .clear, in: Capsule())
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(size.title)
+                .accessibilityValue(selected ? "Selected" : "")
+                .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+                .help("\(size.title) size")
+            }
+        }
+        .padding(2)
+        .background(.black.opacity(0.62), in: Capsule())
+        .overlay(Capsule().strokeBorder(.white.opacity(0.14), lineWidth: 0.5))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(widgetTitle) size")
+    }
+
+    private func glyph(_ size: WidgetPresentationSize, selected: Bool) -> some View {
+        let span = size.span
+        let unit: CGFloat = 5, gap: CGFloat = 1
+        let width = CGFloat(span.columns) * unit + CGFloat(span.columns - 1) * gap
+        let height = CGFloat(span.rows) * unit + CGFloat(span.rows - 1) * gap
+        return RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+            .fill(selected ? Color.white : Color.white.opacity(0.45))
+            .frame(width: width, height: height)
     }
 }

@@ -377,7 +377,8 @@ struct ExpandedPresentationProfile: Equatable, Sendable {
                              height: max(1, metrics.visibleLogicalSize.height - 24 * metrics.spacingScale - vertical))
         let content = WorkspaceWidgetLayoutProjection.preferredContentSize(regions: regions,
             maximumSize: maximum, metrics: metrics, editing: editing,
-            chatHeightHint: surface == .agents ? chatHeightHint : nil)
+            chatHeightHint: surface == .agents ? chatHeightHint : nil,
+            minimumWidth: min(minimumHeaderWidth, maximum.width))
         return CGSize(width: max(content.width, min(minimumHeaderWidth, maximum.width)) + horizontal,
                       height: content.height + vertical)
     }

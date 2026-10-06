@@ -547,17 +547,30 @@ struct AgentDashboardContentView: View {
                         onDragActive: { layoutStore?.setWorkspaceDragActive($0) },
                         chatHeightHint: { [weak layoutStore] in layoutStore?.agentChatHeightHint },
                         onApplyCompleted: applyCompletion?.action) { region, height in
+                        // Compact Chat/Terminal (1x1) is a glanceable summary.
+                        // Controllers, the PTY and the transcript stay alive:
+                        // only the heavy surface is unmounted, exactly as when
+                        // the stack shows its other page.
+                        if WorkspaceWidgetLayoutProjection.presentationSize(of: region) == .compact,
+                           region.isStack || region.widgets[0].kind == .chat || region.widgets[0].kind == .terminal {
+                            let role: AgentCompactSessionSummary.Role = region.isStack ? .stack
+                                : region.widgets[0].kind == .terminal ? .terminal : .chat
+                            return AnyView(AgentCompactSessionSummary(session: selectedSession, role: role,
+                                isVisible: contentVisible && !editingWorkspace.wrappedValue,
+                                attention: AnyView(AgentWorkspaceApprovalAttentionControl(approvals: approvalControl,
+                                    selectedSessionID: selectedSession?.id, onSelect: selectAttentionSession))))
+                        }
                         if region.isStack {
                             return AnyView(AgentChatTerminalStack(presentation: workspacePresentation, isVisible: contentVisible && transcriptPresentationReady && !editingWorkspace.wrappedValue, reduceMotion: reduceMotion || (settings?.reduceExtraMotion ?? false), layoutStore: layoutStore,
                                 chat: { AnyView(chatContent(workspace: workspace, newSessionFolder: newSessionFolder, verticalLayout: AgentWorkspaceVerticalLayoutProjection.make(availableHeight: max(0, height - 30)), composerControls: composerControls, visible: contentVisible && workspacePresentation.stackPage == .chat && !editingWorkspace.wrappedValue)
-                                    .environment(\.agentChatHeightReporter, chatHeightReporter(stacked: true,
+                                    .environment(\.agentChatHeightReporter, chatHeightReporter(region: region,
                                         enabled: workspacePresentation.stackPage == .chat && !editingWorkspace.wrappedValue))) },
                                 terminal: { AnyView(terminalContent(session: selectedSession, visible: contentVisible && transcriptPresentationReady && workspacePresentation.stackPage == .terminal && !editingWorkspace.wrappedValue)) }))
                         }
                         switch region.widgets[0].kind {
                         case .chat:
                             return AnyView(chatContent(workspace: workspace, newSessionFolder: newSessionFolder, verticalLayout: AgentWorkspaceVerticalLayoutProjection.make(availableHeight: height), composerControls: composerControls, visible: contentVisible && !editingWorkspace.wrappedValue)
-                                .environment(\.agentChatHeightReporter, chatHeightReporter(stacked: false, enabled: !editingWorkspace.wrappedValue)))
+                                .environment(\.agentChatHeightReporter, chatHeightReporter(region: region, enabled: !editingWorkspace.wrappedValue)))
                         case .terminal:
                             return AnyView(terminalContent(session: selectedSession, visible: contentVisible && transcriptPresentationReady && !editingWorkspace.wrappedValue))
                         case .feed:
@@ -592,11 +605,11 @@ struct AgentDashboardContentView: View {
 
     /// Content-adaptive Chat height reporting for the customized grid. Nil
     /// (no reporting) while editing or when Terminal is the visible page.
-    private func chatHeightReporter(stacked: Bool, enabled: Bool) -> AgentChatHeightReporter? {
+    private func chatHeightReporter(region: WorkspaceWidgetRegion, enabled: Bool) -> AgentChatHeightReporter? {
         guard enabled, let layoutStore else { return nil }
-        let metrics = layoutStore.displayMetrics
-        let cap = IslandWidget.chat.layoutTraits.preferred.height * metrics.expandedCardScale
-            + (stacked ? 30 * metrics.spacingScale : 0)
+        // Cap = the Chat region's own grid cell height (Standard 1 unit, Large 2).
+        let cap = WidgetGridMetrics.make(surface: .agents, metrics: layoutStore.displayMetrics)
+            .size(for: WorkspaceWidgetLayoutProjection.presentationSize(of: region)).height
         return AgentChatHeightReporter(cap: cap) { [weak layoutStore] height in
             layoutStore?.setAgentChatHeightHint(height)
         }
@@ -2439,3 +2452,82 @@ private struct AgentSelectedSessionSurplusKey: PreferenceKey {
 
 /// Plain storage for the last measured surplus (no view publication).
 private final class AgentSurplusProbe { var surplus: CGFloat = 0 }
+
+/// Compact (1x1) Chat / Terminal / Chat+Terminal cell: avatar orb, provider,
+/// live state and the latest sanitized activity. Read-only by design: the
+/// full transcript, composer and interactive PTY live in Standard and Large.
+struct AgentCompactSessionSummary: View {
+    enum Role { case chat, terminal, stack }
+
+    let session: AgentSession?
+    let role: Role
+    let isVisible: Bool
+    let attention: AnyView
+    @Environment(\.agentVisualPreferences) private var visualPreferences
+
+    private var roleTitle: String {
+        switch role {
+        case .chat: "Chat"
+        case .terminal: "Terminal"
+        case .stack: "Chat · Terminal"
+        }
+    }
+
+    private var avatar: BotAvatarConfiguration {
+        var value = visualPreferences.avatar
+        value.size = 34
+        value.interactive = false
+        return value
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: role == .terminal ? "terminal" : "bubble.left.and.text.bubble.right")
+                    .font(.system(size: 9, weight: .semibold))
+                Text(roleTitle).font(.system(size: 10, weight: .semibold))
+                Spacer(minLength: 2)
+                attention
+            }
+            .foregroundStyle(.white.opacity(0.62))
+            if let session {
+                HStack(spacing: 8) {
+                    BotAvatarView(sessionID: session.id, configuration: avatar, state: session.state, compact: true,
+                                  paused: !isVisible, frozenTime: isVisible ? nil : 0)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(session.id.sessionID.provider.stableName.capitalized)
+                            .font(.system(size: 12, weight: .semibold))
+                            .lineLimit(1)
+                        Text(AgentSessionPresentation.displayedStateLabel(for: session, at: Date()))
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(AgentVisualStyle.attentionSurfaceTint(for: session.state))
+                            .lineLimit(1)
+                    }
+                }
+                if let project = AgentPrivacyProjection.displayProject(session.project).displayName {
+                    Text(project).font(.system(size: 9, weight: .medium)).foregroundStyle(.white.opacity(0.46)).lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                if let latest = session.recentActivity.last {
+                    Text(AgentPrivacyProjection.summary(latest.summary)
+                         ?? AgentPrivacyProjection.title(latest.title, fallback: "Recent activity"))
+                        .font(.system(size: 10))
+                        .foregroundStyle(.white.opacity(0.78))
+                        .lineLimit(4)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } else {
+                Spacer(minLength: 0)
+                Text("No agent selected")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.6))
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(roleTitle), compact summary")
+        .accessibilityHint("Use Standard or Large size for the full \(role == .terminal ? "terminal" : "conversation")")
+    }
+}

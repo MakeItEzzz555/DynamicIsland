@@ -145,12 +145,17 @@ struct AgentWorkspaceFeedView: View {
     var selectedSessionID: AgentSessionInstanceID? = nil
     let onSelect: (AgentSessionInstanceID) -> Void
     let isVisible: Bool
+    @Environment(\.workspaceWidgetPlacement) private var widgetPlacement
     @Environment(\.agentVisualPreferences) private var visualPreferences
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         let _ = AgentPerformanceProbe.count("agents.feed.body")
-        let selectedItems = feed.items(for: selectedSessionID, session: sessions.first { $0.id == selectedSessionID })
+        let allItems = feed.items(for: selectedSessionID, session: sessions.first { $0.id == selectedSessionID })
+        // Grid cells choose density by size; non-grid hosts show everything.
+        let density = AgentWorkspaceFeedDensity.visible(allItems,
+            size: widgetPlacement.size.height > 0 ? widgetPlacement.presentationSize : nil)
+        let selectedItems = density.items
         ScrollView(.vertical) {
             LazyVStack(alignment: .leading, spacing: 6) {
                 if selectedItems.isEmpty {
@@ -167,6 +172,13 @@ struct AgentWorkspaceFeedView: View {
                     feedRow(item)
                         .id(item.id)
                         .transition(reduceMotion ? .opacity : .opacity.combined(with: .offset(y: 8)))
+                }
+                if density.hidden > 0 {
+                    Text(density.hidden == 1 ? "1 earlier event" : "\(density.hidden) earlier events")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.top, 2)
                 }
             }
             .padding(.horizontal, 5)

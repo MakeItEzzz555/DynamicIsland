@@ -52,46 +52,10 @@ enum IslandWidget: String, CaseIterable, Codable, Identifiable {
     }
 }
 
-/// Measurable layout capabilities. The one place widget kinds describe their
-/// size needs; the workspace projection decides placement from these traits,
-/// never from widget-name conditionals in views.
-struct WidgetLayoutTraits: Equatable {
-    /// Comfortable size in a multi-widget composition.
-    var preferred: CGSize
-    /// Smallest readable size; controls keep their hit targets.
-    var minimum: CGSize
-    /// Size when the widget is alone on its surface (centered composition).
-    var solo: CGSize
-    /// May grow taller than `preferred` to share a row's height.
-    var fillsHeight: Bool
-    /// May share a column with another stackable widget beside a taller one.
-    var stackable: Bool
-    /// A short full-width strip (usage gauges): consecutive band widgets form
-    /// their own centered row and never stretch to a neighbour's height, so
-    /// they never force the primary row to wrap.
-    var band = false
-}
-
+/// Usage gauges are strips (bands): consecutive band widgets form their own
+/// centered row; their size changes density, not grid span.
 extension IslandWidget {
-    var layoutTraits: WidgetLayoutTraits {
-        switch self {
-        case .media: .init(preferred: .init(width: 360, height: 220), minimum: .init(width: 260, height: 180), solo: .init(width: 330, height: 176), fillsHeight: true, stackable: false)
-        case .files, .clipboard: .init(preferred: .init(width: 260, height: 210), minimum: .init(width: 200, height: 170), solo: .init(width: 300, height: 210), fillsHeight: true, stackable: false)
-        case .timer: .init(preferred: .init(width: 360, height: 160), minimum: .init(width: 280, height: 150), solo: .init(width: 360, height: 160), fillsHeight: true, stackable: true)
-        case .calendar: .init(preferred: .init(width: 320, height: 240), minimum: .init(width: 260, height: 200), solo: .init(width: 320, height: 240), fillsHeight: true, stackable: false)
-        case .shortcuts: .init(preferred: .init(width: 240, height: 120), minimum: .init(width: 180, height: 100), solo: .init(width: 260, height: 140), fillsHeight: false, stackable: true)
-        case .activities: .init(preferred: .init(width: 260, height: 140), minimum: .init(width: 190, height: 110), solo: .init(width: 280, height: 180), fillsHeight: true, stackable: true)
-        case .workspace: .init(preferred: .init(width: 340, height: 240), minimum: .init(width: 260, height: 180), solo: .init(width: 340, height: 240), fillsHeight: true, stackable: false)
-        // Minimums match the readable widths the native Agents split already
-        // uses on small displays (~420 / ~300 pt), so a compact screen keeps
-        // Chat and Terminal side by side instead of wrapping into tall rows.
-        case .chat: .init(preferred: .init(width: 700, height: 360), minimum: .init(width: 420, height: 300), solo: .init(width: 700, height: 360), fillsHeight: true, stackable: false)
-        case .terminal: .init(preferred: .init(width: 500, height: 320), minimum: .init(width: 300, height: 240), solo: .init(width: 500, height: 320), fillsHeight: true, stackable: false)
-        case .feed: .init(preferred: .init(width: 330, height: 320), minimum: .init(width: 230, height: 220), solo: .init(width: 330, height: 320), fillsHeight: true, stackable: false)
-        case .agentUsage: .init(preferred: .init(width: 420, height: 72), minimum: .init(width: 340, height: 64), solo: .init(width: 420, height: 72), fillsHeight: false, stackable: false, band: true)
-        case .codexUsage, .claudeUsage: .init(preferred: .init(width: 210, height: 72), minimum: .init(width: 180, height: 64), solo: .init(width: 220, height: 72), fillsHeight: false, stackable: false, band: true)
-        }
-    }
+    var isBand: Bool { self == .agentUsage || self == .codexUsage || self == .claudeUsage }
 }
 
 /// Only presentation IDs are stored. Controllers, permissions and running
@@ -158,7 +122,9 @@ enum WorkspaceSurface: String, CaseIterable, Codable, Identifiable {
 enum WidgetPresentationSize: String, CaseIterable, Codable {
     case compact, standard, large
     var title: String { switch self { case .compact: "Compact"; case .standard: "Standard"; case .large: "Large" } }
-    var scale: CGFloat { switch self { case .compact: 0.85; case .standard: 1; case .large: 1.15 } }
+    /// Grid span (Compact 1x1, Standard 2x1, Large 2x2). Size is a layout
+    /// class with its own content hierarchy, never a scale factor.
+    var span: (columns: Int, rows: Int) { WidgetGridMetrics.span(self) }
 }
 
 struct WidgetPlacement: Codable, Equatable, Identifiable {
@@ -260,7 +226,7 @@ struct WorkspaceConfiguration: Codable, Equatable {
         placements: IslandWidgetLayout.initial.widgets.enumerated().map {
             WidgetPlacement(kind: $0.element, surface: .media, order: $0.offset)
         } + [.init(kind: .agentUsage, surface: .agents, order: 0), .init(kind: .chat, surface: .agents, order: 1),
-             .init(kind: .feed, surface: .agents, order: 2)],
+             .init(kind: .feed, surface: .agents, order: 2, size: .compact)],
         groups: [], navigation: .initial, customizedSurfaces: [])
 
     init(schemaVersion: Int = currentVersion, placements: [WidgetPlacement], groups: [WidgetGroup] = [],
@@ -729,25 +695,85 @@ enum WorkspaceDropResolver {
     }
 }
 
-// MARK: - Composition-derived content requirements
+// MARK: - Semantic widget grid
 
 struct WorkspaceWidgetFrame: Equatable, Identifiable {
     let id: WidgetID
     let frame: CGRect
 }
 
-/// Content requirements are shared by the editor and the existing island shell
-/// resolver. This projection never owns screen anchoring or shell state.
+/// Apple-style size grammar, adapted for the island (not iPhone pixel sizes):
+/// Compact = 1x1 square, Standard = 2x1 horizontal rectangle, Large = 2x2.
+/// One unit side per surface is the single source of truth; every widget
+/// cell, the shell size and the editor's drag frames derive from it.
+struct WidgetGridMetrics: Equatable {
+    let side: CGFloat
+    let gutter: CGFloat
+
+    /// Island page: dense player/timer/utility cells.
+    static let mediaBaseSide: CGFloat = 162
+    /// Agents page: Chat/Terminal/Feed need a functional Standard cell.
+    static let agentsBaseSide: CGFloat = 236
+    /// Agents stays a wide workspace: at least this many columns when they fit.
+    static let agentsMinimumColumns = 3
+
+    static func make(surface: WorkspaceSurface, metrics: ResolvedIslandMetrics) -> Self {
+        let base = surface == .agents ? agentsBaseSide : mediaBaseSide
+        return Self(side: base * metrics.expandedCardScale, gutter: metrics.spacing(8))
+    }
+
+    static func span(_ size: WidgetPresentationSize) -> (columns: Int, rows: Int) {
+        switch size {
+        case .compact: (1, 1)
+        case .standard: (2, 1)
+        case .large: (2, 2)
+        }
+    }
+
+    func length(_ units: Int) -> CGFloat { CGFloat(units) * side + CGFloat(max(0, units - 1)) * gutter }
+    func size(columns: Int, rows: Int) -> CGSize { CGSize(width: length(columns), height: length(rows)) }
+    func size(for presentation: WidgetPresentationSize) -> CGSize {
+        let span = Self.span(presentation)
+        return size(columns: span.columns, rows: span.rows)
+    }
+    /// Columns that fit `width` (never fewer than the two a Standard needs).
+    func columns(fitting width: CGFloat) -> Int {
+        guard width.isFinite, width > 0 else { return 2 }
+        return max(2, Int(((width + gutter) / (side + gutter)).rounded(.down)))
+    }
+    /// A host narrower than two units shrinks the unit instead of overlapping.
+    func fitted(to width: CGFloat) -> Self {
+        guard width.isFinite, width > gutter, width < length(2) else { return self }
+        return Self(side: max(1, (width - gutter) / 2), gutter: gutter)
+    }
+
+    /// Usage strips: size changes density, not grid span.
+    static func bandSize(_ kind: IslandWidget, _ presentation: WidgetPresentationSize, metrics: ResolvedIslandMetrics) -> CGSize {
+        let combined = kind == .agentUsage
+        let base: CGSize = switch presentation {
+        case .compact: combined ? .init(width: 300, height: 56) : .init(width: 160, height: 56)
+        case .standard: combined ? .init(width: 420, height: 72) : .init(width: 210, height: 72)
+        case .large: combined ? .init(width: 520, height: 96) : .init(width: 270, height: 96)
+        }
+        return .init(width: base.width * metrics.expandedCardScale, height: base.height * metrics.expandedCardScale)
+    }
+}
+
+/// Resolves placements (in user order) onto the semantic grid. Shared by the
+/// editor and the shell resolver; never owns screen anchoring or shell state.
 ///
-/// Rules (from `WidgetLayoutTraits`, never widget names):
-/// - a widget alone on its surface uses its centered `solo` composition size;
-/// - explicit columns (`stacksBelowPrevious`) and two small stackable widgets
-///   beside a taller anchor share one column instead of stretching;
-/// - every unit in a row receives the row height; widgets that can fill
-///   height do so, others keep their preferred height centered in the row;
-/// - column members split the row height in proportion to their preference;
-/// - consecutive `band` widgets (usage) form their own centered strip row, so
-///   removing every band widget reserves no strip height at all.
+/// - Each region occupies its size's span. A row-major cursor never moves
+///   backwards, so user order stays authoritative while smaller widgets fill
+///   the free cells beside a Large one (Large + 2 Compact form a 3x2 block).
+/// - `stacksBelowPrevious` places a region directly below its anchor; later
+///   regions continue beside the anchor, so a stack never strands empty cells.
+/// - Consecutive band widgets (usage) form their own centered strip row;
+///   removing them reclaims all of that height.
+/// - Outside editing, a grid narrower than the shell (the notch-safe header
+///   minimum) scales its unit uniformly - up to `fillScaleCap` - so Compact
+///   stays square and Standard stays 2:1; sections are centered. Editing keeps
+///   intrinsic, centered, top-anchored geometry (drag frames).
+/// - The adaptive Chat hint can shorten the region containing Chat.
 struct WorkspaceWidgetLayoutProjection: Equatable {
     let frames: [WorkspaceWidgetFrame]
     let contentSize: CGSize
@@ -755,200 +781,218 @@ struct WorkspaceWidgetLayoutProjection: Equatable {
     let rows: Int
     let requiresScrolling: Bool
 
-    private struct Requirement {
+    /// Upper bound for the uniform fill scale (a lone Compact never balloons).
+    static let fillScaleCap: CGFloat = 1.5
+
+    private struct Cell: Hashable { let row: Int; let column: Int }
+    private struct Placed {
         let region: WorkspaceWidgetRegion
-        let preferred: CGSize
-        let minimum: CGSize
-        let fillsHeight: Bool
-        let stackable: Bool
-        let band: Bool
+        let column: Int
+        let row: Int
+        let columns: Int
+        let rows: Int
     }
-    /// One horizontal slot: a single region or a vertical column of regions.
-    private struct Unit {
-        var members: [Requirement]
-        var band: Bool { members.allSatisfy(\.band) }
-        func preferred(gap: CGFloat) -> CGSize {
-            .init(width: members.map(\.preferred.width).max() ?? 1,
-                  height: members.map(\.preferred.height).reduce(0, +) + CGFloat(max(0, members.count - 1)) * gap)
-        }
-        func minimum(gap: CGFloat) -> CGSize {
-            .init(width: members.map(\.minimum.width).max() ?? 1,
-                  height: members.map(\.minimum.height).reduce(0, +) + CGFloat(max(0, members.count - 1)) * gap)
-        }
+    private enum Section {
+        case grid([Placed])
+        case band([WorkspaceWidgetRegion])
     }
 
-    private static func requirements(_ regions: [WorkspaceWidgetRegion], metrics: ResolvedIslandMetrics,
-                                     chatHeightHint: CGFloat? = nil) -> [Requirement] {
-        let solo = regions.count == 1
-        return regions.map { region in
-            let requirement = baseRequirement(region, solo: solo, metrics: metrics)
-            // Content-adaptive Chat: the measured cell height (chrome + actual
-            // transcript) replaces the static preferred height, bounded by a
-            // readable floor and the trait height (the previous fixed size).
-            guard let hint = chatHeightHint, hint.isFinite, region.widgets.contains(where: { $0.kind == .chat }) else { return requirement }
-            let floor = AgentChatHeightPolicy.minimumCellHeight * metrics.expandedCardScale
-            let height = min(requirement.preferred.height, max(floor, hint))
-            return Requirement(region: region,
-                               preferred: .init(width: requirement.preferred.width, height: height),
-                               minimum: .init(width: requirement.minimum.width, height: min(requirement.minimum.height, height)),
-                               fillsHeight: requirement.fillsHeight, stackable: requirement.stackable, band: requirement.band)
-        }
+    static func presentationSize(of region: WorkspaceWidgetRegion) -> WidgetPresentationSize {
+        let rank: (WidgetPresentationSize) -> Int = { switch $0 { case .compact: 0; case .standard: 1; case .large: 2 } }
+        return region.widgets.map(\.size).max { rank($0) < rank($1) } ?? .standard
+    }
+    private static func isBand(_ region: WorkspaceWidgetRegion) -> Bool {
+        !region.isStack && region.widgets.allSatisfy(\.kind.isBand)
+    }
+    private static func surface(of regions: [WorkspaceWidgetRegion]) -> WorkspaceSurface {
+        regions.first?.widgets.first?.surface ?? .media
     }
 
-    private static func baseRequirement(_ region: WorkspaceWidgetRegion, solo: Bool, metrics: ResolvedIslandMetrics) -> Requirement {
-        let sizes = region.widgets.map { widget -> (CGSize, CGSize) in
-            let traits = widget.kind.layoutTraits
-            let preferred = solo && !region.isStack ? traits.solo : traits.preferred
-            let minimum = CGSize(width: min(traits.minimum.width, preferred.width), height: min(traits.minimum.height, preferred.height))
-            let scale = metrics.expandedCardScale * widget.size.scale
-            // Compact sizing preserves the minimum readable controls.
-            let minScale = metrics.expandedCardScale * max(1, widget.size.scale)
-            return (.init(width: max(preferred.width * scale, minimum.width * minScale),
-                          height: max(preferred.height * scale, minimum.height * minScale)),
-                    .init(width: minimum.width * minScale, height: minimum.height * minScale))
+    private static func sections(_ regions: [WorkspaceWidgetRegion], columns: Int) -> [Section] {
+        var result: [Section] = []
+        var placed: [Placed] = []
+        var occupied = Set<Cell>()
+        var cursor = 0
+        var bands: [WorkspaceWidgetRegion] = []
+        func free(_ row: Int, _ column: Int, _ width: Int, _ height: Int) -> Bool {
+            guard column >= 0, column + width <= columns else { return false }
+            for r in row..<(row + height) { for c in column..<(column + width) where occupied.contains(Cell(row: r, column: c)) { return false } }
+            return true
         }
-        let stackHeader: CGFloat = region.isStack ? 30 * metrics.spacingScale : 0
-        let traits = region.widgets.map(\.kind.layoutTraits)
-        return Requirement(region: region,
-            preferred: .init(width: sizes.map { $0.0.width }.max() ?? 1, height: (sizes.map { $0.0.height }.max() ?? 1) + stackHeader),
-            minimum: .init(width: sizes.map { $0.1.width }.max() ?? 1, height: (sizes.map { $0.1.height }.max() ?? 1) + stackHeader),
-            fillsHeight: region.isStack || traits.allSatisfy(\.fillsHeight),
-            stackable: !region.isStack && traits.allSatisfy(\.stackable),
-            band: !region.isStack && traits.allSatisfy(\.band))
-    }
-
-    private static func units(_ requirements: [Requirement], gap: CGFloat) -> [Unit] {
-        var units: [Unit] = []
-        for requirement in requirements {
-            if requirement.region.stacksBelowPrevious, !units.isEmpty { units[units.count - 1].members.append(requirement) }
-            else { units.append(Unit(members: [requirement])) }
+        func place(_ region: WorkspaceWidgetRegion, _ row: Int, _ column: Int, _ width: Int, _ height: Int) {
+            for r in row..<(row + height) { for c in column..<(column + width) { occupied.insert(Cell(row: r, column: c)) } }
+            placed.append(Placed(region: region, column: column, row: row, columns: width, rows: height))
+            cursor = row * columns + column + width
         }
-        // Two adjacent small stackable widgets form a column when a taller
-        // anchor exists and the column fits within its height.
-        guard let anchor = units.filter({ $0.members.count == 1 && !$0.members[0].stackable })
-            .map({ $0.preferred(gap: gap).height }).max() else { return units }
-        var index = 0
-        while index + 1 < units.count {
-            let a = units[index], b = units[index + 1]
-            if a.members.count == 1, b.members.count == 1, a.members[0].stackable, b.members[0].stackable,
-               !b.members[0].region.stacksBelowPrevious,
-               a.members[0].preferred.height + gap + b.members[0].preferred.height <= anchor + 1 {
-                units[index].members.append(b.members[0])
-                units.remove(at: index + 1)
+        func flushGrid() {
+            if !placed.isEmpty { result.append(.grid(placed)) }
+            placed = []; occupied = []; cursor = 0
+        }
+        for region in regions {
+            if isBand(region) {
+                flushGrid()
+                bands.append(region)
+                continue
             }
-            index += 1
-        }
-        return units
-    }
-
-    private static func packedRows(_ units: [Unit], width: CGFloat, gap: CGFloat) -> [[Unit]] {
-        var rows: [[Unit]] = []
-        var current: [Unit] = []
-        var used: CGFloat = 0
-        for unit in units {
-            let next = min(unit.minimum(gap: gap).width, width)
-            // Band strips (usage) and primary widgets never share a row.
-            if !current.isEmpty, used + gap + next > width || current[0].band != unit.band {
-                rows.append(current); current = []; used = 0
+            if !bands.isEmpty { result.append(.band(bands)); bands = [] }
+            let span = WidgetGridMetrics.span(presentationSize(of: region))
+            let width = min(span.columns, columns)
+            if region.stacksBelowPrevious, let anchor = placed.last,
+               free(anchor.row + anchor.rows, anchor.column, width, span.rows) {
+                place(region, anchor.row + anchor.rows, anchor.column, width, span.rows)
+                // Continue beside the anchor: the column relation must not
+                // strand the cells to its right.
+                cursor = anchor.row * columns + anchor.column + anchor.columns
+                continue
             }
-            used += (current.isEmpty ? 0 : gap) + next
-            current.append(unit)
+            var index = cursor
+            while true {
+                let row = index / columns, column = index % columns
+                if free(row, column, width, span.rows) { place(region, row, column, width, span.rows); break }
+                index += 1
+            }
         }
-        if !current.isEmpty { rows.append(current) }
-        return rows
+        flushGrid()
+        if !bands.isEmpty { result.append(.band(bands)) }
+        return result
     }
 
+    private struct Layout {
+        var frames: [WorkspaceWidgetFrame] = []
+        var size: CGSize = .zero
+        var columns = 0
+        var rows = 0
+    }
+
+    /// Lays sections out from y = 0, each section centered in the widest one.
+    private static func layout(_ sections: [Section], grid: WidgetGridMetrics, metrics: ResolvedIslandMetrics,
+                               minimumColumns: Int, availableWidth: CGFloat, chatHeightHint: CGFloat?) -> Layout {
+        var result = Layout()
+        var y: CGFloat = 0
+        let gap = grid.gutter
+        let pitch = grid.side + gap
+        var rowsOfFrames: [(range: Range<Int>, width: CGFloat)] = []
+        for section in sections {
+            if result.size.height > 0 { y += gap }
+            let first = result.frames.count
+            var sectionWidth: CGFloat = 0
+            switch section {
+            case .grid(let placed):
+                let used = max(minimumColumns, placed.map { $0.column + $0.columns }.max() ?? 0)
+                var bottom: CGFloat = 0
+                for item in placed {
+                    var height = grid.length(item.rows)
+                    // Compact Chat is a fixed square summary: no adaptive height.
+                    if let hint = chatHeightHint, hint.isFinite, item.region.widgets.contains(where: { $0.kind == .chat }),
+                       presentationSize(of: item.region) != .compact {
+                        let floor = AgentChatHeightPolicy.minimumCellHeight * metrics.expandedCardScale
+                        height = min(height, max(floor, hint))
+                    }
+                    let frame = CGRect(x: CGFloat(item.column) * pitch, y: y + CGFloat(item.row) * pitch,
+                                       width: grid.length(item.columns), height: height)
+                    result.frames.append(.init(id: item.region.id, frame: frame))
+                    bottom = max(bottom, frame.maxY - y)
+                }
+                sectionWidth = grid.length(used)
+                result.columns = max(result.columns, used)
+                result.rows += placed.map { $0.row + $0.rows }.max() ?? 0
+                y += bottom
+            case .band(let regions):
+                let sizes = regions.map { region in
+                    WidgetGridMetrics.bandSize(region.widgets.first?.kind ?? .agentUsage,
+                                               presentationSize(of: region), metrics: metrics)
+                }
+                let total = sizes.map(\.width).reduce(0, +) + CGFloat(max(0, sizes.count - 1)) * gap
+                let factor = total > availableWidth && total > 0 ? availableWidth / total : 1
+                var x: CGFloat = 0
+                let height = sizes.map(\.height).max() ?? 0
+                for (region, size) in zip(regions, sizes) {
+                    result.frames.append(.init(id: region.id, frame: CGRect(x: x, y: y + (height - size.height) / 2,
+                                                                            width: size.width * factor, height: size.height)))
+                    x += size.width * factor + gap
+                }
+                sectionWidth = total * factor
+                result.rows += 1
+                y += height
+            }
+            rowsOfFrames.append((first..<result.frames.count, sectionWidth))
+            result.size.width = max(result.size.width, sectionWidth)
+            result.size.height = y
+        }
+        for row in rowsOfFrames where row.width < result.size.width {
+            let dx = (result.size.width - row.width) / 2
+            for index in row.range {
+                result.frames[index] = .init(id: result.frames[index].id, frame: result.frames[index].frame.offsetBy(dx: dx, dy: 0))
+            }
+        }
+        return result
+    }
+
+    /// Lays out at the natural unit; outside editing, a grid narrower than
+    /// `fillWidth` is relaid with a uniformly scaled unit (aspect preserved).
+    private static func fitted(_ regions: [WorkspaceWidgetRegion], width: CGFloat, fillWidth: CGFloat?,
+                               metrics: ResolvedIslandMetrics, chatHeightHint: CGFloat?) -> Layout {
+        let (grid, columns, minimum) = gridFor(regions, width: width, metrics: metrics)
+        let laidSections = sections(regions, columns: columns)
+        let natural = layout(laidSections, grid: grid, metrics: metrics, minimumColumns: minimum,
+                             availableWidth: width, chatHeightHint: chatHeightHint)
+        guard let fillWidth, natural.columns > 0, natural.size.width < fillWidth - 0.5 else { return natural }
+        // Solve the unit so the widest grid section spans the target exactly.
+        let k = CGFloat(natural.columns)
+        let side = min(grid.side * fillScaleCap, (min(fillWidth, width) - (k - 1) * grid.gutter) / k)
+        guard side > grid.side + 0.01 else { return natural }
+        let filled = WidgetGridMetrics(side: side, gutter: grid.gutter)
+        return layout(laidSections, grid: filled, metrics: metrics, minimumColumns: minimum,
+                      availableWidth: width, chatHeightHint: chatHeightHint)
+    }
+
+    private static func gridFor(_ regions: [WorkspaceWidgetRegion], width: CGFloat,
+                                metrics: ResolvedIslandMetrics) -> (WidgetGridMetrics, Int, Int) {
+        let surface = surface(of: regions)
+        let grid = WidgetGridMetrics.make(surface: surface, metrics: metrics).fitted(to: width)
+        let columns = grid.columns(fitting: width)
+        let minimum = surface == .agents ? min(WidgetGridMetrics.agentsMinimumColumns, columns) : 0
+        return (grid, columns, minimum)
+    }
+
+    /// `minimumWidth` is the shell's own floor (the notch-safe header): the
+    /// grid fills it the same way `make` will, so heights agree.
     static func preferredContentSize(regions: [WorkspaceWidgetRegion], maximumSize: CGSize,
                                      metrics: ResolvedIslandMetrics, editing: Bool = false,
-                                     chatHeightHint: CGFloat? = nil) -> CGSize {
+                                     chatHeightHint: CGFloat? = nil, minimumWidth: CGFloat = 0) -> CGSize {
         let width = finite(maximumSize.width)
         let height = finite(maximumSize.height)
-        let gap = metrics.spacing(8)
         let inset: CGFloat = editing ? 7 : 0
-        let palette: CGFloat = editing ? 54 + gap : 0
-        let rows = packedRows(units(requirements(regions, metrics: metrics, chatHeightHint: editing ? nil : chatHeightHint), gap: gap),
-                              width: max(1, width - inset * 2), gap: gap)
-        let preferredWidth = rows.map { $0.reduce(0) { $0 + $1.preferred(gap: gap).width } + CGFloat(max(0, $0.count - 1)) * gap }.max() ?? 0
-        let preferredHeight = rows.reduce(CGFloat.zero) { $0 + ($1.map { $0.preferred(gap: gap).height }.max() ?? 0) } + CGFloat(max(0, rows.count - 1)) * gap
+        let palette: CGFloat = editing ? 54 + metrics.spacing(8) : 0
+        let laid = fitted(regions, width: max(1, width - inset * 2), fillWidth: editing || minimumWidth <= 0 ? nil : minimumWidth,
+                          metrics: metrics, chatHeightHint: editing ? nil : chatHeightHint)
         // An empty enabled-feature projection remains a readable recovery surface.
-        return .init(width: min(width, max(260 * metrics.expandedCardScale, preferredWidth) + inset * 2),
-                     height: min(height, max(120 * metrics.expandedCardScale, preferredHeight) + inset + palette))
+        return .init(width: min(width, max(260 * metrics.expandedCardScale, laid.size.width) + inset * 2),
+                     height: min(height, max(120 * metrics.expandedCardScale, laid.size.height) + inset + palette))
     }
 
     static func make(regions: [WorkspaceWidgetRegion], availableSize: CGSize,
                      metrics: ResolvedIslandMetrics, editing: Bool = false, chatHeightHint: CGFloat? = nil) -> Self {
         let width = finite(availableSize.width)
         let height = finite(availableSize.height)
-        let gap = metrics.spacing(8)
         let inset: CGFloat = editing ? 7 : 0
-        let palette: CGFloat = editing ? 54 + gap : 0
+        let palette: CGFloat = editing ? 54 + metrics.spacing(8) : 0
         let cardWidth = max(1, width - inset * 2)
         let cardHeight = max(1, height - inset - palette)
-        let rows = packedRows(units(requirements(regions, metrics: metrics, chatHeightHint: editing ? nil : chatHeightHint), gap: gap),
-                              width: cardWidth, gap: gap)
-        let preferredHeights = rows.map { $0.map { $0.preferred(gap: gap).height }.max() ?? 0 }
-        let minimumHeights = rows.map { $0.map { $0.minimum(gap: gap).height }.max() ?? 0 }
-        let totalGap = CGFloat(max(0, rows.count - 1)) * gap
-        let minimumHeight = minimumHeights.reduce(0, +) + totalGap
-        let preferredHeight = preferredHeights.reduce(0, +) + totalGap
-        let scroll = minimumHeight > cardHeight
-        let actualHeight = scroll ? preferredHeight : min(preferredHeight, cardHeight)
-        let extraHeight = max(0, actualHeight - minimumHeight)
-        let heightSlack = max(0, preferredHeight - minimumHeight)
+        // Outside editing the grid fills the shell width (no side gutters)
+        // by scaling its unit; Compact stays square.
+        let laid = fitted(regions, width: cardWidth, fillWidth: editing ? nil : cardWidth,
+                          metrics: metrics, chatHeightHint: editing ? nil : chatHeightHint)
+        let scroll = laid.size.height > cardHeight + 0.5
         // Editing is top-anchored: a prospective layout that grows the shell
         // adds space below and never shifts the cards the pointer is over.
-        var y: CGFloat = inset + (scroll || editing ? 0 : max(0, (cardHeight - actualHeight) / 2))
-        var frames: [WorkspaceWidgetFrame] = []
-        for (index, row) in rows.enumerated() {
-            let rowHeight = scroll ? preferredHeights[index] : minimumHeights[index] + (heightSlack > 0 ? extraHeight * (preferredHeights[index] - minimumHeights[index]) / heightSlack : 0)
-            let gaps = CGFloat(max(0, row.count - 1)) * gap
-            let minimumWidths = row.map { min($0.minimum(gap: gap).width, cardWidth) }
-            let preferredWidths = row.map { min($0.preferred(gap: gap).width, cardWidth) }
-            let minimumWidth = minimumWidths.reduce(0, +)
-            let preferredWidth = preferredWidths.reduce(0, +)
-            let usable = max(0, cardWidth - gaps)
-            // Outside editing, primary rows always span the shell: when the
-            // shell is wider than the content (e.g. the notch-safe header sets
-            // its minimum width), widgets absorb the surplus in proportion to
-            // their preferred width instead of leaving empty side gutters.
-            // Band strips (usage) stay centered; editing keeps drag geometry.
-            let fillsWidth = !editing && !row.allSatisfy(\.band) && usable > preferredWidth
-            let rowWidth = fillsWidth ? usable : min(preferredWidth, usable)
-            let extra = max(0, rowWidth - minimumWidth)
-            let slack = max(0, preferredWidth - minimumWidth)
-            var x = inset + max(0, (cardWidth - rowWidth - gaps) / 2)
-            for (column, unit) in row.enumerated() {
-                let unitWidth = fillsWidth
-                    ? preferredWidths[column] + (rowWidth - preferredWidth) * preferredWidths[column] / max(1, preferredWidth)
-                    : minimumWidths[column] + (slack > 0 ? extra * (preferredWidths[column] - minimumWidths[column]) / slack : 0)
-                frames += memberFrames(unit, x: x, y: y, width: unitWidth, height: rowHeight, gap: gap)
-                x += unitWidth + gap
-            }
-            y += rowHeight + gap
-        }
-        return Self(frames: frames, contentSize: .init(width: width, height: max(height - palette, y - gap)),
-                    columns: rows.map(\.count).max() ?? 0, rows: rows.count, requiresScrolling: scroll)
+        let originY = inset + (scroll || editing ? 0 : max(0, (cardHeight - laid.size.height) / 2))
+        let originX = inset + max(0, (cardWidth - laid.size.width) / 2)
+        let frames = laid.frames.map { WorkspaceWidgetFrame(id: $0.id, frame: $0.frame.offsetBy(dx: originX, dy: originY)) }
+        return Self(frames: frames, contentSize: .init(width: width, height: max(height - palette, originY + laid.size.height)),
+                    columns: laid.columns, rows: laid.rows, requiresScrolling: scroll)
     }
 
-    private static func memberFrames(_ unit: Unit, x: CGFloat, y: CGFloat, width: CGFloat,
-                                     height: CGFloat, gap: CGFloat) -> [WorkspaceWidgetFrame] {
-        if unit.members.count == 1 {
-            let member = unit.members[0]
-            // Fill the shared row height when the widget can compose taller;
-            // otherwise keep its preferred height, centered in the row.
-            let itemHeight = member.fillsHeight ? height : min(height, member.preferred.height)
-            return [.init(id: member.region.id, frame: .init(x: x, y: y + (height - itemHeight) / 2, width: width, height: itemHeight))]
-        }
-        let available = max(0, height - CGFloat(unit.members.count - 1) * gap)
-        let total = max(1, unit.members.map(\.preferred.height).reduce(0, +))
-        var cursor = y
-        return unit.members.map { member in
-            let itemHeight = max(member.minimum.height.rounded(.down) > available ? available / CGFloat(unit.members.count) : 0,
-                                 available * member.preferred.height / total)
-            defer { cursor += itemHeight + gap }
-            return .init(id: member.region.id, frame: .init(x: x, y: cursor, width: width, height: itemHeight))
-        }
-    }
     private static func finite(_ value: CGFloat) -> CGFloat { value.isFinite ? max(1, value) : 1 }
 }
 

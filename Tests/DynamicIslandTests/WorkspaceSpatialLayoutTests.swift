@@ -124,34 +124,38 @@ final class WorkspaceSpatialLayoutTests: XCTestCase {
         XCTAssertEqual(media.maxY, timer.maxY, accuracy: 0.5, "Timer's bottom aligns with Media's")
     }
 
-    func testNonFillingWidgetKeepsItsHeightCenteredInATallerRow() throws {
+    func testSameRowWidgetsShareTheGridRowHeight() throws {
         let projection = WorkspaceWidgetLayoutProjection.make(regions: configuration([.media, .shortcuts]).regions(on: .media),
             availableSize: .init(width: 1100, height: 500), metrics: metrics)
         let media = try XCTUnwrap(frame(projection, .media)), shortcuts = try XCTUnwrap(frame(projection, .shortcuts))
-        XCTAssertLessThan(shortcuts.height, media.height, "a non-filling widget is not stretched into an empty tall box")
-        XCTAssertEqual(shortcuts.midY, media.midY, accuracy: 0.5)
+        XCTAssertEqual(shortcuts.height, media.height, accuracy: 0.5, "one grid row height: no ragged row")
+        XCTAssertEqual(shortcuts.minY, media.minY, accuracy: 0.5)
     }
 
-    func testTwoSmallWidgetsStackBesideALargerAnchorInsteadOfStretching() throws {
+    func testTwoCompactWidgetsStackBesideALargeAnchor() throws {
         var config = configuration([.calendar, .shortcuts, .activities])
         config.setSize(.large, for: try XCTUnwrap(config.placement(kind: .calendar, on: .media)).id)
+        config.setSize(.compact, for: try XCTUnwrap(config.placement(kind: .shortcuts, on: .media)).id)
+        config.setSize(.compact, for: try XCTUnwrap(config.placement(kind: .activities, on: .media)).id)
+        // Three columns: the two Compacts form the third column beside the 2x2 Large.
+        let grid = WidgetGridMetrics.make(surface: .media, metrics: metrics)
         let projection = WorkspaceWidgetLayoutProjection.make(regions: config.regions(on: .media),
-            availableSize: .init(width: 1100, height: 600), metrics: metrics)
+            availableSize: .init(width: grid.length(3), height: 600), metrics: metrics, editing: false)
         let shortcuts = try XCTUnwrap(frame(projection, .shortcuts)), activities = try XCTUnwrap(frame(projection, .activities))
         let calendar = try XCTUnwrap(frame(projection, .calendar))
-        XCTAssertEqual(shortcuts.minX, activities.minX, accuracy: 0.5, "small widgets form one column")
+        XCTAssertEqual(shortcuts.minX, activities.minX, accuracy: 0.5, "compact widgets form one column")
         XCTAssertGreaterThanOrEqual(activities.minY, shortcuts.maxY - 0.5)
-        XCTAssertLessThanOrEqual(activities.maxY, calendar.maxY + 0.5)
-        XCTAssertEqual(projection.rows, 1)
+        XCTAssertEqual(activities.maxY, calendar.maxY, accuracy: 0.5, "the column matches the Large height")
+        XCTAssertEqual(projection.rows, 2)
     }
 
-    func testSoleMediaUsesItsCompactSoloFootprint() {
+    func testMediaStandardFootprintIsAtLeastThirtyPercentSmallerThanTheOldTraits() {
         let solo = WorkspaceWidgetLayoutProjection.preferredContentSize(regions: configuration([.media]).regions(on: .media),
             maximumSize: .init(width: 1200, height: 800), metrics: metrics)
+        let old = 360 * 220 * metrics.expandedCardScale * metrics.expandedCardScale
+        XCTAssertLessThanOrEqual(solo.width * solo.height, old * 0.72, "Standard Media ~30% smaller than the old 360x220 card")
         let shared = WorkspaceWidgetLayoutProjection.preferredContentSize(regions: configuration([.media, .timer]).regions(on: .media),
             maximumSize: .init(width: 1200, height: 800), metrics: metrics)
-        XCTAssertLessThan(solo.width, 360 * metrics.expandedCardScale + 1)
-        XCTAssertLessThan(solo.height, 220 * metrics.expandedCardScale)
         XCTAssertGreaterThan(shared.width, solo.width)
     }
 

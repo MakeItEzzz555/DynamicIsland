@@ -5,7 +5,7 @@ import XCTest
 @MainActor
 final class AdaptiveChatHeightTests: XCTestCase {
     private let metrics = ResolvedIslandMetrics.fallback
-    private var cap: CGFloat { IslandWidget.chat.layoutTraits.preferred.height * metrics.expandedCardScale }
+    private var cap: CGFloat { WidgetGridMetrics.make(surface: .agents, metrics: metrics).size(for: .standard).height }
 
     func testPreferredCellIsChromePlusContentAndQuantized() {
         // 360 pt cell, 230 pt transcript viewport -> 130 pt chrome.
@@ -55,7 +55,10 @@ final class AdaptiveChatHeightTests: XCTestCase {
     func testShortChatShrinksTheShellAndLongChatCapsAtThePreviousHeight() {
         // Chat defines the row (the user's layout: usage band + Chat). A taller
         // neighbour such as Feed legitimately keeps its own row height.
-        let config = agents([.agentUsage, .chat])
+        // A Large (2x2) Chat: the case where a short conversation left the
+        // most black space. Chat defines the row (usage band + Chat).
+        var config = agents([.agentUsage, .chat])
+        config.setSize(.large, for: config.placement(kind: .chat, on: .agents)!.id)
         let maximum = CGSize(width: 1180, height: 800)
         let fixed = WorkspaceWidgetLayoutProjection.preferredContentSize(regions: config.regions(on: .agents), maximumSize: maximum, metrics: metrics)
         let short = WorkspaceWidgetLayoutProjection.preferredContentSize(regions: config.regions(on: .agents), maximumSize: maximum,
@@ -71,7 +74,8 @@ final class AdaptiveChatHeightTests: XCTestCase {
     }
 
     func testHintAppliesToTheChatTerminalStackAndIsIgnoredWhileEditing() {
-        let config = agents([.chat, .terminal], stack: true)
+        var config = agents([.chat, .terminal], stack: true)
+        config.setSize(.large, for: config.groups[0].id)
         let regions = config.regions(on: .agents)
         XCTAssertEqual(regions.count, 1)
         let size = CGSize(width: 900, height: 600)
@@ -83,7 +87,7 @@ final class AdaptiveChatHeightTests: XCTestCase {
                           "Chat page contracts; Terminal page keeps its native height")
         XCTAssertEqual(editing.frames[0].frame.height,
                        WorkspaceWidgetLayoutProjection.make(regions: regions, availableSize: size, metrics: metrics, editing: true).frames[0].frame.height,
-                       accuracy: 0.5, "edit mode uses trait geometry")
+                       accuracy: 0.5, "edit mode uses grid geometry")
     }
 }
 
@@ -164,7 +168,7 @@ final class WorkspaceRowFillTests: XCTestCase {
         let usage = try XCTUnwrap(projection.frames.first { $0.id == config.placement(kind: .agentUsage, on: .agents)?.id }?.frame)
         XCTAssertEqual(chat.minX, 0, accuracy: 0.5)
         XCTAssertEqual(feed.maxX, 1400, accuracy: 0.5)
-        XCTAssertGreaterThan(chat.width, feed.width, "surplus follows preferred proportions")
+        XCTAssertEqual(chat.width, feed.width, accuracy: 0.5, "equal sizes share surplus equally")
         XCTAssertEqual(usage.midX, 700, accuracy: 1, "usage band stays a centered strip")
         XCTAssertLessThan(usage.width, 700)
     }

@@ -52,8 +52,8 @@ final class WorkspaceGeometrySequencingTests: XCTestCase {
         config.add(.calendar, on: .media)
         let two = profile.resolvedSize(from: base, page: .island, configuration: config,
             editing: false, settings: settings, metrics: .fallback)
-        XCTAssertGreaterThan(two.width, one.width)
-        XCTAssertGreaterThan(two.height, one.height)
+        XCTAssertGreaterThan(two.width, one.width, "a second Standard widget adds grid columns")
+        XCTAssertGreaterThanOrEqual(two.height, one.height)
     }
 
     @MainActor func testPreviewAndNativeControlOwnershipAreLocalAndDeduplicated() {

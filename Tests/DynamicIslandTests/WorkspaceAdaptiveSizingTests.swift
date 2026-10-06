@@ -20,9 +20,13 @@ final class WorkspaceAdaptiveSizingTests: XCTestCase {
         XCTAssertEqual(frame.midX, 450, accuracy: 0.01)
         XCTAssertEqual(frame.midY, 200, accuracy: 0.01)
         // The shell is sized to the intrinsic footprint; if it is wider anyway
-        // (e.g. the notch-safe header minimum), the widget spans it - no gutters.
-        XCTAssertEqual(frame.width, 900, accuracy: 0.01)
-        XCTAssertEqual(frame.height, required.height, accuracy: 0.01)
+        // (e.g. the notch-safe header minimum), the grid unit scales uniformly
+        // (capped), so the Standard keeps its 2:1 shape and stays centered.
+        let grid = WidgetGridMetrics.make(surface: .media, metrics: metrics)
+        let side = grid.side * WorkspaceWidgetLayoutProjection.fillScaleCap
+        XCTAssertEqual(frame.width, 2 * side + grid.gutter, accuracy: 0.01)
+        XCTAssertEqual(frame.height, side, accuracy: 0.01)
+        XCTAssertGreaterThan(frame.height, required.height)
         XCTAssertEqual(projection.rows, 1)
         XCTAssertFalse(projection.requiresScrolling)
     }
@@ -33,8 +37,8 @@ final class WorkspaceAdaptiveSizingTests: XCTestCase {
             maximumSize: .init(width: 1200, height: 900), metrics: metrics)
         let many = WorkspaceWidgetLayoutProjection.preferredContentSize(regions: regions([.media, .timer, .files, .clipboard, .calendar, .shortcuts, .activities]),
             maximumSize: .init(width: 900, height: 900), metrics: metrics)
-        XCTAssertGreaterThan(two.width, one.width)
-        XCTAssertGreaterThan(two.height, one.height)
+        XCTAssertGreaterThan(two.width, one.width, "a second Standard widget adds two grid columns")
+        XCTAssertGreaterThanOrEqual(two.height, one.height)
         XCTAssertGreaterThan(many.height, two.height)
         XCTAssertLessThanOrEqual(many.width, 900)
         XCTAssertLessThanOrEqual(many.height, 900)
@@ -62,15 +66,18 @@ final class WorkspaceAdaptiveSizingTests: XCTestCase {
             }
         }
     }
-    func testChatFeedUseWeightedReadableColumnsAndStackUsesOneRegion() throws {
-        let pair = regions([.chat, .feed], surface: .agents)
-        let projection = WorkspaceWidgetLayoutProjection.make(regions: pair,
-            availableSize: .init(width: 860, height: 400), metrics: metrics)
-        XCTAssertEqual(projection.columns, 2)
+    func testChatFeedOccupyTheirGridSpansAndStackUsesOneRegion() throws {
+        var pairConfig = WorkspaceConfiguration(placements: [.init(kind: .chat, surface: .agents, order: 0),
+            .init(kind: .feed, surface: .agents, order: 1, size: .compact)]).normalized()
+        pairConfig.markCustomized(.agents)
+        let grid = WidgetGridMetrics.make(surface: .agents, metrics: metrics)
+        let projection = WorkspaceWidgetLayoutProjection.make(regions: pairConfig.regions(on: .agents),
+            availableSize: .init(width: 860, height: 400), metrics: metrics, editing: true)
+        XCTAssertEqual(projection.rows, 1, "Standard Chat (2x1) + Compact Feed (1x1) share one row")
         let chat = try XCTUnwrap(projection.frames.first { $0.id == WidgetID("agents.chat") })
         let feed = try XCTUnwrap(projection.frames.first { $0.id == WidgetID("agents.feed") })
-        XCTAssertGreaterThan(chat.frame.width, feed.frame.width * 1.5)
-        XCTAssertGreaterThanOrEqual(chat.frame.width, 480 * metrics.expandedCardScale - 0.01)
+        XCTAssertEqual(chat.frame.width, grid.size(for: .standard).width, accuracy: 0.5)
+        XCTAssertEqual(feed.frame.width, feed.frame.height, accuracy: 0.5, "Compact is square")
         var configuration = WorkspaceConfiguration.initial
         configuration.remove(configuration.placement(kind: .agentUsage, on: .agents)!.id)
         configuration.remove(configuration.placement(kind: .feed, on: .agents)!.id)
@@ -80,7 +87,9 @@ final class WorkspaceAdaptiveSizingTests: XCTestCase {
             availableSize: .init(width: 860, height: 500), metrics: metrics)
         XCTAssertEqual(stack.frames.count, 1)
         XCTAssertEqual(stack.frames.first?.id, configuration.groups.first?.id)
-        XCTAssertGreaterThan(stack.frames[0].frame.height, 360 * metrics.expandedCardScale)
+        let gutter = WidgetGridMetrics.make(surface: .agents, metrics: metrics).gutter
+        XCTAssertEqual(stack.frames[0].frame.height, (stack.frames[0].frame.width - gutter) / 2, accuracy: 0.5,
+                       "a Standard stack keeps its 2:1 shape when the grid fills the shell")
     }
     func testConfiguredSizePersistsAndLegacyOrUnknownSizeDecodesToStandard() throws {
         var configuration = WorkspaceConfiguration.initial
@@ -112,8 +121,8 @@ final class WorkspaceAdaptiveSizingTests: XCTestCase {
         configuration.setSize(.large, for: groupID)
         let large = WorkspaceWidgetLayoutProjection.preferredContentSize(regions: configuration.regions(on: .agents),
             maximumSize: .init(width: 1800, height: 1000), metrics: metrics)
-        XCTAssertGreaterThan(large.width, standard.width)
-        XCTAssertGreaterThan(large.height, standard.height)
+        XCTAssertEqual(large.width, standard.width, accuracy: 0.5, "Standard 2x1 and Large 2x2 share width")
+        XCTAssertGreaterThan(large.height, standard.height, "Large adds a grid row")
         XCTAssertEqual(configuration.placements.map(\.id), ids)
         XCTAssertEqual(configuration.groups[0].members, members)
         XCTAssertEqual(configuration.groups[0].id, groupID)
