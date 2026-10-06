@@ -47,3 +47,29 @@ final class WorkspaceEditorMotionTokenTests: XCTestCase {
         XCTAssertGreaterThan(WorkspaceEditorMotion.pressDamping, WorkspaceEditorMotion.releaseDamping)
     }
 }
+
+/// Droppy shell architecture: SwiftUI owns the visible morph; the panel frame
+/// never animates in AppKit; open/close springs are asymmetric.
+@MainActor
+final class DroppyShellMotionParityTests: XCTestCase {
+    func testThePanelFrameNeverAnimatesInAppKit() throws {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/DynamicIsland/Overlay/OverlayWindowController.swift")
+        let source = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertFalse(source.contains("animator().setFrame"), "two animation engines would fight (Droppy: animate: false)")
+        XCTAssertTrue(source.contains("morphInsideStablePanel"))
+    }
+
+    func testCloseIsMoreDampedAndQuickerThanOpen() {
+        XCTAssertGreaterThan(WorkspaceMotion.shellCloseDamping, WorkspaceMotion.shellOpenDamping)
+        XCTAssertLessThan(WorkspaceMotion.shellCloseResponseRatio, 1)
+        XCTAssertEqual(WorkspaceMotion.shellOpenDamping, 0.90, accuracy: 1e-9, "Droppy expandOpen")
+        XCTAssertEqual(WorkspaceMotion.shellCloseDamping, 0.97, accuracy: 1e-9, "Droppy expandClose")
+    }
+
+    func testDisplayTuningMatchesDroppy() {
+        XCTAssertEqual(WorkspaceMotion.motionScale(refreshRate: 120), 1.0)
+        XCTAssertEqual(WorkspaceMotion.motionScale(refreshRate: 90), 1.1)
+        XCTAssertEqual(WorkspaceMotion.motionScale(refreshRate: 60), 1.18)
+    }
+}

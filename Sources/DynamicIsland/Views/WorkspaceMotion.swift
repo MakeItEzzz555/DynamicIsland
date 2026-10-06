@@ -1,7 +1,8 @@
 // Portions adapted from Droppy (https://github.com/1of1Adam/Droppy),
 // Droppy/DroppyAnimation.swift at commit dd2d16ccbdc6aa22b456e199442b43a07aa446af:
-// smoothContent(for:), the display-refresh motion scale and the
-// NotchBlurModifier blur/opacity treatment.
+// smoothContent(for:), the display-refresh motion scale, expandOpen /
+// expandClose (asymmetric shell springs) and the NotchBlurModifier
+// blur/opacity treatment.
 // Droppy is licensed GPL-3.0 with the Commons Clause; reused here for a
 // private, personal build only. See research/SOURCE_PARITY_MANIFEST.md.
 
@@ -30,6 +31,21 @@ enum WorkspaceMotion {
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first(where: { $0.frame.contains(mouse) }) ?? NSScreen.main
         return max(screen?.maximumFramesPerSecond ?? 60, 60)
+    }
+
+    /// Droppy `expandOpen` / `expandClose`: the shell opens on a responsive
+    /// spring (response 0.40, damping 0.90) and closes on a more damped,
+    /// decisive one (0.36, 0.97), both display-tuned. DynamicIsland maps the
+    /// user's preset/speed onto the response (Normal preset = Droppy's 0.40).
+    /// Reduce Motion uses Droppy's ease-out (0.26 open / 0.24 close).
+    static let shellOpenDamping = 0.90, shellCloseDamping = 0.97
+    static let shellCloseResponseRatio = 0.36 / 0.40
+    static func shellSpring(opening: Bool, baseResponse: Double, reduceMotion: Bool,
+                            refreshRate: Int = currentRefreshRate) -> Animation {
+        let scale = motionScale(refreshRate: refreshRate)
+        if reduceMotion { return .easeOut(duration: (opening ? 0.26 : 0.24) * scale) }
+        let response = max(0.01, baseResponse) * scale * (opening ? 1 : shellCloseResponseRatio)
+        return .spring(response: response, dampingFraction: opening ? shellOpenDamping : shellCloseDamping, blendDuration: 0)
     }
 
     static func smoothContentDuration(refreshRate: Int = currentRefreshRate) -> Double {

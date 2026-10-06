@@ -236,6 +236,8 @@ final class OverlayWindowController {
     private var workspaceGeometryCheckScheduled = false
     private var nativeControlScrollOwned = false
     private var canonicalPanelFrame: NSRect = .zero
+    /// Supersedes a pending panel settle when a newer morph starts.
+    private var panelMorphGeneration = 0
     private var lastOrderedVisibilityState: IslandPresentationState?
     private var presentationSession = OverlayPresentationSession()
     private var visibilityGeneration: Int = 0
@@ -692,25 +694,19 @@ final class OverlayWindowController {
             respectHardwareNotch: settings.respectHardwareNotch
         )
         debugGeometryRefresh(geometry)
+        let previousCollapsed = targetCollapsedFrame
+        let previousExpanded = targetExpandedFrame
         targetCollapsedFrame = geometry.collapsedFrame
         targetExpandedFrame = geometry.expandedFrame
-        updateLayout(
-            panelFrame: expandedPresentationProfile.panelFrame(forExpandedFrame: geometry.expandedFrame),
-            collapsedFrame: geometry.collapsedFrame,
-            expandedFrame: geometry.expandedFrame,
-            hasHardwareNotch: geometry.hasHardwareNotch,
-            hardwareNotchWidth: geometry.hardwareNotchWidth,
-            collapsedLeftRegionWidth: geometry.collapsedLeftRegionWidth,
-            collapsedNotchCoreWidth: geometry.collapsedNotchCoreWidth,
-            collapsedRightRegionWidth: geometry.collapsedRightRegionWidth,
-            collapsedPresentationProfile: geometry.collapsedPresentationProfile,
-            animated: animated
-        )
-        applyCanonicalPanelFrame(
-            expandedPresentationProfile.panelFrame(forExpandedFrame: geometry.expandedFrame),
-            reason: "\(reason) initial animated=\(animated)",
-            animated: animated
-        )
+        let targetPanel = expandedPresentationProfile.panelFrame(forExpandedFrame: geometry.expandedFrame)
+        if animated, let previousCollapsed, let previousExpanded {
+            morphInsideStablePanel(geometry: geometry, targetPanel: targetPanel,
+                                   previousCollapsed: previousCollapsed, previousExpanded: previousExpanded, reason: reason)
+        } else {
+            updateLayout(panelFrame: targetPanel, geometry: geometry, animated: animated)
+            // The panel frame never animates in AppKit (Droppy: animate: false).
+            applyCanonicalPanelFrame(targetPanel, reason: "\(reason) initial animated=\(animated)", animated: false)
+        }
         lastAppliedGeometrySignature = signature
         hostingView?.needsLayout = true
         updateWindowVisibility()
@@ -1080,42 +1076,60 @@ final class OverlayWindowController {
         islandPanel.animations.removeAll()
         debugOverlayWindowOperation(operation: "setFrame", reason: reason)
 
-        let reduceMotion = settings.reduceExtraMotion ||
-            NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        let shouldAnimate = animated &&
-            !reduceMotion &&
-            settings.animationPreset != .instant
-
-        guard shouldAnimate else {
-            islandPanel.disableScreenUpdatesUntilFlush()
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0
-                context.allowsImplicitAnimation = false
-                islandPanel.setFrame(frame, display: true)
-            }
-            return
-        }
-
-        let duration = expandedPageMorphDuration
-        #if DEBUG
-        if reason.contains("expandedPageChanged") {
-            let topDrift = abs(frame.maxY - islandPanel.frame.maxY)
-            assert(
-                topDrift <= 1.0,
-                "Expanded page morph must preserve the physical top edge; drift=\(topDrift)"
-            )
-        }
-        #endif
+        // Droppy NotchWindowController: frames apply with no AppKit animation;
+        // SwiftUI morphs the visible shell inside (morphInsideStablePanel).
+        islandPanel.disableScreenUpdatesUntilFlush()
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = duration
-            context.timingFunction = islandState.state == .collapsed &&
-                AgentCompactPermission.current(sessions: modules.agentEvents.sessions,
-                    approvals: modules.agentApprovalControl, managed: modules.agentManagedControl) != nil
-                ? CAMediaTimingFunction(controlPoints: 0.22, 1, 0.36, 1)
-                : ExpandedShellMorph.panelTimingFunction
-            context.allowsImplicitAnimation = true
-            islandPanel.animator().setFrame(frame, display: true)
+            context.duration = 0
+            context.allowsImplicitAnimation = false
+            islandPanel.setFrame(frame, display: true)
         }
+    }
+
+    /// Droppy architecture (NotchWindowController `applySizeUpdate`: window
+    /// frames change with `animate: false`; the visible morph is SwiftUI).
+    /// 1. Stage: the panel grows at once to cover both the current and the
+    ///    target shell; the shell is re-expressed in it without moving.
+    /// 2. Morph: SwiftUI animates the shell's local frames inside that fixed
+    ///    panel - one animation engine, no AppKit window animation competing.
+    /// 3. Settle: when the morph completes the panel shrinks to the target,
+    ///    again without animation. A newer reposition supersedes the settle.
+    private func morphInsideStablePanel(geometry: IslandGeometry, targetPanel: NSRect,
+                                        previousCollapsed: NSRect, previousExpanded: NSRect, reason: String) {
+        islandPanel.animations.removeAll()
+        panelMorphGeneration += 1
+        let generation = panelMorphGeneration
+        let current = islandPanel.frame
+        let stage = current.isEmpty ? targetPanel : current.union(targetPanel)
+        if !framesAreApproximatelyEqual(stage, current, tolerance: 0.35) {
+            applyCanonicalPanelFrame(stage, reason: "\(reason) stage", animated: false)
+            updateLayout(panelFrame: stage, geometry: geometry, collapsedFrame: previousCollapsed,
+                         expandedFrame: previousExpanded, animated: false)
+        }
+        updateLayout(panelFrame: stage, geometry: geometry, animated: true) { [weak self] in
+            guard let self, generation == self.panelMorphGeneration else { return }
+            guard !self.framesAreApproximatelyEqual(stage, targetPanel, tolerance: 0.35) else { return }
+            self.applyCanonicalPanelFrame(targetPanel, reason: "\(reason) settle", animated: false)
+            self.updateLayout(panelFrame: targetPanel, geometry: geometry, animated: false)
+            self.updateMousePassthrough()
+        }
+    }
+
+    private func updateLayout(panelFrame: NSRect, geometry: IslandGeometry, collapsedFrame: NSRect? = nil,
+                              expandedFrame: NSRect? = nil, animated: Bool, completion: (() -> Void)? = nil) {
+        updateLayout(
+            panelFrame: panelFrame,
+            collapsedFrame: collapsedFrame ?? geometry.collapsedFrame,
+            expandedFrame: expandedFrame ?? geometry.expandedFrame,
+            hasHardwareNotch: geometry.hasHardwareNotch,
+            hardwareNotchWidth: geometry.hardwareNotchWidth,
+            collapsedLeftRegionWidth: geometry.collapsedLeftRegionWidth,
+            collapsedNotchCoreWidth: geometry.collapsedNotchCoreWidth,
+            collapsedRightRegionWidth: geometry.collapsedRightRegionWidth,
+            collapsedPresentationProfile: geometry.collapsedPresentationProfile,
+            animated: animated,
+            completion: completion
+        )
     }
 
     private func framesAreApproximatelyEqual(_ lhs: NSRect, _ rhs: NSRect, tolerance: CGFloat) -> Bool {
@@ -1149,7 +1163,8 @@ final class OverlayWindowController {
         collapsedNotchCoreWidth: CGFloat,
         collapsedRightRegionWidth: CGFloat,
         collapsedPresentationProfile: CollapsedPresentationProfile,
-        animated: Bool
+        animated: Bool,
+        completion: (() -> Void)? = nil
     ) {
         let updates = { [self] in
             self.layoutStore.updateLocal(
@@ -1175,8 +1190,16 @@ final class OverlayWindowController {
             let permissionMotion = islandState.state == .collapsed &&
                 AgentCompactPermission.current(sessions: modules.agentEvents.sessions,
                     approvals: modules.agentApprovalControl, managed: modules.agentManagedControl) != nil
-            withAnimation(permissionMotion ? AgentCompactPermissionMotion.animation(reduceMotion: reduceMotion) : ExpandedShellMorph.canvasAnimation(duration: duration)) {
+            // Shell size morph: the panel is fixed during the morph, so the
+            // canvas uses Droppy's open/close springs (growing = open).
+            let growing = expandedFrame.width * expandedFrame.height >= layoutStore.expandedSize.width * layoutStore.expandedSize.height
+            let morph = settings.animationPreset == .instant ? Animation.linear(duration: max(duration, 0.01))
+                : IslandShellMotion.shellAnimation(settings: settings, reduceMotion: reduceMotion, opening: growing)
+            withAnimation(permissionMotion ? AgentCompactPermissionMotion.animation(reduceMotion: reduceMotion) : morph,
+                          completionCriteria: .logicallyComplete) {
                 updates()
+            } completion: {
+                completion?()
             }
         } else {
             var transaction = Transaction(animation: nil)
@@ -1184,6 +1207,7 @@ final class OverlayWindowController {
             withTransaction(transaction) {
                 updates()
             }
+            completion?()
         }
     }
 

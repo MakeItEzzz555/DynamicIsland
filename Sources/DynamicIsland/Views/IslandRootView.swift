@@ -259,14 +259,13 @@ enum IslandShellLayout {
 /// preview, so the preview animates exactly like the island.
 @MainActor
 enum IslandShellMotion {
-    static func shellAnimation(settings: AppSettings, reduceMotion: Bool) -> Animation {
-        if reduceMotion || settings.reduceExtraMotion {
-            return .easeInOut(duration: 0.24)
-        }
-        let duration = settings.animationPreset == .instant
-            ? 0.01
-            : settings.animationPreset.shellDuration / max(settings.shellAnimationSpeed, 0.25)
-        return .smooth(duration: duration)
+    /// One shell motion source for expand/collapse and shell size morphs:
+    /// Droppy's asymmetric open/close springs (WorkspaceMotion.shellSpring).
+    static func shellAnimation(settings: AppSettings, reduceMotion: Bool, opening: Bool = true) -> Animation {
+        if settings.animationPreset == .instant { return .linear(duration: 0.01) }
+        let response = settings.animationPreset.shellDuration / max(settings.shellAnimationSpeed, 0.25)
+        return WorkspaceMotion.shellSpring(opening: opening, baseResponse: response,
+                                           reduceMotion: reduceMotion || settings.reduceExtraMotion)
     }
 }
 
@@ -485,7 +484,8 @@ struct IslandRootView: View {
            layoutStore.collapsedPresentationProfile.kind == .agentAttention {
             return .interactiveSpring(response: 0.38, dampingFraction: 0.8, blendDuration: 0)
         }
-        return IslandShellMotion.shellAnimation(settings: settings, reduceMotion: reduceMotion)
+        return IslandShellMotion.shellAnimation(settings: settings, reduceMotion: reduceMotion,
+                                                opening: islandState.state == .expanded)
     }
 
     private var shellMorphProgress: CGFloat {

@@ -564,11 +564,13 @@ enum WorkspaceEditorMotion {
     /// (the iOS home-screen feel) instead of restarting from rest.
     static let reorderDuration = 0.32
     static let resizeDuration = 0.36
+    /// Display-tuned like every other island motion (Droppy motionScale).
+    private static var scale: Double { WorkspaceMotion.motionScale(refreshRate: WorkspaceMotion.currentRefreshRate) }
     static func reorder(reduceMotion: Bool) -> Animation? {
-        reduceMotion ? nil : .smooth(duration: reorderDuration, extraBounce: 0)
+        reduceMotion ? nil : .smooth(duration: reorderDuration * scale, extraBounce: 0)
     }
     static func resize(reduceMotion: Bool) -> Animation? {
-        reduceMotion ? nil : .smooth(duration: resizeDuration, extraBounce: 0)
+        reduceMotion ? nil : .smooth(duration: resizeDuration * scale, extraBounce: 0)
     }
     /// Droppy AnimationTokens press (0.14 / 0.82) and release (0.24 / 0.74):
     /// hover-target feedback answers immediately and settles softly, while
@@ -578,8 +580,8 @@ enum WorkspaceEditorMotion {
     static func hover(entering: Bool, reduceMotion: Bool) -> Animation? {
         guard !reduceMotion else { return nil }
         return entering
-            ? .spring(response: pressResponse, dampingFraction: pressDamping)
-            : .spring(response: releaseResponse, dampingFraction: releaseDamping)
+            ? .spring(response: pressResponse * scale, dampingFraction: pressDamping)
+            : .spring(response: releaseResponse * scale, dampingFraction: releaseDamping)
     }
     /// transitions.dev panel reveal: open 400 ms, close 350 ms (smooth-out,
     /// never bouncing a close). Reduce Motion applies chrome directly.
@@ -591,8 +593,8 @@ enum WorkspaceEditorMotion {
     static func chrome(opening: Bool, reduceMotion: Bool) -> Animation? {
         if reduceMotion { return nil }
         return opening
-            ? .spring(response: chromeOpenDuration, dampingFraction: 0.92)
-            : .spring(response: chromeCloseDuration, dampingFraction: 0.98)
+            ? .spring(response: chromeOpenDuration * scale, dampingFraction: 0.92)
+            : .spring(response: chromeCloseDuration * scale, dampingFraction: 0.98)
     }
 }
 
