@@ -177,3 +177,10 @@ Size contracts:
 - Standard Media is two columns: artwork left, one centered stack right (metadata -> transport -> progress -> volume). Verified on the packaged build through AX geometry.
 - Header-to-content dead band reduced from ~17 pt to ~7 pt via the shared `ExpandedIslandLayoutMetrics` and usage strip heights; still notch-safe.
 - Full suite 1,946 / 0 / 41.
+
+## Intrinsic geometry and Agent Chat tiers (2026-10-06, after 0474889)
+
+- Persisted semantic size owns widget geometry; the shell absorbs every layout-size change (no scale-to-fill, no content-adaptive Chat height).
+- Agent Chat spans: Compact 1x1 (functional compact chat), Standard 3x2, Large 4x3 bounded by the display row budget.
+- Shell motion follows Droppy: no AppKit window animation, SwiftUI morph inside a staged panel, asymmetric open/close springs.
+- Packaged acceptance pending (screen locked during this phase).
