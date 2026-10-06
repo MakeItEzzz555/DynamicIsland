@@ -5,8 +5,16 @@ final class IslandShellRadiiTests: XCTestCase {
     func testNotchAwareContentPaddingResolution() {
         XCTAssertEqual(IslandShellLayout.collapsedHorizontalPadding(isNotchIntegrated: true), 8)
         XCTAssertEqual(IslandShellLayout.collapsedHorizontalPadding(isNotchIntegrated: false), 8)
-        XCTAssertEqual(IslandShellLayout.expandedHorizontalPadding(isNotchIntegrated: true), 41)
-        XCTAssertEqual(IslandShellLayout.expandedHorizontalPadding(isNotchIntegrated: false), 22)
+        // Shell hugging (2026-10-06): a 12 pt visible inset. The integrated
+        // shell adds its concave top "ear" (the expanded top radius).
+        let ear = IslandShellRadii.interpolated(progress: 1, isNotchIntegrated: true).top
+        XCTAssertEqual(IslandShellLayout.expandedHorizontalPadding(isNotchIntegrated: false), 12)
+        XCTAssertEqual(IslandShellLayout.expandedHorizontalPadding(isNotchIntegrated: true), ear + 12)
+        // The content corner (inset, bottom padding) stays inside the shell's
+        // rounded bottom corner.
+        let bottom = IslandShellRadii.interpolated(progress: 1, isNotchIntegrated: true).bottom
+        let corner = CGPoint(x: 12, y: IslandShellLayout.expandedBottomPadding)
+        XCTAssertLessThanOrEqual(hypot(bottom - corner.x, bottom - corner.y), bottom, "content clears the rounded corner")
         XCTAssertEqual(IslandShellLayout.collapsedBottomPadding, 6)
     }
 

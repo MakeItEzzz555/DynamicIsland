@@ -947,6 +947,9 @@ final class OverlayWindowController {
             minimumHeaderWidth: ExpandedIslandHeaderMetrics.minimumContentWidth(
                 pageCount: modules.navigation.availablePages(using: settings).count,
                 clipboardEnabled: settings.clipboardHistoryEnabled,
+                hardwareNotchWidth: layoutStore.hardwareNotchWidth),
+            lane: ExpandedIslandLayoutMetrics.workspaceNotchLane(settings: settings, metrics: layoutStore.displayMetrics,
+                pageCount: modules.navigation.availablePages(using: settings).count,
                 hardwareNotchWidth: layoutStore.hardwareNotchWidth))
         return preview == nil ? size : IslandLayoutStore.dragFloored(size, floor: layoutStore.workspaceDragFloor)
     }

@@ -117,7 +117,8 @@ final class WorkspaceUsageBandAndHeaderTests: XCTestCase {
         let editing = ExpandedPresentationProfile.agentsWorkspace.resolvedSize(from: base, page: .agents,
             configuration: config, editing: true, settings: settings, metrics: metrics)
         let regions = config.regions(on: .agents)
-        let projection = WorkspaceWidgetLayoutProjection.make(regions: regions, availableSize: .init(width: editing.width - 40,
+        let padding = IslandShellLayout.expandedHorizontalPadding(isNotchIntegrated: metrics.hasHardwareNotch && settings.respectHardwareNotch) * 2
+        let projection = WorkspaceWidgetLayoutProjection.make(regions: regions, availableSize: .init(width: editing.width - padding,
             height: editing.height), metrics: metrics, editing: true)
         // Grid grammar: Standard Chat + Standard Terminal need four columns;
         // the default Feed is Compact. Rows wrap only when the display is too

@@ -119,7 +119,7 @@ final class IslandDisplayMetricsTests: XCTestCase {
             )
             let metrics = ExpandedIslandLayoutMetrics(
                 containerSize: shell,
-                horizontalPadding: 41 * display.spacingScale,
+                horizontalPadding: IslandShellLayout.expandedHorizontalPadding(isNotchIntegrated: true) * display.spacingScale,
                 displayMetrics: display
             )
             let finite = [

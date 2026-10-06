@@ -238,8 +238,8 @@ private struct IslandPointerGestureModifier: ViewModifier {
 
 enum IslandShellLayout {
     static let collapsedHorizontalPadding: CGFloat = 8
-    static let floatingExpandedHorizontalPadding: CGFloat = 22
-    static let integratedExpandedHorizontalPadding: CGFloat = 41
+    static let floatingExpandedHorizontalPadding: CGFloat = 12
+    static let integratedExpandedHorizontalPadding: CGFloat = 31
 
     static func collapsedHorizontalPadding(isNotchIntegrated: Bool) -> CGFloat {
         collapsedHorizontalPadding
@@ -342,6 +342,36 @@ struct ExpandedIslandLayoutMetrics {
     var pageHeight: CGFloat { max(innerHeight - tabSwitcherHeight - tabToPageSpacing, 0) }
     /// Header/footer chrome around a customized workspace page.
     var workspaceVerticalChrome: CGFloat { topPadding + bottomPadding + tabSwitcherHeight + tabToPageSpacing }
+    /// Vertical notch-to-content clearance: the same distance the header
+    /// keeps between the physical notch and its side buttons.
+    static func notchContentClearance(metrics: ResolvedIslandMetrics) -> CGFloat {
+        ExpandedIslandHeaderMetrics.notchClearance * metrics.spacingScale
+    }
+    /// The workspace notch lane for a notch-integrated shell (`.none`
+    /// otherwise): how far centered top content may rise into the empty
+    /// header band under the notch, and the header geometry that bounds it.
+    static func workspaceNotchLane(metrics: ResolvedIslandMetrics, isNotchIntegrated: Bool,
+                                   pageCount: Int, clipboardEnabled: Bool, hardwareNotchWidth: CGFloat) -> WorkspaceNotchLane {
+        guard isNotchIntegrated, metrics.hasHardwareNotch, metrics.hardwareNotchHeight > 0 else { return .none }
+        let chrome = ExpandedIslandLayoutMetrics(containerSize: .zero, horizontalPadding: 0, displayMetrics: metrics)
+        let contentTop = chrome.topPadding + chrome.tabSwitcherHeight + chrome.tabToPageSpacing
+        let rise = max(0, contentTop - (metrics.hardwareNotchHeight + notchContentClearance(metrics: metrics)))
+        return WorkspaceNotchLane(
+            rise: rise,
+            headerGroupWidth: max(ExpandedIslandHeaderMetrics.leadingGroupWidth(pageCount: pageCount),
+                                  ExpandedIslandHeaderMetrics.trailingGroupWidth(clipboardEnabled: clipboardEnabled)),
+            clearance: notchContentClearance(metrics: metrics),
+            minimumInnerWidth: ExpandedIslandHeaderMetrics.minimumContentWidth(
+                pageCount: pageCount, clipboardEnabled: clipboardEnabled, hardwareNotchWidth: hardwareNotchWidth))
+    }
+    /// The lane for the current settings (header layout comes from them).
+    @MainActor
+    static func workspaceNotchLane(settings: AppSettings, metrics: ResolvedIslandMetrics, pageCount: Int,
+                                   hardwareNotchWidth: CGFloat) -> WorkspaceNotchLane {
+        workspaceNotchLane(metrics: metrics, isNotchIntegrated: metrics.hasHardwareNotch && settings.respectHardwareNotch,
+                           pageCount: pageCount, clipboardEnabled: settings.clipboardHistoryEnabled,
+                           hardwareNotchWidth: hardwareNotchWidth)
+    }
     /// The most workspace content height this display can present (shared by
     /// the shell resolver and the grid's display row budget).
     static func workspaceContentHeightBudget(metrics: ResolvedIslandMetrics) -> CGFloat {
@@ -438,6 +468,11 @@ struct IslandRootView: View {
     /// `childExitClock`: content-tree completions can be lost with live sessions).
     @State private var workspaceExitClock: Double = 0
     @State private var isCollapsedHovering = false
+
+    private var workspaceNotchLane: WorkspaceNotchLane {
+        ExpandedIslandLayoutMetrics.workspaceNotchLane(settings: settings, metrics: layoutStore.displayMetrics,
+            pageCount: navigation.availablePages(using: settings).count, hardwareNotchWidth: layoutStore.hardwareNotchWidth)
+    }
     @State private var collapsedPreviewVisible = false
     @State private var collapsedPreviewGeneration = 0
     @StateObject private var agentGlow = AgentActivityGlowCoordinator()
@@ -503,6 +538,7 @@ struct IslandRootView: View {
         animatedIslandCanvas
             .environment(\.islandDisplayMetrics, layoutStore.displayMetrics)
             .environment(\.mediaAdvancedControls, modules.mediaAdvanced)
+            .environment(\.workspaceNotchLane, workspaceNotchLane)
             .environment(\.timerRulerInteractionRegistration, TimerRulerInteractionRegistration { owner, frame in
                 layoutStore.setNativeControlRegion(frame, owner: owner)
             })
@@ -3212,6 +3248,7 @@ struct ExpandedIslandView: View {
     @ObservedObject private var agentEvents: AgentEventStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.isCollapseShellOnly) private var isCollapseShellOnly
+    @Environment(\.workspaceNotchLane) private var workspaceNotchLane
     @Environment(\.isNotchIntegratedShell) private var isNotchIntegratedShell
 
     @State private var isAirDropTargeted = false
@@ -3470,8 +3507,13 @@ struct ExpandedIslandView: View {
                     }
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: metrics.pageHeight, alignment: .top)
+            // The notch lane lets centered top content rise toward the notch:
+            // the clip extends up by that allowance and the page is padded
+            // back down, so pages without rising content are unchanged.
+            .padding(.top, workspaceNotchLane.rise)
+            .frame(maxWidth: .infinity, maxHeight: metrics.pageHeight + workspaceNotchLane.rise, alignment: .top)
             .clipped()
+            .padding(.top, -workspaceNotchLane.rise)
         }
         .padding(.horizontal, metrics.horizontalPadding)
         .padding(.top, metrics.topPadding)
@@ -3519,7 +3561,8 @@ struct ExpandedIslandView: View {
             editing: false, settings: settings, metrics: layoutStore.displayMetrics,
             minimumHeaderWidth: ExpandedIslandHeaderMetrics.minimumContentWidth(
                 pageCount: navigation.availablePages(using: settings).count, clipboardEnabled: settings.clipboardHistoryEnabled,
-                hardwareNotchWidth: layoutStore.hardwareNotchWidth))
+                hardwareNotchWidth: layoutStore.hardwareNotchWidth),
+            lane: workspaceNotchLane)
         let shrinks = nextSize.width < layoutStore.expandedSize.width || nextSize.height < layoutStore.expandedSize.height
         let effect = presentation.select(
             page,

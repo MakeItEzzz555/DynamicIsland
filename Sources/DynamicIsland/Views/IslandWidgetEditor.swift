@@ -20,6 +20,7 @@ struct IslandWidgetEditor: View {
     var content: (WorkspaceWidgetRegion, CGFloat) -> AnyView
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.islandDisplayMetrics) private var displayMetrics
+    @Environment(\.workspaceNotchLane) private var notchLane
     @State private var draft = WorkspaceConfiguration.initial
     @State private var drag: WorkspaceEditorDrag?
     @State private var target: WorkspaceDropTarget?
@@ -76,7 +77,7 @@ struct IslandWidgetEditor: View {
         measurements.size = size
         let visibleRegions = regions(in: visibleConfiguration)
         let projection = WorkspaceWidgetLayoutProjection.make(regions: visibleRegions, availableSize: size,
-            metrics: displayMetrics, editing: editing)
+            metrics: displayMetrics, editing: editing, lane: notchLane)
         let height = max(1, size.height - (editing ? WorkspaceEditorChrome.paletteHeight + displayMetrics.spacing(8) : 0))
         let canvas = widgetGrid(regions: visibleRegions, projection: projection)
         return VStack(spacing: displayMetrics.spacing(8)) {
@@ -522,7 +523,7 @@ struct IslandWidgetEditor: View {
         let committed = regions(in: draft)
         let reference = measurements.dragStartSize == .zero ? measurements.size : measurements.dragStartSize
         let projection = WorkspaceWidgetLayoutProjection.make(regions: committed, availableSize: reference,
-            metrics: displayMetrics, editing: editing)
+            metrics: displayMetrics, editing: editing, lane: notchLane)
         let location = WorkspaceDropResolver.dragReferencePoint(location, currentSize: measurements.size, startSize: reference)
         let slots = committed.compactMap { region -> WorkspaceDropSlot? in
             guard let frame = projection.frames.first(where: { $0.id == region.id })?.frame,
@@ -918,5 +919,17 @@ struct WorkspaceWidgetSizeControl: View {
         return RoundedRectangle(cornerRadius: 1.5, style: .continuous)
             .fill(selected ? Color.white : Color.white.opacity(0.45))
             .frame(width: width, height: height)
+    }
+}
+
+private struct WorkspaceNotchLaneKey: EnvironmentKey {
+    static let defaultValue = WorkspaceNotchLane.none
+}
+
+extension EnvironmentValues {
+    /// Header geometry around the notch for the workspace projection.
+    var workspaceNotchLane: WorkspaceNotchLane {
+        get { self[WorkspaceNotchLaneKey.self] }
+        set { self[WorkspaceNotchLaneKey.self] = newValue }
     }
 }

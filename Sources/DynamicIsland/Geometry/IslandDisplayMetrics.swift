@@ -83,6 +83,8 @@ struct ResolvedIslandMetrics: Equatable {
     let hudSliderHeight: CGFloat
     let transcriptFontSize: CGFloat
     let workspaceTileMinimumHeight: CGFloat
+    /// Physical notch height (0 without a hardware notch).
+    var hardwareNotchHeight: CGFloat = 0
 
     static let fallback = IslandDisplayMetricsResolver.resolve(
         IslandDisplaySnapshot(
@@ -137,7 +139,7 @@ enum IslandDisplayMetricsResolver {
         let corners = clamp(pow(areaRatio, 0.06), 0.95, 1.08)
         let shell = clamp(pow(areaRatio, 0.055), 0.95, 1.08)
 
-        return ResolvedIslandMetrics(
+        var resolved = ResolvedIslandMetrics(
             logicalSize: snapshot.frame.size,
             visibleLogicalSize: snapshot.visibleFrame.size,
             pixelSize: snapshot.pixelSize,
@@ -162,6 +164,8 @@ enum IslandDisplayMetricsResolver {
             transcriptFontSize: clamp(9.5 * typography, 9, 10.8),
             workspaceTileMinimumHeight: clamp(48 * card, 44, 58)
         )
+        resolved.hardwareNotchHeight = snapshot.notchRect?.height ?? 0
+        return resolved
     }
 
     @MainActor

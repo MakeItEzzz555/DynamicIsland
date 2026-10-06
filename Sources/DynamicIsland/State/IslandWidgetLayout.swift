@@ -824,7 +824,19 @@ struct WorkspaceWidgetLayoutProjection: Equatable {
     }
     private enum Section {
         case grid([Placed])
-        case band([WorkspaceWidgetRegion])
+        /// Centered usage band(s) at intrinsic size, optionally flanked by a
+        /// Compact wing on each side (the regions configured immediately
+        /// before / after the band). Without wings this is the plain band.
+        case topLane(left: WorkspaceWidgetRegion?, bands: [WorkspaceWidgetRegion], right: WorkspaceWidgetRegion?)
+    }
+
+    /// A region that may sit in a top-lane wing: one Compact (1 x 1) widget
+    /// that is not part of a stack or stack-below column.
+    static func isLaneWingCandidate(_ region: WorkspaceWidgetRegion, grid: WidgetGridMetrics) -> Bool {
+        guard !region.isStack, !region.stacksBelowPrevious, !isBand(region),
+              presentationSize(of: region) == .compact else { return false }
+        let span = grid.span(kinds: region.widgets.map(\.kind), size: .compact)
+        return span.columns == 1 && span.rows == 1
     }
 
     static func presentationSize(of region: WorkspaceWidgetRegion) -> WidgetPresentationSize {
@@ -838,7 +850,9 @@ struct WorkspaceWidgetLayoutProjection: Equatable {
         regions.first?.widgets.first?.surface ?? .media
     }
 
-    private static func sections(_ regions: [WorkspaceWidgetRegion], columns: Int, grid: WidgetGridMetrics) -> [Section] {
+    private static func sections(_ regions: [WorkspaceWidgetRegion], columns: Int, grid: WidgetGridMetrics,
+                                 metrics: ResolvedIslandMetrics, availableWidth: CGFloat) -> [Section] {
+        let wings = laneWings(regions, grid: grid, metrics: metrics, availableWidth: availableWidth)
         var result: [Section] = []
         var placed: [Placed] = []
         var occupied = Set<Cell>()
@@ -858,13 +872,26 @@ struct WorkspaceWidgetLayoutProjection: Equatable {
             if !placed.isEmpty { result.append(.grid(placed)) }
             placed = []; occupied = []; cursor = 0
         }
+        var leftWing: WorkspaceWidgetRegion?
+        func flushLane(right: WorkspaceWidgetRegion?) {
+            if !bands.isEmpty { result.append(.topLane(left: leftWing, bands: bands, right: right)) }
+            bands = []; leftWing = nil
+        }
         for region in regions {
+            if wings.contains(region.id), bands.isEmpty, !isBand(region),
+               let next = regions.drop(while: { $0.id != region.id }).dropFirst().first, isBand(next) {
+                leftWing = region           // flanks the band that follows
+                continue
+            }
             if isBand(region) {
                 flushGrid()
                 bands.append(region)
                 continue
             }
-            if !bands.isEmpty { result.append(.band(bands)); bands = [] }
+            if !bands.isEmpty {
+                if wings.contains(region.id) { flushLane(right: region); continue }
+                flushLane(right: nil)
+            }
             let span = grid.span(kinds: region.widgets.map(\.kind), size: presentationSize(of: region))
             let width = min(span.columns, columns)
             if region.stacksBelowPrevious, let anchor = placed.last,
@@ -883,8 +910,32 @@ struct WorkspaceWidgetLayoutProjection: Equatable {
             }
         }
         flushGrid()
-        if !bands.isEmpty { result.append(.band(bands)) }
+        flushLane(right: nil)
         return result
+    }
+
+    /// Wing regions: the candidates directly before / after the first run of
+    /// bands, kept only if the whole lane fits the available width.
+    private static func laneWings(_ regions: [WorkspaceWidgetRegion], grid: WidgetGridMetrics,
+                                  metrics: ResolvedIslandMetrics, availableWidth: CGFloat) -> Set<WidgetID> {
+        guard let start = regions.firstIndex(where: isBand) else { return [] }
+        let end = regions[start...].firstIndex { !isBand($0) } ?? regions.endIndex
+        var wings: [WorkspaceWidgetRegion] = []
+        if start > 0, isLaneWingCandidate(regions[start - 1], grid: grid) { wings.append(regions[start - 1]) }
+        if end < regions.endIndex, isLaneWingCandidate(regions[end], grid: grid),
+           !(end + 1 < regions.endIndex && regions[end + 1].stacksBelowPrevious) { wings.append(regions[end]) }
+        guard !wings.isEmpty else { return [] }
+        let bandWidth = bandRowWidth(Array(regions[start..<end]), gap: grid.gutter, metrics: metrics)
+        let laneWidth = bandWidth + 2 * (grid.length(1) + grid.gutter)
+        return laneWidth <= availableWidth + 0.5 ? Set(wings.map(\.id)) : []
+    }
+
+    private static func bandSizes(_ regions: [WorkspaceWidgetRegion], metrics: ResolvedIslandMetrics) -> [CGSize] {
+        regions.map { WidgetGridMetrics.bandSize($0.widgets.first?.kind ?? .agentUsage, presentationSize(of: $0), metrics: metrics) }
+    }
+    private static func bandRowWidth(_ regions: [WorkspaceWidgetRegion], gap: CGFloat, metrics: ResolvedIslandMetrics) -> CGFloat {
+        let sizes = bandSizes(regions, metrics: metrics)
+        return sizes.map(\.width).reduce(0, +) + CGFloat(max(0, sizes.count - 1)) * gap
     }
 
     private struct Layout {
@@ -944,23 +995,30 @@ struct WorkspaceWidgetLayoutProjection: Equatable {
                 result.columns = max(result.columns, used)
                 result.rows += placed.map { $0.row + $0.rows }.max() ?? 0
                 y += bottom
-            case .band(let regions):
-                let sizes = regions.map { region in
-                    WidgetGridMetrics.bandSize(region.widgets.first?.kind ?? .agentUsage,
-                                               presentationSize(of: region), metrics: metrics)
-                }
+            case .topLane(let left, let regions, let right):
+                let sizes = bandSizes(regions, metrics: metrics)
                 let total = sizes.map(\.width).reduce(0, +) + CGFloat(max(0, sizes.count - 1)) * gap
                 let factor = total > availableWidth && total > 0 ? availableWidth / total : 1
-                var x: CGFloat = 0
+                // Wings are reserved symmetrically so the band stays centered
+                // even with a single wing; they are top-aligned with the band.
+                let wing = left == nil && right == nil ? 0 : grid.length(1) + gap
+                var x: CGFloat = wing
                 let height = sizes.map(\.height).max() ?? 0
                 for (region, size) in zip(regions, sizes) {
                     result.frames.append(.init(id: region.id, frame: CGRect(x: x, y: y + (height - size.height) / 2,
                                                                             width: size.width * factor, height: size.height)))
                     x += size.width * factor + gap
                 }
-                sectionWidth = total * factor
+                sectionWidth = total * factor + wing * 2
+                let side = grid.length(1)
+                if let left {
+                    result.frames.append(.init(id: left.id, frame: CGRect(x: 0, y: y, width: side, height: side)))
+                }
+                if let right {
+                    result.frames.append(.init(id: right.id, frame: CGRect(x: sectionWidth - side, y: y, width: side, height: side)))
+                }
                 result.rows += 1
-                y += height
+                y += max(height, wing > 0 ? side : 0)
             }
             rowsOfFrames.append((first..<result.frames.count, sectionWidth))
             result.size.width = max(result.size.width, sectionWidth)
@@ -977,11 +1035,32 @@ struct WorkspaceWidgetLayoutProjection: Equatable {
 
     /// Lays out at the natural grid unit. The available width only decides
     /// how many columns fit (wrapping), never the size of a widget.
-    private static func natural(_ regions: [WorkspaceWidgetRegion], width: CGFloat,
-                                metrics: ResolvedIslandMetrics) -> Layout {
+    private static func natural(_ regions: [WorkspaceWidgetRegion], width: CGFloat, metrics: ResolvedIslandMetrics,
+                                lane: WorkspaceNotchLane, headerInnerWidth: CGFloat) -> Layout {
         let (grid, columns, minimum) = gridFor(regions, width: width, metrics: metrics)
-        return layout(sections(regions, columns: columns, grid: grid), grid: grid, metrics: metrics,
-                      minimumColumns: minimum, availableWidth: width)
+        var laid = layout(sections(regions, columns: columns, grid: grid, metrics: metrics, availableWidth: width),
+                          grid: grid, metrics: metrics, minimumColumns: minimum, availableWidth: width)
+        applyNotchRise(&laid, lane: lane, headerInnerWidth: headerInnerWidth)
+        return laid
+    }
+
+    /// Notch rise (pure geometry, shared by editor and shell): when every
+    /// frame of the top row lies in the free gap between the header groups,
+    /// the content moves up by `lane.rise` so it starts
+    /// `notchContentClearance` below the physical notch.
+    private static func applyNotchRise(_ laid: inout Layout, lane: WorkspaceNotchLane, headerInnerWidth: CGFloat) {
+        guard !laid.frames.isEmpty else { return }
+        guard lane.rise > 0 else { return }
+        let topRowBottom = laid.frames.map(\.frame.minY).min().map { top in
+            laid.frames.filter { $0.frame.minY <= top + 0.5 }.map(\.frame.maxY).max() ?? top
+        } ?? 0
+        let topRow = laid.frames.filter { $0.frame.minY < topRowBottom - 0.5 }
+        let center = laid.size.width / 2
+        let freeHalf = max(headerInnerWidth, laid.size.width) / 2 - lane.headerGroupWidth - lane.clearance
+        guard freeHalf > 0, topRow.allSatisfy({ $0.frame.minX >= center - freeHalf - 0.5 && $0.frame.maxX <= center + freeHalf + 0.5 })
+        else { return }
+        laid.frames = laid.frames.map { .init(id: $0.id, frame: $0.frame.offsetBy(dx: 0, dy: -lane.rise)) }
+        laid.size.height = max(0, laid.size.height - lane.rise)
     }
 
     private static func gridFor(_ regions: [WorkspaceWidgetRegion], width: CGFloat,
@@ -995,31 +1074,51 @@ struct WorkspaceWidgetLayoutProjection: Equatable {
 
     /// The content footprint the shell must hug (intrinsic widget geometry).
     static func preferredContentSize(regions: [WorkspaceWidgetRegion], maximumSize: CGSize,
-                                     metrics: ResolvedIslandMetrics, editing: Bool = false) -> CGSize {
+                                     metrics: ResolvedIslandMetrics, editing: Bool = false,
+                                     lane: WorkspaceNotchLane = .none) -> CGSize {
         let width = finite(maximumSize.width)
         let height = finite(maximumSize.height)
         let inset: CGFloat = editing ? 7 : 0
         let palette: CGFloat = editing ? 54 + metrics.spacing(8) : 0
-        let laid = natural(regions, width: max(1, width - inset * 2), metrics: metrics)
+        var lane = lane
+        if editing { lane.rise = 0 }
+        var laid = natural(regions, width: max(1, width - inset * 2), metrics: metrics,
+                           lane: lane, headerInnerWidth: lane.minimumInnerWidth)
+        if laid.size.height > height - inset - palette + 0.5, lane.rise > 0 {
+            lane.rise = 0
+            laid = natural(regions, width: max(1, width - inset * 2), metrics: metrics,
+                           lane: lane, headerInnerWidth: lane.minimumInnerWidth)
+        }
         // An empty enabled-feature projection remains a readable recovery surface.
         return .init(width: min(width, max(260 * metrics.expandedCardScale, laid.size.width) + inset * 2),
                      height: min(height, max(120 * metrics.expandedCardScale, laid.size.height) + inset + palette))
     }
 
     static func make(regions: [WorkspaceWidgetRegion], availableSize: CGSize,
-                     metrics: ResolvedIslandMetrics, editing: Bool = false) -> Self {
+                     metrics: ResolvedIslandMetrics, editing: Bool = false,
+                     lane: WorkspaceNotchLane = .none) -> Self {
         let width = finite(availableSize.width)
         let height = finite(availableSize.height)
         let inset: CGFloat = editing ? 7 : 0
         let palette: CGFloat = editing ? 54 + metrics.spacing(8) : 0
         let cardWidth = max(1, width - inset * 2)
         let cardHeight = max(1, height - inset - palette)
-        // Intrinsic geometry; a wider shell centers the content.
-        let laid = natural(regions, width: cardWidth, metrics: metrics)
+        // Intrinsic geometry; a wider shell centers the content. The notch
+        // rise never applies while editing (edit chrome stays clear of the
+        // header) or when the content scrolls (a ScrollView clips it).
+        var lane = lane
+        if editing { lane.rise = 0 }
+        var laid = natural(regions, width: cardWidth, metrics: metrics, lane: lane, headerInnerWidth: width)
+        if laid.size.height > cardHeight + 0.5, lane.rise > 0 {
+            lane.rise = 0
+            laid = natural(regions, width: cardWidth, metrics: metrics, lane: lane, headerInnerWidth: width)
+        }
         let scroll = laid.size.height > cardHeight + 0.5
         // Editing is top-anchored: a prospective layout that grows the shell
         // adds space below and never shifts the cards the pointer is over.
-        let originY = inset + (scroll || editing ? 0 : max(0, (cardHeight - laid.size.height) / 2))
+        // Risen content is anchored to the top (it sits against the notch).
+        let risen = laid.frames.contains { $0.frame.minY < -0.01 }
+        let originY = inset + (scroll || editing || risen ? 0 : max(0, (cardHeight - laid.size.height) / 2))
         let originX = inset + max(0, (cardWidth - laid.size.width) / 2)
         let frames = laid.frames.map { WorkspaceWidgetFrame(id: $0.id, frame: $0.frame.offsetBy(dx: originX, dy: originY)) }
         return Self(frames: frames, contentSize: .init(width: width, height: max(height - palette, originY + laid.size.height)),
@@ -1027,4 +1126,19 @@ struct WorkspaceWidgetLayoutProjection: Equatable {
     }
 
     private static func finite(_ value: CGFloat) -> CGFloat { value.isFinite ? max(1, value) : 1 }
+}
+
+
+/// Header geometry around the physical notch, for the workspace top lane.
+struct WorkspaceNotchLane: Equatable {
+    /// How far top content inside the free header gap may move up.
+    var rise: CGFloat
+    /// The wider of the two header button groups (each sits at a shell edge).
+    var headerGroupWidth: CGFloat
+    /// Horizontal clearance kept from the header groups (= notch clearance).
+    var clearance: CGFloat
+    /// The header's own minimum inner width (notch-safe).
+    var minimumInnerWidth: CGFloat
+
+    static let none = WorkspaceNotchLane(rise: 0, headerGroupWidth: 0, clearance: 0, minimumInnerWidth: 0)
 }

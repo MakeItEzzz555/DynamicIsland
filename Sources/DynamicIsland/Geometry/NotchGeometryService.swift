@@ -351,7 +351,7 @@ struct ExpandedPresentationProfile: Equatable, Sendable {
     func resolvedSize(from base: CGSize, page: ExpandedIslandPage,
                       configuration: WorkspaceConfiguration?, editing: Bool,
                       settings: AppSettings, metrics: ResolvedIslandMetrics,
-                      minimumHeaderWidth: CGFloat = 0) -> CGSize {
+                      minimumHeaderWidth: CGFloat = 0, lane: WorkspaceNotchLane = .none) -> CGSize {
         let surface: WorkspaceSurface? = page == .island ? .media : (page == .agents ? .agents : nil)
         guard let surface, let configuration,
               editing || configuration.customizedSurfaces.contains(surface) else {
@@ -378,7 +378,7 @@ struct ExpandedPresentationProfile: Equatable, Sendable {
         // Content owns the shell size; the header minimum may widen the shell
         // (the content is then centered) but never enlarges a widget.
         let content = WorkspaceWidgetLayoutProjection.preferredContentSize(regions: regions,
-            maximumSize: maximum, metrics: metrics, editing: editing)
+            maximumSize: maximum, metrics: metrics, editing: editing, lane: lane)
         return CGSize(width: max(content.width, min(minimumHeaderWidth, maximum.width)) + horizontal,
                       height: content.height + vertical)
     }
