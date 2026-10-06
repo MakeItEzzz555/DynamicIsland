@@ -36,9 +36,17 @@ final class AgentConsoleSwitchTests: XCTestCase {
         let terminal = try XCTUnwrap(regions.first { $0.widgets.first?.kind == .terminal })
         let presentation = AgentWorkspacePresentation()
         XCTAssertEqual(presentation.consoleMode(for: terminal), .terminal, "a Terminal region defaults to Terminal")
-        presentation.switchConsole(to: .chat, in: terminal)
-        XCTAssertEqual(presentation.consoleMode(for: terminal), .chat)
-        XCTAssertEqual(presentation.consoleMode(for: chat), .chat, "the other region is untouched")
+        // Live finding (2026-10-06): showing Terminal in the Chat region while
+        // the Terminal widget also showed it mounted the one PTY host twice
+        // (one pane blank). Each surface is presented once: the regions swap.
+        presentation.switchConsole(to: .terminal, in: chat, among: regions)
+        XCTAssertEqual(presentation.consoleMode(for: chat), .terminal)
+        XCTAssertEqual(presentation.consoleMode(for: terminal), .chat, "the other region takes the other surface")
+        presentation.switchConsole(to: .terminal, in: terminal, among: regions)
+        XCTAssertEqual(presentation.consoleMode(for: terminal), .terminal)
+        XCTAssertEqual(presentation.consoleMode(for: chat), .chat)
+        let shown = regions.map { presentation.consoleMode(for: $0) }
+        XCTAssertEqual(Set(shown).count, shown.count, "never the same surface twice")
         XCTAssertEqual(config.regions(on: .agents).count, 2, "both widgets remain")
     }
 

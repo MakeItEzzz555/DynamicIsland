@@ -58,13 +58,24 @@ final class AgentWorkspacePresentation: ObservableObject {
     }
 
     /// The embedded Chat/Terminal switch. Presentation only: it never adds,
-    /// removes or reorders workspace widgets.
-    func switchConsole(to mode: AgentConsolePresentationMode, in region: WorkspaceWidgetRegion) {
+    /// removes or reorders workspace widgets. Each surface is presented at
+    /// most once (one PTY host, one composer): if another standalone console
+    /// region already shows the requested surface, the two regions swap.
+    func switchConsole(to mode: AgentConsolePresentationMode, in region: WorkspaceWidgetRegion,
+                       among regions: [WorkspaceWidgetRegion] = []) {
         switch AgentConsoleSwitchTarget.resolve(region) {
         case .stack:
             showStack(mode == .chat ? .chat : .terminal)
         case .region(let id):
-            if consoleModes[id] != mode { consoleModes[id] = mode }
+            let previous = consoleMode(for: region)
+            guard previous != mode else { return }
+            var next = consoleModes
+            for other in regions where other.id != id && AgentConsoleSwitchTarget.resolve(other) == .region(other.id)
+                && consoleMode(for: other) == mode {
+                next[other.id] = previous
+            }
+            next[id] = mode
+            consoleModes = next
             if interactionMode != mode { interactionMode = mode }
         case .none:
             break

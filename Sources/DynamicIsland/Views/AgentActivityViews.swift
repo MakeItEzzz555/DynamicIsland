@@ -667,7 +667,8 @@ struct AgentDashboardContentView: View {
     /// handler added a Terminal widget below the Chat on every switch).
     private func consoleSwitch(_ region: WorkspaceWidgetRegion) -> (AgentInteractionMode) -> Void {
         let presentation = workspacePresentation
-        return { mode in presentation.switchConsole(to: mode, in: region) }
+        let regions = customization?.configuration.regions(on: .agents) ?? []
+        return { mode in presentation.switchConsole(to: mode, in: region, among: regions) }
     }
 
     /// Terminal shown in a Standard/Large console region.
