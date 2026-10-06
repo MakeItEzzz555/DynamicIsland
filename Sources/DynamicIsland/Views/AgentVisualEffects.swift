@@ -479,7 +479,6 @@ struct MetalSendButton: View {
         .buttonStyle(MetalSendPressStyle(reduceMotion: reduceMotion, hovering: hovering && isEnabled))
         .disabled(!isEnabled)
         .onHover { hovering = $0 }
-        .animation(reduceMotion ? nil : .spring(response: 0.18, dampingFraction: 0.72), value: hovering)
         .accessibilityLabel("Send prompt")
         .accessibilityValue(isEnabled ? "Ready" : "Unavailable")
     }
@@ -498,14 +497,40 @@ struct MetalSendButton: View {
     }
 }
 
+/// Send button hover/press feedback, shared by every Agent Chat size (one
+/// button implementation). The style used to receive `hovering` and ignore
+/// it, so the only hover response was the Metal shader's pointer effect,
+/// which runs only while the surface reports itself visible and active - the
+/// Compact and Large chats showed none.
+struct MetalSendFeedback: Equatable {
+    var scale: CGFloat
+    var brightness: Double
+    var opacity: Double
+
+    static func resolve(hovering: Bool, pressed: Bool, enabled: Bool, reduceMotion: Bool) -> Self {
+        guard enabled else { return Self(scale: 1, brightness: 0, opacity: 1) }
+        if pressed { return Self(scale: reduceMotion ? 1 : 0.95, brightness: -0.04, opacity: 0.86) }
+        if hovering { return Self(scale: reduceMotion ? 1 : 1.05, brightness: 0.10, opacity: 1) }
+        return Self(scale: 1, brightness: 0, opacity: 1)
+    }
+}
+
 private struct MetalSendPressStyle: ButtonStyle {
     var reduceMotion: Bool
     var hovering: Bool
+    @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
+        let feedback = MetalSendFeedback.resolve(hovering: hovering, pressed: configuration.isPressed,
+                                                 enabled: isEnabled, reduceMotion: reduceMotion)
         configuration.label
-            .opacity(configuration.isPressed ? 0.78 : 1)
-            .animation(reduceMotion ? nil : .spring(response: 0.18, dampingFraction: 0.72), value: configuration.isPressed)
+            .scaleEffect(feedback.scale)
+            .brightness(feedback.brightness)
+            .opacity(feedback.opacity)
+            // Droppy press/release springs (editor tokens): press reacts
+            // immediately, release/hover settle softly. No layout movement.
+            .animation(WorkspaceEditorMotion.hover(entering: configuration.isPressed || hovering, reduceMotion: reduceMotion),
+                       value: feedback)
     }
 }
 
