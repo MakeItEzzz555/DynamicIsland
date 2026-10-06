@@ -171,3 +171,9 @@ Size contracts:
 - Orphan rows are centered at their semantic size; the editor preview equals the committed geometry (`WorkspaceSemanticSizeTests`).
 - Camera explicit intent and the Screen Recording request ledger: unit-tested; packaged acceptance needs camera and Screen Recording grants for a build (see context.md).
 - Full suite 1,944 / 0 / 41.
+
+## Standard Media and header rhythm (2026-10-06, after ad41566)
+
+- Standard Media is two columns: artwork left, one centered stack right (metadata -> transport -> progress -> volume). Verified on the packaged build through AX geometry.
+- Header-to-content dead band reduced from ~17 pt to ~7 pt via the shared `ExpandedIslandLayoutMetrics` and usage strip heights; still notch-safe.
+- Full suite 1,946 / 0 / 41.
