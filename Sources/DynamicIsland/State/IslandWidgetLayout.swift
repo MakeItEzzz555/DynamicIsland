@@ -739,7 +739,9 @@ struct WidgetGridMetrics: Equatable {
     /// Columns that fit `width` (never fewer than the two a Standard needs).
     func columns(fitting width: CGFloat) -> Int {
         guard width.isFinite, width > 0 else { return 2 }
-        return max(2, Int(((width + gutter) / (side + gutter)).rounded(.down)))
+        // Epsilon: a width of exactly N units (after inset arithmetic) must
+        // fit N columns, not N - 1 from floating-point rounding.
+        return max(2, Int(((width + gutter) / (side + gutter) + 1e-6).rounded(.down)))
     }
     /// A host narrower than two units shrinks the unit instead of overlapping.
     func fitted(to width: CGFloat) -> Self {
@@ -864,6 +866,18 @@ struct WorkspaceWidgetLayoutProjection: Equatable {
         var rows = 0
     }
 
+    private static func isOrphan(_ item: Placed, in placed: [Placed]) -> Bool {
+        guard !item.region.stacksBelowPrevious else { return false }
+        // An anchor whose column carries a stacked-below widget stays put.
+        let columns = item.column..<(item.column + item.columns)
+        if placed.contains(where: { $0.region.stacksBelowPrevious && $0.region.id != item.region.id
+            && columns.overlaps($0.column..<($0.column + $0.columns)) }) { return false }
+        let rows = item.row..<(item.row + item.rows)
+        return !placed.contains { other in
+            other.region.id != item.region.id && rows.overlaps(other.row..<(other.row + other.rows))
+        }
+    }
+
     /// Lays sections out from y = 0, each section centered in the widest one.
     private static func layout(_ sections: [Section], grid: WidgetGridMetrics, metrics: ResolvedIslandMetrics,
                                minimumColumns: Int, availableWidth: CGFloat, chatHeightHint: CGFloat?) -> Layout {
@@ -888,7 +902,16 @@ struct WorkspaceWidgetLayoutProjection: Equatable {
                         let floor = AgentChatHeightPolicy.minimumCellHeight * metrics.expandedCardScale
                         height = min(height, max(floor, hint))
                     }
-                    let frame = CGRect(x: CGFloat(item.column) * pitch, y: y + CGFloat(item.row) * pitch,
+                    var x = CGFloat(item.column) * pitch
+                    // An orphan - the only region in every row it occupies,
+                    // e.g. the widget wrapped onto its own row - is centered
+                    // in the section instead of hugging the left edge. Its
+                    // semantic size is unchanged. Stack-below columns keep
+                    // their alignment.
+                    if isOrphan(item, in: placed), item.columns < used {
+                        x = (grid.length(used) - grid.length(item.columns)) / 2
+                    }
+                    let frame = CGRect(x: x, y: y + CGFloat(item.row) * pitch,
                                        width: grid.length(item.columns), height: height)
                     result.frames.append(.init(id: item.region.id, frame: frame))
                     bottom = max(bottom, frame.maxY - y)

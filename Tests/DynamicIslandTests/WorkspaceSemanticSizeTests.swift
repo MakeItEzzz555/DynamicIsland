@@ -192,6 +192,71 @@ final class WorkspaceSemanticSizeTests: XCTestCase {
         XCTAssertEqual(frame.height, preferred.height, accuracy: 0.5)
     }
 
+    // MARK: Orphan rows
+
+    private func centered(_ frame: CGRect, in projection: WorkspaceWidgetLayoutProjection,
+                          file: StaticString = #filePath, line: UInt = #line) {
+        let others = projection.frames.map(\.frame).filter { $0 != frame }
+        let minX = (others + [frame]).map(\.minX).min()!, maxX = (others + [frame]).map(\.maxX).max()!
+        XCTAssertEqual(frame.midX, (minX + maxX) / 2, accuracy: 0.5, "orphan is centered in its section", file: file, line: line)
+    }
+
+    func testAWrappedSingletonIsCenteredWithoutChangingItsSize() throws {
+        let grid = WidgetGridMetrics.make(surface: .media, metrics: metrics)
+        // [A][B] / [ C ] at four columns: two Standards then a Standard.
+        let projection = layout([(.media, .standard), (.timer, .standard), (.calendar, .standard)], columns: 4)
+        let c = try XCTUnwrap(projection.frames.last?.frame)
+        XCTAssertEqual(c.width, grid.size(for: .standard).width, accuracy: 0.5, "size unchanged, not stretched")
+        centered(c, in: projection)
+        assertNoOverlap(projection)
+    }
+
+    func testSingletonCentersAcrossCompactAndLargeMixes() throws {
+        // Three Compacts at two columns: [A][B] / [C]
+        let three = layout([(.media, .compact), (.timer, .compact), (.files, .compact)], columns: 2)
+        centered(try XCTUnwrap(three.frames.last?.frame), in: three)
+        // Standard + Compact + Compact at three columns: [S S][C] / [C]
+        let mixed = layout([(.media, .standard), (.timer, .compact), (.files, .compact)], columns: 3)
+        centered(try XCTUnwrap(mixed.frames.last?.frame), in: mixed)
+        // Large + Compact at two columns: the Compact wraps below the Large.
+        let large = layout([(.calendar, .large), (.timer, .compact)], columns: 2)
+        centered(try XCTUnwrap(large.frames.last?.frame), in: large)
+        // Rows with two widgets keep their positions.
+        XCTAssertEqual(three.frames[0].frame.minX, three.frames.map(\.frame.minX).min()!, accuracy: 0.5)
+        XCTAssertEqual(mixed.columns, 3, "a width of exactly three units fits three columns")
+    }
+
+    func testChatTerminalStackAndFeedAloneCenterAsOneItem() throws {
+        var value = config([(.feed, .standard), (.chat, .standard), (.terminal, .standard)], surface: .agents)
+        value.combineTerminalWithChat()
+        let grid = WidgetGridMetrics.make(surface: .agents, metrics: metrics)
+        let projection = WorkspaceWidgetLayoutProjection.make(regions: value.regions(on: .agents),
+            availableSize: .init(width: grid.length(3) + 14, height: 2_000), metrics: metrics, editing: true)
+        XCTAssertEqual(projection.frames.count, 2, "the stack is one placement item")
+        for frame in projection.frames.map(\.frame) { centered(frame, in: projection) }
+    }
+
+    func testTimerAloneAfterWrapIsCenteredButStackBelowKeepsItsColumn() throws {
+        let wrapped = layout([(.media, .standard), (.files, .compact), (.timer, .standard)], columns: 3)
+        centered(try XCTUnwrap(wrapped.frames.last?.frame), in: wrapped)
+        let stacked = layout([(.media, .compact), (.timer, .standard), (.workspace, .standard)], columns: 6, below: [1])
+        XCTAssertEqual(stacked.frames[1].frame.minX, stacked.frames[0].frame.minX, accuracy: 0.5, "column relation preserved")
+    }
+
+    func testDragPreviewAndCommittedLayoutPlaceTheOrphanIdentically() throws {
+        // The editor previews with the same projection it commits with.
+        let specs: [Spec] = [(.media, .standard), (.timer, .standard), (.calendar, .standard)]
+        let preview = layout(specs, columns: 4, editing: true)
+        let committed = layout(specs, columns: 4, editing: true)
+        XCTAssertEqual(preview, committed)
+        let draft = config(specs, surface: .media)
+        let decoded = WorkspaceConfiguration.decoded(try JSONEncoder().encode(draft))
+        let afterCommit = WorkspaceWidgetLayoutProjection.make(regions: decoded.regions(on: .media),
+            availableSize: .init(width: WidgetGridMetrics.make(surface: .media, metrics: metrics).length(4) + 14, height: 2_000),
+            metrics: metrics, editing: true)
+        XCTAssertEqual(afterCommit.frames, preview.frames, "commit equals the previewed geometry")
+    }
+
     func testPackingIsDeterministicAndNeverReshufflesOrder() {
         let specs: [Spec] = [(.media, .compact), (.calendar, .large), (.timer, .standard), (.files, .compact),
                              (.clipboard, .compact), (.shortcuts, .standard), (.activities, .compact)]

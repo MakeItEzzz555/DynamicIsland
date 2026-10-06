@@ -146,20 +146,22 @@ final class StandardMediaLayoutTests: XCTestCase {
         }
     }
 
-    func testArtworkSitsOnTheLeftWithMetadataBesideIt() throws {
+    func testArtworkLeftMetadataCenteredDirectlyAboveTheTransport() throws {
         for cell in cells {
             let f = MediaStandardLayout.make(cell: cell, content: .init()).frames
-            let art = try XCTUnwrap(f[.artwork]), title = try XCTUnwrap(f[.title])
+            let art = try XCTUnwrap(f[.artwork]), transport = try XCTUnwrap(f[.transport])
+            let source = try XCTUnwrap(f[.source])
             XCTAssertEqual(art.minX, MediaStandardLayout.horizontalPadding, accuracy: 0.01, "artwork is on the left")
             XCTAssertEqual(art.width, art.height, accuracy: 0.01)
             XCTAssertGreaterThanOrEqual(art.width, 44, "\(cell): artwork is not shrunk below the old 44 pt baseline")
             for slot in [Slot.title, .artist, .source] {
                 let text = try XCTUnwrap(f[slot])
-                XCTAssertGreaterThanOrEqual(text.minX, art.maxX, "\(slot) is beside the artwork")
-                XCTAssertEqual(text.maxX, cell.width - MediaStandardLayout.horizontalPadding, accuracy: 0.01)
+                XCTAssertEqual(text.midX, transport.midX, accuracy: 0.5, "\(slot) is centered on the controls' axis")
+                XCTAssertGreaterThanOrEqual(text.minX, art.maxX, "\(slot) never overlaps the artwork")
+                XCTAssertGreaterThanOrEqual(text.width / cell.width, MediaStandardLayout.metadataMinimumWidthRatio - 0.01)
             }
-            let metaMid = (title.minY + f[.source]!.maxY) / 2
-            XCTAssertEqual(metaMid, art.midY, accuracy: 0.5, "the metadata block is vertically centered on the artwork")
+            XCTAssertEqual(transport.minY - source.maxY, MediaStandardLayout.metadataTransportGap, accuracy: 0.5,
+                           "\(cell): metadata sits directly above the transport")
         }
     }
 
