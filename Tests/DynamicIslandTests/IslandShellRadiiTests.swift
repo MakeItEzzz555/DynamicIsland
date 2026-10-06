@@ -96,4 +96,86 @@ final class IslandShellRadiiTests: XCTestCase {
         XCTAssertEqual(profile.kind, .agentAttention)
         XCTAssertEqual(profile.heightDelta, 60)
     }
+
+    func testNotchIntegrationStaysTrueWhenEitherIndependentSignalStillSeesHardwareNotch() {
+        XCTAssertFalse(
+            IslandShellNotchIntegration.resolve(
+                geometryHasHardwareNotch: false,
+                displayMetricsHaveHardwareNotch: false
+            )
+        )
+        XCTAssertTrue(
+            IslandShellNotchIntegration.resolve(
+                geometryHasHardwareNotch: true,
+                displayMetricsHaveHardwareNotch: false
+            )
+        )
+        XCTAssertTrue(
+            IslandShellNotchIntegration.resolve(
+                geometryHasHardwareNotch: false,
+                displayMetricsHaveHardwareNotch: true
+            )
+        )
+        XCTAssertTrue(
+            IslandShellNotchIntegration.resolve(
+                geometryHasHardwareNotch: true,
+                displayMetricsHaveHardwareNotch: true
+            )
+        )
+    }
+
+    func testShellPathGeometryKeepsFiniteRoundedRadiiAcrossCollapsedAndMorphFrames() throws {
+        let cases: [(CGRect, CGFloat, CGFloat)] = [
+            (CGRect(x: 0, y: 0, width: 216, height: 34), 6, 14),
+            (CGRect(x: 0, y: 0, width: 260, height: 42), 9, 17),
+            (CGRect(x: 0, y: 0, width: 393, height: 66), 12.5, 19),
+            (CGRect(x: 0, y: 0, width: 676, height: 260), 19, 24),
+        ]
+
+        for (rect, top, bottom) in cases {
+            let radii = try XCTUnwrap(
+                IslandShellPathGeometry.resolvedRadii(
+                    in: rect,
+                    topCornerRadius: top,
+                    bottomCornerRadius: bottom
+                )
+            )
+            XCTAssertGreaterThan(radii.top, 0)
+            XCTAssertGreaterThan(radii.bottom, 0)
+            XCTAssertTrue(radii.top.isFinite)
+            XCTAssertTrue(radii.bottom.isFinite)
+            XCTAssertLessThanOrEqual(radii.top, rect.height)
+            XCTAssertLessThanOrEqual(radii.bottom, rect.height)
+        }
+    }
+
+    func testGlowContourUsesSameGeometryButNeverClosesAcrossPhysicalNotch() {
+        let rect = CGRect(x: 0, y: 0, width: 216, height: 34)
+        let shell = IslandShellPathGeometry.path(
+            in: rect,
+            topCornerRadius: 6,
+            bottomCornerRadius: 14,
+            closesAcrossNotch: true
+        )
+        let glow = IslandShellPathGeometry.path(
+            in: rect,
+            topCornerRadius: 6,
+            bottomCornerRadius: 14,
+            closesAcrossNotch: false
+        )
+
+        var shellCloseCount = 0
+        var glowCloseCount = 0
+        shell.forEach { element in
+            if case .closeSubpath = element { shellCloseCount += 1 }
+        }
+        glow.forEach { element in
+            if case .closeSubpath = element { glowCloseCount += 1 }
+        }
+
+        XCTAssertEqual(shellCloseCount, 1)
+        XCTAssertEqual(glowCloseCount, 0)
+        XCTAssertEqual(shell.boundingRect, glow.boundingRect)
+    }
+
 }

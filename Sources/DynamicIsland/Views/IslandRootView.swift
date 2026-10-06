@@ -19,6 +19,19 @@ extension View {
     }
 }
 
+/// Keep shell shoulder geometry stable when one of the two independent notch
+/// observations is momentarily stale during a display/window geometry refresh.
+/// GeometryService owns the actual frames; this only decides visual shoulder
+/// treatment for the already-resolved shell.
+enum IslandShellNotchIntegration {
+    static func resolve(
+        geometryHasHardwareNotch: Bool,
+        displayMetricsHaveHardwareNotch: Bool
+    ) -> Bool {
+        geometryHasHardwareNotch || displayMetricsHaveHardwareNotch
+    }
+}
+
 enum IslandContentTransitionTiming {
     // Content timing is derived from the active shell animation duration. Child content
     // starts only once the shell has fully expanded (ratio 1.0): with the default
@@ -632,7 +645,12 @@ struct IslandRootView: View {
                 ) {
                     islandSurfaceContent
                 }
-                .notchIntegrated(layoutStore.hasHardwareNotch)
+                .notchIntegrated(
+                    IslandShellNotchIntegration.resolve(
+                        geometryHasHardwareNotch: layoutStore.hasHardwareNotch,
+                        displayMetricsHaveHardwareNotch: layoutStore.displayMetrics.hasHardwareNotch
+                    )
+                )
                 .shellMorphing(layoutStore.isShellMorphing)
                 .collapseShellOnly(layoutStore.isCollapseShellOnly)
                 .frame(width: surfaceSize.width, height: surfaceSize.height)
@@ -858,7 +876,10 @@ struct IslandRootView: View {
             collapsedLeftRegionWidth: layoutStore.collapsedLeftRegionWidth,
             collapsedNotchCoreWidth: layoutStore.collapsedNotchCoreWidth,
             collapsedRightRegionWidth: layoutStore.collapsedRightRegionWidth,
-            isNotchIntegratedShell: layoutStore.hasHardwareNotch
+            isNotchIntegratedShell: IslandShellNotchIntegration.resolve(
+                geometryHasHardwareNotch: layoutStore.hasHardwareNotch,
+                displayMetricsHaveHardwareNotch: layoutStore.displayMetrics.hasHardwareNotch
+            )
         )
             }
         }
@@ -2020,7 +2041,7 @@ private struct AgentNotchGlowBorder: View {
         TimelineView(.animation(minimumInterval: frameInterval, paused: reduceMotion)) { timeline in
             let time = timeline.date.timeIntervalSinceReferenceDate
             let rotation = reduceMotion ? 0 : (time.truncatingRemainder(dividingBy: 2.0)) / 2.0 * 360
-            IslandShellShape(
+            IslandShellGlowContour(
                 topCornerRadius: topCornerRadius,
                 bottomCornerRadius: bottomCornerRadius
             )
@@ -2040,17 +2061,11 @@ private struct AgentNotchGlowBorder: View {
                     startAngle: .degrees(rotation),
                     endAngle: .degrees(rotation + 360)
                 ),
-                lineWidth: 2.5
+                style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round)
             )
             .shadow(color: glowColor.opacity(0.7), radius: 8)
             .shadow(color: glowColor.opacity(0.4), radius: 16)
             .shadow(color: glowColor.opacity(0.2), radius: 24)
-            .mask {
-                VStack(spacing: 0) {
-                    Color.clear.frame(height: 4)
-                    Color.white
-                }
-            }
         }
         .allowsHitTesting(false)
     }
@@ -2081,24 +2096,22 @@ struct IslandShellRadii: Equatable {
     }
 }
 
-private struct IslandShellShape: Shape {
-    var topCornerRadius: CGFloat
-    var bottomCornerRadius: CGFloat
-
-    var animatableData: AnimatablePair<CGFloat, CGFloat> {
-        get { AnimatablePair(topCornerRadius, bottomCornerRadius) }
-        set {
-            topCornerRadius = newValue.first
-            bottomCornerRadius = newValue.second
-        }
+enum IslandShellPathGeometry {
+    struct ResolvedRadii: Equatable {
+        let top: CGFloat
+        let bottom: CGFloat
     }
 
-    func path(in rect: CGRect) -> Path {
+    static func resolvedRadii(
+        in rect: CGRect,
+        topCornerRadius: CGFloat,
+        bottomCornerRadius: CGFloat
+    ) -> ResolvedRadii? {
         guard rect.width.isFinite,
               rect.height.isFinite,
               rect.width > 0,
               rect.height > 0 else {
-            return Path()
+            return nil
         }
 
         let requestedTop = topCornerRadius.isFinite ? max(topCornerRadius, 0) : 0
@@ -2109,8 +2122,32 @@ private struct IslandShellShape: Shape {
             max(rect.height - topRadius, 0),
             max((rect.width / 2) - topRadius, 0)
         )
+        return ResolvedRadii(top: topRadius, bottom: bottomRadius)
+    }
 
+    static func path(
+        in rect: CGRect,
+        topCornerRadius: CGFloat,
+        bottomCornerRadius: CGFloat,
+        closesAcrossNotch: Bool
+    ) -> Path {
+        guard let radii = resolvedRadii(
+            in: rect,
+            topCornerRadius: topCornerRadius,
+            bottomCornerRadius: bottomCornerRadius
+        ) else {
+            return Path()
+        }
+
+        let topRadius = radii.top
+        let bottomRadius = radii.bottom
         var path = Path()
+
+        // The visible notch-integrated contour begins at the left shoulder tip,
+        // travels around the shell bottom, and ends at the right shoulder tip.
+        // The filled shell closes across the hidden top edge; the animated glow
+        // deliberately does not, so it can reach both shoulders without drawing
+        // a neon line through the physical camera notch.
         path.move(to: CGPoint(x: rect.minX, y: rect.minY))
         path.addQuadCurve(
             to: CGPoint(x: rect.minX + topRadius, y: rect.minY + topRadius),
@@ -2131,8 +2168,55 @@ private struct IslandShellShape: Shape {
             to: CGPoint(x: rect.maxX, y: rect.minY),
             control: CGPoint(x: rect.maxX - topRadius, y: rect.minY)
         )
-        path.closeSubpath()
+
+        if closesAcrossNotch {
+            path.closeSubpath()
+        }
         return path
+    }
+}
+
+private struct IslandShellShape: Shape {
+    var topCornerRadius: CGFloat
+    var bottomCornerRadius: CGFloat
+
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(topCornerRadius, bottomCornerRadius) }
+        set {
+            topCornerRadius = newValue.first
+            bottomCornerRadius = newValue.second
+        }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        IslandShellPathGeometry.path(
+            in: rect,
+            topCornerRadius: topCornerRadius,
+            bottomCornerRadius: bottomCornerRadius,
+            closesAcrossNotch: true
+        )
+    }
+}
+
+private struct IslandShellGlowContour: Shape {
+    var topCornerRadius: CGFloat
+    var bottomCornerRadius: CGFloat
+
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(topCornerRadius, bottomCornerRadius) }
+        set {
+            topCornerRadius = newValue.first
+            bottomCornerRadius = newValue.second
+        }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        IslandShellPathGeometry.path(
+            in: rect,
+            topCornerRadius: topCornerRadius,
+            bottomCornerRadius: bottomCornerRadius,
+            closesAcrossNotch: false
+        )
     }
 }
 
