@@ -1509,6 +1509,18 @@ final class MediaController: ObservableObject {
         }
     }
 
+    /// Runs one AppleScript through the shared serialized executor (same
+    /// timeouts/backoff as transport commands). Used by the advanced Now
+    /// Playing controls; never called from the detection loop.
+    func runAutomation(_ source: String, target: MediaAutomationTarget) async -> MediaAutomationScriptResult {
+        guard !isSettingsPreview else { return MediaAutomationScriptResult(output: "", failure: .cancelled) }
+        return await withCheckedContinuation { continuation in
+            automationExecutor.submitCommand(MediaAutomationOperation(target: target, source: source)) { result in
+                continuation.resume(returning: result)
+            }
+        }
+    }
+
     private func send(
         command: String,
         to player: MediaPlayer,

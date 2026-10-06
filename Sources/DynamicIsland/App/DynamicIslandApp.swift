@@ -113,6 +113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     )
     private let rightWorkspace = RightWorkspaceStore()
     private let customization = WorkspaceCustomizationStore()
+    private lazy var mediaAdvanced = MediaAdvancedController(media: media, spotify: workspaceServices.spotify)
     private lazy var workspaceServices = WorkspaceServices(
         appLibrary: AppLibraryStore(),
         calendar: CalendarEventsController(),
@@ -249,7 +250,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             basketPresenter: basketPresenter,
             agentWorkspaceFeed: agentWorkspaceFeed,
             agentWorkspacePresentation: agentWorkspacePresentation,
-            customization: customization
+            customization: customization,
+            mediaAdvanced: mediaAdvanced
         )
         navigation.applyConfiguration(customization.configuration, using: settings)
         customization.$configuration.dropFirst().removeDuplicates().sink { [weak self] configuration in

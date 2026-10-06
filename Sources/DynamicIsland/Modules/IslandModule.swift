@@ -41,6 +41,8 @@ struct IslandModules {
     var agentWorkspaceFeed: AgentWorkspaceFeedStore? = nil
     var agentWorkspacePresentation: AgentWorkspacePresentation? = nil
     var customization: WorkspaceCustomizationStore? = nil
+    /// Advanced Now Playing controls (queue, favorite, mode, output).
+    var mediaAdvanced: MediaAdvancedController? = nil
 }
 
 /// Real data sources for the right workspace's Apps & Media page.

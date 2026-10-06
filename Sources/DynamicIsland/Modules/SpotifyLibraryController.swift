@@ -81,6 +81,22 @@ struct SpotifyLibrarySnapshot: Equatable, Sendable {
     var likedSongs: [SpotifyMediaItem]
 }
 
+/// `GET me/player` subset used by the Now Playing controls.
+struct SpotifyPlaybackState: Equatable, Sendable {
+    enum Repeat: String, Sendable { case off, context, track }
+    var shuffle: Bool
+    var repeatState: Repeat
+    var itemURI: String?
+
+    static func parse(_ data: Data) -> SpotifyPlaybackState? {
+        guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let shuffle = object["shuffle_state"] as? Bool else { return nil }
+        let repeatState = (object["repeat_state"] as? String).flatMap(Repeat.init(rawValue:)) ?? .off
+        let uri = (object["item"] as? [String: Any])?["uri"] as? String
+        return SpotifyPlaybackState(shuffle: shuffle, repeatState: repeatState, itemURI: uri)
+    }
+}
+
 enum SpotifyLibraryError: LocalizedError, Equatable {
     case appNotConfigured
     case notConnected
@@ -834,6 +850,52 @@ final class SpotifyLibraryController: NSObject, ObservableObject {
         let existing = Set(current[keyPath: keyPath].map(\.id))
         current[keyPath: keyPath].append(contentsOf: newItems.filter { !existing.contains($0.id) })
         snapshot = current
+    }
+
+    // MARK: Playback controls (Now Playing advanced controls)
+
+    /// `GET me/player`: shuffle, repeat and the playing item. Nil when no
+    /// device is active (204).
+    func playbackState() async throws -> SpotifyPlaybackState? {
+        let data = try await get("me/player")
+        return SpotifyPlaybackState.parse(data)
+    }
+
+    /// `PUT me/player/shuffle?state=`.
+    func setShuffle(_ on: Bool) async throws {
+        try await send(method: "PUT", path: "me/player/shuffle",
+                       query: [URLQueryItem(name: "state", value: on ? "true" : "false")],
+                       expectedStatusCodes: [200, 202, 204])
+    }
+
+    /// `PUT me/player/repeat?state=off|context|track`.
+    func setRepeat(_ state: SpotifyPlaybackState.Repeat) async throws {
+        try await send(method: "PUT", path: "me/player/repeat",
+                       query: [URLQueryItem(name: "state", value: state.rawValue)],
+                       expectedStatusCodes: [200, 202, 204])
+    }
+
+    /// Whether the item is in the user's library (Liked Songs).
+    func isSaved(uri: String) async throws -> Bool {
+        var components = URLComponents(url: apiURL("me/library/contains"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "uris", value: uri)]
+        guard let url = components.url else { throw SpotifyLibraryError.invalidResponse }
+        let data = try await get(url)
+        return ((try? JSONSerialization.jsonObject(with: data)) as? [Bool])?.first ?? false
+    }
+
+    /// Save / remove by URI (the same `me/library` endpoints as `setSaved`).
+    func setSaved(uri: String, saved: Bool) async throws {
+        try await send(method: saved ? "PUT" : "DELETE", path: "me/library",
+                       query: [URLQueryItem(name: "uris", value: uri)], expectedStatusCodes: [200, 204])
+    }
+
+    /// Reload only the queue (no full library refresh).
+    func refreshQueue() async {
+        if snapshot == nil {
+            snapshot = SpotifyLibrarySnapshot(currentlyPlaying: nil, queue: [], playlists: [], likedSongs: [])
+        }
+        await refreshQueueOnly()
     }
 
     private func refreshQueueOnly() async {

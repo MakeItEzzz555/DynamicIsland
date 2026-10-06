@@ -135,45 +135,34 @@ final class CompactMediaLayoutTests: XCTestCase {
     }
 }
 
-/// Standard Media: artwork left, metadata centered beside it, controls and
-/// full-width sliders below filling the rectangle.
+/// Standard Media: the native Now Playing structure.
 final class StandardMediaLayoutTests: XCTestCase {
     private typealias Slot = MediaStandardLayout.Slot
-    private let cells: [CGSize] = [WorkspaceSurface.media, .agents].flatMap { surface in
-        [CGFloat(1), 0.918].map { scale in
-            let grid = WidgetGridMetrics.make(surface: surface, metrics: .fallback)
-            return CGSize(width: grid.size(for: .standard).width * scale, height: grid.size(for: .standard).height * scale)
-        }
+    private let cells: [CGSize] = [CGFloat(1), 0.918].map { scale in
+        let grid = WidgetGridMetrics.make(surface: .media, metrics: .fallback)
+        return CGSize(width: grid.size(for: .standard).width * scale, height: grid.size(for: .standard).height * scale)
     }
 
-    func testArtworkLeftAndOneCenteredStackOnTheRight() throws {
+    func testReferenceStructureTopRowProgressRowControls() throws {
         for cell in cells {
             let f = MediaStandardLayout.make(cell: cell, content: .init()).frames
-            let art = try XCTUnwrap(f[.artwork])
-            XCTAssertEqual(art.minX, MediaStandardLayout.horizontalPadding, accuracy: 0.01, "artwork is on the left")
-            XCTAssertEqual(art.width, art.height, accuracy: 0.01)
-            XCTAssertGreaterThanOrEqual(art.width, 44, "\(cell): artwork is not shrunk below the old 44 pt baseline")
-            XCTAssertEqual(art.midY, cell.height / 2, accuracy: 0.5, "artwork is vertically centered")
-            let order: [Slot] = [.title, .artist, .source, .transport, .progress, .volume]
-            let column = try order.map { try XCTUnwrap(f[$0], "\(cell): \($0)") }
-            for frame in column {
-                XCTAssertEqual(frame.midX, column[0].midX, accuracy: 0.5, "one centered column")
-                XCTAssertGreaterThanOrEqual(frame.minX, art.maxX, "right of the artwork")
-            }
-            for (a, b) in zip(column, column.dropFirst()) {
-                XCTAssertGreaterThanOrEqual(b.minY, a.maxY - 0.01)
-                XCTAssertLessThanOrEqual(b.minY - a.maxY, MediaStandardLayout.stackGap + 0.01, "\(cell): stacked tightly")
-            }
-            let top = column.first!.minY, bottom = column.last!.maxY
-            XCTAssertEqual(top, cell.height - bottom, accuracy: 0.5, "\(cell): the stack is vertically centered")
-            let progress = try XCTUnwrap(f[.progress])
-            XCTAssertLessThanOrEqual(progress.width / cell.width, 0.70, "\(cell): short sliders preserved")
-        }
-    }
-
-    func testControlsStayInsideTheCardWithoutOverlap() throws {
-        for cell in cells {
-            let f = MediaStandardLayout.make(cell: cell, content: .init()).frames
+            let art = try XCTUnwrap(f[.artwork]), title = try XCTUnwrap(f[.title]), artist = try XCTUnwrap(f[.artist])
+            let viz = try XCTUnwrap(f[.visualizer])
+            let elapsed = try XCTUnwrap(f[.elapsed]), track = try XCTUnwrap(f[.progress]), remaining = try XCTUnwrap(f[.remaining])
+            let controls = try XCTUnwrap(f[.controls])
+            XCTAssertEqual(art.minX, MediaStandardLayout.horizontalPadding, accuracy: 0.01, "artwork left")
+            XCTAssertGreaterThan(title.minX, art.maxX, "title right of the artwork")
+            XCTAssertEqual(artist.minX, title.minX, accuracy: 0.01)
+            XCTAssertGreaterThanOrEqual(artist.minY, title.maxY - 0.01, "artist under title")
+            XCTAssertEqual(viz.maxX, cell.width - MediaStandardLayout.horizontalPadding, accuracy: 0.01, "visualizer upper right")
+            XCTAssertLessThan(viz.midY, track.minY)
+            XCTAssertLessThanOrEqual(title.maxX, viz.minX, "title never runs under the visualizer")
+            XCTAssertGreaterThanOrEqual(track.minY, art.maxY - 0.01, "progress below the top row")
+            XCTAssertLessThan(elapsed.maxX, track.minX); XCTAssertLessThan(track.maxX, remaining.minX)
+            XCTAssertEqual(elapsed.minX, MediaStandardLayout.horizontalPadding, accuracy: 0.01)
+            XCTAssertEqual(remaining.maxX, cell.width - MediaStandardLayout.horizontalPadding, accuracy: 0.01, "progress spans the card")
+            XCTAssertGreaterThanOrEqual(controls.minY, track.maxY - 0.01, "controls at the bottom")
+            XCTAssertEqual(controls.midX, cell.width / 2, accuracy: 0.5)
             let bounds = CGRect(origin: .zero, size: cell).insetBy(dx: -0.01, dy: -0.01)
             let list = Array(f.values)
             for (i, a) in list.enumerated() {
@@ -183,13 +172,81 @@ final class StandardMediaLayoutTests: XCTestCase {
         }
     }
 
-    func testShortCellsDropVolumeThenProgressBeforeCrushingTheArtwork() {
-        let short = MediaStandardLayout.make(cell: .init(width: 300, height: 110), content: .init())
-        XCTAssertNil(short.frames[.volume])
-        XCTAssertGreaterThanOrEqual(short.artworkSide, MediaStandardLayout.artworkMinimum)
-        let noArtwork = MediaStandardLayout.make(cell: .init(width: 300, height: 150), content: .init(artwork: false))
-        XCTAssertNil(noArtwork.frames[.artwork])
-        XCTAssertEqual(noArtwork.frames[.title]?.midX ?? 0, 150, accuracy: 0.5, "without artwork the stack centers in the card")
-        XCTAssertLessThanOrEqual(noArtwork.frames[.progress]?.width ?? 0, 300 * 0.70 + 0.01)
+    func testMissingArtworkAndProgressStayBalanced() throws {
+        let cell = CGSize(width: 305, height: 149)
+        let noArt = MediaStandardLayout.make(cell: cell, content: .init(artwork: false))
+        XCTAssertNil(noArt.frames[.artwork])
+        XCTAssertEqual(noArt.frames[.title]?.minX ?? 0, MediaStandardLayout.horizontalPadding, accuracy: 0.01)
+        let noProgress = MediaStandardLayout.make(cell: cell, content: .init(progress: false))
+        XCTAssertNil(noProgress.frames[.progress])
+        XCTAssertNotNil(noProgress.frames[.controls])
+    }
+}
+
+/// Advanced Now Playing controls: capability model, mode machine, row.
+final class MediaAdvancedControlTests: XCTestCase {
+    func testControlRowOrderMatchesTheReferenceAndCentersPlay() {
+        XCTAssertEqual(MediaControlSlot.standardOrder, [.queue, .favorite, .previous, .playPause, .next, .mode, .output])
+        for metrics in [MediaControlRowMetrics.standard, .large] {
+            let width: CGFloat = 281
+            let centers = metrics.centers(width: width)
+            XCTAssertEqual(centers[3], width / 2, accuracy: 0.01, "Play/Pause sits on the row's center")
+            XCTAssertGreaterThan(metrics.play, metrics.transport)
+            XCTAssertGreaterThan(metrics.transport, metrics.secondary)
+            XCTAssertEqual(centers, centers.sorted())
+        }
+    }
+
+    func testCapabilitiesReflectRealBackendsOnly() {
+        let spotifyAuthed = MediaControlCapabilities.resolve(source: .spotify, spotifyConnected: true, hasOutputDevices: true)
+        XCTAssertEqual(spotifyAuthed.queue, .supported); XCTAssertEqual(spotifyAuthed.favorite, .supported)
+        XCTAssertTrue(spotifyAuthed.supportsRepeatOne)
+        let spotify = MediaControlCapabilities.resolve(source: .spotify, spotifyConnected: false, hasOutputDevices: true)
+        XCTAssertEqual(spotify.queue, .authRequired); XCTAssertEqual(spotify.favorite, .authRequired)
+        XCTAssertEqual(spotify.playbackMode, .supported, "AppleScript shuffle/repeat works without auth")
+        XCTAssertFalse(spotify.supportsRepeatOne, "repeat-one needs the Web API")
+        let music = MediaControlCapabilities.resolve(source: .music, spotifyConnected: false, hasOutputDevices: true)
+        XCTAssertEqual(music.queue, .unsupported, "Music has no queue API")
+        XCTAssertEqual(music.favorite, .supported); XCTAssertTrue(music.supportsRepeatOne)
+        for source in [MediaSourceKind.system, .browser, .unknown] {
+            let value = MediaControlCapabilities.resolve(source: source, spotifyConnected: true, hasOutputDevices: true)
+            XCTAssertEqual(value.queue, .unsupported); XCTAssertEqual(value.favorite, .unsupported)
+            XCTAssertEqual(value.playbackMode, .unsupported); XCTAssertEqual(value.output, .supported)
+        }
+        XCTAssertEqual(MediaControlCapabilities.resolve(source: .music, spotifyConnected: false, hasOutputDevices: false).output, .unsupported)
+        XCTAssertNotNil(MediaControlCapabilities.reason(.unsupported, source: "Safari"))
+        XCTAssertNil(MediaControlCapabilities.reason(.supported, source: "Music"))
+    }
+
+    func testModeCycleAndIcons() {
+        var mode = MediaPlaybackModeState()
+        XCTAssertEqual(mode.symbol, "shuffle"); XCTAssertFalse(mode.isActive)
+        mode = mode.next(supportsRepeatOne: true); XCTAssertEqual(mode, .init(shuffle: true, repeatMode: .off))
+        XCTAssertEqual(mode.symbol, "shuffle"); XCTAssertTrue(mode.isActive)
+        mode = mode.next(supportsRepeatOne: true); XCTAssertEqual(mode, .init(shuffle: false, repeatMode: .all))
+        XCTAssertEqual(mode.symbol, "repeat")
+        mode = mode.next(supportsRepeatOne: true); XCTAssertEqual(mode.symbol, "repeat.1")
+        mode = mode.next(supportsRepeatOne: true); XCTAssertEqual(mode, MediaPlaybackModeState())
+        XCTAssertEqual(MediaPlaybackModeState(shuffle: false, repeatMode: .all).next(supportsRepeatOne: false), MediaPlaybackModeState(),
+                       "no repeat-one step where the provider cannot do it")
+        XCTAssertEqual(MediaPlaybackModeState(shuffle: true, repeatMode: .all).accessibilityValue, "Shuffle and repeat all",
+                       "independent provider states are never collapsed")
+    }
+
+    func testRemainingTimeIsNegativeAndClamped() {
+        XCTAssertEqual(MediaAdvancedController.remainingLabel(position: 1, duration: 197), "-3:16")
+        XCTAssertEqual(MediaAdvancedController.remainingLabel(position: 300, duration: 197), "-0:00")
+        XCTAssertEqual(MediaAdvancedController.remainingLabel(position: .nan, duration: 61), "-1:01")
+    }
+
+    func testSpotifyPlaybackStateParsingAndRepeatMapping() throws {
+        let json = #"{"shuffle_state":true,"repeat_state":"track","item":{"uri":"spotify:track:abc"}}"#
+        let state = try XCTUnwrap(SpotifyPlaybackState.parse(Data(json.utf8)))
+        XCTAssertTrue(state.shuffle); XCTAssertEqual(state.repeatState, .track); XCTAssertEqual(state.itemURI, "spotify:track:abc")
+        XCTAssertNil(SpotifyPlaybackState.parse(Data("{}".utf8)), "no active device")
+        for mode in MediaRepeatMode.allCases {
+            XCTAssertEqual(MediaAdvancedController.mode(MediaAdvancedController.spotifyRepeat(mode)), mode)
+        }
+        XCTAssertTrue(MediaAdvancedController.parseFlags("true||false\n")! == (true, false))
     }
 }

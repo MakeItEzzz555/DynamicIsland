@@ -502,6 +502,7 @@ struct IslandRootView: View {
     var body: some View {
         animatedIslandCanvas
             .environment(\.islandDisplayMetrics, layoutStore.displayMetrics)
+            .environment(\.mediaAdvancedControls, modules.mediaAdvanced)
             .environment(\.timerRulerInteractionRegistration, TimerRulerInteractionRegistration { owner, frame in
                 layoutStore.setNativeControlRegion(frame, owner: owner)
             })
