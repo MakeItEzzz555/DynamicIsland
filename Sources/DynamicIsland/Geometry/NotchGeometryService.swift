@@ -348,10 +348,45 @@ struct ExpandedPresentationProfile: Equatable, Sendable {
     /// Widget content contributes requirements to the existing shell resolver;
     /// notch anchoring, display limits and attached sidecars stay in this path.
     @MainActor
+    /// The header mode for a page (see `ExpandedHeaderLayout.resolve`).
+    static func headerLayout(page: ExpandedIslandPage, configuration: WorkspaceConfiguration?, editing: Bool,
+                             settings: AppSettings, metrics: ResolvedIslandMetrics, pageCount: Int) -> ExpandedHeaderLayout {
+        let surface: WorkspaceSurface? = page == .island ? .media : (page == .agents ? .agents : nil)
+        guard let surface, let configuration, !editing, configuration.customizedSurfaces.contains(surface) else { return .winged }
+        let regions = eligibleRegions(configuration, surface: surface, settings: settings)
+        guard regions.count == 1 else { return .winged }
+        let maximum = workspaceMaximumContentSize(settings: settings, metrics: metrics)
+        let intrinsic = WorkspaceWidgetLayoutProjection.intrinsicContentSize(regions: regions, maximumWidth: maximum.width, metrics: metrics)
+        return ExpandedHeaderLayout.resolve(regionCount: regions.count, singleRegionWidth: intrinsic.width,
+            contentHeight: intrinsic.height, editing: editing, metrics: metrics,
+            isNotchIntegrated: metrics.hasHardwareNotch && settings.respectHardwareNotch,
+            pageCount: pageCount, clipboardEnabled: settings.clipboardHistoryEnabled)
+    }
+
+    @MainActor
+    private static func eligibleRegions(_ configuration: WorkspaceConfiguration, surface: WorkspaceSurface,
+                                        settings: AppSettings) -> [WorkspaceWidgetRegion] {
+        let allowed = WorkspaceWidgetAvailability.eligible(on: surface, settings: settings)
+        return configuration.regions(on: surface).compactMap { region -> WorkspaceWidgetRegion? in
+            let widgets = region.widgets.filter { allowed.contains($0.kind) }
+            guard !widgets.isEmpty else { return nil }
+            return WorkspaceWidgetRegion(id: widgets.count > 1 ? region.id : widgets[0].id, widgets: widgets)
+        }
+    }
+
+    @MainActor
+    private static func workspaceMaximumContentSize(settings: AppSettings, metrics: ResolvedIslandMetrics) -> CGSize {
+        let horizontal = IslandShellLayout.expandedHorizontalPadding(isNotchIntegrated: metrics.hasHardwareNotch && settings.respectHardwareNotch) * 2
+        return CGSize(width: max(1, max(520, metrics.logicalSize.width - 280) - horizontal),
+                      height: ExpandedIslandLayoutMetrics.workspaceContentHeightBudget(metrics: metrics))
+    }
+
+    @MainActor
     func resolvedSize(from base: CGSize, page: ExpandedIslandPage,
                       configuration: WorkspaceConfiguration?, editing: Bool,
                       settings: AppSettings, metrics: ResolvedIslandMetrics,
-                      minimumHeaderWidth: CGFloat = 0, lane: WorkspaceNotchLane = .none) -> CGSize {
+                      minimumHeaderWidth: CGFloat = 0, lane: WorkspaceNotchLane = .none,
+                      header: ExpandedHeaderLayout = .winged) -> CGSize {
         let surface: WorkspaceSurface? = page == .island ? .media : (page == .agents ? .agents : nil)
         guard let surface, let configuration,
               editing || configuration.customizedSurfaces.contains(surface) else {
@@ -362,24 +397,24 @@ struct ExpandedPresentationProfile: Equatable, Sendable {
             return CGSize(width: max(size.width * metrics.expandedShellScale, minimumHeaderWidth + horizontal),
                           height: size.height * metrics.expandedShellScale)
         }
-        let allowed = WorkspaceWidgetAvailability.eligible(on: surface, settings: settings)
-        let regions = configuration.regions(on: surface).compactMap { region -> WorkspaceWidgetRegion? in
-            let widgets = region.widgets.filter { allowed.contains($0.kind) }
-            guard !widgets.isEmpty else { return nil }
-            return WorkspaceWidgetRegion(id: widgets.count > 1 ? region.id : widgets[0].id, widgets: widgets)
-        }
+        let regions = Self.eligibleRegions(configuration, surface: surface, settings: settings)
         let horizontal = IslandShellLayout.expandedHorizontalPadding(isNotchIntegrated: metrics.hasHardwareNotch && settings.respectHardwareNotch) * 2
-        let chrome = ExpandedIslandLayoutMetrics(containerSize: base, horizontalPadding: horizontal / 2, displayMetrics: metrics)
+        let compact = header.mode == .compactBelowNotch
+        let chrome = ExpandedIslandLayoutMetrics(containerSize: base, horizontalPadding: horizontal / 2, displayMetrics: metrics,
+                                                 headerDrop: compact ? header.headerDrop : 0)
         // Usage is a configured band widget inside the projection: nothing is
         // reserved for it outside the configuration (zero when removed).
         let vertical = chrome.workspaceVerticalChrome
-        let maximum = CGSize(width: max(1, max(520, metrics.logicalSize.width - 280) - horizontal),
-                             height: ExpandedIslandLayoutMetrics.workspaceContentHeightBudget(metrics: metrics))
+        let maximum = Self.workspaceMaximumContentSize(settings: settings, metrics: metrics)
         // Content owns the shell size; the header minimum may widen the shell
-        // (the content is then centered) but never enlarges a widget.
+        // (the content is then centered) but never enlarges a widget. The
+        // compact header sits below the notch, so it neither needs the
+        // notch-wide winged minimum nor lets content rise into the notch lane.
         let content = WorkspaceWidgetLayoutProjection.preferredContentSize(regions: regions,
-            maximumSize: maximum, metrics: metrics, editing: editing, lane: lane)
-        return CGSize(width: max(content.width, min(minimumHeaderWidth, maximum.width)) + horizontal,
+            maximumSize: maximum, metrics: metrics, editing: editing, lane: compact ? .none : lane,
+            minimumWidth: compact ? 0 : nil)
+        let headerWidth = compact ? header.compactRowWidth : min(minimumHeaderWidth, maximum.width)
+        return CGSize(width: max(content.width, headerWidth) + horizontal,
                       height: content.height + vertical)
     }
 

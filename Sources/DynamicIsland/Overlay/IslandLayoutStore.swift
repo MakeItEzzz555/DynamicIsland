@@ -106,6 +106,10 @@ final class IslandLayoutStore: ObservableObject {
     @Published private(set) var collapsedPresentationProfile: CollapsedPresentationProfile = .normal
     @Published var compactPermissionHovered = false
     @Published var isShellMorphing = false
+    /// The header mode for the committed shell geometry. Set by the overlay
+    /// controller in the same (animated) update as the shell frames, so the
+    /// header row and the shell move as one transition.
+    @Published var expandedHeaderLayout: ExpandedHeaderLayout = .winged
     @Published var isCollapseShellOnly = false
     @Published var isExpandedContentExiting = false
     @Published var collapsedPreviewActive = false

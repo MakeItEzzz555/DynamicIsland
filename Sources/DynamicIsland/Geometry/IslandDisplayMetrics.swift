@@ -85,6 +85,8 @@ struct ResolvedIslandMetrics: Equatable {
     let workspaceTileMinimumHeight: CGFloat
     /// Physical notch height (0 without a hardware notch).
     var hardwareNotchHeight: CGFloat = 0
+    /// Physical notch width (0 without a hardware notch).
+    var hardwareNotchWidth: CGFloat = 0
 
     static let fallback = IslandDisplayMetricsResolver.resolve(
         IslandDisplaySnapshot(
@@ -165,6 +167,7 @@ enum IslandDisplayMetricsResolver {
             workspaceTileMinimumHeight: clamp(48 * card, 44, 58)
         )
         resolved.hardwareNotchHeight = snapshot.notchRect?.height ?? 0
+        resolved.hardwareNotchWidth = snapshot.notchRect?.width ?? 0
         return resolved
     }
 

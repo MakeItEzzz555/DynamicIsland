@@ -746,6 +746,7 @@ final class OverlayWindowController {
                     collapsedNotchCoreWidth: correctedGeometry.collapsedNotchCoreWidth,
                     collapsedRightRegionWidth: correctedGeometry.collapsedRightRegionWidth,
                     collapsedPresentationProfile: correctedGeometry.collapsedPresentationProfile,
+                    header: self.currentHeaderLayout,
                     animated: false
                 )
                 self.applyCanonicalPanelFrame(
@@ -937,10 +938,22 @@ final class OverlayWindowController {
             isExpanded: islandState.state == .expanded)
     }
 
+    /// The header mode for the current page/configuration (header resolver).
+    private var currentHeaderLayout: ExpandedHeaderLayout {
+        let page = modules.navigation.selectedPage
+        let surface: WorkspaceSurface? = page == .island ? .media : page == .agents ? .agents : nil
+        let preview = layoutStore.workspaceLayoutPreview.flatMap { $0.surface == surface ? $0 : nil }
+        return ExpandedPresentationProfile.headerLayout(page: page,
+            configuration: preview?.configuration ?? modules.customization?.configuration,
+            editing: preview != nil, settings: settings, metrics: layoutStore.displayMetrics,
+            pageCount: modules.navigation.availablePages(using: settings).count)
+    }
+
     private var desiredExpandedSize: CGSize {
         let page = modules.navigation.selectedPage
         let surface: WorkspaceSurface? = page == .island ? .media : page == .agents ? .agents : nil
         let preview = layoutStore.workspaceLayoutPreview.flatMap { $0.surface == surface ? $0 : nil }
+        let header = currentHeaderLayout
         let size = expandedPresentationProfile.resolvedSize(from: settings.expandedSize, page: page,
             configuration: preview?.configuration ?? modules.customization?.configuration,
             editing: preview != nil, settings: settings, metrics: layoutStore.displayMetrics,
@@ -950,7 +963,8 @@ final class OverlayWindowController {
                 hardwareNotchWidth: layoutStore.hardwareNotchWidth),
             lane: ExpandedIslandLayoutMetrics.workspaceNotchLane(settings: settings, metrics: layoutStore.displayMetrics,
                 pageCount: modules.navigation.availablePages(using: settings).count,
-                hardwareNotchWidth: layoutStore.hardwareNotchWidth))
+                hardwareNotchWidth: layoutStore.hardwareNotchWidth),
+            header: header)
         return preview == nil ? size : IslandLayoutStore.dragFloored(size, floor: layoutStore.workspaceDragFloor)
     }
 
@@ -1130,6 +1144,8 @@ final class OverlayWindowController {
             collapsedNotchCoreWidth: geometry.collapsedNotchCoreWidth,
             collapsedRightRegionWidth: geometry.collapsedRightRegionWidth,
             collapsedPresentationProfile: geometry.collapsedPresentationProfile,
+            // A stage re-expresses the *previous* frames: keep its header.
+            header: collapsedFrame == nil && expandedFrame == nil ? currentHeaderLayout : nil,
             animated: animated,
             completion: completion
         )
@@ -1166,10 +1182,14 @@ final class OverlayWindowController {
         collapsedNotchCoreWidth: CGFloat,
         collapsedRightRegionWidth: CGFloat,
         collapsedPresentationProfile: CollapsedPresentationProfile,
+        header: ExpandedHeaderLayout? = nil,
         animated: Bool,
         completion: (() -> Void)? = nil
     ) {
         let updates = { [self] in
+            if let header, self.layoutStore.expandedHeaderLayout != header {
+                self.layoutStore.expandedHeaderLayout = header
+            }
             self.layoutStore.updateLocal(
                 panelFrame: panelFrame,
                 collapsedScreenFrame: collapsedFrame,

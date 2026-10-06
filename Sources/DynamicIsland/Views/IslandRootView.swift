@@ -252,7 +252,7 @@ enum IslandShellLayout {
     static let collapsedTopPadding: CGFloat = 0
     static let collapsedBottomPadding: CGFloat = 6
     static let expandedTopPadding: CGFloat = 14
-    static let expandedBottomPadding: CGFloat = 20
+    static let expandedBottomPadding: CGFloat = 12
 }
 
 /// Shell expand/collapse animation shared by the island and its Settings
@@ -313,25 +313,88 @@ enum ExpandedIslandHeaderMetrics {
     }
 }
 
+/// How the expanded header is arranged around the physical notch.
+enum ExpandedHeaderLayoutMode: Equatable, Sendable {
+    /// Navigation left of the notch, actions right of it (default).
+    case winged
+    /// One compact row of all controls directly below the notch, as wide as
+    /// the single widget beneath it; removes the notch-wide side wings.
+    case compactBelowNotch
+}
+
+/// The header resolver: the only owner of the header-mode decision, shared by
+/// the shell resolver, the root view and the notch lane.
+struct ExpandedHeaderLayout: Equatable, Sendable {
+    var mode: ExpandedHeaderLayoutMode
+    /// Intrinsic width of the compact row (all buttons at full size).
+    var compactRowWidth: CGFloat
+    /// Extra top inset so the compact row starts one clearance below the notch.
+    var headerDrop: CGFloat
+
+    static let winged = ExpandedHeaderLayout(mode: .winged, compactRowWidth: 0, headerDrop: 0)
+    /// Minimum gap between the navigation and action groups in the row.
+    static let compactGroupSpacing: CGFloat = 8
+
+    static func compactRowWidth(pageCount: Int, clipboardEnabled: Bool) -> CGFloat {
+        ExpandedIslandHeaderMetrics.leadingGroupWidth(pageCount: pageCount)
+            + compactGroupSpacing
+            + ExpandedIslandHeaderMetrics.trailingGroupWidth(clipboardEnabled: clipboardEnabled)
+    }
+
+    /// Compact applies only to a notch-integrated shell, outside editing, with
+    /// exactly one top-level region whose intrinsic width holds the full row
+    /// (buttons are never shrunk), when the notch-wide winged header is what
+    /// widens the shell (otherwise compact would add height for no width),
+    /// and with vertical room for the lower row. Everything else keeps the
+    /// winged header.
+    static func resolve(regionCount: Int, singleRegionWidth: CGFloat, contentHeight: CGFloat, editing: Bool,
+                        metrics: ResolvedIslandMetrics, isNotchIntegrated: Bool,
+                        pageCount: Int, clipboardEnabled: Bool) -> Self {
+        guard isNotchIntegrated, metrics.hasHardwareNotch, metrics.hardwareNotchHeight > 0,
+              !editing, regionCount == 1 else { return .winged }
+        let row = compactRowWidth(pageCount: pageCount, clipboardEnabled: clipboardEnabled)
+        guard row <= singleRegionWidth + 0.5 else { return .winged }
+        let winged = ExpandedIslandHeaderMetrics.minimumContentWidth(pageCount: pageCount, clipboardEnabled: clipboardEnabled,
+                                                                    hardwareNotchWidth: metrics.hardwareNotchWidth)
+        guard winged > singleRegionWidth + 0.5 else { return .winged }
+        let chrome = ExpandedIslandLayoutMetrics(containerSize: .zero, horizontalPadding: 0, displayMetrics: metrics)
+        let drop = max(0, metrics.hardwareNotchHeight
+                       + ExpandedIslandLayoutMetrics.notchContentClearance(metrics: metrics) - chrome.topPadding)
+        guard contentHeight + drop <= ExpandedIslandLayoutMetrics.workspaceContentHeightBudget(metrics: metrics) + 0.5
+        else { return .winged }
+        return Self(mode: .compactBelowNotch, compactRowWidth: row, headerDrop: drop)
+    }
+}
+
 struct ExpandedIslandLayoutMetrics {
     let containerSize: CGSize
     let horizontalPadding: CGFloat
     let displayMetrics: ResolvedIslandMetrics
+    /// Compact header: the header row starts below the physical notch.
+    let headerDrop: CGFloat
 
     init(
         containerSize: CGSize,
         horizontalPadding: CGFloat,
-        displayMetrics: ResolvedIslandMetrics = .fallback
+        displayMetrics: ResolvedIslandMetrics = .fallback,
+        headerDrop: CGFloat = 0
     ) {
         self.containerSize = containerSize
         self.horizontalPadding = horizontalPadding
         self.displayMetrics = displayMetrics
+        self.headerDrop = headerDrop
     }
 
     /// Header rhythm (2026-10-06): a small intentional gap only. The header
-    /// row stays notch-safe through the horizontal exclusion, not padding.
-    var topPadding: CGFloat { 10 * displayMetrics.spacingScale }
-    var bottomPadding: CGFloat { 20 * displayMetrics.spacingScale }
+    /// row stays notch-safe through the horizontal exclusion (winged) or by
+    /// starting below the notch (compact), not padding.
+    var topPadding: CGFloat { 10 * displayMetrics.spacingScale + headerDrop }
+    /// One optical clearance below the lowest content (2026-10-06: was 20 pt);
+    /// the same spacing family as the 12 pt side inset and the notch clearance.
+    var bottomPadding: CGFloat { Self.contentBottomClearance(metrics: displayMetrics) }
+    static func contentBottomClearance(metrics: ResolvedIslandMetrics) -> CGFloat {
+        IslandShellLayout.expandedBottomPadding * metrics.spacingScale
+    }
     var tabSwitcherHeight: CGFloat { 34 * displayMetrics.compactControlScale }
     var tabToPageSpacing: CGFloat { 4 * displayMetrics.spacingScale }
     var pageColumnSpacing: CGFloat { 10 * displayMetrics.spacingScale }
@@ -469,8 +532,14 @@ struct IslandRootView: View {
     @State private var workspaceExitClock: Double = 0
     @State private var isCollapsedHovering = false
 
+    /// Committed with the shell geometry (animated with it), never read
+    /// ahead from navigation - see `IslandLayoutStore.expandedHeaderLayout`.
+    private var expandedHeaderLayout: ExpandedHeaderLayout { layoutStore.expandedHeaderLayout }
+
     private var workspaceNotchLane: WorkspaceNotchLane {
-        ExpandedIslandLayoutMetrics.workspaceNotchLane(settings: settings, metrics: layoutStore.displayMetrics,
+        // The compact header occupies the space under the notch.
+        guard expandedHeaderLayout.mode == .winged else { return .none }
+        return ExpandedIslandLayoutMetrics.workspaceNotchLane(settings: settings, metrics: layoutStore.displayMetrics,
             pageCount: navigation.availablePages(using: settings).count, hardwareNotchWidth: layoutStore.hardwareNotchWidth)
     }
     @State private var collapsedPreviewVisible = false
@@ -539,6 +608,7 @@ struct IslandRootView: View {
             .environment(\.islandDisplayMetrics, layoutStore.displayMetrics)
             .environment(\.mediaAdvancedControls, modules.mediaAdvanced)
             .environment(\.workspaceNotchLane, workspaceNotchLane)
+            .environment(\.expandedHeaderLayout, expandedHeaderLayout)
             .environment(\.timerRulerInteractionRegistration, TimerRulerInteractionRegistration { owner, frame in
                 layoutStore.setNativeControlRegion(frame, owner: owner)
             })
@@ -3249,6 +3319,7 @@ struct ExpandedIslandView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.isCollapseShellOnly) private var isCollapseShellOnly
     @Environment(\.workspaceNotchLane) private var workspaceNotchLane
+    @Environment(\.expandedHeaderLayout) private var headerLayout
     @Environment(\.isNotchIntegratedShell) private var isNotchIntegratedShell
 
     @State private var isAirDropTargeted = false
@@ -3305,7 +3376,8 @@ struct ExpandedIslandView: View {
                 horizontalPadding: IslandShellLayout.expandedHorizontalPadding(
                     isNotchIntegrated: isNotchIntegratedShell
                 ),
-                displayMetrics: layoutStore.displayMetrics
+                displayMetrics: layoutStore.displayMetrics,
+                headerDrop: headerLayout.mode == .compactBelowNotch ? headerLayout.headerDrop : 0
             )
 
             ZStack(alignment: .topLeading) {
@@ -3428,8 +3500,12 @@ struct ExpandedIslandView: View {
 
                 // Hardware-notch exclusion: equal flexible halves keep this gap
                 // centered on the notch; nothing interactive is placed in it.
+                // The compact header row sits below the notch: only the
+                // minimum group spacing remains.
                 Color.clear
-                    .frame(width: ExpandedIslandHeaderMetrics.notchExclusionWidth(hardwareNotchWidth: layoutStore.hardwareNotchWidth))
+                    .frame(width: headerLayout.mode == .compactBelowNotch
+                           ? ExpandedHeaderLayout.compactGroupSpacing
+                           : ExpandedIslandHeaderMetrics.notchExclusionWidth(hardwareNotchWidth: layoutStore.hardwareNotchWidth))
                     .accessibilityHidden(true)
 
                 HStack(spacing: 6) {
@@ -3562,7 +3638,10 @@ struct ExpandedIslandView: View {
             minimumHeaderWidth: ExpandedIslandHeaderMetrics.minimumContentWidth(
                 pageCount: navigation.availablePages(using: settings).count, clipboardEnabled: settings.clipboardHistoryEnabled,
                 hardwareNotchWidth: layoutStore.hardwareNotchWidth),
-            lane: workspaceNotchLane)
+            lane: workspaceNotchLane,
+            header: ExpandedPresentationProfile.headerLayout(page: page, configuration: customization.configuration,
+                editing: false, settings: settings, metrics: layoutStore.displayMetrics,
+                pageCount: navigation.availablePages(using: settings).count))
         let shrinks = nextSize.width < layoutStore.expandedSize.width || nextSize.height < layoutStore.expandedSize.height
         let effect = presentation.select(
             page,
@@ -5232,5 +5311,17 @@ private enum TimerRingColor {
             hue = 0.02 + (0.08 * segment)
         }
         return Color(hue: hue, saturation: 0.92, brightness: 0.98)
+    }
+}
+
+private struct ExpandedHeaderLayoutKey: EnvironmentKey {
+    static let defaultValue = ExpandedHeaderLayout.winged
+}
+
+extension EnvironmentValues {
+    /// The resolved header mode for the selected page.
+    var expandedHeaderLayout: ExpandedHeaderLayout {
+        get { self[ExpandedHeaderLayoutKey.self] }
+        set { self[ExpandedHeaderLayoutKey.self] = newValue }
     }
 }

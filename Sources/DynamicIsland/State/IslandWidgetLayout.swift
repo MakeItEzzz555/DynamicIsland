@@ -1080,9 +1080,16 @@ struct WorkspaceWidgetLayoutProjection: Equatable {
     }
 
     /// The content footprint the shell must hug (intrinsic widget geometry).
+    /// The laid-out footprint of `regions` at intrinsic geometry (no floors,
+    /// no editing chrome): what a single widget physically occupies.
+    static func intrinsicContentSize(regions: [WorkspaceWidgetRegion], maximumWidth: CGFloat,
+                                     metrics: ResolvedIslandMetrics) -> CGSize {
+        natural(regions, width: finite(maximumWidth), metrics: metrics, lane: .none, headerInnerWidth: 0).size
+    }
+
     static func preferredContentSize(regions: [WorkspaceWidgetRegion], maximumSize: CGSize,
                                      metrics: ResolvedIslandMetrics, editing: Bool = false,
-                                     lane: WorkspaceNotchLane = .none) -> CGSize {
+                                     lane: WorkspaceNotchLane = .none, minimumWidth: CGFloat? = nil) -> CGSize {
         let width = finite(maximumSize.width)
         let height = finite(maximumSize.height)
         let inset: CGFloat = editing ? 7 : 0
@@ -1097,7 +1104,7 @@ struct WorkspaceWidgetLayoutProjection: Equatable {
                            lane: lane, headerInnerWidth: lane.minimumInnerWidth)
         }
         // An empty enabled-feature projection remains a readable recovery surface.
-        return .init(width: min(width, max(260 * metrics.expandedCardScale, laid.size.width) + inset * 2),
+        return .init(width: min(width, max(minimumWidth ?? 260 * metrics.expandedCardScale, laid.size.width) + inset * 2),
                      height: min(height, max(120 * metrics.expandedCardScale, laid.size.height) + inset + palette))
     }
 
