@@ -253,8 +253,11 @@ final class TimerCompletionNotificationTests: XCTestCase {
         XCTAssertEqual(client.addedRequests.first?.includesSound, false)
     }
 
+    private var localChimes = 0
+
     private func makeSystem(
-        client: MockTimerNotificationCenterClient = MockTimerNotificationCenterClient()
+        client: MockTimerNotificationCenterClient = MockTimerNotificationCenterClient(),
+        preferences: TimerCompletionNotificationPreferences? = nil
     ) -> (
         timer: TimerController,
         clock: ManualCountdownClock,
@@ -263,13 +266,62 @@ final class TimerCompletionNotificationTests: XCTestCase {
     ) {
         let clock = ManualCountdownClock()
         let timer = TimerController(clock: clock, refreshInterval: nil)
+        localChimes = 0
         let coordinator = TimerCompletionNotificationCoordinator(
             client: client,
-            sessionIdentifier: "test-session"
+            sessionIdentifier: "test-session",
+            playLocalChime: { [weak self] in self?.localChimes += 1 }
         )
+        let preferences = preferences ?? enabledPreferences
         timer.setLifecycleHandler { [weak coordinator] event in
-            coordinator?.handle(event, preferences: self.enabledPreferences)
+            coordinator?.handle(event, preferences: preferences)
         }
         return (timer, clock, coordinator, client)
+    }
+
+    // MARK: Exactly one completion sound
+
+    private func runToCompletion(_ system: (timer: TimerController, clock: ManualCountdownClock,
+                                            coordinator: TimerCompletionNotificationCoordinator,
+                                            client: MockTimerNotificationCenterClient)) async {
+        system.timer.start(seconds: 5)
+        await system.coordinator.waitForPendingWork()
+        system.clock.advance(by: .seconds(5))
+        system.timer.refresh()
+    }
+
+    func testScheduledNotificationOwnsTheSoundSoNoLocalChime() async {
+        let system = makeSystem()
+        await runToCompletion(system)
+        XCTAssertEqual(system.client.addedRequests.map(\.includesSound), [true])
+        XCTAssertEqual(localChimes, 0, "no double sound")
+    }
+
+    func testSoundWithoutNotificationsPlaysOneLocalChime() async {
+        let system = makeSystem(preferences: .init(notificationsEnabled: false, soundEnabled: true))
+        await runToCompletion(system)
+        XCTAssertTrue(system.client.addedRequests.isEmpty, "no banner, no permission needed")
+        XCTAssertEqual(localChimes, 1)
+    }
+
+    func testDeniedNotificationsStillChimeOnce() async {
+        let client = MockTimerNotificationCenterClient()
+        client.status = .denied
+        let system = makeSystem(client: client)
+        await runToCompletion(system)
+        XCTAssertEqual(localChimes, 1)
+    }
+
+    func testSoundOffIsSilentAndCancelledTimersNeverChime() async {
+        let system = makeSystem(preferences: .init(notificationsEnabled: false, soundEnabled: false))
+        await runToCompletion(system)
+        XCTAssertEqual(localChimes, 0)
+        let other = makeSystem(preferences: .init(notificationsEnabled: false, soundEnabled: true))
+        other.timer.start(seconds: 5)
+        other.timer.pause()
+        other.clock.advance(by: .seconds(10))
+        other.timer.refresh()
+        XCTAssertEqual(localChimes, 0)
+        XCTAssertEqual(TimerCompletionNotificationCoordinator.localChimeName, "Glass")
     }
 }
