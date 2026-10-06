@@ -163,3 +163,11 @@ Size contracts:
 | Feed | One row, preferring a pending approval, plus an earlier-event count | Latest 12 rows | Full bounded history |
 | Usage | 40 pt rings, 56 pt strip | 48 pt rings, 72 pt strip | 64 pt rings, 96 pt strip |
 | Calendar, Files, Clipboard, Shortcuts, Activities, Workspace | Compose into the allocated cell; lists show what fits | Same | Same, more rows |
+
+## P0 recovery validation (2026-10-06, after ec9de5b)
+
+- Edit-entry black shell: geometry liveness now follows the values `@Published` emits (`WorkspaceGeometryLiveness`). Packaged DEBUG build: before, 6/8 black entries with a connected Chat; after, 0/12, and 0/40 stuck or black across Cancel, resize+Apply and Apply collapse cycles.
+- Chat composer (packaged, test-owned Codex session): typing, Shift+Return, Send by real mouse click, Return, and typing after Chat<->Terminal, collapse/expand and Edit->Cancel all passed. Typing after Chat Compact->Standard->Large->Standard was not completed (user input interfered); covered by state-retention design (Compact unmounts only the heavy surface).
+- Orphan rows are centered at their semantic size; the editor preview equals the committed geometry (`WorkspaceSemanticSizeTests`).
+- Camera explicit intent and the Screen Recording request ledger: unit-tested; packaged acceptance needs camera and Screen Recording grants for a build (see context.md).
+- Full suite 1,944 / 0 / 41.
