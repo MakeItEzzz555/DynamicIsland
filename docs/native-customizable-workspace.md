@@ -184,3 +184,10 @@ Size contracts:
 - Agent Chat spans: Compact 1x1 (functional compact chat), Standard 3x2, Large 4x3 bounded by the display row budget.
 - Shell motion follows Droppy: no AppKit window animation, SwiftUI morph inside a staged panel, asymmetric open/close springs.
 - Packaged acceptance pending (screen locked during this phase).
+
+## Now Playing fidelity, notch packing and morph symmetry (2026-10-06, after 92311c7)
+
+- Standard Media follows the native Now Playing reference: top row (artwork, title/artist, visualizer), elapsed / progress / negative remaining, then Queue, Favorite, Previous, Play/Pause, Next, Shuffle/Repeat, Output. Advanced controls come only from real provider capabilities (`MediaControlCapabilities`); unsupported ones stay visible, dimmed, with the reason.
+- Shell inset 12 pt visible on each side; vertical notch clearance equals the horizontal one (`notchContentClearance`). A top row inside the free header gap sits exactly one clearance below the notch.
+- Agents top lane: a Compact widget placed directly before or after the usage band occupies that wing when it shortens the layout; otherwise it stays in the grid. Preview == commit.
+- Page morphs keep the shell's midX and top edge fixed in every frame (the canvas is pinned top-leading in its host; see context.md for the measurement).
