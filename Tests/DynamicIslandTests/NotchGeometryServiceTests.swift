@@ -378,6 +378,11 @@ final class NotchGeometryServiceTests: XCTestCase {
     /// The detach bug: NSHostingView centers a root whose size differs
     /// from its bounds, so while the panel animates the shell's top moved by
     /// half the size difference. The island root must be top-pinned.
+    /// Since 2026-10-06 it is also leading-pinned: the canvas is laid out at
+    /// the panel's exact size in panel-local coordinates (the panel no longer
+    /// animates in AppKit), and centering it on the hosting proposal - which
+    /// lags a staged resize by one update - made tab -> wider page morphs grow
+    /// one-sided (see ShellMorphInvariantTests).
     @MainActor
     func testIslandRootIsTopPinnedInsideTheHostingViewWhileSizesDiffer() {
         for (bounds, content) in [(CGFloat(446), CGFloat(286)), (286, 446)] {
@@ -395,7 +400,7 @@ final class NotchGeometryServiceTests: XCTestCase {
             host.layoutSubtreeIfNeeded()
             RunLoop.main.run(until: Date().addingTimeInterval(0.1))
             XCTAssertEqual(probe.top, 0, accuracy: 0.5, "content \(content) in bounds \(bounds) must stay at the top")
-            XCTAssertEqual(probe.midX, 250, accuracy: 0.5, "horizontal center preserved")
+            XCTAssertEqual(probe.midX, 200, accuracy: 0.5, "canvas origin is the hosting origin (not re-centered)")
         }
     }
 

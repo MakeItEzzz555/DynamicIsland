@@ -40,16 +40,25 @@ enum ExpandedShellMorph {
 
 }
 
-/// Top-pins (and horizontally centers) the island root inside its hosting
-/// view, instead of NSHostingView's default centering.
+/// Pins the island canvas to the top-leading corner of its hosting view,
+/// instead of NSHostingView's default centering.
 struct TopPinnedHostRoot<Content: View>: View {
+    /// The canvas is always laid out at the panel's exact size, in panel-local
+    /// coordinates, so its origin is the hosting view's origin.
+    ///
+    /// It must not be centered: SwiftUI receives the hosting view's new size
+    /// (the proxy below) one update *after* a staged panel resize, i.e. inside
+    /// the shell morph's animated update. Centering on that lagging, animating
+    /// size slid the canvas by half the width growth during the morph (measured
+    /// canvas layer -26 -> 0 pt), so the shell grew one-sided toward a wider
+    /// page. Top-leading is independent of when the proposal arrives.
+    static var canvasAlignment: Alignment { .topLeading }
+
     let content: Content
 
     var body: some View {
-        // A fixed frame equal to the hosting bounds: a larger canvas
-        // overflows downward (and equally left/right), never upward.
         GeometryReader { proxy in
-            content.frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
+            content.frame(width: proxy.size.width, height: proxy.size.height, alignment: Self.canvasAlignment)
         }
     }
 }
