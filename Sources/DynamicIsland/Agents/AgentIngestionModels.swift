@@ -34,6 +34,7 @@ enum AgentSourceKind: String, CaseIterable, Hashable, Codable, Sendable {
     case structuredTelemetry
     case structuredRecovery
     case processEnrichment
+    case mcpObservation
     case heuristicFallback
 }
 
@@ -207,10 +208,14 @@ struct AgentProducerPolicy: Equatable, Sendable {
 
     static let codexStructuredRecovery = AgentProducerPolicy(
         allowedProviders: [.codex],
-        allowedSources: [.unknown],
+        // Rollout session_meta carries the real client surface. Preserve it so
+        // an active VS Code/CLI thread is searchable and attributable without
+        // granting that source any managed-control authority.
+        allowedSources: [.unknown, .terminal, .vscode, .jetbrains, .desktopApp, .cloud],
         allowedSourceKinds: [.structuredRecovery],
         allowedEventTypes: [
             .sessionStarted, .sessionResumed, .sessionMetadataUpdated, .agentWorking,
+            .toolStarted, .toolCompleted, .commandStarted, .commandCompleted,
             .usageUpdated, .capabilitiesUpdated, .projectContextUpdated,
             .taskCompleted, .interrupted, .heartbeat
         ],
@@ -218,8 +223,8 @@ struct AgentProducerPolicy: Equatable, Sendable {
             ($0, AgentEvidenceAuthority.localStructuredRecord)
         }),
         allowedCapabilities: [
-            .sessionLifecycle, .taskLifecycle, .tokenUsage, .contextUsage,
-            .modelMetadata, .projectContext, .gitMetadata
+            .sessionLifecycle, .toolLifecycle, .commandLifecycle, .taskLifecycle,
+            .tokenUsage, .contextUsage, .modelMetadata, .projectContext, .gitMetadata
         ],
         allowedSchemaVersions: [AgentEvent.normalizedSchemaVersion]
     )
@@ -251,6 +256,10 @@ struct AgentProducerPolicy: Equatable, Sendable {
     /// Authority for the locally owned official Claude Code structured-stream
     /// control process. The current CLI surface supports resume, prompt input,
     /// visible output, and tool observation, but not typed approval decisions.
+    /// Managed Claude Code over the CLI stream-json control protocol.
+    /// Permission prompts arrive as exact `can_use_tool` control requests,
+    /// so approval control is permitted on the same fail-closed terms as
+    /// the Codex app-server (exact session + active turn + one-shot).
     static let claudeManagedCLI = AgentProducerPolicy(
         allowedProviders: [.claude],
         allowedSources: [.desktopApp],
@@ -259,7 +268,8 @@ struct AgentProducerPolicy: Equatable, Sendable {
             .sessionStarted, .sessionResumed, .sessionMetadataUpdated,
             .agentWorking, .toolStarted, .toolCompleted,
             .commandStarted, .commandCompleted,
-            .capabilitiesUpdated, .projectContextUpdated,
+            .approvalRequested, .approvalResolved,
+            .usageUpdated, .capabilitiesUpdated, .projectContextUpdated,
             .taskCompleted, .taskFailed, .interrupted, .heartbeat
         ],
         authorityCeilings: Dictionary(uniqueKeysWithValues: AgentAuthorityDomain.allCases.map {
@@ -267,9 +277,12 @@ struct AgentProducerPolicy: Equatable, Sendable {
         }),
         allowedCapabilities: [
             .sessionLifecycle, .toolLifecycle, .commandLifecycle,
-            .taskLifecycle, .modelMetadata, .projectContext
+            .approvalObservation, .approvalControl,
+            .taskLifecycle, .tokenUsage, .contextUsage, .quotaUsage,
+            .modelMetadata, .projectContext
         ],
         allowedSchemaVersions: [AgentEvent.normalizedSchemaVersion],
+        permitsApprovalControl: true,
         permitsLifecycleRecovery: true
     )
 
@@ -316,6 +329,38 @@ struct AgentProducerPolicy: Equatable, Sendable {
             ($0, AgentEvidenceAuthority.structuredTelemetry)
         }),
         allowedCapabilities: [.tokenUsage, .contextUsage, .quotaUsage, .costUsage, .modelMetadata],
+        allowedSchemaVersions: [AgentEvent.normalizedSchemaVersion]
+    )
+
+    /// MCP is an observation boundary only. It can describe provider activity,
+    /// but never supplies managed-control or approval-resolution authority.
+    static let mcpObservation = AgentProducerPolicy(
+        allowedProviders: nil,
+        allowedSources: [.mcp],
+        allowedSourceKinds: [.mcpObservation],
+        allowedEventTypes: [
+            .sessionStarted, .sessionMetadataUpdated, .agentWorking,
+            .planningStarted, .planUpdated, .planReady,
+            .toolStarted, .toolCompleted, .commandStarted, .commandCompleted,
+            .approvalRequested, .usageUpdated, .capabilitiesUpdated,
+            .projectContextUpdated, .heartbeat
+        ],
+        authorityCeilings: [
+            .lifecycle: .processObservation,
+            .activity: .processObservation,
+            .operation: .processObservation,
+            .interaction: .processObservation,
+            .usage: .structuredTelemetry,
+            .metadata: .processObservation,
+            .capability: .processObservation,
+            .liveness: .processObservation
+        ],
+        allowedCapabilities: [
+            .sessionLifecycle, .planLifecycle, .toolLifecycle,
+            .commandLifecycle, .approvalObservation,
+            .tokenUsage, .contextUsage, .quotaUsage, .costUsage,
+            .modelMetadata, .projectContext, .gitMetadata
+        ],
         allowedSchemaVersions: [AgentEvent.normalizedSchemaVersion]
     )
 

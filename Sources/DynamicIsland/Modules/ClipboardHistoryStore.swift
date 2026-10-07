@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import Foundation
 
@@ -181,7 +182,11 @@ final class ClipboardHistoryStore: ObservableObject {
     static let terminationPersistenceWaitSeconds: TimeInterval = 0.5
 
     @Published private(set) var entries: [ClipboardHistoryEntry] = []
+    @Published private(set) var tags: [ClipboardTag] = []
     @Published private(set) var isMonitoring = false
+
+    var autoFocusSearchEnabled: Bool { settings.clipboardHistoryAutoFocusSearch }
+    var tagsEnabled: Bool { settings.clipboardHistoryTagsEnabled }
 
     private let settings: AppSettings
     private let pasteboard: ClipboardPasteboardClient
@@ -195,6 +200,7 @@ final class ClipboardHistoryStore: ObservableObject {
     private var imageCaptureTask: Task<Void, Never>?
     private var imageCaptureGeneration = 0
     private let processImage: @Sendable (ClipboardImageCapture) async -> ClipboardPasteboardReadResult
+    private let sourceApplicationProvider: () -> ClipboardSourceApplication?
     private var lastObservedChangeCount = 0
     private var cancellables: Set<AnyCancellable> = []
     private var isFinalizing = false
@@ -208,6 +214,14 @@ final class ClipboardHistoryStore: ObservableObject {
         automaticallySchedulesTimer: Bool = true,
         processImage: @escaping @Sendable (ClipboardImageCapture) async -> ClipboardPasteboardReadResult = { capture in
             await Task.detached(priority: .utility) { capture.resolve() }.value
+        },
+        sourceApplicationProvider: @escaping () -> ClipboardSourceApplication? = {
+            guard let app = NSWorkspace.shared.frontmostApplication,
+                  let bundleID = app.bundleIdentifier, !bundleID.isEmpty else { return nil }
+            return ClipboardSourceApplication(
+                name: app.localizedName ?? bundleID,
+                bundleIdentifier: bundleID
+            )
         }
     ) {
         self.settings = settings
@@ -217,6 +231,7 @@ final class ClipboardHistoryStore: ObservableObject {
         self.now = now
         self.automaticallySchedulesTimer = automaticallySchedulesTimer
         self.processImage = processImage
+        self.sourceApplicationProvider = sourceApplicationProvider
         persistenceWriter = ClipboardHistoryPersistenceWriter(
             persistence: persistence,
             enabled: settings.clipboardHistoryPersistenceEnabled
@@ -278,6 +293,13 @@ final class ClipboardHistoryStore: ObservableObject {
         let currentChangeCount = pasteboard.changeCount
         guard currentChangeCount != lastObservedChangeCount else { return }
         lastObservedChangeCount = currentChangeCount
+        let sourceApplication = sourceApplicationProvider()
+        if let bundleID = sourceApplication?.bundleIdentifier,
+           settings.clipboardHistoryExcludedAppBundleIDs.contains(where: {
+               $0.caseInsensitiveCompare(bundleID) == .orderedSame
+           }) {
+            return
+        }
 
         let prepared = pasteboard.prepareCapture(
             limits: limits,
@@ -285,7 +307,7 @@ final class ClipboardHistoryStore: ObservableObject {
         )
         switch prepared {
         case let .ready(result):
-            if case let .payload(payload) = result { capture(payload) }
+            if case let .payload(payload) = result { capture(payload, sourceApplication: sourceApplication) }
         case let .image(image):
             let generation = imageCaptureGeneration
             let processImage = self.processImage
@@ -298,7 +320,7 @@ final class ClipboardHistoryStore: ObservableObject {
                    self.settings.clipboardHistoryCaptureImagesEnabled,
                    self.pasteboard.changeCount == currentChangeCount,
                    case let .payload(payload) = result {
-                    self.capture(payload)
+                    self.capture(payload, sourceApplication: sourceApplication)
                 }
                 self.pollNow()
             }
@@ -312,12 +334,118 @@ final class ClipboardHistoryStore: ObservableObject {
     func clearHistory() {
         imageCaptureGeneration += 1
         entries.removeAll()
-        persistenceWriter.deleteWithoutDisabling()
+        if settings.clipboardHistoryPersistenceEnabled, !tags.isEmpty {
+            persistHistoryIfNeeded()
+        } else {
+            persistenceWriter.deleteWithoutDisabling()
+        }
     }
 
     func removeEntry(id: UUID) {
         guard let index = entries.firstIndex(where: { $0.id == id }) else { return }
         entries.remove(at: index)
+        persistHistoryIfNeeded()
+    }
+
+    func toggleFavorite(id: UUID) {
+        guard let index = entries.firstIndex(where: { $0.id == id }) else { return }
+        let entry = entries[index]
+        entries[index] = ClipboardHistoryEntry(
+            id: entry.id,
+            createdAt: entry.createdAt,
+            lastUsedAt: entry.lastUsedAt,
+            payload: entry.payload,
+            fingerprint: entry.fingerprint,
+            sourceApplication: entry.sourceApplication,
+            isFavorite: !entry.isFavorite,
+            customTitle: entry.customTitle,
+            tagIDs: entry.tagIDs
+        )
+        sortPinnedFirst()
+        pruneToCurrentLimits()
+        persistHistoryIfNeeded()
+    }
+
+    func renameEntry(id: UUID, title: String?) {
+        guard let index = entries.firstIndex(where: { $0.id == id }) else { return }
+        let entry = entries[index]
+        let normalized = title?.trimmingCharacters(in: .whitespacesAndNewlines)
+        entries[index] = ClipboardHistoryEntry(
+            id: entry.id,
+            createdAt: entry.createdAt,
+            lastUsedAt: entry.lastUsedAt,
+            payload: entry.payload,
+            fingerprint: entry.fingerprint,
+            sourceApplication: entry.sourceApplication,
+            isFavorite: entry.isFavorite,
+            customTitle: normalized?.isEmpty == false ? normalized : nil,
+            tagIDs: entry.tagIDs
+        )
+        persistHistoryIfNeeded()
+    }
+
+    @discardableResult
+    func addTag(name: String, color: ClipboardTagColor) -> ClipboardTag? {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, name.count <= 48 else { return nil }
+        guard !tags.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) else { return nil }
+        let tag = ClipboardTag(name: name, color: color, sortOrder: tags.count)
+        tags.append(tag)
+        persistHistoryIfNeeded()
+        return tag
+    }
+
+    func updateTag(id: UUID, name: String, color: ClipboardTagColor) {
+        guard let index = tags.firstIndex(where: { $0.id == id }) else { return }
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, name.count <= 48 else { return }
+        guard !tags.contains(where: { $0.id != id && $0.name.caseInsensitiveCompare(name) == .orderedSame }) else { return }
+        tags[index].name = name
+        tags[index].color = color
+        persistHistoryIfNeeded()
+    }
+
+    func deleteTag(id: UUID) {
+        guard tags.contains(where: { $0.id == id }) else { return }
+        tags.removeAll { $0.id == id }
+        for index in entries.indices where entries[index].tagIDs.contains(id) {
+            let entry = entries[index]
+            entries[index] = ClipboardHistoryEntry(
+                id: entry.id,
+                createdAt: entry.createdAt,
+                lastUsedAt: entry.lastUsedAt,
+                payload: entry.payload,
+                fingerprint: entry.fingerprint,
+                sourceApplication: entry.sourceApplication,
+                isFavorite: entry.isFavorite,
+                customTitle: entry.customTitle,
+                tagIDs: entry.tagIDs.filter { $0 != id }
+            )
+        }
+        persistHistoryIfNeeded()
+    }
+
+    func setTag(_ tagID: UUID, on entryID: UUID, enabled: Bool) {
+        guard tags.contains(where: { $0.id == tagID }),
+              let index = entries.firstIndex(where: { $0.id == entryID }) else { return }
+        let entry = entries[index]
+        var tagIDs = entry.tagIDs
+        if enabled {
+            if !tagIDs.contains(tagID) { tagIDs.append(tagID) }
+        } else {
+            tagIDs.removeAll { $0 == tagID }
+        }
+        entries[index] = ClipboardHistoryEntry(
+            id: entry.id,
+            createdAt: entry.createdAt,
+            lastUsedAt: entry.lastUsedAt,
+            payload: entry.payload,
+            fingerprint: entry.fingerprint,
+            sourceApplication: entry.sourceApplication,
+            isFavorite: entry.isFavorite,
+            customTitle: entry.customTitle,
+            tagIDs: tagIDs
+        )
         persistHistoryIfNeeded()
     }
 
@@ -337,10 +465,11 @@ final class ClipboardHistoryStore: ObservableObject {
         }
 
         let operation: ClipboardHistoryFinalPersistenceOperation
-        if settings.clipboardHistoryPersistenceEnabled, !entries.isEmpty {
+        if settings.clipboardHistoryPersistenceEnabled, (!entries.isEmpty || !tags.isEmpty) {
             let archive = ClipboardHistoryArchive(
                 schemaVersion: ClipboardHistoryArchive.currentSchemaVersion,
-                entries: entries
+                entries: entries,
+                tags: tags
             )
             guard let data = try? JSONEncoder().encode(archive) else { return .failed }
             operation = .save(data, count: archive.entries.count)
@@ -364,12 +493,18 @@ final class ClipboardHistoryStore: ObservableObject {
         entries.insert(
             ClipboardHistoryEntry(
                 id: entry.id,
-                createdAt: now(),
+                createdAt: entry.createdAt,
+                lastUsedAt: now(),
                 payload: entry.payload,
-                fingerprint: entry.fingerprint
+                fingerprint: entry.fingerprint,
+                sourceApplication: entry.sourceApplication,
+                isFavorite: entry.isFavorite,
+                customTitle: entry.customTitle,
+                tagIDs: entry.tagIDs
             ),
             at: 0
         )
+        sortPinnedFirst()
         persistHistoryIfNeeded()
         #if DEBUG
         print("[ClipboardHistory] restored kind=\(entry.payload.kind.rawValue)")
@@ -377,7 +512,10 @@ final class ClipboardHistoryStore: ObservableObject {
         return true
     }
 
-    private func capture(_ payload: ClipboardHistoryPayload) {
+    private func capture(
+        _ payload: ClipboardHistoryPayload,
+        sourceApplication: ClipboardSourceApplication?
+    ) {
         guard !isFinalizing else { return }
         guard let payload = sanitized(payload) else { return }
         let fingerprint = ClipboardHistoryFingerprint.make(for: payload)
@@ -390,8 +528,13 @@ final class ClipboardHistoryStore: ObservableObject {
             entry = ClipboardHistoryEntry(
                 id: existing.id,
                 createdAt: captureDate,
+                lastUsedAt: existing.lastUsedAt,
                 payload: payload,
-                fingerprint: fingerprint
+                fingerprint: fingerprint,
+                sourceApplication: sourceApplication ?? existing.sourceApplication,
+                isFavorite: existing.isFavorite,
+                customTitle: existing.customTitle,
+                tagIDs: existing.tagIDs
             )
             wasDuplicate = true
         } else {
@@ -399,12 +542,14 @@ final class ClipboardHistoryStore: ObservableObject {
                 id: UUID(),
                 createdAt: captureDate,
                 payload: payload,
-                fingerprint: fingerprint
+                fingerprint: fingerprint,
+                sourceApplication: sourceApplication
             )
             wasDuplicate = false
         }
 
         entries.insert(entry, at: 0)
+        sortPinnedFirst()
         pruneToCurrentLimits()
         persistHistoryIfNeeded()
         #if DEBUG
@@ -457,14 +602,39 @@ final class ClipboardHistoryStore: ObservableObject {
             .store(in: &cancellables)
     }
 
-    private func pruneToCurrentLimits(maximumItems: Int? = nil) {
-        let maximumItems = maximumItems ?? settings.clipboardHistoryMaximumItems
-        if entries.count > maximumItems {
-            entries.removeLast(entries.count - maximumItems)
+    private func sortPinnedFirst() {
+        entries.sort {
+            if $0.isFavorite != $1.isFavorite { return $0.isFavorite && !$1.isFavorite }
+            let lhs = $0.lastUsedAt ?? $0.createdAt
+            let rhs = $1.lastUsedAt ?? $1.createdAt
+            if lhs != rhs { return lhs > rhs }
+            return $0.id.uuidString < $1.id.uuidString
         }
+    }
+
+    private func pruneToCurrentLimits(maximumItems: Int? = nil) {
+        let maximumOrdinary = maximumItems ?? settings.clipboardHistoryMaximumItems
+        let maximumFavorites = 50
+        var ordinarySeen = 0
+        var favoritesSeen = 0
+        entries = entries.filter { entry in
+            if entry.isFavorite {
+                favoritesSeen += 1
+                return favoritesSeen <= maximumFavorites
+            }
+            ordinarySeen += 1
+            return ordinarySeen <= maximumOrdinary
+        }
+
         var total = entries.reduce(into: 0) { $0 += $1.payload.byteCount }
-        while total > limits.maximumTotalHistoryPayloadBytes, let removed = entries.popLast() {
-            total -= removed.payload.byteCount
+        while total > limits.maximumTotalHistoryPayloadBytes {
+            if let ordinaryIndex = entries.lastIndex(where: { !$0.isFavorite }) {
+                total -= entries.remove(at: ordinaryIndex).payload.byteCount
+            } else if let removed = entries.popLast() {
+                total -= removed.payload.byteCount
+            } else {
+                break
+            }
         }
     }
 
@@ -527,8 +697,13 @@ final class ClipboardHistoryStore: ObservableObject {
                 ClipboardHistoryEntry(
                     id: entry.id,
                     createdAt: entry.createdAt,
+                    lastUsedAt: entry.lastUsedAt,
                     payload: payload,
-                    fingerprint: canonicalFingerprint
+                    fingerprint: canonicalFingerprint,
+                    sourceApplication: entry.sourceApplication,
+                    isFavorite: entry.isFavorite,
+                    customTitle: entry.customTitle,
+                    tagIDs: entry.tagIDs.filter { id in tags.contains(where: { $0.id == id }) }
                 )
             )
         }
@@ -539,13 +714,15 @@ final class ClipboardHistoryStore: ObservableObject {
         guard let data = persistence.loadData() else { return }
         do {
             let archive = try JSONDecoder().decode(ClipboardHistoryArchive.self, from: data)
-            guard archive.schemaVersion == ClipboardHistoryArchive.currentSchemaVersion else {
+            guard (1...ClipboardHistoryArchive.currentSchemaVersion).contains(archive.schemaVersion) else {
                 #if DEBUG
                 print("[ClipboardHistory] unknown archive schema ignored")
                 #endif
                 return
             }
+            tags = archive.tags.sorted { $0.sortOrder < $1.sortOrder }
             entries = validatedLoadedEntries(archive.entries)
+            sortPinnedFirst()
             pruneToCurrentLimits()
             #if DEBUG
             print("[ClipboardHistory] persistence loaded count=\(entries.count)")
@@ -563,7 +740,8 @@ final class ClipboardHistoryStore: ObservableObject {
         guard assumingEnabled ?? settings.clipboardHistoryPersistenceEnabled else { return }
         let archive = ClipboardHistoryArchive(
             schemaVersion: ClipboardHistoryArchive.currentSchemaVersion,
-            entries: entries
+            entries: entries,
+            tags: tags
         )
         guard let data = try? JSONEncoder().encode(archive) else { return }
         persistenceWriter.scheduleSave(data, count: archive.entries.count)

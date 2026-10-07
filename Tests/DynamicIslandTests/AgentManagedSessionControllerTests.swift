@@ -5,6 +5,92 @@ import XCTest
 
 final class AgentManagedSessionControllerTests: XCTestCase {
     @MainActor
+    func testReasoningOptionsFollowExactProviderAndAdvertisedPendingModel() async throws {
+        let codex = PersistentSnapshotFakeProvider(
+            sessions: [Self.descriptor(id: "reasoning", state: .idle)], usage: AgentUsage(),
+            capabilities: [.startSession, .resumeSession, .submitPrompt, .selectModel, .selectReasoningEffort]
+        )
+        let claude = PersistentSnapshotFakeProvider(
+            provider: .claude, sessions: [Self.descriptor(id: "reasoning", state: .idle, provider: .claude)],
+            usage: AgentUsage(), capabilities: [.resumeSession, .submitPrompt, .selectModel]
+        )
+        await codex.setModels([
+            Self.reasoningModel("model-a", efforts: ["medium", "ultra"], defaultEffort: "medium"),
+            Self.reasoningModel("model-b", efforts: ["low"], defaultEffort: "low")
+        ])
+        await claude.setModels([Self.reasoningModel("model-a", efforts: ["medium"], defaultEffort: "medium")])
+        let store = AgentEventStore()
+        let controller = AgentManagedSessionController(
+            providers: [codex, claude], coordinator: AgentIngestionCoordinator(eventStore: store),
+            eventStore: store, approvals: AgentApprovalController()
+        )
+        await controller.refreshPersistentSnapshot()
+        let session = try XCTUnwrap(store.sessions.first { $0.id.sessionID.provider == .codex })
+        let other = try XCTUnwrap(store.sessions.first { $0.id.sessionID.provider == .claude })
+        // Unknown observed model must not borrow the default model's options.
+        XCTAssertTrue(controller.availableReasoningEfforts(for: session).isEmpty)
+        XCTAssertTrue(controller.selectModel("model-a", for: session))
+        XCTAssertEqual(controller.availableReasoningEfforts(for: session).map(\.id), ["medium", "ultra"])
+        XCTAssertEqual(controller.selectedReasoningEffort(for: session), "medium")
+        XCTAssertTrue(controller.selectReasoningEffort("ultra", for: session))
+        XCTAssertFalse(controller.selectReasoningEffort("invented", for: session))
+        XCTAssertEqual(controller.selectedReasoningEffort(for: session), "ultra")
+        XCTAssertTrue(controller.selectReasoningEffort(nil, for: session))
+        XCTAssertEqual(controller.selectedReasoningEffort(for: session), "medium")
+        XCTAssertTrue(controller.selectReasoningEffort("ultra", for: session))
+        XCTAssertTrue(controller.availableReasoningEfforts(for: other).isEmpty)
+        XCTAssertFalse(controller.selectReasoningEffort("medium", for: other))
+        XCTAssertTrue(controller.selectModel("model-b", for: session))
+        XCTAssertEqual(controller.availableReasoningEfforts(for: session).map(\.id), ["low"])
+        XCTAssertEqual(controller.selectedReasoningEffort(for: session), "low")
+        controller.stop()
+    }
+
+    @MainActor
+    func testReasoningOverrideUsesExactGenerationAndFreezesDuringTurn() async throws {
+        let provider = PersistentSnapshotFakeProvider(
+            sessions: [], usage: AgentUsage(),
+            capabilities: [.startSession, .resumeSession, .submitPrompt, .selectModel, .selectReasoningEffort]
+        )
+        await provider.setModels([Self.reasoningModel("model-a", efforts: ["medium", "ultra"], defaultEffort: "medium")])
+        let store = AgentEventStore()
+        let controller = AgentManagedSessionController(
+            provider: provider, coordinator: AgentIngestionCoordinator(eventStore: store),
+            eventStore: store, approvals: AgentApprovalController()
+        )
+        await controller.refreshPersistentSnapshot()
+        XCTAssertTrue(controller.selectNewSessionModel("model-a", for: .codex))
+        guard case .success(let started) = await controller.startManagedSession(provider: .codex, cwd: "/tmp") else {
+            return XCTFail("Expected managed session")
+        }
+        let session = try XCTUnwrap(controller.session(for: started.instance))
+        XCTAssertTrue(controller.selectReasoningEffort("ultra", for: session))
+        let foreignGeneration = AgentSession(
+            id: .init(sessionID: session.id.sessionID, generation: .init(rawValue: session.id.generation.rawValue + 1)),
+            source: session.source, state: session.state, project: session.project,
+            capabilities: session.capabilities, usage: session.usage, tools: [:], commands: [:],
+            approvals: [:], subagents: [:], recentActivity: [], startedAt: session.startedAt,
+            endedAt: nil, lastUpdatedAt: session.lastUpdatedAt
+        )
+        XCTAssertEqual(controller.selectedReasoningEffort(for: foreignGeneration), "medium")
+        XCTAssertFalse(controller.selectReasoningEffort("ultra", for: foreignGeneration))
+        let rejected = await controller.submit("wrong generation", for: foreignGeneration)
+        XCTAssertFalse(rejected)
+        let accepted = await controller.submit("hello", for: session)
+        XCTAssertTrue(accepted)
+        let efforts = await provider.submittedReasoningEfforts()
+        XCTAssertEqual(efforts, ["ultra"])
+        XCTAssertFalse(controller.canSelectReasoningEffort(for: session))
+        XCTAssertFalse(controller.selectReasoningEffort("medium", for: session))
+        controller.stop()
+    }
+
+    private static func reasoningModel(_ model: String, efforts: [String], defaultEffort: String) -> AgentManagedModelDescriptor {
+        .init(id: model, model: model, displayName: model, description: nil, isDefault: true,
+              supportedReasoningEfforts: efforts.map { .init(id: $0, description: nil) }, defaultReasoningEffort: defaultEffort)
+    }
+
+    @MainActor
     func testCrossProviderIdentitySelectionAndUsageRemainIsolated() async throws {
         let codexUsage = AgentUsage(scopedSamples: [
             AgentUsageKey(metric: .quotaUsed, scope: "5h"): AgentUsageSample(
@@ -299,7 +385,7 @@ final class AgentManagedSessionControllerTests: XCTestCase {
         let attachmentCalls = await provider.calls()
         XCTAssertEqual(attachmentCalls, [
             "inspect:official-thread", "history:official-thread",
-            "inspect:official-thread", "history:official-thread", "resume:official-thread"
+            "inspect:official-thread", "resume:official-thread"
         ])
     }
 
@@ -623,17 +709,24 @@ final class AgentManagedSessionControllerTests: XCTestCase {
             approvals: AgentApprovalController()
         )
         await controller.refreshPersistentSnapshot()
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("DynamicIsland-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
 
         XCTAssertTrue(controller.selectNewSessionModel("model-b", for: .codex))
-        let started = await controller.startNewSession(cwd: "/tmp/DynamicIsland")
+        let started = await controller.startNewSession(cwd: folder.path)
         XCTAssertEqual(started?.model, "model-b")
         let startedModels = await provider.startedSessionModels()
+        let startedCWDs = await provider.startedSessionCWDs()
         XCTAssertEqual(startedModels, ["model-b"])
+        XCTAssertEqual(startedCWDs, [folder.path])
         XCTAssertEqual(store.sessions.count, 1)
+        XCTAssertEqual(controller.selectedSessionID?.sessionID.nativeID, started?.nativeSessionID)
 
         await provider.setStartFailure(true)
         let before = store.sessions.count
-        let failed = await controller.startNewSession(cwd: "/tmp/DynamicIsland")
+        let failed = await controller.startNewSession(cwd: folder.path)
         XCTAssertNil(failed)
         XCTAssertEqual(store.sessions.count, before)
         controller.stop()
@@ -709,6 +802,88 @@ final class AgentManagedSessionControllerTests: XCTestCase {
         controller.stop()
     }
 
+
+    @MainActor
+    func testManagedInteractionStateTracksReadyWorkingStoppingAndFailure() async throws {
+        let provider = PersistentSnapshotFakeProvider(
+            sessions: [Self.descriptor(id: "interaction-thread", state: .idle)],
+            usage: AgentUsage()
+        )
+        let store = AgentEventStore()
+        let controller = AgentManagedSessionController(
+            provider: provider,
+            coordinator: AgentIngestionCoordinator(eventStore: store),
+            eventStore: store,
+            approvals: AgentApprovalController()
+        )
+        await controller.refreshPersistentSnapshot()
+        let observed = try XCTUnwrap(store.sessions.first)
+        controller.connect(observed)
+        let readyDeadline = ContinuousClock.now + .seconds(2)
+        while ContinuousClock.now < readyDeadline {
+            guard let candidate = store.sessions.first else {
+                await Task.yield()
+                continue
+            }
+            if controller.interactionState(for: candidate) == .ready { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+
+        let managed = try XCTUnwrap(store.sessions.first)
+        XCTAssertEqual(controller.interactionState(for: managed), .ready)
+
+        let accepted = await controller.submit("hello", for: managed)
+        XCTAssertTrue(accepted)
+        guard case .working(let canInterrupt) = controller.interactionState(for: managed) else {
+            return XCTFail("Expected working interaction state")
+        }
+        XCTAssertTrue(canInterrupt)
+
+        controller.interrupt(managed)
+        XCTAssertEqual(controller.interactionState(for: managed), .stopping)
+
+        await provider.yield(.turnCompleted(
+            .init(nativeSessionID: "interaction-thread", turnID: "turn-submit"),
+            state: .completed,
+            summary: nil
+        ))
+        let completionDeadline = ContinuousClock.now + .seconds(2)
+        while controller.interactionState(for: managed) != .ready,
+              ContinuousClock.now < completionDeadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertEqual(controller.interactionState(for: managed), .ready)
+        controller.stop()
+    }
+
+    @MainActor
+    func testSecondPromptIsRejectedWhileManagedTurnIsActive() async throws {
+        let provider = PersistentSnapshotFakeProvider(
+            sessions: [Self.descriptor(id: "single-turn-thread", state: .idle)],
+            usage: AgentUsage()
+        )
+        let store = AgentEventStore()
+        let controller = AgentManagedSessionController(
+            provider: provider,
+            coordinator: AgentIngestionCoordinator(eventStore: store),
+            eventStore: store,
+            approvals: AgentApprovalController()
+        )
+        await controller.refreshPersistentSnapshot()
+        let observed = try XCTUnwrap(store.sessions.first)
+        controller.connect(observed)
+        try await Task.sleep(for: .milliseconds(20))
+        let managed = try XCTUnwrap(store.sessions.first)
+
+        let firstAccepted = await controller.submit("first", for: managed)
+        let secondAccepted = await controller.submit("second", for: managed)
+        let submitted = await provider.submittedPrompts()
+        XCTAssertTrue(firstAccepted)
+        XCTAssertFalse(secondAccepted)
+        XCTAssertEqual(submitted, ["first"])
+        controller.stop()
+    }
+
     @MainActor
     func testSubmitReportsProviderAcceptanceAndFailureSynchronouslyToComposer() async throws {
         let provider = PersistentSnapshotFakeProvider(
@@ -748,6 +923,13 @@ final class AgentManagedSessionControllerTests: XCTestCase {
         )))
         try await Task.sleep(for: .milliseconds(20))
         XCTAssertEqual(controller.transcript(for: session).map(\.text), ["hello"])
+
+        await provider.yield(.turnCompleted(
+            .init(nativeSessionID: "submit-thread", turnID: "turn-submit"),
+            state: .completed,
+            summary: nil
+        ))
+        try await Task.sleep(for: .milliseconds(20))
 
         await provider.setSubmitFailure(true)
         let rejected = await controller.submit("keep this draft", for: session)
@@ -795,10 +977,17 @@ final class AgentManagedSessionControllerTests: XCTestCase {
             nativeSessionID: "managed",
             turnID: "turn-1",
             itemID: "agent-1",
-            delta: "lo"
+            delta: "lo "
         ))
-        try await Task.sleep(for: .milliseconds(20))
-        XCTAssertEqual(controller.transcript(for: session).last?.text, "hello")
+        for delta in ["world\n", "\n", "```swift\n  let x = 1\n```\n"] {
+            await provider.yield(.transcriptDelta(nativeSessionID: "managed", turnID: "turn-1", itemID: "agent-1", delta: delta))
+        }
+        let exactStream = "hello world\n\n```swift\n  let x = 1\n```\n"
+        let streamDeadline = ContinuousClock.now.advanced(by: .seconds(1))
+        while controller.transcript(for: session).last?.text != exactStream, ContinuousClock.now < streamDeadline {
+            await Task.yield()
+        }
+        XCTAssertEqual(controller.transcript(for: session).last?.text, exactStream)
 
         await provider.yield(.transcript(AgentManagedTranscriptEntry(
             id: "agent-1",
@@ -927,6 +1116,7 @@ final class AgentManagedSessionControllerTests: XCTestCase {
             $0.text.contains("Approved automatically")
         })
 
+        // Generic progress is not proof; only the exact acknowledgement is.
         await provider.yield(.transcript(.init(
             id: "continued-after-approval",
             nativeSessionID: "approval-session",
@@ -935,6 +1125,14 @@ final class AgentManagedSessionControllerTests: XCTestCase {
             text: "Continuing",
             timestamp: Date()
         )))
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertFalse(controller.transcript(for: session).contains {
+            $0.text.contains("Approved automatically")
+        })
+        await provider.yield(.approvalAcknowledged(
+            nativeSessionID: "approval-session",
+            requestToken: .string("request-1")
+        ))
         try await Task.sleep(for: .milliseconds(20))
         XCTAssertTrue(controller.transcript(for: session).contains {
             $0.text.contains("Approved automatically")
@@ -1204,6 +1402,49 @@ final class AgentManagedSessionControllerTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(20))
             let decisions = await provider.approvalDecisions()
             XCTAssertEqual(decisions, ["\(requestID):\(decision == .allow ? "allow" : "deny")"])
+
+            // Writing the provider response alone is not enough to project
+            // success; the normalized approval stays pending until the
+            // provider acknowledges this exact request.
+            let beforeConfirmation = try XCTUnwrap(
+                store.sessions.first { $0.id == session.id }?.approvals[
+                    AgentCorrelationID(rawValue: requestID)
+                ]
+            )
+            XCTAssertEqual(beforeConfirmation.state, .pending)
+            XCTAssertEqual(approvals.presentedRequest(for: session.id), pending)
+            XCTAssertEqual(
+                approvals.deliveryState(for: pending.key),
+                .submitting(decision)
+            )
+
+            await provider.yield(.approvalAcknowledged(
+                nativeSessionID: nativeID,
+                requestToken: .string(requestID)
+            ))
+            try await Task.sleep(for: .milliseconds(20))
+
+            let afterConfirmation = try XCTUnwrap(
+                store.sessions.first { $0.id == session.id }?.approvals[
+                    AgentCorrelationID(rawValue: requestID)
+                ]
+            )
+            XCTAssertEqual(
+                afterConfirmation.state,
+                decision == .allow ? .approved : .denied
+            )
+            XCTAssertNil(approvals.presentedRequest(for: session.id))
+
+            await controller.refreshTranscript(for: session)
+            let afterRefresh = try XCTUnwrap(
+                store.sessions.first { $0.id == session.id }?.approvals[
+                    AgentCorrelationID(rawValue: requestID)
+                ]
+            )
+            XCTAssertEqual(
+                afterRefresh.state,
+                decision == .allow ? .approved : .denied
+            )
             controller.stop()
         }
     }
@@ -1296,10 +1537,373 @@ final class AgentManagedSessionControllerTests: XCTestCase {
         let failedDecisions = await provider.approvalDecisions()
         XCTAssertTrue(failedDecisions.isEmpty)
         XCTAssertNil(approvals.pendingRequest(for: session.id))
+        // The failure stays visible instead of silently disappearing.
+        let failed = try XCTUnwrap(approvals.presentedRequest(for: session.id))
+        guard case .failed(.allow, _)? = approvals.deliveryState(for: failed.key) else {
+            return XCTFail("expected a visible failed delivery")
+        }
+        XCTAssertEqual(
+            store.sessions.first { $0.id == session.id }?.approvals[AgentCorrelationID(rawValue: "failure")]?.state,
+            .unknown
+        )
         XCTAssertFalse(controller.transcript(for: session).contains {
             $0.text.contains("Approved automatically")
         })
         XCTAssertNotNil(controller.statusMessage(for: session))
+        controller.stop()
+    }
+
+    // MARK: Approval authority audit
+
+    @MainActor
+    private func makeApprovalHarness(
+        _ nativeID: String
+    ) async throws -> (
+        provider: PersistentSnapshotFakeProvider,
+        store: AgentEventStore,
+        approvals: AgentApprovalController,
+        controller: AgentManagedSessionController
+    ) {
+        let provider = PersistentSnapshotFakeProvider(
+            sessions: [Self.descriptor(id: nativeID, state: .notLoaded)],
+            usage: AgentUsage()
+        )
+        let store = AgentEventStore()
+        let approvals = AgentApprovalController()
+        let controller = AgentManagedSessionController(
+            provider: provider,
+            coordinator: AgentIngestionCoordinator(eventStore: store),
+            eventStore: store,
+            approvals: approvals
+        )
+        controller.startObserving()
+        await controller.refreshPersistentSnapshot()
+        controller.connect(try XCTUnwrap(store.sessions.first))
+        try await Task.sleep(for: .milliseconds(30))
+        return (provider, store, approvals, controller)
+    }
+
+    @MainActor
+    private func yieldApproval(
+        _ provider: PersistentSnapshotFakeProvider,
+        _ approvals: AgentApprovalController,
+        nativeID: String,
+        turnID: String,
+        requestID: String
+    ) async throws {
+        let before = approvals.pendingRequests.count
+        await provider.yield(.approvalRequested(.init(
+            requestToken: .string(requestID),
+            requestID: requestID,
+            kind: .fileChange,
+            threadID: nativeID,
+            turnID: turnID,
+            itemID: "item-\(requestID)",
+            summary: "Write file"
+        )))
+        for _ in 0..<60 where approvals.pendingRequests.count <= before {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+    }
+
+    @MainActor
+    func testPendingApprovalIsWithdrawnWhenTurnEndsBeforeDecision() async throws {
+        let nativeID = "approval-turn-end"
+        let harness = try await makeApprovalHarness(nativeID)
+        await harness.provider.yield(.turnStarted(.init(nativeSessionID: nativeID, turnID: "turn-1")))
+        try await Task.sleep(for: .milliseconds(20))
+        try await yieldApproval(harness.provider, harness.approvals, nativeID: nativeID, turnID: "turn-1", requestID: "stale")
+        let session = try XCTUnwrap(harness.store.sessions.first)
+        let pending = try XCTUnwrap(harness.approvals.pendingRequest(for: session.id))
+
+        await harness.provider.yield(.turnCompleted(
+            .init(nativeSessionID: nativeID, turnID: "turn-1"),
+            state: .interrupted,
+            summary: nil
+        ))
+        try await Task.sleep(for: .milliseconds(40))
+
+        XCTAssertNil(harness.approvals.pendingRequest(for: session.id), "A finished turn must not keep an actionable approval")
+        XCTAssertNil(harness.approvals.presentedRequest(for: session.id))
+        XCTAssertEqual(
+            harness.approvals.resolve(session: session.id, requestID: pending.key.requestID, decision: .allow),
+            .missing
+        )
+        try await Task.sleep(for: .milliseconds(20))
+        let decisions = await harness.provider.approvalDecisions()
+        XCTAssertFalse(decisions.contains("stale:allow"))
+        harness.controller.stop()
+    }
+
+    @MainActor
+    func testPendingApprovalIsWithdrawnOnProviderFailureForExactSession() async throws {
+        let nativeID = "approval-provider-failure"
+        let harness = try await makeApprovalHarness(nativeID)
+        await harness.provider.yield(.turnStarted(.init(nativeSessionID: nativeID, turnID: "turn-1")))
+        try await Task.sleep(for: .milliseconds(20))
+        try await yieldApproval(harness.provider, harness.approvals, nativeID: nativeID, turnID: "turn-1", requestID: "crashed")
+        let session = try XCTUnwrap(harness.store.sessions.first)
+        XCTAssertNotNil(harness.approvals.pendingRequest(for: session.id))
+
+        await harness.provider.yield(.providerFailure(nativeSessionID: nativeID, summary: nil))
+        try await Task.sleep(for: .milliseconds(40))
+
+        XCTAssertNil(harness.approvals.presentedRequest(for: session.id))
+        let decisions = await harness.provider.approvalDecisions()
+        XCTAssertFalse(decisions.contains("crashed:allow"))
+        harness.controller.stop()
+    }
+
+    @MainActor
+    func testTransportCloseWithdrawsApprovalWithoutRecordingUserDecision() async throws {
+        let nativeID = "approval-transport"
+        let harness = try await makeApprovalHarness(nativeID)
+        await harness.provider.yield(.turnStarted(.init(nativeSessionID: nativeID, turnID: "turn-1")))
+        try await Task.sleep(for: .milliseconds(20))
+        try await yieldApproval(harness.provider, harness.approvals, nativeID: nativeID, turnID: "turn-1", requestID: "closed")
+        let session = try XCTUnwrap(harness.store.sessions.first)
+        let pending = try XCTUnwrap(harness.approvals.pendingRequest(for: session.id))
+
+        await harness.provider.yield(.transportClosed(nil))
+        for _ in 0..<60 where harness.approvals.pendingRequest(for: session.id) != nil {
+            try await Task.sleep(for: .milliseconds(2))
+        }
+        // Never presented as a submitted "Deny" the user did not choose.
+        XCTAssertNil(harness.approvals.deliveryState(for: pending.key))
+        XCTAssertNil(harness.approvals.presentedRequest(for: session.id))
+        let decisions = await harness.provider.approvalDecisions()
+        XCTAssertFalse(decisions.contains("closed:allow"))
+        harness.controller.stop()
+    }
+
+    @MainActor
+    func testProviderCancelledApprovalIsWithdrawnWithoutAnyWireDecision() async throws {
+        let nativeID = "approval-cancelled"
+        let harness = try await makeApprovalHarness(nativeID)
+        await harness.provider.yield(.turnStarted(.init(nativeSessionID: nativeID, turnID: "turn-1")))
+        try await Task.sleep(for: .milliseconds(20))
+        try await yieldApproval(harness.provider, harness.approvals, nativeID: nativeID, turnID: "turn-1", requestID: "keep")
+        try await yieldApproval(harness.provider, harness.approvals, nativeID: nativeID, turnID: "turn-1", requestID: "cancelled")
+        let session = try XCTUnwrap(harness.store.sessions.first)
+        XCTAssertEqual(harness.approvals.pendingRequests.count, 2)
+
+        // A cancel naming a different session is ignored.
+        await harness.provider.yield(.approvalCancelled(nativeSessionID: "someone-else", requestID: "cancelled"))
+        await harness.provider.yield(.approvalCancelled(nativeSessionID: nativeID, requestID: "cancelled"))
+        try await Task.sleep(for: .milliseconds(40))
+
+        let remaining = harness.approvals.pendingRequests.values.map(\.key.requestID.rawValue)
+        XCTAssertEqual(remaining, ["keep"])
+        XCTAssertEqual(
+            harness.approvals.resolve(
+                session: session.id,
+                requestID: AgentCorrelationID(rawValue: "cancelled"),
+                decision: .allow
+            ),
+            .missing
+        )
+        try await Task.sleep(for: .milliseconds(20))
+        let decisions = await harness.provider.approvalDecisions()
+        XCTAssertTrue(decisions.isEmpty, "Provider-cancelled requests get no wire response: \(decisions)")
+        harness.controller.stop()
+    }
+
+    @MainActor
+    func testReusedProviderRequestIDInLaterTurnIsSurfacedNotSilentlyDropped() async throws {
+        let nativeID = "approval-reused-id"
+        let harness = try await makeApprovalHarness(nativeID)
+        await harness.provider.yield(.turnStarted(.init(nativeSessionID: nativeID, turnID: "turn-1")))
+        try await Task.sleep(for: .milliseconds(20))
+        try await yieldApproval(harness.provider, harness.approvals, nativeID: nativeID, turnID: "turn-1", requestID: "0")
+        let session = try XCTUnwrap(harness.store.sessions.first)
+        let first = try XCTUnwrap(harness.approvals.pendingRequest(for: session.id))
+        XCTAssertEqual(harness.approvals.resolve(session: session.id, requestID: first.key.requestID, decision: .allow), .accepted)
+        try await Task.sleep(for: .milliseconds(20))
+        await harness.provider.yield(.turnCompleted(.init(nativeSessionID: nativeID, turnID: "turn-1"), state: .completed, summary: nil))
+        try await Task.sleep(for: .milliseconds(30))
+
+        await harness.provider.yield(.turnStarted(.init(nativeSessionID: nativeID, turnID: "turn-2")))
+        try await Task.sleep(for: .milliseconds(20))
+        // A restarted app-server reuses JSON-RPC id 0 for a new request in a new turn.
+        try await yieldApproval(harness.provider, harness.approvals, nativeID: nativeID, turnID: "turn-2", requestID: "0")
+        let second = try XCTUnwrap(
+            harness.approvals.pendingRequest(for: session.id),
+            "A new provider request in a new turn must be surfaced, not dropped unanswered"
+        )
+        XCTAssertEqual(harness.approvals.resolve(session: session.id, requestID: second.key.requestID, decision: .deny), .accepted)
+        try await Task.sleep(for: .milliseconds(20))
+        let decisions = await harness.provider.approvalDecisions()
+        XCTAssertEqual(decisions, ["0:allow", "0:deny"])
+        harness.controller.stop()
+    }
+
+    @MainActor
+    func testReplayOfAnsweredRequestInSameTurnIsNotAnsweredTwice() async throws {
+        let nativeID = "approval-replay"
+        let harness = try await makeApprovalHarness(nativeID)
+        await harness.provider.yield(.turnStarted(.init(nativeSessionID: nativeID, turnID: "turn-1")))
+        try await Task.sleep(for: .milliseconds(20))
+        try await yieldApproval(harness.provider, harness.approvals, nativeID: nativeID, turnID: "turn-1", requestID: "once")
+        let session = try XCTUnwrap(harness.store.sessions.first)
+        let pending = try XCTUnwrap(harness.approvals.pendingRequest(for: session.id))
+        XCTAssertEqual(harness.approvals.resolve(session: session.id, requestID: pending.key.requestID, decision: .deny), .accepted)
+        try await Task.sleep(for: .milliseconds(30))
+        // The same turn is re-announced (e.g. Codex turn/started after submit).
+        await harness.provider.yield(.turnStarted(.init(nativeSessionID: nativeID, turnID: "turn-1")))
+        try await Task.sleep(for: .milliseconds(20))
+        await harness.provider.yield(.approvalRequested(.init(
+            requestToken: .string("once"), requestID: "once", kind: .fileChange,
+            threadID: nativeID, turnID: "turn-1", itemID: "item-once", summary: "Write file"
+        )))
+        try await Task.sleep(for: .milliseconds(40))
+        XCTAssertNil(harness.approvals.pendingRequest(for: session.id))
+        let decisions = await harness.provider.approvalDecisions()
+        XCTAssertEqual(decisions, ["once:deny"])
+        harness.controller.stop()
+    }
+
+    @MainActor
+    func testHookObservedClaudeApprovalIsNeverActionableOrTakenOver() async throws {
+        let provider = PersistentSnapshotFakeProvider(provider: .claude, sessions: [], usage: AgentUsage())
+        let store = AgentEventStore()
+        let approvals = AgentApprovalController()
+        let coordinator = AgentIngestionCoordinator(eventStore: store)
+        let controller = AgentManagedSessionController(
+            provider: provider,
+            coordinator: coordinator,
+            eventStore: store,
+            approvals: approvals
+        )
+        controller.startObserving()
+        let hook = try await coordinator.registerProducer(
+            descriptor: AgentProducerDescriptor(
+                sourceInstanceID: AgentSourceInstanceID(rawValue: "test-claude-hook"),
+                sourceKind: .officialHook,
+                runtimeVersion: "test"
+            ),
+            policy: .claudeOfficialHook,
+            authenticatedProducerID: "test-hook"
+        ).get()
+        func event(_ id: String, _ type: AgentEventType, correlation: String? = nil, payload: AgentEventPayload) -> AgentIngestionEvent {
+            AgentIngestionEvent(
+                schemaVersion: AgentEvent.normalizedSchemaVersion,
+                eventID: AgentEventID(rawValue: id),
+                provider: .claude,
+                source: .unknown,
+                nativeSessionID: "observed-claude",
+                assertedGeneration: nil,
+                type: type,
+                providerTimestamp: nil,
+                receivedTimestamp: Date(),
+                correlationID: correlation.map { AgentCorrelationID(rawValue: $0) },
+                sequence: nil,
+                authority: .lifecycle,
+                payload: payload,
+                continuity: AgentSessionContinuity(immutableIdentity: "observed-claude")
+            )
+        }
+        _ = await coordinator.ingest(event("s", .sessionStarted, payload: .sessionMetadata(AgentSessionMetadata(project: nil))), from: hook)
+        let approvalResult = await coordinator.ingest(event(
+            "p", .approvalRequested, correlation: "hook-permission",
+            payload: .approvalRequest(AgentApprovalRequest(
+                summary: "Use Write", operationCorrelationID: nil, expiresAt: Date().addingTimeInterval(60)
+            ))
+        ), from: hook)
+        guard case .success = approvalResult else { return XCTFail("hook approval not observed: \(approvalResult)") }
+
+        let session = try XCTUnwrap(store.sessions.first { $0.id.sessionID.nativeID == "observed-claude" })
+        XCTAssertEqual(session.state, .waitingForApproval)
+        XCTAssertFalse(session.capabilities.contains(.approvalControl))
+        XCTAssertTrue(approvals.pendingRequests.isEmpty, "observation-only producers never register a decision")
+        XCTAssertFalse(AgentApprovalPresentation.isActionable(session: session, pending: approvals.presentedRequest(for: session.id)))
+        XCTAssertFalse(controller.isManaged(session))
+        XCTAssertFalse(controller.canConnect(session), "no take-over while the source app owns a prompt")
+        XCTAssertEqual(controller.statusMessage(for: session), "External approval · respond in source app")
+        XCTAssertEqual(
+            approvals.resolve(session: session.id, requestID: AgentCorrelationID(rawValue: "hook-permission"), decision: .allow),
+            .missing
+        )
+        controller.stop()
+    }
+
+    @MainActor
+    func testInterruptStaysStoppingUntilAuthoritativeTurnCompletionAndDeduplicates() async throws {
+        let provider = PersistentSnapshotFakeProvider(
+            sessions: [Self.descriptor(id: "interrupt-session", state: .notLoaded)],
+            usage: AgentUsage()
+        )
+        let store = AgentEventStore()
+        let controller = AgentManagedSessionController(
+            provider: provider,
+            coordinator: AgentIngestionCoordinator(eventStore: store),
+            eventStore: store,
+            approvals: AgentApprovalController()
+        )
+        controller.startObserving()
+        await controller.refreshPersistentSnapshot()
+        controller.connect(try XCTUnwrap(store.sessions.first))
+        try await Task.sleep(for: .milliseconds(30))
+        await provider.yield(.turnStarted(.init(
+            nativeSessionID: "interrupt-session",
+            turnID: "turn-1"
+        )))
+        try await Task.sleep(for: .milliseconds(20))
+        let session = try XCTUnwrap(store.sessions.first)
+
+        controller.interrupt(session)
+        controller.interrupt(session)
+        try await Task.sleep(for: .milliseconds(20))
+
+        XCTAssertTrue(controller.isInterrupting(session))
+        XCTAssertEqual(controller.statusMessage(for: session), "Stopping…")
+        XCTAssertFalse(controller.mode(for: session).canInterrupt)
+        let interruptCalls = await provider.interruptCalls()
+        XCTAssertEqual(interruptCalls, ["interrupt-session:turn-1"])
+
+        await provider.yield(.turnCompleted(
+            .init(nativeSessionID: "interrupt-session", turnID: "turn-1"),
+            state: .interrupted,
+            summary: "Interrupted"
+        ))
+        try await Task.sleep(for: .milliseconds(20))
+
+        XCTAssertFalse(controller.isInterrupting(session))
+        XCTAssertEqual(store.sessions.first?.state, .interrupted)
+        controller.stop()
+    }
+
+    @MainActor
+    func testInterruptFailureRestoresControlWithoutFakingIdle() async throws {
+        let provider = PersistentSnapshotFakeProvider(
+            sessions: [Self.descriptor(id: "interrupt-failure", state: .notLoaded)],
+            usage: AgentUsage()
+        )
+        let store = AgentEventStore()
+        let controller = AgentManagedSessionController(
+            provider: provider,
+            coordinator: AgentIngestionCoordinator(eventStore: store),
+            eventStore: store,
+            approvals: AgentApprovalController()
+        )
+        controller.startObserving()
+        await controller.refreshPersistentSnapshot()
+        controller.connect(try XCTUnwrap(store.sessions.first))
+        try await Task.sleep(for: .milliseconds(30))
+        await provider.yield(.turnStarted(.init(
+            nativeSessionID: "interrupt-failure",
+            turnID: "turn-1"
+        )))
+        try await Task.sleep(for: .milliseconds(20))
+        let session = try XCTUnwrap(store.sessions.first)
+        await provider.setInterruptFailure(true)
+
+        controller.interrupt(session)
+        try await Task.sleep(for: .milliseconds(30))
+
+        XCTAssertFalse(controller.isInterrupting(session))
+        XCTAssertEqual(store.sessions.first?.state, .working)
+        XCTAssertNotNil(controller.statusMessage(for: session))
+        XCTAssertTrue(controller.mode(for: session).canInterrupt)
         controller.stop()
     }
 
@@ -1342,11 +1946,15 @@ private actor PersistentSnapshotFakeProvider: AgentInteractiveProvider {
     private var usageFailure = false
     private var transcript: [AgentManagedTranscriptEntry] = []
     private var submitted: [String] = []
+    private var submittedEfforts: [String?] = []
     private var submitFailure = false
     private var startFailure = false
     private var startedModels: [String?] = []
+    private var startedCWDs: [String?] = []
     private var approvalResolutionFailure = false
     private var approvalDecisionLog: [String] = []
+    private var interruptFailure = false
+    private var interruptLog: [String] = []
     private var callLog: [String] = []
     private var unavailableSessionIDs: Set<String> = []
     private var resumeReplacementID: String?
@@ -1448,6 +2056,7 @@ private actor PersistentSnapshotFakeProvider: AgentInteractiveProvider {
     func startSession(cwd: String?, model: String?) async throws -> AgentManagedSessionDescriptor {
         if startFailure { throw CodexAppServerError.rpcError(code: -1, message: "start failed") }
         startedModels.append(model)
+        startedCWDs.append(cwd)
         let nativeID = "started-\(startedModels.count)"
         return AgentManagedSessionDescriptor(
             provider: provider,
@@ -1464,6 +2073,10 @@ private actor PersistentSnapshotFakeProvider: AgentInteractiveProvider {
 
     func startedSessionModels() -> [String?] {
         startedModels
+    }
+
+    func startedSessionCWDs() -> [String?] {
+        startedCWDs
     }
 
     func resumeSession(
@@ -1499,11 +2112,30 @@ private actor PersistentSnapshotFakeProvider: AgentInteractiveProvider {
         submitFailure = value
     }
 
+    func submit(prompt: String, nativeSessionID: String, model: String?, reasoningEffort: String?) async throws -> AgentManagedTurnDescriptor {
+        let turn = try await submit(prompt: prompt, nativeSessionID: nativeSessionID, model: model)
+        submittedEfforts.append(reasoningEffort)
+        return turn
+    }
+
+    func submittedReasoningEfforts() -> [String?] { submittedEfforts }
+
     func submittedPrompts() -> [String] {
         submitted
     }
 
-    func interrupt(nativeSessionID: String, turnID: String) async throws {}
+    func interrupt(nativeSessionID: String, turnID: String) async throws {
+        if interruptFailure { throw CodexAppServerError.transportClosed(nil) }
+        interruptLog.append("\(nativeSessionID):\(turnID)")
+    }
+
+    func setInterruptFailure(_ value: Bool) {
+        interruptFailure = value
+    }
+
+    func interruptCalls() -> [String] {
+        interruptLog
+    }
 
     func resolveApproval(_ request: AgentManagedApprovalRequest, allow: Bool) async throws {
         if approvalResolutionFailure {
@@ -1522,5 +2154,241 @@ private actor PersistentSnapshotFakeProvider: AgentInteractiveProvider {
 
     func stop() async {
         eventContinuation.finish()
+    }
+}
+
+// MARK: - Managed approval authority (exact provider acknowledgement)
+
+extension AgentManagedSessionControllerTests {
+    @MainActor
+    private func startApprovalTurn(
+        _ nativeID: String,
+        requestID: String,
+        turnID: String = "turn-1"
+    ) async throws -> (
+        harness: (provider: PersistentSnapshotFakeProvider, store: AgentEventStore, approvals: AgentApprovalController, controller: AgentManagedSessionController),
+        session: AgentSession,
+        pending: AgentApprovalControlRequest
+    ) {
+        let harness = try await makeApprovalHarness(nativeID)
+        await harness.provider.yield(.turnStarted(.init(nativeSessionID: nativeID, turnID: turnID)))
+        try await Task.sleep(for: .milliseconds(20))
+        try await yieldApproval(harness.provider, harness.approvals, nativeID: nativeID, turnID: turnID, requestID: requestID)
+        let session = try XCTUnwrap(harness.store.sessions.first { $0.id.sessionID.nativeID == nativeID })
+        let pending = try XCTUnwrap(harness.approvals.pendingRequest(for: session.id))
+        return (harness, session, pending)
+    }
+
+    @MainActor
+    private func storeApproval(
+        _ store: AgentEventStore,
+        _ session: AgentSession,
+        _ requestID: String
+    ) -> AgentApproval? {
+        store.sessions.first { $0.id == session.id }?.approvals[AgentCorrelationID(rawValue: requestID)]
+    }
+
+    @MainActor
+    private func settle(_ condition: () -> Bool) async throws {
+        for _ in 0..<100 where !condition() {
+            try await Task.sleep(for: .milliseconds(3))
+        }
+    }
+
+    @MainActor
+    func testManagedApprovalHasNoWallClockExpiry() async throws {
+        let (harness, session, pending) = try await startApprovalTurn("no-expiry", requestID: "r1")
+        XCTAssertEqual(pending.expiresAt, .distantFuture, "the provider waits; so does the island")
+        XCTAssertNil(storeApproval(harness.store, session, "r1")?.expiresAt)
+        XCTAssertTrue(AgentApprovalPresentation.isActionable(
+            session: try XCTUnwrap(harness.store.sessions.first { $0.id == session.id }),
+            pending: harness.approvals.presentedRequest(for: session.id)
+        ))
+        harness.controller.stop()
+    }
+
+    @MainActor
+    func testGenericTurnProgressDoesNotConfirmDecision() async throws {
+        let (harness, session, pending) = try await startApprovalTurn("no-heuristic", requestID: "r1")
+        XCTAssertEqual(harness.approvals.resolve(session: session.id, requestID: pending.key.requestID, decision: .allow), .accepted)
+        try await settle { !harness.approvals.deliveryState(for: pending.key).map { $0 == .awaitingDecision }! }
+        await harness.provider.yield(.transcript(.init(
+            id: "progress", nativeSessionID: "no-heuristic", turnID: "turn-1",
+            role: .status, text: "Still going", timestamp: Date()
+        )))
+        await harness.provider.yield(.transcriptDelta(nativeSessionID: "no-heuristic", turnID: "turn-1", itemID: "m", delta: "x"))
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertEqual(harness.approvals.deliveryState(for: pending.key), .submitting(.allow))
+        XCTAssertEqual(storeApproval(harness.store, session, "r1")?.state, .pending, "never 'Approved' without provider proof")
+        harness.controller.stop()
+    }
+
+    @MainActor
+    func testExactProviderAcknowledgementConfirmsAllowAndDeny() async throws {
+        for (suffix, decision) in [("allow", AgentBridgePermissionDecision.allow), ("deny", .deny)] {
+            let nativeID = "ack-\(suffix)"
+            let (harness, session, pending) = try await startApprovalTurn(nativeID, requestID: "r-\(suffix)")
+            XCTAssertEqual(harness.approvals.resolve(session: session.id, requestID: pending.key.requestID, decision: decision), .accepted)
+            var decisions: [String] = []
+            for _ in 0..<100 where decisions.isEmpty {
+                decisions = await harness.provider.approvalDecisions()
+                try await Task.sleep(for: .milliseconds(3))
+            }
+            XCTAssertEqual(decisions, ["r-\(suffix):\(suffix)"])
+
+            // Another request's acknowledgement never confirms this one.
+            await harness.provider.yield(.approvalAcknowledged(nativeSessionID: nativeID, requestToken: .string("other")))
+            await harness.provider.yield(.approvalAcknowledged(nativeSessionID: "other-thread", requestToken: .string("r-\(suffix)")))
+            try await Task.sleep(for: .milliseconds(30))
+            XCTAssertEqual(harness.approvals.deliveryState(for: pending.key), .submitting(decision))
+
+            await harness.provider.yield(.approvalAcknowledged(nativeSessionID: nativeID, requestToken: .string("r-\(suffix)")))
+            try await settle { storeApproval(harness.store, session, "r-\(suffix)")?.state != .pending }
+            XCTAssertEqual(storeApproval(harness.store, session, "r-\(suffix)")?.state, decision == .allow ? .approved : .denied)
+            XCTAssertNil(harness.approvals.presentedRequest(for: session.id))
+            XCTAssertNil(harness.approvals.deliveryState(for: pending.key))
+
+            // Resolved history stays visible after the turn completes.
+            await harness.provider.yield(.turnCompleted(.init(nativeSessionID: nativeID, turnID: "turn-1"), state: .completed, summary: nil))
+            try await Task.sleep(for: .milliseconds(30))
+            XCTAssertEqual(storeApproval(harness.store, session, "r-\(suffix)")?.state, decision == .allow ? .approved : .denied)
+            harness.controller.stop()
+        }
+    }
+
+    @MainActor
+    func testTurnEndingDuringSubmissionFailsWithoutClaimingSuccess() async throws {
+        let (harness, session, pending) = try await startApprovalTurn("turn-end-submit", requestID: "r1")
+        _ = harness.approvals.resolve(session: session.id, requestID: pending.key.requestID, decision: .allow)
+        try await settle { !(harness.approvals.deliveryState(for: pending.key) == .awaitingDecision) }
+        await harness.provider.yield(.turnCompleted(.init(nativeSessionID: "turn-end-submit", turnID: "turn-1"), state: .interrupted, summary: nil))
+        try await settle {
+            if case .failed? = harness.approvals.deliveryState(for: pending.key) { return true }
+            return false
+        }
+
+        guard case .failed(.allow, _)? = harness.approvals.deliveryState(for: pending.key) else {
+            return XCTFail("expected failed delivery, got \(String(describing: harness.approvals.deliveryState(for: pending.key)))")
+        }
+        XCTAssertNotEqual(storeApproval(harness.store, session, "r1")?.state, .approved)
+        XCTAssertEqual(storeApproval(harness.store, session, "r1")?.state, .unknown)
+        XCTAssertNotNil(harness.approvals.presentedRequest(for: session.id), "the failure stays visible")
+        harness.approvals.dismissFailedDelivery(pending.key)
+        XCTAssertNil(harness.approvals.presentedRequest(for: session.id))
+        harness.controller.stop()
+    }
+
+    @MainActor
+    func testDeliveryTransportFailureIsVisibleAndNeverApproved() async throws {
+        let (harness, session, pending) = try await startApprovalTurn("transport-fail", requestID: "r1")
+        await harness.provider.setApprovalResolutionFailure(true)
+        _ = harness.approvals.resolve(session: session.id, requestID: pending.key.requestID, decision: .allow)
+        try await settle {
+            if case .failed? = harness.approvals.deliveryState(for: pending.key) { return true }
+            return false
+        }
+        guard case .failed(.allow, _)? = harness.approvals.deliveryState(for: pending.key) else {
+            return XCTFail("expected failed delivery")
+        }
+        XCTAssertEqual(storeApproval(harness.store, session, "r1")?.state, .unknown)
+        harness.controller.stop()
+    }
+
+    @MainActor
+    func testProviderResolvingBeforeUserDecisionWithdrawsWithoutWireDecision() async throws {
+        let (harness, session, pending) = try await startApprovalTurn("provider-resolved", requestID: "r1")
+        await harness.provider.yield(.approvalAcknowledged(nativeSessionID: "provider-resolved", requestToken: .string("r1")))
+        try await settle { harness.approvals.pendingRequest(for: session.id) == nil }
+        try await settle { storeApproval(harness.store, session, "r1")?.state == .cancelled }
+        XCTAssertNil(harness.approvals.presentedRequest(for: session.id))
+        XCTAssertEqual(harness.approvals.resolve(session: session.id, requestID: pending.key.requestID, decision: .allow), .missing)
+        try await Task.sleep(for: .milliseconds(20))
+        let decisions = await harness.provider.approvalDecisions()
+        XCTAssertTrue(decisions.isEmpty)
+        XCTAssertEqual(storeApproval(harness.store, session, "r1")?.state, .cancelled)
+        harness.controller.stop()
+    }
+
+    @MainActor
+    func testRepeatedClickSendsExactlyOnce() async throws {
+        let (harness, session, pending) = try await startApprovalTurn("double-click", requestID: "r1")
+        XCTAssertEqual(harness.approvals.resolve(session: session.id, requestID: pending.key.requestID, decision: .allow), .accepted)
+        XCTAssertEqual(harness.approvals.resolve(session: session.id, requestID: pending.key.requestID, decision: .allow), .missing)
+        XCTAssertEqual(harness.approvals.resolve(session: session.id, requestID: pending.key.requestID, decision: .deny), .missing)
+        try await Task.sleep(for: .milliseconds(30))
+        let decisions = await harness.provider.approvalDecisions()
+        XCTAssertEqual(decisions, ["r1:allow"])
+        harness.controller.stop()
+    }
+
+    @MainActor
+    func testStaleRowCannotResolveNewerTurnWithReusedRequestID() async throws {
+        let nativeID = "stale-row"
+        let (harness, session, stale) = try await startApprovalTurn(nativeID, requestID: "0")
+        // Turn 1 ends (e.g. reconnect); its request is withdrawn.
+        await harness.provider.yield(.turnCompleted(.init(nativeSessionID: nativeID, turnID: "turn-1"), state: .interrupted, summary: nil))
+        try await settle { harness.approvals.pendingRequest(for: session.id) == nil }
+        // Turn 2 reuses native request id "0".
+        await harness.provider.yield(.turnStarted(.init(nativeSessionID: nativeID, turnID: "turn-2")))
+        try await Task.sleep(for: .milliseconds(20))
+        try await yieldApproval(harness.provider, harness.approvals, nativeID: nativeID, turnID: "turn-2", requestID: "0")
+        let current = try XCTUnwrap(harness.approvals.pendingRequest(for: session.id))
+        XCTAssertNotEqual(current.key, stale.key)
+
+        XCTAssertEqual(harness.approvals.resolve(session: stale.key.session, requestID: stale.key.requestID, decision: .allow), .missing)
+        try await Task.sleep(for: .milliseconds(20))
+        var decisions = await harness.provider.approvalDecisions()
+        XCTAssertTrue(decisions.isEmpty, "a stale button never answers the newer turn")
+
+        XCTAssertEqual(harness.approvals.resolve(session: current.key.session, requestID: current.key.requestID, decision: .deny), .accepted)
+        try await Task.sleep(for: .milliseconds(20))
+        decisions = await harness.provider.approvalDecisions()
+        XCTAssertEqual(decisions, ["0:deny"])
+        harness.controller.stop()
+    }
+
+    @MainActor
+    func testSessionSwitchWhilePendingKeepsExactBinding() async throws {
+        let (harness, session, pending) = try await startApprovalTurn("switch-pending", requestID: "r1")
+        harness.controller.selectSession(nil)
+        XCTAssertEqual(harness.approvals.pendingRequest(for: session.id), pending)
+        XCTAssertEqual(harness.approvals.resolve(session: pending.key.session, requestID: pending.key.requestID, decision: .allow), .accepted)
+        try await Task.sleep(for: .milliseconds(20))
+        let decisions = await harness.provider.approvalDecisions()
+        XCTAssertEqual(decisions, ["r1:allow"])
+        harness.controller.stop()
+    }
+
+    @MainActor
+    func testShutdownWhileAwaitingDecisionSendsNoDecision() async throws {
+        let (harness, _, _) = try await startApprovalTurn("shutdown", requestID: "r1")
+        harness.controller.stop()
+        try await Task.sleep(for: .milliseconds(40))
+        let decisions = await harness.provider.approvalDecisions()
+        XCTAssertTrue(decisions.isEmpty, "shutdown never answers on the user's behalf")
+    }
+
+    @MainActor
+    func testAutoApprovalAwaitsProviderAcknowledgement() async throws {
+        let nativeID = "auto-ack"
+        let harness = try await makeApprovalHarness(nativeID)
+        let session = try XCTUnwrap(harness.store.sessions.first)
+        harness.controller.setApprovalPolicyChoice(.autoApprove, for: session)
+        await harness.provider.yield(.turnStarted(.init(nativeSessionID: nativeID, turnID: "turn-1")))
+        try await Task.sleep(for: .milliseconds(20))
+        await harness.provider.yield(.approvalRequested(.init(
+            requestToken: .string("auto"), requestID: "auto", kind: .command,
+            threadID: nativeID, turnID: "turn-1", itemID: "item", summary: "Run"
+        )))
+        try await Task.sleep(for: .milliseconds(40))
+        let decisions = await harness.provider.approvalDecisions()
+        XCTAssertEqual(decisions, ["auto:allow"])
+        XCTAssertEqual(storeApproval(harness.store, session, "auto")?.state, .pending)
+
+        await harness.provider.yield(.approvalAcknowledged(nativeSessionID: nativeID, requestToken: .string("auto")))
+        try await settle { storeApproval(harness.store, session, "auto")?.state != .pending }
+        XCTAssertEqual(storeApproval(harness.store, session, "auto")?.state, .approved)
+        XCTAssertTrue(harness.controller.transcript(for: session).contains { $0.text == "Approved automatically" })
+        harness.controller.stop()
     }
 }

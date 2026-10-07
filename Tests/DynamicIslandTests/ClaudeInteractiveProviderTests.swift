@@ -10,11 +10,13 @@ final class ClaudeInteractiveProviderTests: XCTestCase {
 
         XCTAssertEqual(provider.provider, .claude)
         XCTAssertEqual(provider.interactiveCapabilities, [
-            .resumeSession, .submitPrompt, .streamMessages, .streamToolActivity
+            .startSession, .resumeSession, .loadHistory, .submitPrompt, .interrupt, .selectModel,
+            .resolveApprovals, .accountUsage, .contextUsage, .streamMessages, .streamToolActivity
         ])
-        XCTAssertFalse(provider.interactiveCapabilities.contains(.interrupt))
-        XCTAssertFalse(provider.interactiveCapabilities.contains(.resolveApprovals))
-        XCTAssertFalse(provider.interactiveCapabilities.contains(.selectModel))
+        // History comes from Claude Code's own session transcript (user and
+        // assistant text only), so a resumed session shows its conversation.
+        XCTAssertTrue(provider.interactiveCapabilities.contains(.loadHistory))
+        // Model is chosen at session start only; no in-place switching claimed.
         XCTAssertNil(provider.modelSelectionScope)
     }
 
@@ -95,7 +97,11 @@ final class ClaudeInteractiveProviderTests: XCTestCase {
         let delta = await provider.project(envelope(type: "stream_event", event: .object([
             "type": .string("content_block_delta"),
             "index": .integer(0),
-            "delta": .object(["type": .string("text_delta"), "text": .string("Hello")])
+            "delta": .object(["type": .string("text_delta"), "text": .string("Hello ")])
+        ])))
+        let whitespace = await provider.project(envelope(type: "stream_event", event: .object([
+            "type": .string("content_block_delta"), "index": .integer(0),
+            "delta": .object(["type": .string("text_delta"), "text": .string("\n  ")])
         ])))
         let completed = await provider.project(ClaudeCodeStreamEnvelope(
             nativeSessionID: "session-1",
@@ -105,18 +111,71 @@ final class ClaudeInteractiveProviderTests: XCTestCase {
                 "message": .object([
                     "id": .string("message-1"),
                     "content": .array([
-                        .object(["type": .string("text"), "text": .string("Hello world")])
+                        .object(["type": .string("text"), "text": .string("Hello world\n")])
                     ])
                 ])
             ])
         ))
 
-        guard case .transcriptDelta(_, _, let deltaID, _) = try XCTUnwrap(delta.first),
+        guard case .transcriptDelta(_, _, let deltaID, let deltaText) = try XCTUnwrap(delta.first),
+              case .transcriptDelta(_, _, let whitespaceID, let whitespaceText) = try XCTUnwrap(whitespace.first),
               case .transcript(let final) = try XCTUnwrap(completed.first) else {
             return XCTFail("Expected delta and completed transcript")
         }
         XCTAssertEqual(deltaID, final.id)
-        XCTAssertEqual(final.text, "Hello world")
+        XCTAssertEqual(whitespaceID, deltaID)
+        XCTAssertEqual(deltaText, "Hello ")
+        XCTAssertEqual(whitespaceText, "\n  ")
+        XCTAssertEqual(final.text, "Hello world\n")
+    }
+
+    /// Verified shape from Claude Code 2.1.285 with --include-partial-messages:
+    /// one `assistant` event per block, whose content holds only that block,
+    /// while stream deltas use the real block index (text after thinking = 1).
+    func testPerBlockAssistantEventsDoNotDuplicateStreamedText() async throws {
+        let provider = try ClaudeInteractiveProvider(
+            client: ClaudeCodeStreamingClient(executableURL: URL(fileURLWithPath: "/usr/bin/true"))
+        )
+        _ = await provider.project(envelope(type: "stream_event", event: .object([
+            "type": .string("message_start"),
+            "message": .object(["id": .string("msg-1")])
+        ])))
+        _ = await provider.project(envelope(type: "stream_event", event: .object([
+            "type": .string("content_block_start"), "index": .integer(0),
+            "content_block": .object(["type": .string("thinking")])
+        ])))
+        let thinking = await provider.project(assistant(messageID: "msg-1", block: .object([
+            "type": .string("thinking"), "thinking": .string("private")
+        ])))
+        XCTAssertTrue(thinking.isEmpty)
+        _ = await provider.project(envelope(type: "stream_event", event: .object([
+            "type": .string("content_block_start"), "index": .integer(1),
+            "content_block": .object(["type": .string("text")])
+        ])))
+        let delta = await provider.project(envelope(type: "stream_event", event: .object([
+            "type": .string("content_block_delta"), "index": .integer(1),
+            "delta": .object(["type": .string("text_delta"), "text": .string("DONE")])
+        ])))
+        let completed = await provider.project(assistant(messageID: "msg-1", block: .object([
+            "type": .string("text"), "text": .string("DONE")
+        ])))
+
+        guard case .transcriptDelta(_, _, let deltaID, _) = try XCTUnwrap(delta.first),
+              case .transcript(let final) = try XCTUnwrap(completed.first) else {
+            return XCTFail("Expected delta and completed transcript")
+        }
+        XCTAssertEqual(deltaID, final.id, "streamed and completed text must be one entry")
+    }
+
+    private func assistant(messageID: String, block: CodexJSONValue) -> ClaudeCodeStreamEnvelope {
+        ClaudeCodeStreamEnvelope(
+            nativeSessionID: "session-1",
+            turnID: "turn-1",
+            message: .object([
+                "type": .string("assistant"),
+                "message": .object(["id": .string(messageID), "content": .array([block])])
+            ])
+        )
     }
 
     func testResultMapsToIdleTurnCompletionWithoutEndingThreadIdentity() async throws {
@@ -135,10 +194,12 @@ final class ClaudeInteractiveProviderTests: XCTestCase {
         XCTAssertEqual(state, .completed)
     }
 
-    func testManagedPolicyCannotControlApprovals() {
-        XCTAssertFalse(AgentProducerPolicy.claudeManagedCLI.permitsApprovalControl)
-        XCTAssertFalse(AgentProducerPolicy.claudeManagedCLI.allowedCapabilities.contains(.approvalControl))
+    func testManagedPolicyPermitsExactApprovalControlForClaudeOnly() {
+        XCTAssertTrue(AgentProducerPolicy.claudeManagedCLI.permitsApprovalControl)
+        XCTAssertTrue(AgentProducerPolicy.claudeManagedCLI.allowedCapabilities.contains(.approvalControl))
+        XCTAssertTrue(AgentProducerPolicy.claudeManagedCLI.allowedEventTypes.contains(.approvalRequested))
         XCTAssertEqual(AgentProducerPolicy.claudeManagedCLI.allowedProviders, [.claude])
+        XCTAssertFalse(AgentProducerPolicy.claudeStructuredRecovery.permitsApprovalControl)
     }
 
     private func envelope(

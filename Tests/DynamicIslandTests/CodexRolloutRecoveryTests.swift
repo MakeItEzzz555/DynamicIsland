@@ -56,7 +56,7 @@ final class CodexRolloutRecoveryTests: XCTestCase {
             XCTAssertEqual(usage[.cachedInputTokens]?.value, 20)
             XCTAssertEqual(usage[.outputTokens]?.value, 40)
             XCTAssertEqual(usage[.reasoningTokens]?.value, 5)
-            XCTAssertEqual(usage[.contextUsed]?.value, 145)
+            XCTAssertNil(usage[.contextUsed])
         } else {
             XCTFail("expected usage")
         }
@@ -68,12 +68,13 @@ final class CodexRolloutRecoveryTests: XCTestCase {
         {"timestamp":"2026-09-25T09:00:00Z","ordinal":1,"type":"session_meta","payload":{"session_id":"s-1","id":"s-1","cwd":"/tmp/project"}}
         """.utf8))
         let events = try parser.parse(Data("""
-        {"timestamp":"2026-09-25T09:03:00Z","ordinal":4,"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":120,"cached_input_tokens":30,"output_tokens":50,"reasoning_output_tokens":8,"total_tokens":178},"last_token_usage":{},"model_context_window":258000},"rate_limits":{"secret":"ignored"}}}
+        {"timestamp":"2026-09-25T09:03:00Z","ordinal":4,"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":59842683,"cached_input_tokens":30,"output_tokens":50,"reasoning_output_tokens":8,"total_tokens":59842683},"last_token_usage":{"input_tokens":100000,"cached_input_tokens":90000,"output_tokens":11574,"reasoning_output_tokens":2000,"total_tokens":111574},"model_context_window":258400},"rate_limits":{"secret":"ignored"}}}
         """.utf8))
         if case .usage(let usage) = events[0].payload {
-            XCTAssertEqual(usage[.contextUsed]?.value, 178)
-            XCTAssertEqual(usage[.contextUsed]?.limit, 258000)
-            XCTAssertEqual(usage[.contextLimit]?.value, 258000)
+            XCTAssertEqual(usage[.contextUsed]?.value, 111574)
+            XCTAssertEqual(usage[.contextUsed]?.limit, 258400)
+            XCTAssertEqual(usage[.contextLimit]?.value, 258400)
+            XCTAssertLessThan(usage[.contextUsed]?.value ?? .infinity, 258400)
         } else {
             XCTFail("expected usage")
         }
@@ -125,6 +126,85 @@ final class CodexRolloutRecoveryTests: XCTestCase {
 
         let state = await MainActor.run { store.sessions.first?.state }
         XCTAssertEqual(state, .working)
+    }
+
+
+    func testSessionMetaPreservesVSCodeSourceApplication() throws {
+        var parser = CodexRolloutRecoveryParser()
+        let events = try parser.parse(Data(#"""
+        {"timestamp":"2026-09-28T20:00:00Z","type":"session_meta","payload":{"id":"vscode-thread","cwd":"/tmp/DynamicIsland","source":"vscode","originator":"codex_vscode"}}
+        """#.utf8))
+
+        XCTAssertEqual(events.first?.source, .vscode)
+        guard case .sessionMetadata(let metadata) = events[0].payload else {
+            return XCTFail("expected session metadata")
+        }
+        XCTAssertEqual(metadata.project?.sourceApplication?.displayName, "Visual Studio Code")
+        XCTAssertEqual(metadata.project?.sourceApplication?.bundleIdentifier, "com.microsoft.VSCode")
+    }
+
+    func testResponseItemsProjectCommandAndToolLifecycleByExactCallID() throws {
+        var parser = CodexRolloutRecoveryParser()
+        _ = try parser.parse(Data(#"""
+        {"type":"session_meta","payload":{"id":"live-thread","cwd":"/tmp/DynamicIsland","source":"vscode","originator":"codex_vscode"}}
+        """#.utf8))
+
+        let commandStart = try parser.parse(Data(#"""
+        {"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"swift test --filter Foo\"}","call_id":"call-command","internal_chat_message_metadata_passthrough":{"turn_id":"turn-1"}}}
+        """#.utf8))
+        XCTAssertEqual(commandStart.count, 1)
+        XCTAssertEqual(commandStart[0].type, .commandStarted)
+        XCTAssertEqual(commandStart[0].correlationID?.rawValue, "call-command")
+        if case .command(let command) = commandStart[0].payload {
+            XCTAssertEqual(command.executable, "swift")
+        } else {
+            XCTFail("expected command payload")
+        }
+
+        let commandEnd = try parser.parse(Data(#"""
+        {"type":"response_item","payload":{"type":"function_call_output","call_id":"call-command","output":"Chunk ID: abc\nProcess exited with code 0\nOutput:\nok","internal_chat_message_metadata_passthrough":{"turn_id":"turn-1"}}}
+        """#.utf8))
+        XCTAssertEqual(commandEnd[0].type, .commandCompleted)
+        XCTAssertEqual(commandEnd[0].correlationID?.rawValue, "call-command")
+        if case .command(let command) = commandEnd[0].payload {
+            XCTAssertEqual(command.exitCode, 0)
+            XCTAssertEqual(command.success, true)
+        } else {
+            XCTFail("expected command completion")
+        }
+
+        let toolStart = try parser.parse(Data(#"""
+        {"type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch","input":"PRIVATE PATCH","call_id":"call-tool","internal_chat_message_metadata_passthrough":{"turn_id":"turn-1"}}}
+        """#.utf8))
+        XCTAssertEqual(toolStart[0].type, .toolStarted)
+        XCTAssertEqual(toolStart[0].correlationID?.rawValue, "call-tool")
+
+        let toolEnd = try parser.parse(Data(#"""
+        {"type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call-tool","output":"Success. Updated files.","internal_chat_message_metadata_passthrough":{"turn_id":"turn-1"}}}
+        """#.utf8))
+        XCTAssertEqual(toolEnd[0].type, .toolCompleted)
+        XCTAssertEqual(toolEnd[0].correlationID?.rawValue, "call-tool")
+    }
+
+    func testBootstrapReadsSessionMetaBeforeLargeTailWindow() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("DynamicIsland-CodexBootstrap-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let file = directory.appendingPathComponent("rollout-large.jsonl")
+        let sessionMeta = #"{"type":"session_meta","payload":{"id":"bootstrap-thread","cwd":"/tmp/project","source":"vscode","originator":"codex_vscode"}}"# + "\n"
+        var data = Data(sessionMeta.utf8)
+        data.append(Data(repeating: 0x20, count: AppendOnlyRecordLimits.maximumCatchUpBytes + 4096))
+        try data.write(to: file)
+
+        let bootstrap = try XCTUnwrap(
+            CodexRolloutRecoveryAdapter.bootstrapSessionMetaRecord(fileURL: file)
+        )
+        var parser = CodexRolloutRecoveryParser()
+        let events = try parser.parse(bootstrap)
+        XCTAssertEqual(events.first?.nativeSessionID, "bootstrap-thread")
+        XCTAssertEqual(events.first?.source, .vscode)
     }
 
     func testUnsupportedRawResponseContentIsIgnoredByParser() throws {

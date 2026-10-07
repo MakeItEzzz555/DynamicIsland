@@ -17,6 +17,8 @@ struct AudioVisualizerView: View {
     var accentColor: Color = ArtworkAccentColorExtractor.fallbackColor
     var variant: AudioVisualizerVariant = .compact
     var barCount = 12
+    /// Collapsed (always-on) visualizers use the cheaper ambient cadence.
+    var cadence: IslandFrameCadence.Surface = .expandedDecoration
     var pauseDuringShellMorph = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.isShellMorphing) private var isShellMorphing
@@ -24,7 +26,7 @@ struct AudioVisualizerView: View {
     @State private var playbackHoldGeneration = 0
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 24.0, paused: !shouldAnimateContinuously)) { timeline in
+        TimelineView(.animation(minimumInterval: IslandFrameCadence.interval(cadence), paused: !shouldAnimateContinuously)) { timeline in
             bars(
                 tick: shouldAnimateContinuously ? timeline.date.timeIntervalSinceReferenceDate : nil,
                 opacity: visualizerOpacity
@@ -209,6 +211,8 @@ struct CompactShelfBadge: View {
 }
 
 struct MediaModuleView: View {
+    @Environment(\.workspaceWidgetPlacement) private var widgetPlacement
+    @Environment(\.mediaAdvancedControls) var advancedControls
     @ObservedObject var settings: AppSettings
     @ObservedObject var media: MediaController
     let availableHeight: CGFloat?
@@ -308,7 +312,12 @@ struct MediaModuleView: View {
             }
         }
 
-        if let availableHeight {
+        if availableHeight != nil, widgetPlacement.size.height > 0 {
+            // Workspace grid: the semantic composition receives its exact cell
+            // so ViewThatFits can choose the variant that genuinely fits.
+            content
+                .frame(width: widgetPlacement.size.width, height: widgetPlacement.size.height)
+        } else if let availableHeight {
             VStack(spacing: 0) {
                 Spacer(minLength: 0)
                 content
@@ -369,11 +378,35 @@ struct MediaModuleView: View {
 
     @ViewBuilder
     private var activePlayerView: some View {
-        if usesCompactExpandedLayout {
+        if usesCompactExpandedLayout && widgetPlacement.size.height > 0 {
+            // Workspace grid: a dedicated composition per semantic size class.
+            semanticPlayerView
+        } else if usesCompactExpandedLayout && widgetPlacement.isSole {
+            soloActivePlayerView
+        } else if usesCompactExpandedLayout {
             constrainedActivePlayerView
         } else {
             regularActivePlayerView
         }
+    }
+
+    /// The only widget on its surface, composed from the allocated cell with
+    /// full-size controls: the artwork/title group keeps its left-weighted
+    /// structure but sits a cell-proportional step in from the edge (never
+    /// centered); transport is centered; progress and volume use the width.
+    private var soloActivePlayerView: some View {
+        let width = widgetPlacement.size.width > 0 ? widgetPlacement.size.width : 330
+        let headerInset = MediaSoloComposition.headerInset(cellWidth: width)
+        return ViewThatFits(in: .vertical) {
+            constrainedActivePlayerLayout(artworkSize: 62, transportButtonSize: 32, transportSymbolSize: 13,
+                                          sectionSpacing: 7, headerSpacing: 12, inlineVisualizerTopPadding: 1,
+                                          centered: true, headerLeadingInset: headerInset)
+            constrainedActivePlayerLayout(artworkSize: 50, transportButtonSize: 28, transportSymbolSize: 12,
+                                          sectionSpacing: 4, headerSpacing: 10, inlineVisualizerTopPadding: 0,
+                                          centered: true, headerLeadingInset: headerInset)
+        }
+        .padding(.horizontal, MediaSoloComposition.horizontalPadding)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder
@@ -517,7 +550,8 @@ struct MediaModuleView: View {
                 transportSymbolSize: 12,
                 sectionSpacing: 4,
                 headerSpacing: 8,
-                inlineVisualizerTopPadding: 1
+                inlineVisualizerTopPadding: 1,
+                distributes: distributesInWidgetCell
             )
             constrainedActivePlayerLayout(
                 artworkSize: 40,
@@ -525,11 +559,15 @@ struct MediaModuleView: View {
                 transportSymbolSize: 11,
                 sectionSpacing: 3,
                 headerSpacing: 7,
-                inlineVisualizerTopPadding: 0
+                inlineVisualizerTopPadding: 0,
+                distributes: distributesInWidgetCell
             )
         }
-        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, maxHeight: distributesInWidgetCell ? .infinity : nil, alignment: .topLeading)
     }
+
+    /// Inside a workspace widget cell (not the legacy fixed layout).
+    private var distributesInWidgetCell: Bool { widgetPlacement.size.height > 0 }
 
     private func constrainedActivePlayerLayout(
         artworkSize: CGFloat,
@@ -537,10 +575,13 @@ struct MediaModuleView: View {
         transportSymbolSize: CGFloat,
         sectionSpacing: CGFloat,
         headerSpacing: CGFloat,
-        inlineVisualizerTopPadding: CGFloat
+        inlineVisualizerTopPadding: CGFloat,
+        centered: Bool = false,
+        headerLeadingInset: CGFloat = 0,
+        distributes: Bool = false
     ) -> some View {
         return VStack(alignment: .leading, spacing: sectionSpacing) {
-            HStack(alignment: .top, spacing: headerSpacing) {
+            HStack(alignment: centered ? .center : .top, spacing: headerSpacing) {
                 if settings.showAlbumArtwork {
                     ClickableAlbumArtworkButton(
                         settings: settings,
@@ -596,9 +637,15 @@ struct MediaModuleView: View {
 
                 Spacer(minLength: 0)
             }
+            .padding(.leading, headerLeadingInset)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            // In a shared widget row the composition spans its whole cell, so
+            // its top and bottom align with row neighbours (e.g. the Timer).
+            if distributes { Spacer(minLength: 0) }
 
             if settings.showPlaybackControls {
-                HStack(spacing: 9) {
+                HStack(spacing: centered ? 14 : 9) {
                     MediaButton(
                         symbol: "backward.fill",
                         label: "Previous track",
@@ -624,7 +671,10 @@ struct MediaModuleView: View {
                         action: media.nextTrack
                     )
                 }
+                .frame(maxWidth: .infinity, alignment: centered ? .center : .leading)
             }
+
+            if distributes { Spacer(minLength: 0) }
 
             if settings.showProgressSlider {
                 VStack(spacing: 3) {
@@ -760,7 +810,7 @@ private struct ClickableAlbumArtworkButton: View {
     }
 }
 
-private struct EmptyMediaLauncherView: View {
+struct EmptyMediaLauncherView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var media: MediaController
     let onLauncherActivated: () -> Void
@@ -860,6 +910,9 @@ struct MediaButton: View {
 struct FileShelfModuleView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var fileShelf: FileShelfStore
+    @ObservedObject var backgroundOperations: BackgroundOperationController
+    var dragExplanation: String? = nil
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @StateObject private var thumbnailCache = FileThumbnailCache()
 
     private let columns = [
@@ -868,6 +921,14 @@ struct FileShelfModuleView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            if backgroundOperations.primaryOperation != nil {
+                BackgroundOperationCenterView(
+                    controller: backgroundOperations,
+                    reduceMotion: reduceMotion || settings.reduceExtraMotion
+                )
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+
             HStack {
                 Label("File Shelf", systemImage: "tray.full")
                     .font(.system(size: 14, weight: .bold, design: .rounded))
@@ -881,6 +942,14 @@ struct FileShelfModuleView: View {
                         .accessibilityLabel("\(fileShelf.files.count) files")
                 }
                 Spacer()
+                if fileShelf.files.count > 1 {
+                    Button("Select All") {
+                        fileShelf.selectAll()
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.white.opacity(0.58))
+                    .accessibilityLabel("Select all files in shelf")
+                }
                 Button("Clear") {
                     clearShelf()
                 }
@@ -910,8 +979,10 @@ struct FileShelfModuleView: View {
                         ForEach(fileShelf.files, id: \.self) { url in
                             ShelfFileTile(
                                 settings: settings,
+                                fileShelf: fileShelf,
                                 url: url,
                                 thumbnailCache: thumbnailCache,
+                                isSelected: fileShelf.selection.contains(url.standardizedFileURL),
                                 onRemove: { fileShelf.remove(url) }
                             )
                         }
@@ -923,8 +994,29 @@ struct FileShelfModuleView: View {
             }
         }
         .padding(12)
-        .frame(maxWidth: .infinity, minHeight: 154, maxHeight: 214, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: 154, maxHeight: backgroundOperations.primaryOperation == nil ? 214 : 260, alignment: .topLeading)
         .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay {
+            if let dragExplanation {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .fill(Color.black.opacity(0.82))
+                    VStack(spacing: 8) {
+                        Image(systemName: "arrow.down.circle.fill")
+                            .font(.system(size: 22, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.88))
+                        Text(dragExplanation)
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.9))
+                            .multilineTextAlignment(.center)
+                    }
+                    .padding(14)
+                }
+                .allowsHitTesting(false)
+                .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.14), value: dragExplanation)
     }
 
     private var emptyShelfSubtitle: String {
@@ -1060,13 +1152,14 @@ enum FileShelfActions {
         debugLog("FileShelfActions.copyName name=\(url.lastPathComponent)")
     }
 
+    @MainActor
     @discardableResult
     static func quickLook(_ url: URL) -> Bool {
         guard FileManager.default.fileExists(atPath: url.path) else {
             debugLog("FileShelfActions.quickLook skipped missing file path=\(url.path)")
             return false
         }
-        let didPreview = open(url)
+        let didPreview = FileShelfQuickLookController.shared.preview([url])
         debugLog("FileShelfActions.quickLook path=\(url.path) success=\(didPreview)")
         return didPreview
     }
@@ -1086,12 +1179,18 @@ enum FileShelfActions {
 
 struct ShelfFileTile: View {
     @ObservedObject var settings: AppSettings
+    @ObservedObject var fileShelf: FileShelfStore
     let url: URL
     @ObservedObject var thumbnailCache: FileThumbnailCache
+    var isSelected = false
     let onRemove: () -> Void
 
     @State private var isHovering = false
+    @State private var showsRename = false
+    @State private var renameText = ""
+    @State private var operationError: String?
     @Environment(\.isShellMorphing) private var isShellMorphing
+    @Environment(\.basketShelfTransfer) private var basketTransfer
 
     var body: some View {
         VStack(spacing: 6) {
@@ -1101,7 +1200,10 @@ struct ShelfFileTile: View {
                     .background(.white.opacity(0.075), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                     .overlay {
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(.white.opacity(isHovering ? 0.16 : 0.05), lineWidth: 1)
+                            .stroke(
+                                isSelected ? Color.accentColor : .white.opacity(isHovering ? 0.16 : 0.05),
+                                lineWidth: isSelected ? 2 : 1
+                            )
                     }
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
 
@@ -1131,10 +1233,31 @@ struct ShelfFileTile: View {
         .padding(.horizontal, 5)
         .padding(.vertical, 7)
         .frame(width: 84, alignment: .top)
-        .background(.white.opacity(isHovering ? 0.12 : 0.045), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(
+            isSelected ? Color.accentColor.opacity(0.22) : .white.opacity(isHovering ? 0.12 : 0.045),
+            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+        )
         .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .onTapGesture(count: 2) {
             FileShelfActions.quickLook(url)
+        }
+        .onTapGesture {
+            let modifiers = NSEvent.modifierFlags
+            fileShelf.select(
+                url,
+                extend: modifiers.contains(.command),
+                range: modifiers.contains(.shift)
+            )
+        }
+        .focusable()
+        .onKeyPress(.return) {
+            let modifiers = NSEvent.modifierFlags
+            fileShelf.select(
+                url,
+                extend: modifiers.contains(.command),
+                range: modifiers.contains(.shift)
+            )
+            return .handled
         }
         .onHover { hovering in
             if isHovering != hovering {
@@ -1156,10 +1279,34 @@ struct ShelfFileTile: View {
 
             if settings.openFileActionEnabled {
                 Divider()
-
                 Button("Open") {
                     FileShelfActions.open(url)
                 }
+                let applications = FileShelfActions.openWithApplications(for: url)
+                if !applications.isEmpty {
+                    Menu("Open With") {
+                        ForEach(applications, id: \.self) { appURL in
+                            Button(appURL.deletingPathExtension().lastPathComponent) {
+                                FileShelfActions.open(url, withApplication: appURL)
+                            }
+                        }
+                    }
+                }
+            }
+
+            Divider()
+            Button("Copy") {
+                _ = FileShelfActions.copyFiles(contextTargets)
+            }
+            Button("Rename…") {
+                renameText = url.lastPathComponent
+                showsRename = true
+            }
+            Button("Copy To…") {
+                copyToChosenFolder()
+            }
+            Button("Move To…") {
+                moveToChosenFolder()
             }
 
             if settings.revealInFinderActionEnabled {
@@ -1170,28 +1317,102 @@ struct ShelfFileTile: View {
 
             if settings.copyPathActionEnabled {
                 Divider()
-
                 Button("Copy Path") {
                     FileShelfActions.copyPath(url)
                 }
-
                 Button("Copy File Name") {
                     FileShelfActions.copyName(url)
                 }
             }
 
+            if settings.floatingBasketEnabled, let basketTransfer {
+                Divider()
+                // App-surface transfer: the file itself is not moved on disk.
+                Button(contextTargets.count > 1 ? "Move \(contextTargets.count) to Basket" : "Move to Basket") {
+                    basketTransfer.moveToBasket(contextTargets)
+                }
+            }
+
             if settings.removeFileActionEnabled {
                 Divider()
-
                 Button("Remove from Tray", role: .destructive) {
                     onRemove()
                 }
             }
         }
+        .popover(isPresented: $showsRename, arrowEdge: .top) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Rename")
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                TextField("File name", text: $renameText)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 250)
+                    .onSubmit { performRename() }
+                HStack {
+                    Spacer()
+                    Button("Cancel") { showsRename = false }
+                    Button("Rename") { performRename() }
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(renameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+            .padding(14)
+        }
+        .alert("File operation failed", isPresented: operationErrorBinding) {
+            Button("OK") { operationError = nil }
+        } message: {
+            Text(operationError ?? "Unknown error")
+        }
         .accessibilityLabel("File \(url.lastPathComponent)")
-        .accessibilityHint("Right-click for file actions")
+        .accessibilityHint("Click to select for quick actions. Right-click for file actions")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
         .onDrag {
             NSItemProvider(object: url as NSURL)
+        }
+    }
+
+    private var contextTargets: [URL] {
+        if isSelected, !fileShelf.selection.isEmpty {
+            return fileShelf.files.filter { fileShelf.selection.contains($0) }
+        }
+        return [url]
+    }
+
+    private var operationErrorBinding: Binding<Bool> {
+        Binding(
+            get: { operationError != nil },
+            set: { if !$0 { operationError = nil } }
+        )
+    }
+
+    private func performRename() {
+        do {
+            _ = try fileShelf.rename(url, to: renameText)
+            showsRename = false
+        } catch {
+            operationError = error.localizedDescription
+        }
+    }
+
+    private func copyToChosenFolder() {
+        guard let destination = FileShelfActions.chooseDestination(title: "Copy Files", prompt: "Copy") else { return }
+        do {
+            _ = try FileShelfDiskOperations.copy(contextTargets, to: destination)
+        } catch {
+            operationError = error.localizedDescription
+        }
+    }
+
+    private func moveToChosenFolder() {
+        let targets = contextTargets
+        guard let destination = FileShelfActions.chooseDestination(title: "Move Files", prompt: "Move") else { return }
+        do {
+            let moves = try FileShelfDiskOperations.move(targets, to: destination)
+            for move in moves {
+                fileShelf.recordMove(from: move.from, to: move.to)
+            }
+        } catch {
+            operationError = error.localizedDescription
         }
     }
 
@@ -1346,5 +1567,597 @@ struct ShortcutsModuleView: View {
         let fittedRowHeight = availableHeight - headerAndPadding
         let clampedRowHeight = min(max(fittedRowHeight, 46), 68)
         return min(clampedRowHeight, max(fittedRowHeight, 0))
+    }
+}
+
+/// Solo Media composition metrics derived from the allocated cell width.
+enum MediaSoloComposition {
+    static let horizontalPadding: CGFloat = 14
+    /// A modest rightward step for the artwork/title group: proportional to the
+    /// cell so wide cells don't leave the group hugging the edge, bounded so it
+    /// never drifts toward the center.
+    static func headerInset(cellWidth: CGFloat) -> CGFloat {
+        guard cellWidth.isFinite, cellWidth > 0 else { return 0 }
+        return min(44, max(6, (cellWidth - 2 * horizontalPadding) * 0.07))
+    }
+}
+
+/// Semantic Media sizes. Track widths follow the 70% rule; hit targets keep
+/// the native slider/button heights. Pure so the geometry is testable.
+enum MediaWidgetMetrics {
+    static let sliderWidthRatio: CGFloat = 0.70
+    static let sliderMinimumWidth: CGFloat = 96
+    static let sliderMaximumWidth: CGFloat = 300
+
+    static func sliderWidth(cellWidth: CGFloat) -> CGFloat {
+        guard cellWidth.isFinite, cellWidth > 0 else { return sliderMinimumWidth }
+        return min(cellWidth - 16, max(sliderMinimumWidth, min(cellWidth * sliderWidthRatio, sliderMaximumWidth)))
+    }
+
+    /// Artwork stays visually strong: it is sized from the cell's own height,
+    /// not reduced by the same factor as the sliders.
+    static func artworkSide(_ size: WidgetPresentationSize, cellHeight: CGFloat) -> CGFloat {
+        guard cellHeight.isFinite, cellHeight > 0 else { return 40 }
+        switch size {
+        case .compact: return min(64, max(40, cellHeight * 0.36))
+        case .standard: return min(44, max(30, cellHeight * 0.25))
+        case .large: return min(132, max(72, cellHeight * 0.36))
+        }
+    }
+
+    static func transportButton(_ size: WidgetPresentationSize) -> (button: CGFloat, symbol: CGFloat) {
+        switch size {
+        case .compact: (30, 12)
+        case .standard: (28, 12)
+        case .large: (34, 14)
+        }
+    }
+}
+
+extension MediaModuleView {
+    /// One composition per size class: Compact (square, glanceable + play),
+    /// Standard (full player, centered vertical stack), Large (expanded).
+    @ViewBuilder
+    var semanticPlayerView: some View {
+        let cell = widgetPlacement.size
+        switch widgetPlacement.presentationSize {
+        case .compact:
+            compactSemanticPlayer(cell: cell)
+        case .standard:
+            standardSemanticPlayer(cell: cell)
+        case .large:
+            largeSemanticPlayer(cell: cell)
+        }
+    }
+
+    private func semanticArtwork(_ size: CGFloat) -> some View {
+        ClickableAlbumArtworkButton(settings: settings, media: media, size: size) {
+            if media.openActiveMediaSource() { onMediaSourceOpened() }
+        }
+    }
+
+    private func semanticTitle(_ size: CGFloat, lines: Int) -> some View {
+        Text(media.title)
+            .font(.system(size: size, weight: .bold, design: .rounded))
+            .foregroundStyle(.white)
+            .lineLimit(lines).multilineTextAlignment(.center)
+            .minimumScaleFactor(0.85)
+    }
+
+    private func semanticArtist(_ size: CGFloat) -> some View {
+        Text(media.artist)
+            .font(.system(size: size, weight: .semibold, design: .rounded))
+            .foregroundStyle(.white.opacity(0.66))
+            .lineLimit(1).minimumScaleFactor(0.85)
+    }
+
+    private func semanticSource(_ size: CGFloat, visualizer: Bool) -> some View {
+        HStack(spacing: 5) {
+            if settings.showMediaSourceName {
+                Text(media.sourceName)
+                    .font(.system(size: size, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.46))
+                    .lineLimit(1)
+            }
+            if visualizer && settings.showVisualizer && settings.showExpandedVisualizer {
+                AudioVisualizerView(isPlaying: media.isPlaying, isActive: media.hasActiveMediaSource,
+                                    accentColor: visualizerColor, variant: .compact,
+                                    pauseDuringShellMorph: settings.disableVisualizerDuringMorph)
+            }
+        }
+    }
+
+    private func semanticTransport(_ size: WidgetPresentationSize, spacing: CGFloat) -> some View {
+        let metrics = MediaWidgetMetrics.transportButton(size)
+        return HStack(spacing: spacing) {
+            MediaButton(symbol: "backward.fill", label: "Previous track", symbolSize: metrics.symbol,
+                        buttonSize: metrics.button, isEnabled: media.isTransportControlAvailable, action: media.previousTrack)
+            MediaButton(symbol: media.isPlaying ? "pause.fill" : "play.fill", label: "Play or pause",
+                        symbolSize: metrics.symbol + 2, buttonSize: metrics.button + 2,
+                        isEnabled: media.isTransportControlAvailable, action: media.playPause)
+            MediaButton(symbol: "forward.fill", label: "Next track", symbolSize: metrics.symbol,
+                        buttonSize: metrics.button, isEnabled: media.isTransportControlAvailable, action: media.nextTrack)
+        }
+    }
+
+    /// Progress at 70% track width. `inlineTimes` puts the times beside the
+    /// track (Standard); otherwise they sit under its ends (Large).
+    @ViewBuilder
+    private func semanticProgress(width: CGFloat, inlineTimes: Bool) -> some View {
+        if settings.showProgressSlider {
+            let available = media.hasPlaybackProgress
+            let current = available ? formatTime(media.playbackPosition) : "--:--"
+            let total = available ? formatTime(media.duration) : "--:--"
+            let track = Group {
+                if available {
+                    Slider(value: Binding(get: { media.playbackPosition }, set: { media.updateScrubPosition($0) }),
+                           in: 0...max(media.duration, 1),
+                           onEditingChanged: { editing in if !editing { media.seek(to: media.playbackPosition) } })
+                        .tint(.white.opacity(0.70))
+                        .opacity(media.isSeekControlAvailable ? 1 : 0.38)
+                        .disabled(!media.isSeekControlAvailable)
+                } else {
+                    Capsule(style: .continuous).fill(.white.opacity(0.16)).frame(height: 4).frame(height: 16)
+                }
+            }
+            .frame(width: width)
+            let times = { (text: String) in
+                Text(text).font(.system(size: 8.5, weight: .bold)).monospacedDigit()
+                    .foregroundStyle(.white.opacity(available ? 0.58 : 0.36))
+            }
+            if inlineTimes {
+                HStack(spacing: 6) { times(current); track; times(total) }
+            } else {
+                VStack(spacing: 2) {
+                    track
+                    HStack { times(current); Spacer(minLength: 0); times(total) }.frame(width: width)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func semanticVolume(width: CGFloat) -> some View {
+        if settings.showVolumeSlider {
+            HStack(spacing: 5) {
+                Image(systemName: media.isVolumeControlAvailable ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.white.opacity(media.isVolumeControlAvailable ? 0.50 : 0.32))
+                    .frame(width: 12)
+                Slider(value: Binding(get: { media.volume }, set: { media.setVolume($0) }), in: 0...1)
+                    .tint(.white.opacity(0.70))
+                    .opacity(media.isVolumeControlAvailable ? 1 : 0.38)
+                    .disabled(!media.isVolumeControlAvailable)
+                    .frame(width: max(40, width - 17))
+                    .accessibilityLabel("Media volume")
+            }
+            .frame(width: width)
+        }
+    }
+
+    /// Compact (1x1): an artwork-first Now Playing square. Geometry comes from
+    /// `MediaCompactLayout` (pure, tested); each element is placed at its
+    /// planned frame, so what the tests measure is exactly what is drawn.
+    private func compactSemanticPlayer(cell: CGSize) -> some View {
+        let source = settings.showMediaSourceName ? media.sourceName : ""
+        let plan = MediaCompactLayout.make(cell: cell, content: .init(
+            artwork: settings.showAlbumArtwork,
+            title: settings.showMediaTitle && !media.title.isEmpty,
+            artist: settings.showMediaArtist && !media.artist.isEmpty,
+            source: !source.isEmpty,
+            progress: settings.showProgressSlider && media.hasPlaybackProgress,
+            volume: settings.showVolumeSlider))
+        return ZStack(alignment: .topLeading) {
+            if let frame = plan.frames[.artwork] {
+                semanticArtwork(frame.width).position(x: frame.midX, y: frame.midY)
+            }
+            if let frame = plan.frames[.title] {
+                Text(media.title)
+                    .font(.system(size: MediaCompactLayout.titleFont, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .lineLimit(1).truncationMode(.tail)
+                    .frame(width: frame.width, height: frame.height)
+                    .position(x: frame.midX, y: frame.midY)
+            }
+            if let frame = plan.frames[.artist] {
+                HStack(spacing: 3) {
+                    Text(media.artist).foregroundStyle(.white.opacity(0.66))
+                        .lineLimit(1).truncationMode(.tail)
+                    if plan.sourceInline {
+                        Text("·").foregroundStyle(.white.opacity(0.36))
+                        Text(source).foregroundStyle(.white.opacity(0.42)).lineLimit(1).layoutPriority(-1)
+                    }
+                }
+                .font(.system(size: MediaCompactLayout.artistFont, weight: .medium, design: .rounded))
+                .frame(width: frame.width, height: frame.height)
+                .position(x: frame.midX, y: frame.midY)
+            }
+            if let frame = plan.frames[.source] {
+                Text(source)
+                    .font(.system(size: MediaCompactLayout.sourceFont, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.42))
+                    .lineLimit(1).truncationMode(.tail)
+                    .frame(width: frame.width, height: frame.height)
+                    .position(x: frame.midX, y: frame.midY)
+            }
+            if let frame = plan.frames[.transport] {
+                HStack(spacing: MediaCompactLayout.transportSpacing) {
+                    if plan.showsSkipButtons {
+                        MediaButton(symbol: "backward.fill", label: "Previous track", symbolSize: 11,
+                                    buttonSize: MediaCompactLayout.skipButton, isEnabled: media.isTransportControlAvailable,
+                                    action: media.previousTrack)
+                    }
+                    MediaButton(symbol: media.isPlaying ? "pause.fill" : "play.fill", label: "Play or pause", symbolSize: 15,
+                                buttonSize: MediaCompactLayout.transportHeight, isEnabled: media.isTransportControlAvailable,
+                                action: media.playPause)
+                    if plan.showsSkipButtons {
+                        MediaButton(symbol: "forward.fill", label: "Next track", symbolSize: 11,
+                                    buttonSize: MediaCompactLayout.skipButton, isEnabled: media.isTransportControlAvailable,
+                                    action: media.nextTrack)
+                    }
+                }
+                .frame(width: frame.width, height: frame.height)
+                .position(x: frame.midX, y: frame.midY)
+            }
+            if let frame = plan.frames[.progress] {
+                Slider(value: Binding(get: { media.playbackPosition }, set: { media.updateScrubPosition($0) }),
+                       in: 0...max(media.duration, 1),
+                       onEditingChanged: { editing in if !editing { media.seek(to: media.playbackPosition) } })
+                    .controlSize(.mini)
+                    .tint(.white.opacity(0.70))
+                    .opacity(media.isSeekControlAvailable ? 1 : 0.38)
+                    .disabled(!media.isSeekControlAvailable)
+                    .accessibilityLabel("Playback position")
+                    .frame(width: frame.width, height: frame.height)
+                    .position(x: frame.midX, y: frame.midY)
+            }
+            if let frame = plan.frames[.times] {
+                HStack {
+                    Text(formatTime(media.playbackPosition))
+                    Spacer(minLength: 0)
+                    Text(formatTime(media.duration))
+                }
+                .font(.system(size: 7.5, weight: .bold)).monospacedDigit()
+                .foregroundStyle(.white.opacity(0.5))
+                .frame(width: frame.width, height: frame.height)
+                .position(x: frame.midX, y: frame.midY)
+            }
+            if let frame = plan.frames[.volume] {
+                HStack(spacing: 4) {
+                    Image(systemName: media.isVolumeControlAvailable ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(.white.opacity(media.isVolumeControlAvailable ? 0.5 : 0.32))
+                    Slider(value: Binding(get: { media.volume }, set: { media.setVolume($0) }), in: 0...1)
+                        .controlSize(.mini)
+                        .tint(.white.opacity(0.70))
+                        .opacity(media.isVolumeControlAvailable ? 1 : 0.38)
+                        .disabled(!media.isVolumeControlAvailable)
+                        .accessibilityLabel("Media volume")
+                }
+                .frame(width: frame.width, height: frame.height)
+                .position(x: frame.midX, y: frame.midY)
+            }
+        }
+        .frame(width: cell.width, height: cell.height, alignment: .topLeading)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Now Playing, compact")
+        // The square stays uncluttered: secondary actions live in a native
+        // context menu, backed by the same real provider controller.
+        .contextMenu { compactAdvancedMenu }
+    }
+
+    /// Standard (2x1): the native Now Playing structure - artwork, title and
+    /// artist with a compact visualizer at the upper right; elapsed,
+    /// progress and negative remaining time; then Queue, Favorite, Previous,
+    /// Play/Pause, Next, Mode and Output. Geometry: `MediaStandardLayout`.
+    private func standardSemanticPlayer(cell: CGSize) -> some View {
+        let visualizer = settings.showVisualizer && settings.showExpandedVisualizer
+        let plan = MediaStandardLayout.make(cell: cell, content: .init(
+            artwork: settings.showAlbumArtwork,
+            title: settings.showMediaTitle && !media.title.isEmpty,
+            artist: settings.showMediaArtist && !media.artist.isEmpty,
+            visualizer: visualizer,
+            progress: settings.showProgressSlider))
+        let available = media.hasPlaybackProgress
+        return ZStack(alignment: .topLeading) {
+            if let frame = plan.frames[.artwork] {
+                semanticArtwork(frame.width).position(x: frame.midX, y: frame.midY)
+            }
+            if let frame = plan.frames[.title] {
+                Text(media.title)
+                    .font(.system(size: MediaStandardLayout.titleFont, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1).truncationMode(.tail)
+                    .frame(width: frame.width, height: frame.height, alignment: .leading)
+                    .position(x: frame.midX, y: frame.midY)
+            }
+            if let frame = plan.frames[.artist] {
+                Text(settings.showMediaSourceName ? "\(media.artist) · \(media.sourceName)" : media.artist)
+                    .font(.system(size: MediaStandardLayout.artistFont, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.6))
+                    .lineLimit(1).truncationMode(.tail)
+                    .frame(width: frame.width, height: frame.height, alignment: .leading)
+                    .position(x: frame.midX, y: frame.midY)
+            }
+            if let frame = plan.frames[.visualizer] {
+                AudioVisualizerView(isPlaying: media.isPlaying, isActive: media.hasActiveMediaSource,
+                                    accentColor: visualizerColor, variant: .compact,
+                                    pauseDuringShellMorph: settings.disableVisualizerDuringMorph)
+                    .frame(width: frame.width, height: frame.height)
+                    .position(x: frame.midX, y: frame.midY)
+            }
+            if let elapsed = plan.frames[.elapsed], let track = plan.frames[.progress], let remaining = plan.frames[.remaining] {
+                Text(available ? formatTime(media.playbackPosition) : "--:--")
+                    .font(.system(size: MediaStandardLayout.timeFont, weight: .semibold)).monospacedDigit()
+                    .foregroundStyle(.white.opacity(available ? 0.6 : 0.35))
+                    .frame(width: elapsed.width, height: elapsed.height, alignment: .leading)
+                    .position(x: elapsed.midX, y: elapsed.midY)
+                Group {
+                    if available {
+                        Slider(value: Binding(get: { media.playbackPosition }, set: { media.updateScrubPosition($0) }),
+                               in: 0...max(media.duration, 1),
+                               onEditingChanged: { editing in if !editing { media.seek(to: media.playbackPosition) } })
+                            .controlSize(.small)
+                            .tint(.white.opacity(0.75))
+                            .opacity(media.isSeekControlAvailable ? 1 : 0.38)
+                            .disabled(!media.isSeekControlAvailable)
+                            .accessibilityLabel("Playback position")
+                    } else {
+                        Capsule(style: .continuous).fill(.white.opacity(0.16)).frame(height: 4)
+                    }
+                }
+                .frame(width: track.width, height: track.height)
+                .position(x: track.midX, y: track.midY)
+                Text(available ? MediaAdvancedController.remainingLabel(position: media.playbackPosition, duration: media.duration) : "--:--")
+                    .font(.system(size: MediaStandardLayout.timeFont, weight: .semibold)).monospacedDigit()
+                    .foregroundStyle(.white.opacity(available ? 0.6 : 0.35))
+                    .frame(width: remaining.width, height: remaining.height, alignment: .trailing)
+                    .position(x: remaining.midX, y: remaining.midY)
+            }
+            if let frame = plan.frames[.controls] {
+                MediaControlRow(media: media, advanced: advancedControls, metrics: .standard)
+                    .frame(width: frame.width, height: frame.height)
+                    .position(x: frame.midX, y: frame.midY)
+            }
+        }
+        .frame(width: cell.width, height: cell.height, alignment: .topLeading)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Now Playing")
+    }
+
+    /// Large (2x2): bigger artwork, two-line title, full metadata, roomy
+    /// transport, progress with times beneath, volume.
+    private func largeSemanticPlayer(cell: CGSize) -> some View {
+        let slider = MediaWidgetMetrics.sliderWidth(cellWidth: cell.width)
+        return VStack(spacing: 6) {
+            if settings.showAlbumArtwork { semanticArtwork(MediaWidgetMetrics.artworkSide(.large, cellHeight: cell.height)) }
+            VStack(spacing: 1) {
+                if settings.showMediaTitle { semanticTitle(14.5, lines: 2) }
+                if settings.showMediaArtist { semanticArtist(11.5) }
+                semanticSource(9.5, visualizer: true)
+            }
+            .padding(.horizontal, 12)
+            MediaControlRow(media: media, advanced: advancedControls, metrics: .large)
+                .frame(width: max(0, cell.width - 28), height: MediaControlRowMetrics.large.play)
+            semanticProgress(width: slider, inlineTimes: false)
+            semanticVolume(width: slider)
+        }
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// Compact Media (1x1) geometry: artwork first, metadata second, controls
+/// third. Content that does not fit is dropped by priority (time labels,
+/// volume, the separate source line - folded into the artist line first -,
+/// progress, source, artist) instead of scaling everything down. The artwork
+/// stays between 45% and 56% of the width whenever the square allows it.
+struct MediaCompactLayout: Equatable {
+    enum Slot: Hashable, CaseIterable { case artwork, title, artist, source, transport, progress, times, volume }
+    struct Content: Equatable {
+        var artwork = true, title = true, artist = true, source = true, progress = true, volume = true
+    }
+
+    static let horizontalPadding: CGFloat = 8
+    static let verticalPadding: CGFloat = 6
+    static let titleFont: CGFloat = 12, artistFont: CGFloat = 10, sourceFont: CGFloat = 9
+    static let titleHeight: CGFloat = 14, artistHeight: CGFloat = 12, sourceHeight: CGFloat = 11
+    static let transportHeight: CGFloat = 22, skipButton: CGFloat = 20, transportSpacing: CGFloat = 6
+    static let progressHeight: CGFloat = 10, timesHeight: CGFloat = 9, volumeHeight: CGFloat = 12
+    static let artworkGap: CGFloat = 6, controlsGap: CGFloat = 3, progressGap: CGFloat = 2, volumeGap: CGFloat = 3
+    static let artworkTargetRatio: CGFloat = 0.56, artworkMinimumRatio: CGFloat = 0.45
+
+    let frames: [Slot: CGRect]
+    let artworkSide: CGFloat
+    let sourceInline: Bool
+    let showsSkipButtons: Bool
+
+    private enum Drop: CaseIterable { case times, volume, sourceLine, progress, sourceInline, artist }
+
+    static func make(cell: CGSize, content: Content) -> Self {
+        let width = cell.width.isFinite ? max(0, cell.width) : 0
+        let height = cell.height.isFinite ? max(0, cell.height) : 0
+        let available = max(0, height - verticalPadding * 2)
+        var dropped = Set<Drop>()
+        func shows(_ slot: Slot) -> Bool {
+            switch slot {
+            case .artwork: content.artwork
+            case .title: content.title
+            case .artist: content.artist && !dropped.contains(.artist)
+            case .source: content.source && !dropped.contains(.sourceLine)
+            case .transport: true
+            case .progress: content.progress && !dropped.contains(.progress)
+            case .times: content.progress && !dropped.contains(.progress) && !dropped.contains(.times)
+            case .volume: content.volume && !dropped.contains(.volume)
+            }
+        }
+        func inline() -> Bool {
+            content.source && dropped.contains(.sourceLine) && !dropped.contains(.sourceInline) && shows(.artist)
+        }
+        func fixedHeight() -> CGFloat {
+            var total: CGFloat = 0
+            let meta = (shows(.title) ? titleHeight : 0) + (shows(.artist) ? artistHeight : 0) + (shows(.source) ? sourceHeight : 0)
+            if content.artwork { total += artworkGap }
+            total += meta + controlsGap + transportHeight
+            if shows(.progress) { total += progressGap + progressHeight }
+            if shows(.times) { total += timesHeight }
+            if shows(.volume) { total += volumeGap + volumeHeight }
+            return total
+        }
+        let target = (width * artworkTargetRatio).rounded(.down)
+        let minimum = (width * artworkMinimumRatio).rounded(.down)
+        var artwork: CGFloat = 0
+        if content.artwork {
+            var steps = Drop.allCases[...]
+            while true {
+                let room = available - fixedHeight()
+                if room >= minimum || steps.isEmpty {
+                    artwork = max(min(target, room), min(24, max(0, room)))
+                    break
+                }
+                dropped.insert(steps.removeFirst())
+            }
+        } else {
+            var steps = Drop.allCases[...]
+            while available - fixedHeight() < 0, !steps.isEmpty { dropped.insert(steps.removeFirst()) }
+        }
+        let sourceInline = inline()
+        let transportWidth = transportHeight + 2 * (skipButton + transportSpacing)
+        let showsSkip = width - horizontalPadding * 2 >= transportWidth
+        let used = (content.artwork ? artwork : 0) + fixedHeight()
+        var y = verticalPadding + max(0, (available - used) / 2)
+        var frames: [Slot: CGRect] = [:]
+        let textWidth = max(0, width - horizontalPadding * 2)
+        func put(_ slot: Slot, width w: CGFloat, height h: CGFloat) {
+            frames[slot] = CGRect(x: (width - w) / 2, y: y, width: w, height: h)
+            y += h
+        }
+        if content.artwork { put(.artwork, width: artwork, height: artwork); y += artworkGap }
+        if shows(.title) { put(.title, width: textWidth, height: titleHeight) }
+        if shows(.artist) { put(.artist, width: textWidth, height: artistHeight) }
+        if shows(.source) { put(.source, width: textWidth, height: sourceHeight) }
+        y += controlsGap
+        put(.transport, width: min(textWidth, showsSkip ? transportWidth : transportHeight), height: transportHeight)
+        let track = MediaWidgetMetrics.sliderWidth(cellWidth: width)
+        if shows(.progress) { y += progressGap; put(.progress, width: track, height: progressHeight) }
+        if shows(.times) { put(.times, width: track, height: timesHeight) }
+        if shows(.volume) { y += volumeGap; put(.volume, width: track, height: volumeHeight) }
+        return Self(frames: frames, artworkSide: artwork, sourceInline: sourceInline, showsSkipButtons: showsSkip)
+    }
+}
+
+
+/// Standard Media (2x1) geometry - the native Now Playing structure:
+/// top row (artwork, title over artist, compact visualizer at the upper
+/// right), a progress row (elapsed, track, -remaining) across the card, and
+/// the seven-control row. The block is vertically centered in the cell.
+struct MediaStandardLayout: Equatable {
+    enum Slot: Hashable, CaseIterable { case artwork, title, artist, visualizer, elapsed, progress, remaining, controls }
+    struct Content: Equatable {
+        var artwork = true, title = true, artist = true, visualizer = true, progress = true
+    }
+
+    static let horizontalPadding: CGFloat = 14
+    static let verticalPadding: CGFloat = 10
+    static let titleFont: CGFloat = 13, artistFont: CGFloat = 11, timeFont: CGFloat = 9.5
+    static let titleHeight: CGFloat = 17, artistHeight: CGFloat = 14
+    static let artworkTextGap: CGFloat = 10
+    static let visualizerSize = CGSize(width: 22, height: 14)
+    static let progressHeight: CGFloat = 16, timeWidth: CGFloat = 34, timeGap: CGFloat = 6
+    static let rowGap: CGFloat = 8
+    static let controlsHeight: CGFloat = 36
+    static let artworkMinimum: CGFloat = 34, artworkMaximum: CGFloat = 64, artworkHeightRatio: CGFloat = 0.30
+
+    let frames: [Slot: CGRect]
+    let artworkSide: CGFloat
+
+    static func make(cell: CGSize, content: Content) -> Self {
+        let width = cell.width.isFinite ? max(0, cell.width) : 0
+        let height = cell.height.isFinite ? max(0, cell.height) : 0
+        let inner = max(0, width - horizontalPadding * 2)
+        let available = max(0, height - verticalPadding * 2)
+        let artwork = content.artwork ? min(artworkMaximum, max(artworkMinimum, (height * artworkHeightRatio).rounded(.down))) : 0
+        let meta = (content.title ? titleHeight : 0) + (content.artist ? artistHeight : 0)
+        let topRow = max(artwork, meta)
+        let block = topRow + (content.progress ? rowGap + progressHeight : 0) + rowGap + controlsHeight
+        var y = verticalPadding + max(0, (available - block) / 2)
+        let x0 = horizontalPadding
+        var frames: [Slot: CGRect] = [:]
+        if content.artwork { frames[.artwork] = CGRect(x: x0, y: y + (topRow - artwork) / 2, width: artwork, height: artwork) }
+        let textX = content.artwork ? x0 + artwork + artworkTextGap : x0
+        let visualizerReserve = content.visualizer ? visualizerSize.width + artworkTextGap : 0
+        let textWidth = max(0, width - horizontalPadding - textX - visualizerReserve)
+        var textY = y + (topRow - meta) / 2
+        if content.title { frames[.title] = CGRect(x: textX, y: textY, width: textWidth, height: titleHeight); textY += titleHeight }
+        if content.artist { frames[.artist] = CGRect(x: textX, y: textY, width: textWidth, height: artistHeight) }
+        if content.visualizer {
+            let anchorY = frames[.title]?.midY ?? (y + topRow / 2)
+            frames[.visualizer] = CGRect(x: width - horizontalPadding - visualizerSize.width,
+                                         y: anchorY - visualizerSize.height / 2,
+                                         width: visualizerSize.width, height: visualizerSize.height)
+        }
+        y += topRow
+        if content.progress {
+            y += rowGap
+            frames[.elapsed] = CGRect(x: x0, y: y, width: timeWidth, height: progressHeight)
+            frames[.remaining] = CGRect(x: width - horizontalPadding - timeWidth, y: y, width: timeWidth, height: progressHeight)
+            let trackX = x0 + timeWidth + timeGap
+            frames[.progress] = CGRect(x: trackX, y: y, width: max(0, inner - 2 * (timeWidth + timeGap)), height: progressHeight)
+            y += progressHeight
+        }
+        y += rowGap
+        frames[.controls] = CGRect(x: x0, y: y, width: inner, height: controlsHeight)
+        return Self(frames: frames, artworkSide: artwork)
+    }
+}
+
+extension MediaModuleView {
+    /// Compact Media overflow: mode, favorite, Up Next and output - only the
+    /// actions the current source really supports.
+    @ViewBuilder
+    var compactAdvancedMenu: some View {
+        if let advanced = advancedControls {
+            MediaCompactAdvancedMenu(advanced: advanced)
+        }
+    }
+}
+
+private struct MediaCompactAdvancedMenu: View {
+    @ObservedObject var advanced: MediaAdvancedController
+
+    var body: some View {
+        if advanced.capabilities.playbackMode.isEnabled {
+            Button(advanced.mode.shuffle ? "Turn Shuffle Off" : "Turn Shuffle On") {
+                Task { await advanced.setShuffle(!advanced.mode.shuffle) }
+            }
+            Picker("Repeat", selection: Binding(get: { advanced.mode.repeatMode },
+                                                set: { value in Task { await advanced.setRepeat(value) } })) {
+                Text("Off").tag(MediaRepeatMode.off)
+                Text("All").tag(MediaRepeatMode.all)
+                if advanced.capabilities.supportsRepeatOne { Text("One").tag(MediaRepeatMode.one) }
+            }
+        }
+        if advanced.capabilities.favorite.isEnabled {
+            Button(advanced.isFavorite ? "Remove from Favorites" : "Add to Favorites") {
+                Task { await advanced.toggleFavorite() }
+            }
+        }
+        if advanced.capabilities.queue.isEnabled, !advanced.queue.isEmpty {
+            Menu("Up Next") {
+                ForEach(advanced.queue.prefix(10)) { item in Text("\(item.title) - \(item.subtitle)") }
+            }
+        }
+        if advanced.capabilities.output.isEnabled {
+            Menu("Audio Output") {
+                ForEach(advanced.outputDevices) { device in
+                    Button {
+                        advanced.selectOutput(device)
+                    } label: {
+                        if device.id == advanced.currentOutputID { Label(device.name, systemImage: "checkmark") }
+                        else { Text(device.name) }
+                    }
+                }
+            }
+        }
     }
 }

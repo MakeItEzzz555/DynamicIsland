@@ -1,11 +1,13 @@
 import Foundation
 
-enum ExpandedIslandPage: CaseIterable {
+enum ExpandedIslandPage: String, CaseIterable, Codable, Hashable {
     case island
     case agents
     case tray
     case timer
     case stats
+    case tools
+    case messages
 
     var title: String {
         switch self {
@@ -19,6 +21,10 @@ enum ExpandedIslandPage: CaseIterable {
             "Timer"
         case .stats:
             "Stats"
+        case .tools:
+            "Tools"
+        case .messages:
+            "Messages"
         }
     }
 
@@ -34,6 +40,10 @@ enum ExpandedIslandPage: CaseIterable {
             "timer"
         case .stats:
             "chart.xyaxis.line"
+        case .tools:
+            "wand.and.stars"
+        case .messages:
+            "message.fill"
         }
     }
 
@@ -46,9 +56,17 @@ enum ExpandedIslandPage: CaseIterable {
 final class IslandNavigationStore: ObservableObject {
     @Published private(set) var selectedPage: ExpandedIslandPage = .island
     @Published private(set) var isFileDropTargeted = false
+    @Published private(set) var configuration = NavigationTabConfiguration.initial
+    /// Runtime availability of the Messages page: true only while a
+    /// visible incoming message is queued.
+    @Published var hasActionableMessages = false
 
-    func availablePages(using settings: AppSettings) -> [ExpandedIslandPage] {
+    /// Feature/settings availability without saved customization visibility.
+    func eligiblePages(using settings: AppSettings) -> [ExpandedIslandPage] {
         var pages: [ExpandedIslandPage] = [.island]
+        if hasActionableMessages {
+            pages.append(.messages)
+        }
         if settings.agentActivityEnabled && settings.showAgentsTab {
             pages.append(.agents)
         }
@@ -61,7 +79,29 @@ final class IslandNavigationStore: ObservableObject {
         if settings.statsEnabled && settings.showStatsTab {
             pages.append(.stats)
         }
+        if settings.showToolsTab {
+            pages.append(.tools)
+        }
         return pages
+    }
+
+    func availablePages(using settings: AppSettings) -> [ExpandedIslandPage] {
+        let configured = configuration.normalized()
+        let available = Set(eligiblePages(using: settings))
+        var ordered = configured.order.filter { available.contains($0) && !configured.hidden.contains($0) }
+        // Incoming actionable messages are runtime-owned and cannot be hidden by saved layout.
+        if hasActionableMessages { ordered.insert(.messages, at: min(1, ordered.count)) }
+        return ordered
+    }
+
+    func applyConfiguration(_ configuration: NavigationTabConfiguration, using settings: AppSettings) {
+        let next = configuration.normalized()
+        if self.configuration != next { self.configuration = next }
+        ensureValidSelection(using: settings)
+    }
+
+    func applyConfiguration(_ configuration: WorkspaceConfiguration, using settings: AppSettings) {
+        applyConfiguration(configuration.navigation, using: settings)
     }
 
     func ensureValidSelection(using settings: AppSettings) {
@@ -96,7 +136,13 @@ final class IslandNavigationStore: ObservableObject {
         select(.stats)
     }
 
+    func showMessages() {
+        guard hasActionableMessages else { return }
+        select(.messages)
+    }
+
     func select(_ page: ExpandedIslandPage) {
+        guard page == .island || page == .messages || !configuration.hidden.contains(page) else { return }
         guard selectedPage != page else { return }
         selectedPage = page
         logPageChange()
@@ -111,7 +157,8 @@ final class IslandNavigationStore: ObservableObject {
     }
 
     func showTrayForFileDrag(using settings: AppSettings) {
-        guard settings.trayEnabled, settings.fileShelfEnabled, settings.showTrayTab else { return }
+        guard settings.trayEnabled, settings.fileShelfEnabled, settings.showTrayTab,
+              availablePages(using: settings).contains(.tray) else { return }
         let changedPage = selectedPage != .tray
         selectedPage = .tray
         if !isFileDropTargeted {

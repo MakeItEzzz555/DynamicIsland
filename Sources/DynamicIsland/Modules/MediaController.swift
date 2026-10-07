@@ -414,7 +414,33 @@ final class MediaController: ObservableObject {
         automationExecutor.invalidate()
     }
 
+    // MARK: Settings preview role
+
+    /// True only for the inert controller Settings uses to render the
+    /// production media components with a labeled sample track. It never
+    /// polls providers and never sends commands.
+    private(set) var isSettingsPreview = false
+
+    static func settingsPreview() -> MediaController {
+        let controller = MediaController(startsAutomatically: false)
+        controller.isSettingsPreview = true
+        controller.title = "Preview Track"
+        controller.artist = "Sample Artist"
+        controller.sourceName = "Settings Preview"
+        controller.isPlaying = true
+        controller.hasActiveMediaSource = true
+        controller.isTransportControlAvailable = true
+        controller.isSeekControlAvailable = true
+        controller.isVolumeControlAvailable = true
+        controller.hasPlaybackProgress = true
+        controller.playbackPosition = 74
+        controller.duration = 212
+        controller.volume = 0.6
+        return controller
+    }
+
     func refresh() {
+        guard !isSettingsPreview else { return }
         guard let start = refreshCoordinator.request() else { return }
         beginRefresh(start)
     }
@@ -567,6 +593,24 @@ final class MediaController: ObservableObject {
         guard isTransportControlAvailable else { return }
         send(command: activePlayer.playPauseCommand, to: activePlayer)
         refresh()
+    }
+
+    /// Plays a Spotify item through Spotify's own scripting dictionary
+    /// (`play track`). Only well-formed Spotify URIs are accepted, so no
+    /// caller text is ever interpolated into the script.
+    @discardableResult
+    func playSpotifyURI(_ uri: String) -> Bool {
+        guard Self.isValidSpotifyURI(uri) else { return false }
+        send(command: "play track \"\(uri)\"", to: .spotify)
+        refresh()
+        return true
+    }
+
+    nonisolated static func isValidSpotifyURI(_ uri: String) -> Bool {
+        uri.range(
+            of: #"^spotify:(track|album|playlist|episode|show|artist):[A-Za-z0-9]{8,40}$"#,
+            options: .regularExpression
+        ) != nil
     }
 
     func nextTrack() {
@@ -1465,12 +1509,25 @@ final class MediaController: ObservableObject {
         }
     }
 
+    /// Runs one AppleScript through the shared serialized executor (same
+    /// timeouts/backoff as transport commands). Used by the advanced Now
+    /// Playing controls; never called from the detection loop.
+    func runAutomation(_ source: String, target: MediaAutomationTarget) async -> MediaAutomationScriptResult {
+        guard !isSettingsPreview else { return MediaAutomationScriptResult(output: "", failure: .cancelled) }
+        return await withCheckedContinuation { continuation in
+            automationExecutor.submitCommand(MediaAutomationOperation(target: target, source: source)) { result in
+                continuation.resume(returning: result)
+            }
+        }
+    }
+
     private func send(
         command: String,
         to player: MediaPlayer,
         isVolume: Bool = false,
         completion: @escaping @Sendable (MediaAutomationScriptResult) -> Void = { _ in }
     ) {
+        guard !isSettingsPreview else { return }
         let target: MediaAutomationTarget = player == .spotify ? .spotify : .music
         automationExecutor.submitCommand(
             MediaAutomationOperation(

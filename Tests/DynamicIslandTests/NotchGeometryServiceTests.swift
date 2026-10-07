@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import XCTest
 @testable import DynamicIsland
 
@@ -264,7 +265,7 @@ final class NotchGeometryServiceTests: XCTestCase {
 
         let agents = ExpandedPresentationProfile.agentsWorkspace.resolvedSize(from: base)
         XCTAssertEqual(agents.width, 946, accuracy: 0.001)
-        XCTAssertEqual(agents.height, 398, accuracy: 0.001)
+        XCTAssertEqual(agents.height, 446, accuracy: 0.001)
         XCTAssertEqual(ExpandedPresentationProfile.agentsWorkspace.kind, .agentsWorkspace)
     }
 
@@ -274,14 +275,32 @@ final class NotchGeometryServiceTests: XCTestCase {
         XCTAssertEqual(ExpandedPresentationProfile.resolve(for: .agents), .agentsWorkspace)
         XCTAssertEqual(
             ExpandedPresentationProfile.resolve(for: .agents).resolvedSize(from: base),
-            CGSize(width: 946, height: 398)
+            CGSize(width: 946, height: 446)
         )
 
-        for page in ExpandedIslandPage.allCases where page != .agents {
+        // Tray keeps the standard shell size; only transparent accessory
+        // space below it is added for the quick-action circles.
+        let tray = ExpandedPresentationProfile.resolve(for: .tray)
+        XCTAssertEqual(tray, .trayQuickActions)
+        XCTAssertEqual(tray.resolvedSize(from: base), base)
+        XCTAssertGreaterThan(tray.accessoryHeight, 0)
+
+        for page in ExpandedIslandPage.allCases where page != .agents && page != .tray {
             let profile = ExpandedPresentationProfile.resolve(for: page)
             XCTAssertEqual(profile, .standard)
             XCTAssertEqual(profile.resolvedSize(from: base), base)
+            XCTAssertEqual(profile.accessoryHeight, 0)
         }
+    }
+
+    func testTrayPanelFrameExtendsDownwardWithoutMovingShell() {
+        let expanded = CGRect(x: 326, y: 696, width: 860, height: 286)
+        let panel = ExpandedPresentationProfile.trayQuickActions.panelFrame(forExpandedFrame: expanded)
+        XCTAssertEqual(panel.maxY, expanded.maxY)
+        XCTAssertEqual(panel.minX, expanded.minX)
+        XCTAssertEqual(panel.width, expanded.width)
+        XCTAssertEqual(panel.minY, expanded.minY - FileTrayQuickActionMetrics.accessoryHeight)
+        XCTAssertEqual(ExpandedPresentationProfile.standard.panelFrame(forExpandedFrame: expanded), expanded)
     }
 
     func testAgentsGeometryMorphPreservesCanonicalCollapsedFrameAndRestoresStandardExactly() {
@@ -311,10 +330,90 @@ final class NotchGeometryServiceTests: XCTestCase {
             expandedSize: ExpandedPresentationProfile.standard.resolvedSize(from: base)
         )
 
-        XCTAssertEqual(agents.expandedFrame.size, CGSize(width: 946, height: 398))
+        XCTAssertEqual(agents.expandedFrame.size, CGSize(width: 946, height: 446))
         XCTAssertEqual(agents.collapsedFrame, standard.collapsedFrame)
         XCTAssertEqual(restored.expandedFrame, standard.expandedFrame)
         XCTAssertEqual(restored.collapsedFrame, standard.collapsedFrame)
+    }
+
+    func testExpandedTabMorphKeepsTopEdgeAndCenterInvariantAtEverySample() {
+        let service = NotchGeometryService()
+        let snapshot = ScreenSnapshot(
+            frame: CGRect(x: 0, y: 0, width: 1512, height: 982),
+            visibleFrame: CGRect(x: 0, y: 0, width: 1512, height: 944),
+            safeAreaInsets: NSEdgeInsets(top: 38, left: 0, bottom: 0, right: 0),
+            auxiliaryTopLeftArea: CGRect(x: 0, y: 944, width: 635, height: 38),
+            auxiliaryTopRightArea: CGRect(x: 877, y: 944, width: 635, height: 38)
+        )
+        let collapsed = CGSize(width: 190, height: 44)
+        let base = CGSize(width: 860, height: 286)
+        let standard = service.geometry(
+            for: snapshot,
+            collapsedSize: collapsed,
+            expandedSize: ExpandedPresentationProfile.standard.resolvedSize(from: base)
+        ).expandedFrame
+        let agents = service.geometry(
+            for: snapshot,
+            collapsedSize: collapsed,
+            expandedSize: ExpandedPresentationProfile.agentsWorkspace.resolvedSize(from: base)
+        ).expandedFrame
+
+        XCTAssertEqual(standard.maxY, agents.maxY, accuracy: 0.001)
+        XCTAssertEqual(standard.midX, agents.midX, accuracy: 0.001)
+
+        // Every tab pair, in both directions, interpolated exactly the way
+        // AppKit animates a window frame (origin and size component-wise).
+        let tray = ExpandedPresentationProfile.trayQuickActions.panelFrame(forExpandedFrame: standard)
+        let pairs: [(CGRect, CGRect)] = [(standard, agents), (agents, standard), (tray, agents), (agents, tray)]
+        for (source, target) in pairs {
+            XCTAssertEqual(source.maxY, target.maxY, accuracy: 0.001, "endpoints must share the top edge")
+            for progress: CGFloat in [0, 0.1, 0.25, 0.5, 0.75, 0.9, 1] {
+                let frame = ExpandedShellMorph.interpolatedFrame(from: source, to: target, progress: progress)
+                XCTAssertEqual(frame.maxY, source.maxY, accuracy: 0.001, "top drift at \(progress)")
+                XCTAssertEqual(frame.midX, source.midX, accuracy: 0.001, "center drift at \(progress)")
+            }
+        }
+    }
+
+    /// The detach bug: NSHostingView centers a root whose size differs
+    /// from its bounds, so while the panel animates the shell's top moved by
+    /// half the size difference. The island root must be top-pinned.
+    /// Since 2026-10-06 it is also leading-pinned: the canvas is laid out at
+    /// the panel's exact size in panel-local coordinates (the panel no longer
+    /// animates in AppKit), and centering it on the hosting proposal - which
+    /// lags a staged resize by one update - made tab -> wider page morphs grow
+    /// one-sided (see ShellMorphInvariantTests).
+    @MainActor
+    func testIslandRootIsTopPinnedInsideTheHostingViewWhileSizesDiffer() {
+        for (bounds, content) in [(CGFloat(446), CGFloat(286)), (286, 446)] {
+            let probe = HostPlacementProbe()
+            let host = NSHostingView(rootView: TopPinnedHostRoot(content:
+                Color.red
+                    .frame(width: 400, height: content)
+                    .background(GeometryReader { proxy in
+                        Color.clear.onAppear { probe.top = proxy.frame(in: .global).minY; probe.midX = proxy.frame(in: .global).midX }
+                    })
+            ))
+            host.frame = CGRect(x: 0, y: 0, width: 500, height: bounds)
+            let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+            window.contentView = host
+            host.layoutSubtreeIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+            XCTAssertEqual(probe.top, 0, accuracy: 0.5, "content \(content) in bounds \(bounds) must stay at the top")
+            XCTAssertEqual(probe.midX, 200, accuracy: 0.5, "canvas origin is the hosting origin (not re-centered)")
+        }
+    }
+
+    func testCanvasAnimationUsesThePanelCurve() {
+        XCTAssertEqual(ExpandedShellMorph.panelTimingFunction, CAMediaTimingFunction(name: .easeInEaseOut))
+        var points = [Float](repeating: 0, count: 2)
+        var c0 = [Float](repeating: 0, count: 2)
+        ExpandedShellMorph.panelTimingFunction.getControlPoint(at: 1, values: &c0)
+        ExpandedShellMorph.panelTimingFunction.getControlPoint(at: 2, values: &points)
+        XCTAssertEqual(Double(c0[0]), ExpandedShellMorph.controlPoints.c0x, accuracy: 0.001)
+        XCTAssertEqual(Double(c0[1]), ExpandedShellMorph.controlPoints.c0y, accuracy: 0.001)
+        XCTAssertEqual(Double(points[0]), ExpandedShellMorph.controlPoints.c1x, accuracy: 0.001)
+        XCTAssertEqual(Double(points[1]), ExpandedShellMorph.controlPoints.c1y, accuracy: 0.001)
     }
 
     func testAgentsGeometryUsesCanonicalNarrowScreenClamp() {
@@ -352,7 +451,7 @@ final class NotchGeometryServiceTests: XCTestCase {
         )
         let agents = OverlayGeometrySignature(
             collapsedSize: base.collapsedSize,
-            expandedSize: CGSize(width: 946, height: 398),
+            expandedSize: CGSize(width: 946, height: 446),
             expandedPresentationKind: .agentsWorkspace,
             collapsedActivityProfile: base.collapsedActivityProfile,
             collapsedPresentationProfile: base.collapsedPresentationProfile,
@@ -404,7 +503,8 @@ final class NotchGeometryServiceTests: XCTestCase {
         XCTAssertLessThan(normal.collapsedFrame.width, routine.collapsedFrame.width)
         XCTAssertLessThan(routine.collapsedFrame.width, attention.collapsedFrame.width)
         XCTAssertEqual(routine.collapsedFrame.height, 46)
-        XCTAssertEqual(attention.collapsedFrame.height, 48)
+        XCTAssertEqual(attention.collapsedFrame.height, 104)
+        XCTAssertGreaterThanOrEqual(attention.collapsedFrame.width, normal.collapsedFrame.width + 200)
         XCTAssertEqual(normal.collapsedFrame, retracted.collapsedFrame)
         XCTAssertEqual(normal.canvas.collapsedSurfaceFrame, retracted.canvas.collapsedSurfaceFrame)
         XCTAssertEqual(retracted.collapsedPresentationProfile, .normal)
@@ -445,4 +545,47 @@ final class NotchGeometryServiceTests: XCTestCase {
         XCTAssertEqual(store.collapsedSize, CGSize(width: 190, height: 44))
         XCTAssertEqual(store.collapsedPresentationProfile, .normal)
     }
+
+
+    func testCollapsedLiveActivityGeometrySignatureDetectsSystemHUDOverlayOverMedia() {
+        let media = CollapsedActivityLayoutProfile.media(showsArtwork: true, showsVisualizer: true)
+        let normal = CollapsedLiveActivityGeometrySignature(
+            activityProfile: media,
+            presentationProfile: .normal
+        )
+        let hud = CollapsedLiveActivityGeometrySignature(
+            activityProfile: media,
+            presentationProfile: .systemHUD(value: 0.42)
+        )
+
+        XCTAssertNotEqual(
+            normal,
+            hud,
+            "A transient interactive HUD must invalidate collapsed geometry even when media remains the persistent primary activity"
+        )
+    }
+
+    func testCollapsedLiveActivityGeometrySignatureDoesNotInvalidateForHUDProgressOnly() {
+        let media = CollapsedActivityLayoutProfile.media(showsArtwork: true, showsVisualizer: true)
+        let low = CollapsedLiveActivityGeometrySignature(
+            activityProfile: media,
+            presentationProfile: .systemHUD(value: 0.10)
+        )
+        let high = CollapsedLiveActivityGeometrySignature(
+            activityProfile: media,
+            presentationProfile: .systemHUD(value: 1.0)
+        )
+
+        XCTAssertEqual(
+            low,
+            high,
+            "Changing only the HUD value should update content, not restart the physical collapsed-shell morph"
+        )
+    }
+
+}
+
+private final class HostPlacementProbe {
+    var top: CGFloat = .nan
+    var midX: CGFloat = .nan
 }

@@ -24,6 +24,7 @@ enum AgentInteractiveCapability: String, CaseIterable, Hashable, Sendable {
     case submitPrompt
     case interrupt
     case selectModel
+    case selectReasoningEffort
     case resolveApprovals
     case accountUsage
     case contextUsage
@@ -32,12 +33,30 @@ enum AgentInteractiveCapability: String, CaseIterable, Hashable, Sendable {
     case loadHistory
 }
 
+struct AgentManagedReasoningEffort: Identifiable, Equatable, Sendable {
+    let id: String
+    let description: String?
+}
+
 struct AgentManagedModelDescriptor: Identifiable, Equatable, Sendable {
     let id: String
     let model: String
     let displayName: String
     let description: String?
     let isDefault: Bool
+    let supportedReasoningEfforts: [AgentManagedReasoningEffort]
+    let defaultReasoningEffort: String?
+
+    init(id: String, model: String, displayName: String, description: String?, isDefault: Bool,
+         supportedReasoningEfforts: [AgentManagedReasoningEffort] = [], defaultReasoningEffort: String? = nil) {
+        self.id = id
+        self.model = model
+        self.displayName = displayName
+        self.description = description
+        self.isDefault = isDefault
+        self.supportedReasoningEfforts = supportedReasoningEfforts
+        self.defaultReasoningEffort = defaultReasoningEffort
+    }
 }
 
 enum AgentModelSelectionScope: String, Equatable, Sendable {
@@ -67,9 +86,11 @@ struct AgentManagedTranscriptEntry: Identifiable, Equatable, Sendable {
     let text: String
     let timestamp: Date
 
-    static func boundedText(_ value: String?) -> String? {
+    static func boundedText(_ value: String?, preservingWhitespace: Bool = false) -> String? {
         guard let value else { return nil }
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Streaming fragments are not complete messages: trimming each one
+        // joins words and destroys Markdown indentation/blank lines.
+        let trimmed = preservingWhitespace ? value : value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         if trimmed.count <= maximumTextLength { return trimmed }
         return String(trimmed.prefix(maximumTextLength - 1)) + "…"
@@ -100,6 +121,14 @@ enum AgentInteractiveProviderEvent: Equatable, Sendable {
     case accountUsageChanged
     case normalized(AgentManagedNormalizedEvent)
     case approvalRequested(AgentManagedApprovalRequest)
+    /// The provider withdrew one exact pending approval request (for example
+    /// Claude Code `control_cancel_request`). It must never be answered.
+    case approvalCancelled(nativeSessionID: String, requestID: String)
+    /// The provider's own authoritative statement that one exact pending
+    /// request (by its wire token) is resolved: Codex
+    /// `serverRequest/resolved`, Claude Code `tool_result` for the answered
+    /// tool use. The only evidence that may confirm a delivered decision.
+    case approvalAcknowledged(nativeSessionID: String, requestToken: AgentInteractiveRequestToken)
     case transportClosed(String?)
 }
 
@@ -111,7 +140,7 @@ struct AgentManagedNormalizedEvent: Equatable, Sendable {
     let payload: AgentEventPayload
 }
 
-enum AgentInteractiveRequestToken: Equatable, Sendable {
+enum AgentInteractiveRequestToken: Hashable, Sendable {
     case string(String)
     case integer(Int64)
 }
@@ -157,19 +186,74 @@ protocol AgentInteractiveProvider: Sendable {
         nativeSessionID: String,
         model: String?
     ) async throws -> AgentManagedTurnDescriptor
+    func submit(prompt: String, nativeSessionID: String, model: String?, reasoningEffort: String?) async throws -> AgentManagedTurnDescriptor
     func interrupt(nativeSessionID: String, turnID: String) async throws
     func resolveApproval(_ request: AgentManagedApprovalRequest, allow: Bool) async throws
     func stop() async
+    /// Configured agents/profiles the provider itself exposes. Empty when
+    /// the provider has no such concept.
+    func listAgents() async throws -> [AgentManagedAgentDescriptor]
+    func startSession(cwd: String?, model: String?, agent: String?) async throws -> AgentManagedSessionDescriptor
+}
+
+extension AgentInteractiveProvider {
+    func submit(prompt: String, nativeSessionID: String, model: String?, reasoningEffort: String?) async throws -> AgentManagedTurnDescriptor {
+        guard reasoningEffort == nil else { throw AgentManagedReasoningSelectionError.unsupported }
+        return try await submit(prompt: prompt, nativeSessionID: nativeSessionID, model: model)
+    }
+    func listAgents() async throws -> [AgentManagedAgentDescriptor] { [] }
+
+    func startSession(cwd: String?, model: String?, agent: String?) async throws -> AgentManagedSessionDescriptor {
+        guard agent == nil else { throw AgentManagedAgentSelectionError.unsupported }
+        return try await startSession(cwd: cwd, model: model)
+    }
+}
+
+enum AgentManagedReasoningSelectionError: Error, Equatable {
+    case unsupported
+}
+
+enum AgentManagedAgentSelectionError: Error, Equatable {
+    case unsupported
+}
+
+enum AgentManagedInteractionState: Equatable, Sendable {
+    case observed
+    case connecting
+    case checkingAttachment
+    case ready
+    case submitting
+    case working(canInterrupt: Bool)
+    case stopping
+    case failed(String)
+
+    var allowsPromptSubmission: Bool {
+        if case .ready = self { return true }
+        return false
+    }
+
+    var canInterrupt: Bool {
+        if case let .working(canInterrupt) = self { return canInterrupt }
+        return false
+    }
 }
 
 struct AgentManagedControlState: Equatable, Sendable {
     let nativeSessionID: String
     var activeTurnID: String?
     var isSubmitting: Bool
+    var isInterrupting: Bool
     var lastError: String?
     var acceptsDirectInput: Bool
 
     var canInterrupt: Bool {
-        activeTurnID != nil
+        activeTurnID != nil && !isInterrupting
+    }
+
+    var canSubmit: Bool {
+        acceptsDirectInput &&
+        activeTurnID == nil &&
+        !isSubmitting &&
+        !isInterrupting
     }
 }

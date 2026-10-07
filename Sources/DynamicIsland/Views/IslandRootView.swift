@@ -19,10 +19,24 @@ extension View {
     }
 }
 
+/// Keep shell shoulder geometry stable when one of the two independent notch
+/// observations is momentarily stale during a display/window geometry refresh.
+/// GeometryService owns the actual frames; this only decides visual shoulder
+/// treatment for the already-resolved shell.
+enum IslandShellNotchIntegration {
+    static func resolve(
+        geometryHasHardwareNotch: Bool,
+        displayMetricsHaveHardwareNotch: Bool
+    ) -> Bool {
+        geometryHasHardwareNotch || displayMetricsHaveHardwareNotch
+    }
+}
+
 enum IslandContentTransitionTiming {
-    // Content timing is derived from the active shell animation duration. With the default
-    // `.normal` shell timing of 0.40s, expansion content runs from about 0.16s to 0.32s.
-    static let expansionContentDelayRatio: TimeInterval = 0.40
+    // Content timing is derived from the active shell animation duration. Child content
+    // starts only once the shell has fully expanded (ratio 1.0): with the default
+    // `.normal` shell timing of 0.40s, expansion content runs from 0.40s to 0.56s.
+    static let expansionContentDelayRatio: TimeInterval = 1.0
     static let expansionContentDurationRatio: TimeInterval = 0.40
     static let collapseContentDurationRatio: TimeInterval = 0.40
 
@@ -48,6 +62,15 @@ enum IslandContentTransitionTiming {
     static func collapseContentDuration(shellDuration: TimeInterval) -> TimeInterval {
         shellDuration * collapseContentDurationRatio
     }
+
+    // Collapse child exit (InnerBlurScaleCleanModifier removal): the values
+    // the modifier animates and the contraction plan sequences against.
+    static let collapseExitScale: CGFloat = 0.97
+    static let collapseExitBlur: CGFloat = 6
+    /// Largest stagger delay the modifier applies before the exit starts.
+    static let collapseExitStaggerAllowance: TimeInterval = 0.015
+    /// Reduce Motion exit: a short fade only.
+    static let reducedCollapseExitDuration: TimeInterval = 0.10
 }
 
 private enum IslandContentPhase {
@@ -157,6 +180,7 @@ private struct IslandPointerGestureModifier: ViewModifier {
     let context: IslandGestureContext
     let callbacks: IslandGestureCallbacks
     let swipeSensitivity: Double
+    var layoutStore: IslandLayoutStore? = nil
 
     @ViewBuilder
     func body(content: Content) -> some View {
@@ -173,6 +197,7 @@ private struct IslandPointerGestureModifier: ViewModifier {
     private var doubleClickGesture: some Gesture {
         TapGesture(count: 2)
             .onEnded {
+                guard !pointerOwnedByControl else { return }
                 coordinator.handle(
                     .doubleClick,
                     settings: settings,
@@ -183,8 +208,10 @@ private struct IslandPointerGestureModifier: ViewModifier {
     }
 
     private var swipeGesture: some Gesture {
-        DragGesture(minimumDistance: 12, coordinateSpace: .local)
+        DragGesture(minimumDistance: 12, coordinateSpace: .named(IslandCanvasCoordinateSpace.name))
             .onEnded { value in
+                guard layoutStore?.containsNativeControlPoint(value.startLocation) != true,
+                      layoutStore?.transientInteractionOwners.contains(.workspaceEditor) != true else { return }
                 guard let gesture = IslandPointerGesture.detected(
                     from: value.translation,
                     sensitivity: swipeSensitivity
@@ -203,7 +230,7 @@ private struct IslandPointerGestureModifier: ViewModifier {
     private var longPressGesture: some Gesture {
         LongPressGesture(minimumDuration: 0.55, maximumDistance: 10)
             .onEnded { completed in
-                guard completed else { return }
+                guard completed, !pointerOwnedByControl else { return }
                 coordinator.handle(
                     .longPress,
                     settings: settings,
@@ -212,12 +239,20 @@ private struct IslandPointerGestureModifier: ViewModifier {
                 )
             }
     }
+
+    private var pointerOwnedByControl: Bool {
+        guard let layoutStore else { return false }
+        let mouse = NSEvent.mouseLocation
+        let point = CGPoint(x: mouse.x - layoutStore.panelFrame.minX,
+            y: layoutStore.canvasSize.height - (mouse.y - layoutStore.panelFrame.minY))
+        return layoutStore.containsNativeControlPoint(point) || layoutStore.transientInteractionOwners.contains(.workspaceEditor)
+    }
 }
 
 enum IslandShellLayout {
     static let collapsedHorizontalPadding: CGFloat = 8
-    static let floatingExpandedHorizontalPadding: CGFloat = 22
-    static let integratedExpandedHorizontalPadding: CGFloat = 41
+    static let floatingExpandedHorizontalPadding: CGFloat = 12
+    static let integratedExpandedHorizontalPadding: CGFloat = 31
 
     static func collapsedHorizontalPadding(isNotchIntegrated: Bool) -> CGFloat {
         collapsedHorizontalPadding
@@ -230,24 +265,198 @@ enum IslandShellLayout {
     static let collapsedTopPadding: CGFloat = 0
     static let collapsedBottomPadding: CGFloat = 6
     static let expandedTopPadding: CGFloat = 14
-    static let expandedBottomPadding: CGFloat = 20
+    static let expandedBottomPadding: CGFloat = 12
 }
 
-private struct ExpandedIslandLayoutMetrics {
+/// Shell expand/collapse animation shared by the island and its Settings
+/// preview, so the preview animates exactly like the island.
+@MainActor
+enum IslandShellMotion {
+    /// One shell motion source for expand/collapse and shell size morphs:
+    /// Droppy's asymmetric open/close springs (WorkspaceMotion.shellSpring).
+    static func shellAnimation(settings: AppSettings, reduceMotion: Bool, opening: Bool = true) -> Animation {
+        if settings.animationPreset == .instant { return .linear(duration: 0.01) }
+        let response = settings.animationPreset.shellDuration / max(settings.shellAnimationSpeed, 0.25)
+        return WorkspaceMotion.shellSpring(opening: opening, baseResponse: response,
+                                           reduceMotion: reduceMotion || settings.reduceExtraMotion)
+    }
+}
+
+/// Header geometry. Invariant: no interactive header control intersects the
+/// resolved hardware-notch exclusion. The leading (tabs) and trailing (actions)
+/// groups live in equal halves around a centered exclusion gap — the shell is
+/// centered on the notch — and the shell minimum width guarantees both fit.
+/// Notchless displays reserve no gap.
+enum ExpandedIslandHeaderMetrics {
+    static let buttonWidth: CGFloat = 30
+    static let tabSpacing: CGFloat = 4
+    static let tabPadding: CGFloat = 4
+    /// Clearance on each side of the physical notch.
+    static let notchClearance: CGFloat = 10
+
+    static func leadingGroupWidth(pageCount: Int) -> CGFloat {
+        let count = max(1, pageCount)
+        return CGFloat(count) * buttonWidth + CGFloat(count - 1) * tabSpacing + tabPadding * 2
+    }
+    static func trailingGroupWidth(clipboardEnabled: Bool) -> CGFloat {
+        let actionCount = clipboardEnabled ? 3 : 2
+        return CGFloat(actionCount) * buttonWidth + CGFloat(actionCount - 1) * 6
+    }
+    static func notchExclusionWidth(hardwareNotchWidth: CGFloat) -> CGFloat {
+        guard hardwareNotchWidth.isFinite, hardwareNotchWidth > 0 else { return 0 }
+        return hardwareNotchWidth + notchClearance * 2
+    }
+    static func minimumContentWidth(pageCount: Int, clipboardEnabled: Bool, hardwareNotchWidth: CGFloat = 0) -> CGFloat {
+        let leading = leadingGroupWidth(pageCount: pageCount)
+        let trailing = trailingGroupWidth(clipboardEnabled: clipboardEnabled)
+        let exclusion = notchExclusionWidth(hardwareNotchWidth: hardwareNotchWidth)
+        guard exclusion > 0 else { return leading + trailing + 8 }
+        return 2 * max(leading, trailing) + exclusion
+    }
+    /// Frames (header-local x ranges) of the leading group, the trailing group
+    /// and the notch exclusion for a header of `innerWidth`.
+    static func frames(innerWidth: CGFloat, pageCount: Int, clipboardEnabled: Bool,
+                       hardwareNotchWidth: CGFloat) -> (leading: ClosedRange<CGFloat>, trailing: ClosedRange<CGFloat>, exclusion: ClosedRange<CGFloat>) {
+        let exclusion = notchExclusionWidth(hardwareNotchWidth: hardwareNotchWidth)
+        let half = max(0, (innerWidth - exclusion) / 2)
+        let leading = min(leadingGroupWidth(pageCount: pageCount), half)
+        let trailing = min(trailingGroupWidth(clipboardEnabled: clipboardEnabled), half)
+        return (0...leading, (innerWidth - trailing)...innerWidth,
+                (innerWidth / 2 - exclusion / 2)...(innerWidth / 2 + exclusion / 2))
+    }
+}
+
+/// How the expanded header is arranged around the physical notch.
+enum ExpandedHeaderLayoutMode: Equatable, Sendable {
+    /// Navigation left of the notch, actions right of it (default).
+    case winged
+    /// One compact row of all controls directly below the notch, as wide as
+    /// the single widget beneath it; removes the notch-wide side wings.
+    case compactBelowNotch
+}
+
+/// The header resolver: the only owner of the header-mode decision, shared by
+/// the shell resolver, the root view and the notch lane.
+struct ExpandedHeaderLayout: Equatable, Sendable {
+    var mode: ExpandedHeaderLayoutMode
+    /// Intrinsic width of the compact row (all buttons at full size).
+    var compactRowWidth: CGFloat
+    /// Extra top inset so the compact row starts one clearance below the notch.
+    var headerDrop: CGFloat
+
+    static let winged = ExpandedHeaderLayout(mode: .winged, compactRowWidth: 0, headerDrop: 0)
+    /// Minimum gap between the navigation and action groups in the row.
+    static let compactGroupSpacing: CGFloat = 8
+
+    static func compactRowWidth(pageCount: Int, clipboardEnabled: Bool) -> CGFloat {
+        ExpandedIslandHeaderMetrics.leadingGroupWidth(pageCount: pageCount)
+            + compactGroupSpacing
+            + ExpandedIslandHeaderMetrics.trailingGroupWidth(clipboardEnabled: clipboardEnabled)
+    }
+
+    /// Compact applies only to a notch-integrated shell, outside editing, with
+    /// exactly one top-level region whose intrinsic width holds the full row
+    /// (buttons are never shrunk), when the notch-wide winged header is what
+    /// widens the shell (otherwise compact would add height for no width),
+    /// and with vertical room for the lower row. Everything else keeps the
+    /// winged header.
+    static func resolve(regionCount: Int, singleRegionWidth: CGFloat, contentHeight: CGFloat, editing: Bool,
+                        metrics: ResolvedIslandMetrics, isNotchIntegrated: Bool,
+                        pageCount: Int, clipboardEnabled: Bool) -> Self {
+        guard isNotchIntegrated, metrics.hasHardwareNotch, metrics.hardwareNotchHeight > 0,
+              !editing, regionCount == 1 else { return .winged }
+        let row = compactRowWidth(pageCount: pageCount, clipboardEnabled: clipboardEnabled)
+        guard row <= singleRegionWidth + 0.5 else { return .winged }
+        let winged = ExpandedIslandHeaderMetrics.minimumContentWidth(pageCount: pageCount, clipboardEnabled: clipboardEnabled,
+                                                                    hardwareNotchWidth: metrics.hardwareNotchWidth)
+        guard winged > singleRegionWidth + 0.5 else { return .winged }
+        let chrome = ExpandedIslandLayoutMetrics(containerSize: .zero, horizontalPadding: 0, displayMetrics: metrics)
+        let drop = max(0, metrics.hardwareNotchHeight
+                       + ExpandedIslandLayoutMetrics.notchContentClearance(metrics: metrics) - chrome.topPadding)
+        guard contentHeight + drop <= ExpandedIslandLayoutMetrics.workspaceContentHeightBudget(metrics: metrics) + 0.5
+        else { return .winged }
+        return Self(mode: .compactBelowNotch, compactRowWidth: row, headerDrop: drop)
+    }
+}
+
+struct ExpandedIslandLayoutMetrics {
     let containerSize: CGSize
     let horizontalPadding: CGFloat
-    let topPadding: CGFloat = IslandShellLayout.expandedTopPadding
-    let bottomPadding: CGFloat = IslandShellLayout.expandedBottomPadding
-    let tabSwitcherHeight: CGFloat = 34
-    let tabToPageSpacing: CGFloat = 10
-    let pageColumnSpacing: CGFloat = 10
-    let cardSpacing: CGFloat = 10
+    let displayMetrics: ResolvedIslandMetrics
+    /// Compact header: the header row starts below the physical notch.
+    let headerDrop: CGFloat
+
+    init(
+        containerSize: CGSize,
+        horizontalPadding: CGFloat,
+        displayMetrics: ResolvedIslandMetrics = .fallback,
+        headerDrop: CGFloat = 0
+    ) {
+        self.containerSize = containerSize
+        self.horizontalPadding = horizontalPadding
+        self.displayMetrics = displayMetrics
+        self.headerDrop = headerDrop
+    }
+
+    /// Header rhythm (2026-10-06): a small intentional gap only. The header
+    /// row stays notch-safe through the horizontal exclusion (winged) or by
+    /// starting below the notch (compact), not padding.
+    var topPadding: CGFloat { 10 * displayMetrics.spacingScale + headerDrop }
+    /// One optical clearance below the lowest content (2026-10-06: was 20 pt);
+    /// the same spacing family as the 12 pt side inset and the notch clearance.
+    var bottomPadding: CGFloat { Self.contentBottomClearance(metrics: displayMetrics) }
+    static func contentBottomClearance(metrics: ResolvedIslandMetrics) -> CGFloat {
+        IslandShellLayout.expandedBottomPadding * metrics.spacingScale
+    }
+    var tabSwitcherHeight: CGFloat { 34 * displayMetrics.compactControlScale }
+    var tabToPageSpacing: CGFloat { 4 * displayMetrics.spacingScale }
+    var pageColumnSpacing: CGFloat { 10 * displayMetrics.spacingScale }
+    var cardSpacing: CGFloat { 10 * displayMetrics.spacingScale }
 
     var innerWidth: CGFloat { max(containerSize.width - (horizontalPadding * 2), 0) }
     var innerHeight: CGFloat { max(containerSize.height - topPadding - bottomPadding, 0) }
     var pageHeight: CGFloat { max(innerHeight - tabSwitcherHeight - tabToPageSpacing, 0) }
+    /// Header/footer chrome around a customized workspace page.
+    var workspaceVerticalChrome: CGFloat { topPadding + bottomPadding + tabSwitcherHeight + tabToPageSpacing }
+    /// Vertical notch-to-content clearance: the same distance the header
+    /// keeps between the physical notch and its side buttons.
+    static func notchContentClearance(metrics: ResolvedIslandMetrics) -> CGFloat {
+        ExpandedIslandHeaderMetrics.notchClearance * metrics.spacingScale
+    }
+    /// The workspace notch lane for a notch-integrated shell (`.none`
+    /// otherwise): how far centered top content may rise into the empty
+    /// header band under the notch, and the header geometry that bounds it.
+    static func workspaceNotchLane(metrics: ResolvedIslandMetrics, isNotchIntegrated: Bool,
+                                   pageCount: Int, clipboardEnabled: Bool, hardwareNotchWidth: CGFloat) -> WorkspaceNotchLane {
+        guard isNotchIntegrated, metrics.hasHardwareNotch, metrics.hardwareNotchHeight > 0 else { return .none }
+        let chrome = ExpandedIslandLayoutMetrics(containerSize: .zero, horizontalPadding: 0, displayMetrics: metrics)
+        let contentTop = chrome.topPadding + chrome.tabSwitcherHeight + chrome.tabToPageSpacing
+        let rise = max(0, contentTop - (metrics.hardwareNotchHeight + notchContentClearance(metrics: metrics)))
+        return WorkspaceNotchLane(
+            rise: rise,
+            headerGroupWidth: max(ExpandedIslandHeaderMetrics.leadingGroupWidth(pageCount: pageCount),
+                                  ExpandedIslandHeaderMetrics.trailingGroupWidth(clipboardEnabled: clipboardEnabled)),
+            clearance: notchContentClearance(metrics: metrics),
+            minimumInnerWidth: ExpandedIslandHeaderMetrics.minimumContentWidth(
+                pageCount: pageCount, clipboardEnabled: clipboardEnabled, hardwareNotchWidth: hardwareNotchWidth))
+    }
+    /// The lane for the current settings (header layout comes from them).
+    @MainActor
+    static func workspaceNotchLane(settings: AppSettings, metrics: ResolvedIslandMetrics, pageCount: Int,
+                                   hardwareNotchWidth: CGFloat) -> WorkspaceNotchLane {
+        workspaceNotchLane(metrics: metrics, isNotchIntegrated: metrics.hasHardwareNotch && settings.respectHardwareNotch,
+                           pageCount: pageCount, clipboardEnabled: settings.clipboardHistoryEnabled,
+                           hardwareNotchWidth: hardwareNotchWidth)
+    }
+    /// The most workspace content height this display can present (shared by
+    /// the shell resolver and the grid's display row budget).
+    static func workspaceContentHeightBudget(metrics: ResolvedIslandMetrics) -> CGFloat {
+        let chrome = ExpandedIslandLayoutMetrics(containerSize: .zero, horizontalPadding: 0, displayMetrics: metrics)
+        return max(1, metrics.visibleLogicalSize.height - 24 * metrics.spacingScale - chrome.workspaceVerticalChrome)
+    }
     var responsiveScale: CGFloat {
-        min(max(min(pageHeight / 178, innerWidth / 720), 0.78), 1)
+        let localFit = min(pageHeight / 178, innerWidth / 720)
+        return min(max(localFit * displayMetrics.uiScale, 0.76), 1.14)
     }
     var compactScale: CGFloat { responsiveScale }
 
@@ -255,48 +464,51 @@ private struct ExpandedIslandLayoutMetrics {
         let spacingBudget = dividerWidth + (pageColumnSpacing * 2)
         let availableColumnWidth = max(innerWidth - spacingBudget, 0)
         let preferredWidth = floor(innerWidth * 0.44)
-        let minimumWidth = min(420, max(360, availableColumnWidth * 0.40))
-        let maximumWidth = min(520, max(availableColumnWidth - minimumMediaColumnWidth, 0))
+        let minBase = 360 * displayMetrics.expandedCardScale
+        let maxBase = 520 * displayMetrics.expandedCardScale
+        let minimumWidth = min(maxBase, max(minBase, availableColumnWidth * 0.40))
+        let maximumWidth = min(maxBase, max(availableColumnWidth - minimumMediaColumnWidth, 0))
         return min(max(preferredWidth, minimumWidth), maximumWidth)
     }
     var mediaColumnWidth: CGFloat {
         max(innerWidth - rightStackWidth - dividerWidth - (pageColumnSpacing * 2), 0)
     }
-    var minimumMediaColumnWidth: CGFloat { min(360, max(300, innerWidth * 0.46)) }
+    var minimumMediaColumnWidth: CGFloat {
+        min(360 * displayMetrics.expandedCardScale, max(300 * displayMetrics.expandedCardScale, innerWidth * 0.46))
+    }
     var shortcutsColumnWidth: CGFloat { rightStackWidth }
-    var dividerWidth: CGFloat { 1 }
-    var dividerHeight: CGFloat { min(max(pageHeight - 10, 100), pageHeight) }
-    var trayAirDropWidth: CGFloat { min(max(innerWidth * 0.29, 150), 188) }
-    var timerHeaderHeight: CGFloat { 24 }
-    var timerControlsHeight: CGFloat { pageHeight < 150 ? 24 : 28 }
-    var timerVerticalSpacingTotal: CGFloat { pageHeight < 150 ? 18 : 20 }
+    var dividerWidth: CGFloat { displayMetrics.dividerThickness }
+    var dividerHeight: CGFloat { min(max(pageHeight - (10 * displayMetrics.spacingScale), 100), pageHeight) }
+    var trayAirDropWidth: CGFloat {
+        min(max(innerWidth * 0.29, 150 * displayMetrics.expandedCardScale), 188 * displayMetrics.expandedCardScale)
+    }
+    var timerHeaderHeight: CGFloat { 24 * compactScale }
+    var timerControlsHeight: CGFloat { (pageHeight < 150 ? 24 : 28) * compactScale }
+    var timerVerticalSpacingTotal: CGFloat { (pageHeight < 150 ? 18 : 20) * displayMetrics.spacingScale }
     var timerReservedHeight: CGFloat { timerHeaderHeight + timerControlsHeight + timerVerticalSpacingTotal }
-    var timerRingSize: CGFloat { min(max(pageHeight - timerReservedHeight, 86), 118) }
+    var timerRingSize: CGFloat {
+        min(max(pageHeight - timerReservedHeight, 86 * compactScale), 118 * displayMetrics.expandedCardScale)
+    }
     var mediaMaxHeight: CGFloat { pageHeight }
     var shortcutsMaxHeight: CGFloat { pageHeight }
     var liveActivitiesMaxHeight: CGFloat { pageHeight }
-    var rightStackSpacing: CGFloat { min(max(14 * compactScale, 12), 16) }
-    var rightStackAvailableHeight: CGFloat {
-        max(pageHeight - rightStackSpacing, 0)
+    var rightStackSpacing: CGFloat {
+        min(max(14 * compactScale * displayMetrics.spacingScale, 11), 18)
     }
-    var liveActivitiesStackHeight: CGFloat {
-        floor(rightStackAvailableHeight * 0.45)
-    }
-    var shortcutsStackHeight: CGFloat {
-        max(rightStackAvailableHeight - liveActivitiesStackHeight, 0)
-    }
+    var rightStackAvailableHeight: CGFloat { max(pageHeight - rightStackSpacing, 0) }
+    var liveActivitiesStackHeight: CGFloat { floor(rightStackAvailableHeight * 0.45) }
+    var shortcutsStackHeight: CGFloat { max(rightStackAvailableHeight - liveActivitiesStackHeight, 0) }
     var statsCardWidth: CGFloat { max((innerWidth - (cardSpacing * 2)) / 3, 0) }
     var statsHeaderHeight: CGFloat { 25 * compactScale }
     var statsGridAvailableHeight: CGFloat { max(pageHeight - statsHeaderHeight - 8 - 4, 0) }
     var statsTwoRowCardHeight: CGFloat { max((statsGridAvailableHeight - cardSpacing) / 2, 0) }
     var statsUsesScroll: Bool { statsTwoRowCardHeight < (48 * compactScale) }
     var statsCardHeight: CGFloat {
-        if statsUsesScroll {
-            return 58 * compactScale
-        }
+        if statsUsesScroll { return 58 * compactScale }
         return min(statsTwoRowCardHeight, 74 * compactScale)
     }
 }
+
 
 struct IslandRootView: View {
     @ObservedObject var settings: AppSettings
@@ -310,18 +522,42 @@ struct IslandRootView: View {
     let onOpenSettings: () -> Void
     @ObservedObject private var media: MediaController
     @ObservedObject private var navigation: IslandNavigationStore
+    @ObservedObject private var fileDragSession: FileDragSessionController
     @ObservedObject private var liveActivities: LiveActivityStore
+    @ObservedObject private var agentApprovals: AgentApprovalController
     @ObservedObject private var agentAttention: AgentAttentionCoordinator
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var contentPhase: IslandContentPhase = .compact
     @State private var renderedContentMode: RenderedContentMode = .compact
     @State private var contentVisible = false
+    /// Alternating presentation-only clock edge. Every collapse toggles it so
+    /// the exit owns a real animation even if an expansion/collapse pair occurs
+    /// before SwiftUI commits another presentation pass.
+    @State private var childExitClock: Double = 0
     @State private var expandedContentMounted = false
     @State private var isContentRemoving = false
     @State private var sequenceGeneration = 0
+    @State private var childExitTracker = ExpandedChildExitTracker()
+    @State private var workspaceContentVisible = true
+    @State private var workspaceExitGeneration: Int?
+    /// Isolated clock for the workspace geometry children-exit (same reason as
+    /// `childExitClock`: content-tree completions can be lost with live sessions).
+    @State private var workspaceExitClock: Double = 0
     @State private var isCollapsedHovering = false
+
+    /// Committed with the shell geometry (animated with it), never read
+    /// ahead from navigation - see `IslandLayoutStore.expandedHeaderLayout`.
+    private var expandedHeaderLayout: ExpandedHeaderLayout { layoutStore.expandedHeaderLayout }
+
+    private var workspaceNotchLane: WorkspaceNotchLane {
+        // The compact header occupies the space under the notch.
+        guard expandedHeaderLayout.mode == .winged else { return .none }
+        return ExpandedIslandLayoutMetrics.workspaceNotchLane(settings: settings, metrics: layoutStore.displayMetrics,
+            pageCount: navigation.availablePages(using: settings).count, hardwareNotchWidth: layoutStore.hardwareNotchWidth)
+    }
     @State private var collapsedPreviewVisible = false
     @State private var collapsedPreviewGeneration = 0
+    @StateObject private var agentGlow = AgentActivityGlowCoordinator()
     @StateObject private var gestureCoordinator = IslandGestureCoordinator()
 
     init(
@@ -346,7 +582,9 @@ struct IslandRootView: View {
         self.onOpenSettings = onOpenSettings
         media = modules.media
         navigation = modules.navigation
+        fileDragSession = modules.fileDragSession
         liveActivities = modules.liveActivities
+        agentApprovals = modules.agentApprovalControl
         agentAttention = modules.agentAttention
     }
 
@@ -359,13 +597,12 @@ struct IslandRootView: View {
     }
 
     private var shellAnimation: Animation {
-        if reduceMotion || settings.reduceExtraMotion {
-            return .easeInOut(duration: 0.24)
+        if !(reduceMotion || settings.reduceExtraMotion),
+           layoutStore.collapsedPresentationProfile.kind == .agentAttention {
+            return .interactiveSpring(response: 0.38, dampingFraction: 0.8, blendDuration: 0)
         }
-        let duration = settings.animationPreset == .instant
-            ? 0.01
-            : settings.animationPreset.shellDuration / max(settings.shellAnimationSpeed, 0.25)
-        return .smooth(duration: duration)
+        return IslandShellMotion.shellAnimation(settings: settings, reduceMotion: reduceMotion,
+                                                opening: islandState.state == .expanded)
     }
 
     private var shellMorphProgress: CGFloat {
@@ -380,6 +617,20 @@ struct IslandRootView: View {
     }
 
     var body: some View {
+        animatedIslandCanvas
+            .environment(\.islandDisplayMetrics, layoutStore.displayMetrics)
+            .environment(\.mediaAdvancedControls, modules.mediaAdvanced)
+            .environment(\.workspaceNotchLane, workspaceNotchLane)
+            .environment(\.expandedHeaderLayout, expandedHeaderLayout)
+            .environment(\.timerRulerInteractionRegistration, TimerRulerInteractionRegistration { owner, frame in
+                layoutStore.setNativeControlRegion(frame, owner: owner)
+            })
+            .environment(\.basketShelfTransfer, BasketShelfTransfer { [presenter = modules.basketPresenter] urls in
+                presenter.moveShelfFilesToBasket(urls)
+            })
+    }
+
+    private var baseIslandCanvas: some View {
         ZStack(alignment: .topLeading) {
             if settings.overlayEnabled {
                 IslandSurface(
@@ -387,145 +638,391 @@ struct IslandRootView: View {
                     isExpanded: isExpanded,
                     visualProgress: shellVisualProgress,
                     collapsedPresentationProfile: layoutStore.collapsedPresentationProfile,
-                    collapsedGlowColor: collapsedAgentGlowColor
+                    collapsedGlowColor: collapsedAgentGlowColor,
+                    collapsedBrightGlowColor: collapsedAgentBrightGlowColor,
+                    forcesCollapsedGlow: shouldShowCollapsedAgentGlow && compactPermission == nil,
+                    systemHUDActivity: activeInteractiveSystemHUD
                 ) {
-                    if showsExpandedContent {
-                        ExpandedIslandView(
-                            settings: settings,
-                            modules: modules,
-                            contentVisible: contentVisible,
-                            shouldRenderContent: expandedContentMounted,
-                            isContentRemoving: isContentRemoving,
-                            onShortcutLaunched: onRequestCollapse,
-                            onTimerStarted: {
-                                if settings.collapseAfterStartingTimer {
-                                    onRequestCollapse()
-                                }
-                            },
-                            rendersExpandedVisualContent: rendersExpandedVisualContent,
-                            onOpenSettings: onOpenSettings,
-                            layoutStore: layoutStore,
-                            escapeRouter: escapeRouter,
-                            islandGestureCoordinator: gestureCoordinator,
-                            islandGestureContext: gestureContext,
-                            islandGestureCallbacks: gestureCallbacks,
-                            islandSwipeSensitivity: settings.gestureSensitivity
-                        )
-                    } else {
-                        CompactIslandView(
-                            settings: settings,
-                            modules: modules,
-                            contentMode: collapsedContentMode,
-                            previewContent: CollapsedPreviewContent.mounted(
-                                collapsedPreviewContent,
-                                previewActive: isCollapsedPreviewActive
-                            ),
-                            previewActive: isCollapsedPreviewActive,
-                            hardwareNotchWidth: layoutStore.hardwareNotchWidth,
-                            collapsedLeftRegionWidth: layoutStore.collapsedLeftRegionWidth,
-                            collapsedNotchCoreWidth: layoutStore.collapsedNotchCoreWidth,
-                            collapsedRightRegionWidth: layoutStore.collapsedRightRegionWidth,
-                            isNotchIntegratedShell: layoutStore.hasHardwareNotch
-                        )
-                            .contentShape(Rectangle())
-                            .onHover(perform: handleCollapsedHover)
-                            .onTapGesture {
-                                guard settings.expandOnClick else { return }
-                                deactivateCollapsedPreview()
-                                onRequestExpand()
-                            }
-                            .modifier(
-                                IslandPointerGestureModifier(
-                                    settings: settings,
-                                    coordinator: gestureCoordinator,
-                                    context: gestureContext,
-                                    callbacks: gestureCallbacks,
-                                    swipeSensitivity: settings.gestureSensitivity
-                                )
-                            )
-                    }
+                    islandSurfaceContent
                 }
-                .notchIntegrated(layoutStore.hasHardwareNotch)
+                .notchIntegrated(
+                    IslandShellNotchIntegration.resolve(
+                        geometryHasHardwareNotch: layoutStore.hasHardwareNotch,
+                        displayMetricsHaveHardwareNotch: layoutStore.displayMetrics.hasHardwareNotch
+                    )
+                )
                 .shellMorphing(layoutStore.isShellMorphing)
                 .collapseShellOnly(layoutStore.isCollapseShellOnly)
                 .frame(width: surfaceSize.width, height: surfaceSize.height)
-                .position(x: surfaceFrame.midX, y: layoutStore.canvasSize.height - surfaceFrame.midY)
+                .shadow(color: .black.opacity(!isExpanded && compactPermission != nil && layoutStore.compactPermissionHovered ? AgentCompactPermissionMotion.shadowOpacity : 0),
+                    radius: AgentCompactPermissionMotion.shadowRadius, y: AgentCompactPermissionMotion.shadowY)
+                .animation(AgentCompactPermissionMotion.animation(reduceMotion: reduceMotion || settings.reduceExtraMotion), value: layoutStore.compactPermissionHovered)
+                .position(
+                    x: surfaceFrame.midX,
+                    y: layoutStore.canvasSize.height - surfaceFrame.midY
+                )
                 .id(layoutStore.overlayPresentationGeneration)
+
+                collapsedSidecarOverlay
+                trayQuickActionOverlay
             }
         }
         .shellMorphing(layoutStore.isShellMorphing)
         .collapseShellOnly(layoutStore.isCollapseShellOnly)
-        .frame(width: layoutStore.canvasSize.width, height: layoutStore.canvasSize.height, alignment: .topLeading)
+        .frame(
+            width: layoutStore.canvasSize.width,
+            height: layoutStore.canvasSize.height,
+            alignment: .topLeading
+        )
         .coordinateSpace(name: IslandCanvasCoordinateSpace.name)
-        .onAppear {
-            modules.navigation.ensureValidSelection(using: settings)
-            synchronizePresentationForCurrentState()
-            updateCollapsedPreviewLayout()
-        }
-        .onChange(of: layoutStore.overlayPresentationGeneration) { _, _ in
-            sequenceGeneration += 1
-            deactivateCollapsedPreview()
-            finalizeCompactPresentation()
-        }
-        .onChange(of: islandState.state) { _, newValue in
-            handleStateChange(newValue)
-        }
-        .onChange(of: isCollapsedPreviewActive) { _, _ in
-            updateCollapsedPreviewLayout()
-        }
-        .onChange(of: collapsedPreviewSurfaceFrame) { _, _ in
-            updateCollapsedPreviewLayout()
-        }
-        .onChange(of: settings.collapsedHoverPreviewEnabled) { _, enabled in
-            if !enabled {
-                deactivateCollapsedPreview()
-            }
-        }
-        .onChange(of: navigation.isFileDropTargeted) { _, _ in
-            if !isCollapsedPreviewAllowed {
-                deactivateCollapsedPreview()
-            } else {
+    }
+
+    private var presentationObservedCanvas: some View {
+        baseIslandCanvas
+            .onAppear {
+                modules.navigation.ensureValidSelection(using: settings)
+                synchronizePresentationForCurrentState()
                 updateCollapsedPreviewLayout()
+                synchronizeCollapsedSidecarGeometry()
             }
-        }
-        .onChange(of: media.hasActiveMediaSource) { _, _ in
-            if !isCollapsedPreviewAllowed {
+            .onChange(of: layoutStore.overlayPresentationGeneration) { _, _ in
+                sequenceGeneration += 1
                 deactivateCollapsedPreview()
-            }
-        }
-        .onChange(of: layoutStore.isExpandedContentExiting) { _, newValue in
-            if newValue {
-                beginContentExitSequence()
-            }
-        }
-        .onChange(of: layoutStore.isCollapseShellOnly) { _, newValue in
-            if !newValue, islandState.state == .collapsed {
                 finalizeCompactPresentation()
             }
+            .onChange(of: islandState.state) { _, newValue in
+                handleStateChange(newValue)
+                layoutStore.compactPermissionHovered = false
+                synchronizeCollapsedSidecarGeometry()
+            }
+            .onChange(of: layoutStore.isShellMorphing) { _, morphing in
+                if !morphing { revealExpandedContentIfReady() }
+            }
+            .onChange(of: layoutStore.workspaceGeometryTransition) { _, transition in
+                handleWorkspaceGeometryTransition(transition)
+            }
+            .onChange(of: isCollapsedPreviewActive) { _, _ in
+                updateCollapsedPreviewLayout()
+                synchronizeCollapsedSidecarGeometry()
+            }
+            .onChange(of: collapsedCompositeGeometry) { _, _ in
+                synchronizeCollapsedSidecarGeometry()
+            }
+            .onChange(of: agentAttention.presentation != nil) { _, _ in
+                synchronizeCollapsedSidecarGeometry()
+            }
+            .onChange(of: compactPermission?.request.key) { _, key in
+                if key == nil {
+                    withAnimation(AgentCompactPermissionMotion.animation(reduceMotion: reduceMotion || settings.reduceExtraMotion)) {
+                        layoutStore.compactPermissionHovered = false
+                    }
+                }
+            }
+    }
+
+    private var navigationObservedCanvas: some View {
+        presentationObservedCanvas
+            .onChange(of: collapsedPreviewSurfaceFrame) { _, _ in
+                updateCollapsedPreviewLayout()
+            }
+            .onChange(of: settings.collapsedHoverPreviewEnabled) { _, enabled in
+                if !enabled {
+                    deactivateCollapsedPreview()
+                }
+            }
+            .onChange(of: navigation.isFileDropTargeted) { _, _ in
+                if !isCollapsedPreviewAllowed {
+                    deactivateCollapsedPreview()
+                } else {
+                    updateCollapsedPreviewLayout()
+                }
+            }
+            .onChange(of: media.hasActiveMediaSource) { _, _ in
+                if !isCollapsedPreviewAllowed {
+                    deactivateCollapsedPreview()
+                }
+            }
+            .onChange(of: layoutStore.isExpandedContentExiting) { _, newValue in
+                if newValue {
+                    driveChildExit()
+                } else if islandState.state == .expanded, contentPhase == .contentCollapsing {
+                    // The pending collapse was cancelled by an expansion before
+                    // the shell contracted: bring the children back.
+                    childExitTracker.reset()
+                    cancelContentExitSequence()
+                }
+            }
+            // The generation, not the Bool edge, drives the exit: SwiftUI can
+            // coalesce collapse -> cancel -> collapse into true -> true.
+            .onChange(of: layoutStore.expandedChildExitGeneration) { _, _ in
+                driveChildExit()
+            }
+            .onChange(of: layoutStore.isCollapseShellOnly) { _, newValue in
+                if !newValue, islandState.state == .collapsed {
+                    finalizeCompactPresentation()
+                }
+            }
+    }
+
+    private var interactionObservedCanvas: some View {
+        navigationObservedCanvas
+            .onReceive(settings.objectWillChange) { _ in
+                DispatchQueue.main.async {
+                    modules.navigation.ensureValidSelection(using: settings)
+                }
+            }
+            .onDrop(
+                of: FileDropProviderLoader.acceptedTypes,
+                isTargeted: fileDropTargetBinding
+            ) { providers in
+                loadDroppedFilesFromCollapsedIsland(from: providers)
+            }
+            .onChange(of: activeRoutineAgentProvider) { _, provider in
+                agentGlow.update(activeProvider: provider)
+            }
+            .onDisappear {
+                agentGlow.stop()
+                fileDragSession.cancel()
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("DynamicIsland")
+    }
+
+    private var animatedIslandCanvas: some View {
+        interactionObservedCanvas
+            .animation(shellAnimation, value: islandState.state)
+            .animation(shellAnimation, value: layoutStore.isShellMorphing)
+            .animation(compactPermission != nil ? AgentCompactPermissionMotion.animation(reduceMotion: reduceMotion || settings.reduceExtraMotion) : shellAnimation, value: layoutStore.collapsedSurfaceFrame)
+            .animation(compactPermission != nil ? AgentCompactPermissionMotion.animation(reduceMotion: reduceMotion || settings.reduceExtraMotion) : shellAnimation, value: layoutStore.collapsedPresentationProfile)
+            .animation(collapsedPreviewAnimation, value: isCollapsedPreviewActive)
+    }
+
+    @ViewBuilder
+    private var islandSurfaceContent: some View {
+        if showsExpandedContent {
+            ExpandedIslandView(
+                settings: settings,
+                modules: modules,
+                contentVisible: contentVisible && workspaceContentVisible,
+                shouldRenderContent: expandedContentMounted,
+                isContentRemoving: isContentRemoving || layoutStore.workspaceGeometryTransition.phase != .idle,
+                onShortcutLaunched: onRequestCollapse,
+                onTimerStarted: {
+                    if settings.collapseAfterStartingTimer {
+                        onRequestCollapse()
+                    }
+                },
+                rendersExpandedVisualContent: rendersExpandedVisualContent,
+                onOpenSettings: onOpenSettings,
+                layoutStore: layoutStore,
+                escapeRouter: escapeRouter,
+                islandGestureCoordinator: gestureCoordinator,
+                islandGestureContext: gestureContext,
+                islandGestureCallbacks: gestureCallbacks,
+                islandSwipeSensitivity: settings.gestureSensitivity
+            )
+            .opacity(contentVisible && workspaceContentVisible ? 1 : 0)
+            .background(alignment: .topLeading) {
+                // Isolated exit clock: animated with the exact child-exit curve in
+                // its own transaction, so its completion cannot be captured by
+                // live session subtrees (see context.md 2026-10-05 Resume fix).
+                Color.black.opacity(0.001 * childExitClock + 0.0005 * workspaceExitClock)
+                    .frame(width: 1, height: 1)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+            .onDisappear { finishChildExitAnimation(token: childExitTracker.animationToken) }
+        } else {
+            compactIslandContent
         }
-        .onReceive(settings.objectWillChange) { _ in
-            DispatchQueue.main.async {
-                modules.navigation.ensureValidSelection(using: settings)
+    }
+
+    private var compactPermission: AgentCompactPermission? {
+        AgentCompactPermission.current(sessions: modules.agentEvents.sessions,
+            approvals: modules.agentApprovalControl, managed: modules.agentManagedControl)
+    }
+
+    private var compactIslandContent: some View {
+        Group {
+            if let compactPermission {
+                AgentCompactPermissionView(permission: compactPermission, approvals: modules.agentApprovalControl,
+                    topBandHeight: max(layoutStore.collapsedSize.height - layoutStore.collapsedPresentationProfile.heightDelta, 20),
+                    openFeed: {
+                        modules.agentProjects.selectedProjectKey = nil
+                        modules.agentManagedControl.selectSession(compactPermission.session.id)
+                        if let customization = modules.customization {
+                            var configuration = customization.configuration
+                            configuration.navigation.hidden.remove(.agents)
+                            if configuration.customizedSurfaces.contains(.agents) { configuration.add(.feed, on: .agents) }
+                            customization.commit(configuration)
+                            modules.navigation.applyConfiguration(configuration, using: settings)
+                        }
+                        modules.agentWorkspacePresentation?.select(.feed)
+                        modules.navigation.showAgents()
+                        islandState.expand()
+                    })
+            } else {
+        CompactIslandView(
+            settings: settings,
+            modules: modules,
+            contentMode: collapsedContentMode,
+            layoutResolution: collapsedLayoutResolution,
+            previewContent: CollapsedPreviewContent.mounted(
+                collapsedPreviewContent,
+                previewActive: isCollapsedPreviewActive
+            ),
+            previewActive: isCollapsedPreviewActive,
+            hardwareNotchWidth: layoutStore.hardwareNotchWidth,
+            collapsedLeftRegionWidth: layoutStore.collapsedLeftRegionWidth,
+            collapsedNotchCoreWidth: layoutStore.collapsedNotchCoreWidth,
+            collapsedRightRegionWidth: layoutStore.collapsedRightRegionWidth,
+            isNotchIntegratedShell: IslandShellNotchIntegration.resolve(
+                geometryHasHardwareNotch: layoutStore.hasHardwareNotch,
+                displayMetricsHaveHardwareNotch: layoutStore.displayMetrics.hasHardwareNotch
+            )
+        )
             }
         }
-        .onDrop(of: FileDropProviderLoader.acceptedTypes, isTargeted: fileDropTargetBinding) { providers in
-            loadDroppedFilesFromCollapsedIsland(from: providers)
+        .environment(\.agentVisualPreferences, settings.agentVisualPreferences)
+        .contentShape(Rectangle())
+        .onHover(perform: handleCollapsedHover)
+        .onTapGesture {
+            guard settings.expandOnClick, compactPermission == nil else { return }
+            deactivateCollapsedPreview()
+            if let attention = agentAttention.presentation,
+               let primary = attention.primary {
+                navigation.showAgents()
+                modules.agentManagedControl.selectSession(primary.session)
+            }
+            onRequestExpand()
         }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("DynamicIsland")
-        .animation(shellAnimation, value: islandState.state)
-        .animation(shellAnimation, value: layoutStore.isShellMorphing)
-        .animation(shellAnimation, value: layoutStore.collapsedSurfaceFrame)
-        .animation(shellAnimation, value: layoutStore.collapsedPresentationProfile)
-        .animation(collapsedPreviewAnimation, value: isCollapsedPreviewActive)
+        .modifier(
+            IslandPointerGestureModifier(
+                settings: settings,
+                coordinator: gestureCoordinator,
+                context: gestureContext,
+                callbacks: gestureCallbacks,
+                swipeSensitivity: settings.gestureSensitivity, layoutStore: layoutStore
+            )
+        )
+    }
+
+    /// Quick actions attached below the expanded shell, Tray page only.
+    /// Positioned from the shell frame so they follow it; their frame is
+    /// reported to the layout store for hover, hit-test and passthrough.
+    @ViewBuilder
+    private var trayQuickActionOverlay: some View {
+        if showsExpandedContent,
+           isExpanded,
+           !layoutStore.isExpandedContentExiting,
+           navigation.selectedPage == .tray,
+           settings.trayEnabled,
+           settings.fileShelfEnabled {
+            let shell = layoutStore.expandedSurfaceFrame
+            ZStack {
+                if fileDragSession.isActive {
+                    FileDragQuickActionOrbit(
+                        session: fileDragSession,
+                        layoutStore: layoutStore,
+                        reduceMotion: reduceMotion || settings.reduceExtraMotion
+                    )
+                    .position(
+                        x: shell.midX,
+                        y: layoutStore.canvasSize.height - shell.minY
+                            + FileDragQuickActionMetrics.gap
+                            + FileDragQuickActionMetrics.diameter / 2
+                    )
+                    .transition(.opacity.combined(with: .scale(scale: (reduceMotion || settings.reduceExtraMotion) ? 1 : 0.92)))
+                } else {
+                    FileTrayQuickActionBar(
+                        fileShelf: modules.fileShelf,
+                        backgroundOperations: modules.backgroundOperations,
+                        backgroundRemoval: modules.productivity.backgroundRemoval,
+                        layoutStore: layoutStore,
+                        reduceMotion: reduceMotion || settings.reduceExtraMotion
+                    )
+                    .position(
+                        x: shell.midX,
+                        y: layoutStore.canvasSize.height - shell.minY
+                            + FileTrayQuickActionMetrics.gap
+                            + FileTrayQuickActionMetrics.diameter / 2
+                    )
+                    .transition(.opacity.combined(with: .offset(y: reduceMotion ? 0 : -6)))
+                }
+            }
+            .animation(
+                (reduceMotion || settings.reduceExtraMotion) ? .easeOut(duration: 0.12) : .spring(response: 0.24, dampingFraction: 0.82),
+                value: fileDragSession.isActive
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var collapsedSidecarOverlay: some View {
+        if !showsExpandedContent,
+           agentAttention.presentation == nil,
+           !isCollapsedPreviewActive {
+            LiveActivitySidecarLayer(
+                resolution: collapsedLayoutResolution,
+                compositeGeometry: collapsedCompositeGeometry,
+                canvasHeight: layoutStore.canvasSize.height,
+                reduceMotion: reduceMotion,
+                onActivate: activateSidecar
+            )
+            .animation(shellAnimation, value: collapsedLayoutResolution)
+        }
+    }
+
+    private var activeRoutineAgentProvider: AgentProvider? {
+        modules.agentEvents.sessions.first(where: {
+            switch $0.state {
+            case .working, .runningTool, .runningCommand, .thinking, .planning:
+                true
+            case .waitingForApproval, .waitingForUser, .planReady,
+                 .idle, .completed, .failed, .interrupted:
+                false
+            }
+        })?.id.sessionID.provider
+    }
+
+    private var collapsedAgentProvider: AgentProvider? {
+        if let provider = agentAttention.presentation?.primary?.session.sessionID.provider {
+            return provider
+        }
+        return activeRoutineAgentProvider ?? agentGlow.provider
+    }
+
+    private var shouldShowCollapsedAgentGlow: Bool {
+        agentAttention.presentation != nil ||
+        activeRoutineAgentProvider != nil ||
+        agentGlow.provider != nil
     }
 
     private var collapsedAgentGlowColor: Color {
-        switch agentAttention.presentation?.style {
-        case .success: .green
-        case .actionRequired: .orange
-        case .failure: .red
-        case .informational, .none: .cyan
+        if agentAttention.presentation?.style == .failure {
+            return Color(red: 0.9, green: 0.2, blue: 0.2)
+        }
+        switch collapsedAgentProvider {
+        case .codex:
+            return Color(red: 0.1, green: 0.3, blue: 0.7)
+        case .claude:
+            return Color(red: 0.9, green: 0.4, blue: 0.1)
+        case .other, .none:
+            return Color(red: 0.0, green: 0.8, blue: 1.0)
+        }
+    }
+
+    private var collapsedAgentBrightGlowColor: Color {
+        if agentAttention.presentation?.style == .failure {
+            return Color(red: 1.0, green: 0.3, blue: 0.3)
+        }
+        switch collapsedAgentProvider {
+        case .codex:
+            return Color(red: 0.2, green: 0.45, blue: 0.9)
+        case .claude:
+            return Color(red: 1.0, green: 0.55, blue: 0.2)
+        case .other, .none:
+            return Color(red: 0.4, green: 0.95, blue: 1.0)
         }
     }
 
@@ -537,7 +1034,8 @@ struct IslandRootView: View {
         IslandGestureContext(
             presentationState: islandState.state,
             selectedPage: navigation.selectedPage,
-            mediaControlAvailable: collapsedContentMode == .media && media.isTransportControlAvailable,
+            mediaControlAvailable: collapsedLayoutResolution.primary?.activity.kind == .media &&
+                media.isTransportControlAvailable,
             timerIsRunning: modules.timer.isRunning,
             timerCanResume: modules.timer.remainingSeconds > 0,
             collapsedPreviewActive: isCollapsedPreviewActive,
@@ -613,24 +1111,144 @@ struct IslandRootView: View {
         return CollapsedPreviewContent(rows: rows)
     }
 
-    private var collapsedContentMode: CollapsedIslandContentMode {
-        CollapsedLiveActivitySelector.select(
-            activities: liveActivities.activities,
+    private var collapsedSourceToggles: CollapsedLiveActivitySourceToggles {
+        CollapsedLiveActivitySourceToggles(
+            liveActivitiesEnabled: settings.liveActivitiesEnabled,
+            timerEnabled: settings.timerEnabled && settings.showTimerLiveActivity,
+            mediaEnabled: settings.mediaEnabled &&
+                settings.showMusicLiveActivity &&
+                (settings.showMediaWhenPaused || media.isPlaying),
+            fileTrayEnabled: settings.trayEnabled &&
+                settings.fileShelfEnabled &&
+                settings.showFileDropLiveActivity,
+            batteryEnabled: settings.showBatteryLiveActivity,
+            systemHUDEnabled: settings.systemHUDsEnabled
+        )
+    }
+
+    private var activeInteractiveSystemHUD: DynamicIslandLiveActivity? {
+        liveActivities.activities.first {
+            guard $0.id == LiveActivityStore.systemHUDActivityID else { return false }
+            return $0.systemHUDKind == .volume || $0.systemHUDKind == .brightness
+        }
+    }
+
+    private var collapsedLayoutActivities: [DynamicIslandLiveActivity] {
+        LiveActivityRuntimeProjection.activities(
+            stored: liveActivities.activities,
             priorities: settings.collapsedLiveActivityPrioritySettings,
-            toggles: CollapsedLiveActivitySourceToggles(
-                liveActivitiesEnabled: settings.liveActivitiesEnabled,
-                timerEnabled: settings.timerEnabled && settings.showTimerLiveActivity,
-                mediaEnabled: settings.mediaEnabled &&
-                    settings.showMusicLiveActivity &&
-                    (settings.showMediaWhenPaused || media.isPlaying),
-                fileTrayEnabled: settings.trayEnabled && settings.fileShelfEnabled && settings.showFileDropLiveActivity,
-                batteryEnabled: settings.showBatteryLiveActivity
+            toggles: collapsedSourceToggles,
+            agentSessions: modules.agentEvents.sessions,
+            agentEnabled: settings.agentActivityEnabled && agentAttention.presentation == nil
+        )
+    }
+
+    private var collapsedLayoutResolution: LiveActivityLayoutResolution {
+        LiveActivityLayoutResolver.resolve(
+            activities: collapsedLayoutActivities,
+            context: LiveActivityLayoutContext(
+                availableWidth: max(layoutStore.canvasSize.width, layoutStore.collapsedSurfaceFrame.width),
+                hasHardwareNotch: layoutStore.hasHardwareNotch,
+                hardwareNotchWidth: layoutStore.hardwareNotchWidth,
+                primaryMinimumWidth: max(layoutStore.collapsedSurfaceFrame.width, 172),
+                primaryIdealWidth: max(layoutStore.collapsedSurfaceFrame.width, 226),
+                sidecarDiameter: LiveActivitySidecarMetrics.diameter,
+                sidecarGap: LiveActivitySidecarMetrics.gap,
+                allowSimultaneousSidecars: settings.allowSimultaneousLiveActivitySidecars,
+                timerSidePreference: settings.timerSidecarPreference
             )
         )
     }
 
+    private var collapsedContentMode: CollapsedIslandContentMode {
+        guard let primary = collapsedLayoutResolution.primary?.activity else {
+            return .inactive
+        }
+        switch primary.kind {
+        case .media:
+            return .media
+        case .agent:
+            return .agent(primary)
+        case .timer:
+            return .timer(primary)
+        case .fileTray:
+            return .fileTray(primary)
+        case .backgroundOperation:
+            return .generic(primary)
+        case .battery:
+            return .battery(primary)
+        case .system:
+            return .inactive
+        case .screenRecording:
+            return .screenRecording(primary)
+        case .voiceRecording:
+            return .voiceRecording(primary)
+        case .voiceTranscription:
+            return .voiceTranscription(primary)
+        case .keepAwake, .terminalTask, .windowSnapPreview, .reminder,
+             .voiceStatus, .camera, .backgroundRemoval, .message:
+            return .generic(primary)
+        }
+    }
+
+    private var collapsedCompositeGeometry: LiveActivityCompositeGeometry {
+        LiveActivityCompositeGeometry.resolve(
+            primaryFrame: layoutStore.collapsedSurfaceFrame,
+            canvasSize: layoutStore.canvasSize,
+            resolution: collapsedLayoutResolution,
+            sidecarDiameter: LiveActivitySidecarMetrics.diameter,
+            sidecarGap: LiveActivitySidecarMetrics.gap
+        )
+    }
+
+    private func activateSidecar(_ presentation: LiveActivityPresentation) {
+        switch presentation.activity.kind {
+        case .timer:
+            navigation.showTimer()
+            onRequestExpand()
+        case .agent:
+            navigation.showAgents()
+            onRequestExpand()
+        case .media:
+            navigation.showIsland()
+            onRequestExpand()
+        case .fileTray, .backgroundOperation:
+            navigation.showTray()
+            onRequestExpand()
+        case .battery, .system, .keepAwake, .terminalTask, .windowSnapPreview,
+             .reminder, .voiceRecording, .voiceTranscription, .voiceStatus, .camera, .backgroundRemoval:
+            break
+        case .screenRecording:
+            navigation.showIsland()
+            modules.rightWorkspace.show(.productivity)
+            onRequestExpand()
+        case .message:
+            navigation.showMessages()
+            onRequestExpand()
+        }
+    }
+
+    private func synchronizeCollapsedSidecarGeometry() {
+        if islandState.state == .collapsed,
+           agentAttention.presentation == nil,
+           !isCollapsedPreviewActive {
+            layoutStore.updateCollapsedSidecars(collapsedCompositeGeometry)
+        } else {
+            layoutStore.updateCollapsedSidecars(
+                LiveActivityCompositeGeometry.resolve(
+                    primaryFrame: layoutStore.collapsedSurfaceFrame,
+                    canvasSize: layoutStore.canvasSize,
+                    resolution: .empty,
+                    sidecarDiameter: LiveActivitySidecarMetrics.diameter,
+                    sidecarGap: LiveActivitySidecarMetrics.gap
+                )
+            )
+        }
+    }
+
     private var isCollapsedPreviewAllowed: Bool {
-        islandState.state == .collapsed &&
+        guard compactPermission == nil else { return false }
+        return islandState.state == .collapsed &&
             settings.collapsedHoverPreviewEnabled &&
             collapsedPreviewContent != nil &&
             !navigation.isFileDropTargeted &&
@@ -772,6 +1390,17 @@ struct IslandRootView: View {
                 kind: .fileDrop,
                 isPrimary: isPrimary
             )
+        case .backgroundOperation:
+            return CollapsedPreviewRowContent(
+                id: activity.id,
+                title: activity.title,
+                subtitle: activity.subtitle,
+                trailingText: activity.progress.map { "\(Int(($0 * 100).rounded()))%" },
+                symbolName: activity.symbolName,
+                fallbackSymbolName: "archivebox",
+                kind: .liveActivity,
+                isPrimary: isPrimary
+            )
         case .battery:
             return CollapsedPreviewRowContent(
                 id: activity.id,
@@ -783,8 +1412,32 @@ struct IslandRootView: View {
                 kind: .battery,
                 isPrimary: isPrimary
             )
+        case .agent:
+            return CollapsedPreviewRowContent(
+                id: activity.id,
+                title: activity.title,
+                subtitle: activity.subtitle,
+                trailingText: nil,
+                symbolName: activity.symbolName,
+                fallbackSymbolName: "cpu",
+                kind: .liveActivity,
+                isPrimary: isPrimary
+            )
         case .system:
             return nil
+        case .keepAwake, .terminalTask, .windowSnapPreview, .reminder,
+             .voiceRecording, .voiceTranscription, .voiceStatus, .camera, .backgroundRemoval,
+             .screenRecording, .message:
+            return CollapsedPreviewRowContent(
+                id: activity.id,
+                title: activity.title,
+                subtitle: activity.subtitle,
+                trailingText: nil,
+                symbolName: activity.symbolName,
+                fallbackSymbolName: "circle.fill",
+                kind: .liveActivity,
+                isPrimary: isPrimary
+            )
         }
     }
 
@@ -803,11 +1456,13 @@ struct IslandRootView: View {
         Binding(
             get: { modules.navigation.isFileDropTargeted },
             set: { isTargeted in
-                if isTargeted,
-                   settings.trayEnabled,
-                   settings.fileShelfEnabled,
-                   settings.allowFileDropsOnCollapsedIsland,
-                   settings.showTrayTab {
+                let accepted = isTargeted &&
+                    settings.trayEnabled &&
+                    settings.fileShelfEnabled &&
+                    settings.allowFileDropsOnCollapsedIsland &&
+                    settings.showTrayTab
+                fileDragSession.setSourceTargeted(accepted, region: .collapsedIsland)
+                if accepted {
                     modules.navigation.showTrayForFileDrag(using: settings)
                     onRequestExpand()
                 } else {
@@ -819,11 +1474,15 @@ struct IslandRootView: View {
 
     private func loadDroppedFilesFromCollapsedIsland(from providers: [NSItemProvider]) -> Bool {
         let loader = FileDropProviderLoader()
-        guard canAcceptCollapsedFileDrop, loader.canLoad(providers) else {
+        guard islandState.state == .collapsed,
+              renderedContentMode == .compact,
+              canAcceptCollapsedFileDrop,
+              loader.canLoad(providers) else {
             modules.navigation.endFileDropTargeting()
             return false
         }
         modules.navigation.endFileDropTargeting()
+        fileDragSession.cancel()
 
         loader.loadURLs(from: providers) { urls in
             Task { @MainActor in
@@ -868,7 +1527,6 @@ struct IslandRootView: View {
 
     private func startExpansionSequence() {
         guard settings.overlayEnabled else { return }
-        let sessionGeneration = layoutStore.overlayPresentationGeneration
         sequenceGeneration += 1
         let generation = sequenceGeneration
         if !modules.navigation.isFileDropTargeted {
@@ -876,6 +1534,9 @@ struct IslandRootView: View {
                 modules.navigation.ensureValidSelection(using: settings)
             } else {
                 modules.navigation.applyDefaultSelectionIfNeeded(using: settings)
+                // Same convention for the right workspace: without "remember
+                // last tab", each expansion starts on the default page.
+                modules.rightWorkspace.resetToDefaultPage()
             }
         }
         renderedContentMode = .expanded
@@ -884,30 +1545,110 @@ struct IslandRootView: View {
         isContentRemoving = false
         contentPhase = .shellExpanding
 
-        let shellDuration = IslandContentTransitionTiming.shellDuration(
-            settings: settings,
-            reduceMotion: reduceMotion
-        )
-        let revealDelay = reduceMotion || settings.reduceExtraMotion || !settings.contentAnimationEnabled || settings.animationPreset == .instant
-            ? 0
-            : IslandContentTransitionTiming.expansionContentDelay(shellDuration: shellDuration)
-        DispatchQueue.main.asyncAfter(deadline: .now() + revealDelay) {
-            guard settings.overlayEnabled, sessionGeneration == layoutStore.overlayPresentationGeneration,
-                  generation == sequenceGeneration else { return }
-            guard islandState.state == .expanded else { return }
-            guard !layoutStore.isExpandedContentExiting else { return }
-            isContentRemoving = false
-            contentVisible = true
-            contentPhase = .expandedContentVisible
+        // The overlay owns shell completion. One deferred turn supports an
+        // already-expanded static fixture without racing its state subscriber.
+        DispatchQueue.main.async {
+            guard generation == sequenceGeneration else { return }
+            revealExpandedContentIfReady()
+        }
+    }
+
+    private func revealExpandedContentIfReady() {
+        guard settings.overlayEnabled, islandState.state == .expanded,
+              contentPhase == .shellExpanding, !layoutStore.isShellMorphing,
+              !layoutStore.isExpandedContentExiting else { return }
+        isContentRemoving = false
+        contentVisible = true
+        contentPhase = .expandedContentVisible
+    }
+
+    private func handleWorkspaceGeometryTransition(_ transition: WorkspaceGeometryTransition) {
+        switch transition.phase {
+        case .childrenExiting:
+            guard workspaceExitGeneration != transition.generation else { return }
+            workspaceExitGeneration = transition.generation
+            let plan = ExpandedIslandMotion.collapsePlan(settings: settings, reduceMotion: reduceMotion)
+            let animation: Animation? = plan.childExitDuration > 0 ? .easeIn(duration: plan.childExitDuration) : nil
+            let generation = transition.generation
+            withAnimation(animation, completionCriteria: .logicallyComplete) {
+                workspaceExitClock = ExpandedChildExitVisualClock.next(after: workspaceExitClock)
+            } completion: {
+                layoutStore.workspaceChildrenExited(generation: generation)
+            }
+            withAnimation(animation, completionCriteria: .removed) {
+                workspaceContentVisible = false
+            } completion: {
+                layoutStore.workspaceChildrenExited(generation: generation)
+            }
+        case .shellResizing: break
+        case .idle:
+            workspaceExitGeneration = nil
+            workspaceContentVisible = true
+        }
+    }
+
+    /// Children exit -> acknowledgement -> shell collapse. Acknowledges the
+    /// current collapse generation from actual visual state, so a coalesced,
+    /// cancelled or interrupted exit can never leave the shell waiting.
+    private func driveChildExit() {
+        let childrenHidden = !contentVisible
+        switch childExitTracker.drive(generation: layoutStore.expandedChildExitGeneration,
+                                      isExiting: layoutStore.isExpandedContentExiting,
+                                      childrenHidden: childrenHidden) {
+        case .beginExit:
+            beginContentExitSequence()
+        case .acknowledge(let generation):
+            sequenceGeneration += 1
+            renderedContentMode = .expanded
+            contentPhase = .contentCollapsing
+            isContentRemoving = expandedContentMounted
+            layoutStore.acknowledgeExpandedChildExit(generation: generation)
+        case .none:
+            break
         }
     }
 
     private func beginContentExitSequence() {
         sequenceGeneration += 1
+        let token = childExitTracker.beginAnimation(generation: layoutStore.expandedChildExitGeneration)
+        let plan = ExpandedIslandMotion.collapsePlan(settings: settings, reduceMotion: reduceMotion)
         renderedContentMode = .expanded
-        contentVisible = false
-        isContentRemoving = expandedContentMounted
         contentPhase = .contentCollapsing
+        let exitAnimation: Animation? = plan.childExitDuration > 0 ? .easeIn(duration: plan.childExitDuration) : nil
+        let nextExitClock = ExpandedChildExitVisualClock.next(after: childExitClock)
+        withAnimation(exitAnimation, completionCriteria: .logicallyComplete) {
+            childExitClock = nextExitClock
+        } completion: {
+            finishChildExitAnimation(token: token)
+        }
+        withAnimation(exitAnimation, completionCriteria: .logicallyComplete) {
+            contentVisible = false
+            isContentRemoving = expandedContentMounted
+        } completion: {
+            finishChildExitAnimation(token: token)
+        }
+    }
+
+    /// The newest exit animation finished (rendered progress reached zero, its
+    /// container unmounted, or SwiftUI's completion fired — whichever is first).
+    private func finishChildExitAnimation(token: Int) {
+        guard childExitTracker.exitInFlight else { return }
+        if let generation = childExitTracker.animationFinished(
+            token: token,
+            currentGeneration: layoutStore.expandedChildExitGeneration,
+            isExiting: layoutStore.isExpandedContentExiting
+        ) {
+            layoutStore.acknowledgeExpandedChildExit(generation: generation)
+        }
+    }
+
+    private func cancelContentExitSequence() {
+        sequenceGeneration += 1
+        renderedContentMode = .expanded
+        expandedContentMounted = true
+        isContentRemoving = false
+        contentVisible = !layoutStore.isShellMorphing
+        contentPhase = contentVisible ? .expandedContentVisible : .shellExpanding
     }
 
     private func beginShellCollapseSequence() {
@@ -919,6 +1660,7 @@ struct IslandRootView: View {
     }
 
     private func finalizeCompactPresentation() {
+        childExitTracker.reset()
         renderedContentMode = .compact
         expandedContentMounted = false
         contentVisible = false
@@ -930,6 +1672,13 @@ struct IslandRootView: View {
     private func handleCollapsedHover(_ isHovering: Bool) {
         guard settings.overlayEnabled else { return }
         let sessionGeneration = layoutStore.overlayPresentationGeneration
+        if compactPermission != nil {
+            withAnimation(AgentCompactPermissionMotion.animation(reduceMotion: reduceMotion || settings.reduceExtraMotion)) {
+                layoutStore.compactPermissionHovered = isHovering
+            }
+            return
+        }
+        layoutStore.compactPermissionHovered = false
         isCollapsedHovering = isHovering
         collapsedPreviewGeneration += 1
         let generation = collapsedPreviewGeneration
@@ -1002,7 +1751,7 @@ private struct BlurBounceModifier: ViewModifier {
 
 /// Drives the "materialize in place" animation for the inner tray content only.
 /// The tray shell still uses the bouncy spring from IslandRootView.
-private struct InnerBlurScaleCleanModifier: ViewModifier {
+struct InnerBlurScaleCleanModifier: ViewModifier {
     let isVisible: Bool
     let isRemoval: Bool
     let delay: Double
@@ -1016,13 +1765,13 @@ private struct InnerBlurScaleCleanModifier: ViewModifier {
     private var scale: CGFloat {
         if reduceMotion || !animationsEnabled || !useScaleTransitions { return 1.0 }
         if isVisible { return 1.0 }
-        return isRemoval ? 0.97 : 0.955
+        return isRemoval ? IslandContentTransitionTiming.collapseExitScale : 0.955
     }
 
     private var blur: CGFloat {
         if reduceMotion || !animationsEnabled || !useBlurTransitions { return 0 }
         if isVisible { return 0 }
-        return isRemoval ? 6 : 8
+        return isRemoval ? IslandContentTransitionTiming.collapseExitBlur : 8
     }
 
     private var opacity: Double {
@@ -1046,8 +1795,8 @@ private struct InnerBlurScaleCleanModifier: ViewModifier {
                 .delay(reduceMotion ? 0 : delay)
         }
 
-        return .easeIn(duration: reduceMotion ? 0.10 : exitDuration)
-            .delay(reduceMotion ? 0 : min(max(0, delay * 0.35), 0.015))
+        return .easeIn(duration: reduceMotion ? IslandContentTransitionTiming.reducedCollapseExitDuration : exitDuration)
+            .delay(reduceMotion ? 0 : min(max(0, delay * 0.35), IslandContentTransitionTiming.collapseExitStaggerAllowance))
     }
 }
 
@@ -1119,7 +1868,7 @@ static var blurBounce: AnyTransition {
 }
 }
 
-private extension View {
+extension View {
     func innerBlurScaleClean(
         settings: AppSettings,
         isVisible: Bool,
@@ -1161,8 +1910,12 @@ struct IslandSurface<Content: View>: View {
     let visualProgress: CGFloat
     var collapsedPresentationProfile: CollapsedPresentationProfile = .normal
     var collapsedGlowColor: Color = .cyan
+    var collapsedBrightGlowColor: Color = .white
+    var forcesCollapsedGlow = false
+    var systemHUDActivity: DynamicIslandLiveActivity? = nil
     @ViewBuilder var content: Content
     @Environment(\.isNotchIntegratedShell) private var isNotchIntegratedShell
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.isShellMorphing) private var isShellMorphing
     @Environment(\.isCollapseShellOnly) private var isCollapseShellOnly
 
@@ -1197,24 +1950,31 @@ struct IslandSurface<Content: View>: View {
                     }
                 }
                 .overlay {
-                    if !isExpanded, collapsedPresentationProfile.glowStrength > 0 {
-                        shellShape
-                            .stroke(
-                                collapsedGlowColor.opacity(collapsedPresentationProfile.glowStrength),
-                                style: StrokeStyle(lineWidth: 2.2, lineCap: .round)
-                            )
-                            .blur(radius: collapsedPresentationProfile.kind == .agentAttention ? 5.5 : 3)
-                            .mask(alignment: .bottom) {
-                                LinearGradient(
-                                    colors: [.clear, .black.opacity(0.2), .black],
-                                    startPoint: .top,
-                                    endPoint: .bottom
-                                )
-                                .frame(height: 22)
-                            }
-                            .allowsHitTesting(false)
+                    if !isExpanded, collapsedPresentationProfile.glowStrength > 0 || forcesCollapsedGlow {
+                        AgentNotchGlowBorder(
+                            topCornerRadius: radii.top,
+                            bottomCornerRadius: radii.bottom,
+                            glowColor: collapsedGlowColor,
+                            brightColor: collapsedBrightGlowColor,
+                            reduceMotion: reduceMotion || settings.reduceExtraMotion
+                        )
+                        .opacity(
+                            collapsedPresentationProfile.glowStrength > 0
+                                ? collapsedPresentationProfile.glowStrength
+                                : (forcesCollapsedGlow ? 1 : 0)
+                        )
+                        .transition(.opacity)
                     }
                 }
+                .animation(.easeOut(duration: 0.5), value: forcesCollapsedGlow)
+
+            if !isExpanded,
+               collapsedPresentationProfile.kind == .systemHUD,
+               let systemHUDActivity {
+                SystemHUDBottomOuterGlow(activity: systemHUDActivity)
+                    .transition(.opacity)
+                    .zIndex(3)
+            }
 
             content
                 .padding(.horizontal, usesExpandedContentPadding ? 0 : collapsedHorizontalPadding)
@@ -1223,6 +1983,91 @@ struct IslandSurface<Content: View>: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .clipShape(shellShape)
         }
+    }
+}
+
+private struct SystemHUDBottomOuterGlow: View {
+    let activity: DynamicIslandLiveActivity
+
+    var body: some View {
+        GeometryReader { proxy in
+            let progress = LiveActivityStore.clampedProgress(activity.progress) ?? 0
+            let kind = activity.systemHUDKind ?? .volume
+            let components = SystemHUDAccentComponents.resolve(
+                kind: kind,
+                value: progress,
+                isMuted: kind == .volume && progress <= 0.0001
+            )
+            let color = Color(
+                red: components.red,
+                green: components.green,
+                blue: components.blue
+            )
+            let strength = 0.18 + (components.glowStrength * 0.82)
+
+            Capsule(style: .continuous)
+                .fill(color.opacity(0.12 * strength))
+                .frame(width: max(proxy.size.width - 34, 1), height: 1.2)
+                .position(x: proxy.size.width / 2, y: proxy.size.height + 0.6)
+                .shadow(
+                    color: color.opacity(0.62 * strength),
+                    radius: 4 + (8 * progress),
+                    y: 3 + (3 * progress)
+                )
+                .shadow(
+                    color: color.opacity(0.25 * strength),
+                    radius: 10 + (9 * progress),
+                    y: 7 + (4 * progress)
+                )
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+private struct AgentNotchGlowBorder: View {
+    let topCornerRadius: CGFloat
+    let bottomCornerRadius: CGFloat
+    let glowColor: Color
+    let brightColor: Color
+    let reduceMotion: Bool
+
+    private var frameInterval: Double {
+        // Always-on collapsed glow: ambient cadence (60 Hz, 30 in Low Power).
+        IslandFrameCadence.interval(.ambient)
+    }
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: frameInterval, paused: reduceMotion)) { timeline in
+            let time = timeline.date.timeIntervalSinceReferenceDate
+            let rotation = reduceMotion ? 0 : (time.truncatingRemainder(dividingBy: 2.0)) / 2.0 * 360
+            IslandShellGlowContour(
+                topCornerRadius: topCornerRadius,
+                bottomCornerRadius: bottomCornerRadius
+            )
+            .stroke(
+                AngularGradient(
+                    stops: [
+                        .init(color: .clear, location: 0.0),
+                        .init(color: glowColor.opacity(0.3), location: 0.1),
+                        .init(color: glowColor, location: 0.2),
+                        .init(color: brightColor, location: 0.3),
+                        .init(color: glowColor, location: 0.4),
+                        .init(color: glowColor.opacity(0.3), location: 0.5),
+                        .init(color: .clear, location: 0.6),
+                        .init(color: .clear, location: 1.0)
+                    ],
+                    center: .center,
+                    startAngle: .degrees(rotation),
+                    endAngle: .degrees(rotation + 360)
+                ),
+                style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round)
+            )
+            .shadow(color: glowColor.opacity(0.7), radius: 8)
+            .shadow(color: glowColor.opacity(0.4), radius: 16)
+            .shadow(color: glowColor.opacity(0.2), radius: 24)
+        }
+        .allowsHitTesting(false)
     }
 }
 
@@ -1251,24 +2096,22 @@ struct IslandShellRadii: Equatable {
     }
 }
 
-private struct IslandShellShape: Shape {
-    var topCornerRadius: CGFloat
-    var bottomCornerRadius: CGFloat
-
-    var animatableData: AnimatablePair<CGFloat, CGFloat> {
-        get { AnimatablePair(topCornerRadius, bottomCornerRadius) }
-        set {
-            topCornerRadius = newValue.first
-            bottomCornerRadius = newValue.second
-        }
+enum IslandShellPathGeometry {
+    struct ResolvedRadii: Equatable {
+        let top: CGFloat
+        let bottom: CGFloat
     }
 
-    func path(in rect: CGRect) -> Path {
+    static func resolvedRadii(
+        in rect: CGRect,
+        topCornerRadius: CGFloat,
+        bottomCornerRadius: CGFloat
+    ) -> ResolvedRadii? {
         guard rect.width.isFinite,
               rect.height.isFinite,
               rect.width > 0,
               rect.height > 0 else {
-            return Path()
+            return nil
         }
 
         let requestedTop = topCornerRadius.isFinite ? max(topCornerRadius, 0) : 0
@@ -1279,8 +2122,32 @@ private struct IslandShellShape: Shape {
             max(rect.height - topRadius, 0),
             max((rect.width / 2) - topRadius, 0)
         )
+        return ResolvedRadii(top: topRadius, bottom: bottomRadius)
+    }
 
+    static func path(
+        in rect: CGRect,
+        topCornerRadius: CGFloat,
+        bottomCornerRadius: CGFloat,
+        closesAcrossNotch: Bool
+    ) -> Path {
+        guard let radii = resolvedRadii(
+            in: rect,
+            topCornerRadius: topCornerRadius,
+            bottomCornerRadius: bottomCornerRadius
+        ) else {
+            return Path()
+        }
+
+        let topRadius = radii.top
+        let bottomRadius = radii.bottom
         var path = Path()
+
+        // The visible notch-integrated contour begins at the left shoulder tip,
+        // travels around the shell bottom, and ends at the right shoulder tip.
+        // The filled shell closes across the hidden top edge; the animated glow
+        // deliberately does not, so it can reach both shoulders without drawing
+        // a neon line through the physical camera notch.
         path.move(to: CGPoint(x: rect.minX, y: rect.minY))
         path.addQuadCurve(
             to: CGPoint(x: rect.minX + topRadius, y: rect.minY + topRadius),
@@ -1301,8 +2168,55 @@ private struct IslandShellShape: Shape {
             to: CGPoint(x: rect.maxX, y: rect.minY),
             control: CGPoint(x: rect.maxX - topRadius, y: rect.minY)
         )
-        path.closeSubpath()
+
+        if closesAcrossNotch {
+            path.closeSubpath()
+        }
         return path
+    }
+}
+
+private struct IslandShellShape: Shape {
+    var topCornerRadius: CGFloat
+    var bottomCornerRadius: CGFloat
+
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(topCornerRadius, bottomCornerRadius) }
+        set {
+            topCornerRadius = newValue.first
+            bottomCornerRadius = newValue.second
+        }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        IslandShellPathGeometry.path(
+            in: rect,
+            topCornerRadius: topCornerRadius,
+            bottomCornerRadius: bottomCornerRadius,
+            closesAcrossNotch: true
+        )
+    }
+}
+
+private struct IslandShellGlowContour: Shape {
+    var topCornerRadius: CGFloat
+    var bottomCornerRadius: CGFloat
+
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(topCornerRadius, bottomCornerRadius) }
+        set {
+            topCornerRadius = newValue.first
+            bottomCornerRadius = newValue.second
+        }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        IslandShellPathGeometry.path(
+            in: rect,
+            topCornerRadius: topCornerRadius,
+            bottomCornerRadius: bottomCornerRadius,
+            closesAcrossNotch: false
+        )
     }
 }
 
@@ -1310,6 +2224,7 @@ struct CompactIslandView: View {
     @ObservedObject var settings: AppSettings
     let modules: IslandModules
     let contentMode: CollapsedIslandContentMode
+    let layoutResolution: LiveActivityLayoutResolution
     let previewContent: CollapsedPreviewContent?
     let previewActive: Bool
     let hardwareNotchWidth: CGFloat
@@ -1329,6 +2244,7 @@ struct CompactIslandView: View {
         settings: AppSettings,
         modules: IslandModules,
         contentMode: CollapsedIslandContentMode = .inactive,
+        layoutResolution: LiveActivityLayoutResolution = .empty,
         previewContent: CollapsedPreviewContent? = nil,
         previewActive: Bool = false,
         hardwareNotchWidth: CGFloat = 0,
@@ -1340,6 +2256,7 @@ struct CompactIslandView: View {
         self.settings = settings
         self.modules = modules
         self.contentMode = contentMode
+        self.layoutResolution = layoutResolution
         self.previewContent = previewContent
         self.previewActive = previewActive
         self.hardwareNotchWidth = hardwareNotchWidth
@@ -1365,6 +2282,13 @@ struct CompactIslandView: View {
         case .failure: .red
         case .informational, .none: .cyan
         }
+        let attentionSymbol: String = switch attentionPresentation?.style {
+        case .success: "checkmark"
+        case .actionRequired: "hand.raised.fill"
+        case .failure: "exclamationmark"
+        case .informational: "sparkles"
+        case .none: "circle.fill"
+        }
         let _ = Self.debugRender(
             hasActiveMediaSource: media.hasActiveMediaSource,
             isPlaying: media.isPlaying,
@@ -1375,20 +2299,33 @@ struct CompactIslandView: View {
 
         ZStack(alignment: .bottom) {
             if let attentionPresentation, let primary = attentionPresentation.primary {
-                sideSlotLayout {
-                    AgentCompactAttentionLeadingView(
-                        provider: primary.session.sessionID.provider,
-                        project: attentionSession?.project.displayName
-                    )
-                } right: {
-                    AgentCompactAttentionTrailingView(
-                        text: attentionPresentation.totalCount > 1
-                            ? "\(attentionPresentation.totalCount) agents"
-                            : String(primary.displaySummary.prefix(72)),
-                        accent: attentionAccent
+                VStack(spacing: 0) {
+                    sideSlotLayout {
+                        AgentCompactAttentionLeadingView(
+                            provider: primary.session.sessionID.provider,
+                            project: attentionSession?.project.displayName,
+                            session: attentionSession
+                        )
+                    } right: {
+                        AgentCompactAttentionTrailingView(
+                            text: attentionPresentation.totalCount > 1
+                                ? "\(attentionPresentation.totalCount) agents"
+                                : titleForAttention(primary.reason),
+                            accent: attentionAccent,
+                            symbol: attentionSymbol
+                        )
+                    }
+                    .frame(height: 22)
+
+                    Spacer(minLength: 4)
+
+                    AgentCompactPeekNotificationView(
+                        presentation: attentionPresentation,
+                        session: attentionSession
                     )
                 }
-                .transition(.opacity)
+                .padding(.bottom, 5)
+                .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .top)))
             } else {
                 compactContentRow(activeBranch: activeBranch, visualizerColor: visualizerColor)
                     .frame(height: 16)
@@ -1409,66 +2346,143 @@ struct CompactIslandView: View {
         .animation(compactContentAnimation, value: previewActive)
     }
 
+    private func titleForAttention(_ reason: AgentAttentionReason) -> String {
+        switch reason {
+        case .approvalRequired: "Permission required"
+        case .userInputRequired: "Input required"
+        case .completed: "Task Complete"
+        case .failed: "Task Failed"
+        case .planReady: "Plan ready"
+        case .interrupted: "Interrupted"
+        }
+    }
+
     @ViewBuilder
     private func compactContentRow(activeBranch: Bool, visualizerColor: Color) -> some View {
         ZStack {
-            switch contentMode {
-            case .media where activeBranch:
+            persistentCompactContent(activeBranch: activeBranch, visualizerColor: visualizerColor)
+
+            if let overlay = layoutResolution.overlayTransient?.activity {
+                CollapsedSystemHUDCompactView(
+                    activity: overlay,
+                    layout: sideSlotGeometry,
+                    controller: modules.systemHUD
+                )
+                .background(Color.black.opacity(0.97))
+                .transition(.compactMediaContent)
+                .zIndex(10)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func persistentCompactContent(activeBranch: Bool, visualizerColor: Color) -> some View {
+        switch contentMode {
+        case .media where activeBranch:
+            sideSlotLayout {
+                if settings.showAlbumArtwork {
+                    CompactMediaView(media: media)
+                }
+            } right: {
+                if settings.showVisualizer && settings.showCollapsedVisualizer {
+                    AudioVisualizerView(
+                        isPlaying: media.isPlaying,
+                        isActive: media.hasActiveMediaSource,
+                        accentColor: visualizerColor,
+                        variant: .compact,
+                        barCount: 7,
+                        cadence: .ambient,
+                        pauseDuringShellMorph: settings.disableVisualizerDuringMorph
+                    )
+                }
+            }
+            .transition(.compactMediaContent)
+
+        case .agent:
+            if let presentation = AgentCompactPresentation.make(
+                sessions: agentEvents.sessions,
+                enabled: settings.agentActivityEnabled
+            ), let primary = presentation.sessions.first {
                 sideSlotLayout {
-                    if settings.showAlbumArtwork {
-                        CompactMediaView(media: media)
-                    }
+                    AgentCompactRoutineLeadingView(session: primary)
                 } right: {
-                    if settings.showVisualizer && settings.showCollapsedVisualizer {
-                        AudioVisualizerView(
-                            isPlaying: media.isPlaying,
-                            isActive: media.hasActiveMediaSource,
-                            accentColor: visualizerColor,
-                            variant: .compact,
-                            barCount: 7,
-                            pauseDuringShellMorph: settings.disableVisualizerDuringMorph
-                        )
-                    }
+                    AgentCompactRoutineTrailingView(session: primary)
                 }
                 .transition(.compactMediaContent)
-            case .timer(let activity):
-                CollapsedTimerActivityCompactView(
-                    activity: activity,
-                    layout: sideSlotGeometry
-                )
-                    .transition(.compactMediaContent)
-            case .fileTray(let activity):
-                CollapsedFileActivityCompactView(
-                    activity: activity,
-                    layout: sideSlotGeometry
-                )
-                    .transition(.compactMediaContent)
-            case .battery(let activity):
-                CollapsedBatteryActivityCompactView(
-                    activity: activity,
-                    layout: sideSlotGeometry
-                )
-                    .transition(.compactMediaContent)
-            case .inactive:
-                if agentAttention.presentation == nil,
-                   let presentation = AgentCompactPresentation.make(
-                       sessions: agentEvents.sessions,
-                       enabled: settings.agentActivityEnabled
-                   ) {
-                    sideSlotLayout {
-                        AgentCompactMarkerCluster(presentation: presentation)
-                    } right: {
-                        AgentCompactSummaryLabel(presentation: presentation)
-                    }
-                        .transition(.opacity)
-                } else {
-                    Color.clear
-                        .transition(.opacity)
+            } else {
+                Color.clear
+            }
+
+        case .system(let activity):
+            CollapsedSystemHUDCompactView(
+                activity: activity,
+                layout: sideSlotGeometry,
+                controller: modules.systemHUD
+            )
+            .transition(.compactMediaContent)
+
+        case .timer(let activity):
+            CollapsedTimerActivityCompactView(
+                activity: activity,
+                layout: sideSlotGeometry
+            )
+            .transition(.compactMediaContent)
+
+        case .fileTray(let activity):
+            CollapsedFileActivityCompactView(
+                activity: activity,
+                layout: sideSlotGeometry
+            )
+            .transition(.compactMediaContent)
+
+        case .battery(let activity):
+            CollapsedBatteryActivityCompactView(
+                activity: activity,
+                layout: sideSlotGeometry
+            )
+            .transition(.compactMediaContent)
+
+        case .screenRecording:
+            CollapsedScreenRecordingActivityView(
+                controller: modules.productivity.screenRecording,
+                layout: sideSlotGeometry
+            )
+            .transition(.compactMediaContent)
+
+        case .voiceRecording(let activity), .voiceTranscription(let activity):
+            CollapsedVoiceBeamCompactView(
+                controller: modules.productivity.voice,
+                activity: activity
+            )
+            .transition(.compactMediaContent)
+
+        case .generic(let activity):
+            CollapsedGenericActivityCompactView(
+                activity: activity,
+                layout: sideSlotGeometry
+            )
+            .transition(.compactMediaContent)
+
+        case .inactive:
+            if agentAttention.presentation == nil,
+               let presentation = AgentCompactPresentation.make(
+                   sessions: agentEvents.sessions,
+                   enabled: settings.agentActivityEnabled
+               ), let primary = presentation.sessions.first {
+                sideSlotLayout {
+                    AgentCompactRoutineLeadingView(session: primary)
+                } right: {
+                    AgentCompactRoutineTrailingView(session: primary)
                 }
-            case .media:
+                .transition(.opacity)
+            } else {
                 Color.clear
                     .transition(.opacity)
             }
+
+        case .media:
+            Color.clear
+                .transition(.opacity)
         }
     }
 
@@ -1590,6 +2604,515 @@ struct CompactCollapsedSideSlotLayout<Left: View, Right: View>: View {
                 right()
             }
         }
+    }
+}
+
+
+enum LiveActivitySidecarMetrics {
+    static let diameter: CGFloat = 30
+    static let gap: CGFloat = 7
+}
+
+struct RadialActivityProgressView<Content: View>: View {
+    let progress: Double
+    let content: Content
+
+    init(
+        progress: Double,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.progress = min(max(progress, 0), 1)
+        self.content = content()
+    }
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(.white.opacity(0.12), lineWidth: 1.6)
+
+            Circle()
+                .trim(from: 0, to: progress)
+                .stroke(
+                    .white.opacity(0.88),
+                    style: StrokeStyle(lineWidth: 1.8, lineCap: .round)
+                )
+                .rotationEffect(.degrees(-90))
+
+            content
+        }
+        .animation(.easeInOut(duration: 0.18), value: progress)
+    }
+}
+
+struct CircleSidecarView: View {
+    let symbolName: String
+    let accessibilityLabel: String
+
+    var body: some View {
+        ZStack {
+            Circle().fill(Color.black.opacity(0.98))
+            Circle().stroke(.white.opacity(0.12), lineWidth: 1)
+            SafeSystemImage(symbolName: symbolName, fallbackSymbolName: "circle.fill")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(.white.opacity(0.88))
+        }
+        .accessibilityLabel(accessibilityLabel)
+    }
+}
+
+struct ProgressCircleSidecarView: View {
+    let activity: DynamicIslandLiveActivity
+
+    var body: some View {
+        RadialActivityProgressView(progress: progress) {
+            if activity.kind == .timer {
+                Image(systemName: activity.isActive ? "timer" : "pause.fill")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(activity.isActive ? .orange : .white.opacity(0.86))
+            } else {
+                SafeSystemImage(
+                    symbolName: activity.symbolName,
+                    fallbackSymbolName: "circle.fill"
+                )
+                .font(.system(size: 8.5, weight: .bold))
+                .foregroundStyle(sidecarAccent)
+            }
+        }
+        .padding(2)
+        .background(Color.black.opacity(0.98), in: Circle())
+        .overlay(Circle().stroke(.white.opacity(0.08), lineWidth: 1))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityValue("\(Int((progress * 100).rounded())) percent")
+    }
+
+    private var progress: Double {
+        LiveActivityStore.clampedProgress(activity.progress) ?? 0
+    }
+
+    private var sidecarAccent: Color {
+        switch activity.kind {
+        case .battery:
+            switch activity.batteryState {
+            case .low: .orange
+            case .charging, .pluggedIn: .green
+            case .full, .none: .white.opacity(0.86)
+            }
+        default:
+            .white.opacity(0.86)
+        }
+    }
+
+    private var accessibilityLabel: String {
+        [activity.title, activity.subtitle]
+            .compactMap { $0 }
+            .joined(separator: ", ")
+    }
+}
+
+struct CompactCapsuleSidecarView: View {
+    let activity: DynamicIslandLiveActivity
+
+    var body: some View {
+        HStack(spacing: 3) {
+            SafeSystemImage(
+                symbolName: activity.symbolName,
+                fallbackSymbolName: "circle.fill"
+            )
+            .font(.system(size: 8, weight: .bold))
+
+            if let subtitle = activity.subtitle {
+                Text(subtitle)
+                    .font(.system(size: 6.8, weight: .bold, design: .rounded))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.55)
+            }
+        }
+        .foregroundStyle(.white.opacity(0.86))
+        .padding(.horizontal, 5)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.black.opacity(0.98), in: Capsule())
+        .overlay(Capsule().stroke(.white.opacity(0.11), lineWidth: 1))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(
+            [activity.title, activity.subtitle]
+                .compactMap { $0 }
+                .joined(separator: ", ")
+        )
+    }
+}
+
+struct LiveActivitySidecarLayer: View {
+    let resolution: LiveActivityLayoutResolution
+    let compositeGeometry: LiveActivityCompositeGeometry
+    let canvasHeight: CGFloat
+    let reduceMotion: Bool
+    let onActivate: (LiveActivityPresentation) -> Void
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            if let leading = resolution.leadingSidecar,
+               let frame = compositeGeometry.leadingSidecarFrame {
+                sidecarButton(leading)
+                    .frame(width: frame.width, height: frame.height)
+                    .position(x: frame.midX, y: canvasHeight - frame.midY)
+                    .transition(sidecarTransition)
+            }
+
+            if let trailing = resolution.trailingSidecar,
+               let frame = compositeGeometry.trailingSidecarFrame {
+                sidecarButton(trailing)
+                    .frame(width: frame.width, height: frame.height)
+                    .position(x: frame.midX, y: canvasHeight - frame.midY)
+                    .transition(sidecarTransition)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .allowsHitTesting(true)
+    }
+
+    @ViewBuilder
+    private func sidecarButton(_ presentation: LiveActivityPresentation) -> some View {
+        Button {
+            onActivate(presentation)
+        } label: {
+            sidecarView(presentation)
+        }
+        .buttonStyle(.plain)
+        .help(sidecarHelp(presentation.activity))
+        .accessibilityLabel(sidecarHelp(presentation.activity))
+    }
+
+    @ViewBuilder
+    private func sidecarView(_ presentation: LiveActivityPresentation) -> some View {
+        switch presentation.descriptor.compactShape {
+        case .circle:
+            if presentation.activity.progress != nil {
+                ProgressCircleSidecarView(activity: presentation.activity)
+            } else {
+                CircleSidecarView(
+                    symbolName: presentation.activity.symbolName,
+                    accessibilityLabel: sidecarHelp(presentation.activity)
+                )
+            }
+        case .capsule, .progressPill:
+            CompactCapsuleSidecarView(activity: presentation.activity)
+        case .notchWing, .elongatedPill:
+            CircleSidecarView(
+                symbolName: presentation.activity.symbolName,
+                accessibilityLabel: sidecarHelp(presentation.activity)
+            )
+        }
+    }
+
+    private var sidecarTransition: AnyTransition {
+        if reduceMotion {
+            return .opacity
+        }
+        return .opacity.combined(with: .scale(scale: 0.82))
+    }
+
+    private func sidecarHelp(_ activity: DynamicIslandLiveActivity) -> String {
+        [activity.title, activity.subtitle]
+            .compactMap { $0 }
+            .joined(separator: " · ")
+    }
+}
+
+struct CollapsedGenericActivityCompactView: View {
+    let activity: DynamicIslandLiveActivity
+    let layout: CompactCollapsedSideSlotGeometry
+
+    var body: some View {
+        CompactCollapsedSideSlotLayout(geometry: layout) {
+            SafeSystemImage(symbolName: activity.symbolName, fallbackSymbolName: "circle.fill")
+                .font(.system(size: 10.5, weight: .bold))
+                .foregroundStyle(.white.opacity(0.9))
+                .frame(
+                    width: CollapsedActivityLayoutProfile.genericActivityLeftContentWidth,
+                    height: CollapsedActivityLayoutProfile.genericActivityLeftContentWidth
+                )
+        } right: {
+            Text(activity.subtitle ?? activity.title)
+                .font(.system(size: 8.5, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.84))
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+                .frame(
+                    width: CollapsedActivityLayoutProfile.genericActivityRightContentWidth,
+                    alignment: .trailing
+                )
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(
+            [activity.title, activity.subtitle]
+                .compactMap { $0 }
+                .joined(separator: ", ")
+        )
+    }
+}
+
+struct CollapsedSystemHUDCompactView: View {
+    let activity: DynamicIslandLiveActivity
+    let layout: CompactCollapsedSideSlotGeometry
+    var controller: SystemHUDController? = nil
+
+    @Environment(\.islandDisplayMetrics) private var displayMetrics
+    @State private var confirmedProgress: Double = 0
+    @State private var interactionSupported: Bool? = nil
+    @State private var lastWriteUptime: TimeInterval = 0
+
+    var body: some View {
+        VStack(spacing: 0) {
+            CompactCollapsedSideSlotLayout(geometry: layout) {
+                SafeSystemImage(symbolName: activity.symbolName, fallbackSymbolName: "slider.horizontal.3")
+                    .font(.system(size: displayMetrics.icon(11), weight: .bold))
+                    .foregroundStyle(accentColor.opacity(0.96))
+                    .frame(
+                        width: max(CollapsedActivityLayoutProfile.systemHUDLeftContentWidth * displayMetrics.collapsedSideContentScale, 16),
+                        height: max(CollapsedActivityLayoutProfile.systemHUDLeftContentWidth * displayMetrics.collapsedSideContentScale, 16)
+                    )
+                    .contentTransition(.symbolEffect(.replace.byLayer))
+            } right: {
+                if sliderKind != nil {
+                    Text(SystemHUDFormatting.percentage(confirmedProgress))
+                        .font(.system(size: displayMetrics.font(8.2, minimum: 7.4, maximum: 10), weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(accentColor.opacity(0.96))
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .frame(minWidth: 30 * displayMetrics.compactControlScale, alignment: .trailing)
+                } else {
+                    Text(activity.subtitle ?? activity.title)
+                        .font(.system(size: displayMetrics.font(7.4, minimum: 7.2, maximum: 9.4), weight: .bold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.84))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
+                        .frame(
+                            width: CollapsedActivityLayoutProfile.systemHUDRightContentWidth * displayMetrics.collapsedSideContentScale,
+                            alignment: .trailing
+                        )
+                }
+            }
+            // Row band: the physical top band (notch height or collapsed
+            // height), so the icon and percentage stay beside the notch.
+            .frame(maxHeight: .infinity)
+
+            if sliderKind != nil {
+                // Slider band hanging below the top band. The shell's bottom
+                // padding is part of the band, so the slider is centered
+                // between the notch edge and the shell's bottom edge.
+                let sliderHeight = displayMetrics.hudSliderHeight
+                let band = CollapsedPresentationProfile.systemHUDSliderBandHeight
+                SystemHUDCompactSlider(
+                    value: confirmedProgress,
+                    accent: accentColor,
+                    isEnabled: interactionSupported == true,
+                    height: sliderHeight,
+                    trackTopInset: max((band - sliderHeight) / 2, 0),
+                    hitHeight: band - IslandShellLayout.collapsedBottomPadding,
+                    onChange: { requested, force in
+                        writeInteractiveValue(requested, force: force)
+                    }
+                )
+                .padding(.horizontal, max(8 * displayMetrics.spacingScale, 7))
+                .help(interactionSupported == false ? unsupportedHelp : "Adjust \(activity.title)")
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(
+            [activity.title, activity.subtitle].compactMap { $0 }.joined(separator: ", ")
+        )
+        .accessibilityValue(sliderKind == nil ? (activity.subtitle ?? "") : SystemHUDFormatting.percentage(confirmedProgress))
+        .onAppear(perform: synchronizeFromAuthority)
+        .onChange(of: activity.progress) { _, _ in synchronizeFromActivity() }
+        .onChange(of: activity.systemHUDKind) { _, _ in synchronizeFromAuthority() }
+    }
+
+    private var sliderKind: SystemHUDKind? {
+        guard activity.progress != nil else { return nil }
+        switch resolvedKind {
+        case .volume, .brightness:
+            return resolvedKind
+        case .capsLock, .battery, .audioDevice, .focus, nil:
+            return nil
+        }
+    }
+
+    private var resolvedKind: SystemHUDKind? {
+        if let exact = activity.systemHUDKind { return exact }
+        switch activity.title.lowercased() {
+        case let title where title.contains("volume") || title.contains("muted"):
+            return .volume
+        case let title where title.contains("brightness"):
+            return .brightness
+        default:
+            return nil
+        }
+    }
+
+    private var accentComponents: SystemHUDAccentComponents {
+        SystemHUDAccentComponents.resolve(
+            kind: resolvedKind ?? .volume,
+            value: confirmedProgress,
+            isMuted: resolvedKind == .volume && confirmedProgress <= 0.0001
+        )
+    }
+
+    private var accentColor: Color {
+        Color(
+            red: accentComponents.red,
+            green: accentComponents.green,
+            blue: accentComponents.blue,
+            opacity: accentComponents.opacity
+        )
+    }
+
+    private var unsupportedHelp: String {
+        resolvedKind == .brightness
+            ? "Brightness control is unavailable for this display"
+            : "Volume control is unavailable for this output device"
+    }
+
+    private func synchronizeFromActivity() {
+        guard let progress = activity.progress else { return }
+        confirmedProgress = min(max(progress, 0), 1)
+    }
+
+    private func synchronizeFromAuthority() {
+        synchronizeFromActivity()
+        guard let controller, let kind = sliderKind else {
+            interactionSupported = controller == nil ? nil : false
+            return
+        }
+        if let snapshot = controller.currentInteractiveSnapshot(kind: kind) {
+            confirmedProgress = min(max(snapshot.value, 0), 1)
+            interactionSupported = true
+        } else {
+            interactionSupported = false
+        }
+    }
+
+    private func writeInteractiveValue(_ requested: Double, force: Bool) {
+        guard let controller, let kind = sliderKind, interactionSupported == true else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        guard force || now - lastWriteUptime >= (1.0 / 30.0) else { return }
+        lastWriteUptime = now
+        guard let snapshot = controller.setInteractiveValue(kind: kind, value: requested) else {
+            interactionSupported = false
+            synchronizeFromActivity()
+            return
+        }
+        confirmedProgress = min(max(snapshot.value, 0), 1)
+    }
+}
+
+/// The production collapsed HUD shell (IslandSurface, shape, bottom glow and
+/// CollapsedSystemHUDCompactView) at the geometry NotchGeometryService
+/// resolves for a reference notched display. Settings previews use this so
+/// they can never drift from the island's own HUD geometry.
+struct SystemHUDShellPreview: View {
+    @ObservedObject var settings: AppSettings
+    let activity: DynamicIslandLiveActivity
+
+    /// 14-inch-class notched display (1512×982 pt, 32 pt safe-area top).
+    static let referenceScreen: ScreenSnapshot = {
+        let size = CGSize(width: 1512, height: 982)
+        let notchHeight: CGFloat = 32
+        return ScreenSnapshot(
+            frame: CGRect(origin: .zero, size: size),
+            visibleFrame: CGRect(x: 0, y: 0, width: size.width, height: size.height - notchHeight),
+            safeAreaInsets: NSEdgeInsets(top: notchHeight, left: 0, bottom: 0, right: 0),
+            auxiliaryTopLeftArea: CGRect(x: 0, y: size.height - notchHeight, width: (size.width - 180) / 2, height: notchHeight),
+            auxiliaryTopRightArea: CGRect(x: (size.width + 180) / 2, y: size.height - notchHeight, width: (size.width - 180) / 2, height: notchHeight)
+        )
+    }()
+
+    static func geometry(settings: AppSettings, activity: DynamicIslandLiveActivity) -> IslandGeometry {
+        let isInteractive = activity.systemHUDKind == .volume || activity.systemHUDKind == .brightness
+        return NotchGeometryService().geometry(
+            for: referenceScreen,
+            collapsedSize: settings.collapsedSize,
+            expandedSize: settings.expandedSize,
+            collapsedActivityProfile: .systemHUD,
+            collapsedPresentationProfile: isInteractive ? .systemHUD(value: activity.progress ?? 0) : .normal,
+            useAdaptiveNotchSizing: true,
+            respectHardwareNotch: true
+        )
+    }
+
+    var body: some View {
+        let geometry = Self.geometry(settings: settings, activity: activity)
+        let isInteractive = geometry.collapsedPresentationProfile.kind == .systemHUD
+        IslandSurface(
+            settings: settings,
+            isExpanded: false,
+            visualProgress: 0,
+            collapsedPresentationProfile: geometry.collapsedPresentationProfile,
+            systemHUDActivity: isInteractive ? activity : nil
+        ) {
+            CollapsedSystemHUDCompactView(
+                activity: activity,
+                layout: CompactCollapsedSideSlotGeometry(
+                    isNotchIntegrated: true,
+                    leftRegionWidth: geometry.collapsedLeftRegionWidth,
+                    notchCoreWidth: geometry.collapsedNotchCoreWidth,
+                    rightRegionWidth: geometry.collapsedRightRegionWidth
+                )
+            )
+        }
+        .notchIntegrated(true)
+        .frame(width: geometry.collapsedFrame.width, height: geometry.collapsedFrame.height)
+    }
+}
+
+private struct SystemHUDCompactSlider: View {
+    let value: Double
+    let accent: Color
+    let isEnabled: Bool
+    let height: CGFloat
+    /// Distance from the top of the hit area to the visual track.
+    var trackTopInset: CGFloat = 0
+    /// Interactive height; the drag target spans the whole slider band
+    /// instead of only the thin visual track.
+    var hitHeight: CGFloat? = nil
+    let onChange: (_ value: Double, _ force: Bool) -> Void
+
+    var body: some View {
+        GeometryReader { proxy in
+            let width = max(proxy.size.width, 1)
+            ZStack(alignment: .topLeading) {
+                ZStack(alignment: .leading) {
+                    Capsule(style: .continuous)
+                        .fill(.white.opacity(isEnabled ? 0.13 : 0.07))
+                    Capsule(style: .continuous)
+                        .fill(accent)
+                        .frame(width: width * CGFloat(min(max(value, 0), 1)))
+                }
+                .frame(height: height)
+                .padding(.top, trackTopInset)
+            }
+            .frame(width: width, height: proxy.size.height, alignment: .topLeading)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0, coordinateSpace: .local)
+                    .onChanged { gesture in
+                        guard isEnabled else { return }
+                        onChange(min(max(gesture.location.x / width, 0), 1), false)
+                    }
+                    .onEnded { gesture in
+                        guard isEnabled else { return }
+                        onChange(min(max(gesture.location.x / width, 0), 1), true)
+                    }
+            )
+        }
+        .frame(height: max(hitHeight ?? height, height + trackTopInset))
+        .opacity(isEnabled ? 1 : 0.48)
+        .animation(.smooth(duration: 0.10), value: value)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("System level")
+        .accessibilityValue(SystemHUDFormatting.percentage(value))
     }
 }
 
@@ -1746,7 +3269,7 @@ private struct CollapsedBatteryActivityCompactView: View {
     }
 }
 
-private struct CollapsedPreviewRow: View {
+struct CollapsedPreviewRow: View {
     let content: CollapsedPreviewContent
 
     var body: some View {
@@ -1858,6 +3381,7 @@ private struct SafeSystemImage: View {
 }
 
 struct ExpandedIslandView: View {
+    @Environment(\.timerRulerInteractionRegistration) private var rulerRegistration
     @ObservedObject var settings: AppSettings
     let modules: IslandModules
     let contentVisible: Bool
@@ -1878,11 +3402,17 @@ struct ExpandedIslandView: View {
     @ObservedObject private var agentEvents: AgentEventStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.isCollapseShellOnly) private var isCollapseShellOnly
+    @Environment(\.workspaceNotchLane) private var workspaceNotchLane
+    @Environment(\.expandedHeaderLayout) private var headerLayout
     @Environment(\.isNotchIntegratedShell) private var isNotchIntegratedShell
 
     @State private var isAirDropTargeted = false
     @State private var isFilesTargeted = false
     @State private var clipboardPresentation = ClipboardHistoryPresentationState()
+    @State private var pagePresentation: ExpandedPageTransitionState
+    @ObservedObject private var customization: WorkspaceCustomizationStore
+    @State private var editingWidgets = false
+    @State private var editingNavigation = false
 
     init(
         settings: AppSettings,
@@ -1916,9 +3446,11 @@ struct ExpandedIslandView: View {
         self.islandGestureContext = islandGestureContext
         self.islandGestureCallbacks = islandGestureCallbacks
         self.islandSwipeSensitivity = islandSwipeSensitivity
+        customization = modules.customization ?? WorkspaceCustomizationStore()
         navigation = modules.navigation
         liveActivities = modules.liveActivities
         agentEvents = modules.agentEvents
+        _pagePresentation = State(initialValue: ExpandedPageTransitionState(page: modules.navigation.selectedPage))
     }
 
     var body: some View {
@@ -1927,7 +3459,9 @@ struct ExpandedIslandView: View {
                 containerSize: proxy.size,
                 horizontalPadding: IslandShellLayout.expandedHorizontalPadding(
                     isNotchIntegrated: isNotchIntegratedShell
-                )
+                ),
+                displayMetrics: layoutStore.displayMetrics,
+                headerDrop: headerLayout.mode == .compactBelowNotch ? headerLayout.headerDrop : 0
             )
 
             ZStack(alignment: .topLeading) {
@@ -1938,7 +3472,7 @@ struct ExpandedIslandView: View {
                             coordinator: islandGestureCoordinator,
                             context: islandGestureContext,
                             callbacks: islandGestureCallbacks,
-                            swipeSensitivity: islandSwipeSensitivity
+                            swipeSensitivity: islandSwipeSensitivity, layoutStore: layoutStore
                         )
                     )
 
@@ -1956,35 +3490,59 @@ struct ExpandedIslandView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .environment(\.timerRulerInteractionRegistration, TimerRulerInteractionRegistration(
+            enabled: !editingWidgets && !editingNavigation, rulerRegistration.report))
         .onAppear {
+            navigation.applyConfiguration(customization.configuration, using: settings)
             synchronizeExpandedScrollSuppression()
             synchronizeClipboardEscapeRegistration()
             synchronizeStatsPolling()
         }
-        .onChange(of: navigation.selectedPage) { _, _ in
+        .onChange(of: customization.configuration) { _, configuration in
+            navigation.applyConfiguration(configuration, using: settings)
+        }
+        .onChange(of: editingWidgets) { _, _ in synchronizeCustomizationEditing() }
+        .onChange(of: editingNavigation) { _, _ in synchronizeCustomizationEditing() }
+        .onChange(of: navigation.selectedPage) { _, page in
+            editingWidgets = false
+            editingNavigation = false
+            handleSelectedPageChange(page)
             closeClipboardHistoryImmediately()
             synchronizeExpandedScrollSuppression()
             synchronizeStatsPolling()
         }
         .onChange(of: contentVisible) { _, isVisible in
             if !isVisible {
+                if layoutStore.isExpandedContentExiting || isCollapseShellOnly {
+                    editingWidgets = false
+                    editingNavigation = false
+                    synchronizeCustomizationEditing()
+                }
                 closeClipboardHistoryImmediately()
             }
+            // Expansion/collapse owns content visibility; never leave a tab
+            // handoff pending across it.
+            pagePresentation.snap(to: navigation.selectedPage)
             synchronizeStatsPolling()
         }
         .onChange(of: shouldRenderContent) { _, shouldRender in
             if !shouldRender {
                 closeClipboardHistoryImmediately()
+                pagePresentation.snap(to: navigation.selectedPage)
             }
             synchronizeStatsPolling()
         }
         .onChange(of: isCollapseShellOnly) { _, collapseOnly in
             if collapseOnly {
                 closeClipboardHistoryImmediately()
+                pagePresentation.snap(to: navigation.selectedPage)
             }
             synchronizeStatsPolling()
         }
         .onDisappear {
+            editingWidgets = false
+            editingNavigation = false
+            layoutStore.setTransientInteraction(false, owner: .workspaceEditor)
             closeClipboardHistoryImmediately()
             escapeRouter.setTopmostPresentation(nil)
             layoutStore.setExpandedScrollGestureSuppressed(false)
@@ -2008,7 +3566,7 @@ struct ExpandedIslandView: View {
 
     private func expandedBaseLayer(metrics: ExpandedIslandLayoutMetrics) -> some View {
         VStack(alignment: .leading, spacing: metrics.tabToPageSpacing) {
-            HStack(alignment: .center, spacing: 8) {
+            HStack(alignment: .center, spacing: 0) {
                 ZStack(alignment: .leading) {
                     if rendersExpandedVisualContent && shouldRenderContent && !isCollapseShellOnly {
                         ExpandedIslandPageSwitcher(settings: settings, navigation: navigation)
@@ -2022,11 +3580,41 @@ struct ExpandedIslandView: View {
                     }
                 }
                 .frame(height: metrics.tabSwitcherHeight)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-                Spacer(minLength: 0)
+                // Hardware-notch exclusion: equal flexible halves keep this gap
+                // centered on the notch; nothing interactive is placed in it.
+                // The compact header row sits below the notch: only the
+                // minimum group spacing remains.
+                Color.clear
+                    .frame(width: headerLayout.mode == .compactBelowNotch
+                           ? ExpandedHeaderLayout.compactGroupSpacing
+                           : ExpandedIslandHeaderMetrics.notchExclusionWidth(hardwareNotchWidth: layoutStore.hardwareNotchWidth))
+                    .accessibilityHidden(true)
 
                 HStack(spacing: 6) {
                     if rendersExpandedVisualContent && shouldRenderContent && !isCollapseShellOnly {
+                        ExpandedHeaderButton(systemImage: "square.grid.2x2", help: "Customize workspace", accessibilityLabel: "Customize workspace") {
+                            closeClipboardHistoryImmediately()
+                            if navigation.selectedPage == .island || navigation.selectedPage == .agents {
+                                editingNavigation = false
+                                editingWidgets.toggle()
+                            } else {
+                                editingWidgets = false
+                                editingNavigation.toggle()
+                            }
+                        }
+                        .contextMenu {
+                            Button("Customize tabs") {
+                                editingWidgets = false
+                                editingNavigation = true
+                            }
+                            Button("Reset to Default Layout") {
+                                customization.reset()
+                                editingWidgets = false
+                                editingNavigation = false
+                            }
+                        }
                         if settings.clipboardHistoryEnabled {
                             ExpandedHeaderButton(
                                 systemImage: "clipboard",
@@ -2050,22 +3638,42 @@ struct ExpandedIslandView: View {
                     reduceMotion: reduceMotion
                 )
                 .frame(height: metrics.tabSwitcherHeight)
+                .frame(maxWidth: .infinity, alignment: .trailing)
             }
             .frame(height: metrics.tabSwitcherHeight)
 
-            ZStack(alignment: .topLeading) {
+            // Top-centered: pages are laid out at the target metrics while the
+            // shell still morphs around its horizontal center, so an incoming
+            // page overflows (or insets) symmetrically instead of detaching
+            // toward the leading edge. Identical once the morph settles.
+            ZStack(alignment: .top) {
                 if !rendersExpandedVisualContent || !shouldRenderContent {
                     Color.clear
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    pageView(navigation.selectedPage, metrics: metrics)
-                        .id(navigation.selectedPage)
-                        .transition(pageSwitchTransition)
-                        .animation(pageSwitchAnimation, value: navigation.selectedPage)
+                    if let page = pagePresentation.mountedPage {
+                        pageView(page, metrics: metrics)
+                            .overlay(alignment: .top) {
+                                if editingNavigation {
+                                    WorkspaceNavigationEditor(store: customization, eligiblePages: navigation.eligiblePages(using: settings), editing: $editingNavigation, extraMotion: !settings.reduceExtraMotion)
+                                        .padding(8).background(.black.opacity(0.96), in: RoundedRectangle(cornerRadius: 12))
+                                }
+                            }
+                            .expandedPageMotion(
+                                pageMotionPlan,
+                                animatesEntrance: pagePresentation.animatesEntrance,
+                                mountID: ExpandedPageMountID(page: page, generation: pagePresentation.mountGeneration)
+                            )
+                    }
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: metrics.pageHeight, alignment: .topLeading)
+            // The notch lane lets centered top content rise toward the notch:
+            // the clip extends up by that allowance and the page is padded
+            // back down, so pages without rising content are unchanged.
+            .padding(.top, workspaceNotchLane.rise)
+            .frame(maxWidth: .infinity, maxHeight: metrics.pageHeight + workspaceNotchLane.rise, alignment: .top)
             .clipped()
+            .padding(.top, -workspaceNotchLane.rise)
         }
         .padding(.horizontal, metrics.horizontalPadding)
         .padding(.top, metrics.topPadding)
@@ -2086,36 +3694,51 @@ struct ExpandedIslandView: View {
             timerPage(metrics: metrics)
         case .stats:
             statsPage(metrics: metrics)
+        case .tools:
+            toolsPage(metrics: metrics)
+        case .messages:
+            messagesPage(metrics: metrics)
         }
     }
 
-    private var pageSwitchAnimation: Animation {
-        guard !reduceMotion,
-              settings.contentAnimationEnabled,
-              settings.animationPreset != .instant else {
-            return .linear(duration: 0.01)
-        }
-
-        let shellDuration = IslandContentTransitionTiming.shellDuration(
-            settings: settings,
-            reduceMotion: reduceMotion
-        )
-        let contentDuration = max(shellDuration * 0.58, 0.16)
-        let contentDelay = shellDuration * 0.06
-        return .smooth(duration: contentDuration).delay(contentDelay)
+    private var pageMotionPlan: ExpandedIslandMotion.Plan {
+        ExpandedIslandMotion.plan(settings: settings, reduceMotion: reduceMotion)
     }
 
-    private var pageSwitchTransition: AnyTransition {
-        guard !reduceMotion,
-              settings.contentAnimationEnabled,
-              settings.animationPreset != .instant else {
-            return .opacity
+    /// Routes a committed page selection through the shared choreography:
+    /// the outgoing page leaves now, the incoming page mounts on handoff.
+    private func handleSelectedPageChange(_ page: ExpandedIslandPage) {
+        guard rendersExpandedVisualContent, shouldRenderContent, contentVisible, !isCollapseShellOnly else {
+            pagePresentation.snap(to: page)
+            return
         }
-
-        return .asymmetric(
-            insertion: .opacity.combined(with: .scale(scale: 0.985, anchor: .top)),
-            removal: .opacity.combined(with: .scale(scale: 0.992, anchor: .top))
+        var presentation = pagePresentation
+        let plan = pageMotionPlan
+        // Toward a smaller shell the outgoing page leaves first, the shell
+        // contracts, and only then does the incoming page mount.
+        let nextSize = ExpandedPresentationProfile.resolve(for: page).resolvedSize(
+            from: settings.expandedSize, page: page, configuration: customization.configuration,
+            editing: false, settings: settings, metrics: layoutStore.displayMetrics,
+            minimumHeaderWidth: ExpandedIslandHeaderMetrics.minimumContentWidth(
+                pageCount: navigation.availablePages(using: settings).count, clipboardEnabled: settings.clipboardHistoryEnabled,
+                hardwareNotchWidth: layoutStore.hardwareNotchWidth),
+            lane: workspaceNotchLane,
+            header: ExpandedPresentationProfile.headerLayout(page: page, configuration: customization.configuration,
+                editing: false, settings: settings, metrics: layoutStore.displayMetrics,
+                pageCount: navigation.availablePages(using: settings).count))
+        let shrinks = nextSize.width < layoutStore.expandedSize.width || nextSize.height < layoutStore.expandedSize.height
+        let effect = presentation.select(
+            page,
+            plan: plan,
+            handoffDelay: shrinks ? ExpandedIslandMotion.shrinkingPagePlan(plan).incomingHandoffDelay : nil
         )
+        pagePresentation = presentation
+        guard case let .scheduleHandoff(generation, delay) = effect else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            var presentation = pagePresentation
+            guard presentation.completeHandoff(generation: generation) else { return }
+            pagePresentation = presentation
+        }
     }
 
     private var contentVisibilityAnimation: Animation {
@@ -2207,7 +3830,7 @@ struct ExpandedIslandView: View {
     }
 
     private func synchronizeExpandedScrollSuppression() {
-        layoutStore.setExpandedScrollGestureSuppressed(clipboardPresentation.isMounted)
+        layoutStore.setExpandedScrollGestureSuppressed(clipboardPresentation.isMounted || editingWidgets || editingNavigation)
         if navigation.selectedPage != .agents {
             layoutStore.setExpandedContentScrollRegion(.zero)
         }
@@ -2248,7 +3871,11 @@ struct ExpandedIslandView: View {
                 store: modules.clipboardHistory,
                 onClose: {
                     closeClipboardHistoryAnimated()
-                }
+                },
+                externalActions: ClipboardHistoryExternalActions(
+                    addFilesToShelf: { urls in modules.fileShelf.add(urls) },
+                    addFilesToBasket: { urls in modules.basketPresenter.addClipboardFilesToBasket(urls) }
+                )
             )
             .frame(width: cardWidth, height: metrics.pageHeight)
             .innerBlurScaleClean(
@@ -2305,13 +3932,84 @@ struct ExpandedIslandView: View {
         }
     }
 
+    @ViewBuilder
     private func islandPage(metrics: ExpandedIslandLayoutMetrics) -> some View {
+        if editingWidgets || customization.configuration.customizedSurfaces.contains(.media) {
+            IslandWidgetEditor(store: customization, surface: .media, editing: $editingWidgets,
+                eligibleWidgets: eligibleMediaWidgets, extraMotion: !settings.reduceExtraMotion,
+                onLayoutPreview: { layoutStore.setWorkspaceLayoutPreview($0, surface: .media) },
+                onDragActive: { layoutStore.setWorkspaceDragActive($0) },
+                onApplyCompleted: onShortcutLaunched) { region, height in
+                AnyView(islandWidget(region.widgets[0].kind, height: height))
+            }
+            .innerBlurScaleClean(settings: settings, isVisible: contentVisible,
+                isRemoval: isContentRemoving, index: 0, reduceMotion: reduceMotion)
+            .allowsHitTesting(contentVisible)
+            .environment(\.rightWorkspacePageIsActive, contentVisible)
+        } else {
+            standardIslandPage(metrics: metrics)
+        }
+    }
+
+    private var eligibleMediaWidgets: [IslandWidget] {
+        WorkspaceWidgetAvailability.eligible(on: .media, settings: settings)
+    }
+
+    private func synchronizeCustomizationEditing() {
+        layoutStore.setTransientInteraction(editingWidgets || editingNavigation, owner: .workspaceEditor)
+        synchronizeExpandedScrollSuppression()
+    }
+
+    @ViewBuilder
+    private func islandWidget(_ widget: IslandWidget, height: CGFloat) -> some View {
+        switch widget {
+        case .workspace:
+            RightWorkspaceView(store: modules.rightWorkspace, layoutStore: layoutStore, reduceMotion: reduceMotion || settings.reduceExtraMotion,
+                overview: {
+                    VStack(spacing: 8) {
+                        LiveActivitiesModuleView(liveActivities: liveActivities, navigation: navigation, rightWorkspace: modules.rightWorkspace, settings: settings, availableHeight: height * 0.6, compactScale: 1)
+                        ShortcutsModuleView(shortcuts: modules.shortcuts, availableHeight: height * 0.4, compactScale: 1, onShortcutLaunched: onShortcutLaunched)
+                    }
+                }, productivity: {
+                    ProductivityDeckView(productivity: modules.productivity, fileShelf: modules.fileShelf, tools: modules.rightWorkspace.configuration.visibleTools, reduceMotion: reduceMotion || settings.reduceExtraMotion, layoutStore: layoutStore)
+                }, appsMedia: {
+                    AppsMediaDeckView(services: modules.workspaceServices, media: modules.media, sections: modules.rightWorkspace.configuration.visibleSections, layoutStore: layoutStore, onOpenSettings: onOpenSettings)
+                })
+        case .chat, .terminal, .feed:
+            EmptyView()
+        case .agentUsage, .codexUsage, .claudeUsage:
+            if let scope = AgentUsageWidgetView.Scope(widget: widget) {
+                AgentUsageWidgetView(managedControl: modules.agentManagedControl, scope: scope)
+            }
+        case .media:
+            MediaModuleView(settings: settings, media: modules.media, availableHeight: height, onLauncherActivated: onShortcutLaunched, onMediaSourceOpened: onShortcutLaunched)
+        case .files:
+            FileShelfModuleView(settings: settings, fileShelf: modules.fileShelf, backgroundOperations: modules.backgroundOperations)
+                .onDrop(of: FileDropProviderLoader.acceptedTypes, isTargeted: filesTargetBinding) { providers in
+                    loadDroppedFiles(from: providers)
+                }
+        case .timer:
+            FocusTimerView(timer: modules.timer, settings: settings, onStarted: onTimerStarted, showsPanel: false)
+        case .calendar:
+            CalendarSectionView(controller: modules.workspaceServices.calendar, layoutStore: layoutStore)
+                .padding(10)
+        case .clipboard:
+            ClipboardWidgetView(store: modules.clipboardHistory, enabled: settings.clipboardHistoryEnabled, onOpen: openClipboardHistory, onEnable: onOpenSettings)
+        case .shortcuts:
+            ShortcutsModuleView(shortcuts: modules.shortcuts, availableHeight: height, compactScale: 1, onShortcutLaunched: onShortcutLaunched)
+        case .activities:
+            LiveActivitiesModuleView(liveActivities: liveActivities, navigation: navigation, rightWorkspace: modules.rightWorkspace, settings: settings, availableHeight: height, compactScale: 1)
+        }
+    }
+
+    private func standardIslandPage(metrics: ExpandedIslandLayoutMetrics) -> some View {
         let visibility = ExpandedIslandRightStackVisibility.resolve(
             liveActivitiesEnabled: settings.liveActivitiesEnabled,
             showExpandedLiveActivitiesSection: settings.showExpandedLiveActivitiesSection,
             shortcutsEnabled: settings.shortcutsEnabled
         )
         let showsRightStack = visibility.showsRightStack
+            || modules.rightWorkspace.configuration.visiblePages.contains { $0 != .overview }
 
         return HStack(spacing: metrics.pageColumnSpacing) {
             if settings.mediaEnabled {
@@ -2350,35 +4048,77 @@ struct ExpandedIslandView: View {
             }
 
             if showsRightStack {
-                let liveActivitiesHeight = visibility.showsShortcuts
+                // The page indicator's band comes out of the overview stack
+                // proportionally so no card is covered.
+                let indicatorBand = RightWorkspaceView<EmptyView, EmptyView, EmptyView>
+                    .showsIndicator(modules.rightWorkspace.configuration)
+                    ? RightWorkspaceView<EmptyView, EmptyView, EmptyView>.indicatorBand
+                    : 0
+                let overviewScale = metrics.pageHeight > 0
+                    ? max(metrics.pageHeight - indicatorBand, 0) / metrics.pageHeight
+                    : 1
+                let liveActivitiesHeight = (visibility.showsShortcuts
                     ? metrics.liveActivitiesStackHeight
-                    : metrics.pageHeight
-                let shortcutsHeight = visibility.showsLiveActivities
+                    : metrics.pageHeight) * overviewScale
+                let shortcutsHeight = (visibility.showsLiveActivities
                     ? metrics.shortcutsStackHeight
-                    : metrics.pageHeight
+                    : metrics.pageHeight) * overviewScale
 
-                VStack(spacing: metrics.rightStackSpacing) {
-                    if visibility.showsLiveActivities {
-                        LiveActivitiesModuleView(
-                            liveActivities: liveActivities,
-                            navigation: navigation,
-                            settings: settings,
-                            availableHeight: liveActivitiesHeight,
-                            compactScale: metrics.compactScale
-                        )
-                        .frame(height: liveActivitiesHeight, alignment: .topLeading)
-                    }
+                RightWorkspaceView(
+                    store: modules.rightWorkspace,
+                    layoutStore: layoutStore,
+                    reduceMotion: reduceMotion || settings.reduceExtraMotion,
+                    overview: {
+                        if visibility.showsRightStack {
+                            VStack(spacing: metrics.rightStackSpacing) {
+                                if visibility.showsLiveActivities {
+                                    LiveActivitiesModuleView(
+                                        liveActivities: liveActivities,
+                                        navigation: navigation,
+                                        rightWorkspace: modules.rightWorkspace,
+                                        settings: settings,
+                                        availableHeight: liveActivitiesHeight,
+                                        compactScale: metrics.compactScale
+                                    )
+                                    .frame(height: liveActivitiesHeight, alignment: .topLeading)
+                                }
 
-                    if visibility.showsShortcuts {
-                        ShortcutsModuleView(
-                            shortcuts: modules.shortcuts,
-                            availableHeight: shortcutsHeight,
-                            compactScale: metrics.compactScale,
-                            onShortcutLaunched: onShortcutLaunched
+                                if visibility.showsShortcuts {
+                                    ShortcutsModuleView(
+                                        shortcuts: modules.shortcuts,
+                                        availableHeight: shortcutsHeight,
+                                        compactScale: metrics.compactScale,
+                                        onShortcutLaunched: onShortcutLaunched
+                                    )
+                                    .frame(height: shortcutsHeight, alignment: .topLeading)
+                                }
+                            }
+                        } else {
+                            Text("Live Activities and Shortcuts are turned off")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(.white.opacity(0.45))
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        }
+                    },
+                    productivity: {
+                        ProductivityDeckView(
+                            productivity: modules.productivity,
+                            fileShelf: modules.fileShelf,
+                            tools: modules.rightWorkspace.configuration.visibleTools,
+                            reduceMotion: reduceMotion || settings.reduceExtraMotion,
+                            layoutStore: layoutStore
                         )
-                        .frame(height: shortcutsHeight, alignment: .topLeading)
+                    },
+                    appsMedia: {
+                        AppsMediaDeckView(
+                            services: modules.workspaceServices,
+                            media: modules.media,
+                            sections: modules.rightWorkspace.configuration.visibleSections,
+                            layoutStore: layoutStore,
+                            onOpenSettings: onOpenSettings
+                        )
                     }
-                }
+                )
                 .frame(width: settings.mediaEnabled ? metrics.rightStackWidth : nil, height: metrics.pageHeight, alignment: .topLeading)
                 .clipped()
                 .innerBlurScaleClean(
@@ -2397,18 +4137,23 @@ struct ExpandedIslandView: View {
         AgentActivityDashboardView(
             settings: settings,
             agentEvents: agentEvents,
+            projects: modules.agentProjects,
             approvalControl: modules.agentApprovalControl,
             managedControl: modules.agentManagedControl,
             layoutStore: layoutStore,
-            availableHeight: metrics.pageHeight
+            activityRecorder: modules.agentActivityRecorder,
+            workspaceFeed: modules.agentWorkspaceFeed,
+            workspacePresentation: modules.agentWorkspacePresentation,
+            terminal: modules.productivity.terminal,
+            customization: customization, editingWorkspace: $editingWidgets,
+            timerWidget: AnyView(FocusTimerView(timer: modules.timer, settings: settings, showsPanel: false)),
+            availableHeight: metrics.pageHeight,
+            contentVisible: contentVisible,
+            isContentRemoving: isContentRemoving
         )
-        .innerBlurScaleClean(
-            settings: settings,
-            isVisible: contentVisible,
-            isRemoval: isContentRemoving,
-            index: 1,
-            reduceMotion: reduceMotion
-        )
+        .environment(\.agentVisualPreferences, settings.agentVisualPreferences)
+        // Apply in the Agents editor collapses through the same request path.
+        .environment(\.workspaceApplyCompletion, WorkspaceApplyCompletion(action: onShortcutLaunched))
         .frame(maxWidth: .infinity, maxHeight: metrics.pageHeight, alignment: .topLeading)
     }
 
@@ -2436,7 +4181,13 @@ struct ExpandedIslandView: View {
                 }
 
                 if settings.fileShelfEnabled {
-                    FileShelfModuleView(settings: settings, fileShelf: modules.fileShelf)
+                    FileShelfModuleView(
+                        settings: settings,
+                        fileShelf: modules.fileShelf,
+                        backgroundOperations: modules.backgroundOperations,
+                        dragExplanation: modules.fileDragSession.explanatoryAction?.explanation
+                            ?? modules.fileDragSession.outcomeMessage
+                    )
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .overlay {
                             if isFilesTargeted || (navigation.isFileDropTargeted && !isAirDropTargeted) {
@@ -2468,6 +4219,34 @@ struct ExpandedIslandView: View {
             pageHeight: metrics.pageHeight,
             onTimerStarted: onTimerStarted
         )
+            .innerBlurScaleClean(
+                settings: settings,
+                isVisible: contentVisible,
+                isRemoval: isContentRemoving,
+                index: 1,
+                reduceMotion: reduceMotion
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private func messagesPage(metrics: ExpandedIslandLayoutMetrics) -> some View {
+        MessagingPageView(
+            controller: modules.messaging,
+            layoutStore: layoutStore,
+            pageHeight: metrics.pageHeight
+        )
+            .innerBlurScaleClean(
+                settings: settings,
+                isVisible: contentVisible,
+                isRemoval: isContentRemoving,
+                index: 1,
+                reduceMotion: reduceMotion
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private func toolsPage(metrics: ExpandedIslandLayoutMetrics) -> some View {
+        ProductivityToolsPageView(productivity: modules.productivity, pageHeight: metrics.pageHeight)
             .innerBlurScaleClean(
                 settings: settings,
                 isVisible: contentVisible,
@@ -2512,7 +4291,9 @@ struct ExpandedIslandView: View {
             get: { isAirDropTargeted },
             set: { isTargeted in
                 isAirDropTargeted = isTargeted
-                if isTargeted, settings.airDropZoneEnabled, settings.showTrayTab {
+                let accepted = isTargeted && settings.airDropZoneEnabled && settings.showTrayTab
+                modules.fileDragSession.setSourceTargeted(accepted, region: .trayAirDrop)
+                if accepted {
                     navigation.showTrayForFileDrag(using: settings)
                 }
             }
@@ -2524,11 +4305,13 @@ struct ExpandedIslandView: View {
             get: { isFilesTargeted },
             set: { isTargeted in
                 isFilesTargeted = isTargeted
-                if isTargeted,
-                   settings.trayEnabled,
-                   settings.fileShelfEnabled,
-                   settings.allowFileDropsOnExpandedTray,
-                   settings.showTrayTab {
+                let accepted = isTargeted &&
+                    settings.trayEnabled &&
+                    settings.fileShelfEnabled &&
+                    settings.allowFileDropsOnExpandedTray &&
+                    settings.showTrayTab
+                modules.fileDragSession.setSourceTargeted(accepted, region: .trayShelf)
+                if accepted {
                     navigation.showTrayForFileDrag(using: settings)
                 } else {
                     navigation.endFileDropTargeting()
@@ -2546,6 +4329,7 @@ struct ExpandedIslandView: View {
         }
         isFilesTargeted = false
         navigation.endFileDropTargeting()
+        modules.fileDragSession.cancel()
 
         loader.loadURLs(from: providers) { urls in
             Task { @MainActor in
@@ -2571,6 +4355,7 @@ struct ExpandedIslandView: View {
         }
         loadFileURLs(from: providers) { urls in
             Task { @MainActor in
+                modules.fileDragSession.setSourceTargeted(false, region: .trayAirDrop)
                 if !urls.isEmpty {
                     AirDropService.share(
                         urls: urls,
@@ -2651,7 +4436,7 @@ private struct SettingsGearButton: View {
             Image(systemName: "gearshape.fill")
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(.white.opacity(isHovering ? 0.95 : 0.62))
-                .frame(width: 30, height: 30)
+                .frame(width: ExpandedIslandHeaderMetrics.buttonWidth, height: 30)
                 .background {
                     Circle()
                         .fill(.white.opacity(isHovering ? 0.14 : 0.08))
@@ -2665,7 +4450,7 @@ private struct SettingsGearButton: View {
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
         .animation(.easeOut(duration: 0.14), value: isHovering)
-        .help("Settings")
+        .nativeHelp("Settings")
         .accessibilityLabel("Open Settings")
     }
 }
@@ -2682,7 +4467,7 @@ private struct ExpandedHeaderButton: View {
             Image(systemName: systemImage)
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(.white.opacity(isHovering ? 0.95 : 0.62))
-                .frame(width: 30, height: 30)
+                .frame(width: ExpandedIslandHeaderMetrics.buttonWidth, height: 30)
                 .background {
                     Circle().fill(.white.opacity(isHovering ? 0.14 : 0.08))
                 }
@@ -2694,17 +4479,17 @@ private struct ExpandedHeaderButton: View {
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
         .animation(.easeOut(duration: 0.14), value: isHovering)
-        .help(help)
+        .nativeHelp(help)
         .accessibilityLabel(accessibilityLabel)
     }
 }
 
-private struct ExpandedIslandPageSwitcher: View {
+struct ExpandedIslandPageSwitcher: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var navigation: IslandNavigationStore
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: ExpandedIslandHeaderMetrics.tabSpacing) {
             ForEach(navigation.availablePages(using: settings), id: \.self) { page in
                 ExpandedIslandPageButton(
                     page: page,
@@ -2714,7 +4499,7 @@ private struct ExpandedIslandPageSwitcher: View {
                 }
             }
         }
-        .padding(4)
+        .padding(ExpandedIslandHeaderMetrics.tabPadding)
         .background(.white.opacity(0.07), in: Capsule(style: .continuous))
         .overlay {
             Capsule(style: .continuous)
@@ -2735,7 +4520,7 @@ private struct ExpandedIslandPageButton: View {
         Button(action: action) {
             Image(systemName: page.symbolName)
                 .font(.system(size: 13, weight: .bold))
-                .frame(width: 30, height: 26)
+                .frame(width: ExpandedIslandHeaderMetrics.buttonWidth, height: 26)
                 .foregroundStyle(.white.opacity(foregroundOpacity))
                 .background {
                     Capsule(style: .continuous)
@@ -2746,10 +4531,11 @@ private struct ExpandedIslandPageButton: View {
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
         .animation(hoverAnimation, value: isHovering)
+        .animation(selectionAnimation, value: selected)
         .accessibilityLabel(page.accessibilityLabel)
         .accessibilityValue(selected ? "Selected" : "Not selected")
         .accessibilityAddTraits(selected ? .isSelected : [])
-        .help(page.title)
+        .nativeHelp(page.title)
     }
 
     private var foregroundOpacity: Double {
@@ -2767,6 +4553,10 @@ private struct ExpandedIslandPageButton: View {
 
     private var hoverAnimation: Animation {
         reduceMotion ? .linear(duration: 0.01) : .easeOut(duration: 0.14)
+    }
+
+    private var selectionAnimation: Animation {
+        reduceMotion ? .linear(duration: 0.01) : .easeOut(duration: 0.16)
     }
 }
 
@@ -2790,9 +4580,10 @@ struct ExpandedIslandRightStackVisibility: Equatable {
     }
 }
 
-private struct LiveActivitiesModuleView: View {
+struct LiveActivitiesModuleView: View {
     @ObservedObject var liveActivities: LiveActivityStore
     @ObservedObject var navigation: IslandNavigationStore
+    @ObservedObject var rightWorkspace: RightWorkspaceStore
     @ObservedObject var settings: AppSettings
     var availableHeight: CGFloat? = nil
     var compactScale: CGFloat = 1
@@ -2896,7 +4687,7 @@ private struct LiveActivitiesModuleView: View {
             if settings.timerEnabled, settings.showTimerTab {
                 navigation.showTimer()
             }
-        case .fileTray:
+        case .fileTray, .backgroundOperation:
             if settings.trayEnabled, settings.showTrayTab {
                 navigation.showTray()
             }
@@ -2904,8 +4695,20 @@ private struct LiveActivitiesModuleView: View {
             navigation.showIsland()
         case .battery:
             break
+        case .agent:
+            if settings.agentActivityEnabled, settings.showAgentsTab {
+                navigation.showAgents()
+            }
         case .system:
             break
+        case .message:
+            navigation.showMessages()
+        case .keepAwake, .terminalTask, .windowSnapPreview, .reminder,
+             .voiceRecording, .voiceTranscription, .voiceStatus, .camera, .backgroundRemoval:
+            break
+        case .screenRecording:
+            navigation.showIsland()
+            rightWorkspace.show(.productivity)
         }
     }
 }
@@ -2996,7 +4799,7 @@ private struct ExtraLiveActivityCard: View {
     }
 }
 
-private struct StatsPageView: View {
+struct StatsPageView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var stats: SystemStatsController
     let metrics: ExpandedIslandLayoutMetrics
@@ -3343,7 +5146,7 @@ extension View {
     }
 }
 
-private struct AirDropDropZoneView: View {
+struct AirDropDropZoneView: View {
     @ObservedObject var settings: AppSettings
     let isTargeted: Bool
     let reduceMotion: Bool
@@ -3411,7 +5214,7 @@ private struct FileDropHighlightView: View {
     }
 }
 
-private struct DedicatedTimerPageView: View {
+struct DedicatedTimerPageView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var timer: TimerController
     let ringSize: CGFloat
@@ -3437,11 +5240,18 @@ private struct DedicatedTimerPageView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: usesCompactLayout ? 7 : 8) {
-            Label("Timer", systemImage: "timer")
-                .font(.system(size: titleFontSize, weight: .bold, design: .rounded))
-                .foregroundStyle(.white)
-
-            if settings.showTimerProgressRing {
+            FocusTimerView(timer: timer, settings: settings, onStarted: onTimerStarted)
+            if settings.timerPresetsEnabled {
+                HStack(spacing: controlsSpacing) {
+                    Button("\(settings.timerPreset1Minutes)m") { startTimer(settings.timerPreset1Minutes) }
+                    Button("\(settings.timerPreset2Minutes)m") { startTimer(settings.timerPreset2Minutes) }
+                    Button("\(settings.timerPreset3Minutes)m") { startTimer(settings.timerPreset3Minutes) }
+                }
+                .buttonStyle(.borderless)
+                .font(.system(size: controlsFontSize, weight: .semibold))
+                .frame(maxWidth: .infinity)
+            }
+            if settings.showTimerProgressRing && pageHeight >= 250 {
                 TimerProgressRingView(
                     progress: TimerProgressFormatting.progress(
                         remainingSeconds: timer.remainingSeconds,
@@ -3449,17 +5259,10 @@ private struct DedicatedTimerPageView: View {
                     ),
                     remainingText: timer.displayText,
                     isRunning: timer.isRunning,
-                    ringSize: ringSize,
+                    ringSize: min(ringSize, pageHeight - 150),
                     animationEnabled: settings.timerRingAnimationEnabled
                 )
                 .frame(maxWidth: .infinity)
-            }
-
-            if settings.timerPresetsEnabled {
-                ViewThatFits(in: .horizontal) {
-                    timerControlRow
-                    timerControlStack
-                }
             }
 
             Spacer(minLength: 0)
@@ -3592,5 +5395,17 @@ private enum TimerRingColor {
             hue = 0.02 + (0.08 * segment)
         }
         return Color(hue: hue, saturation: 0.92, brightness: 0.98)
+    }
+}
+
+private struct ExpandedHeaderLayoutKey: EnvironmentKey {
+    static let defaultValue = ExpandedHeaderLayout.winged
+}
+
+extension EnvironmentValues {
+    /// The resolved header mode for the selected page.
+    var expandedHeaderLayout: ExpandedHeaderLayout {
+        get { self[ExpandedHeaderLayoutKey.self] }
+        set { self[ExpandedHeaderLayoutKey.self] = newValue }
     }
 }

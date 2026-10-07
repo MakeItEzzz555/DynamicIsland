@@ -210,6 +210,7 @@ public final class AppSettings: ObservableObject {
     @Published public var showTrayTab: Bool { didSet { save(showTrayTab, for: Key.showTrayTab) } }
     @Published public var showTimerTab: Bool { didSet { save(showTimerTab, for: Key.showTimerTab) } }
     @Published public var showStatsTab: Bool { didSet { save(showStatsTab, for: Key.showStatsTab) } }
+    @Published public var showToolsTab: Bool { didSet { save(showToolsTab, for: Key.showToolsTab) } }
     @Published public var showAgentsTab: Bool { didSet { save(showAgentsTab, for: Key.showAgentsTab) } }
     @Published public var showActivitiesTab: Bool { didSet { save(showActivitiesTab, for: Key.showActivitiesTab) } }
     @Published public var showLiveActivitiesTab: Bool { didSet { save(showLiveActivitiesTab, for: Key.showLiveActivitiesTab) } }
@@ -221,8 +222,16 @@ public final class AppSettings: ObservableObject {
     @Published public var agentCompletionAlertsEnabled: Bool { didSet { save(agentCompletionAlertsEnabled, for: Key.agentCompletionAlertsEnabled) } }
     @Published public var agentApprovalAlertsEnabled: Bool { didSet { save(agentApprovalAlertsEnabled, for: Key.agentApprovalAlertsEnabled) } }
     @Published public var agentSoundsEnabled: Bool { didSet { save(agentSoundsEnabled, for: Key.agentSoundsEnabled) } }
+    /// One subtle system chime when an agent task completes (DynamicIsland
+    /// policy; AgentNotch itself is silent). New key, default on.
+    @Published public var agentCompletionSoundEnabled: Bool { didSet { save(agentCompletionSoundEnabled, for: Key.agentCompletionSoundEnabled) } }
     @Published public var agentUsageMetricsEnabled: Bool { didSet { save(agentUsageMetricsEnabled, for: Key.agentUsageMetricsEnabled) } }
+    /// Record Activities: explicit opt-in, local normalized events only.
+    @Published public var agentActivityRecordingEnabled: Bool { didSet { save(agentActivityRecordingEnabled, for: Key.agentActivityRecordingEnabled) } }
     @Published public var agentPeekDurationSeconds: Double { didSet { save(agentPeekDurationSeconds, for: Key.agentPeekDurationSeconds) } }
+    @Published var agentVisualPreferences: AgentVisualPreferences {
+        didSet { normalizeAgentVisualPreferences(oldValue: oldValue) }
+    }
 
     @Published public var mediaEnabled: Bool { didSet { save(mediaEnabled, for: Key.mediaEnabled) } }
     @Published public var showMediaWhenPaused: Bool { didSet { save(showMediaWhenPaused, for: Key.showMediaWhenPaused) } }
@@ -261,6 +270,17 @@ public final class AppSettings: ObservableObject {
     @Published public var deferThumbnailsDuringMorph: Bool { didSet { save(deferThumbnailsDuringMorph, for: Key.deferThumbnailsDuringMorph) } }
     @Published public var showFileExtensions: Bool { didSet { save(showFileExtensions, for: Key.showFileExtensions) } }
     @Published public var showFileCountBadge: Bool { didSet { save(showFileCountBadge, for: Key.showFileCountBadge) } }
+    /// Floating Basket (Droppy parity). Shake a real file drag to summon it.
+    @Published public var floatingBasketEnabled: Bool { didSet { save(floatingBasketEnabled, for: Key.floatingBasketEnabled) } }
+    /// 1...5, higher = fewer direction reversals needed (Droppy default 3).
+    @Published public var basketJiggleSensitivity: Int {
+        didSet { normalizeAndSaveInt(\.basketJiggleSensitivity, oldValue: oldValue, fallback: 3, range: 1...5, key: Key.basketJiggleSensitivity) }
+    }
+    @Published public var basketMultipleEnabled: Bool { didSet { save(basketMultipleEnabled, for: Key.basketMultipleEnabled) } }
+    @Published public var basketAutoHideEnabled: Bool { didSet { save(basketAutoHideEnabled, for: Key.basketAutoHideEnabled) } }
+    @Published public var basketAutoHideDelay: Double {
+        didSet { normalizeAndSaveDouble(\.basketAutoHideDelay, oldValue: oldValue, fallback: 2.0, range: 0.5...10.0, key: Key.basketAutoHideDelay) }
+    }
     @Published public var confirmBeforeClearShelf: Bool { didSet { save(confirmBeforeClearShelf, for: Key.confirmBeforeClearShelf) } }
     @Published public var revealInFinderActionEnabled: Bool { didSet { save(revealInFinderActionEnabled, for: Key.revealInFinderActionEnabled) } }
     @Published public var copyPathActionEnabled: Bool { didSet { save(copyPathActionEnabled, for: Key.copyPathActionEnabled) } }
@@ -316,6 +336,9 @@ public final class AppSettings: ObservableObject {
     }
     @Published public var clipboardHistoryPersistenceEnabled: Bool { didSet { save(clipboardHistoryPersistenceEnabled, for: Key.clipboardHistoryPersistenceEnabled) } }
     @Published public var clipboardHistoryCaptureImagesEnabled: Bool { didSet { save(clipboardHistoryCaptureImagesEnabled, for: Key.clipboardHistoryCaptureImagesEnabled) } }
+    @Published public var clipboardHistoryExcludedAppBundleIDs: [String] { didSet { save(clipboardHistoryExcludedAppBundleIDs, for: Key.clipboardHistoryExcludedAppBundleIDs) } }
+    @Published public var clipboardHistoryAutoFocusSearch: Bool { didSet { save(clipboardHistoryAutoFocusSearch, for: Key.clipboardHistoryAutoFocusSearch) } }
+    @Published public var clipboardHistoryTagsEnabled: Bool { didSet { save(clipboardHistoryTagsEnabled, for: Key.clipboardHistoryTagsEnabled) } }
 
     @Published public var liveActivitiesEnabled: Bool { didSet { save(liveActivitiesEnabled, for: Key.liveActivitiesEnabled) } }
     @Published public var showExpandedLiveActivitiesSection: Bool {
@@ -335,6 +358,22 @@ public final class AppSettings: ObservableObject {
         didSet { normalizeLiveActivityDismiss(oldValue: oldValue) }
     }
     @Published public var liveActivityAnimationEnabled: Bool { didSet { save(liveActivityAnimationEnabled, for: Key.liveActivityAnimationEnabled) } }
+    @Published public var allowSimultaneousLiveActivitySidecars: Bool {
+        didSet { save(allowSimultaneousLiveActivitySidecars, for: Key.allowSimultaneousLiveActivitySidecars) }
+    }
+    @Published public var timerSidecarPreference: LiveActivitySidePreference {
+        didSet { save(timerSidecarPreference.rawValue, for: Key.timerSidecarPreference) }
+    }
+    @Published public var systemHUDsEnabled: Bool { didSet { save(systemHUDsEnabled, for: Key.systemHUDsEnabled) } }
+    @Published public var replaceMacOSSystemHUDs: Bool { didSet { save(replaceMacOSSystemHUDs, for: Key.replaceMacOSSystemHUDs) } }
+    @Published public var volumeHUDEnabled: Bool { didSet { save(volumeHUDEnabled, for: Key.volumeHUDEnabled) } }
+    @Published public var brightnessHUDEnabled: Bool { didSet { save(brightnessHUDEnabled, for: Key.brightnessHUDEnabled) } }
+    @Published public var capsLockHUDEnabled: Bool { didSet { save(capsLockHUDEnabled, for: Key.capsLockHUDEnabled) } }
+    @Published public var batteryStatusHUDEnabled: Bool { didSet { save(batteryStatusHUDEnabled, for: Key.batteryStatusHUDEnabled) } }
+    @Published public var lowBatteryHUDEnabled: Bool { didSet { save(lowBatteryHUDEnabled, for: Key.lowBatteryHUDEnabled) } }
+    @Published public var audioDeviceHUDEnabled: Bool { didSet { save(audioDeviceHUDEnabled, for: Key.audioDeviceHUDEnabled) } }
+    @Published public var focusHUDEnabled: Bool { didSet { save(focusHUDEnabled, for: Key.focusHUDEnabled) } }
+    @Published public var systemHUDDurationSeconds: Double { didSet { save(systemHUDDurationSeconds, for: Key.systemHUDDurationSeconds) } }
     @Published public var collapsedPriorityRunningTimer: Int {
         didSet { normalizeCollapsedPriorityRunningTimer(oldValue: oldValue) }
     }
@@ -440,13 +479,17 @@ public final class AppSettings: ObservableObject {
         showTrayTab = Self.bool(defaults, Key.showTrayTab, true)
         showTimerTab = Self.bool(defaults, Key.showTimerTab, true)
         showStatsTab = Self.bool(defaults, Key.showStatsTab, true)
+        showToolsTab = Self.bool(defaults, Key.showToolsTab, true)
         showAgentsTab = Self.bool(defaults, Key.showAgentsTab, true)
         agentActivityEnabled = Self.bool(defaults, Key.agentActivityEnabled, true)
         agentCompletionAlertsEnabled = Self.bool(defaults, Key.agentCompletionAlertsEnabled, true)
         agentApprovalAlertsEnabled = Self.bool(defaults, Key.agentApprovalAlertsEnabled, true)
         agentSoundsEnabled = Self.bool(defaults, Key.agentSoundsEnabled, true)
+        agentCompletionSoundEnabled = Self.bool(defaults, Key.agentCompletionSoundEnabled, true)
         agentUsageMetricsEnabled = Self.bool(defaults, Key.agentUsageMetricsEnabled, true)
+        agentActivityRecordingEnabled = Self.bool(defaults, Key.agentActivityRecordingEnabled, false)
         agentPeekDurationSeconds = Self.double(defaults, Key.agentPeekDurationSeconds, 5.0)
+        agentVisualPreferences = AgentVisualPreferences.decode(from: defaults, key: Key.agentVisualPreferences)
         showActivitiesTab = Self.bool(defaults, Key.showActivitiesTab, false)
         showLiveActivitiesTab = Self.bool(defaults, Key.showLiveActivitiesTab, false)
         showGesturesTab = Self.bool(defaults, Key.showGesturesTab, false)
@@ -488,6 +531,11 @@ public final class AppSettings: ObservableObject {
         deferThumbnailsDuringMorph = Self.bool(defaults, Key.deferThumbnailsDuringMorph, true)
         showFileExtensions = Self.bool(defaults, Key.showFileExtensions, true)
         showFileCountBadge = Self.bool(defaults, Key.showFileCountBadge, true)
+        floatingBasketEnabled = Self.bool(defaults, Key.floatingBasketEnabled, true)
+        basketJiggleSensitivity = Self.int(defaults, Key.basketJiggleSensitivity, 3)
+        basketMultipleEnabled = Self.bool(defaults, Key.basketMultipleEnabled, true)
+        basketAutoHideEnabled = Self.bool(defaults, Key.basketAutoHideEnabled, false)
+        basketAutoHideDelay = Self.double(defaults, Key.basketAutoHideDelay, 2.0)
         confirmBeforeClearShelf = Self.bool(defaults, Key.confirmBeforeClearShelf, false)
         revealInFinderActionEnabled = Self.bool(defaults, Key.revealInFinderActionEnabled, true)
         copyPathActionEnabled = Self.bool(defaults, Key.copyPathActionEnabled, true)
@@ -530,6 +578,9 @@ public final class AppSettings: ObservableObject {
         clipboardHistoryMaximumItems = Self.int(defaults, Key.clipboardHistoryMaximumItems, 50)
         clipboardHistoryPersistenceEnabled = Self.bool(defaults, Key.clipboardHistoryPersistenceEnabled, false)
         clipboardHistoryCaptureImagesEnabled = Self.bool(defaults, Key.clipboardHistoryCaptureImagesEnabled, true)
+        clipboardHistoryExcludedAppBundleIDs = defaults.stringArray(forKey: Key.clipboardHistoryExcludedAppBundleIDs) ?? []
+        clipboardHistoryAutoFocusSearch = Self.bool(defaults, Key.clipboardHistoryAutoFocusSearch, false)
+        clipboardHistoryTagsEnabled = Self.bool(defaults, Key.clipboardHistoryTagsEnabled, true)
 
         liveActivitiesEnabled = Self.bool(defaults, Key.liveActivitiesEnabled, true)
         showExpandedLiveActivitiesSection = Self.bool(defaults, Key.showExpandedLiveActivitiesSection, true)
@@ -543,6 +594,26 @@ public final class AppSettings: ObservableObject {
         liveActivityAutoDismissEnabled = Self.bool(defaults, Key.liveActivityAutoDismissEnabled, true)
         liveActivityAutoDismissSeconds = Self.double(defaults, Key.liveActivityAutoDismissSeconds, 6.0)
         liveActivityAnimationEnabled = Self.bool(defaults, Key.liveActivityAnimationEnabled, true)
+        allowSimultaneousLiveActivitySidecars = Self.bool(
+            defaults,
+            Key.allowSimultaneousLiveActivitySidecars,
+            true
+        )
+        timerSidecarPreference = Self.enumValue(
+            defaults,
+            Key.timerSidecarPreference,
+            .automatic
+        )
+        systemHUDsEnabled = Self.bool(defaults, Key.systemHUDsEnabled, true)
+        replaceMacOSSystemHUDs = Self.bool(defaults, Key.replaceMacOSSystemHUDs, true)
+        volumeHUDEnabled = Self.bool(defaults, Key.volumeHUDEnabled, true)
+        brightnessHUDEnabled = Self.bool(defaults, Key.brightnessHUDEnabled, true)
+        capsLockHUDEnabled = Self.bool(defaults, Key.capsLockHUDEnabled, true)
+        batteryStatusHUDEnabled = Self.bool(defaults, Key.batteryStatusHUDEnabled, true)
+        lowBatteryHUDEnabled = Self.bool(defaults, Key.lowBatteryHUDEnabled, true)
+        audioDeviceHUDEnabled = Self.bool(defaults, Key.audioDeviceHUDEnabled, true)
+        focusHUDEnabled = Self.bool(defaults, Key.focusHUDEnabled, false)
+        systemHUDDurationSeconds = Self.double(defaults, Key.systemHUDDurationSeconds, 1.4)
         collapsedPriorityRunningTimer = Self.int(defaults, Key.collapsedPriorityRunningTimer, CollapsedLiveActivityPrioritySource.runningTimer.defaultPriority)
         collapsedPriorityPlayingMedia = Self.int(defaults, Key.collapsedPriorityPlayingMedia, CollapsedLiveActivityPrioritySource.playingMedia.defaultPriority)
         collapsedPriorityPausedTimer = Self.int(defaults, Key.collapsedPriorityPausedTimer, CollapsedLiveActivityPrioritySource.pausedTimer.defaultPriority)
@@ -644,9 +715,10 @@ public final class AppSettings: ObservableObject {
 
     public func resetModuleSettings() {
         reset(keys: [
-            Key.showTrayTab, Key.showTimerTab, Key.showStatsTab, Key.showAgentsTab,
+            Key.showTrayTab, Key.showTimerTab, Key.showStatsTab, Key.showToolsTab, Key.showAgentsTab,
             Key.agentActivityEnabled, Key.agentCompletionAlertsEnabled, Key.agentApprovalAlertsEnabled,
-            Key.agentSoundsEnabled, Key.agentUsageMetricsEnabled, Key.agentPeekDurationSeconds,
+            Key.agentSoundsEnabled, Key.agentCompletionSoundEnabled, Key.agentUsageMetricsEnabled, Key.agentActivityRecordingEnabled,
+            Key.agentPeekDurationSeconds,
             Key.defaultExpandedTab,
             Key.mediaEnabled, Key.showMediaWhenPaused, Key.showMediaWhenNoSource,
             Key.showAlbumArtwork, Key.showMediaTitle, Key.showMediaArtist, Key.showMediaSourceName,
@@ -654,11 +726,17 @@ public final class AppSettings: ObservableObject {
             Key.collapsedHoverPreviewMediaEnabled, Key.collapsedHoverPreviewShowTitle,
             Key.collapsedHoverPreviewShowsArtist, Key.collapsedHoverPreviewShowsSource,
             Key.trayEnabled, Key.fileShelfEnabled, Key.airDropZoneEnabled,
+            Key.floatingBasketEnabled, Key.basketJiggleSensitivity, Key.basketMultipleEnabled,
+            Key.basketAutoHideEnabled, Key.basketAutoHideDelay,
             Key.timerEnabled, Key.timerPresetsEnabled, Key.timerPreset1Minutes, Key.timerPreset2Minutes, Key.timerPreset3Minutes,
             Key.statsEnabled, Key.showCPU, Key.showMemory, Key.showGPU, Key.showNetwork, Key.showDisk, Key.showBattery, Key.showUptime,
             Key.clipboardHistoryEnabled, Key.clipboardHistoryMaximumItems,
             Key.clipboardHistoryPersistenceEnabled, Key.clipboardHistoryCaptureImagesEnabled,
-            Key.showExpandedLiveActivitiesSection
+            Key.showExpandedLiveActivitiesSection, Key.allowSimultaneousLiveActivitySidecars,
+            Key.timerSidecarPreference, Key.systemHUDsEnabled, Key.replaceMacOSSystemHUDs,
+            Key.volumeHUDEnabled, Key.brightnessHUDEnabled, Key.capsLockHUDEnabled,
+            Key.batteryStatusHUDEnabled, Key.lowBatteryHUDEnabled, Key.audioDeviceHUDEnabled,
+            Key.focusHUDEnabled, Key.systemHUDDurationSeconds
         ])
         reload()
     }
@@ -727,12 +805,15 @@ public final class AppSettings: ObservableObject {
         showTrayTab = Self.bool(defaults, Key.showTrayTab, true)
         showTimerTab = Self.bool(defaults, Key.showTimerTab, true)
         showStatsTab = Self.bool(defaults, Key.showStatsTab, true)
+        showToolsTab = Self.bool(defaults, Key.showToolsTab, true)
         showAgentsTab = Self.bool(defaults, Key.showAgentsTab, true)
         agentActivityEnabled = Self.bool(defaults, Key.agentActivityEnabled, true)
         agentCompletionAlertsEnabled = Self.bool(defaults, Key.agentCompletionAlertsEnabled, true)
         agentApprovalAlertsEnabled = Self.bool(defaults, Key.agentApprovalAlertsEnabled, true)
         agentSoundsEnabled = Self.bool(defaults, Key.agentSoundsEnabled, true)
+        agentCompletionSoundEnabled = Self.bool(defaults, Key.agentCompletionSoundEnabled, true)
         agentUsageMetricsEnabled = Self.bool(defaults, Key.agentUsageMetricsEnabled, true)
+        agentActivityRecordingEnabled = Self.bool(defaults, Key.agentActivityRecordingEnabled, false)
         agentPeekDurationSeconds = Self.double(defaults, Key.agentPeekDurationSeconds, 5.0)
         showActivitiesTab = Self.bool(defaults, Key.showActivitiesTab, false)
         showLiveActivitiesTab = Self.bool(defaults, Key.showLiveActivitiesTab, false)
@@ -773,6 +854,11 @@ public final class AppSettings: ObservableObject {
         deferThumbnailsDuringMorph = Self.bool(defaults, Key.deferThumbnailsDuringMorph, true)
         showFileExtensions = Self.bool(defaults, Key.showFileExtensions, true)
         showFileCountBadge = Self.bool(defaults, Key.showFileCountBadge, true)
+        floatingBasketEnabled = Self.bool(defaults, Key.floatingBasketEnabled, true)
+        basketJiggleSensitivity = Self.int(defaults, Key.basketJiggleSensitivity, 3)
+        basketMultipleEnabled = Self.bool(defaults, Key.basketMultipleEnabled, true)
+        basketAutoHideEnabled = Self.bool(defaults, Key.basketAutoHideEnabled, false)
+        basketAutoHideDelay = Self.double(defaults, Key.basketAutoHideDelay, 2.0)
         confirmBeforeClearShelf = Self.bool(defaults, Key.confirmBeforeClearShelf, false)
         revealInFinderActionEnabled = Self.bool(defaults, Key.revealInFinderActionEnabled, true)
         copyPathActionEnabled = Self.bool(defaults, Key.copyPathActionEnabled, true)
@@ -813,6 +899,9 @@ public final class AppSettings: ObservableObject {
         clipboardHistoryMaximumItems = Self.int(defaults, Key.clipboardHistoryMaximumItems, 50)
         clipboardHistoryPersistenceEnabled = Self.bool(defaults, Key.clipboardHistoryPersistenceEnabled, false)
         clipboardHistoryCaptureImagesEnabled = Self.bool(defaults, Key.clipboardHistoryCaptureImagesEnabled, true)
+        clipboardHistoryExcludedAppBundleIDs = defaults.stringArray(forKey: Key.clipboardHistoryExcludedAppBundleIDs) ?? []
+        clipboardHistoryAutoFocusSearch = Self.bool(defaults, Key.clipboardHistoryAutoFocusSearch, false)
+        clipboardHistoryTagsEnabled = Self.bool(defaults, Key.clipboardHistoryTagsEnabled, true)
         liveActivitiesEnabled = Self.bool(defaults, Key.liveActivitiesEnabled, true)
         showExpandedLiveActivitiesSection = Self.bool(defaults, Key.showExpandedLiveActivitiesSection, true)
         liveActivityStyle = Self.enumValue(defaults, Key.liveActivityStyle, .compact)
@@ -825,6 +914,26 @@ public final class AppSettings: ObservableObject {
         liveActivityAutoDismissEnabled = Self.bool(defaults, Key.liveActivityAutoDismissEnabled, true)
         liveActivityAutoDismissSeconds = Self.double(defaults, Key.liveActivityAutoDismissSeconds, 6.0)
         liveActivityAnimationEnabled = Self.bool(defaults, Key.liveActivityAnimationEnabled, true)
+        allowSimultaneousLiveActivitySidecars = Self.bool(
+            defaults,
+            Key.allowSimultaneousLiveActivitySidecars,
+            true
+        )
+        timerSidecarPreference = Self.enumValue(
+            defaults,
+            Key.timerSidecarPreference,
+            .automatic
+        )
+        systemHUDsEnabled = Self.bool(defaults, Key.systemHUDsEnabled, true)
+        replaceMacOSSystemHUDs = Self.bool(defaults, Key.replaceMacOSSystemHUDs, true)
+        volumeHUDEnabled = Self.bool(defaults, Key.volumeHUDEnabled, true)
+        brightnessHUDEnabled = Self.bool(defaults, Key.brightnessHUDEnabled, true)
+        capsLockHUDEnabled = Self.bool(defaults, Key.capsLockHUDEnabled, true)
+        batteryStatusHUDEnabled = Self.bool(defaults, Key.batteryStatusHUDEnabled, true)
+        lowBatteryHUDEnabled = Self.bool(defaults, Key.lowBatteryHUDEnabled, true)
+        audioDeviceHUDEnabled = Self.bool(defaults, Key.audioDeviceHUDEnabled, true)
+        focusHUDEnabled = Self.bool(defaults, Key.focusHUDEnabled, false)
+        systemHUDDurationSeconds = Self.double(defaults, Key.systemHUDDurationSeconds, 1.4)
         collapsedPriorityRunningTimer = Self.int(defaults, Key.collapsedPriorityRunningTimer, CollapsedLiveActivityPrioritySource.runningTimer.defaultPriority)
         collapsedPriorityPlayingMedia = Self.int(defaults, Key.collapsedPriorityPlayingMedia, CollapsedLiveActivityPrioritySource.playingMedia.defaultPriority)
         collapsedPriorityPausedTimer = Self.int(defaults, Key.collapsedPriorityPausedTimer, CollapsedLiveActivityPrioritySource.pausedTimer.defaultPriority)
@@ -878,6 +987,8 @@ public final class AppSettings: ObservableObject {
         shellAnimationSpeed = normalizedDouble(shellAnimationSpeed, fallback: 1.0, range: 0.25...2.0)
         contentStaggerAmount = normalizedDouble(contentStaggerAmount, fallback: 1.0, range: 0...2.0)
         maxShelfFiles = normalizedInt(maxShelfFiles, fallback: 12, range: 1...48)
+        basketJiggleSensitivity = normalizedInt(basketJiggleSensitivity, fallback: 3, range: 1...5)
+        basketAutoHideDelay = normalizedDouble(basketAutoHideDelay, fallback: 2.0, range: 0.5...10.0)
         timerPreset1Minutes = normalizedInt(timerPreset1Minutes, fallback: 5, range: 1...180)
         timerPreset2Minutes = normalizedInt(timerPreset2Minutes, fallback: 10, range: 1...180)
         timerPreset3Minutes = normalizedInt(timerPreset3Minutes, fallback: 15, range: 1...180)
@@ -892,8 +1003,28 @@ public final class AppSettings: ObservableObject {
         collapsedPriorityPausedMedia = normalizedCollapsedLiveActivityPriority(collapsedPriorityPausedMedia)
         gestureSensitivity = normalizedDouble(gestureSensitivity, fallback: 0.5, range: 0...1.0)
         gestureCooldownSeconds = normalizedDouble(gestureCooldownSeconds, fallback: 0.75, range: 0.1...10.0)
+        agentVisualPreferences = agentVisualPreferences.normalized()
         showIslandTab = true
         saveAllNormalizedValues()
+    }
+
+    private func normalizeAgentVisualPreferences(oldValue: AgentVisualPreferences) {
+        guard !isNormalizingSettings else { return }
+        let normalized = agentVisualPreferences.normalized()
+        if normalized != agentVisualPreferences {
+            isNormalizingSettings = true
+            agentVisualPreferences = normalized
+            isNormalizingSettings = false
+        }
+        if normalized != oldValue || defaults.data(forKey: Key.agentVisualPreferences) == nil {
+            if let data = normalized.encoded() {
+                save(data, for: Key.agentVisualPreferences)
+            }
+        }
+    }
+
+    func resetAgentVisualPreferences() {
+        agentVisualPreferences = .defaults
     }
 
     private func normalizeAutoCollapseGrace(oldValue: Double) {
@@ -1119,6 +1250,8 @@ public final class AppSettings: ObservableObject {
         save(shellAnimationSpeed, for: Key.shellAnimationSpeed)
         save(contentStaggerAmount, for: Key.contentStaggerAmount)
         save(maxShelfFiles, for: Key.maxShelfFiles)
+        save(basketJiggleSensitivity, for: Key.basketJiggleSensitivity)
+        save(basketAutoHideDelay, for: Key.basketAutoHideDelay)
         save(timerPreset1Minutes, for: Key.timerPreset1Minutes)
         save(timerPreset2Minutes, for: Key.timerPreset2Minutes)
         save(timerPreset3Minutes, for: Key.timerPreset3Minutes)
@@ -1133,6 +1266,9 @@ public final class AppSettings: ObservableObject {
         save(collapsedPriorityPausedMedia, for: Key.collapsedPriorityPausedMedia)
         save(gestureSensitivity, for: Key.gestureSensitivity)
         save(gestureCooldownSeconds, for: Key.gestureCooldownSeconds)
+        if let data = agentVisualPreferences.normalized().encoded() {
+            save(data, for: Key.agentVisualPreferences)
+        }
         save(showIslandTab, for: Key.showIslandTab)
     }
 
@@ -1241,13 +1377,17 @@ private enum Key {
     static let showTrayTab = "showTrayTab"
     static let showTimerTab = "showTimerTab"
     static let showStatsTab = "showStatsTab"
+    static let showToolsTab = "showToolsTab"
     static let showAgentsTab = "showAgentsTab"
     static let agentActivityEnabled = "agentActivityEnabled"
     static let agentCompletionAlertsEnabled = "agentCompletionAlertsEnabled"
     static let agentApprovalAlertsEnabled = "agentApprovalAlertsEnabled"
     static let agentSoundsEnabled = "agentSoundsEnabled"
+    static let agentCompletionSoundEnabled = "agentCompletionSoundEnabled"
     static let agentUsageMetricsEnabled = "agentUsageMetricsEnabled"
+    static let agentActivityRecordingEnabled = "agentActivityRecordingEnabled"
     static let agentPeekDurationSeconds = "agentPeekDurationSeconds"
+    static let agentVisualPreferences = "agentVisualPreferences"
     static let showActivitiesTab = "showActivitiesTab"
     static let showLiveActivitiesTab = "showLiveActivitiesTab"
     static let showGesturesTab = "showGesturesTab"
@@ -1287,6 +1427,11 @@ private enum Key {
     static let deferThumbnailsDuringMorph = "deferThumbnailsDuringMorph"
     static let showFileExtensions = "showFileExtensions"
     static let showFileCountBadge = "showFileCountBadge"
+    static let floatingBasketEnabled = "floatingBasketEnabled"
+    static let basketJiggleSensitivity = "basketJiggleSensitivity"
+    static let basketMultipleEnabled = "basketMultipleEnabled"
+    static let basketAutoHideEnabled = "basketAutoHideEnabled"
+    static let basketAutoHideDelay = "basketAutoHideDelay"
     static let confirmBeforeClearShelf = "confirmBeforeClearShelf"
     static let revealInFinderActionEnabled = "revealInFinderActionEnabled"
     static let copyPathActionEnabled = "copyPathActionEnabled"
@@ -1327,6 +1472,9 @@ private enum Key {
     static let clipboardHistoryMaximumItems = "clipboardHistoryMaximumItems"
     static let clipboardHistoryPersistenceEnabled = "clipboardHistoryPersistenceEnabled"
     static let clipboardHistoryCaptureImagesEnabled = "clipboardHistoryCaptureImagesEnabled"
+    static let clipboardHistoryExcludedAppBundleIDs = "clipboardHistoryExcludedAppBundleIDs"
+    static let clipboardHistoryAutoFocusSearch = "clipboardHistoryAutoFocusSearch"
+    static let clipboardHistoryTagsEnabled = "clipboardHistoryTagsEnabled"
     static let liveActivitiesEnabled = "liveActivitiesEnabled"
     static let showExpandedLiveActivitiesSection = "showExpandedLiveActivitiesSection"
     static let liveActivityStyle = "liveActivityStyle"
@@ -1339,6 +1487,18 @@ private enum Key {
     static let liveActivityAutoDismissEnabled = "liveActivityAutoDismissEnabled"
     static let liveActivityAutoDismissSeconds = "liveActivityAutoDismissSeconds"
     static let liveActivityAnimationEnabled = "liveActivityAnimationEnabled"
+    static let allowSimultaneousLiveActivitySidecars = "allowSimultaneousLiveActivitySidecars"
+    static let timerSidecarPreference = "timerSidecarPreference"
+    static let systemHUDsEnabled = "systemHUDsEnabled"
+    static let replaceMacOSSystemHUDs = "replaceMacOSSystemHUDs"
+    static let volumeHUDEnabled = "volumeHUDEnabled"
+    static let brightnessHUDEnabled = "brightnessHUDEnabled"
+    static let capsLockHUDEnabled = "capsLockHUDEnabled"
+    static let batteryStatusHUDEnabled = "batteryStatusHUDEnabled"
+    static let lowBatteryHUDEnabled = "lowBatteryHUDEnabled"
+    static let audioDeviceHUDEnabled = "audioDeviceHUDEnabled"
+    static let focusHUDEnabled = "focusHUDEnabled"
+    static let systemHUDDurationSeconds = "systemHUDDurationSeconds"
     static let collapsedPriorityRunningTimer = "collapsedPriorityRunningTimer"
     static let collapsedPriorityPlayingMedia = "collapsedPriorityPlayingMedia"
     static let collapsedPriorityPausedTimer = "collapsedPriorityPausedTimer"
@@ -1387,10 +1547,10 @@ private enum Key {
         collapsedHoverPreviewTitleIconName, collapsedHoverPreviewArtistIconName, animationPreset, reduceExtraMotion,
         shellAnimationSpeed, contentAnimationEnabled, contentStaggerEnabled, contentStaggerAmount,
         useBlurTransitions, useScaleTransitions, showIslandTab, showTrayTab,
-        showTimerTab, showStatsTab, showAgentsTab, agentActivityEnabled,
-        agentCompletionAlertsEnabled, agentApprovalAlertsEnabled, agentSoundsEnabled,
-        agentUsageMetricsEnabled, agentPeekDurationSeconds,
-        showActivitiesTab, showLiveActivitiesTab, showGesturesTab,
+        showTimerTab, showStatsTab, showToolsTab, showAgentsTab, agentActivityEnabled,
+        agentCompletionAlertsEnabled, agentApprovalAlertsEnabled, agentSoundsEnabled, agentCompletionSoundEnabled,
+        agentUsageMetricsEnabled, agentActivityRecordingEnabled, agentPeekDurationSeconds,
+        agentVisualPreferences, showActivitiesTab, showLiveActivitiesTab, showGesturesTab,
         rememberLastSelectedTab, defaultExpandedTab, mediaEnabled, showMediaWhenPaused,
         showMediaWhenNoSource, showAlbumArtwork, showMediaTitle, showMediaArtist, showMediaSourceName,
         showPlaybackControls, showProgressSlider, showVolumeSlider, showVisualizer,
@@ -1400,7 +1560,9 @@ private enum Key {
         browserMediaDetectionEnabled, youtubeMetadataEnrichmentEnabled, trayEnabled, fileShelfEnabled,
         airDropZoneEnabled, allowFileDropsOnCollapsedIsland, allowFileDropsOnExpandedTray, maxShelfFiles,
         persistFileShelfAcrossLaunches, showFileThumbnails, deferThumbnailsDuringMorph,
-        showFileExtensions, showFileCountBadge, confirmBeforeClearShelf, revealInFinderActionEnabled,
+        showFileExtensions, showFileCountBadge, floatingBasketEnabled, basketJiggleSensitivity,
+        basketMultipleEnabled, basketAutoHideEnabled, basketAutoHideDelay,
+        confirmBeforeClearShelf, revealInFinderActionEnabled,
         copyPathActionEnabled, removeFileActionEnabled, openFileActionEnabled,
         airDropFallbackRevealInFinder, timerEnabled, timerPresetsEnabled, timerPreset1Minutes,
         timerPreset2Minutes, timerPreset3Minutes, timerSoundEnabled, timerNotificationEnabled,
@@ -1411,11 +1573,15 @@ private enum Key {
         activitiesRefreshIntervalSeconds, showRunningAppsActivity, showDownloadsActivity,
         showCalendarActivity, showNowPlayingActivity, clipboardHistoryEnabled,
         clipboardHistoryMaximumItems, clipboardHistoryPersistenceEnabled,
-        clipboardHistoryCaptureImagesEnabled, liveActivitiesEnabled,
+        clipboardHistoryCaptureImagesEnabled, clipboardHistoryExcludedAppBundleIDs,
+        clipboardHistoryAutoFocusSearch, clipboardHistoryTagsEnabled, liveActivitiesEnabled,
         showExpandedLiveActivitiesSection, liveActivityStyle,
         showMusicLiveActivity, showTimerLiveActivity, showFileDropLiveActivity,
         showBatteryLiveActivity, showCalendarLiveActivity, showDownloadsLiveActivity,
         liveActivityAutoDismissEnabled, liveActivityAutoDismissSeconds, liveActivityAnimationEnabled,
+        systemHUDsEnabled, replaceMacOSSystemHUDs, volumeHUDEnabled, brightnessHUDEnabled,
+        capsLockHUDEnabled, batteryStatusHUDEnabled, lowBatteryHUDEnabled, audioDeviceHUDEnabled,
+        focusHUDEnabled, systemHUDDurationSeconds,
         collapsedPriorityRunningTimer, collapsedPriorityPlayingMedia, collapsedPriorityPausedTimer,
         collapsedPriorityRecentFiles, collapsedPriorityPausedMedia,
         gesturesEnabled, gestureInputSource, expandGestureEnabled, collapseGestureEnabled,
@@ -1434,6 +1600,9 @@ private enum Key {
         clipboardHistoryEnabled,
         clipboardHistoryMaximumItems,
         clipboardHistoryPersistenceEnabled,
-        clipboardHistoryCaptureImagesEnabled
+        clipboardHistoryCaptureImagesEnabled,
+        clipboardHistoryExcludedAppBundleIDs,
+        clipboardHistoryAutoFocusSearch,
+        clipboardHistoryTagsEnabled
     ]
 }

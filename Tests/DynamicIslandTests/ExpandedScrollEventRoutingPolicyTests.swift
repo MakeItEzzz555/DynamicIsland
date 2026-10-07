@@ -113,6 +113,17 @@ final class ExpandedScrollEventRoutingPolicyTests: XCTestCase {
         XCTAssertFalse(store.isExpandedScrollGestureSuppressed)
     }
 
+    func testTransientLauncherInteractionLockDefaultsOffAndCanHoldHoverOpen() {
+        let store = IslandLayoutStore()
+        XCTAssertFalse(store.isTransientInteractionActive)
+
+        store.isTransientInteractionActive = true
+        XCTAssertTrue(store.isTransientInteractionActive)
+
+        store.isTransientInteractionActive = false
+        XCTAssertFalse(store.isTransientInteractionActive)
+    }
+
     func testLayoutStoreRegistersAndClearsExpandedContentScrollRegion() {
         let store = IslandLayoutStore()
         XCTAssertEqual(store.expandedContentScrollRegion, .zero)
@@ -203,6 +214,32 @@ final class ExpandedScrollEventRoutingPolicyTests: XCTestCase {
             ownership.route(phase: .physicalChanged, startsInsideContent: true, verticalIntent: true),
             .islandGesture
         )
+    }
+
+    func testOutsideSequenceNeverTransfersToContentAfterPointerEnters() {
+        var ownership = ExpandedContentScrollSequenceOwnership()
+
+        XCTAssertEqual(
+            ownership.route(phase: .physicalBegan, startsInsideContent: false, verticalIntent: true),
+            .islandGesture
+        )
+        XCTAssertEqual(
+            ownership.route(phase: .physicalChanged, startsInsideContent: true, verticalIntent: true),
+            .islandGesture
+        )
+        XCTAssertEqual(
+            ownership.route(phase: .physicalEnded, startsInsideContent: true, verticalIntent: nil),
+            .islandGesture
+        )
+        XCTAssertEqual(
+            ownership.route(phase: .momentumBegan, startsInsideContent: true, verticalIntent: nil),
+            .islandGesture
+        )
+        XCTAssertEqual(
+            ownership.route(phase: .momentumEnded, startsInsideContent: true, verticalIntent: nil),
+            .islandGesture
+        )
+        XCTAssertNil(ownership.owner)
     }
 
     private func route(

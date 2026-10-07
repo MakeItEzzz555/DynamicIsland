@@ -49,6 +49,19 @@ final class AgentUISnapshotTests: XCTestCase {
             output: output
         )
 
+        try renderCompactState(name: "16-collapsed-working", session: working, output: output)
+        try renderCompactState(
+            name: "17-collapsed-plan-ready",
+            session: session(provider: .codex, nativeID: "plan", project: "DynamicIsland", state: .planReady, progress: nil),
+            output: output
+        )
+        try renderCompactState(name: "18-collapsed-completed", session: completed, output: output)
+        try renderCompactState(
+            name: "19-collapsed-failed",
+            session: session(provider: .codex, nativeID: "failed", project: "DynamicIsland", state: .failed, progress: nil),
+            output: output
+        )
+
         XCTAssertNil(AgentCollapsedShellPresentation.routine(sessions: [completed], enabled: true))
         try renderCompact(
             name: "04-completed-retraction",
@@ -72,6 +85,13 @@ final class AgentUISnapshotTests: XCTestCase {
             output: output
         )
         try renderWorkspaceDashboard(
+            name: "23-agents-workspace-inline-usage",
+            sessions: [approval, working, claude, completed],
+            selectedSessionID: working.id,
+            width: 946,
+            output: output
+        )
+        try renderWorkspaceDashboard(
             name: "14-selected-attention-workspace",
             sessions: [approval, working, completed],
             selectedSessionID: nil,
@@ -91,6 +111,110 @@ final class AgentUISnapshotTests: XCTestCase {
             sessions: longWorkspace,
             selectedSessionID: longWorkspace[2].id,
             output: output
+        )
+        try renderStandaloneConsole(
+            name: "20-expanded-plan-ready",
+            session: session(provider: .codex, nativeID: "plan-expanded", project: "DynamicIsland", state: .planReady, progress: nil),
+            mode: .observed,
+            output: output
+        )
+        try renderStandaloneConsole(
+            name: "21-managed-console",
+            session: working,
+            mode: .interactive(canInterrupt: true),
+            output: output
+        )
+        try renderSessionLauncher(
+            sessions: [approval, working, claude] + longWorkspace,
+            output: output
+        )
+    }
+
+    private func renderCompactState(
+        name: String,
+        session: AgentSession,
+        output: URL
+    ) throws {
+        let accent = AgentVisualStyle.accent(for: session.state)
+        try renderCompact(
+            name: name,
+            profile: .agentRoutine(leftContentWidth: 100, rightContentWidth: 108),
+            content: AnyView(
+                HStack(spacing: 12) {
+                    AgentCompactRoutineLeadingView(session: session)
+                    Spacer(minLength: 20)
+                    AgentCompactAttentionTrailingView(
+                        text: AgentSessionPresentation.stateLabel(session.state),
+                        accent: accent,
+                        symbol: AgentSessionPresentation.stateSymbol(session.state)
+                    )
+                }
+            ),
+            glowColor: accent,
+            output: output
+        )
+    }
+
+    private func renderStandaloneConsole(
+        name: String,
+        session: AgentSession,
+        mode: AgentConsoleMode,
+        output: URL
+    ) throws {
+        let approvals = AgentApprovalController()
+        let interactionState: AgentManagedInteractionState = switch mode {
+        case .observed:
+            .observed
+        case .interactive(let canInterrupt):
+            canInterrupt ? .working(canInterrupt: true) : .ready
+        }
+        let view = AgentEmbeddedConsoleView(
+            session: session,
+            mode: mode,
+            interactionState: interactionState,
+            maximumActivityEntries: 6,
+            transcriptEntries: [],
+            workspaceSessions: [session],
+            approvalControl: approvals,
+            onSelectSession: { _ in },
+            onSubmit: { _ in true },
+            onInterrupt: {}
+        )
+        .padding(14)
+        .background(Color(red: 0.025, green: 0.027, blue: 0.055))
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .padding(12)
+        .background(Color(red: 0.055, green: 0.06, blue: 0.12))
+
+        try renderHosted(
+            view,
+            size: CGSize(width: 820, height: 440),
+            to: output.appendingPathComponent(name + ".png")
+        )
+    }
+
+    private func renderSessionLauncher(
+        sessions: [AgentSession],
+        output: URL
+    ) throws {
+        let approvals = AgentApprovalController()
+        let managed = makeManagedControl(approvals: approvals)
+        let view = AgentSessionLauncherView(
+            sessions: sessions,
+            managedControl: managed,
+            flow: AgentNewSessionFlow(),
+            onSelectSession: { _ in },
+            onStarted: { _ in },
+            onDismiss: {}
+        )
+        .frame(width: 520, height: 300, alignment: .top)
+        .padding(18)
+        .background(Color(red: 0.025, green: 0.027, blue: 0.055))
+
+        try renderHosted(
+            view,
+            size: CGSize(width: 556, height: 336),
+            to: output.appendingPathComponent("22-in-island-session-launcher.png")
         )
     }
 
@@ -155,6 +279,88 @@ final class AgentUISnapshotTests: XCTestCase {
         try render(view, size: CGSize(width: 820, height: 440), to: output.appendingPathComponent(name + ".png"))
     }
 
+    func testRenderNewSessionWorkflowSnapshots() async throws {
+        guard let outputPath = ProcessInfo.processInfo.environment["DYNAMIC_ISLAND_AGENT_SNAPSHOT_DIR"] else {
+            throw XCTSkip("Set DYNAMIC_ISLAND_AGENT_SNAPSHOT_DIR to render review screenshots.")
+        }
+        let output = URL(fileURLWithPath: outputPath, isDirectory: true)
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        let folder = output.appendingPathComponent("render-project", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+
+        let store = AgentEventStore()
+        let approvals = AgentApprovalController()
+        let claude = ClaudeInteractiveProvider(
+            client: try ClaudeCodeStreamingClient(executableURL: URL(fileURLWithPath: "/usr/bin/true")),
+            catalog: SnapshotEmptyClaudeCatalog()
+        )
+        let managed = AgentManagedSessionController(
+            providers: [claude],
+            coordinator: AgentIngestionCoordinator(eventStore: store),
+            eventStore: store,
+            approvals: approvals
+        )
+        await managed.refreshPersistentSnapshot()
+        _ = managed.selectNewSessionModel("opus", for: .claude)
+
+        func dashboard(_ sessions: [AgentSession]) -> some View {
+            AgentDashboardContentView(
+                sessions: sessions,
+                showsUsage: false,
+                approvalControl: approvals,
+                managedControl: managed,
+                availableHeight: 440
+            )
+            .padding(14)
+            .background(Color(red: 0.025, green: 0.027, blue: 0.055))
+        }
+
+        try renderHosted(dashboard([]), size: CGSize(width: 820, height: 440),
+                         to: output.appendingPathComponent("30-empty-new-session.png"))
+
+        let flow = AgentNewSessionFlow()
+        flow.present(.newSession, provider: .claude, folder: folder.path)
+        let launcher = AgentSessionLauncherView(
+            sessions: [],
+            managedControl: managed,
+            flow: flow,
+            onSelectSession: { _ in },
+            onStarted: { _ in },
+            onDismiss: {}
+        )
+        .frame(width: 780, alignment: .top)
+        .padding(18)
+        .background(Color(red: 0.025, green: 0.027, blue: 0.055))
+        try renderHosted(launcher, size: CGSize(width: 816, height: 400),
+                         to: output.appendingPathComponent("31-new-session-launcher.png"))
+
+        guard case .success(let started) = await managed.startManagedSession(provider: .claude, cwd: folder.path) else {
+            return XCTFail("start failed")
+        }
+        try renderHosted(dashboard(store.sessions), size: CGSize(width: 820, height: 440),
+                         to: output.appendingPathComponent("32-new-session-composer.png"))
+        XCTAssertEqual(managed.selectedSessionID, started.instance)
+        managed.stop()
+
+        // Provider buttons with each provider selected (no refresh, so no
+        // provider process is launched).
+        let codex = CodexAppServerProvider(client: try CodexAppServerClient())
+        let twoProviders = AgentManagedSessionController(
+            providers: [claude, codex],
+            coordinator: AgentIngestionCoordinator(eventStore: AgentEventStore()),
+            eventStore: AgentEventStore(),
+            approvals: approvals
+        )
+        for provider in [AgentProvider.claude, .codex] {
+            twoProviders.selectProvider(provider)
+            let header = AgentProviderButtons(managedControl: twoProviders)
+                .padding(14)
+                .background(Color(red: 0.025, green: 0.027, blue: 0.055))
+            try renderHosted(header, size: CGSize(width: 260, height: 56),
+                             to: output.appendingPathComponent("33-provider-\(provider.stableName)-selected.png"))
+        }
+    }
+
     private func renderStandbyDashboard(output: URL) throws {
         let approvals = AgentApprovalController()
         let managed = makeManagedControl(approvals: approvals)
@@ -182,6 +388,7 @@ final class AgentUISnapshotTests: XCTestCase {
         name: String,
         sessions: [AgentSession],
         selectedSessionID: AgentSessionInstanceID?,
+        width: CGFloat = 820,
         output: URL
     ) throws {
         let approvals = AgentApprovalController()
@@ -202,7 +409,7 @@ final class AgentUISnapshotTests: XCTestCase {
 
         try renderHosted(
             view,
-            size: CGSize(width: 820, height: 480),
+            size: CGSize(width: width, height: 480),
             to: output.appendingPathComponent(name + ".png")
         )
     }
@@ -298,7 +505,7 @@ final class AgentUISnapshotTests: XCTestCase {
 
     private func render<V: View>(_ view: V, size: CGSize, to url: URL) throws {
         let renderer = ImageRenderer(
-            content: view
+            content: view.environment(\.nativeVisualSnapshotTime, 0.6)
                 .frame(width: size.width, height: size.height)
                 .preferredColorScheme(.dark)
         )
@@ -437,4 +644,9 @@ final class AgentUISnapshotTests: XCTestCase {
         default: AgentSessionPresentation.stateLabel(state)
         }
     }
+}
+
+private struct SnapshotEmptyClaudeCatalog: ClaudeSessionCataloging {
+    func recentSessions(limit: Int) throws -> [ClaudeCatalogEntry] { [] }
+    func session(nativeSessionID: String) throws -> ClaudeCatalogEntry? { nil }
 }

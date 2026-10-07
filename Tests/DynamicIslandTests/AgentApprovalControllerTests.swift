@@ -92,6 +92,64 @@ final class AgentApprovalControllerTests: XCTestCase {
         XCTAssertNil(result)
     }
 
+    func testResolvedChoiceRemainsPresentedUntilProviderDeliveryIsConfirmed() async {
+        let current = now
+        let controller = AgentApprovalController(now: { current })
+        let request = makeRequest(id: "delivery")
+        let waiter = Task { await controller.request(request, maximumWait: .seconds(1)) }
+        await Task.yield()
+
+        XCTAssertEqual(
+            controller.resolve(
+                session: request.key.session,
+                requestID: request.key.requestID,
+                decision: .allow
+            ),
+            .accepted
+        )
+        let decision = await waiter.value
+        XCTAssertEqual(decision, .allow)
+        XCTAssertNil(controller.pendingRequest(for: request.key.session))
+        XCTAssertEqual(controller.presentedRequest(for: request.key.session), request)
+        XCTAssertEqual(controller.deliveryState(for: request.key), .submitting(.allow))
+        XCTAssertEqual(
+            controller.resolve(
+                session: request.key.session,
+                requestID: request.key.requestID,
+                decision: .allow
+            ),
+            .missing
+        )
+
+        controller.confirmDelivery(request.key)
+        XCTAssertNil(controller.presentedRequest(for: request.key.session))
+    }
+
+    func testWithdrawReturnsNoDecisionAndStaysOneShot() async {
+        let current = now
+        let controller = AgentApprovalController(now: { current })
+        let request = makeRequest(id: "withdrawn")
+        let waiter = Task { await controller.request(request, maximumWait: .seconds(1)) }
+        await Task.yield()
+
+        XCTAssertEqual(controller.withdraw(session: request.key.session, requestID: request.key.requestID), .accepted)
+        let decision = await waiter.value
+        XCTAssertNil(decision, "Withdrawal is never a decision")
+        XCTAssertNil(controller.deliveryState(for: request.key))
+        XCTAssertNil(controller.presentedRequest(for: request.key.session))
+        XCTAssertEqual(
+            controller.resolve(session: request.key.session, requestID: request.key.requestID, decision: .allow),
+            .missing
+        )
+        XCTAssertEqual(controller.withdraw(session: request.key.session, requestID: request.key.requestID), .missing)
+        XCTAssertTrue(controller.hasHandled(request.key))
+        let replay = await controller.request(request, maximumWait: .seconds(1))
+        XCTAssertNil(replay)
+
+        controller.forgetHandledRequests(for: request.key.session.sessionID)
+        XCTAssertFalse(controller.hasHandled(request.key))
+    }
+
     private func makeRequest(
         id: String,
         expiresAt: Date? = nil
@@ -108,5 +166,50 @@ final class AgentApprovalControllerTests: XCTestCase {
             summary: "$ git push origin feature/agents-ui-overhaul",
             expiresAt: expiresAt ?? now.addingTimeInterval(75)
         )
+    }
+}
+
+@MainActor
+final class AgentApprovalDeliveryStateTests: XCTestCase {
+    private func key(_ id: String = "r1") -> AgentApprovalControlKey {
+        AgentApprovalControlKey(
+            session: AgentSessionInstanceID(
+                sessionID: AgentSessionID(provider: .codex, nativeID: "thread"),
+                generation: AgentSessionGeneration(rawValue: 1)
+            ),
+            requestID: AgentCorrelationID(rawValue: id)
+        )
+    }
+
+    func testUnboundedManagedRequestNeverExpiresWhileProviderWaits() async throws {
+        final class Clock: @unchecked Sendable { var date = Date(timeIntervalSince1970: 1_000) }
+        let clock = Clock()
+        let controller = AgentApprovalController(now: { clock.date })
+        let request = AgentApprovalControlRequest(key: key(), summary: "Run", expiresAt: .distantFuture)
+        let task = Task { await controller.request(request, maximumWait: nil) }
+        while controller.pendingRequests.isEmpty { await Task.yield() }
+        clock.date = clock.date.addingTimeInterval(3_600)
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertNotNil(controller.presentedRequest(for: request.key.session))
+        XCTAssertEqual(controller.resolve(session: request.key.session, requestID: request.key.requestID, decision: .allow), .accepted)
+        let decision = await task.value
+        XCTAssertEqual(decision, .allow)
+        XCTAssertEqual(controller.deliveryState(for: request.key), .submitting(.allow))
+    }
+
+    func testFailedDeliveryStaysPresentedUntilDismissed() async {
+        let controller = AgentApprovalController()
+        let request = AgentApprovalControlRequest(key: key(), summary: "Run", expiresAt: .distantFuture)
+        let task = Task { await controller.request(request, maximumWait: nil) }
+        while controller.pendingRequests.isEmpty { await Task.yield() }
+        _ = controller.resolve(session: request.key.session, requestID: request.key.requestID, decision: .deny)
+        _ = await task.value
+        controller.failDelivery(request.key, reason: "Codex did not confirm the decision.")
+        XCTAssertEqual(controller.deliveryState(for: request.key), .failed(.deny, reason: "Codex did not confirm the decision."))
+        XCTAssertEqual(controller.presentedRequest(for: request.key.session), request)
+        XCTAssertEqual(controller.resolve(session: request.key.session, requestID: request.key.requestID, decision: .allow), .missing)
+        controller.dismissFailedDelivery(request.key)
+        XCTAssertNil(controller.presentedRequest(for: request.key.session))
+        XCTAssertNil(controller.deliveryState(for: request.key))
     }
 }

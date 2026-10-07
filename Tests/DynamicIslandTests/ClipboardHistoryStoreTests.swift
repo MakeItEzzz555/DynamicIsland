@@ -763,12 +763,124 @@ final class ClipboardHistoryStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testSourceApplicationIsCapturedAtPasteboardChangeTime() {
+        let settings = AppSettings(defaults: defaults)
+        settings.clipboardHistoryEnabled = true
+        let pasteboard = FakeClipboardPasteboardClient()
+        let source = ClipboardSourceApplication(name: "Example", bundleIdentifier: "com.example.app")
+        let store = makeStore(
+            settings: settings,
+            pasteboard: pasteboard,
+            sourceApplicationProvider: { source }
+        )
+
+        capture(text("source-aware"), with: pasteboard, store: store)
+
+        XCTAssertEqual(store.entries.first?.sourceApplication, source)
+    }
+
+    @MainActor
+    func testExcludedSourceApplicationIsRejectedBeforeCapture() {
+        let settings = AppSettings(defaults: defaults)
+        settings.clipboardHistoryEnabled = true
+        settings.clipboardHistoryExcludedAppBundleIDs = ["com.secret.app"]
+        let pasteboard = FakeClipboardPasteboardClient()
+        let store = makeStore(
+            settings: settings,
+            pasteboard: pasteboard,
+            sourceApplicationProvider: {
+                ClipboardSourceApplication(name: "Secret", bundleIdentifier: "com.secret.app")
+            }
+        )
+
+        capture(text("must never persist"), with: pasteboard, store: store)
+
+        XCTAssertTrue(store.entries.isEmpty)
+    }
+
+    @MainActor
+    func testFavoriteSurvivesOrdinaryHistoryTrimAndMetadataRoundTrip() throws {
+        let persistence = MemoryClipboardPersistence()
+        let settings = AppSettings(defaults: defaults)
+        settings.clipboardHistoryEnabled = true
+        settings.clipboardHistoryPersistenceEnabled = true
+        settings.clipboardHistoryMaximumItems = 10
+        let pasteboard = FakeClipboardPasteboardClient()
+        let store = makeStore(settings: settings, pasteboard: pasteboard, persistence: persistence)
+        capture(text("keep"), with: pasteboard, store: store)
+        let favoriteID = try XCTUnwrap(store.entries.first?.id)
+        store.toggleFavorite(id: favoriteID)
+        store.renameEntry(id: favoriteID, title: "Pinned note")
+        let tag = try XCTUnwrap(store.addTag(name: "Work", color: .blue))
+        store.setTag(tag.id, on: favoriteID, enabled: true)
+
+        for index in 0..<16 { capture(text("ordinary-\(index)"), with: pasteboard, store: store) }
+        store.waitForPendingPersistenceForTesting()
+
+        let favorite = try XCTUnwrap(store.entries.first(where: { $0.id == favoriteID }))
+        XCTAssertTrue(favorite.isFavorite)
+        XCTAssertEqual(favorite.customTitle, "Pinned note")
+        XCTAssertEqual(favorite.tagIDs, [tag.id])
+        XCTAssertLessThanOrEqual(store.entries.filter { !$0.isFavorite }.count, 10)
+
+        let reloadedSettings = AppSettings(defaults: defaults)
+        let reloaded = makeStore(
+            settings: reloadedSettings,
+            pasteboard: FakeClipboardPasteboardClient(),
+            persistence: persistence
+        )
+        let persistedFavorite = try XCTUnwrap(reloaded.entries.first(where: { $0.id == favoriteID }))
+        XCTAssertTrue(persistedFavorite.isFavorite)
+        XCTAssertEqual(persistedFavorite.customTitle, "Pinned note")
+        XCTAssertEqual(reloaded.tags.first?.name, "Work")
+    }
+
+    @MainActor
+    func testSchemaOneArchiveMigratesWithSafeMetadataDefaults() throws {
+        struct LegacyEntry: Codable {
+            let id: UUID
+            let createdAt: Date
+            let payload: ClipboardHistoryPayload
+            let fingerprint: String
+        }
+        struct LegacyArchive: Codable {
+            let schemaVersion: Int
+            let entries: [LegacyEntry]
+        }
+
+        let payload = text("legacy")
+        let legacy = LegacyArchive(
+            schemaVersion: 1,
+            entries: [LegacyEntry(
+                id: UUID(),
+                createdAt: Date(timeIntervalSince1970: 1),
+                payload: payload,
+                fingerprint: ClipboardHistoryFingerprint.make(for: payload)
+            )]
+        )
+        let settings = AppSettings(defaults: defaults)
+        settings.clipboardHistoryPersistenceEnabled = true
+        let store = makeStore(
+            settings: settings,
+            pasteboard: FakeClipboardPasteboardClient(),
+            persistence: MemoryClipboardPersistence(data: try JSONEncoder().encode(legacy))
+        )
+
+        XCTAssertEqual(store.entries.count, 1)
+        XCTAssertFalse(store.entries[0].isFavorite)
+        XCTAssertNil(store.entries[0].sourceApplication)
+        XCTAssertTrue(store.entries[0].tagIDs.isEmpty)
+        XCTAssertTrue(store.tags.isEmpty)
+    }
+
+    @MainActor
     private func makeStore(
         settings: AppSettings,
         pasteboard: FakeClipboardPasteboardClient,
         persistence: ClipboardHistoryPersistence = MemoryClipboardPersistence(),
         limits: ClipboardHistoryLimits = .standard,
-        now: @escaping () -> Date = Date.init
+        now: @escaping () -> Date = Date.init,
+        sourceApplicationProvider: @escaping () -> ClipboardSourceApplication? = { nil }
     ) -> ClipboardHistoryStore {
         ClipboardHistoryStore(
             settings: settings,
@@ -776,7 +888,8 @@ final class ClipboardHistoryStoreTests: XCTestCase {
             persistence: persistence,
             limits: limits,
             now: now,
-            automaticallySchedulesTimer: false
+            automaticallySchedulesTimer: false,
+            sourceApplicationProvider: sourceApplicationProvider
         )
     }
 

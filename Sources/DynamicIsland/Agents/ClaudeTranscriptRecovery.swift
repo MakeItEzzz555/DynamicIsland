@@ -62,6 +62,7 @@ struct ClaudeTranscriptRecoveryParser: Sendable {
                 .commandLifecycle: Self.evidence(observedAt),
                 .taskLifecycle: Self.evidence(observedAt),
                 .tokenUsage: Self.evidence(observedAt),
+                .contextUsage: Self.evidence(observedAt),
                 .modelMetadata: Self.evidence(observedAt),
                 .projectContext: Self.evidence(observedAt),
                 .gitMetadata: Self.evidence(observedAt)
@@ -178,7 +179,8 @@ struct ClaudeTranscriptRecoveryParser: Sendable {
                             payload: .command(AgentCommandEvent(
                                 executable: executable,
                                 success: nil,
-                                exitCode: nil
+                                exitCode: nil,
+                                processingKind: .executing
                             )),
                             recordID: uuid,
                             discriminator: "command-start"
@@ -195,7 +197,8 @@ struct ClaudeTranscriptRecoveryParser: Sendable {
                                 name: toolName,
                                 category: Self.toolCategory(toolName),
                                 summary: nil,
-                                success: nil
+                                success: nil,
+                                processingKind: Self.processingKind(forToolName: toolName)
                             )),
                             recordID: uuid,
                             discriminator: "tool-start"
@@ -222,7 +225,8 @@ struct ClaudeTranscriptRecoveryParser: Sendable {
                             payload: .command(AgentCommandEvent(
                                 executable: executable,
                                 success: success,
-                                exitCode: nil
+                                exitCode: nil,
+                                processingKind: .executing
                             )),
                             recordID: uuid,
                             discriminator: "command-end"
@@ -238,7 +242,8 @@ struct ClaudeTranscriptRecoveryParser: Sendable {
                                 name: name,
                                 category: Self.toolCategory(name),
                                 summary: nil,
-                                success: success
+                                success: success,
+                                processingKind: Self.processingKind(forToolName: name)
                             )),
                             recordID: uuid,
                             discriminator: "tool-end"
@@ -252,7 +257,11 @@ struct ClaudeTranscriptRecoveryParser: Sendable {
         }
 
         if let usageObject = message["usage"] as? [String: Any],
-           let usage = Self.usage(usageObject, observedAt: timestamp ?? receivedAt) {
+           let usage = Self.usage(
+               usageObject,
+               observedAt: timestamp ?? receivedAt,
+               isSidechain: (root["isSidechain"] as? Bool) == true
+           ) {
             events.append(event(
                 nativeID: nativeID,
                 type: .usageUpdated,
@@ -363,9 +372,16 @@ struct ClaudeTranscriptRecoveryParser: Sendable {
         )
     }
 
-    private static func usage(
+    /// Token usage from one assistant message. Context used is the prompt
+    /// size the provider reported for that request (input + cache creation +
+    /// cache read). Claude transcripts do not record the context-window
+    /// limit, so no limit is attached and no percentage is implied.
+    /// Sidechain (subagent) requests describe a different context and are
+    /// excluded from the main thread's context value.
+    static func usage(
         _ object: [String: Any],
-        observedAt: Date
+        observedAt: Date,
+        isSidechain: Bool = false
     ) -> AgentUsage? {
         let candidates: [(AgentUsageMetric, String, Any?)] = [
             (.inputTokens, "message-input", object["input_tokens"]),
@@ -383,6 +399,23 @@ struct ClaudeTranscriptRecoveryParser: Sendable {
                 source: "claude-transcript",
                 observedAt: observedAt
             )
+        }
+        if !isSidechain {
+            let parts = [
+                object["input_tokens"],
+                object["cache_creation_input_tokens"],
+                object["cache_read_input_tokens"]
+            ].compactMap { double($0) }.filter { $0.isFinite && $0 >= 0 }
+            if !parts.isEmpty {
+                samples[.contextUsed] = AgentUsageSample(
+                    value: parts.reduce(0, +),
+                    limit: nil,
+                    unit: .tokens,
+                    scope: "context",
+                    source: "claude-transcript",
+                    observedAt: observedAt
+                )
+            }
         }
         return samples.isEmpty ? nil : AgentUsage(samples: samples)
     }
@@ -406,6 +439,21 @@ struct ClaudeTranscriptRecoveryParser: Sendable {
         if lower == "read" || lower.contains("search") || lower.contains("glob") || lower.contains("grep") { return "read" }
         if lower.contains("web") || lower.contains("browser") { return "web" }
         return "tool"
+    }
+
+    private static func processingKind(forToolName name: String) -> AgentProcessingKind {
+        let lower = name.lowercased()
+        if lower.contains("web") || lower.contains("browser") ||
+            lower.contains("search") || lower.contains("glob") || lower.contains("grep") {
+            return .searching
+        }
+        if lower == "read" || lower.contains("read") {
+            return .listening
+        }
+        if lower.contains("task") || lower.contains("agent") {
+            return .connecting
+        }
+        return .executing
     }
 
     private static func boundedString(_ value: Any?, maximumBytes: Int) -> String? {

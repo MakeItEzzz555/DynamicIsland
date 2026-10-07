@@ -10,6 +10,7 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
         .submitPrompt,
         .interrupt,
         .selectModel,
+        .selectReasoningEffort,
         .resolveApprovals,
         .accountUsage,
         .contextUsage,
@@ -33,8 +34,9 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
         return AsyncStream { continuation in
             let task = Task {
                 for await event in upstream {
-                    if let mapped = Self.map(event) {
-                        continuation.yield(mapped)
+                    let mapped = Self.normalizedEvents(event)
+                    if !mapped.isEmpty {
+                        for value in mapped { continuation.yield(value) }
                     } else if case .serverRequest(let id, let method, _) = event {
                         // Unknown server requests must never hang a managed turn.
                         // Reject them through JSON-RPC without broadening the
@@ -104,7 +106,9 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
                     model: $0.model,
                     displayName: $0.displayName,
                     description: $0.description,
-                    isDefault: $0.isDefault
+                    isDefault: $0.isDefault,
+                    supportedReasoningEfforts: $0.supportedReasoningEfforts,
+                    defaultReasoningEffort: $0.defaultReasoningEffort
                 )
             }
     }
@@ -161,10 +165,15 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
         nativeSessionID: String,
         model: String?
     ) async throws -> AgentManagedTurnDescriptor {
+        try await submit(prompt: prompt, nativeSessionID: nativeSessionID, model: model, reasoningEffort: nil)
+    }
+
+    func submit(prompt: String, nativeSessionID: String, model: String?, reasoningEffort: String?) async throws -> AgentManagedTurnDescriptor {
         let turn = try await client.startTurn(
             threadID: nativeSessionID,
             prompt: prompt,
-            model: model
+            model: model,
+            reasoningEffort: reasoningEffort
         )
         return AgentManagedTurnDescriptor(nativeSessionID: nativeSessionID, turnID: turn.id)
     }
@@ -340,6 +349,28 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
         )
     }
 
+    /// One wire item may finish processing and publish displayable text. Keep
+    /// both events on the existing provider stream, in provider order.
+    nonisolated static func normalizedEvents(_ event: CodexAppServerEvent) -> [AgentInteractiveProviderEvent] {
+        var values: [AgentInteractiveProviderEvent] = []
+        if case .notification(let method, let params) = event, method == "item/completed",
+           let thread = params["threadId"]?.stringValue, let turn = params["turnId"]?.stringValue,
+           let item = params["item"], item["type"]?.stringValue == "agentMessage",
+           let ended = mapItem(item, nativeSessionID: thread, turnID: turn, completed: true) {
+            values.append(.normalized(ended))
+        }
+        if case .notification(let method, let params) = event, method == "item/completed",
+           let thread = params["threadId"]?.stringValue, let turn = params["turnId"]?.stringValue,
+           let item = params["item"], item["type"]?.stringValue == "plan", let id = item["id"]?.stringValue {
+            let plan = AgentManagedNormalizedEvent(nativeSessionID: thread, turnID: turn,
+                type: .planUpdated, correlationID: AgentCorrelationID(rawValue: id),
+                payload: .plan(AgentPlanEvent(summary: AgentPrivacyProjection.summary(item["text"]?.stringValue))))
+            values.append(.normalized(plan))
+        }
+        if let value = map(event) { values.append(value) }
+        return values
+    }
+
     private nonisolated static func map(
         _ event: CodexAppServerEvent
     ) -> AgentInteractiveProviderEvent? {
@@ -349,6 +380,14 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
 
         case .notification(let method, let params):
             switch method {
+            case "serverRequest/resolved":
+                // Authoritative: app-server finished one exact server request
+                // (answered by us, or withdrawn by the server).
+                guard let threadID = params["threadId"]?.stringValue,
+                      let requestID = params["requestId"],
+                      let token = interactiveRequestToken(requestID) else { return nil }
+                return .approvalAcknowledged(nativeSessionID: threadID, requestToken: token)
+
             case "thread/started":
                 guard let thread = params["thread"],
                       let threadID = thread["id"]?.stringValue else { return nil }
@@ -409,6 +448,24 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
                     turnID: turnID,
                     completed: false
                 ).map(AgentInteractiveProviderEvent.normalized)
+
+            case "turn/plan/updated":
+                guard let thread = params["threadId"]?.stringValue,
+                      let turn = params["turnId"]?.stringValue,
+                      let steps = params["plan"]?.arrayValue else { return nil }
+                let done = steps.isEmpty || steps.allSatisfy { $0["status"]?.stringValue == "completed" }
+                return .normalized(processingEvent(thread: thread, turn: turn, item: "plan:\(turn)",
+                    kind: .planning, completed: done, type: done ? .agentWorking : .planningStarted))
+
+            case "mcpServer/startupStatus/updated":
+                // A global startup notification has no session owner. Never
+                // assign it to whichever thread happens to be selected.
+                guard let thread = params["threadId"]?.stringValue,
+                      let name = params["name"]?.stringValue,
+                      let status = params["status"]?.stringValue,
+                      ["starting", "ready", "failed", "cancelled"].contains(status) else { return nil }
+                return .normalized(processingEvent(thread: thread, turn: nil, item: "mcp:\(name)",
+                    kind: .connecting, completed: status != "starting", type: .agentWorking))
 
             case "item/completed":
                 guard let threadID = params["threadId"]?.stringValue,
@@ -593,7 +650,7 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
             return nil
         }
 
-        guard let text = AgentManagedTranscriptEntry.boundedText(rawText) else { return nil }
+        guard let text = AgentManagedTranscriptEntry.boundedText(rawText, preservingWhitespace: role == .agent) else { return nil }
         return AgentManagedTranscriptEntry(
             id: itemID,
             nativeSessionID: nativeSessionID,
@@ -618,6 +675,17 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
         let mapped: (AgentEventType, AgentEventPayload)?
 
         switch itemType {
+        case "reasoning", "plan", "agentMessage", "contextCompaction":
+            let kind: AgentProcessingKind = itemType == "reasoning" ? .reasoning : itemType == "plan" ? .planning : itemType == "contextCompaction" ? .background : .composing
+            let type: AgentEventType = switch (kind, completed) {
+            case (.reasoning, false): .thinkingStarted
+            case (.reasoning, true): .thinkingEnded
+            case (.planning, false): .planningStarted
+            default: .agentWorking
+            }
+            return processingEvent(thread: nativeSessionID, turn: turnID, item: itemID,
+                                   kind: kind, completed: completed, type: type)
+
         case "commandExecution":
             let executable = AgentPrivacyProjection.commandSummary(
                 executable: item["command"]?.stringValue
@@ -631,7 +699,8 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
                 .command(AgentCommandEvent(
                     executable: executable,
                     success: success,
-                    exitCode: completed ? item["exitCode"]?.intValue : nil
+                    exitCode: completed ? item["exitCode"]?.intValue : nil,
+                    processingKind: commandProcessingKind(item)
                 ))
             )
 
@@ -643,7 +712,8 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
                     name: "File change",
                     category: "edit",
                     summary: count > 0 ? "\(count) file\(count == 1 ? "" : "s")" : nil,
-                    success: completed ? item["status"]?.stringValue == "completed" : nil
+                    success: completed ? item["status"]?.stringValue == "completed" : nil,
+                    processingKind: .executing
                 ))
             )
 
@@ -654,7 +724,8 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
                     name: AgentPrivacyProjection.toolName(item["tool"]?.stringValue),
                     category: "mcp",
                     summary: AgentPrivacyProjection.summary(item["server"]?.stringValue),
-                    success: completed ? item["status"]?.stringValue == "completed" : nil
+                    success: completed ? item["status"]?.stringValue == "completed" : nil,
+                    processingKind: .executing
                 ))
             )
 
@@ -665,9 +736,22 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
                     name: AgentPrivacyProjection.toolName(item["tool"]?.stringValue),
                     category: "tool",
                     summary: nil,
-                    success: completed ? item["success"]?.boolValue : nil
+                    success: completed ? item["success"]?.boolValue : nil,
+                    processingKind: .executing
                 ))
             )
+
+        case "collabAgentToolCall":
+            let tool = item["tool"]?.stringValue ?? "Agent tool"
+            let kind: AgentProcessingKind = switch tool {
+            case "spawnAgent", "resumeAgent": .connecting
+            case "wait": .listening
+            default: .executing
+            }
+            mapped = (completed ? .toolCompleted : .toolStarted,
+                .tool(AgentToolEvent(name: tool, category: "agent", summary: nil,
+                    success: completed ? item["status"]?.stringValue == "completed" : nil,
+                    processingKind: kind)))
 
         case "webSearch":
             mapped = (
@@ -676,15 +760,8 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
                     name: "Web search",
                     category: "search",
                     summary: nil,
-                    success: completed ? true : nil
-                ))
-            )
-
-        case "plan" where completed:
-            mapped = (
-                .planUpdated,
-                .plan(AgentPlanEvent(
-                    summary: AgentPrivacyProjection.summary(item["text"]?.stringValue)
+                    success: completed ? true : nil,
+                    processingKind: .searching
                 ))
             )
 
@@ -700,6 +777,23 @@ actor CodexAppServerProvider: AgentInteractiveProvider {
             correlationID: correlation,
             payload: mapped.1
         )
+    }
+
+    private nonisolated static func processingEvent(thread: String, turn: String?, item: String,
+        kind: AgentProcessingKind, completed: Bool, type: AgentEventType) -> AgentManagedNormalizedEvent {
+        AgentManagedNormalizedEvent(nativeSessionID: thread, turnID: turn, type: type,
+            correlationID: AgentCorrelationID(rawValue: item),
+            payload: .activity(AgentActivityDescriptor(title: kind.rawValue.capitalized, summary: nil,
+                processingKind: kind, processingStatus: completed ? .completed : .active)))
+    }
+
+    private nonisolated static func commandProcessingKind(_ item: CodexJSONValue) -> AgentProcessingKind {
+        // App-server's structured commandActions wins. No command arguments,
+        // path, search query or assistant prose survives this projection.
+        let actions = item["commandActions"]?.arrayValue?.compactMap { $0["type"]?.stringValue } ?? []
+        if actions.contains("search") || actions.contains("listFiles") { return .searching }
+        if !actions.isEmpty && actions.allSatisfy({ $0 == "read" }) { return .listening }
+        return .executing
     }
 
     nonisolated static func mapUsage(_ payload: CodexJSONValue) -> AgentUsage? {

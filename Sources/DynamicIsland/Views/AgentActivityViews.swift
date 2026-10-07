@@ -1,4 +1,5 @@
 import AgentBridgeShared
+import AppKit
 import SwiftUI
 
 enum AgentVisualStyle {
@@ -14,12 +15,61 @@ enum AgentVisualStyle {
         }
     }
 
+    /// Claude brand orange (#D97757), defined once.
+    /// AgentNotch source colors (AgentNotch/Views/Notch/ToolCallListView.swift,
+    /// TelemetryStatusIndicatorView.swift, AgentNotchContentView.swift at
+    /// commit 4139d6fd): Claude Code orange and Codex blue.
+    static let claudeOrange = Color(red: 1.0, green: 0.55, blue: 0.2)
+    static let codexBlue = Color(red: 0.2, green: 0.45, blue: 0.9)
+
     static func providerAccent(_ provider: AgentProvider) -> Color {
         switch provider {
-        case .codex: .cyan
-        case .claude: .orange
-        case .other: .purple
+        case .codex: codexBlue
+        case .claude: claudeOrange
+        case .other: Color(red: 0.6, green: 0.8, blue: 1.0) // AgentNotch "unknown" source.
         }
+    }
+
+    /// The installed provider app's own icon, when that app is installed.
+    /// DynamicIsland bundles no third-party logos.
+    @MainActor
+    static func installedProviderIcon(_ provider: AgentProvider) -> NSImage? {
+        let bundleID: String? = switch provider {
+        case .claude: "com.anthropic.claudefordesktop"
+        case .codex, .other: nil
+        }
+        guard let bundleID else { return nil }
+        if let cached = ProviderIconCache.icons[bundleID] { return cached }
+        let icon = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+            .map { rasterized(NSWorkspace.shared.icon(forFile: $0.path)) }
+        ProviderIconCache.icons[bundleID] = .some(icon)
+        return icon
+    }
+
+    /// App icons are large multi-resolution images; the Agents chrome draws
+    /// them at 9-13 pt on every render, so keep one small bitmap instead.
+    private static func rasterized(_ image: NSImage, side: CGFloat = 32) -> NSImage {
+        let pixels = Int(side * 2)
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: pixels,
+            pixelsHigh: pixels,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ), let context = NSGraphicsContext(bitmapImageRep: rep) else { return image }
+        rep.size = NSSize(width: side, height: side)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        image.draw(in: NSRect(x: 0, y: 0, width: side, height: side))
+        NSGraphicsContext.restoreGraphicsState()
+        let result = NSImage(size: rep.size)
+        result.addRepresentation(rep)
+        return result
     }
 
     static func providerSymbol(_ provider: AgentProvider) -> String {
@@ -61,15 +111,106 @@ private extension AgentVisualStyle {
     }
 }
 
+enum AgentsPagePresentationPhase: Int, Equatable, Sendable {
+    case inactive
+    case entering
+    case chromeVisible
+    case transcriptReady
+}
+
+struct AgentsPagePresentationState: Equatable, Sendable {
+    private(set) var phase: AgentsPagePresentationPhase = .inactive
+    private(set) var generation = 0
+
+    @discardableResult
+    mutating func begin() -> Int {
+        generation &+= 1
+        phase = .entering
+        return generation
+    }
+
+    @discardableResult
+    mutating func revealChrome(generation expected: Int) -> Bool {
+        guard generation == expected, phase == .entering else { return false }
+        phase = .chromeVisible
+        return true
+    }
+
+    @discardableResult
+    mutating func revealTranscript(generation expected: Int) -> Bool {
+        guard generation == expected,
+              phase == .chromeVisible || phase == .entering else { return false }
+        phase = .transcriptReady
+        return true
+    }
+
+    mutating func cancel() {
+        generation &+= 1
+        phase = .inactive
+    }
+
+    var chromeVisible: Bool {
+        phase == .chromeVisible || phase == .transcriptReady
+    }
+
+    var transcriptReady: Bool {
+        phase == .transcriptReady
+    }
+}
+
+struct AgentTranscriptLoadGate: Equatable, Sendable {
+    private(set) var requestedSessionID: AgentSessionInstanceID?
+    private(set) var readySessionID: AgentSessionInstanceID?
+    private(set) var generation = 0
+
+    mutating func begin(for sessionID: AgentSessionInstanceID) -> Int {
+        generation &+= 1
+        requestedSessionID = sessionID
+        readySessionID = nil
+        return generation
+    }
+
+    @discardableResult
+    mutating func complete(for sessionID: AgentSessionInstanceID, generation expected: Int) -> Bool {
+        guard expected == generation, requestedSessionID == sessionID else { return false }
+        readySessionID = sessionID
+        return true
+    }
+
+    mutating func cancel() {
+        generation &+= 1
+        requestedSessionID = nil
+        readySessionID = nil
+    }
+
+    func isReady(for sessionID: AgentSessionInstanceID?) -> Bool {
+        sessionID != nil && readySessionID == sessionID
+    }
+}
+
 struct AgentActivityDashboardView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var agentEvents: AgentEventStore
+    @ObservedObject var projects: AgentProjectProjectionStore
     @ObservedObject var approvalControl: AgentApprovalController
     @ObservedObject var managedControl: AgentManagedSessionController
     @ObservedObject var layoutStore: IslandLayoutStore
+    var activityRecorder: AgentActivityRecorder? = nil
+    var workspaceFeed: AgentWorkspaceFeedStore? = nil
+    var workspacePresentation: AgentWorkspacePresentation? = nil
+    var terminal: TerminalSessionController? = nil
+    var customization: WorkspaceCustomizationStore? = nil
+    var editingWorkspace: Binding<Bool> = .constant(false)
+    var timerWidget: AnyView? = nil
     let availableHeight: CGFloat
+    let contentVisible: Bool
+    let isContentRemoving: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var presentation = AgentsPagePresentationState()
+    @State private var presentationTask: Task<Void, Never>?
 
     var body: some View {
+        let _ = AgentPerformanceProbe.count("agents.dashboard.body")
         let visibleSessions = agentEvents.sessions.filter(managedControl.shouldPresent)
         AgentDashboardContentView(
             sessions: visibleSessions,
@@ -78,21 +219,114 @@ struct AgentActivityDashboardView: View {
             approvalControl: approvalControl,
             managedControl: managedControl,
             layoutStore: layoutStore,
-            availableHeight: availableHeight
+            activityRecorder: activityRecorder,
+            availableHeight: availableHeight,
+            settings: settings,
+            contentVisible: contentVisible && presentation.chromeVisible,
+            isContentRemoving: isContentRemoving,
+            reduceMotion: reduceMotion,
+            transcriptPresentationReady: presentation.transcriptReady,
+            presentationGeneration: presentation.generation,
+            transcriptLoadDelay: 0,
+            workspaceFeed: workspaceFeed, workspacePresentation: workspacePresentation, terminal: terminal,
+            customization: customization, editingWorkspace: editingWorkspace, timerWidget: timerWidget
         )
+        .environment(\.agentProjectLocations, projects.index)
+        .environment(\.agentProjectSelection, AgentProjectSelectionBinding(
+            key: projects.selectedProjectKey,
+            set: { projects.selectedProjectKey = $0 }
+        ))
+        .onAppear {
+            beginPresentation()
+        }
+        .onChange(of: contentVisible) { _, isVisible in
+            if isVisible {
+                if presentation.phase == .inactive {
+                    beginPresentation()
+                }
+            } else {
+                cancelPresentation()
+            }
+        }
+        .onDisappear {
+            cancelPresentation()
+        }
+    }
+
+    private func beginPresentation() {
+        presentationTask?.cancel()
+        AgentPerformanceProbe.mark("agents.enter.requested")
+        let generation = presentation.begin()
+        let shellDuration = IslandContentTransitionTiming.shellDuration(
+            settings: settings,
+            reduceMotion: reduceMotion
+        )
+        let chromeDelay = reduceMotion
+            ? 0
+            : IslandContentTransitionTiming.expansionContentDelay(shellDuration: shellDuration)
+        let transcriptDelay = max(0, shellDuration - chromeDelay)
+
+        presentationTask = Task { @MainActor in
+            if chromeDelay > 0 {
+                try? await Task.sleep(for: .seconds(chromeDelay))
+            } else {
+                await Task.yield()
+            }
+            guard !Task.isCancelled else { return }
+            if presentation.revealChrome(generation: generation) {
+                AgentPerformanceProbe.mark("agents.chrome.visible")
+            }
+
+            if transcriptDelay > 0 {
+                try? await Task.sleep(for: .seconds(transcriptDelay))
+            }
+            guard !Task.isCancelled else { return }
+            if presentation.revealTranscript(generation: generation) {
+                AgentPerformanceProbe.mark("agents.transcript.allowed")
+            }
+        }
+    }
+
+    private func cancelPresentation() {
+        AgentPerformanceProbe.mark("agents.leave")
+        presentationTask?.cancel()
+        presentationTask = nil
+        presentation.cancel()
     }
 }
 
 struct AgentDashboardContentView: View {
+    @Environment(\.workspaceApplyCompletion) private var applyCompletion
     let sessions: [AgentSession]
     let accountUsage: AgentUsage
     let showsUsage: Bool
     @ObservedObject var approvalControl: AgentApprovalController
     @ObservedObject var managedControl: AgentManagedSessionController
     var layoutStore: IslandLayoutStore? = nil
+    var activityRecorder: AgentActivityRecorder? = nil
     let availableHeight: CGFloat
+    let settings: AppSettings?
+    let contentVisible: Bool
+    let isContentRemoving: Bool
+    let reduceMotion: Bool
+    let transcriptPresentationReady: Bool
+    let presentationGeneration: Int
+    let transcriptLoadDelay: TimeInterval
     private let initialSelectedSessionID: AgentSessionInstanceID?
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private let suppliedFeed: AgentWorkspaceFeedStore?
+    private let suppliedPresentation: AgentWorkspacePresentation?
+    private let terminal: TerminalSessionController?
+    private let customization: WorkspaceCustomizationStore?
+    private let editingWorkspace: Binding<Bool>
+    private let timerWidget: AnyView?
+    @StateObject private var localFeed = AgentWorkspaceFeedStore()
+    @StateObject private var localPresentation = AgentWorkspacePresentation()
+    private var feed: AgentWorkspaceFeedStore { suppliedFeed ?? localFeed }
+    private var workspacePresentation: AgentWorkspacePresentation { suppliedPresentation ?? localPresentation }
+    @StateObject private var launchFlow = AgentNewSessionFlow()
+    @State private var transcriptLoadGate = AgentTranscriptLoadGate()
+    @Environment(\.agentProjectLocations) private var projectLocations
+    @Environment(\.agentProjectSelection) private var projectSelection
 
     init(
         sessions: [AgentSession],
@@ -101,8 +335,22 @@ struct AgentDashboardContentView: View {
         approvalControl: AgentApprovalController,
         managedControl: AgentManagedSessionController,
         layoutStore: IslandLayoutStore? = nil,
+        activityRecorder: AgentActivityRecorder? = nil,
         availableHeight: CGFloat,
-        initialSelectedSessionID: AgentSessionInstanceID? = nil
+        initialSelectedSessionID: AgentSessionInstanceID? = nil,
+        settings: AppSettings? = nil,
+        contentVisible: Bool = true,
+        isContentRemoving: Bool = false,
+        reduceMotion: Bool = false,
+        transcriptPresentationReady: Bool = true,
+        presentationGeneration: Int = 0,
+        transcriptLoadDelay: TimeInterval = 0,
+        workspaceFeed: AgentWorkspaceFeedStore? = nil,
+        workspacePresentation: AgentWorkspacePresentation? = nil,
+        terminal: TerminalSessionController? = nil,
+        customization: WorkspaceCustomizationStore? = nil,
+        editingWorkspace: Binding<Bool> = .constant(false),
+        timerWidget: AnyView? = nil
     ) {
         self.sessions = sessions
         self.accountUsage = accountUsage
@@ -110,245 +358,700 @@ struct AgentDashboardContentView: View {
         _approvalControl = ObservedObject(wrappedValue: approvalControl)
         _managedControl = ObservedObject(wrappedValue: managedControl)
         self.layoutStore = layoutStore
+        self.activityRecorder = activityRecorder
         self.availableHeight = availableHeight
         self.initialSelectedSessionID = initialSelectedSessionID
+        self.settings = settings
+        self.contentVisible = contentVisible
+        self.isContentRemoving = isContentRemoving
+        self.reduceMotion = reduceMotion
+        self.transcriptPresentationReady = transcriptPresentationReady
+        self.presentationGeneration = presentationGeneration
+        self.transcriptLoadDelay = transcriptLoadDelay
+        self.suppliedFeed = workspaceFeed
+        self.suppliedPresentation = workspacePresentation
+        self.terminal = terminal
+        self.customization = customization
+        self.editingWorkspace = editingWorkspace
+        self.timerWidget = timerWidget
     }
 
     var body: some View {
+        let _ = AgentPerformanceProbe.count("agents.content.body")
         GeometryReader { proxy in
-            let controlSessions = (managedControl.selectedProvider ?? managedControl.managedProvider).map { provider in
-                sessions.filter { $0.id.sessionID.provider == provider }
-            } ?? sessions
-            let layout = AgentDashboardLayoutProjection.make(width: proxy.size.width)
+            let workspace = AgentPerformanceProbe.measure("agents.workspace.projection") {
+                AgentWorkspaceProjection.make(
+                    sessions: sessions,
+                    controller: managedControl,
+                    projectKey: projectSelection.key,
+                    locations: projectLocations,
+                    launcherOpen: launchFlow.isPresented,
+                    approvalControl: approvalControl
+                )
+            }
+            let providerSessions = workspace.providerSessions
+            let projectOptions = AgentPerformanceProbe.measure("agents.project.options") {
+                AgentProjectFilter.options(
+                    for: providerSessions,
+                    locations: projectLocations,
+                    activeManagedSessionIDs: managedControl.activeManagedSessionIDs
+                )
+            }
+            let effectiveProjectKey = workspace.effectiveProjectKey
+            let controlSessions = workspace.controlSessions
             let verticalLayout = AgentWorkspaceVerticalLayoutProjection.make(
                 availableHeight: proxy.size.height
             )
-            let selectedSession = AgentWorkspaceSelection.session(
-                current: managedControl.selectedSessionID,
-                sessions: controlSessions,
-                activeManagedSessionIDs: managedControl.activeManagedSessionIDs
-            )
-            let metrics = showsUsage
-                ? AgentGlobalUsagePresentation.makeForSelectedSession(
-                    provider: managedControl.managedProvider ?? .codex,
-                    accountUsage: accountUsage,
-                    selectedSession: selectedSession,
-                    limit: layout.maximumGaugeCount
-                )
-                : []
-            VStack(alignment: .leading, spacing: 10) {
-                if showsUsage {
-                    AgentGlobalSummaryStrip(metrics: metrics, layout: layout)
+            let selectedSession = workspace.selectedSession
+            let newSessionFolder = projectOptions.first { $0.id == effectiveProjectKey }?.path
+                ?? selectedSession?.project.workingDirectory
+            let selectedByProvider = Dictionary(uniqueKeysWithValues: [AgentProvider.codex, .claude].compactMap { provider -> (AgentProvider, AgentSession)? in
+                guard let id = managedControl.selectedSessionIDs[provider],
+                      let session = sessions.first(where: { $0.id == id }) else { return nil }
+                return (provider, session)
+            })
+            let _ = selectedByProvider
+            // Usage is owned by WorkspaceConfiguration. A customized layout
+            // projects usage widgets itself; the default layout renders the
+            // configured usage band (Combined by default) above the split.
+            let customizedLayout = customization.map { store in
+                editingWorkspace.wrappedValue || store.configuration.customizedSurfaces.contains(.agents)
+            } ?? false
+            let usageBand: [IslandWidget] = customization.map { store in
+                store.configuration.widgets(on: .agents).map(\.kind).filter(\.isUsage)
+            } ?? [.agentUsage]
+            VStack(alignment: .leading, spacing: 6) {
+                if showsUsage && !customizedLayout && !usageBand.isEmpty {
+                    stagedAgentContent(index: 1) {
+                        AgentWorkspaceUsageStrip(managedControl: managedControl, widgets: usageBand,
+                                                 availableWidth: proxy.size.width)
+                    }
                 }
 
-                if controlSessions.isEmpty {
-                    AgentEmptyConsoleState(managedControl: managedControl)
-                } else {
-                    AgentCLIControlBar(
+                workspaceContent(
+                    workspace: workspace,
+                    newSessionFolder: newSessionFolder,
+                    verticalLayout: verticalLayout,
+                    composerControls: AnyView(AgentCLIControlBar(
                         sessions: controlSessions,
                         managedControl: managedControl,
-                        approvalControl: approvalControl
-                    )
-
-                    if let pending = approvalControl.nextPendingRequest(),
-                       pending.key.session != selectedSession?.id,
-                       let approvalSession = sessions.first(where: { $0.id == pending.key.session }) {
-                        AgentConsoleApprovalRow(
-                            request: pending,
-                            session: approvalSession,
-                            approvalControl: approvalControl
-                        )
-                    }
-
-                    if let selectedSession {
-                        AgentSelectedSessionControlView(
-                            session: selectedSession,
-                            managedControl: managedControl,
-                            approvalControl: approvalControl,
-                            detailHeight: max(verticalLayout.selectedDetailHeight, 138),
-                            activityLimit: max(verticalLayout.selectedDetailActivityLimit, 6),
-                            layoutStore: layoutStore
-                        )
-                        .layoutPriority(2)
-                    }
-                }
+                        approvalControl: approvalControl,
+                        projectOptions: projectOptions,
+                        selectedProjectKey: effectiveProjectKey,
+                        onSelectProject: { key in selectProject(key, among: providerSessions) },
+                        launcherOpen: launchFlow.isPresented,
+                        onToggleLauncher: {
+                            withAnimation(AgentWorkspaceMotion.selection(reduceMotion: reduceMotion)) {
+                                launchFlow.toggle(provider: managedControl.selectedProvider)
+                            }
+                        },
+                        onNewSession: { openNewSession(folder: newSessionFolder) }
+                    ))
+                )
             }
             .frame(maxWidth: .infinity, maxHeight: proxy.size.height, alignment: .topLeading)
+            .task(
+                id: AgentTranscriptPresentationRequest(
+                    sessionID: selectedSession?.id,
+                    presentationGeneration: presentationGeneration,
+                    isAllowed: transcriptPresentationReady
+                )
+            ) {
+                await deferTranscript(
+                    for: selectedSession?.id,
+                    isAllowed: transcriptPresentationReady,
+                    presentationGeneration: presentationGeneration
+                )
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: availableHeight, alignment: .topLeading)
         .foregroundStyle(.white)
         .onChange(of: sessions.map(\.id)) { _, _ in
-            managedControl.reconcileSelection(with: sessions)
+            reconcileWorkspaceSelection()
+        }
+        .onChange(of: managedControl.selectedProvider) { _, _ in
+            reconcileWorkspaceSelection()
+        }
+        .onChange(of: managedControl.selectedSessionID) { _, _ in
+            reconcileWorkspaceSelection()
         }
         .onAppear {
             if managedControl.selectedSessionID == nil,
                let initialSelectedSessionID {
                 managedControl.selectSession(initialSelectedSessionID)
             }
-            managedControl.reconcileSelection(with: sessions)
+            reconcileWorkspaceSelection()
+        }
+        .onChange(of: launchFlow.isPresented) { _, isOpen in
+            layoutStore?.setTransientInteraction(isOpen, owner: .agentsLauncher)
+            if isOpen {
+                layoutStore?.setExpandedScrollGestureSuppressed(true)
+            } else {
+                layoutStore?.setExpandedScrollGestureSuppressed(false)
+            }
         }
         .onDisappear {
+            // The quantized Chat height hint is kept across collapse/page
+            // changes so re-expanding Agents opens at the right height in one
+            // motion; the first measurement corrects it if content changed.
+            transcriptLoadGate.cancel()
+            layoutStore?.setTransientInteraction(false, owner: .agentsLauncher)
+            layoutStore?.setExpandedScrollGestureSuppressed(false)
             layoutStore?.setExpandedContentScrollRegion(.zero)
+        }
+    }
+
+    @ViewBuilder
+    private func workspaceContent(
+        workspace: AgentWorkspaceProjection,
+        newSessionFolder: String?,
+        verticalLayout: AgentWorkspaceVerticalLayoutProjection,
+        composerControls: AnyView
+    ) -> some View {
+        let selectedSession = workspace.selectedSession
+        if launchFlow.isPresented {
+            AgentSessionLauncherView(
+                sessions: sessions,
+                managedControl: managedControl,
+                flow: launchFlow,
+                onSelectSession: { id in managedControl.selectSession(id) },
+                onStarted: { started in
+                    didStartSession(started)
+                },
+                onDismiss: {
+                    withAnimation(AgentWorkspaceMotion.selection(reduceMotion: reduceMotion)) {
+                        launchFlow.dismiss()
+                    }
+                }
+            )
+            .padding(.horizontal, 8)
+            .transition(.opacity.combined(with: .move(edge: .top)))
+            .zIndex(20)
+            .frame(maxHeight: .infinity, alignment: .top)
+            .layoutPriority(2)
+        } else {
+            stagedAgentContent(index: 3) {
+                if let customization, editingWorkspace.wrappedValue || customization.configuration.customizedSurfaces.contains(.agents) {
+                    IslandWidgetEditor(store: customization, surface: .agents, editing: editingWorkspace,
+                        eligibleWidgets: [.chat, .feed] + (terminal != nil ? [.terminal] : []) + (settings?.timerEnabled != false && timerWidget != nil ? [.timer] : [])
+                            + (showsUsage ? [.agentUsage, .codexUsage, .claudeUsage] : []), extraMotion: !(settings?.reduceExtraMotion ?? false),
+                        onLayoutPreview: { layoutStore?.setWorkspaceLayoutPreview($0, surface: .agents) },
+                        onDragActive: { layoutStore?.setWorkspaceDragActive($0) },
+                        onApplyCompleted: applyCompletion?.action) { region, height in
+                        // Compact Chat/Terminal (1x1) is a glanceable summary.
+                        // Controllers, the PTY and the transcript stay alive:
+                        // only the heavy surface is unmounted, exactly as when
+                        // the stack shows its other page.
+                        let isConsole = region.isStack || region.widgets[0].kind == .chat || region.widgets[0].kind == .terminal
+                        if WorkspaceWidgetLayoutProjection.presentationSize(of: region) == .compact, isConsole {
+                            if region.isStack {
+                                return AnyView(AgentCompactSessionSummary(session: selectedSession, role: .stack,
+                                    isVisible: contentVisible && !editingWorkspace.wrappedValue,
+                                    attention: AnyView(AgentWorkspaceApprovalAttentionControl(approvals: approvalControl,
+                                        selectedSessionID: selectedSession?.id, onSelect: selectAttentionSession)),
+                                    conversation: compactConversation(workspace: workspace, height: height)))
+                            }
+                            return AnyView(AgentConsoleRegionView(presentation: workspacePresentation, region: region,
+                                chat: { AnyView(AgentCompactSessionSummary(session: selectedSession, role: .chat,
+                                    isVisible: contentVisible && !editingWorkspace.wrappedValue,
+                                    attention: AnyView(AgentWorkspaceApprovalAttentionControl(approvals: approvalControl,
+                                        selectedSessionID: selectedSession?.id, onSelect: selectAttentionSession)),
+                                    conversation: compactConversation(workspace: workspace, height: height))) },
+                                terminal: { compactTerminal(region: region, session: selectedSession) }))
+                        }
+                        if region.isStack {
+                            return AnyView(AgentChatTerminalStack(presentation: workspacePresentation, isVisible: contentVisible && transcriptPresentationReady && !editingWorkspace.wrappedValue, reduceMotion: reduceMotion || (settings?.reduceExtraMotion ?? false), layoutStore: layoutStore,
+                                chat: { AnyView(chatContent(workspace: workspace, newSessionFolder: newSessionFolder, verticalLayout: AgentWorkspaceVerticalLayoutProjection.make(availableHeight: max(0, height - 30)), composerControls: composerControls, visible: contentVisible && workspacePresentation.stackPage == .chat && !editingWorkspace.wrappedValue, onSelectInteraction: consoleSwitch(region))) },
+                                terminal: { AnyView(terminalContent(session: selectedSession, visible: contentVisible && transcriptPresentationReady && workspacePresentation.stackPage == .terminal && !editingWorkspace.wrappedValue)) }))
+                        }
+                        switch region.widgets[0].kind {
+                        case .chat, .terminal:
+                            // One rectangle, two surfaces: the embedded switch
+                            // changes presentation only (never the layout).
+                            return AnyView(AgentConsoleRegionView(presentation: workspacePresentation, region: region,
+                                chat: { AnyView(chatContent(workspace: workspace, newSessionFolder: newSessionFolder, verticalLayout: AgentWorkspaceVerticalLayoutProjection.make(availableHeight: height), composerControls: composerControls, visible: contentVisible && !editingWorkspace.wrappedValue, onSelectInteraction: consoleSwitch(region), activeInteraction: .chat)) },
+                                terminal: { consoleTerminal(region: region, session: selectedSession) }))
+                        case .feed:
+                            return AnyView(customizedFeed(selectedSession: selectedSession))
+                        case .timer:
+                            return timerWidget ?? AnyView(EmptyView())
+                        case .agentUsage, .codexUsage, .claudeUsage:
+                            return AnyView(AgentUsageWidgetView(managedControl: managedControl,
+                                                                scope: AgentUsageWidgetView.Scope(widget: region.widgets[0].kind) ?? .combined))
+                        default:
+                            return AnyView(EmptyView())
+                        }
+                    }
+                } else {
+                AgentWorkspaceSplitView(presentation: workspacePresentation, reduceMotion: reduceMotion) {
+                    chatContent(workspace: workspace, newSessionFolder: newSessionFolder, verticalLayout: verticalLayout, composerControls: composerControls, visible: contentVisible)
+                } workspace: { canEmphasize in
+                    AgentRightWorkspace(
+                        presentation: workspacePresentation, feed: feed, approvals: approvalControl,
+                        terminal: terminal, sessions: sessions, selectedSession: selectedSession,
+                        onSelect: managedControl.selectSession,
+                        onSelectAttention: selectAttentionSession,
+                        canEmphasize: canEmphasize,
+                        isVisible: contentVisible && transcriptPresentationReady, layoutStore: layoutStore
+                    )
+                }
+                .layoutPriority(2)
+                }
+            }
+        }
+    }
+
+    /// Compact Chat body: the same control surface Standard uses (Resume,
+    /// transcript, composer, one submit path) without the secondary composer
+    /// controls, sized to the square below the compact header.
+    private func compactConversation(workspace: AgentWorkspaceProjection, height: CGFloat) -> AnyView? {
+        guard case .session(let session, let surface) = workspace.surface else { return nil }
+        return AnyView(AgentSelectedSessionControlView(
+            session: session, surface: surface, sessions: workspace.controlSessions,
+            managedControl: managedControl, approvalControl: approvalControl,
+            detailHeight: max(48, height - AgentCompactSessionSummary.conversationHeaderHeight),
+            activityLimit: 0, layoutStore: layoutStore,
+            transcriptReady: transcriptLoadGate.isReady(for: session.id),
+            composerControls: nil))
+    }
+
+    @ViewBuilder
+    private func chatContent(workspace: AgentWorkspaceProjection, newSessionFolder: String?, verticalLayout: AgentWorkspaceVerticalLayoutProjection, composerControls: AnyView, visible: Bool,
+                             onSelectInteraction: ((AgentInteractionMode) -> Void)? = nil, activeInteraction: AgentInteractionMode? = nil) -> some View {
+        let controlSessions = workspace.controlSessions
+        Group {
+                    if case .session(let selectedSession, let controlSurface) = workspace.surface {
+                        AgentChatSurface(
+                            session: selectedSession, controller: managedControl,
+                            presentation: workspacePresentation, isVisible: visible,
+                            onNewSession: { openNewSession(folder: newSessionFolder) },
+                            onSelectInteraction: onSelectInteraction,
+                            activeInteraction: activeInteraction,
+                            approvalAttention: customization != nil && (editingWorkspace.wrappedValue || customization!.configuration.customizedSurfaces.contains(.agents))
+                                ? AnyView(AgentWorkspaceApprovalAttentionControl(approvals: approvalControl,
+                                    selectedSessionID: selectedSession.id, onSelect: selectAttentionSession)) : nil
+                        ) {
+                            AgentSelectedSessionControlView(
+                                session: selectedSession,
+                                surface: controlSurface,
+                                sessions: controlSessions, managedControl: managedControl,
+                                approvalControl: approvalControl,
+                                detailHeight: max(verticalLayout.selectedDetailHeight, 138),
+                                activityLimit: 0, layoutStore: layoutStore,
+                                transcriptReady: transcriptLoadGate.isReady(for: selectedSession.id),
+                                composerControls: composerControls
+                            )
+                        }
+                    } else {
+                        AgentSessionLauncherView(
+                            sessions: sessions, managedControl: managedControl, flow: launchFlow,
+                            onSelectSession: managedControl.selectSession,
+                            onStarted: didStartSession, onDismiss: {},
+                            embeddedNewChat: true
+                        )
+                        .onAppear {
+                            launchFlow.prepareNewChat(provider: managedControl.selectedProvider ?? managedControl.managedProvider,
+                                folder: newSessionFolder)
+                        }
+                        .onChange(of: managedControl.selectedProvider) { _, provider in
+                            launchFlow.prepareNewChat(provider: provider, folder: newSessionFolder)
+                        }
+                        .transition(.opacity)
+                        .accessibilityIdentifier("agents.newChatFallback")
+                    }
+        }.environment(\.rightWorkspacePageIsActive, visible)
+    }
+
+    /// The embedded Chat / Terminal switch for one customized region.
+    /// Presentation only: it never commits a configuration (the former
+    /// handler added a Terminal widget below the Chat on every switch).
+    private func consoleSwitch(_ region: WorkspaceWidgetRegion) -> (AgentInteractionMode) -> Void {
+        let presentation = workspacePresentation
+        let regions = customization?.configuration.regions(on: .agents) ?? []
+        return { mode in presentation.switchConsole(to: mode, in: region, among: regions) }
+    }
+
+    /// Terminal shown in a Standard/Large console region.
+    private func consoleTerminal(region: WorkspaceWidgetRegion, session: AgentSession?) -> AnyView {
+        guard let terminal else {
+            return AnyView(Color.clear.accessibilityLabel("Terminal unavailable"))
+        }
+        return AnyView(AgentConsoleTerminalPane(controller: terminal, onSelectInteraction: consoleSwitch(region)) {
+            terminalContent(session: session, visible: contentVisible && transcriptPresentationReady && !editingWorkspace.wrappedValue,
+                            compact: true)
+        })
+    }
+
+    /// Compact Terminal: the same retained controller and PTY in a square
+    /// terminal viewport (never a second shell, never an agent summary).
+    private func compactTerminal(region: WorkspaceWidgetRegion, session: AgentSession?) -> AnyView {
+        guard let terminal else {
+            return AnyView(Color.clear.accessibilityLabel("Terminal unavailable"))
+        }
+        return AnyView(AgentConsoleTerminalPane(controller: terminal, onSelectInteraction: consoleSwitch(region), compact: true) {
+            terminalContent(session: session, visible: contentVisible && transcriptPresentationReady && !editingWorkspace.wrappedValue,
+                            compact: true)
+        })
+    }
+
+    private func customizedFeed(selectedSession: AgentSession?) -> some View {
+        VStack(spacing: 5) {
+            HStack {
+                Text("Feed").font(.system(size: 10, weight: .semibold))
+                Spacer(minLength: 4)
+                AgentWorkspaceApprovalAttentionControl(approvals: approvalControl,
+                    selectedSessionID: selectedSession?.id, onSelect: selectAttentionSession)
+            }
+            .padding(.horizontal, 5)
+            AgentWorkspaceFeedView(feed: feed, approvals: approvalControl, sessions: sessions,
+                selectedSessionID: selectedSession?.id, onSelect: managedControl.selectSession,
+                isVisible: contentVisible && !editingWorkspace.wrappedValue)
+        }
+    }
+
+    @ViewBuilder
+    private func terminalContent(session: AgentSession?, visible: Bool, compact: Bool = false) -> some View {
+        if let terminal, visible {
+            AgentWorkspaceTerminalView(controller: terminal, session: session, isVisible: visible, focusRequest: workspacePresentation.terminalFocusRequest, layoutStore: layoutStore, compact: compact)
+        } else {
+            Color.clear.accessibilityLabel("Terminal presentation paused")
+        }
+    }
+
+    private func selectAttentionSession(_ instance: AgentSessionInstanceID) {
+        guard let session = sessions.first(where: { $0.id == instance }) else { return }
+        let projectKey = AgentProjectGrouping.key(for: session, locations: projectLocations).rawValue
+        if projectSelection.key != nil && projectSelection.key != projectKey {
+            projectSelection.set(projectKey)
+        }
+        managedControl.selectSession(instance)
+        workspacePresentation.select(.feed)
+        if let customization, customization.configuration.customizedSurfaces.contains(.agents) {
+            var configuration = customization.configuration
+            configuration.add(.feed, on: .agents)
+            customization.commit(configuration)
+        }
+        launchFlow.dismiss()
+    }
+
+    private func openNewSession(folder: String?) {
+        withAnimation(AgentWorkspaceMotion.selection(reduceMotion: reduceMotion)) {
+            launchFlow.present(
+                .newSession,
+                provider: managedControl.selectedProvider ?? managedControl.managedProvider,
+                folder: folder
+            )
+        }
+    }
+
+    /// The exact new session is already selected and managed; make sure
+    /// the project filter shows it.
+    private func didStartSession(_ started: AgentManagedStartedSession) {
+        guard let session = sessions.first(where: { $0.id == started.instance })
+            ?? managedControl.session(for: started.instance) else { return }
+        let key = AgentWorkspaceProjection.projectKey(
+            afterStarting: session,
+            currentKey: projectSelection.key,
+            locations: projectLocations
+        )
+        if key != projectSelection.key { projectSelection.set(key) }
+        managedControl.selectSession(started.instance)
+    }
+
+    /// Filter change only: cached lookups, no filesystem work, and the
+    /// selected exact session is kept whenever it belongs to the project.
+    private func selectProject(_ key: String?, among providerSessions: [AgentSession]) {
+        projectSelection.set(key)
+        let filtered = AgentProjectFilter.filter(
+            providerSessions,
+            projectKey: key,
+            locations: projectLocations
+        )
+        let preferred = AgentWorkspaceProjection.preferredSession(
+            current: managedControl.selectedSessionID, sessions: filtered, controller: managedControl,
+            approvalControl: approvalControl
+        )?.id
+        if preferred != managedControl.selectedSessionID {
+            managedControl.selectSession(preferred)
+        }
+    }
+
+    private func reconcileWorkspaceSelection() {
+        // Selection, Chat routing, Feed and Context use the same effective
+        // provider/project projection. A managed chat in another project must
+        // never steal ownership from the project currently being viewed.
+        let projection = AgentWorkspaceProjection.make(
+            sessions: sessions, controller: managedControl,
+            projectKey: projectSelection.key, locations: projectLocations,
+            launcherOpen: launchFlow.isPresented,
+            approvalControl: approvalControl
+        )
+        let preferred = projection.selectedSession?.id
+        if preferred != managedControl.selectedSessionID {
+            managedControl.selectSession(preferred)
+        }
+        managedControl.reconcileSelection(with: sessions)
+    }
+
+    @ViewBuilder
+    private func stagedAgentContent<Content: View>(
+        index: Int,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        if !contentVisible && !isContentRemoving {
+            // Rendering is gated, not merely its opacity. Shell/chrome can
+            // commit geometry without constructing a hidden transcript/PTY.
+            Color.clear
+        } else if index == 3 {
+            // Never blur the whole transcript/terminal during shell morphing.
+            content()
+                .opacity(contentVisible ? 1 : 0)
+                .animation(AgentWorkspaceMotion.selection(reduceMotion: reduceMotion), value: contentVisible)
+        } else if let settings {
+            content()
+                .innerBlurScaleClean(
+                    settings: settings,
+                    isVisible: contentVisible,
+                    isRemoval: isContentRemoving,
+                    index: index,
+                    reduceMotion: reduceMotion
+                )
+        } else {
+            content()
+        }
+    }
+
+    @MainActor
+    private func deferTranscript(
+        for sessionID: AgentSessionInstanceID?,
+        isAllowed: Bool,
+        presentationGeneration expectedPresentationGeneration: Int
+    ) async {
+        guard isAllowed, let sessionID else {
+            transcriptLoadGate.cancel()
+            return
+        }
+        let generation = transcriptLoadGate.begin(for: sessionID)
+        do {
+            if transcriptLoadDelay > 0 {
+                try await Task.sleep(for: .seconds(transcriptLoadDelay))
+            } else {
+                await Task.yield()
+            }
+            try Task.checkCancellation()
+        } catch {
+            return
+        }
+        guard presentationGeneration == expectedPresentationGeneration,
+              transcriptPresentationReady else {
+            transcriptLoadGate.cancel()
+            return
+        }
+        if transcriptLoadGate.complete(for: sessionID, generation: generation) {
+            AgentPerformanceProbe.mark("agents.transcript.gate.open")
         }
     }
 }
 
-private struct AgentCLIControlBar: View {
+private struct AgentTranscriptPresentationRequest: Hashable {
+    let sessionID: AgentSessionInstanceID?
+    let presentationGeneration: Int
+    let isAllowed: Bool
+}
+
+struct AgentCLIControlBar: View {
     let sessions: [AgentSession]
     @ObservedObject var managedControl: AgentManagedSessionController
     @ObservedObject var approvalControl: AgentApprovalController
+    var projectOptions: [AgentProjectOption] = []
+    var selectedProjectKey: String? = nil
+    var onSelectProject: (String?) -> Void = { _ in }
+    let launcherOpen: Bool
+    let onToggleLauncher: () -> Void
+    var onNewSession: () -> Void = {}
 
     private var selectedSession: AgentSession? {
-        AgentWorkspaceSelection.session(
-            current: managedControl.selectedSessionID,
-            sessions: sessions,
-            activeManagedSessionIDs: managedControl.activeManagedSessionIDs
+        if let current = managedControl.selectedSessionID {
+            guard let exact = sessions.first(where: { $0.id == current }),
+                  AgentWorkspaceProjection.offersPrimaryChat(exact, controller: managedControl) else { return nil }
+            return exact
+        }
+        return AgentWorkspaceProjection.preferredSession(
+            current: nil,
+            sessions: sessions.filter { AgentWorkspaceProjection.offersPrimaryChat($0, controller: managedControl) },
+            controller: managedControl, approvalControl: approvalControl
         )
-    }
-
-    private var groupedSessions: [AgentProjectGroupPresentation] {
-        let ordered = AgentWorkspaceSelection.ordered(
-            sessions: sessions,
-            activeManagedSessionIDs: managedControl.activeManagedSessionIDs
-        )
-        return AgentDashboardPresentation.make(orderedSessions: ordered).groups
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            ViewThatFits(in: .horizontal) {
-                controls(compact: false)
-                    .fixedSize(horizontal: true, vertical: false)
-                controls(compact: true)
-                    .frame(maxWidth: .infinity)
-            }
-            .frame(height: 28)
-
-            if sessions.count > 1 {
-                sessionRail
-            }
+        let _ = AgentPerformanceProbe.count("agents.controlbar.body")
+        ViewThatFits(in: .horizontal) {
+            controls(compact: false)
+                .agentComposerRegion("controls.named")
+                .fixedSize(horizontal: true, vertical: false)
+            controls(compact: true)
+                .fixedSize(horizontal: true, vertical: false)
+            controls(compact: true, singleProvider: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.horizontal, 9)
-        .padding(.bottom, sessions.count > 1 ? 5 : 0)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minHeight: 31)
+        .padding(.horizontal, 6)
+        .padding(.top, 4)
         .overlay(alignment: .bottom) {
             Rectangle()
                 .fill(.white.opacity(0.055))
                 .frame(height: 1)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Agent console controls")
+        .accessibilityLabel("Agent composer controls")
+        .accessibilityIdentifier("agents.composer.controls")
+        .agentComposerRegion("controls")
     }
 
-    private func controls(compact: Bool) -> some View {
-        HStack(spacing: compact ? 5 : 8) {
-            providerMenu(compact: compact)
+    private func controls(compact: Bool, singleProvider: Bool = false) -> some View {
+        HStack(spacing: 5) {
+            // Provider, model, repository/session discovery and New Chat are
+            // integrated controls in the selected agent composer.
+            Group {
+                if singleProvider {
+                    Menu {
+                        ForEach([AgentProvider.codex, .claude], id: \.self) { provider in
+                            Button { managedControl.selectProvider(provider) } label: {
+                                Label(provider.stableName.capitalized, systemImage: AgentVisualStyle.providerSymbol(provider))
+                            }
+                        }
+                    } label: {
+                        Image(systemName: AgentVisualStyle.providerSymbol(managedControl.selectedProvider ?? .codex))
+                            .frame(width: 26, height: 26)
+                    }
+                    .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden)
+                    .accessibilityLabel("Agent provider: \(managedControl.selectedProvider?.stableName.capitalized ?? "Codex")")
+                } else {
+                    AgentProviderButtons(managedControl: managedControl, compact: compact, namedWidth: 60)
+                        .fixedSize()
+                }
+            }
+            .layoutPriority(4)
 
             if let session = selectedSession {
-                HStack(spacing: 4) {
-                    Image(systemName: selectorStateSymbol(session))
-                        .font(.system(size: 7, weight: .semibold))
-                    Text(selectedSessionLabel(session))
-                        .font(.system(size: compact ? 8 : 9, weight: .semibold))
+                modelControl(for: session, compact: compact)
+                    .layoutPriority(3)
+                reasoningControl(for: session, compact: compact)
+            }
+
+            launcherButton(compact: compact)
+                .layoutPriority(2)
+            projectMenu(compact: compact)
+                .layoutPriority(2)
+            newSessionButton(compact: compact)
+                .layoutPriority(3)
+        }
+    }
+
+    private func launcherButton(compact: Bool) -> some View {
+        Button(action: onToggleLauncher) {
+            HStack(spacing: 4) {
+                Image(systemName: "rectangle.stack")
+                if !compact {
+                    Text("Sessions")
                         .lineLimit(1)
                 }
-                .foregroundStyle(.white.opacity(0.82))
-                .layoutPriority(2)
-
-                Spacer(minLength: compact ? 2 : 6)
-                modelControl(for: session, compact: compact)
-                approvalPolicyControl(for: session, compact: compact)
-                statusControl(for: session, compact: compact)
-
-                if managedControl.mode(for: session).canInterrupt {
-                    Button {
-                        managedControl.interrupt(session)
-                    } label: {
-                        adaptiveLabel("Stop", systemImage: "stop.fill", compact: compact)
-                    }
-                    .buttonStyle(.borderless)
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundStyle(.red.opacity(0.86))
-                    .help("Interrupt the exact active managed turn")
-                    .accessibilityLabel("Stop active agent turn")
-                }
+                Image(systemName: launcherOpen ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 6.5, weight: .bold))
             }
-        }
-    }
-
-    private func providerMenu(compact: Bool) -> some View {
-        let provider = selectedSession?.id.sessionID.provider ?? managedControl.managedProvider ?? .other("agent")
-        return Menu {
-            ForEach(managedControl.managedProviders, id: \.self) { supported in
-                Button {
-                    managedControl.selectProvider(supported)
-                    managedControl.reconcileSelection(with: sessions)
-                } label: {
-                    Label(
-                        supported.stableName.capitalized,
-                        systemImage: supported == provider ? "checkmark" : AgentVisualStyle.providerSymbol(supported)
-                    )
-                }
-            }
-        } label: {
-            adaptiveLabel(
-                provider.stableName.capitalized,
-                systemImage: AgentVisualStyle.providerSymbol(provider),
-                compact: compact
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(.white.opacity(0.74))
+            .padding(.horizontal, compact ? 4 : 7)
+            .frame(height: 25)
+            .background(
+                launcherOpen ? Color.white.opacity(0.09) : Color.white.opacity(0.035),
+                in: Capsule(style: .continuous)
             )
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.72))
         }
-        .menuStyle(.borderlessButton)
-        .help("Managed agent provider")
+        .buttonStyle(.plain)
+        .help("Live sessions and local repositories")
+        .accessibilityLabel("Open live sessions and repository launcher")
     }
 
-    private var sessionRail: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 5) {
-                ForEach(
-                    AgentWorkspaceSelection.ordered(
-                        sessions: sessions,
-                        activeManagedSessionIDs: managedControl.activeManagedSessionIDs
-                    ),
-                    id: \.id
-                ) { session in
-                    let selected = selectedSession?.id == session.id
-                    Button {
-                        managedControl.selectSession(session.id)
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: selectorStateSymbol(session))
-                                .font(.system(size: 7, weight: .semibold))
-                            Text("\(sessionLabel(session)) · \(threadSuffix(session))")
-                                .font(.system(size: 8, weight: selected ? .bold : .semibold))
-                                .lineLimit(1)
-                            Text(selectorStateLabel(session))
-                                .font(.system(size: 7.5, weight: .medium))
-                                .foregroundStyle(.white.opacity(selected ? 0.72 : 0.42))
-                        }
-                        .foregroundStyle(.white.opacity(selected ? 0.94 : 0.66))
-                        .padding(.horizontal, 7)
-                        .frame(height: 22)
-                        .background(
-                            selected ? Color.white.opacity(0.13) : Color.white.opacity(0.045),
-                            in: Capsule(style: .continuous)
-                        )
-                        .overlay {
-                            Capsule(style: .continuous)
-                                .stroke(
-                                    selected ? Color.white.opacity(0.20) : Color.white.opacity(0.07),
-                                    lineWidth: 1
-                                )
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .help(sessionMenuTitle(session))
-                }
+    private func newSessionButton(compact: Bool) -> some View {
+        Button(action: onNewSession) {
+            HStack(spacing: 3) {
+                Image(systemName: "plus")
+                if !compact { Text("New") }
             }
-            .padding(.vertical, 1)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(.white.opacity(0.74))
+            .padding(.horizontal, compact ? 5 : 7)
+            .frame(height: 25)
+            .background(Color.white.opacity(0.035), in: Capsule(style: .continuous))
+            .contentShape(Capsule(style: .continuous))
         }
-        .scrollBounceBehavior(.basedOnSize)
-        .accessibilityLabel("Agent sessions")
+        .buttonStyle(.plain)
+        .fixedSize()
+        .disabled(managedControl.managedProviders.isEmpty)
+        .help("New Claude or Codex session in a folder")
+        .accessibilityLabel("New agent session")
+    }
+
+    @ViewBuilder
+    private func projectMenu(compact: Bool) -> some View {
+        if !projectOptions.isEmpty || selectedProjectKey != nil {
+            let selected = projectOptions.first { $0.id == selectedProjectKey }
+            Menu {
+                Button {
+                    onSelectProject(nil)
+                } label: {
+                    Label("All projects", systemImage: selectedProjectKey == nil ? "checkmark" : "square.stack")
+                }
+                Divider()
+                ForEach(projectOptions) { option in
+                    Button {
+                        onSelectProject(option.id)
+                    } label: {
+                        Label(
+                            projectMenuTitle(option),
+                            systemImage: option.id == selectedProjectKey ? "checkmark" : "folder"
+                        )
+                    }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "folder")
+                    if !compact {
+                        Text("Project").lineLimit(1)
+                    }
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 6.5, weight: .bold))
+                }
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.white.opacity(selected == nil ? 0.52 : 0.78))
+                .padding(.horizontal, compact ? 4 : 7)
+                .frame(height: 25)
+                .background(Color.white.opacity(0.035), in: Capsule(style: .continuous))
+                .contentShape(Capsule(style: .continuous))
+            }
+            // Plain button menu style keeps the custom label typography;
+            // the borderless style substitutes the system control font.
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help(selected?.path ?? "Filter sessions by project")
+            .accessibilityLabel("Project filter: \(selected?.title ?? "All projects")")
+        }
+    }
+
+    private func projectMenuTitle(_ option: AgentProjectOption) -> String {
+        var parts = [option.title]
+        parts.append(option.activeCount > 0
+            ? "\(option.activeCount) active"
+            : "\(option.sessionCount) session\(option.sessionCount == 1 ? "" : "s")")
+        if option.providers.count > 1 {
+            parts.append(option.providers.map { $0.stableName.capitalized }.joined(separator: " + "))
+        }
+        return parts.joined(separator: " · ")
     }
 
     @ViewBuilder
@@ -356,6 +1059,28 @@ private struct AgentCLIControlBar: View {
         let provider = session.id.sessionID.provider
         let models = managedControl.availableModels(for: session)
         if managedControl.capabilities(for: provider).contains(.selectModel),
+           !models.isEmpty,
+           managedControl.modelSelectionScope(for: provider) == nil {
+            // The provider cannot switch a running session's model: show the
+            // actual model and offer a new session instead of pretending.
+            Menu {
+                Section("Start a new session in this folder with") {
+                    ForEach(models) { option in
+                        Button(option.displayName) {
+                            startNewSession(for: session, model: option.model)
+                        }
+                    }
+                }
+            } label: {
+                compactModelLabel(for: session, compact: compact)
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("This session keeps its model. Choose a model to start a new session.")
+            .accessibilityLabel("Agent model: \(modelLabel(for: session))")
+        } else if managedControl.capabilities(for: provider).contains(.selectModel),
            !models.isEmpty {
             Menu {
                 Button("Use thread model") {
@@ -378,28 +1103,77 @@ private struct AgentCLIControlBar: View {
                     }
                 }
             } label: {
-                HStack(spacing: 3) {
-                    if compact { Image(systemName: "cpu") }
-                    Text(modelLabel(for: session))
-                        .lineLimit(1)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 6.5, weight: .semibold))
-                }
-                .font(.system(size: 8, weight: .medium, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.48))
+                compactModelLabel(for: session, compact: compact)
             }
-            .menuStyle(.borderlessButton)
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .fixedSize()
             .disabled(!managedControl.canSelectModel(for: session))
+            .accessibilityLabel("Agent model: \(modelLabel(for: session))")
             .help(
                 managedControl.canSelectModel(for: session)
                     ? modelSelectionHelp(for: session)
                     : "Model changes are unavailable while a turn is active or submitting"
             )
-        } else if !compact {
+        } else if !compact,
+                  managedControl.selectedModel(for: session) != nil ||
+                  managedControl.pendingModel(for: session) != nil {
             Text(modelLabel(for: session))
                 .font(.system(size: 8, weight: .medium, design: .monospaced))
                 .foregroundStyle(.white.opacity(0.40))
                 .lineLimit(1)
+        }
+    }
+
+    /// Preselects the model and opens the New Session launcher for this
+    /// session's folder, so the user sees where it will run before Start.
+    private func startNewSession(for session: AgentSession, model: String) {
+        let provider = session.id.sessionID.provider
+        managedControl.selectProvider(provider)
+        guard managedControl.selectNewSessionModel(model, for: provider) else { return }
+        onNewSession()
+    }
+
+    private func compactModelLabel(for session: AgentSession, compact: Bool) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: "cpu")
+            if !compact {
+                Text("Model").lineLimit(1)
+            }
+            Image(systemName: "chevron.down")
+                .font(.system(size: 6.5, weight: .semibold))
+        }
+        .font(.system(size: 8, weight: .medium, design: .monospaced))
+        .foregroundStyle(.white.opacity(0.48))
+        .padding(.horizontal, 6)
+        .frame(height: 22)
+        .background(Color.white.opacity(0.03), in: Capsule(style: .continuous))
+        .contentShape(Capsule(style: .continuous))
+    }
+
+    @ViewBuilder
+    private func reasoningControl(for session: AgentSession, compact: Bool) -> some View {
+        let efforts = managedControl.availableReasoningEfforts(for: session)
+        let selected = managedControl.selectedReasoningEffort(for: session)
+        if !efforts.isEmpty, managedControl.isManaged(session) {
+            Menu {
+                Button("Use model default") { managedControl.selectReasoningEffort(nil, for: session) }
+                ForEach(efforts) { option in
+                    Button { managedControl.selectReasoningEffort(option.id, for: session) } label: {
+                        Label(option.id.capitalized, systemImage: selected == option.id ? "checkmark" : "brain")
+                    }
+                }
+            } label: {
+                adaptiveLabel(selected?.capitalized ?? "Default", systemImage: "brain", compact: compact)
+                    .font(.system(size: 9, weight: .medium))
+                    .padding(.horizontal, 5).frame(height: 25)
+                    .background(.white.opacity(0.035), in: Capsule())
+            }
+            .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden)
+            .disabled(!managedControl.canSelectReasoningEffort(for: session))
+            .help("Reasoning effort for the next turn")
+            .accessibilityLabel("Reasoning effort: \(selected ?? "model default")")
         }
     }
 
@@ -450,25 +1224,29 @@ private struct AgentCLIControlBar: View {
                         : Color.white.opacity(0.48)
                 )
             }
-            .menuStyle(.borderlessButton)
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .fixedSize()
             .help(policy.isAutomatic ? "Auto-approval enabled: \(policy.displayName)" : "Approval policy")
             .accessibilityLabel("Approval policy: \(policy.displayName)")
         }
     }
 
     private func statusControl(for session: AgentSession, compact: Bool) -> some View {
-        adaptiveLabel(
-            selectorStateLabel(session),
-            systemImage: selectorStateSymbol(session),
-            compact: compact
-        )
-        .font(.system(size: 8, weight: .semibold))
-        .foregroundStyle(
-            (managedControl.activeManagedSessionIDs.contains(session.id.sessionID)
-                ? Color.green
-                : AgentVisualStyle.accent(for: session.state)).opacity(0.82)
-        )
-        .help(selectorStateLabel(session))
+        let stopping = managedControl.isInterrupting(session)
+        let label = stopping ? "Stopping…" : selectorStateLabel(session)
+        let symbol = stopping ? "stop.circle" : selectorStateSymbol(session)
+        return adaptiveLabel(label, systemImage: symbol, compact: compact)
+            .font(.system(size: 8, weight: .semibold))
+            .foregroundStyle(
+                (stopping
+                    ? Color.orange
+                    : managedControl.activeManagedSessionIDs.contains(session.id.sessionID)
+                        ? Color.green
+                        : AgentVisualStyle.accent(for: session.state)).opacity(0.82)
+            )
+            .help(label)
     }
 
     @ViewBuilder
@@ -484,7 +1262,13 @@ private struct AgentCLIControlBar: View {
         }
     }
 
+    @Environment(\.agentProjectLocations) private var projectLocations
+
     private func sessionLabel(_ session: AgentSession) -> String {
+        if let label = AgentProjectFilter.displayLabel(for: session, locations: projectLocations),
+           !label.isEmpty {
+            return label
+        }
         let project = AgentPrivacyProjection.displayProject(session.project)
         if let displayName = project.displayName, !displayName.isEmpty {
             return displayName
@@ -547,171 +1331,297 @@ private struct AgentCLIControlBar: View {
     }
 }
 
+/// Claude and Codex as individual provider controls. Selecting one scopes
+/// sessions, usage rings and model/agent controls to that provider and
+/// restores its own exact selected session; the other provider's session
+/// and drafts are untouched. Visual treatment follows AgentNotch's source
+/// badge; a small dot marks a running managed turn. Normal widths show
+/// `[provider icon] Name`; `compact` (icon-only) is reserved for genuine
+/// width pressure.
+struct AgentProviderButtons: View {
+    static let minimumHitHeight: CGFloat = 26
+    static let minimumNamedWidth: CGFloat = 74
+
+    @ObservedObject var managedControl: AgentManagedSessionController
+    var compact = false
+    var namedWidth: CGFloat = Self.minimumNamedWidth
+
+    var body: some View {
+        let _ = AgentPerformanceProbe.count("agents.providerbuttons.body")
+        HStack(spacing: 4) {
+            ForEach(managedControl.managedProviders, id: \.self) { provider in
+                let selected = managedControl.selectedProvider == provider
+                let active = managedControl.activeManagedSessionIDs.contains { $0.provider == provider }
+                let color = AgentVisualStyle.providerAccent(provider)
+                Button {
+                    withAnimation(.interactiveSpring(response: 0.38, dampingFraction: 0.8, blendDuration: 0)) {
+                        managedControl.selectProvider(provider)
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        providerIcon(provider, selected: selected, color: color)
+                        if !compact {
+                            Text(AgentProviderVisualIdentity.resolve(provider).accessibilityName)
+                                .lineLimit(1)
+                        }
+                        if active {
+                            // A managed turn is running for this provider.
+                            Circle()
+                                .fill(color)
+                                .frame(width: 5, height: 5)
+                                .shadow(color: color.opacity(0.6), radius: 3)
+                        }
+                    }
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(selected ? color : .white.opacity(0.55))
+                    .padding(.horizontal, compact ? 7 : 10)
+                    .frame(minWidth: compact ? Self.minimumHitHeight : namedWidth)
+                    .frame(height: Self.minimumHitHeight)
+                    .background(
+                        selected ? color.opacity(0.15) : Color.white.opacity(0.035),
+                        in: Capsule(style: .continuous)
+                    )
+                    .overlay {
+                        Capsule(style: .continuous)
+                            .strokeBorder(selected ? color.opacity(0.45) : .clear, lineWidth: 1)
+                    }
+                    .contentShape(Capsule(style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .fixedSize()
+                .help("Show \(AgentProviderVisualIdentity.resolve(provider).accessibilityName) sessions and usage")
+                .accessibilityLabel(AgentProviderVisualIdentity.resolve(provider).accessibilityName)
+                .accessibilityAddTraits(selected ? [.isSelected, .isButton] : .isButton)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Agent provider")
+    }
+
+    @ViewBuilder
+    private func providerIcon(_ provider: AgentProvider, selected: Bool, color: Color) -> some View {
+        if let icon = AgentVisualStyle.installedProviderIcon(provider) {
+            Image(nsImage: icon)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: 13, height: 13)
+                .opacity(selected ? 1 : 0.7)
+        } else {
+            Image(systemName: AgentVisualStyle.providerSymbol(provider))
+                .font(.system(size: 10, weight: .semibold))
+        }
+    }
+}
+
 private struct AgentSelectedSessionControlView: View {
     let session: AgentSession
+    let surface: AgentSessionControlSurface
+    let sessions: [AgentSession]
     @ObservedObject var managedControl: AgentManagedSessionController
     @ObservedObject var approvalControl: AgentApprovalController
     let detailHeight: CGFloat
     let activityLimit: Int
     let layoutStore: IslandLayoutStore?
+    let transcriptReady: Bool
+    var composerControls: AnyView? = nil
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        if managedControl.isManaged(session), managedControl.mode(for: session).showsComposer {
-            AgentEmbeddedConsoleView(
-                session: session,
-                mode: managedControl.mode(for: session),
-                maximumActivityEntries: activityLimit,
-                transcriptEntries: managedControl.transcript(for: session),
-                layoutStore: layoutStore,
-                approvalControl: approvalControl,
-                onSubmit: { await managedControl.submit($0, for: session) },
-                onInterrupt: { managedControl.interrupt(session) }
-            )
-            .frame(minHeight: detailHeight, maxHeight: .infinity)
-            .task(id: session.id) {
-                await managedControl.refreshTranscript(for: session)
-            }
-        } else {
-            VStack(spacing: 5) {
-                if managedControl.supportsManagedControl(for: session) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "link.badge.plus")
-                            .foregroundStyle(.white.opacity(0.50))
-                        Text(session.availability == .resumable
-                            ? "Resumable \(providerName(session)) session"
-                            : "Observed \(providerName(session)) session")
-                            .font(.system(size: 8.5, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.62))
-                        if let status = managedControl.statusMessage(for: session) {
-                            Text(status)
-                                .font(.system(size: 8, weight: .medium))
-                                .foregroundStyle(.orange.opacity(0.78))
-                                .lineLimit(1)
-                        }
-                        Spacer(minLength: 8)
-                        if managedControl.canConnect(session) ||
-                            managedControl.connecting.contains(session.id.sessionID) {
-                            Button {
-                                managedControl.connect(session)
-                            } label: {
-                                Label(
-                                    managedControl.connecting.contains(session.id.sessionID)
-                                        ? "Connecting…"
-                                        : (session.availability == .resumable ? "Resume" : "Control"),
-                                    systemImage: "terminal"
-                                )
-                            }
-                            .buttonStyle(.borderless)
-                            .font(.system(size: 8.5, weight: .semibold))
-                            .disabled(!managedControl.canConnect(session))
-                            .help("Resume this provider session through its managed control plane")
-                        }
-                    }
-                    .padding(.horizontal, 8)
-                    .frame(height: 26)
-                    .background(.white.opacity(0.022))
-                    .accessibilityElement(children: .contain)
-                }
-
+        let _ = AgentPerformanceProbe.count("agents.selected.body")
+        Group {
+            if surface == .composer {
+                // A managed, input-ready session always gets its composer
+                // immediately; it never waits for a first provider event
+                // or the transcript reveal.
+                AgentTranscriptFeedReader(
+                    feed: managedControl.transcriptFeed(for: session),
+                    isEnabled: transcriptReady
+                ) { entries in
                 AgentEmbeddedConsoleView(
                     session: session,
-                    mode: .observed,
+                    mode: managedControl.mode(for: session),
+                    interactionState: managedControl.interactionState(for: session),
                     maximumActivityEntries: activityLimit,
-                    transcriptEntries: managedControl.transcript(for: session),
+                    showsOperationalTraffic: false,
+                    showsActivityOrb: false,
+                    transcriptEntries: entries,
+                    workspaceSessions: AgentWorkspaceSelection.ordered(
+                        sessions: sessions,
+                        activeManagedSessionIDs: managedControl.activeManagedSessionIDs
+                    ),
                     layoutStore: layoutStore,
                     approvalControl: approvalControl,
-                    onSubmit: { _ in false },
-                    onInterrupt: {}
+                    onSelectSession: managedControl.selectSession,
+                    onSubmit: { await managedControl.submit($0, for: session) },
+                    onInterrupt: { managedControl.interrupt(session) },
+                    loadDraft: managedControl.composerDraft(for:),
+                    saveDraft: managedControl.setComposerDraft(_:for:),
+                    composerControls: composerControls
                 )
-                .frame(minHeight: max(detailHeight - 31, 104), maxHeight: .infinity)
-            }
-            .task(id: session.id) {
-                await managedControl.reconcileObservedSession(session)
+                }
+                // Ideal, not minimum: under height pressure the transcript
+                // shrinks so the composer and Send stay inside the page clip.
+                .frame(minHeight: 0, idealHeight: detailHeight, maxHeight: .infinity)
+                .task(id: AgentTranscriptHydrationRequest(sessionID: session.id, isAllowed: transcriptReady)) {
+                    // History is read only once the transcript may show, so
+                    // entering Agents never competes with the shell motion.
+                    guard transcriptReady else { return }
+                    await managedControl.refreshTranscript(for: session)
+                }
+            } else {
+                VStack(spacing: 8) {
+                    AgentSessionControlBanner(
+                        session: session, surface: surface,
+                        status: nil,
+                        onConnect: { managedControl.connect(session) }
+                    )
+                    if surface == .attaching {
+                        AgentTranscriptLoadingView(session: session)
+                    } else {
+                        Spacer(minLength: 0)
+                        Text("Resume this exact session to continue the conversation")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                        Spacer(minLength: 0)
+                    }
+                }
+                .frame(minHeight: 0, idealHeight: detailHeight, maxHeight: .infinity)
+                .safeAreaInset(edge: .bottom) {
+                    AgentComposerContainer { if let composerControls { composerControls } }
+                        .padding(.horizontal, 10).padding(.bottom, 8)
+                }
             }
         }
-    }
-
-    private func providerName(_ session: AgentSession) -> String {
-        session.id.sessionID.provider.stableName.capitalized
+        .animation(AgentWorkspaceMotion.selection(reduceMotion: reduceMotion), value: transcriptReady)
     }
 }
 
-private struct AgentEmptyConsoleState: View {
-    @ObservedObject var managedControl: AgentManagedSessionController
-    @State private var starting = false
+private struct AgentTranscriptHydrationRequest: Hashable {
+    let sessionID: AgentSessionInstanceID
+    let isAllowed: Bool
+}
+
+/// The only view that observes a transcript feed: streamed output re-renders
+/// the console, never the surrounding Agents chrome.
+private struct AgentTranscriptFeedReader<Content: View>: View {
+    @ObservedObject var feed: AgentTranscriptFeed
+    let isEnabled: Bool
+    @ViewBuilder let content: ([AgentManagedTranscriptEntry]) -> Content
 
     var body: some View {
-        let provider = managedControl.managedProvider ?? .other("agent")
-        let providerName = provider.stableName.capitalized
-        VStack(spacing: 10) {
-            Image(systemName: AgentVisualStyle.providerSymbol(provider))
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.52))
-            Text("No \(providerName) session")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.88))
-            Text("Start a managed session to use the embedded agent console.")
-                .font(.system(size: 8.5, weight: .medium))
-                .foregroundStyle(.white.opacity(0.42))
+        content(isEnabled ? feed.entries : [])
+    }
+}
 
-            if let status = managedControl.lastTransportError {
-                Label(status, systemImage: "exclamationmark.circle")
+/// Explicit state for a selected session that is not composer-ready.
+struct AgentSessionControlBanner: View {
+    let session: AgentSession
+    let surface: AgentSessionControlSurface
+    let status: String?
+    let onConnect: () -> Void
+
+    var body: some View {
+        let content = Self.content(for: surface, provider: session.id.sessionID.provider)
+        HStack(spacing: 8) {
+            Image(systemName: content.symbol)
+                .foregroundStyle(.white.opacity(0.50))
+            Text(content.title)
+                .font(.system(size: 8.5, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.66))
+                .lineLimit(1)
+            if let detail = content.detail ?? status {
+                Text(detail)
                     .font(.system(size: 8, weight: .medium))
                     .foregroundStyle(.orange.opacity(0.78))
-                    .lineLimit(2)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
-
-            if managedControl.interactiveCapabilities.contains(.startSession) {
-                if managedControl.interactiveCapabilities.contains(.selectModel),
-                   !managedControl.availableModels.isEmpty {
-                    Menu {
-                        Button("Provider default") {
-                            _ = managedControl.selectNewSessionModel(nil, for: provider)
-                        }
-                        Divider()
-                        ForEach(managedControl.availableModels) { option in
-                            Button {
-                                _ = managedControl.selectNewSessionModel(option.model, for: provider)
-                            } label: {
-                                HStack {
-                                    Text(option.displayName)
-                                    if managedControl.newSessionModel(for: provider) == option.model {
-                                        Image(systemName: "checkmark")
-                                    }
-                                }
-                            }
-                        }
-                    } label: {
-                        Label(
-                            managedControl.newSessionModel(for: provider).flatMap { selected in
-                                managedControl.availableModels.first(where: { $0.model == selected })?.displayName
-                            } ?? "Provider default model",
-                            systemImage: "cpu"
-                        )
-                    }
-                    .menuStyle(.borderlessButton)
-                    .font(.system(size: 8.5, weight: .medium))
+            Spacer(minLength: 8)
+            if let action = content.action {
+                Button(action: onConnect) {
+                    Label(action, systemImage: "terminal")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.black.opacity(0.86))
+                        .padding(.horizontal, 9)
+                        .frame(height: 21)
+                        .background(.white.opacity(0.90), in: Capsule(style: .continuous))
                 }
-
-                Button {
-                    guard !starting else { return }
-                    starting = true
-                    Task { @MainActor in
-                        _ = await managedControl.startNewSession(cwd: nil)
-                        starting = false
-                    }
-                } label: {
-                    Label(starting ? "Starting…" : "New session", systemImage: "plus")
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(starting)
+                .buttonStyle(.plain)
+                .fixedSize()
+                .help(action == "Resume"
+                    ? "Resume this exact session with an embedded composer"
+                    : "Take managed control of this exact session")
+                .accessibilityLabel("\(action) \(content.providerName) session")
+            } else if surface == .attaching {
+                ProgressView().controlSize(.mini)
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.vertical, 18)
+        .padding(.horizontal, 8)
+        .frame(height: 28)
+        .background(.white.opacity(0.03))
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("No \(providerName) session")
+    }
+
+    struct Content: Equatable {
+        let providerName: String
+        let symbol: String
+        let title: String
+        let detail: String?
+        let action: String?
+    }
+
+    static func content(for surface: AgentSessionControlSurface, provider: AgentProvider) -> Content {
+        let name = provider.stableName.capitalized
+        switch surface {
+        case .composer:
+            return Content(providerName: name, symbol: "link", title: "Managed \(name) session", detail: nil, action: nil)
+        case .resumable:
+            return Content(providerName: name, symbol: "arrow.clockwise.circle", title: "Resumable \(name) session", detail: nil, action: "Resume")
+        case .controllable:
+            return Content(providerName: name, symbol: "arrow.clockwise.circle", title: "Resume \(name) session", detail: nil, action: "Resume")
+        case .attaching:
+            return Content(providerName: name, symbol: "link.badge.plus", title: "Attaching \(name) session…", detail: nil, action: nil)
+        case .controlUnavailable(let reason):
+            return Content(providerName: name, symbol: "eye", title: "Observed \(name) session", detail: reason, action: nil)
+        case .readOnly:
+            return Content(providerName: name, symbol: "lock", title: "Read-only observed session", detail: nil, action: nil)
+        }
+    }
+}
+
+private struct AgentTranscriptLoadingView: View {
+    let session: AgentSession
+
+    var body: some View {
+        GeometryReader { _ in
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(spacing: 7) {
+                    Image(systemName: AgentSessionPresentation.stateSymbol(session.state))
+                        .foregroundStyle(AgentVisualStyle.accent(for: session.state).opacity(0.78))
+                    Text(AgentSessionPresentation.displayedPrimaryTitle(for: session, at: Date()))
+                        .font(.system(size: 10, weight: .semibold))
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
+                    Text(AgentSessionPresentation.displayedStateLabel(for: session, at: Date()))
+                        .font(.system(size: 8.5, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.40))
+                }
+
+                Spacer(minLength: 0)
+
+                Label("Loading session…", systemImage: "ellipsis")
+                    .font(.system(size: 9.5, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.38))
+
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Loading selected agent session")
+        }
     }
 }
 
@@ -812,39 +1722,17 @@ private struct AgentGlobalSummaryStrip: View {
     let metrics: [AgentGlobalUsagePresentation]
     let layout: AgentDashboardLayoutProjection
 
-    private var missingSlots: [(String, String)] {
-        let labels = Set(metrics.map { $0.metric.label.lowercased() })
-        let canonical: [(String, String, (String) -> Bool)] = [
-            ("clock", "5h", { $0.contains("5h") }),
-            ("calendar", "Week", { $0.contains("week") }),
-            ("gauge.with.dots.needle.33percent", "Context", { $0 == "context" })
-        ]
-        let available = max(layout.maximumGaugeCount - metrics.count, 0)
-        return Array(
-            canonical
-                .filter { entry in !labels.contains(where: entry.2) }
-                .prefix(available)
-                .map { ($0.0, $0.1) }
-        )
-    }
-
     var body: some View {
-        HStack(spacing: layout.isNarrow ? 10 : 16) {
+        HStack(spacing: layout.isNarrow ? 18 : 28) {
             ForEach(metrics) { metric in
                 AgentUsageGauge(metric: metric)
-                    .frame(maxWidth: .infinity, alignment: .center)
-            }
-            ForEach(Array(missingSlots.enumerated()), id: \.offset) { _, slot in
-                AgentStandbyUsageGauge(symbol: slot.0, label: slot.1)
-                    .frame(maxWidth: .infinity, alignment: .center)
             }
         }
         .frame(maxWidth: .infinity, alignment: .center)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 7)
-        .background(.white.opacity(0.025))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(metrics.isEmpty ? "Usage metrics waiting for provider data" : "Agent usage summary")
+        .accessibilityLabel("Agent usage summary")
     }
 }
 
@@ -852,35 +1740,32 @@ private struct AgentUsageGauge: View {
     let metric: AgentGlobalUsagePresentation
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 7) {
             ZStack {
                 Circle()
-                    .stroke(.white.opacity(0.10), lineWidth: 4)
+                    .stroke(.white.opacity(0.10), lineWidth: 3)
                 if let progress = metric.metric.gaugeProgress {
                     Circle()
                         .trim(from: 0, to: progress)
                         .stroke(
                             Color.white.opacity(0.88),
-                            style: StrokeStyle(lineWidth: 4, lineCap: .round)
+                            style: StrokeStyle(lineWidth: 3, lineCap: .round)
                         )
                         .rotationEffect(.degrees(-90))
                 }
                 Image(systemName: AgentVisualStyle.providerSymbol(metric.provider))
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.78))
             }
-            .frame(width: 48, height: 48)
+            .frame(width: 32, height: 32)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(metric.provider.stableName.capitalized)
-                    .font(.system(size: 8.5, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.50))
+            VStack(alignment: .leading, spacing: 1) {
                 Text(metric.metric.label)
-                    .font(.system(size: 9, weight: .bold))
+                    .font(.system(size: 9.5, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.82))
                     .lineLimit(1)
                 Text(gaugeValue)
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
                     .foregroundStyle(.white.opacity(0.92))
                     .monospacedDigit()
                     .lineLimit(1)
@@ -1129,15 +2014,9 @@ private struct AgentStateMarker: View {
     var emphasized = false
 
     var body: some View {
-        ZStack {
-            Circle()
-                .fill(AgentVisualStyle.providerAccent(session.id.sessionID.provider).opacity(emphasized ? 0.18 : 0.10))
-            Image(systemName: AgentSessionPresentation.displayedStateSymbol(for: session, at: Date()))
-                .font(.system(size: emphasized ? 12 : 10, weight: .bold))
-                .foregroundStyle(AgentVisualStyle.accent(for: session.state))
-        }
-        .frame(width: 26, height: 26)
-        .accessibilityLabel("\(session.id.sessionID.provider.stableName), \(AgentSessionPresentation.displayedStateLabel(for: session, at: Date()))")
+        AgentPresenceGlyph(session: session, size: emphasized ? 26 : 22)
+            .frame(width: 26, height: 26)
+            .accessibilityLabel("\(session.id.sessionID.provider.stableName), \(AgentSessionPresentation.displayedStateLabel(for: session, at: Date()))")
     }
 }
 
@@ -1184,39 +2063,6 @@ private struct AgentSessionRowContent: View {
                     .font(.system(size: 9.5, weight: .medium))
                     .foregroundStyle(.white.opacity(0.74))
                     .lineLimit(2)
-            }
-
-            if let actionableApproval {
-                HStack(spacing: 8) {
-                    Button(role: .destructive) {
-                        approvalControl.resolve(
-                            session: session.id,
-                            requestID: actionableApproval.key.requestID,
-                            decision: .deny
-                        )
-                    } label: {
-                        Label("Deny", systemImage: "xmark.circle.fill")
-                    }
-                    .keyboardShortcut(.cancelAction)
-                    .accessibilityHint("Deny this agent permission request once")
-
-                    Button {
-                        approvalControl.resolve(
-                            session: session.id,
-                            requestID: actionableApproval.key.requestID,
-                            decision: .allow
-                        )
-                    } label: {
-                        Label("Approve", systemImage: "checkmark.circle.fill")
-                    }
-                    .keyboardShortcut(.defaultAction)
-                    .accessibilityHint("Approve this agent permission request once")
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .tint(.white.opacity(0.84))
-                .accessibilityElement(children: .contain)
-                .accessibilityLabel("Agent approval controls")
             }
 
             let operations = AgentOperationAggregation.make(
@@ -1273,12 +2119,6 @@ private struct AgentSessionRowContent: View {
 
     private var attentionDetail: String {
         AgentSessionPresentation.attentionDetail(for: session)
-    }
-
-    private var actionableApproval: AgentApprovalControlRequest? {
-        guard attention else { return nil }
-        let pending = approvalControl.pendingRequest(for: session.id)
-        return AgentApprovalPresentation.isActionable(session: session, pending: pending) ? pending : nil
     }
 
     private func activityColor(_ status: AgentOperationStatus) -> Color {
@@ -1424,12 +2264,16 @@ struct AgentCompactOverviewView: View {
 struct AgentCompactAttentionLeadingView: View {
     let provider: AgentProvider
     let project: String?
+    var session: AgentSession? = nil
 
     var body: some View {
         HStack(spacing: 5) {
             Image(systemName: AgentVisualStyle.providerSymbol(provider))
                 .font(.system(size: 9, weight: .semibold))
                 .foregroundStyle(AgentVisualStyle.providerAccent(provider))
+            if let session {
+                AgentPresenceGlyph(session: session, size: 18)
+            }
             Text(project.flatMap { $0.isEmpty ? nil : $0 } ?? provider.stableName.capitalized)
                 .font(.system(size: 9, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.88))
@@ -1442,10 +2286,11 @@ struct AgentCompactAttentionLeadingView: View {
 struct AgentCompactAttentionTrailingView: View {
     let text: String
     let accent: Color
+    var symbol: String = "exclamationmark"
 
     var body: some View {
         HStack(spacing: 5) {
-            Image(systemName: "exclamationmark")
+            Image(systemName: symbol)
                 .font(.system(size: 9, weight: .bold))
                 .foregroundStyle(accent)
             Text(text)
@@ -1456,5 +2301,261 @@ struct AgentCompactAttentionTrailingView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(text)
+    }
+}
+
+
+struct AgentCompactPeekNotificationView: View {
+    let presentation: AgentAttentionPresentation
+    let session: AgentSession?
+
+    private var primary: AgentAttentionEvent? { presentation.primary }
+
+    var body: some View {
+        if let primary {
+            HStack(spacing: 10) {
+                Image(systemName: symbol(for: primary.reason))
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(accent(for: primary.reason))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(title(for: primary.reason))
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .foregroundStyle(.white)
+                        Text(primary.session.sessionID.provider.stableName.capitalized)
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(
+                                AgentVisualStyle.providerAccent(primary.session.sessionID.provider).opacity(0.80)
+                            )
+                    }
+                    Text(String(primary.displaySummary.prefix(110)))
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.66))
+                        .lineLimit(2)
+                }
+
+                Spacer(minLength: 8)
+
+                if let project = session?.project.displayName, !project.isEmpty {
+                    Text(project)
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.38))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+            .padding(.horizontal, 16)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(title(for: primary.reason)), \(primary.displaySummary)")
+        }
+    }
+
+    private func title(for reason: AgentAttentionReason) -> String {
+        switch reason {
+        case .approvalRequired: "Permission required"
+        case .userInputRequired: "Input required"
+        case .completed: "Task Complete"
+        case .failed: "Task Failed"
+        case .planReady: "Plan ready"
+        case .interrupted: "Interrupted"
+        }
+    }
+
+    private func symbol(for reason: AgentAttentionReason) -> String {
+        switch reason {
+        case .approvalRequired, .userInputRequired: "hand.raised.fill"
+        case .completed: "checkmark.circle.fill"
+        case .failed: "xmark.circle.fill"
+        case .planReady: "list.bullet.clipboard.fill"
+        case .interrupted: "stop.circle.fill"
+        }
+    }
+
+    private func accent(for reason: AgentAttentionReason) -> Color {
+        switch reason {
+        case .completed: .green
+        case .failed: .red
+        case .approvalRequired, .userInputRequired: .orange
+        case .planReady: .cyan
+        case .interrupted: .yellow
+        }
+    }
+}
+
+struct AgentCompactRoutineLeadingView: View {
+    let session: AgentSession
+    @Environment(\.agentVisualPreferences) private var visualPreferences
+
+    var body: some View {
+        HStack(spacing: 5) {
+            // Compact active-agent presence follows the chat visual language:
+            // semantic ThinkingOrb for activity; BotAvatar remains Feed identity.
+            AgentLiveOrbView(
+                session: session,
+                size: 18,
+                speed: visualPreferences.orbSpeed,
+                terminal: !AgentVisualMotion.animates(session.state)
+            )
+            Image(systemName: AgentVisualStyle.providerSymbol(session.id.sessionID.provider))
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(AgentVisualStyle.providerAccent(session.id.sessionID.provider))
+            Text(session.project.displayName ?? session.id.sessionID.provider.stableName.capitalized)
+                .font(.system(size: 9.5, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.88))
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+struct AgentCompactRoutineTrailingView: View {
+    let session: AgentSession
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Text(AgentSessionPresentation.displayedStateLabel(for: session, at: Date()))
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.88))
+                .lineLimit(1)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+enum AgentWorkspaceHeaderLayout {
+    /// Below this width usage indicators get their own centered row above
+    /// the controls; at or above it they sit at the trailing edge of the
+    /// control row so the transcript keeps the vertical space.
+    static let inlineUsageMinimumWidth: CGFloat = 820
+}
+
+/// Looked up once per launch so view rendering never queries LaunchServices.
+@MainActor
+private enum ProviderIconCache {
+    static var icons: [String: NSImage?] = [:]
+}
+
+/// Compact (1x1) Chat / Terminal / Chat+Terminal cell: avatar orb, provider,
+/// live state and the latest sanitized activity. Read-only by design: the
+/// full transcript, composer and interactive PTY live in Standard and Large.
+struct AgentCompactSessionSummary: View {
+    enum Role { case chat, terminal, stack }
+
+    let session: AgentSession?
+    let role: Role
+    let isVisible: Bool
+    let attention: AnyView
+    /// Compact Chat: the live conversation (transcript + composer) under a
+    /// slim identity header. Nil keeps the read-only summary (Terminal).
+    var conversation: AnyView? = nil
+    @Environment(\.agentVisualPreferences) private var visualPreferences
+
+    static let conversationHeaderHeight: CGFloat = 34
+
+    private var roleTitle: String {
+        switch role {
+        case .chat: "Chat"
+        case .terminal: "Terminal"
+        case .stack: "Chat · Terminal"
+        }
+    }
+
+    private var avatar: BotAvatarConfiguration {
+        var value = visualPreferences.avatar
+        value.size = 34
+        value.interactive = false
+        return value
+    }
+
+    var body: some View {
+        if let conversation, let session {
+            compactChat(session: session, conversation: conversation)
+        } else {
+            summary
+        }
+    }
+
+    /// A true square chat: identity header, then the latest transcript lines
+    /// and the composer of the shared control surface.
+    private func compactChat(session: AgentSession, conversation: AnyView) -> some View {
+        var smallAvatar = avatar
+        smallAvatar.size = 20
+        return VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                BotAvatarView(sessionID: session.id, configuration: smallAvatar, state: session.state, compact: true,
+                              paused: !isVisible, frozenTime: isVisible ? nil : 0)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(session.id.sessionID.provider.stableName.capitalized)
+                        .font(.system(size: 11, weight: .semibold)).lineLimit(1)
+                    Text(AgentSessionPresentation.displayedStateLabel(for: session, at: Date()))
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(AgentVisualStyle.attentionSurfaceTint(for: session.state))
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 2)
+                attention
+            }
+            .padding(.horizontal, 8)
+            .frame(height: Self.conversationHeaderHeight)
+            conversation
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(roleTitle), compact")
+    }
+
+    private var summary: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: role == .terminal ? "terminal" : "bubble.left.and.text.bubble.right")
+                    .font(.system(size: 9, weight: .semibold))
+                Text(roleTitle).font(.system(size: 10, weight: .semibold))
+                Spacer(minLength: 2)
+                attention
+            }
+            .foregroundStyle(.white.opacity(0.62))
+            if let session {
+                HStack(spacing: 8) {
+                    BotAvatarView(sessionID: session.id, configuration: avatar, state: session.state, compact: true,
+                                  paused: !isVisible, frozenTime: isVisible ? nil : 0)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(session.id.sessionID.provider.stableName.capitalized)
+                            .font(.system(size: 12, weight: .semibold))
+                            .lineLimit(1)
+                        Text(AgentSessionPresentation.displayedStateLabel(for: session, at: Date()))
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(AgentVisualStyle.attentionSurfaceTint(for: session.state))
+                            .lineLimit(1)
+                    }
+                }
+                if let project = AgentPrivacyProjection.displayProject(session.project).displayName {
+                    Text(project).font(.system(size: 9, weight: .medium)).foregroundStyle(.white.opacity(0.46)).lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                if let latest = session.recentActivity.last {
+                    Text(AgentPrivacyProjection.summary(latest.summary)
+                         ?? AgentPrivacyProjection.title(latest.title, fallback: "Recent activity"))
+                        .font(.system(size: 10))
+                        .foregroundStyle(.white.opacity(0.78))
+                        .lineLimit(4)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } else {
+                Spacer(minLength: 0)
+                Text("No agent selected")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.6))
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(roleTitle), compact summary")
+        .accessibilityHint("Use Standard or Large size for the full \(role == .terminal ? "terminal" : "conversation")")
     }
 }

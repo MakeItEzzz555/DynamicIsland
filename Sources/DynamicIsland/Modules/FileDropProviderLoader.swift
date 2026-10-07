@@ -84,8 +84,20 @@ struct FileShelfTemporaryStorage: Sendable {
 }
 
 final class FileDropProviderLoader: @unchecked Sendable {
-    static let acceptedTypes: [UTType] = [.fileURL, .png]
+    /// Include AppKit's promised-file pasteboard types so a Photos/Finder
+    /// promise can wake/expand the island even before a stable URL exists.
+    /// Materialization itself is handled by FilePromiseDropNSView on orbit
+    /// targets, or by the provider representations below for Shelf drops.
+    static let acceptedTypes: [UTType] = {
+        var result: [UTType] = [.fileURL, .image, .movie]
+        for type in NSFilePromiseReceiver.readableDraggedTypes {
+            let candidate = UTType(importedAs: type)
+            if !result.contains(candidate) { result.append(candidate) }
+        }
+        return result
+    }()
 
+    private static let promisedFileTypeIdentifiers = Set(NSFilePromiseReceiver.readableDraggedTypes)
     private static let debugLogLock = NSLock()
     private let temporaryStorage: FileShelfTemporaryStorage
 
@@ -127,7 +139,7 @@ final class FileDropProviderLoader: @unchecked Sendable {
 
     private func canLoad(_ provider: NSItemProvider) -> Bool {
         provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) ||
-            provider.hasItemConformingToTypeIdentifier(UTType.png.identifier)
+            preferredMaterializableType(for: provider) != nil
     }
 
     private func loadURL(
@@ -155,18 +167,71 @@ final class FileDropProviderLoader: @unchecked Sendable {
                         completion(durableURL)
                     } catch {
                         Self.debugLog("file-url materialization failed delay=\(Self.elapsed(since: start)) error=\(error)")
-                        loadPNGRepresentation(from: providerBox.provider, start: start, completion: completion)
+                        loadPortableRepresentation(from: providerBox.provider, start: start, completion: completion)
                     }
                     return
                 }
 
                 Self.debugLog("file-url load failed delay=\(Self.elapsed(since: start)) error=\(String(describing: error))")
-                loadPNGRepresentation(from: providerBox.provider, start: start, completion: completion)
+                loadPortableRepresentation(from: providerBox.provider, start: start, completion: completion)
             }
             return
         }
 
-        loadPNGRepresentation(from: provider, start: start, completion: completion)
+        loadPortableRepresentation(from: provider, start: start, completion: completion)
+    }
+
+    /// Materializes Photos/image/movie providers that do not expose a stable
+    /// file URL. Prefer file-backed representations so large movies are not
+    /// loaded wholesale into memory; retain the PNG data path for screenshot
+    /// providers that only vend bytes.
+    private func loadPortableRepresentation(
+        from provider: NSItemProvider,
+        start: TimeInterval,
+        completion: @escaping @Sendable (URL?) -> Void
+    ) {
+        if provider.hasItemConformingToTypeIdentifier(UTType.png.identifier) {
+            loadPNGRepresentation(from: provider, start: start, completion: completion)
+            return
+        }
+        guard let type = preferredMaterializableType(for: provider) else {
+            completion(nil)
+            return
+        }
+        let suggestedName = provider.suggestedName
+        provider.loadFileRepresentation(forTypeIdentifier: type.identifier) { [temporaryStorage] url, error in
+            guard let url else {
+                Self.debugLog("portable representation failed type=\(type.identifier) delay=\(Self.elapsed(since: start)) error=\(String(describing: error))")
+                completion(nil)
+                return
+            }
+            var name = suggestedName?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if name?.isEmpty != false { name = nil }
+            if let existingName = name, URL(fileURLWithPath: existingName).pathExtension.isEmpty, let ext = type.preferredFilenameExtension {
+                name = "\(existingName).\(ext)"
+            } else if name == nil {
+                name = "Dropped File.\(type.preferredFilenameExtension ?? "data")"
+            }
+            do {
+                let durableURL = try temporaryStorage.copyIntoShelf(url, suggestedName: name)
+                Self.debugLog("portable representation completed type=\(type.identifier) delay=\(Self.elapsed(since: start)) path=\(durableURL.path)")
+                completion(durableURL)
+            } catch {
+                Self.debugLog("portable materialization failed delay=\(Self.elapsed(since: start)) error=\(error)")
+                completion(nil)
+            }
+        }
+    }
+
+    private func preferredMaterializableType(for provider: NSItemProvider) -> UTType? {
+        let registered = provider.registeredTypeIdentifiers
+        let types = registered.compactMap(UTType.init)
+        if let image = types.first(where: { $0.conforms(to: .image) }) { return image }
+        if let movie = types.first(where: { $0.conforms(to: .movie) }) { return movie }
+        if let promiseIdentifier = registered.first(where: Self.promisedFileTypeIdentifiers.contains) {
+            return UTType(importedAs: promiseIdentifier)
+        }
+        return nil
     }
 
     private func loadPNGRepresentation(

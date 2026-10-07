@@ -129,6 +129,20 @@ struct CodexAvailableModel: Equatable, Sendable {
     let description: String?
     let hidden: Bool
     let isDefault: Bool
+    let supportedReasoningEfforts: [AgentManagedReasoningEffort]
+    let defaultReasoningEffort: String?
+
+    init(id: String, model: String, displayName: String, description: String?, hidden: Bool, isDefault: Bool,
+         supportedReasoningEfforts: [AgentManagedReasoningEffort] = [], defaultReasoningEffort: String? = nil) {
+        self.id = id
+        self.model = model
+        self.displayName = displayName
+        self.description = description
+        self.hidden = hidden
+        self.isDefault = isDefault
+        self.supportedReasoningEfforts = supportedReasoningEfforts
+        self.defaultReasoningEffort = defaultReasoningEffort
+    }
 }
 
 enum CodexAppServerEvent: Equatable, Sendable {
@@ -362,7 +376,13 @@ actor CodexAppServerClient {
                 displayName: displayName,
                 description: value["description"]?.stringValue,
                 hidden: value["hidden"]?.boolValue ?? false,
-                isDefault: value["isDefault"]?.boolValue ?? false
+                isDefault: value["isDefault"]?.boolValue ?? false,
+                supportedReasoningEfforts: (value["supportedReasoningEfforts"]?.arrayValue ?? []).compactMap { option in
+                    guard let effort = option["reasoningEffort"]?.stringValue,
+                          !effort.isEmpty, effort.count <= AgentDomainLimits.tokenLength else { return nil }
+                    return AgentManagedReasoningEffort(id: effort, description: option["description"]?.stringValue)
+                },
+                defaultReasoningEffort: value["defaultReasoningEffort"]?.stringValue
             )
         }
     }
@@ -415,7 +435,8 @@ actor CodexAppServerClient {
     func startTurn(
         threadID: String,
         prompt: String,
-        model: String? = nil
+        model: String? = nil,
+        reasoningEffort: String? = nil
     ) async throws -> CodexManagedTurn {
         try await start()
         let input: CodexJSONValue = .array([
@@ -432,6 +453,9 @@ actor CodexAppServerClient {
         ]
         if let model, !model.isEmpty {
             params["model"] = .string(model)
+        }
+        if let reasoningEffort, !reasoningEffort.isEmpty {
+            params["effort"] = .string(reasoningEffort)
         }
         let result = try await request(
             method: "turn/start",

@@ -182,4 +182,34 @@ final class ClaudeTranscriptRecoveryTests: XCTestCase {
         XCTAssertEqual(leases.first?.owners.count, 2)
         XCTAssertEqual(leases.first?.instanceID.generation.rawValue, 1)
     }
+
+    func testClaudeStructuralToolsExposeOrbProcessingKinds() throws {
+        var parser = ClaudeTranscriptRecoveryParser()
+        let events = try parser.parse(Data("""
+        {"sessionId":"s-semantic","uuid":"m-semantic","message":{"role":"assistant","content":[
+          {"type":"thinking","thinking":"PRIVATE"},
+          {"type":"tool_use","id":"read-1","name":"Read","input":{"file_path":"/private/a"}},
+          {"type":"tool_use","id":"search-1","name":"Grep","input":{"pattern":"PRIVATE"}},
+          {"type":"tool_use","id":"agent-1","name":"Task","input":{"prompt":"PRIVATE"}}
+        ]}}
+        """.utf8))
+
+        XCTAssertNotNil(events.first(where: { $0.type == .thinkingStarted }))
+
+        func toolKind(_ id: String) throws -> AgentProcessingKind? {
+            let event = try XCTUnwrap(events.first(where: {
+                $0.type == .toolStarted && $0.correlationID?.rawValue == id
+            }))
+            guard case .tool(let tool) = event.payload else {
+                XCTFail("expected tool payload for \(id)")
+                return nil
+            }
+            return tool.processingKind
+        }
+
+        XCTAssertEqual(try toolKind("read-1"), .listening)
+        XCTAssertEqual(try toolKind("search-1"), .searching)
+        XCTAssertEqual(try toolKind("agent-1"), .connecting)
+    }
+
 }

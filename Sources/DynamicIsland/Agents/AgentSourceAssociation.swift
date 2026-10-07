@@ -55,7 +55,7 @@ enum AgentSourceAssociationResolver {
             guard let name = desktopAgentBundles[bundleID] else { return nil }
             return AgentSourceOpenTarget(displayName: name, bundleIdentifier: bundleID)
 
-        case .cloud, .unknown:
+        case .cloud, .mcp, .unknown:
             return nil
         }
     }

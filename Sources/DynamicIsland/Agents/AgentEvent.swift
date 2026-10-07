@@ -90,6 +90,9 @@ struct AgentSessionMetadata: Equatable, Codable, Sendable {
 struct AgentActivityDescriptor: Equatable, Codable, Sendable {
     let title: String?
     let summary: String?
+    /// Typed provider evidence, never inferred from message/display text.
+    var processingKind: AgentProcessingKind? = nil
+    var processingStatus: AgentOperationStatus? = nil
 }
 
 struct AgentPlanEvent: Equatable, Codable, Sendable {
@@ -101,6 +104,7 @@ struct AgentToolEvent: Equatable, Codable, Sendable {
     let category: String?
     let summary: String?
     let success: Bool?
+    var processingKind: AgentProcessingKind? = nil
 }
 
 struct AgentCommandEvent: Equatable, Codable, Sendable {
@@ -108,6 +112,7 @@ struct AgentCommandEvent: Equatable, Codable, Sendable {
     let executable: String?
     let success: Bool?
     let exitCode: Int?
+    var processingKind: AgentProcessingKind? = nil
 }
 
 struct AgentApprovalRequest: Equatable, Codable, Sendable {
@@ -266,7 +271,13 @@ struct AgentEvent: Equatable, Codable, Sendable {
             if case .sessionMetadata = payload { return true }
             if case .none = payload { return true }
             return false
-        case .sessionEnded, .thinkingEnded, .userInputResolved, .heartbeat:
+        case .thinkingEnded:
+            if case .none = payload { return true }
+            if case .activity(let descriptor) = payload {
+                return descriptor.processingKind == .reasoning && descriptor.processingStatus == .completed
+            }
+            return false
+        case .sessionEnded, .userInputResolved, .heartbeat:
             if case .none = payload { return true }
             return false
         case .agentWorking, .thinkingStarted, .planningStarted:

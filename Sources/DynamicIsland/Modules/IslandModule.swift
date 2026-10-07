@@ -18,6 +18,8 @@ protocol IslandModule {
 struct IslandModules {
     let media: MediaController
     let fileShelf: FileShelfStore
+    let backgroundOperations: BackgroundOperationController
+    let fileDragSession: FileDragSessionController
     let shortcuts: ShortcutsStore
     let timer: TimerController
     let stats: SystemStatsController
@@ -28,4 +30,24 @@ struct IslandModules {
     let agentAttention: AgentAttentionCoordinator
     let agentApprovalControl: AgentApprovalController
     let agentManagedControl: AgentManagedSessionController
+    let agentProjects: AgentProjectProjectionStore
+    let agentActivityRecorder: AgentActivityRecorder
+    let productivity: ProductivityModules
+    let systemHUD: SystemHUDController
+    let messaging: MessagingController
+    let rightWorkspace: RightWorkspaceStore
+    let workspaceServices: WorkspaceServices
+    let basketPresenter: BasketPresenter
+    var agentWorkspaceFeed: AgentWorkspaceFeedStore? = nil
+    var agentWorkspacePresentation: AgentWorkspacePresentation? = nil
+    var customization: WorkspaceCustomizationStore? = nil
+    /// Advanced Now Playing controls (queue, favorite, mode, output).
+    var mediaAdvanced: MediaAdvancedController? = nil
+}
+
+/// Real data sources for the right workspace's Apps & Media page.
+struct WorkspaceServices {
+    let appLibrary: AppLibraryStore
+    let calendar: CalendarEventsController
+    let spotify: SpotifyLibraryController
 }

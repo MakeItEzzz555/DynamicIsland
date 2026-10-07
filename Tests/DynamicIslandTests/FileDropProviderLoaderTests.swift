@@ -203,6 +203,82 @@ final class FileDropProviderLoaderTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: XCTUnwrap(secondResult.value.first)), Data("B".utf8))
     }
 
+
+    func testJPEGFileRepresentationMaterializesForPhotosStyleProvider() throws {
+        let providerFile = providerTemporaryRoot.appendingPathComponent("provider-photo.jpg")
+        try Data("jpeg-bytes".utf8).write(to: providerFile)
+        let provider = NSItemProvider()
+        provider.suggestedName = "Vacation Photo"
+        provider.registerFileRepresentation(
+            forTypeIdentifier: UTType.jpeg.identifier,
+            fileOptions: [],
+            visibility: .all
+        ) { completion in
+            completion(providerFile, false, nil)
+            return Progress(totalUnitCount: 1)
+        }
+        let loader = FileDropProviderLoader(temporaryStorage: storage)
+        XCTAssertTrue(loader.canLoad([provider]))
+        let loaded = expectation(description: "JPEG representation loaded")
+        let result = LockedValue<[URL]>([])
+
+        loader.loadURLs(from: [provider]) { urls in
+            result.set(urls)
+            loaded.fulfill()
+        }
+        wait(for: [loaded], timeout: 2)
+
+        let durable = try XCTUnwrap(result.value.first)
+        XCTAssertTrue(storage.isOwned(durable))
+        XCTAssertEqual(durable.pathExtension.lowercased(), "jpeg")
+        XCTAssertEqual(try Data(contentsOf: durable), Data("jpeg-bytes".utf8))
+    }
+
+
+    func testPromisedFileRepresentationMaterializesForShelfDrop() throws {
+        let promiseIdentifier = try XCTUnwrap(NSFilePromiseReceiver.readableDraggedTypes.first)
+        let providerFile = providerTemporaryRoot.appendingPathComponent("promised-export.mov")
+        try Data("movie-bytes".utf8).write(to: providerFile)
+        let provider = NSItemProvider()
+        provider.suggestedName = "Promised Export.mov"
+        provider.registerFileRepresentation(
+            forTypeIdentifier: promiseIdentifier,
+            fileOptions: [],
+            visibility: .all
+        ) { completion in
+            completion(providerFile, false, nil)
+            return Progress(totalUnitCount: 1)
+        }
+        let loader = FileDropProviderLoader(temporaryStorage: storage)
+        XCTAssertTrue(loader.canLoad([provider]))
+        let loaded = expectation(description: "promised representation loaded")
+        let result = LockedValue<[URL]>([])
+
+        loader.loadURLs(from: [provider]) { urls in
+            result.set(urls)
+            loaded.fulfill()
+        }
+        wait(for: [loaded], timeout: 2)
+
+        let durable = try XCTUnwrap(result.value.first)
+        XCTAssertTrue(storage.isOwned(durable))
+        XCTAssertEqual(durable.lastPathComponent.hasSuffix("Promised Export.mov"), true)
+        XCTAssertEqual(try Data(contentsOf: durable), Data("movie-bytes".utf8))
+    }
+
+    func testUnsupportedTextProviderFailsClosed() {
+        let provider = NSItemProvider(item: Data("text".utf8) as NSData, typeIdentifier: UTType.plainText.identifier)
+        XCTAssertFalse(FileDropProviderLoader(temporaryStorage: storage).canLoad([provider]))
+    }
+
+
+    func testAcceptedTypesIncludeNativeFilePromiseWakeTypes() {
+        let accepted = Set(FileDropProviderLoader.acceptedTypes.map(\.identifier))
+        for type in NSFilePromiseReceiver.readableDraggedTypes {
+            XCTAssertTrue(accepted.contains(UTType(importedAs: type).identifier))
+        }
+    }
+
     @MainActor
     func testAcceptedDropEndsTargetingWhileProviderRemainsPending() {
         let (settings, defaults, suiteName) = makeSettings()

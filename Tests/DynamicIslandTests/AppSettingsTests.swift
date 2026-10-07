@@ -90,6 +90,89 @@ final class AppSettingsTests: XCTestCase {
     }
 
     @MainActor
+    func testLiveActivitySidecarSettingsDefaultsPersistenceAndReset() {
+        let first = AppSettings(defaults: defaults)
+        XCTAssertTrue(first.allowSimultaneousLiveActivitySidecars)
+        XCTAssertEqual(first.timerSidecarPreference, .automatic)
+
+        first.allowSimultaneousLiveActivitySidecars = false
+        first.timerSidecarPreference = .leading
+
+        let second = AppSettings(defaults: defaults)
+        XCTAssertFalse(second.allowSimultaneousLiveActivitySidecars)
+        XCTAssertEqual(second.timerSidecarPreference, .leading)
+
+        second.resetModuleSettings()
+        XCTAssertTrue(second.allowSimultaneousLiveActivitySidecars)
+        XCTAssertEqual(second.timerSidecarPreference, .automatic)
+    }
+
+    @MainActor
+    func testSystemHUDDefaultsAndPersistence() {
+        let first = AppSettings(defaults: defaults)
+        XCTAssertTrue(first.systemHUDsEnabled)
+        XCTAssertTrue(first.replaceMacOSSystemHUDs)
+        XCTAssertTrue(first.volumeHUDEnabled)
+        XCTAssertTrue(first.brightnessHUDEnabled)
+        XCTAssertTrue(first.capsLockHUDEnabled)
+        XCTAssertTrue(first.batteryStatusHUDEnabled)
+        XCTAssertTrue(first.lowBatteryHUDEnabled)
+        XCTAssertTrue(first.audioDeviceHUDEnabled)
+        XCTAssertFalse(first.focusHUDEnabled)
+        XCTAssertEqual(first.systemHUDDurationSeconds, 1.4, accuracy: 0.001)
+
+        first.systemHUDsEnabled = false
+        first.replaceMacOSSystemHUDs = false
+        first.volumeHUDEnabled = false
+        first.brightnessHUDEnabled = false
+        first.capsLockHUDEnabled = false
+        first.batteryStatusHUDEnabled = false
+        first.lowBatteryHUDEnabled = false
+        first.audioDeviceHUDEnabled = false
+        first.focusHUDEnabled = true
+        first.systemHUDDurationSeconds = 2.2
+
+        let second = AppSettings(defaults: defaults)
+        XCTAssertFalse(second.systemHUDsEnabled)
+        XCTAssertFalse(second.replaceMacOSSystemHUDs)
+        XCTAssertFalse(second.volumeHUDEnabled)
+        XCTAssertFalse(second.brightnessHUDEnabled)
+        XCTAssertFalse(second.capsLockHUDEnabled)
+        XCTAssertFalse(second.batteryStatusHUDEnabled)
+        XCTAssertFalse(second.lowBatteryHUDEnabled)
+        XCTAssertFalse(second.audioDeviceHUDEnabled)
+        XCTAssertTrue(second.focusHUDEnabled)
+        XCTAssertEqual(second.systemHUDDurationSeconds, 2.2, accuracy: 0.001)
+
+        second.resetModuleSettings()
+        XCTAssertTrue(second.systemHUDsEnabled)
+        XCTAssertTrue(second.replaceMacOSSystemHUDs)
+        XCTAssertTrue(second.volumeHUDEnabled)
+        XCTAssertTrue(second.brightnessHUDEnabled)
+        XCTAssertTrue(second.capsLockHUDEnabled)
+        XCTAssertTrue(second.batteryStatusHUDEnabled)
+        XCTAssertTrue(second.lowBatteryHUDEnabled)
+        XCTAssertTrue(second.audioDeviceHUDEnabled)
+        XCTAssertFalse(second.focusHUDEnabled)
+        XCTAssertEqual(second.systemHUDDurationSeconds, 1.4, accuracy: 0.001)
+    }
+
+    func testSystemHUDSnapshotSymbolsMatchState() {
+        XCTAssertEqual(
+            SystemHUDSnapshot(kind: .volume, value: 0, isMuted: true, updatedAt: .distantPast).symbolName,
+            "speaker.slash.fill"
+        )
+        XCTAssertEqual(
+            SystemHUDSnapshot(kind: .volume, value: 0.8, isMuted: false, updatedAt: .distantPast).symbolName,
+            "speaker.wave.3.fill"
+        )
+        XCTAssertEqual(
+            SystemHUDSnapshot(kind: .brightness, value: 0.5, isMuted: false, updatedAt: .distantPast).symbolName,
+            "sun.max.fill"
+        )
+    }
+
+    @MainActor
     func testClipboardHistoryDefaults() {
         let settings = AppSettings(defaults: defaults)
 

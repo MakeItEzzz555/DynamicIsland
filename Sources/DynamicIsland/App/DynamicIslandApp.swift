@@ -75,32 +75,130 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let settings = AppSettings()
     private let islandState = IslandStateStore()
     private lazy var fileShelf = FileShelfStore(settings: settings)
+    private let fileDragSession = FileDragSessionController()
     private let shortcuts = ShortcutsStore()
     private let media = MediaController()
     private let timer = TimerController()
     private let timerNotifications = TimerCompletionNotificationCoordinator()
     private let stats = SystemStatsController()
     private let liveActivities = LiveActivityStore()
+    private lazy var backgroundOperations = BackgroundOperationController(liveActivities: liveActivities)
+    private let capabilityRegistry = IslandCapabilityRegistry()
+    private lazy var keepAwakeController = KeepAwakeController(
+        liveActivities: liveActivities,
+        capabilities: capabilityRegistry
+    )
+    private lazy var windowSnapController = WindowSnapController(
+        liveActivities: liveActivities,
+        capabilities: capabilityRegistry
+    )
+    private lazy var terminalController = TerminalSessionController(
+        liveActivities: liveActivities,
+        capabilities: capabilityRegistry
+    )
+    private lazy var remindersController = RemindersController(
+        liveActivities: liveActivities,
+        capabilities: capabilityRegistry
+    )
+    private lazy var voiceTranscription = VoiceTranscriptionController(
+        liveActivities: liveActivities,
+        capabilities: capabilityRegistry,
+        addToShelf: { [weak self] urls in
+            self?.fileShelf.add(urls)
+        }
+    )
+    private lazy var cameraPreview = CameraPreviewController(
+        liveActivities: liveActivities,
+        capabilities: capabilityRegistry
+    )
+    private let rightWorkspace = RightWorkspaceStore()
+    private let customization = WorkspaceCustomizationStore()
+    private lazy var mediaAdvanced = MediaAdvancedController(media: media, spotify: workspaceServices.spotify)
+    private lazy var workspaceServices = WorkspaceServices(
+        appLibrary: AppLibraryStore(),
+        calendar: CalendarEventsController(),
+        spotify: SpotifyLibraryController()
+    )
+    private lazy var backgroundRemoval = BackgroundRemovalController(
+        liveActivities: liveActivities,
+        capabilities: capabilityRegistry,
+        addToShelf: { [weak self] urls in
+            self?.fileShelf.add(urls)
+        }
+    )
+    private lazy var screenRecording = ScreenRecordingController(
+        liveActivities: liveActivities,
+        capabilities: capabilityRegistry
+    )
+    private lazy var productivity = ProductivityModules(
+        capabilities: capabilityRegistry,
+        keepAwake: keepAwakeController,
+        windowSnap: windowSnapController,
+        terminal: terminalController,
+        reminders: remindersController,
+        voice: voiceTranscription,
+        camera: cameraPreview,
+        backgroundRemoval: backgroundRemoval,
+        screenRecording: screenRecording,
+        screenRecordingSetup: screenRecordingSetup
+    )
+    /// Recorder setup surface, anchored under the island on its current
+    /// screen once the overlay exists.
+    private lazy var screenRecordingSetup = ScreenRecordingSetupPresenter.production(controller: screenRecording)
+    private lazy var systemHUDController = SystemHUDController(
+        settings: settings,
+        liveActivities: liveActivities
+    )
     private lazy var clipboardHistory = ClipboardHistoryStore(settings: settings)
+    private lazy var basketManager = BasketManager(
+        settings: settings,
+        shelf: fileShelf,
+        operations: backgroundOperations
+    )
+    private lazy var basketPresenter = BasketPresenter(
+        manager: basketManager,
+        settings: settings,
+        fileShelf: fileShelf,
+        backgroundRemoval: backgroundRemoval
+    )
     private let batteryActivityProvider = BatteryActivityProvider()
     private let navigation = IslandNavigationStore()
     private let geometryService = NotchGeometryService()
     private let agentEvents = AgentEventStore()
+    private let agentProjects = AgentProjectProjectionStore()
+    private let messagingPreferences = MessagingPreferencesPersistence(defaults: .standard)
+    private lazy var messaging = MessagingController(
+        adapters: [MessagesAppAdapter()],
+        liveActivities: liveActivities,
+        preferences: messagingPreferences.load(),
+        presentationEnabled: { [weak self] in self?.settings.liveActivitiesEnabled ?? true }
+    )
     private let agentAttention = AgentAttentionCoordinator()
+    private let agentActivityRecorder = AgentActivityRecorder()
+    private let agentWorkspaceFeed = AgentWorkspaceFeedStore()
+    private let agentWorkspacePresentation = AgentWorkspacePresentation()
     private let agentApprovalControl = AgentApprovalController()
     private lazy var agentIngestion = AgentIngestionCoordinator(eventStore: agentEvents)
+    private lazy var agentIntegrationRouter = AgentIntegrationRouter(coordinator: agentIngestion)
     private lazy var agentBridge = AgentBridge(
         coordinator: agentIngestion,
+        integrationRouter: agentIntegrationRouter,
         approvals: agentApprovalControl
+    )
+    private lazy var codexRolloutMonitor = CodexRolloutSessionMonitor(
+        coordinator: agentIngestion,
+        integrationRouter: agentIntegrationRouter
     )
     private lazy var agentManagedControl: AgentManagedSessionController = {
         var providers: [any AgentInteractiveProvider] = []
         if let codex = try? CodexAppServerProvider.makeDefault() { providers.append(codex) }
-        // Claude managed control remains research/experimental until the official
-        // Agent SDK helper boundary is implemented and validated on-device.
+        // Claude Code managed sessions over the supported CLI stream-json
+        // control protocol (verified against Claude Code 2.1.285).
+        if let claude = try? ClaudeInteractiveProvider.makeDefault() { providers.append(claude) }
         return AgentManagedSessionController(
             providers: providers,
             coordinator: agentIngestion,
+            integrationRouter: agentIntegrationRouter,
             eventStore: agentEvents,
             approvals: agentApprovalControl
         )
@@ -114,6 +212,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var cancellables: Set<AnyCancellable> = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        EditMenuInstaller.installIfNeeded()
         shortcuts.seedDefaultsIfNeeded()
         timer.setLifecycleHandler { [weak self] event in
             guard let self else { return }
@@ -129,6 +228,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let modules = IslandModules(
             media: media,
             fileShelf: fileShelf,
+            backgroundOperations: backgroundOperations,
+            fileDragSession: fileDragSession,
             shortcuts: shortcuts,
             timer: timer,
             stats: stats,
@@ -138,8 +239,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             agentEvents: agentEvents,
             agentAttention: agentAttention,
             agentApprovalControl: agentApprovalControl,
-            agentManagedControl: agentManagedControl
+            agentManagedControl: agentManagedControl,
+            agentProjects: agentProjects,
+            agentActivityRecorder: agentActivityRecorder,
+            productivity: productivity,
+            systemHUD: systemHUDController,
+            messaging: messaging,
+            rightWorkspace: rightWorkspace,
+            workspaceServices: workspaceServices,
+            basketPresenter: basketPresenter,
+            agentWorkspaceFeed: agentWorkspaceFeed,
+            agentWorkspacePresentation: agentWorkspacePresentation,
+            customization: customization,
+            mediaAdvanced: mediaAdvanced
         )
+        navigation.applyConfiguration(customization.configuration, using: settings)
+        customization.$configuration.dropFirst().removeDuplicates().sink { [weak self] configuration in
+            guard let self else { return }
+            self.navigation.applyConfiguration(configuration, using: self.settings)
+        }.store(in: &cancellables)
+        basketPresenter.start()
+        agentProjects.observe(agentEvents.$sessions)
+        installMessagingObservers()
         #if DEBUG
         debugPrint(
             "DynamicIsland AppDelegate modules",
@@ -157,6 +278,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         )
         self.overlayController = overlayController
+        screenRecordingSetup.anchorProvider = { [weak overlayController] in
+            overlayController?.screenRecordingSetupAnchor()
+        }
         overlayController.setVisible(settings.overlayEnabled)
         LaunchAtLoginController.setEnabled(settings.launchAtLoginEnabled)
 
@@ -174,14 +298,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .store(in: &cancellables)
 
+        // Record Activities observes the normalized store; off unless the
+        // user opted in.
+        agentEvents.appliedEventObserver = { [weak agentActivityRecorder, weak agentWorkspaceFeed] event, session in
+            agentActivityRecorder?.handleApplied(event, session: session)
+            agentWorkspaceFeed?.handleApplied(event, session: session)
+        }
+        settings.$agentActivityRecordingEnabled
+            .removeDuplicates()
+            .sink { [weak self] enabled in
+                self?.agentActivityRecorder.setRecording(enabled)
+            }
+            .store(in: &cancellables)
+
         installLiveActivityObservers()
+        systemHUDController.start()
         installAgentActivityObservers()
+        Task { [codexRolloutMonitor] in
+            await codexRolloutMonitor.start()
+        }
 
         menuController = MenuBarController(
             settings: settings,
             onOpenSettings: { [weak self] in self?.openSettings() },
             onToggleOverlay: { [weak self] in self?.toggleOverlay() },
-            onQuit: { NSApp.terminate(nil) }
+            onQuit: { NSApp.terminate(nil) },
+            hiddenBasketCount: { [weak self] in self?.basketPresenter.hiddenBasketCount ?? 0 },
+            onShowBaskets: { [weak self] in self?.basketPresenter.revealHiddenBaskets() }
         )
 
         NotificationCenter.default.addObserver(
@@ -200,6 +343,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     }
 
+    /// The Messages page exists only while a visible message is queued.
+    private func installMessagingObservers() {
+        messaging.$preferences
+            .dropFirst()
+            .removeDuplicates()
+            .sink { [messagingPreferences] preferences in
+                messagingPreferences.save(preferences)
+            }
+            .store(in: &cancellables)
+
+        messaging.$queue
+            .combineLatest(messaging.$preferences)
+            .map { [weak self] _, _ in !(self?.messaging.visibleEntries.isEmpty ?? true) }
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] hasMessages in
+                guard let self else { return }
+                navigation.hasActionableMessages = hasMessages
+                navigation.ensureValidSelection(using: settings)
+            }
+            .store(in: &cancellables)
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         let clipboardFinalization = clipboardHistory.finalizePersistenceForTermination()
         #if DEBUG
@@ -207,8 +373,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             print("[ClipboardHistory] termination finalization \(clipboardFinalization)")
         }
         #endif
+        keepAwakeController.stop()
+        terminalController.terminate()
+        voiceTranscription.cancel()
+        cameraPreview.terminate()
+        backgroundRemoval.terminate()
+        basketPresenter.stop()
+        systemHUDController.stop()
         agentBridge.stop()
         agentManagedControl.stop()
+        agentActivityRecorder.flushForTermination()
+        Task { [codexRolloutMonitor] in
+            await codexRolloutMonitor.stop()
+        }
         if let eventMonitor {
             NSEvent.removeMonitor(eventMonitor)
         }
@@ -218,13 +395,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         overlayController?.reposition()
     }
 
+    /// Real objects the Settings previews render read-only, plus
+    /// preview-only objects that exist solely inside Settings.
+    private func settingsPreviewDependencies() -> SettingsPreviewDependencies {
+        let previewActivities = LiveActivityStore()
+        let previewCapabilities = IslandCapabilityRegistry()
+        return SettingsPreviewDependencies(
+            timer: timer,
+            stats: stats,
+            clipboardHistory: clipboardHistory,
+            shortcuts: shortcuts,
+            rightWorkspace: rightWorkspace,
+            workspaceServices: workspaceServices,
+            agentManagedControl: agentManagedControl,
+            productivity: productivity,
+            previewMedia: MediaController.settingsPreview(),
+            previewShelf: SettingsPreviewFixtures.previewShelf(settings: settings),
+            previewBackgroundRemoval: BackgroundRemovalController(
+                liveActivities: previewActivities,
+                capabilities: previewCapabilities,
+                addToShelf: { _ in }
+            )
+        )
+    }
+
     private func openSettings() {
         if settingsController == nil {
             settingsController = SettingsWindowController(
                 settings: settings,
                 shortcuts: shortcuts,
                 agentIngestion: agentIngestion,
-                agentEvents: agentEvents
+                agentEvents: agentEvents,
+                productivity: productivity,
+                agentManagedControl: agentManagedControl,
+                agentProjects: agentProjects,
+                messaging: messaging,
+                previews: settingsPreviewDependencies()
             )
         }
         settingsController?.show()
@@ -247,8 +453,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         agentAttention.$soundIntent
             .compactMap { $0 }
             .removeDuplicates()
-            .sink { _ in
-                NSSound.beep()
+            .sink { intent in
+                SystemAgentNotificationFeedback.shared.play(intent)
             }
             .store(in: &cancellables)
 
@@ -257,6 +463,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] state in
                 if state == .expanded {
                     self?.agentAttention.dismissForExpansion()
+                } else if let camera = self?.cameraPreview {
+                    // Collapse ends Camera Mirror capture; re-expanding never
+                    // restarts it (explicit intent only).
+                    Task { await camera.islandDidCollapse() }
                 }
             }
             .store(in: &cancellables)
@@ -316,8 +526,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             peekDuration: settings.agentPeekDurationSeconds,
             completionAlertsEnabled: settings.agentCompletionAlertsEnabled,
             approvalAlertsEnabled: settings.agentApprovalAlertsEnabled,
-            soundsEnabled: settings.agentSoundsEnabled
+            // DynamicIsland's completion chime (AgentNotch itself is silent;
+            // see AgentNotificationFeedback.swift). The feedback policy lets
+            // only fresh completed-task intents through, once per event.
+            soundsEnabled: settings.agentCompletionSoundEnabled
         )
+        SystemAgentNotificationFeedback.shared.policy =
+            AgentNotificationFeedbackPolicy(completionSoundEnabled: settings.agentCompletionSoundEnabled)
         agentAttention.setEnabled(settings.overlayEnabled && settings.agentActivityEnabled)
     }
 
@@ -395,6 +610,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateMediaLiveActivity(settings: settings)
         updateFileTrayLiveActivity(files: fileShelf.files, settings: settings)
         updateBatteryLiveActivity(settings: settings)
+        messaging.republishActivity()
     }
 
     private func updateTimerLiveActivity(

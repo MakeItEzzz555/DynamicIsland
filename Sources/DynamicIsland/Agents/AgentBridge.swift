@@ -5,17 +5,21 @@ import Darwin
 import Foundation
 
 final class AgentBridgeIngress: Sendable {
-    private let coordinator: AgentIngestionCoordinator
+    private let router: AgentIntegrationRouter
 
-    init(coordinator: AgentIngestionCoordinator) {
-        self.coordinator = coordinator
+    init(
+        coordinator: AgentIngestionCoordinator,
+        router: AgentIntegrationRouter? = nil
+    ) {
+        self.router = router ?? AgentIntegrationRouter(coordinator: coordinator)
     }
 
     func ingest(
         request: AgentBridgeWireRequest,
         producer: AgentProducerHandle,
         receivedAt: Date,
-        permitsApprovalControl: Bool = false
+        permitsApprovalControl: Bool = false,
+        precedence: AgentIntegrationPrecedence = .secondaryObservation
     ) async -> Result<AgentBridgeIngestionResult, AgentBridgeEnvelopeError> {
         guard request.protocolVersion == AgentBridgeLimits.protocolVersion else {
             return .failure(.unsupportedProtocol)
@@ -44,7 +48,7 @@ final class AgentBridgeIngress: Sendable {
             return .failure(.malformedEnvelope)
         }
 
-        switch await coordinator.ingestAtomically(normalized, from: producer) {
+        switch await router.routeAtomically(normalized, from: producer, precedence: precedence) {
         case .success(let result):
             return .success(AgentBridgeIngestionResult(
                 acceptedEvents: result.acceptedEvents,
@@ -79,7 +83,11 @@ final class AgentBridgeIngress: Sendable {
             payload: .approvalResolution(AgentApprovalResolution(state: state)),
             continuity: AgentSessionContinuity(immutableIdentity: session.sessionID.nativeID)
         )
-        guard case .success = await coordinator.ingest(event, from: producer) else { return false }
+        guard case .success = await router.route(
+            event,
+            from: producer,
+            precedence: .providerNative
+        ) else { return false }
         return true
     }
 
@@ -326,6 +334,7 @@ actor AgentBridgeRequestProcessor {
     private let producer: AgentProducerHandle
     private let eventsRoute: String
     private let allowsHealth: Bool
+    private let precedence: AgentIntegrationPrecedence
     private let now: @Sendable () -> Date
 
     init(
@@ -334,6 +343,7 @@ actor AgentBridgeRequestProcessor {
         producer: AgentProducerHandle,
         eventsRoute: String = AgentBridgeProtocol.eventsRoute,
         allowsHealth: Bool = true,
+        precedence: AgentIntegrationPrecedence = .secondaryObservation,
         now: @escaping @Sendable () -> Date = Date.init
     ) {
         self.authenticator = authenticator
@@ -341,6 +351,7 @@ actor AgentBridgeRequestProcessor {
         self.producer = producer
         self.eventsRoute = eventsRoute
         self.allowsHealth = allowsHealth
+        self.precedence = precedence
         self.now = now
     }
 
@@ -383,7 +394,8 @@ actor AgentBridgeRequestProcessor {
             let result = await ingress.ingest(
                 request: wire,
                 producer: producer,
-                receivedAt: now()
+                receivedAt: now(),
+                precedence: precedence
             )
             switch result {
             case .success:
@@ -468,7 +480,8 @@ actor AgentBridgePermissionRequestProcessor {
             request: wire,
             producer: producer,
             receivedAt: now(),
-            permitsApprovalControl: true
+            permitsApprovalControl: true,
+            precedence: .providerNative
         )
         guard case .success(let result) = ingestion,
               let session = result.sessionInstances.last,
@@ -496,6 +509,7 @@ actor AgentBridgePermissionRequestProcessor {
             producer: producer,
             receivedAt: now()
         )
+        await approvals.confirmDelivery(controlRequest.key)
         guard let decision else {
             return AgentBridgeHTTPResponse(status: .ok, code: "no-decision")
         }
@@ -609,6 +623,7 @@ final class AgentBridge: ObservableObject {
 
     init(
         coordinator: AgentIngestionCoordinator,
+        integrationRouter: AgentIntegrationRouter? = nil,
         credentialStore: any AgentBridgeCredentialStore = SystemAgentBridgeCredentialStore(),
         discoveryPublisher: (any AgentBridgeDiscoveryPublishing)? = nil,
         codexDiscoveryPublisher: (any AgentBridgeDiscoveryPublishing)? = nil,
@@ -663,7 +678,10 @@ final class AgentBridge: ObservableObject {
         }
 
         self.coordinator = coordinator
-        ingress = AgentBridgeIngress(coordinator: coordinator)
+        ingress = AgentBridgeIngress(
+            coordinator: coordinator,
+            router: integrationRouter
+        )
         self.serverFactory = serverFactory
     }
 
@@ -819,7 +837,8 @@ final class AgentBridge: ObservableObject {
                 ingress: ingress,
                 producer: codexProducer,
                 eventsRoute: AgentBridgeProtocol.codexHookEventsRoute,
-                allowsHealth: false
+                allowsHealth: false,
+                precedence: .providerNative
             )
             let codexPermissionProcessor = AgentBridgePermissionRequestProcessor(
                 authenticator: codexPermissionAuthenticator,
@@ -832,7 +851,8 @@ final class AgentBridge: ObservableObject {
                 ingress: ingress,
                 producer: claudeProducer,
                 eventsRoute: AgentBridgeProtocol.claudeHookEventsRoute,
-                allowsHealth: false
+                allowsHealth: false,
+                precedence: .providerNative
             )
             let server = serverFactory { [weak self] request in
                 let response: AgentBridgeHTTPResponse

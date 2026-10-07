@@ -49,8 +49,11 @@ public struct IslandGeometry: Equatable {
 
 public enum CollapsedPresentationKind: String, Equatable, Sendable {
     case normal
+    case systemHUD
+    case screenRecording
     case agentRoutine
     case agentAttention
+    case agentPermission
 }
 
 /// Transient visual geometry for the collapsed shell. These profiles never become
@@ -74,6 +77,40 @@ public struct CollapsedPresentationProfile: Equatable, Sendable {
         glowStrength: 0
     )
 
+    /// Interactive volume/brightness HUD: the icon + percentage row occupies
+    /// the physical top band (max of the collapsed height and the hardware
+    /// notch, Droppy `HUDLayoutCalculator.notchHeight` parity) and the
+    /// slider gets its own band hanging below it. The shell stays top-pinned
+    /// and grows downward only by this band.
+    public static let systemHUDSliderBandHeight: CGFloat = 24
+
+    public static func systemHUDRowBandHeight(shellHeight: CGFloat) -> CGFloat {
+        max(shellHeight - systemHUDSliderBandHeight, 0)
+    }
+
+    public static func systemHUD(value: Double) -> Self {
+        _ = value
+        return Self(
+            kind: .systemHUD,
+            contentProfile: .systemHUD,
+            widthDelta: 12,
+            heightDelta: systemHUDSliderBandHeight,
+            bottomCornerRadius: 18,
+            horizontalContentInset: 10,
+            glowStrength: 0
+        )
+    }
+
+    public static let screenRecording = Self(
+        kind: .screenRecording,
+        contentProfile: .screenRecording,
+        widthDelta: 20,
+        heightDelta: 28,
+        bottomCornerRadius: 20,
+        horizontalContentInset: 10,
+        glowStrength: 0
+    )
+
     public static func agentRoutine(leftContentWidth: CGFloat, rightContentWidth: CGFloat) -> Self {
         Self(
             kind: .agentRoutine,
@@ -85,22 +122,35 @@ public struct CollapsedPresentationProfile: Equatable, Sendable {
             heightDelta: 2,
             bottomCornerRadius: 16,
             horizontalContentInset: 10,
-            glowStrength: 0.16
+            glowStrength: 1.0
         )
     }
 
     public static func agentAttention(leftContentWidth: CGFloat, rightContentWidth: CGFloat) -> Self {
+        // AgentNotch parity: a transient notification peek grows the closed
+        // notch by +200pt horizontally and +60pt vertically.
         Self(
             kind: .agentAttention,
             contentProfile: CollapsedActivityLayoutProfile(
                 leftContentWidth: leftContentWidth,
                 rightContentWidth: rightContentWidth
             ),
-            widthDelta: 34,
-            heightDelta: 4,
-            bottomCornerRadius: 19,
-            horizontalContentInset: 12,
-            glowStrength: 0.62
+            widthDelta: 200,
+            heightDelta: 60,
+            bottomCornerRadius: 24,
+            horizontalContentInset: 16,
+            glowStrength: 1.0
+        )
+    }
+
+    public static func agentPermission(hovered: Bool, reduceMotion: Bool) -> Self {
+        let grows = hovered && !reduceMotion
+        return Self(
+            kind: .agentPermission,
+            contentProfile: .init(leftContentWidth: 32 + (grows ? 10 : 0), rightContentWidth: 32 + (grows ? 10 : 0)),
+            widthDelta: 120 + (grows ? AgentCompactPermissionMotion.hoverWidth : 0),
+            heightDelta: 68 + (grows ? AgentCompactPermissionMotion.hoverHeight : 0),
+            bottomCornerRadius: 20, horizontalContentInset: 16, glowStrength: 0
         )
     }
 
@@ -123,6 +173,12 @@ public struct CollapsedActivityLayoutProfile: Equatable, Sendable {
     public static let batteryRightContentWidth: CGFloat = 34
     public static let fileLeftContentWidth: CGFloat = 17
     public static let fileRightContentWidth: CGFloat = 44
+    public static let systemHUDLeftContentWidth: CGFloat = 16
+    public static let systemHUDRightContentWidth: CGFloat = 48
+    public static let genericActivityLeftContentWidth: CGFloat = 16
+    public static let genericActivityRightContentWidth: CGFloat = 52
+    public static let screenRecordingLeftContentWidth: CGFloat = 62
+    public static let screenRecordingRightContentWidth: CGFloat = 96
 
     public let leftContentWidth: CGFloat
     public let rightContentWidth: CGFloat
@@ -149,6 +205,18 @@ public struct CollapsedActivityLayoutProfile: Equatable, Sendable {
     static let timer = Self(leftContentWidth: timerLeftContentWidth, rightContentWidth: timerRightContentWidth)
     static let battery = Self(leftContentWidth: batteryLeftContentWidth, rightContentWidth: batteryRightContentWidth)
     static let file = Self(leftContentWidth: fileLeftContentWidth, rightContentWidth: fileRightContentWidth)
+    static let systemHUD = Self(
+        leftContentWidth: systemHUDLeftContentWidth,
+        rightContentWidth: systemHUDRightContentWidth
+    )
+    static let genericActivity = Self(
+        leftContentWidth: genericActivityLeftContentWidth,
+        rightContentWidth: genericActivityRightContentWidth
+    )
+    static let screenRecording = Self(
+        leftContentWidth: screenRecordingLeftContentWidth,
+        rightContentWidth: screenRecordingRightContentWidth
+    )
 }
 
 struct CollapsedActivityResolvedGeometry: Equatable {
@@ -219,28 +287,65 @@ public struct IslandCanvasGeometry: Equatable {
 enum ExpandedPresentationKind: String, Equatable, Sendable {
     case standard
     case agentsWorkspace
+    case trayQuickActions
 }
 
 struct ExpandedPresentationProfile: Equatable, Sendable {
     let kind: ExpandedPresentationKind
     let widthScale: CGFloat
     let additionalHeight: CGFloat
+    /// Transparent panel space below the shell for attached accessories
+    /// (File Tray quick actions). The shell itself is unchanged.
+    var accessoryHeight: CGFloat = 0
 
     static let standard = ExpandedPresentationProfile(
         kind: .standard,
         widthScale: 1,
         additionalHeight: 0
     )
+
+    static let trayQuickActions = ExpandedPresentationProfile(
+        kind: .trayQuickActions,
+        widthScale: 1,
+        additionalHeight: 0,
+        accessoryHeight: FileTrayQuickActionMetrics.accessoryHeight
+    )
     // The managed console needs a fixed control/composer budget. Width keeps the
     // established breathing room while added height flows to the transcript.
     static let agentsWorkspace = ExpandedPresentationProfile(
         kind: .agentsWorkspace,
         widthScale: 1.10,
-        additionalHeight: 112
+        additionalHeight: 160
     )
 
     static func resolve(for page: ExpandedIslandPage) -> Self {
-        page == .agents ? .agentsWorkspace : .standard
+        switch page {
+        case .agents: .agentsWorkspace
+        case .tray: .trayQuickActions
+        default: .standard
+        }
+    }
+
+    /// The panel must contain the collapsed shell as well as the expanded one
+    /// (+ accessory). With a narrow expanded page (compact header) a wide
+    /// collapsed live activity was wider than the panel, and the window edges
+    /// clipped its rounded ends, shoulders and glow square.
+    func panelFrame(forExpandedFrame expanded: CGRect, collapsedFrame collapsed: CGRect) -> CGRect {
+        let panel = panelFrame(forExpandedFrame: expanded)
+        guard collapsed.width > 0, collapsed.height > 0, collapsed.minX.isFinite, collapsed.maxX.isFinite else { return panel }
+        return panel.union(collapsed).integral
+    }
+
+    /// Panel frame: the expanded shell frame extended downward by the
+    /// accessory height (screen coordinates, origin bottom-left).
+    func panelFrame(forExpandedFrame expanded: CGRect) -> CGRect {
+        guard accessoryHeight > 0 else { return expanded }
+        return CGRect(
+            x: expanded.minX,
+            y: expanded.minY - accessoryHeight,
+            width: expanded.width,
+            height: expanded.height + accessoryHeight
+        )
     }
 
     func resolvedSize(from base: CGSize) -> CGSize {
@@ -250,12 +355,104 @@ struct ExpandedPresentationProfile: Equatable, Sendable {
         )
     }
 
+    /// Widget content contributes requirements to the existing shell resolver;
+    /// notch anchoring, display limits and attached sidecars stay in this path.
+    @MainActor
+    /// The header mode for a page (see `ExpandedHeaderLayout.resolve`).
+    static func headerLayout(page: ExpandedIslandPage, configuration: WorkspaceConfiguration?, editing: Bool,
+                             settings: AppSettings, metrics: ResolvedIslandMetrics, pageCount: Int) -> ExpandedHeaderLayout {
+        let surface: WorkspaceSurface? = page == .island ? .media : (page == .agents ? .agents : nil)
+        guard let surface, let configuration, !editing, configuration.customizedSurfaces.contains(surface) else { return .winged }
+        let regions = eligibleRegions(configuration, surface: surface, settings: settings)
+        guard regions.count == 1 else { return .winged }
+        let maximum = workspaceMaximumContentSize(settings: settings, metrics: metrics)
+        let intrinsic = WorkspaceWidgetLayoutProjection.intrinsicContentSize(regions: regions, maximumWidth: maximum.width, metrics: metrics)
+        return ExpandedHeaderLayout.resolve(regionCount: regions.count, singleRegionWidth: intrinsic.width,
+            contentHeight: intrinsic.height, editing: editing, metrics: metrics,
+            isNotchIntegrated: metrics.hasHardwareNotch && settings.respectHardwareNotch,
+            pageCount: pageCount, clipboardEnabled: settings.clipboardHistoryEnabled)
+    }
+
+    @MainActor
+    private static func eligibleRegions(_ configuration: WorkspaceConfiguration, surface: WorkspaceSurface,
+                                        settings: AppSettings) -> [WorkspaceWidgetRegion] {
+        let allowed = WorkspaceWidgetAvailability.eligible(on: surface, settings: settings)
+        return configuration.regions(on: surface).compactMap { region -> WorkspaceWidgetRegion? in
+            let widgets = region.widgets.filter { allowed.contains($0.kind) }
+            guard !widgets.isEmpty else { return nil }
+            return WorkspaceWidgetRegion(id: widgets.count > 1 ? region.id : widgets[0].id, widgets: widgets)
+        }
+    }
+
+    @MainActor
+    private static func workspaceMaximumContentSize(settings: AppSettings, metrics: ResolvedIslandMetrics) -> CGSize {
+        let horizontal = IslandShellLayout.expandedHorizontalPadding(isNotchIntegrated: metrics.hasHardwareNotch && settings.respectHardwareNotch) * 2
+        return CGSize(width: max(1, max(520, metrics.logicalSize.width - 280) - horizontal),
+                      height: ExpandedIslandLayoutMetrics.workspaceContentHeightBudget(metrics: metrics))
+    }
+
+    @MainActor
+    func resolvedSize(from base: CGSize, page: ExpandedIslandPage,
+                      configuration: WorkspaceConfiguration?, editing: Bool,
+                      settings: AppSettings, metrics: ResolvedIslandMetrics,
+                      minimumHeaderWidth: CGFloat = 0, lane: WorkspaceNotchLane = .none,
+                      header: ExpandedHeaderLayout = .winged) -> CGSize {
+        let surface: WorkspaceSurface? = page == .island ? .media : (page == .agents ? .agents : nil)
+        guard let surface, let configuration,
+              editing || configuration.customizedSurfaces.contains(surface) else {
+            let size = resolvedSize(from: base)
+            // Header invariant holds on every page: the shell is never narrower
+            // than its notch-safe header.
+            let horizontal = IslandShellLayout.expandedHorizontalPadding(isNotchIntegrated: metrics.hasHardwareNotch && settings.respectHardwareNotch) * 2
+            return CGSize(width: max(size.width * metrics.expandedShellScale, minimumHeaderWidth + horizontal),
+                          height: size.height * metrics.expandedShellScale)
+        }
+        let regions = Self.eligibleRegions(configuration, surface: surface, settings: settings)
+        let horizontal = IslandShellLayout.expandedHorizontalPadding(isNotchIntegrated: metrics.hasHardwareNotch && settings.respectHardwareNotch) * 2
+        let compact = header.mode == .compactBelowNotch
+        let chrome = ExpandedIslandLayoutMetrics(containerSize: base, horizontalPadding: horizontal / 2, displayMetrics: metrics,
+                                                 headerDrop: compact ? header.headerDrop : 0)
+        // Usage is a configured band widget inside the projection: nothing is
+        // reserved for it outside the configuration (zero when removed).
+        let vertical = chrome.workspaceVerticalChrome
+        let maximum = Self.workspaceMaximumContentSize(settings: settings, metrics: metrics)
+        // Content owns the shell size; the header minimum may widen the shell
+        // (the content is then centered) but never enlarges a widget. The
+        // compact header sits below the notch, so it neither needs the
+        // notch-wide winged minimum nor lets content rise into the notch lane.
+        let content = WorkspaceWidgetLayoutProjection.preferredContentSize(regions: regions,
+            maximumSize: maximum, metrics: metrics, editing: editing, lane: compact ? .none : lane,
+            minimumWidth: compact ? 0 : nil)
+        let headerWidth = compact ? header.compactRowWidth : min(minimumHeaderWidth, maximum.width)
+        return CGSize(width: max(content.width, headerWidth) + horizontal,
+                      height: content.height + vertical)
+    }
+
     private static func stableScaled(_ value: CGFloat, by scale: CGFloat) -> CGFloat {
         stableValue(value * scale)
     }
 
     private static func stableValue(_ value: CGFloat) -> CGFloat {
         (value * 1_000).rounded() / 1_000
+    }
+}
+
+@MainActor
+enum WorkspaceWidgetAvailability {
+    static func eligible(on surface: WorkspaceSurface, settings: AppSettings) -> [IslandWidget] {
+        IslandWidget.allCases.filter { kind in
+            guard kind.isEligible(on: surface) else { return false }
+            switch kind {
+            case .media: return settings.mediaEnabled
+            case .files: return settings.trayEnabled && settings.fileShelfEnabled
+            case .clipboard: return settings.clipboardHistoryEnabled
+            case .timer: return settings.timerEnabled
+            case .shortcuts: return settings.shortcutsEnabled
+            case .activities: return settings.liveActivitiesEnabled
+            case .calendar, .workspace, .chat, .terminal, .feed: return true
+            case .agentUsage, .codexUsage, .claudeUsage: return settings.agentActivityEnabled && settings.agentUsageMetricsEnabled
+            }
+        }
     }
 }
 
@@ -323,7 +520,12 @@ public final class NotchGeometryService {
                 collapsedSize.width + collapsedPresentationProfile.widthDelta,
                 collapsedPresentationProfile.minimumFloatingWidth
             ),
-            height: collapsedSize.height + collapsedPresentationProfile.heightDelta
+            height: (collapsedPresentationProfile.kind == .systemHUD || collapsedPresentationProfile.kind == .agentPermission)
+                // Only a notch-integrated island shares its top band with
+                // the hardware notch; a floating island is never occluded.
+                ? max(collapsedSize.height, useAdaptiveNotchSizing ? (notchRect?.height ?? 0) : 0)
+                    + collapsedPresentationProfile.heightDelta
+                : collapsedSize.height + collapsedPresentationProfile.heightDelta
         )
         let collapsedGeometry: CollapsedActivityResolvedGeometry
         if let notchRect, useAdaptiveNotchSizing {
@@ -464,7 +666,7 @@ public final class NotchGeometryService {
     }
 
     @MainActor
-    private static func preferredScreen() -> NSScreen? {
+    static func preferredScreen() -> NSScreen? {
         NSScreen.screens.first { screen in
             screen.safeAreaInsets.top > 0
         } ?? NSScreen.main ?? NSScreen.screens.first

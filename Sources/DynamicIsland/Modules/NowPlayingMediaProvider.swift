@@ -48,7 +48,7 @@ final class NowPlayingMediaProvider: MediaDetectionProvider {
                 "Source"
             ]) ??
             "Now Playing"
-        let sourceKind = sourceKind(for: bundleIdentifier, sourceName: resolvedSourceName)
+        let sourceKind = Self.sourceKind(for: bundleIdentifier, sourceName: resolvedSourceName)
         let playbackRate = doubleValue(from: info, keys: [
             "kMRMediaRemoteNowPlayingInfoPlaybackRate",
             "playbackRate",
@@ -156,21 +156,36 @@ final class NowPlayingMediaProvider: MediaDetectionProvider {
         }
     }
 
-    private func sourceKind(for bundleIdentifier: String?, sourceName: String) -> MediaSourceKind {
-        if bundleIdentifier == "com.spotify.client" || sourceName.localizedCaseInsensitiveContains("Spotify") {
+    /// Classifies the Now Playing owner. Transport, seek and volume are only
+    /// offered for `.spotify` / `.music` because those commands are sent via
+    /// AppleScript to Spotify.app / Music.app, so the classification must be
+    /// exact: when a bundle identifier is known it is authoritative, and the
+    /// display-name fallback requires an exact name. A third-party app whose
+    /// name merely contains "Music" or "Spotify" (e.g. "YouTube Music") must
+    /// never be treated as — and have commands routed to — Music or Spotify.
+    nonisolated static func sourceKind(for bundleIdentifier: String?, sourceName: String) -> MediaSourceKind {
+        if let bundleIdentifier, !bundleIdentifier.isEmpty {
+            switch bundleIdentifier {
+            case "com.spotify.client":
+                return .spotify
+            case "com.apple.Music":
+                return .music
+            case "com.brave.Browser",
+                 "com.apple.Safari",
+                 "com.google.Chrome",
+                 "company.thebrowser.Browser",
+                 "com.microsoft.edgemac":
+                return .browser
+            default:
+                return .system
+            }
+        }
+        let name = sourceName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if name.caseInsensitiveCompare("Spotify") == .orderedSame {
             return .spotify
         }
-        if bundleIdentifier == "com.apple.Music" || sourceName.localizedCaseInsensitiveContains("Music") {
+        if name.caseInsensitiveCompare("Music") == .orderedSame {
             return .music
-        }
-        if let bundleIdentifier, [
-            "com.brave.Browser",
-            "com.apple.Safari",
-            "com.google.Chrome",
-            "company.thebrowser.Browser",
-            "com.microsoft.edgemac"
-        ].contains(bundleIdentifier) {
-            return .browser
         }
         return .system
     }

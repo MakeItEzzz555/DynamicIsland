@@ -64,13 +64,12 @@ enum AgentCollapsedShellPresentation {
         guard let compact = AgentCompactPresentation.make(sessions: sessions, enabled: enabled) else {
             return nil
         }
-        let markerWidth = min(
-            84,
-            CGFloat(compact.sessions.count * 18 + (compact.overflowCount > 0 ? 22 : 0))
-        )
+        guard let primary = compact.sessions.first else { return nil }
+        let project = primary.project.displayName ?? primary.id.sessionID.provider.stableName.capitalized
+        let state = AgentSessionPresentation.displayedStateLabel(for: primary, at: Date())
         return .agentRoutine(
-            leftContentWidth: max(markerWidth, 28),
-            rightContentWidth: estimatedWidth(compact.summary, minimum: 56, maximum: 112)
+            leftContentWidth: min(112, estimatedWidth(project, minimum: 62, maximum: 112) + 28),
+            rightContentWidth: estimatedWidth(state, minimum: 62, maximum: 112)
         )
     }
 
@@ -84,7 +83,7 @@ enum AgentCollapsedShellPresentation {
             ? "\(presentation.totalCount) agents"
             : (presentation.primary?.displaySummary ?? "Needs attention")
         return .agentAttention(
-            leftContentWidth: estimatedWidth(project, minimum: 62, maximum: 112),
+            leftContentWidth: min(112, estimatedWidth(project, minimum: 62, maximum: 112) + 28),
             rightContentWidth: estimatedWidth(trailing, minimum: 76, maximum: 126)
         )
     }
@@ -198,7 +197,8 @@ enum AgentSessionPresentation {
         }
         switch session.state {
         case .thinking, .planning, .working, .runningTool, .runningCommand:
-            return date.timeIntervalSince(session.lastUpdatedAt) > activeSignalFreshnessInterval
+            let freshness = session.activityEvidenceAt ?? session.lastUpdatedAt
+            return date.timeIntervalSince(freshness) > activeSignalFreshnessInterval
         case .waitingForApproval, .waitingForUser, .planReady,
              .idle, .completed, .failed, .interrupted:
             return false
@@ -213,9 +213,21 @@ enum AgentSessionPresentation {
         if session.isOpen && session.state == .completed {
             return "Idle"
         }
-        return hasStaleActiveSignal(session, at: date)
-            ? "Awaiting update"
-            : stateLabel(session.state)
+        if hasStaleActiveSignal(session, at: date) { return "Awaiting update" }
+        if let kind = session.currentProcessingKind {
+            switch kind {
+            case .reasoning: return "Thinking"
+            case .planning: return "Planning"
+            case .searching: return "Searching"
+            case .executing: return stateLabel(session.state)
+            case .connecting: return "Connecting"
+            case .listening: return "Reading / listening"
+            case .composing: return "Composing"
+            case .synthesizing: return "Combining results"
+            case .background: return "Background processing"
+            }
+        }
+        return stateLabel(session.state)
     }
 
     static func displayedStateSymbol(for session: AgentSession, at date: Date) -> String {
@@ -354,17 +366,26 @@ struct AgentProjectGroupPresentation: Identifiable, Equatable, Sendable {
 struct AgentDashboardPresentation: Equatable, Sendable {
     let groups: [AgentProjectGroupPresentation]
 
-    static func make(sessions: [AgentSession]) -> Self {
-        make(orderedSessions: sessions.sorted(by: AgentSessionPresentation.isOrderedBefore))
+    static func make(
+        sessions: [AgentSession],
+        locations: AgentProjectLocationIndex = .empty
+    ) -> Self {
+        make(
+            orderedSessions: sessions.sorted(by: AgentSessionPresentation.isOrderedBefore),
+            locations: locations
+        )
     }
 
-    static func make(orderedSessions: [AgentSession]) -> Self {
+    static func make(
+        orderedSessions: [AgentSession],
+        locations: AgentProjectLocationIndex = .empty
+    ) -> Self {
         var keys: [String] = []
         var titles: [String: String] = [:]
         var grouped: [String: [AgentSession]] = [:]
 
         for session in orderedSessions {
-            let identity = projectIdentity(for: session)
+            let identity = projectIdentity(for: session, locations: locations)
             if grouped[identity.key] == nil {
                 keys.append(identity.key)
                 titles[identity.key] = identity.title
@@ -381,19 +402,12 @@ struct AgentDashboardPresentation: Equatable, Sendable {
         })
     }
 
-    private static func projectIdentity(for session: AgentSession) -> (key: String, title: String) {
-        if let project = session.project.displayName?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !project.isEmpty {
-            let repository = session.project.repositoryIdentity?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let discriminator = repository.flatMap { $0.isEmpty ? nil : $0.lowercased() } ?? ""
-            return ("project:\(project.lowercased())|\(discriminator)", project)
-        }
-        if let repository = session.project.repositoryIdentity?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !repository.isEmpty {
-            return ("repository:\(repository.lowercased())", repository)
-        }
-        let provider = session.id.sessionID.provider.stableName.capitalized
-        return ("provider:\(session.id.sessionID.provider.deterministicSortKey)", "\(provider) sessions")
+    private static func projectIdentity(
+        for session: AgentSession,
+        locations: AgentProjectLocationIndex
+    ) -> (key: String, title: String) {
+        let key = AgentProjectGrouping.key(for: session, locations: locations, fallback: .perProvider)
+        return (key.rawValue, key.title)
     }
 }
 
@@ -896,7 +910,9 @@ struct AgentConsoleEntry: Identifiable, Equatable, Sendable {
     private static func kind(for operation: AgentOperationSummary) -> AgentConsoleEntryKind {
         if operation.isCommand { return .command }
         let title = operation.title.lowercased()
-        if title.contains("approval") { return .approval }
+        if title.contains("approval") || title == "approved" || title == "denied" {
+            return .approval
+        }
         if title.contains("plan") { return .plan }
         if operation.status == .failed || title.contains("failed") { return .error }
         if title == "completed" || title == "interrupted" || title.contains("waiting") {
@@ -935,9 +951,9 @@ enum AgentOperationAggregation {
                 case .pending: ("Approval requested", .pending)
                 case .approved: ("Approved", .resolved)
                 case .denied: ("Denied", .resolved)
-                case .cancelled: ("Approval failed", .failed)
+                case .cancelled: ("Request withdrawn", .cancelled)
                 case .expired: ("Approval expired", .cancelled)
-                case .unknown: ("Approval status unknown", .unknown)
+                case .unknown: ("Decision not confirmed", .failed)
                 }
                 return AgentOperationSummary(
                     id: "approval:\(approval.requestID.rawValue)",
@@ -1010,7 +1026,8 @@ enum AgentOperationAggregation {
         var aggregated: [String: AgentOperationSummary] = [:]
         for operation in operations.sorted(by: operationOrder) {
             let isCurrent = operation.status == .pending || operation.status == .active
-            let key = isCurrent
+            let isApproval = operation.id.hasPrefix("approval:")
+            let key = (isCurrent || isApproval)
                 ? operation.id
                 : "\(operation.title.lowercased())|\(operation.status.rawValue)"
             if let existing = aggregated[key] {
@@ -1095,6 +1112,17 @@ enum AgentApprovalPresentation {
         session.state == .waitingForApproval &&
             session.capabilities.contains(.approvalControl) &&
             pending?.key.session == session.id
+    }
+
+    /// Actionable requests, plus a failed delivery for this exact session
+    /// instance: the failure stays visible (no buttons) until dismissed.
+    static func isPresented(
+        session: AgentSession,
+        pending: AgentApprovalControlRequest?,
+        delivery: AgentApprovalDeliveryState?
+    ) -> Bool {
+        if case .failed? = delivery, pending?.key.session == session.id { return true }
+        return isActionable(session: session, pending: pending)
     }
 }
 
@@ -1206,7 +1234,7 @@ struct AgentUsagePresentation: Identifiable, Equatable, Sendable {
         return values
     }
 
-    private static func quotaScopeLabel(_ raw: String) -> String? {
+    static func quotaScopeLabel(_ raw: String) -> String? {
         let value = raw.lowercased().replacingOccurrences(of: "_", with: "-")
         if value.contains("5h") || value.contains("five-hour") || value.contains("5-hour") { return "5h" }
         if value.contains("week") || value == "7d" { return "Week" }

@@ -13,17 +13,19 @@ let package = Package(
         .executable(name: "DynamicIslandCodexHookRelay", targets: ["DynamicIslandCodexHookRelay"]),
         .executable(name: "DynamicIslandClaudeHookRelay", targets: ["DynamicIslandClaudeHookRelay"])
     ],
+    dependencies: [.package(url: "https://github.com/migueldeicaza/SwiftTerm.git", exact: "1.20.0")],
     targets: [
+        .target(name: "LibrariesNative", path: "Sources/LibrariesNative", resources: [.copy("LICENSE.txt"), .copy("BorderBeam/Resources"), .copy("MetalFx/MetalResources")], swiftSettings: [.swiftLanguageMode(.v5)]),
         .target(
             name: "AgentBridgeShared",
             path: "Sources/AgentBridgeShared"
         ),
         .executableTarget(
             name: "DynamicIsland",
-            dependencies: ["AgentBridgeShared"],
+            dependencies: ["AgentBridgeShared", "LibrariesNative", .product(name: "SwiftTerm", package: "SwiftTerm")],
             path: "Sources/DynamicIsland",
             resources: [
-                .process("Assets.xcassets")
+                .process("Assets.xcassets"), .copy("ThirdPartyNotices")
             ]
         ),
         .target(
@@ -53,8 +55,9 @@ let package = Package(
         ),
         .testTarget(
             name: "DynamicIslandTests",
-            dependencies: ["DynamicIsland", "AgentBridgeShared", "CodexHookShared", "ClaudeHookShared"],
-            path: "Tests/DynamicIslandTests"
+            dependencies: ["DynamicIsland", "LibrariesNative", "AgentBridgeShared", "CodexHookShared", "ClaudeHookShared"],
+            path: "Tests/DynamicIslandTests",
+            exclude: ["ReferenceVectors"]
         )
     ]
 )

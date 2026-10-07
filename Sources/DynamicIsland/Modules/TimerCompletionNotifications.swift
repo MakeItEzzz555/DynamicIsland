@@ -91,19 +91,37 @@ struct TimerCompletionNotificationPreferences: Equatable {
     let soundEnabled: Bool
 }
 
+/// Timer completion audio: exactly one sound per completed countdown.
+/// - The notification toggle controls the banner/list entry.
+/// - The sound toggle controls audibility. When a notification with sound was
+///   actually scheduled for this countdown, the system notification plays it
+///   (`UNNotificationSound.default`, Apple-managed). Otherwise - notifications
+///   off, permission denied/unanswered - an in-process system chime plays at
+///   completion, so sound never requires notification permission.
+/// macOS exposes no public Clock/Timer tone (only the private ToneLibrary
+/// framework), so none is used or copied.
 @MainActor
 final class TimerCompletionNotificationCoordinator {
+    static let localChimeName = "Glass"
+
     private let client: any TimerNotificationCenterClient
     private let sessionIdentifier: String
+    private let playLocalChime: @MainActor () -> Void
     private var active: (generation: UInt64, identifier: String)?
+    /// The countdown whose notification was scheduled with sound.
+    private var notificationSoundGeneration: UInt64?
     private var pendingWork: Task<Void, Never>?
 
     init(
         client: any TimerNotificationCenterClient = SystemTimerNotificationCenterClient(),
-        sessionIdentifier: String = UUID().uuidString
+        sessionIdentifier: String = UUID().uuidString,
+        playLocalChime: @escaping @MainActor () -> Void = {
+            SystemNotificationSoundPlayer.play(named: TimerCompletionNotificationCoordinator.localChimeName, volume: 0.8)
+        }
     ) {
         self.client = client
         self.sessionIdentifier = sessionIdentifier
+        self.playLocalChime = playLocalChime
     }
 
     func handle(
@@ -116,7 +134,7 @@ final class TimerCompletionNotificationCoordinator {
         case let .cancelled(generation):
             cancel(generation: generation)
         case let .completed(generation):
-            complete(generation: generation)
+            complete(generation: generation, soundEnabled: preferences.soundEnabled)
         }
     }
 
@@ -164,6 +182,7 @@ final class TimerCompletionNotificationCoordinator {
                     client.removePendingNotificationRequests(withIdentifiers: [identifier])
                     return
                 }
+                if request.includesSound { self?.notificationSoundGeneration = generation }
             } catch {
                 #if DEBUG
                 print("[TimerNotification] scheduling failed: \(error)")
@@ -177,16 +196,21 @@ final class TimerCompletionNotificationCoordinator {
         cancelActiveRequest()
     }
 
-    private func complete(generation: UInt64) {
-        guard active?.generation == generation else { return }
-        pendingWork?.cancel()
-        pendingWork = nil
-        active = nil
+    private func complete(generation: UInt64, soundEnabled: Bool) {
+        let notificationPlaysSound = notificationSoundGeneration == generation
+        notificationSoundGeneration = nil
+        if active?.generation == generation {
+            pendingWork?.cancel()
+            pendingWork = nil
+            active = nil
+        }
+        if soundEnabled && !notificationPlaysSound { playLocalChime() }
     }
 
     private func cancelActiveRequest() {
         pendingWork?.cancel()
         pendingWork = nil
+        notificationSoundGeneration = nil
         if let identifier = active?.identifier {
             client.removePendingNotificationRequests(withIdentifiers: [identifier])
         }

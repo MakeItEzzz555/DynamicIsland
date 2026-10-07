@@ -22,11 +22,14 @@ final class AgentConsoleTests: XCTestCase {
         )
     }
 
-    func testCommandReturnSubmitsWhileShiftReturnRemainsNativeNewline() {
+    func testPlainAndCommandReturnSubmitWhileShiftReturnRemainsNativeNewline() {
+        XCTAssertTrue(AgentPromptDraftPolicy.submitsReturn(with: []))
         XCTAssertTrue(AgentPromptDraftPolicy.submitsReturn(with: [.command]))
-        XCTAssertTrue(AgentPromptDraftPolicy.submitsReturn(with: [.command, .shift]))
+        XCTAssertTrue(AgentPromptDraftPolicy.submitsReturn(with: [.capsLock]))
         XCTAssertFalse(AgentPromptDraftPolicy.submitsReturn(with: [.shift]))
-        XCTAssertFalse(AgentPromptDraftPolicy.submitsReturn(with: []))
+        XCTAssertFalse(AgentPromptDraftPolicy.submitsReturn(with: [.command, .shift]))
+        XCTAssertFalse(AgentPromptDraftPolicy.submitsReturn(with: [.option]))
+        XCTAssertFalse(AgentPromptDraftPolicy.submitsReturn(with: [.control]))
     }
 
     func testConsoleProjectionMapsMessagesAndSafeOperationsAndStaysBounded() {
@@ -86,6 +89,25 @@ final class AgentConsoleTests: XCTestCase {
         )
     }
 
+
+    func testResolvedApprovalKeepsApprovalKindAndExactIdentity() {
+        let operations = [
+            AgentOperationSummary(
+                id: "approval:a", symbol: "checkmark.shield", title: "Approved",
+                detail: "Run migration", status: .resolved, count: 1,
+                date: Date(timeIntervalSince1970: 1), isCommand: false
+            ),
+            AgentOperationSummary(
+                id: "approval:b", symbol: "checkmark.shield", title: "Denied",
+                detail: "Delete files", status: .resolved, count: 1,
+                date: Date(timeIntervalSince1970: 2), isCommand: false
+            )
+        ]
+        let entries = AgentConsoleEntry.make(transcript: [], operations: operations)
+        XCTAssertEqual(entries.map(\.kind), [.approval, .approval])
+        XCTAssertEqual(entries.map(\.correlationID), ["approval:a", "approval:b"])
+    }
+
     func testAgentTranscriptUsesSelectedProviderIdentity() {
         let transcript = [AgentManagedTranscriptEntry(
             id: "a1", nativeSessionID: "same", turnID: "turn",
@@ -99,6 +121,101 @@ final class AgentConsoleTests: XCTestCase {
                 provider: .claude
             ).first?.title,
             "Claude"
+        )
+    }
+
+    func testAgentsPresentationGenerationRetriggersAndRejectsStaleReveal() {
+        var state = AgentsPagePresentationState()
+        let first = state.begin()
+        XCTAssertEqual(state.phase, .entering)
+        XCTAssertTrue(state.revealChrome(generation: first))
+        XCTAssertTrue(state.chromeVisible)
+
+        state.cancel()
+        XCTAssertEqual(state.phase, .inactive)
+        XCTAssertFalse(state.revealTranscript(generation: first))
+
+        let second = state.begin()
+        XCTAssertNotEqual(second, first)
+        XCTAssertTrue(state.revealChrome(generation: second))
+        XCTAssertTrue(state.revealTranscript(generation: second))
+        XCTAssertTrue(state.transcriptReady)
+    }
+
+    func testLeavingAgentsCancelsPresentationLifecycle() {
+        var state = AgentsPagePresentationState()
+        let generation = state.begin()
+        XCTAssertTrue(state.revealChrome(generation: generation))
+
+        state.cancel()
+
+        XCTAssertEqual(state.phase, .inactive)
+        XCTAssertFalse(state.chromeVisible)
+        XCTAssertFalse(state.transcriptReady)
+        XCTAssertFalse(state.revealTranscript(generation: generation))
+    }
+
+    func testManagedControlStateAllowsPromptOnlyWhileIdleAndReady() {
+        var state = AgentManagedControlState(
+            nativeSessionID: "thread",
+            activeTurnID: nil,
+            isSubmitting: false,
+            isInterrupting: false,
+            lastError: nil,
+            acceptsDirectInput: true
+        )
+        XCTAssertTrue(state.canSubmit)
+
+        state.activeTurnID = "turn"
+        XCTAssertFalse(state.canSubmit)
+        XCTAssertTrue(state.canInterrupt)
+
+        state.isInterrupting = true
+        XCTAssertFalse(state.canSubmit)
+        XCTAssertFalse(state.canInterrupt)
+    }
+
+    func testDeferredTranscriptLoadCancellationRejectsDelayedCompletion() {
+        let session = sessionID("first")
+        var gate = AgentTranscriptLoadGate()
+        let generation = gate.begin(for: session)
+
+        gate.cancel()
+
+        XCTAssertFalse(gate.complete(for: session, generation: generation))
+        XCTAssertFalse(gate.isReady(for: session))
+    }
+
+    func testSelectedSessionChangeCancelsStaleTranscriptCompletion() {
+        let first = sessionID("first")
+        let second = sessionID("second")
+        var gate = AgentTranscriptLoadGate()
+        let firstGeneration = gate.begin(for: first)
+        let secondGeneration = gate.begin(for: second)
+
+        XCTAssertFalse(gate.complete(for: first, generation: firstGeneration))
+        XCTAssertTrue(gate.complete(for: second, generation: secondGeneration))
+        XCTAssertFalse(gate.isReady(for: first))
+        XCTAssertTrue(gate.isReady(for: second))
+    }
+
+    func testLeavingAgentsClearsReadyTranscriptState() {
+        let session = sessionID("selected")
+        var gate = AgentTranscriptLoadGate()
+        let generation = gate.begin(for: session)
+        XCTAssertTrue(gate.complete(for: session, generation: generation))
+
+        gate.cancel()
+
+        XCTAssertFalse(gate.isReady(for: session))
+        XCTAssertNil(gate.requestedSessionID)
+        XCTAssertNil(gate.readySessionID)
+    }
+
+    private func sessionID(_ nativeID: String) -> AgentSessionInstanceID {
+        AgentSessionInstanceID(
+            sessionID: AgentSessionID(provider: .codex, nativeID: nativeID),
+            generation: AgentSessionGeneration(rawValue: 1)
         )
     }
 }

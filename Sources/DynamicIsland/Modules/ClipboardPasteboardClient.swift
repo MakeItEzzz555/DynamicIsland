@@ -106,25 +106,111 @@ extension ClipboardHistoryPayload: Codable {
     }
 }
 
-enum ClipboardHistoryEntryKind: String, Codable, Equatable, Sendable {
+enum ClipboardHistoryEntryKind: String, Codable, Equatable, Sendable, CaseIterable {
     case text
     case url
     case files
     case image
 }
 
+/// Value snapshot taken at copy time. We intentionally persist only the app's
+/// human name and bundle identifier — never window titles or process objects.
+struct ClipboardSourceApplication: Codable, Equatable, Sendable {
+    let name: String
+    let bundleIdentifier: String
+}
+
+enum ClipboardTagColor: String, Codable, CaseIterable, Equatable, Sendable {
+    case red, orange, yellow, green, blue, purple, pink, gray
+}
+
+struct ClipboardTag: Identifiable, Codable, Equatable, Hashable, Sendable {
+    let id: UUID
+    var name: String
+    var color: ClipboardTagColor
+    var sortOrder: Int
+
+    init(id: UUID = UUID(), name: String, color: ClipboardTagColor, sortOrder: Int = 0) {
+        self.id = id
+        self.name = name
+        self.color = color
+        self.sortOrder = sortOrder
+    }
+}
+
 struct ClipboardHistoryEntry: Identifiable, Codable, Equatable, Sendable {
     let id: UUID
     let createdAt: Date
+    let lastUsedAt: Date?
     let payload: ClipboardHistoryPayload
     let fingerprint: String
+    let sourceApplication: ClipboardSourceApplication?
+    let isFavorite: Bool
+    let customTitle: String?
+    let tagIDs: [UUID]
+
+    init(
+        id: UUID,
+        createdAt: Date,
+        lastUsedAt: Date? = nil,
+        payload: ClipboardHistoryPayload,
+        fingerprint: String,
+        sourceApplication: ClipboardSourceApplication? = nil,
+        isFavorite: Bool = false,
+        customTitle: String? = nil,
+        tagIDs: [UUID] = []
+    ) {
+        self.id = id
+        self.createdAt = createdAt
+        self.lastUsedAt = lastUsedAt
+        self.payload = payload
+        self.fingerprint = fingerprint
+        self.sourceApplication = sourceApplication
+        self.isFavorite = isFavorite
+        self.customTitle = customTitle
+        self.tagIDs = tagIDs
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, createdAt, lastUsedAt, payload, fingerprint
+        case sourceApplication, isFavorite, customTitle, tagIDs
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        createdAt = try c.decode(Date.self, forKey: .createdAt)
+        lastUsedAt = try c.decodeIfPresent(Date.self, forKey: .lastUsedAt)
+        payload = try c.decode(ClipboardHistoryPayload.self, forKey: .payload)
+        fingerprint = try c.decode(String.self, forKey: .fingerprint)
+        sourceApplication = try c.decodeIfPresent(ClipboardSourceApplication.self, forKey: .sourceApplication)
+        isFavorite = try c.decodeIfPresent(Bool.self, forKey: .isFavorite) ?? false
+        customTitle = try c.decodeIfPresent(String.self, forKey: .customTitle)
+        tagIDs = try c.decodeIfPresent([UUID].self, forKey: .tagIDs) ?? []
+    }
 }
 
 struct ClipboardHistoryArchive: Codable, Equatable, Sendable {
-    static let currentSchemaVersion = 1
+    static let currentSchemaVersion = 2
 
     let schemaVersion: Int
     let entries: [ClipboardHistoryEntry]
+    let tags: [ClipboardTag]
+
+    init(schemaVersion: Int, entries: [ClipboardHistoryEntry], tags: [ClipboardTag] = []) {
+        self.schemaVersion = schemaVersion
+        self.entries = entries
+        self.tags = tags
+    }
+
+    private enum CodingKeys: String, CodingKey { case schemaVersion, entries, tags }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try c.decode(Int.self, forKey: .schemaVersion)
+        entries = try c.decode([ClipboardHistoryEntry].self, forKey: .entries)
+        tags = try c.decodeIfPresent([ClipboardTag].self, forKey: .tags) ?? []
+    }
 }
 
 enum ClipboardPasteboardReadResult: Equatable, Sendable {

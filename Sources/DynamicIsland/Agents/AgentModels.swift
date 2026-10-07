@@ -39,6 +39,7 @@ enum AgentSource: String, Hashable, Codable, Sendable {
     case jetbrains
     case desktopApp
     case cloud
+    case mcp
     case unknown
 }
 
@@ -367,6 +368,16 @@ enum AgentActivityKind: String, Hashable, Codable, Sendable {
     case subagent
 }
 
+/// Provider-neutral processing evidence. Presentation maps this to visual states.
+enum AgentProcessingKind: String, Hashable, Codable, Sendable {
+    case reasoning, planning, searching, executing, connecting, listening, composing, synthesizing, background
+}
+
+struct AgentProcessingActivity: Equatable, Sendable {
+    let kind: AgentProcessingKind
+    let startedAt: Date
+}
+
 struct AgentActivity: Identifiable, Equatable, Codable, Sendable {
     let id: AgentEventID
     let kind: AgentActivityKind
@@ -386,6 +397,7 @@ struct AgentTool: Equatable, Codable, Sendable {
     let startedAt: Date
     var completedAt: Date?
     var success: Bool?
+    var processingKind: AgentProcessingKind? = nil
 }
 
 struct AgentCommand: Equatable, Codable, Sendable {
@@ -396,6 +408,7 @@ struct AgentCommand: Equatable, Codable, Sendable {
     var completedAt: Date?
     var exitCode: Int?
     var success: Bool?
+    var processingKind: AgentProcessingKind? = nil
 }
 
 enum AgentApprovalState: String, Hashable, Codable, Sendable {
@@ -513,9 +526,15 @@ struct AgentSession: Identifiable, Equatable, Sendable {
     let startedAt: Date
     var endedAt: Date?
     var lastUpdatedAt: Date
+    /// Best provider/source activity timestamp when one is available. This is
+    /// distinct from lastUpdatedAt (local ingestion time), so bounded catch-up
+    /// cannot make an old rollout look newly active merely because the app launched.
+    var activityEvidenceAt: Date? = nil
     var availability: AgentSessionAvailability? = nil
+    var sourceAuthority: AgentEvidenceAuthority = .heuristic
 
     var isThinking = false
+    var processingActivities: [AgentCorrelationID: AgentProcessingActivity] = [:]
     var isPlanning = false
     var isWorking = false
     var isPlanReady = false
@@ -534,6 +553,29 @@ struct AgentSession: Identifiable, Equatable, Sendable {
 
     var isOpen: Bool {
         endedAt == nil
+    }
+
+    /// Uses the existing primary-state precedence, including blocking states.
+    /// The same evidence is consumed by compact and expanded presentation.
+    var currentProcessingKind: AgentProcessingKind? {
+        switch state {
+        case .runningCommand:
+            return commands.values.filter { $0.status == .active }.max {
+                if $0.startedAt != $1.startedAt { return $0.startedAt < $1.startedAt }
+                return $0.correlationID.rawValue < $1.correlationID.rawValue
+            }.map { $0.processingKind ?? .executing }
+        case .runningTool:
+            return tools.values.filter { $0.status == .active }.max {
+                if $0.startedAt != $1.startedAt { return $0.startedAt < $1.startedAt }
+                return $0.correlationID.rawValue < $1.correlationID.rawValue
+            }.map { $0.processingKind ?? ($0.category == "search" ? .searching : .executing) }
+        case .thinking, .planning, .working:
+            return processingActivities.max {
+                if $0.value.startedAt != $1.value.startedAt { return $0.value.startedAt < $1.value.startedAt }
+                return $0.key.rawValue < $1.key.rawValue
+            }?.value.kind
+        default: return nil
+        }
     }
 }
 
@@ -591,6 +633,9 @@ struct AgentAttentionSoundIntent: Equatable, Sendable {
     let generation: AgentAttentionGeneration
     let eventID: AgentEventID
     let reason: AgentAttentionReason
+    /// When the underlying event happened. Lets feedback stay silent for
+    /// recovered/replayed history that is only now being projected.
+    var occurredAt: Date = .distantPast
 }
 
 struct AgentAttentionPolicyOptions: Equatable, Sendable {
@@ -675,7 +720,8 @@ enum AgentAttentionPolicyEngine {
                 soundIntent = AgentAttentionSoundIntent(
                     generation: nextGeneration,
                     eventID: event.eventID,
-                    reason: event.reason
+                    reason: event.reason,
+                    occurredAt: event.timestamp
                 )
             }
         }
@@ -704,6 +750,44 @@ enum AgentAttentionPolicyEngine {
         var state = initialState
         state.generation = AgentAttentionGeneration(rawValue: state.generation.rawValue &+ 1)
         state.presentation = nil
+        return state
+    }
+
+    static func reconcilePresentation(
+        with sessions: [AgentSession],
+        state initialState: AgentAttentionPolicyState
+    ) -> AgentAttentionPolicyState {
+        guard let presentation = initialState.presentation else { return initialState }
+        let sessionsByID = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })
+        let currentItems = presentation.items.filter { event in
+            guard let session = sessionsByID[event.session] else { return false }
+            switch event.reason {
+            case .approvalRequired: return session.state == .waitingForApproval
+            case .userInputRequired: return session.state == .waitingForUser
+            case .planReady: return session.state == .planReady
+            case .completed: return session.state == .completed
+            case .failed: return session.state == .failed
+            case .interrupted: return session.state == .interrupted
+            }
+        }
+        guard currentItems != presentation.items else { return initialState }
+
+        var state = initialState
+        let generation = AgentAttentionGeneration(rawValue: state.generation.rawValue &+ 1)
+        state.generation = generation
+        guard !currentItems.isEmpty else {
+            state.presentation = nil
+            return state
+        }
+        state.presentation = AgentAttentionPresentation(
+            generation: generation,
+            items: currentItems,
+            overflowCount: 0,
+            style: currentItems.map { style(for: $0.reason) }.max(by: styleRank) ?? .informational,
+            createdAt: presentation.createdAt,
+            updatedAt: presentation.updatedAt,
+            retractAt: presentation.retractAt
+        )
         return state
     }
 
@@ -753,6 +837,8 @@ enum AgentAttentionPolicyEngine {
         }
 
         let presentationStyle = items.map { Self.style(for: $0.reason) }.max(by: styleRank) ?? Self.style(for: event.reason)
+        let duration = items.map { peekDuration(for: $0.reason, fallback: options.peekDuration) }.max()
+            ?? peekDuration(for: event.reason, fallback: options.peekDuration)
         return AgentAttentionPresentation(
             generation: generation,
             items: items,
@@ -760,8 +846,22 @@ enum AgentAttentionPolicyEngine {
             style: presentationStyle,
             createdAt: createdAt,
             updatedAt: now,
-            retractAt: now.addingTimeInterval(max(0.1, options.peekDuration))
+            retractAt: now.addingTimeInterval(duration)
         )
+    }
+
+    private static func peekDuration(
+        for reason: AgentAttentionReason,
+        fallback: TimeInterval
+    ) -> TimeInterval {
+        switch reason {
+        case .approvalRequired, .userInputRequired:
+            5.0
+        case .completed, .planReady, .interrupted:
+            3.0
+        case .failed:
+            5.0
+        }
     }
 
     private static func reconcileBadges(

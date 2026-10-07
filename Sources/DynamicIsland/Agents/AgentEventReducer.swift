@@ -11,7 +11,7 @@ struct AgentEventStoreLimits: Equatable, Sendable {
     var completedSessionRetention: TimeInterval
 
     static let standard = AgentEventStoreLimits(
-        maximumSessions: 32,
+        maximumSessions: 96,
         maximumActivityPerSession: 200,
         maximumGlobalActivity: 2_000,
         maximumRememberedEventIDs: 512,
@@ -111,6 +111,12 @@ enum AgentEventReducer {
             )
         }
 
+        if event.source != .unknown,
+           event.authority >= session.sourceAuthority {
+            session.source = event.source
+            session.sourceAuthority = event.authority
+        }
+
         if isTerminalTransition(event.type),
            event.authority < session.terminalAuthority {
             remember(event, in: &session, limits: limits)
@@ -152,6 +158,13 @@ enum AgentEventReducer {
         case .applied(let attention):
             remember(event, in: &session, limits: limits)
             session.lastUpdatedAt = max(session.lastUpdatedAt, event.receivedTimestamp)
+            if let activityTimestamp = event.providerTimestamp {
+                if let current = session.activityEvidenceAt {
+                    session.activityEvidenceAt = max(current, activityTimestamp)
+                } else {
+                    session.activityEvidenceAt = activityTimestamp
+                }
+            }
             if !session.state.isTerminal {
                 session.state = primaryState(for: session)
             }
@@ -193,7 +206,8 @@ enum AgentEventReducer {
             startedAt: event.effectiveTimestamp,
             endedAt: nil,
             lastUpdatedAt: event.receivedTimestamp,
-            availability: availability
+            availability: availability,
+            sourceAuthority: event.authority
         )
         session.terminalAuthority = event.authority
         return session
@@ -208,7 +222,7 @@ enum AgentEventReducer {
         switch event.type {
         case .sessionStarted:
             session.terminalAuthority = max(session.terminalAuthority, event.authority)
-            mergeSessionMetadata(event.payload, source: event.source, into: &session)
+            mergeSessionMetadata(event.payload, into: &session)
             appendActivity(
                 event: event,
                 kind: .session,
@@ -226,7 +240,7 @@ enum AgentEventReducer {
             session.isWorking = true
             session.isPlanReady = false
             session.planReadyAuthority = .heuristic
-            mergeSessionMetadata(event.payload, source: event.source, into: &session)
+            mergeSessionMetadata(event.payload, into: &session)
             appendActivity(
                 event: event,
                 kind: .session,
@@ -237,7 +251,7 @@ enum AgentEventReducer {
             )
 
         case .sessionMetadataUpdated:
-            mergeSessionMetadata(event.payload, source: event.source, into: &session)
+            mergeSessionMetadata(event.payload, into: &session)
 
         case .sessionEnded:
             session.endedAt = event.effectiveTimestamp
@@ -248,25 +262,31 @@ enum AgentEventReducer {
             }
 
         case .agentWorking:
-            session.isWorking = true
-            if event.authority >= session.planReadyAuthority {
-                session.isPlanReady = false
-                session.planReadyAuthority = .heuristic
+            if let rejection = updateProcessing(event, in: &session, limits: limits) { return .rejected(rejection) }
+            if case .activity(let descriptor) = event.payload, descriptor.processingKind != nil {
+                // Item-level evidence does not resume a user wait/plan or turn.
+            } else {
+                session.isWorking = true
+                if event.authority >= session.planReadyAuthority {
+                    session.isPlanReady = false
+                    session.planReadyAuthority = .heuristic
+                }
+                session.waitingForUserID = nil
             }
-            session.waitingForUserID = nil
             if case .activity(let descriptor) = event.payload {
                 appendActivity(
                     event: event,
                     kind: .session,
                     title: AgentPrivacyProjection.title(descriptor.title, fallback: "Working"),
                     summary: descriptor.summary,
-                    status: .active,
+                    status: descriptor.processingStatus ?? .active,
                     to: &session,
                     limits: limits
                 )
             }
 
         case .thinkingStarted:
+            if let rejection = updateProcessing(event, in: &session, limits: limits) { return .rejected(rejection) }
             session.isThinking = true
             if case .activity(let descriptor) = event.payload {
                 appendActivity(
@@ -281,9 +301,11 @@ enum AgentEventReducer {
             }
 
         case .thinkingEnded:
-            session.isThinking = false
+            if let rejection = updateProcessing(event, in: &session, limits: limits) { return .rejected(rejection) }
+            session.isThinking = session.processingActivities.values.contains { $0.kind == .reasoning }
 
         case .planningStarted:
+            if let rejection = updateProcessing(event, in: &session, limits: limits) { return .rejected(rejection) }
             session.isPlanning = true
             if event.authority >= session.planReadyAuthority {
                 session.isPlanReady = false
@@ -352,7 +374,8 @@ enum AgentEventReducer {
                     status: .active,
                     startedAt: event.effectiveTimestamp,
                     completedAt: nil,
-                    success: nil
+                    success: nil,
+                    processingKind: toolEvent.processingKind
                 )
                 let pendingKey = AgentPendingOperationKey(kind: .tool, correlationID: correlationID)
                 if case .tool(let pending, let completedAt)? = session.pendingOperations.removeValue(forKey: pendingKey) {
@@ -424,7 +447,8 @@ enum AgentEventReducer {
                     startedAt: event.effectiveTimestamp,
                     completedAt: nil,
                     exitCode: nil,
-                    success: nil
+                    success: nil,
+                    processingKind: commandEvent.processingKind
                 )
                 let pendingKey = AgentPendingOperationKey(kind: .command, correlationID: correlationID)
                 if case .command(let pending, let completedAt)? = session.pendingOperations.removeValue(forKey: pendingKey) {
@@ -746,16 +770,37 @@ enum AgentEventReducer {
         }
         if session.isThinking { return .thinking }
         if session.isPlanning { return .planning }
+        if !session.processingActivities.isEmpty { return .working }
         if session.isWorking { return .working }
         return .idle
     }
 
+    private static func updateProcessing(_ event: AgentEvent, in session: inout AgentSession,
+                                         limits: AgentEventStoreLimits) -> AgentEventRejection? {
+        guard case .activity(let descriptor) = event.payload,
+              let kind = descriptor.processingKind, let status = descriptor.processingStatus else { return nil }
+        guard let key = event.correlationID else { return .missingCorrelation }
+        if status == .active || status == .pending {
+            guard session.processingActivities[key] != nil || session.processingActivities.count < limits.maximumTrackedOperations else {
+                return .operationCapacity
+            }
+            // Repeated item evidence is idempotent and cannot restart its phase.
+            if session.processingActivities[key] == nil {
+                session.processingActivities[key] = AgentProcessingActivity(kind: kind, startedAt: event.effectiveTimestamp)
+            }
+        } else {
+            session.processingActivities.removeValue(forKey: key)
+            if kind == .planning {
+                session.isPlanning = session.processingActivities.values.contains { $0.kind == .planning }
+            }
+        }
+        return nil
+    }
+
     private static func mergeSessionMetadata(
         _ payload: AgentEventPayload,
-        source: AgentSource,
         into session: inout AgentSession
     ) {
-        if source != .unknown { session.source = source }
         guard case .sessionMetadata(let metadata) = payload else { return }
         if let project = metadata.project {
             mergeProject(AgentPrivacyProjection.project(project), into: &session.project)
@@ -905,7 +950,8 @@ enum AgentEventReducer {
             name: event.name.map { AgentPrivacyProjection.toolName($0) },
             category: AgentPrivacyProjection.summary(event.category),
             summary: AgentPrivacyProjection.summary(event.summary),
-            success: event.success
+            success: event.success,
+            processingKind: event.processingKind
         )
     }
 
@@ -913,7 +959,8 @@ enum AgentEventReducer {
         AgentCommandEvent(
             executable: event.executable.map { AgentPrivacyProjection.commandSummary(executable: $0) },
             success: event.success,
-            exitCode: event.exitCode
+            exitCode: event.exitCode,
+            processingKind: event.processingKind
         )
     }
 
@@ -955,6 +1002,7 @@ enum AgentEventReducer {
             session.approvals[key]?.resolvedAt = date
         }
         session.isThinking = false
+        session.processingActivities.removeAll(keepingCapacity: false)
         session.isPlanning = false
         session.isWorking = false
         session.isPlanReady = false

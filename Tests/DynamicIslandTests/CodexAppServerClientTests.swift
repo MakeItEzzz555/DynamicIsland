@@ -127,6 +127,53 @@ final class CodexAppServerClientTests: XCTestCase {
         await provider.stop()
     }
 
+    func testDecisionIsAcknowledgedOnlyByExactServerRequestResolved() async throws {
+        let executable = try makeFakeServer(script: #"""
+        #!/usr/bin/env python3
+        import json, sys
+        for line in sys.stdin:
+            message = json.loads(line)
+            method = message.get("method")
+            request_id = message.get("id")
+            if method == "initialize":
+                print(json.dumps({"id": request_id, "result": {}}), flush=True)
+            elif method == "thread/list":
+                print(json.dumps({"id": request_id, "result": {"data": []}}), flush=True)
+                print(json.dumps({"id": 41, "method": "item/fileChange/requestApproval",
+                    "params": {"threadId": "thread-a", "turnId": "turn-a", "itemId": "item-a"}}), flush=True)
+            elif request_id == 41 and "result" in message:
+                decision = message["result"].get("decision")
+                # Unrelated resolution first: another thread, then another request.
+                print(json.dumps({"method": "serverRequest/resolved", "params": {"threadId": "thread-b", "requestId": 41}}), flush=True)
+                print(json.dumps({"method": "serverRequest/resolved", "params": {"threadId": "thread-a", "requestId": 99}}), flush=True)
+                if decision == "decline":
+                    print(json.dumps({"method": "serverRequest/resolved", "params": {"threadId": "thread-a", "requestId": 41}}), flush=True)
+        """#)
+        let client = try CodexAppServerClient(executableURL: executable, requestTimeout: .seconds(2))
+        let provider = CodexAppServerProvider(client: client)
+        let events = await provider.events()
+        let collector = Task<[AgentInteractiveProviderEvent], Never> {
+            var seen: [AgentInteractiveProviderEvent] = []
+            for await event in events {
+                seen.append(event)
+                if case .approvalRequested(let request) = event {
+                    try? await provider.resolveApproval(request, allow: false)
+                }
+                if seen.filter({ if case .approvalAcknowledged = $0 { return true }; return false }).count == 3 { break }
+            }
+            return seen
+        }
+        _ = try await client.listThreads()
+        let seen = await collector.value
+        let acks = seen.compactMap { event -> String? in
+            guard case .approvalAcknowledged(let thread, let token) = event else { return nil }
+            return "\(thread):\(token)"
+        }
+        XCTAssertEqual(acks, ["thread-b:integer(41)", "thread-a:integer(99)", "thread-a:integer(41)"],
+                       "acknowledgements carry the exact thread and JSON-RPC id; the controller matches both")
+        await provider.stop()
+    }
+
     func testModelListAndTurnModelOverrideUseProviderAuthoritativeSchema() async throws {
         let executable = try makeFakeServer(script: #"""
         #!/usr/bin/env python3
@@ -140,7 +187,7 @@ final class CodexAppServerClientTests: XCTestCase {
             elif method == "model/list":
                 print(json.dumps({"id": request_id, "result": {
                     "data": [
-                        {"id":"model-a","model":"model-a","displayName":"Model A","description":"A","hidden":False,"isDefault":True},
+                        {"id":"model-a","model":"model-a","displayName":"Model A","description":"A","hidden":False,"isDefault":True,"supportedReasoningEfforts":[{"reasoningEffort":"medium","description":"Balanced"},{"reasoningEffort":"ultra","description":"Provider-defined future effort"}],"defaultReasoningEffort":"medium"},
                         {"id":"hidden","model":"hidden","displayName":"Hidden","description":"H","hidden":True,"isDefault":False}
                     ],
                     "nextCursor": None
@@ -156,7 +203,8 @@ final class CodexAppServerClientTests: XCTestCase {
                     }}), flush=True)
             elif method == "turn/start":
                 model = message.get("params", {}).get("model")
-                if model != "model-a":
+                effort = message.get("params", {}).get("effort")
+                if model != "model-a" or effort != "ultra":
                     print(json.dumps({"id": request_id, "error": {"code": -1, "message": "missing model override"}}), flush=True)
                 else:
                     print(json.dumps({"id": request_id, "result": {
@@ -172,7 +220,7 @@ final class CodexAppServerClientTests: XCTestCase {
 
         XCTAssertEqual(provider.modelSelectionScope, .turnAndSubsequent)
         XCTAssertEqual(provider.interactiveCapabilities, [
-            .startSession, .resumeSession, .submitPrompt, .interrupt, .selectModel,
+            .startSession, .resumeSession, .submitPrompt, .interrupt, .selectModel, .selectReasoningEffort,
             .resolveApprovals, .accountUsage, .contextUsage, .streamMessages, .streamToolActivity,
             .loadHistory
         ])
@@ -181,6 +229,8 @@ final class CodexAppServerClientTests: XCTestCase {
         XCTAssertEqual(models.map(\.model), ["model-a"])
         XCTAssertEqual(models.first?.displayName, "Model A")
         XCTAssertEqual(models.first?.isDefault, true)
+        XCTAssertEqual(models.first?.supportedReasoningEfforts.map(\.id), ["medium", "ultra"])
+        XCTAssertEqual(models.first?.defaultReasoningEffort, "medium")
 
         let newSession = try await provider.startSession(cwd: "/tmp", model: "model-a")
         XCTAssertEqual(newSession.nativeSessionID, "thread-new")
@@ -189,7 +239,8 @@ final class CodexAppServerClientTests: XCTestCase {
         let turn = try await provider.submit(
             prompt: "hello",
             nativeSessionID: "thread-1",
-            model: "model-a"
+            model: "model-a",
+            reasoningEffort: "ultra"
         )
         XCTAssertEqual(turn.turnID, "turn-model")
         await provider.stop()

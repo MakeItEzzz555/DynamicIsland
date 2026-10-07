@@ -2,6 +2,85 @@ import XCTest
 @testable import DynamicIsland
 
 final class CollapsedLiveActivitySelectorTests: XCTestCase {
+    func testSystemHUDPreemptsRunningTimerAndMedia() {
+        let hud = activity(id: "systemHUD", kind: .system, title: "Volume")
+        let mode = select(
+            [
+                activity(id: "media", kind: .media, title: "Song", isActive: true),
+                activity(id: "timer", kind: .timer, title: "Timer", isActive: true),
+                hud
+            ],
+            toggles: CollapsedLiveActivitySourceToggles(
+                liveActivitiesEnabled: true,
+                timerEnabled: true,
+                mediaEnabled: true,
+                fileTrayEnabled: true,
+                batteryEnabled: true,
+                systemHUDEnabled: true
+            )
+        )
+
+        XCTAssertEqual(mode, .system(hud))
+    }
+
+    func testRemovingSystemHUDRestoresUnderlyingPersistentWinner() {
+        let media = activity(id: "media", kind: .media, title: "Song", isActive: true)
+        let hud = activity(id: "systemHUD", kind: .system, title: "Volume")
+        let toggles = CollapsedLiveActivitySourceToggles(
+            liveActivitiesEnabled: true,
+            timerEnabled: true,
+            mediaEnabled: true,
+            fileTrayEnabled: true,
+            batteryEnabled: true,
+            systemHUDEnabled: true
+        )
+
+        XCTAssertEqual(
+            select([media, hud], toggles: toggles),
+            .system(hud)
+        )
+        XCTAssertEqual(
+            select([media], toggles: toggles),
+            .media
+        )
+    }
+
+    func testSystemHUDCanRenderWhenPersistentLiveActivitiesAreDisabled() {
+        let hud = activity(id: "systemHUD", kind: .system, title: "Brightness")
+        let mode = select(
+            [
+                activity(id: "media", kind: .media, title: "Song", isActive: true),
+                hud
+            ],
+            toggles: CollapsedLiveActivitySourceToggles(
+                liveActivitiesEnabled: false,
+                timerEnabled: true,
+                mediaEnabled: true,
+                fileTrayEnabled: true,
+                batteryEnabled: true,
+                systemHUDEnabled: true
+            )
+        )
+
+        XCTAssertEqual(mode, .system(hud))
+    }
+
+    func testDisabledSystemHUDDoesNotBecomeCollapsedWinner() {
+        let mode = select(
+            [activity(id: "systemHUD", kind: .system, title: "Volume")],
+            toggles: CollapsedLiveActivitySourceToggles(
+                liveActivitiesEnabled: true,
+                timerEnabled: true,
+                mediaEnabled: true,
+                fileTrayEnabled: true,
+                batteryEnabled: true,
+                systemHUDEnabled: false
+            )
+        )
+
+        XCTAssertEqual(mode, .inactive)
+    }
+
     func testRunningTimerBeatsPausedMediaByDefault() {
         let mode = select([
             activity(id: "media", kind: .media, title: "Song", isActive: false),
