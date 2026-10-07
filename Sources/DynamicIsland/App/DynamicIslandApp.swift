@@ -324,7 +324,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onToggleOverlay: { [weak self] in self?.toggleOverlay() },
             onQuit: { NSApp.terminate(nil) },
             hiddenBasketCount: { [weak self] in self?.basketPresenter.hiddenBasketCount ?? 0 },
-            onShowBaskets: { [weak self] in self?.basketPresenter.revealHiddenBaskets() }
+            onShowBaskets: { [weak self] in self?.basketPresenter.revealHiddenBaskets() },
+            onEditWorkspace: { [weak self] in self?.overlayController?.requestWorkspaceAction(.edit) },
+            onOpenClipboard: { [weak self] in self?.overlayController?.requestWorkspaceAction(.clipboard) },
+            onNextPage: { [weak self] in self?.overlayController?.navigatePage(forward: true) },
+            onPreviousPage: { [weak self] in self?.overlayController?.navigatePage(forward: false) }
         )
 
         NotificationCenter.default.addObserver(
@@ -415,7 +419,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 liveActivities: previewActivities,
                 capabilities: previewCapabilities,
                 addToShelf: { _ in }
-            )
+            ),
+            customization: customization
         )
     }
 
@@ -661,7 +666,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         let progress: Double?
         if media.hasPlaybackProgress {
-            progress = media.duration > 0 ? media.playbackPosition / media.duration : nil
+            progress = MediaPlaybackTime.normalizedProgress(position: media.playbackPosition, duration: media.duration)
         } else {
             progress = nil
         }

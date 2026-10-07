@@ -181,14 +181,19 @@ private struct IslandPointerGestureModifier: ViewModifier {
     let callbacks: IslandGestureCallbacks
     let swipeSensitivity: Double
     var layoutStore: IslandLayoutStore? = nil
+    var includesLongPress = true
 
     @ViewBuilder
     func body(content: Content) -> some View {
         if settings.gesturesEnabled, settings.gestureInputSource == .trackpad {
-            content
+            let pointerGestures = content
                 .gesture(doubleClickGesture)
                 .simultaneousGesture(swipeGesture)
-                .simultaneousGesture(longPressGesture)
+            if includesLongPress {
+                pointerGestures.simultaneousGesture(longPressGesture)
+            } else {
+                pointerGestures
+            }
         } else {
             content
         }
@@ -328,6 +333,7 @@ enum ExpandedIslandHeaderMetrics {
 
 /// How the expanded header is arranged around the physical notch.
 enum ExpandedHeaderLayoutMode: Equatable, Sendable {
+    case hidden
     /// Navigation left of the notch, actions right of it (default).
     case winged
     /// One compact row of all controls directly below the notch, as wide as
@@ -345,6 +351,13 @@ struct ExpandedHeaderLayout: Equatable, Sendable {
     var headerDrop: CGFloat
 
     static let winged = ExpandedHeaderLayout(mode: .winged, compactRowWidth: 0, headerDrop: 0)
+    static func hidden(metrics: ResolvedIslandMetrics, isNotchIntegrated: Bool) -> Self {
+        let drop = isNotchIntegrated && metrics.hasHardwareNotch
+            ? max(0, metrics.hardwareNotchHeight + ExpandedIslandLayoutMetrics.notchContentClearance(metrics: metrics)
+                  - 10 * metrics.spacingScale)
+            : 0
+        return Self(mode: .hidden, compactRowWidth: 0, headerDrop: drop)
+    }
     /// Minimum gap between the navigation and action groups in the row.
     static let compactGroupSpacing: CGFloat = 8
 
@@ -385,17 +398,20 @@ struct ExpandedIslandLayoutMetrics {
     let displayMetrics: ResolvedIslandMetrics
     /// Compact header: the header row starts below the physical notch.
     let headerDrop: CGFloat
+    let showHeader: Bool
 
     init(
         containerSize: CGSize,
         horizontalPadding: CGFloat,
         displayMetrics: ResolvedIslandMetrics = .fallback,
-        headerDrop: CGFloat = 0
+        headerDrop: CGFloat = 0,
+        showHeader: Bool = true
     ) {
         self.containerSize = containerSize
         self.horizontalPadding = horizontalPadding
         self.displayMetrics = displayMetrics
         self.headerDrop = headerDrop
+        self.showHeader = showHeader
     }
 
     /// Header rhythm (2026-10-06): a small intentional gap only. The header
@@ -408,8 +424,8 @@ struct ExpandedIslandLayoutMetrics {
     static func contentBottomClearance(metrics: ResolvedIslandMetrics) -> CGFloat {
         IslandShellLayout.expandedBottomPadding * metrics.spacingScale
     }
-    var tabSwitcherHeight: CGFloat { 34 * displayMetrics.compactControlScale }
-    var tabToPageSpacing: CGFloat { 4 * displayMetrics.spacingScale }
+    var tabSwitcherHeight: CGFloat { showHeader ? 34 * displayMetrics.compactControlScale : 0 }
+    var tabToPageSpacing: CGFloat { showHeader ? 4 * displayMetrics.spacingScale : 0 }
     var pageColumnSpacing: CGFloat { 10 * displayMetrics.spacingScale }
     var cardSpacing: CGFloat { 10 * displayMetrics.spacingScale }
 
@@ -444,7 +460,8 @@ struct ExpandedIslandLayoutMetrics {
     @MainActor
     static func workspaceNotchLane(settings: AppSettings, metrics: ResolvedIslandMetrics, pageCount: Int,
                                    hardwareNotchWidth: CGFloat) -> WorkspaceNotchLane {
-        workspaceNotchLane(metrics: metrics, isNotchIntegrated: metrics.hasHardwareNotch && settings.respectHardwareNotch,
+        guard settings.showNavigationControls else { return .none }
+        return workspaceNotchLane(metrics: metrics, isNotchIntegrated: metrics.hasHardwareNotch && settings.respectHardwareNotch,
                            pageCount: pageCount, clipboardEnabled: settings.clipboardHistoryEnabled,
                            hardwareNotchWidth: hardwareNotchWidth)
     }
@@ -552,8 +569,10 @@ struct IslandRootView: View {
     private var workspaceNotchLane: WorkspaceNotchLane {
         // The compact header occupies the space under the notch.
         guard expandedHeaderLayout.mode == .winged else { return .none }
-        return ExpandedIslandLayoutMetrics.workspaceNotchLane(settings: settings, metrics: layoutStore.displayMetrics,
-            pageCount: navigation.availablePages(using: settings).count, hardwareNotchWidth: layoutStore.hardwareNotchWidth)
+        return ExpandedIslandLayoutMetrics.workspaceNotchLane(metrics: layoutStore.displayMetrics,
+            isNotchIntegrated: layoutStore.displayMetrics.hasHardwareNotch && settings.respectHardwareNotch,
+            pageCount: navigation.availablePages(using: settings).count, clipboardEnabled: settings.clipboardHistoryEnabled,
+            hardwareNotchWidth: layoutStore.hardwareNotchWidth)
     }
     @State private var collapsedPreviewVisible = false
     @State private var collapsedPreviewGeneration = 0
@@ -641,7 +660,8 @@ struct IslandRootView: View {
                     collapsedGlowColor: collapsedAgentGlowColor,
                     collapsedBrightGlowColor: collapsedAgentBrightGlowColor,
                     forcesCollapsedGlow: shouldShowCollapsedAgentGlow && compactPermission == nil,
-                    systemHUDActivity: activeInteractiveSystemHUD
+                    systemHUDActivity: activeInteractiveSystemHUD,
+                    backgroundInteraction: shellBackgroundInteraction
                 ) {
                     islandSurfaceContent
                 }
@@ -675,6 +695,45 @@ struct IslandRootView: View {
             alignment: .topLeading
         )
         .coordinateSpace(name: IslandCanvasCoordinateSpace.name)
+    }
+
+    private var shellBackgroundInteraction: IslandShellBackgroundInteraction {
+        let metrics = layoutStore.displayMetrics
+        let notchIntegrated = metrics.hasHardwareNotch && settings.respectHardwareNotch
+        let chrome = ExpandedIslandLayoutMetrics(containerSize: surfaceSize,
+            horizontalPadding: IslandShellLayout.expandedHorizontalPadding(isNotchIntegrated: notchIntegrated),
+            displayMetrics: metrics, headerDrop: expandedHeaderLayout.headerDrop,
+            showHeader: expandedHeaderLayout.mode != .hidden)
+        let shellOrigin = CGPoint(x: surfaceFrame.minX, y: layoutStore.canvasSize.height - surfaceFrame.maxY)
+        let geometry = IslandBackgroundInteractionGeometry(size: surfaceSize,
+            horizontalPadding: chrome.horizontalPadding, bottomPadding: chrome.bottomPadding,
+            contentTop: chrome.topPadding + chrome.tabSwitcherHeight + chrome.tabToPageSpacing,
+            notchSize: notchIntegrated ? CGSize(width: layoutStore.hardwareNotchWidth, height: metrics.hardwareNotchHeight) : .zero,
+            allowsBackground: isExpanded,
+            excludedRects: layoutStore.nativeControlRegions.values.map { $0.offsetBy(dx: -shellOrigin.x, dy: -shellOrigin.y) })
+        return IslandShellBackgroundInteraction(geometry: geometry,
+            enabled: !layoutStore.isShellMorphing && !layoutStore.isExpandedContentExiting && !layoutStore.isCollapseShellOnly
+                && layoutStore.workspaceGeometryTransition.phase == .idle,
+            presentationGeneration: layoutStore.overlayPresentationGeneration,
+            clipboardEnabled: settings.clipboardHistoryEnabled,
+            onEdit: { requestBackgroundWorkspaceAction(.edit) },
+            onClipboard: { requestBackgroundWorkspaceAction(.clipboard) },
+            onSettings: onOpenSettings,
+            onNavigate: { forward in
+                if forward { navigation.selectNextPage(using: settings) }
+                else { navigation.selectPreviousPage(using: settings) }
+                if !isExpanded {
+                    layoutStore.preservePageForNextExpansion(navigation.selectedPage)
+                    onRequestExpand()
+                }
+            })
+    }
+
+    private func requestBackgroundWorkspaceAction(_ action: IslandWorkspaceAction) {
+        guard settings.overlayEnabled else { return }
+        if !isExpanded { layoutStore.preservePageForNextExpansion(navigation.selectedPage) }
+        layoutStore.requestWorkspaceAction(action)
+        if !isExpanded { onRequestExpand() }
     }
 
     private var presentationObservedCanvas: some View {
@@ -1529,7 +1588,13 @@ struct IslandRootView: View {
         guard settings.overlayEnabled else { return }
         sequenceGeneration += 1
         let generation = sequenceGeneration
-        if !modules.navigation.isFileDropTargeted {
+        if let requestedPage = layoutStore.consumeExpansionPage() {
+            if modules.navigation.availablePages(using: settings).contains(requestedPage) {
+                modules.navigation.select(requestedPage)
+            } else {
+                modules.navigation.ensureValidSelection(using: settings)
+            }
+        } else if !modules.navigation.isFileDropTargeted {
             if settings.rememberLastSelectedTab {
                 modules.navigation.ensureValidSelection(using: settings)
             } else {
@@ -1904,6 +1969,161 @@ extension View {
     }
 }
 
+struct IslandShellBackgroundInteraction: NSViewRepresentable {
+    let geometry: IslandBackgroundInteractionGeometry
+    let enabled: Bool
+    let presentationGeneration: Int
+    let clipboardEnabled: Bool
+    let onEdit: () -> Void
+    let onClipboard: () -> Void
+    let onSettings: () -> Void
+    let onNavigate: (Bool) -> Void
+    var shellShape = IslandShellShape(topCornerRadius: 0, bottomCornerRadius: 0)
+
+    func clipped(to shape: IslandShellShape) -> Self {
+        var copy = self
+        copy.shellShape = shape
+        return copy
+    }
+
+    func makeNSView(context: Context) -> IslandShellBackgroundInputView {
+        IslandShellBackgroundInputView(frame: .zero)
+    }
+
+    func updateNSView(_ view: IslandShellBackgroundInputView, context: Context) {
+        view.configure(self)
+    }
+
+    static func dismantleNSView(_ view: IslandShellBackgroundInputView, coordinator: ()) {
+        view.cancelPress()
+    }
+}
+
+/// Never a full-content input overlay. Only the hit-filtered lower sibling is
+/// eligible for the workspace press; native controls remain in front of it.
+final class IslandShellBackgroundInputView: NSView {
+    private var configuration: IslandShellBackgroundInteraction?
+    private var pressWork: DispatchWorkItem?
+    private var pressOrigin: CGPoint?
+    private var pressGeneration = 0
+    override var isFlipped: Bool { true }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        allowedTouchTypes = [.indirect]
+        wantsRestingTouches = true
+        setAccessibilityRole(.button)
+        setAccessibilityLabel("Island background actions")
+        setAccessibilityHelp("Open workspace actions, or hold the empty island background to customize widgets.")
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func configure(_ next: IslandShellBackgroundInteraction) {
+        if configuration?.geometry != next.geometry || configuration?.enabled != next.enabled ||
+            configuration?.presentationGeneration != next.presentationGeneration {
+            cancelPress()
+        }
+        configuration = next
+        setAccessibilityElement(next.enabled)
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let local = convert(point, from: superview)
+        guard !isHidden, let configuration, configuration.enabled,
+              configuration.geometry.region(at: local) != nil,
+              configuration.shellShape.path(in: bounds).contains(local) else { return nil }
+        return self
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        cancelPress()
+        let point = convert(event.locationInWindow, from: nil)
+        guard let configuration, configuration.enabled else { return }
+        switch configuration.geometry.region(at: point) {
+        case .notch:
+            NSMenu.popUpContextMenu(actionsMenu(), with: event, for: self)
+        case .background:
+            pressOrigin = point
+            let generation = pressGeneration
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, self.pressGeneration == generation,
+                      self.window != nil, NSEvent.pressedMouseButtons & 1 != 0,
+                      let configuration = self.configuration, configuration.enabled,
+                      let origin = self.pressOrigin,
+                      configuration.geometry.region(at: origin) == .background else { return }
+                self.cancelPress()
+                configuration.onEdit()
+            }
+            pressWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.55, execute: work)
+        case nil:
+            break
+        }
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        if let origin = pressOrigin,
+           hypot(point.x - origin.x, point.y - origin.y) > 10 || configuration?.geometry.region(at: point) != .background {
+            cancelPress()
+        }
+    }
+
+    override func mouseUp(with event: NSEvent) { cancelPress() }
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if newWindow == nil { cancelPress() }
+        super.viewWillMove(toWindow: newWindow)
+    }
+
+    func cancelPress() {
+        pressGeneration += 1
+        pressWork?.cancel()
+        pressWork = nil
+        pressOrigin = nil
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        cancelPress()
+        return configuration?.enabled == true ? actionsMenu() : nil
+    }
+
+    override func accessibilityPerformPress() -> Bool {
+        guard configuration?.enabled == true else { return false }
+        let notch = configuration?.geometry.notchRect ?? .zero
+        actionsMenu().popUp(positioning: nil,
+            at: notch.isEmpty ? CGPoint(x: bounds.midX, y: bounds.maxY - 6) : CGPoint(x: notch.midX, y: notch.maxY), in: self)
+        return true
+    }
+
+    private func actionsMenu() -> NSMenu {
+        let menu = NSMenu(title: "Island actions")
+        for (title, tag) in [("Previous Page", 0), ("Next Page", 1), ("Customize Workspace…", 2), ("Clipboard History", 3), ("Settings…", 4)] {
+            if tag == 3, configuration?.clipboardEnabled != true { continue }
+            let item = NSMenuItem(title: title, action: #selector(performMenuAction(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = tag
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    @objc private func performMenuAction(_ item: NSMenuItem) {
+        guard let configuration, configuration.enabled else { return }
+        switch item.tag {
+        case 0: configuration.onNavigate(false)
+        case 1: configuration.onNavigate(true)
+        case 2: configuration.onEdit()
+        case 3: if configuration.clipboardEnabled { configuration.onClipboard() }
+        case 4: configuration.onSettings()
+        default: break
+        }
+    }
+}
+
 struct IslandSurface<Content: View>: View {
     @ObservedObject var settings: AppSettings
     let isExpanded: Bool
@@ -1913,6 +2133,7 @@ struct IslandSurface<Content: View>: View {
     var collapsedBrightGlowColor: Color = .white
     var forcesCollapsedGlow = false
     var systemHUDActivity: DynamicIslandLiveActivity? = nil
+    var backgroundInteraction: IslandShellBackgroundInteraction? = nil
     @ViewBuilder var content: Content
     @Environment(\.isNotchIntegratedShell) private var isNotchIntegratedShell
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -1967,6 +2188,12 @@ struct IslandSurface<Content: View>: View {
                     }
                 }
                 .animation(.easeOut(duration: 0.5), value: forcesCollapsedGlow)
+
+            // Lower sibling: the native hit filter accepts only empty shell
+            // padding and the physical notch, before page content takes input.
+            if let backgroundInteraction {
+                backgroundInteraction.clipped(to: shellShape)
+            }
 
             if !isExpanded,
                collapsedPresentationProfile.kind == .systemHUD,
@@ -2176,7 +2403,7 @@ enum IslandShellPathGeometry {
     }
 }
 
-private struct IslandShellShape: Shape {
+struct IslandShellShape: Shape {
     var topCornerRadius: CGFloat
     var bottomCornerRadius: CGFloat
 
@@ -3116,7 +3343,7 @@ private struct SystemHUDCompactSlider: View {
     }
 }
 
-private struct CollapsedTimerActivityCompactView: View {
+struct CollapsedTimerActivityCompactView: View {
     let activity: DynamicIslandLiveActivity
     let layout: CompactCollapsedSideSlotGeometry
 
@@ -3170,7 +3397,7 @@ private struct CollapsedTimerActivityCompactView: View {
     }
 }
 
-private struct CollapsedFileActivityCompactView: View {
+struct CollapsedFileActivityCompactView: View {
     let activity: DynamicIslandLiveActivity
     let layout: CompactCollapsedSideSlotGeometry
 
@@ -3213,7 +3440,7 @@ private struct CollapsedFileActivityCompactView: View {
     }
 }
 
-private struct CollapsedBatteryActivityCompactView: View {
+struct CollapsedBatteryActivityCompactView: View {
     let activity: DynamicIslandLiveActivity
     let layout: CompactCollapsedSideSlotGeometry
 
@@ -3461,7 +3688,8 @@ struct ExpandedIslandView: View {
                     isNotchIntegrated: isNotchIntegratedShell
                 ),
                 displayMetrics: layoutStore.displayMetrics,
-                headerDrop: headerLayout.mode == .compactBelowNotch ? headerLayout.headerDrop : 0
+                headerDrop: headerLayout.headerDrop,
+                showHeader: headerLayout.mode != .hidden
             )
 
             ZStack(alignment: .topLeading) {
@@ -3472,7 +3700,7 @@ struct ExpandedIslandView: View {
                             coordinator: islandGestureCoordinator,
                             context: islandGestureContext,
                             callbacks: islandGestureCallbacks,
-                            swipeSensitivity: islandSwipeSensitivity, layoutStore: layoutStore
+                            swipeSensitivity: islandSwipeSensitivity, layoutStore: layoutStore, includesLongPress: false
                         )
                     )
 
@@ -3494,6 +3722,7 @@ struct ExpandedIslandView: View {
             enabled: !editingWidgets && !editingNavigation, rulerRegistration.report))
         .onAppear {
             navigation.applyConfiguration(customization.configuration, using: settings)
+            fulfillWorkspaceActionIfReady()
             synchronizeExpandedScrollSuppression()
             synchronizeClipboardEscapeRegistration()
             synchronizeStatsPolling()
@@ -3512,6 +3741,7 @@ struct ExpandedIslandView: View {
             synchronizeStatsPolling()
         }
         .onChange(of: contentVisible) { _, isVisible in
+            if isVisible { fulfillWorkspaceActionIfReady() }
             if !isVisible {
                 if layoutStore.isExpandedContentExiting || isCollapseShellOnly {
                     editingWidgets = false
@@ -3526,6 +3756,7 @@ struct ExpandedIslandView: View {
             synchronizeStatsPolling()
         }
         .onChange(of: shouldRenderContent) { _, shouldRender in
+            if shouldRender { fulfillWorkspaceActionIfReady() }
             if !shouldRender {
                 closeClipboardHistoryImmediately()
                 pagePresentation.snap(to: navigation.selectedPage)
@@ -3553,6 +3784,7 @@ struct ExpandedIslandView: View {
                 closeClipboardHistoryImmediately()
             }
         }
+        .onChange(of: layoutStore.workspaceActionRequest) { _, _ in fulfillWorkspaceActionIfReady() }
         .onChange(of: escapeRouter.dismissalRequestGeneration) { _, _ in
             guard clipboardPresentation.isMounted || clipboardPresentation.isRequested else {
                 return
@@ -3566,6 +3798,7 @@ struct ExpandedIslandView: View {
 
     private func expandedBaseLayer(metrics: ExpandedIslandLayoutMetrics) -> some View {
         VStack(alignment: .leading, spacing: metrics.tabToPageSpacing) {
+            if metrics.showHeader {
             HStack(alignment: .center, spacing: 0) {
                 ZStack(alignment: .leading) {
                     if rendersExpandedVisualContent && shouldRenderContent && !isCollapseShellOnly {
@@ -3641,6 +3874,7 @@ struct ExpandedIslandView: View {
                 .frame(maxWidth: .infinity, alignment: .trailing)
             }
             .frame(height: metrics.tabSwitcherHeight)
+            }
 
             // Top-centered: pages are laid out at the target metrics while the
             // shell still morphs around its horizontal center, so an incoming
@@ -3681,6 +3915,24 @@ struct ExpandedIslandView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
+    private func fulfillWorkspaceActionIfReady() {
+        guard contentVisible, shouldRenderContent, !isCollapseShellOnly,
+              !layoutStore.isExpandedContentExiting,
+              let request = layoutStore.workspaceActionRequest,
+              let action = layoutStore.consumeWorkspaceAction(generation: request.generation) else { return }
+        switch action {
+        case .clipboard:
+            editingWidgets = false
+            editingNavigation = false
+            openClipboardHistory()
+        case .edit:
+            closeClipboardHistoryImmediately()
+            editingWidgets = navigation.selectedPage == .island || navigation.selectedPage == .agents
+            editingNavigation = !editingWidgets
+            synchronizeCustomizationEditing()
+        }
+    }
+
     @ViewBuilder
     private func pageView(_ page: ExpandedIslandPage, metrics: ExpandedIslandLayoutMetrics) -> some View {
         switch page {
@@ -3719,9 +3971,9 @@ struct ExpandedIslandView: View {
         let nextSize = ExpandedPresentationProfile.resolve(for: page).resolvedSize(
             from: settings.expandedSize, page: page, configuration: customization.configuration,
             editing: false, settings: settings, metrics: layoutStore.displayMetrics,
-            minimumHeaderWidth: ExpandedIslandHeaderMetrics.minimumContentWidth(
+            minimumHeaderWidth: settings.showNavigationControls ? ExpandedIslandHeaderMetrics.minimumContentWidth(
                 pageCount: navigation.availablePages(using: settings).count, clipboardEnabled: settings.clipboardHistoryEnabled,
-                hardwareNotchWidth: layoutStore.hardwareNotchWidth),
+                hardwareNotchWidth: layoutStore.hardwareNotchWidth) : 0,
             lane: workspaceNotchLane,
             header: ExpandedPresentationProfile.headerLayout(page: page, configuration: customization.configuration,
                 editing: false, settings: settings, metrics: layoutStore.displayMetrics,
@@ -3934,7 +4186,7 @@ struct ExpandedIslandView: View {
 
     @ViewBuilder
     private func islandPage(metrics: ExpandedIslandLayoutMetrics) -> some View {
-        if editingWidgets || customization.configuration.customizedSurfaces.contains(.media) {
+        if editingWidgets || headerLayout.mode == .hidden || customization.configuration.customizedSurfaces.contains(.media) {
             IslandWidgetEditor(store: customization, surface: .media, editing: $editingWidgets,
                 eligibleWidgets: eligibleMediaWidgets, extraMotion: !settings.reduceExtraMotion,
                 onLayoutPreview: { layoutStore.setWorkspaceLayoutPreview($0, surface: .media) },
@@ -4455,7 +4707,7 @@ private struct SettingsGearButton: View {
     }
 }
 
-private struct ExpandedHeaderButton: View {
+struct ExpandedHeaderButton: View {
     let systemImage: String
     let help: String
     let accessibilityLabel: String

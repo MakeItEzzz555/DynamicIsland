@@ -26,8 +26,45 @@ enum TransientInteractionOwner: Hashable, Sendable {
     case unspecified
 }
 
+enum IslandWorkspaceAction: Equatable {
+    case edit
+    case clipboard
+}
+
+struct IslandWorkspaceActionRequest: Equatable {
+    let generation: Int
+    let action: IslandWorkspaceAction
+}
+
 @MainActor
 final class IslandLayoutStore: ObservableObject {
+    /// Transient delivery to the existing expanded view, which still owns
+    /// Clipboard presentation and the editor transaction.
+    @Published private(set) var workspaceActionRequest: IslandWorkspaceActionRequest?
+    private var workspaceActionGeneration = 0
+    private var requestedExpansionPage: ExpandedIslandPage?
+
+    func preservePageForNextExpansion(_ page: ExpandedIslandPage) {
+        requestedExpansionPage = page
+    }
+    func consumeExpansionPage() -> ExpandedIslandPage? {
+        defer { requestedExpansionPage = nil }
+        return requestedExpansionPage
+    }
+    func requestWorkspaceAction(_ action: IslandWorkspaceAction) {
+        workspaceActionGeneration += 1
+        workspaceActionRequest = IslandWorkspaceActionRequest(generation: workspaceActionGeneration, action: action)
+    }
+    func consumeWorkspaceAction(generation: Int) -> IslandWorkspaceAction? {
+        guard let request = workspaceActionRequest, request.generation == generation else { return nil }
+        workspaceActionRequest = nil
+        return request.action
+    }
+    func cancelWorkspaceActionRequests() {
+        workspaceActionGeneration += 1
+        workspaceActionRequest = nil
+        requestedExpansionPage = nil
+    }
     struct WorkspaceLayoutPreview: Equatable {
         let configuration: WorkspaceConfiguration
         let surface: WorkspaceSurface

@@ -361,6 +361,9 @@ struct ExpandedPresentationProfile: Equatable, Sendable {
     /// The header mode for a page (see `ExpandedHeaderLayout.resolve`).
     static func headerLayout(page: ExpandedIslandPage, configuration: WorkspaceConfiguration?, editing: Bool,
                              settings: AppSettings, metrics: ResolvedIslandMetrics, pageCount: Int) -> ExpandedHeaderLayout {
+        if !settings.showNavigationControls {
+            return .hidden(metrics: metrics, isNotchIntegrated: metrics.hasHardwareNotch && settings.respectHardwareNotch)
+        }
         let surface: WorkspaceSurface? = page == .island ? .media : (page == .agents ? .agents : nil)
         guard let surface, let configuration, !editing, configuration.customizedSurfaces.contains(surface) else { return .winged }
         let regions = eligibleRegions(configuration, surface: surface, settings: settings)
@@ -399,19 +402,25 @@ struct ExpandedPresentationProfile: Equatable, Sendable {
                       header: ExpandedHeaderLayout = .winged) -> CGSize {
         let surface: WorkspaceSurface? = page == .island ? .media : (page == .agents ? .agents : nil)
         guard let surface, let configuration,
-              editing || configuration.customizedSurfaces.contains(surface) else {
+              editing || !settings.showNavigationControls || configuration.customizedSurfaces.contains(surface) else {
             let size = resolvedSize(from: base)
             // Header invariant holds on every page: the shell is never narrower
             // than its notch-safe header.
             let horizontal = IslandShellLayout.expandedHorizontalPadding(isNotchIntegrated: metrics.hasHardwareNotch && settings.respectHardwareNotch) * 2
-            return CGSize(width: max(size.width * metrics.expandedShellScale, minimumHeaderWidth + horizontal),
-                          height: size.height * metrics.expandedShellScale)
+            let hidden = header.mode == .hidden
+            let normalChrome = ExpandedIslandLayoutMetrics(containerSize: base, horizontalPadding: 0, displayMetrics: metrics)
+            let currentChrome = ExpandedIslandLayoutMetrics(containerSize: base, horizontalPadding: 0, displayMetrics: metrics,
+                                                            headerDrop: header.headerDrop, showHeader: !hidden)
+            return CGSize(width: max(size.width * metrics.expandedShellScale, (hidden ? 0 : minimumHeaderWidth) + horizontal),
+                          height: max(1, size.height * metrics.expandedShellScale
+                              - normalChrome.workspaceVerticalChrome + currentChrome.workspaceVerticalChrome))
         }
         let regions = Self.eligibleRegions(configuration, surface: surface, settings: settings)
         let horizontal = IslandShellLayout.expandedHorizontalPadding(isNotchIntegrated: metrics.hasHardwareNotch && settings.respectHardwareNotch) * 2
         let compact = header.mode == .compactBelowNotch
+        let hidden = header.mode == .hidden
         let chrome = ExpandedIslandLayoutMetrics(containerSize: base, horizontalPadding: horizontal / 2, displayMetrics: metrics,
-                                                 headerDrop: compact ? header.headerDrop : 0)
+                                                 headerDrop: header.headerDrop, showHeader: !hidden)
         // Usage is a configured band widget inside the projection: nothing is
         // reserved for it outside the configuration (zero when removed).
         let vertical = chrome.workspaceVerticalChrome
@@ -421,9 +430,9 @@ struct ExpandedPresentationProfile: Equatable, Sendable {
         // compact header sits below the notch, so it neither needs the
         // notch-wide winged minimum nor lets content rise into the notch lane.
         let content = WorkspaceWidgetLayoutProjection.preferredContentSize(regions: regions,
-            maximumSize: maximum, metrics: metrics, editing: editing, lane: compact ? .none : lane,
-            minimumWidth: compact ? 0 : nil)
-        let headerWidth = compact ? header.compactRowWidth : min(minimumHeaderWidth, maximum.width)
+            maximumSize: maximum, metrics: metrics, editing: editing, lane: compact || hidden ? .none : lane,
+            minimumWidth: (compact || hidden) && !editing ? 0 : nil)
+        let headerWidth = hidden ? 0 : compact ? header.compactRowWidth : min(minimumHeaderWidth, maximum.width)
         return CGSize(width: max(content.width, headerWidth) + horizontal,
                       height: content.height + vertical)
     }

@@ -86,9 +86,11 @@ enum SettingsAuditCatalog {
                  "Renders the production IslandSurface and CollapsedPreviewRow; Replay Delay uses the configured delay.")
         + entries(["collapsedHoverPreviewArtistIconName"], .deprecatedHidden, deprecatedNote)
         // Tabs
-        + visual(["showTrayTab", "showTimerTab", "showStatsTab", "showToolsTab", "showAgentsTab", "showIslandTab"], .islandShell,
+        + visual(["showNavigationControls", "showTrayTab", "showTimerTab", "showStatsTab", "showToolsTab", "showAgentsTab", "showIslandTab"], .islandShell,
                  "The expanded preview renders the production page switcher.")
         + entries(["rememberLastSelectedTab", "defaultExpandedTab"], .behavioral, "Which tab opens on expansion.")
+        + entries(["threeFingerTabNavigationEnabled"], .behavioral,
+                  "Public trackpad touch navigation; disabling it restores visible navigation controls.")
         + entries(["showActivitiesTab", "showLiveActivitiesTab", "showGesturesTab"], .deprecatedHidden, deprecatedNote)
         // Agents
         + visual(["agentUsageMetricsEnabled"], .agents)

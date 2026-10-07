@@ -170,7 +170,7 @@ struct SettingsView: View {
 
     private var islandSection: some View {
         settingsForm("Island") {
-            IslandShellSettingsPreview(settings: settings)
+            IslandShellSettingsPreview(settings: settings, dependencies: previews)
             SettingsGroup("General") {
                 Toggle("Enable overlay", isOn: $settings.overlayEnabled)
                 Toggle("Launch at login", isOn: $settings.launchAtLoginEnabled)
@@ -207,7 +207,7 @@ struct SettingsView: View {
 
     private var appearanceSection: some View {
         settingsForm("Appearance") {
-            IslandShellSettingsPreview(settings: settings)
+            IslandShellSettingsPreview(settings: settings, dependencies: previews)
             if let previews {
                 CollapsedMediaSettingsPreview(settings: settings, media: previews.previewMedia)
                 CollapsedHoverSettingsPreview(settings: settings, media: previews.previewMedia)
@@ -265,7 +265,7 @@ struct SettingsView: View {
 
     private var motionSection: some View {
         settingsForm("Motion") {
-            IslandShellSettingsPreview(settings: settings)
+            IslandShellSettingsPreview(settings: settings, dependencies: previews)
             ContentMotionSettingsPreview(settings: settings)
             SettingsGroup("Animation") {
                 Picker("Preset", selection: $settings.animationPreset) {
@@ -287,8 +287,14 @@ struct SettingsView: View {
 
     private var tabsSection: some View {
         settingsForm("Tabs") {
-            IslandShellSettingsPreview(settings: settings)
+            IslandShellSettingsPreview(settings: settings, dependencies: previews)
             SettingsGroup("Visible Tabs") {
+                Toggle("Three-finger page navigation", isOn: $settings.threeFingerTabNavigationEnabled)
+                Text("Swipe left or right with three fingers to change pages. Turning this off restores navigation controls.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Toggle("Show navigation controls", isOn: $settings.showNavigationControls)
+                Text("When hidden, use three-finger swipes to change pages. Hold or secondary-click the island background for workspace commands. Settings also remains in the menu bar.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Toggle("Island tab", isOn: .constant(true))
                     .disabled(true)
                 Toggle("Tray tab", isOn: $settings.showTrayTab)
@@ -311,7 +317,7 @@ struct SettingsView: View {
     private var mediaSection: some View {
         settingsForm("Media") {
             if let previews {
-                MediaSettingsPreview(settings: settings, media: previews.previewMedia)
+                MediaSettingsPreview(settings: settings, media: previews.previewMedia, customization: previews.customization)
                 MediaLauncherSettingsPreview(settings: settings, media: previews.previewMedia)
             }
             SettingsGroup("Visibility") {
@@ -411,7 +417,7 @@ struct SettingsView: View {
     private var timerSection: some View {
         settingsForm("Timer") {
             if let previews {
-                TimerPageSettingsPreview(settings: settings, timer: previews.timer)
+                TimerPageSettingsPreview(settings: settings, timer: previews.timer, customization: previews.customization)
             }
             SettingsGroup("Timer") {
                 Toggle("Enable timer", isOn: $settings.timerEnabled)
@@ -440,7 +446,7 @@ struct SettingsView: View {
     private var agentsSection: some View {
         settingsForm("AI Agents") {
             if let control = previews?.agentManagedControl {
-                AgentsSettingsPreview(managedControl: control)
+                AgentsSettingsPreview(managedControl: control, settings: settings, dependencies: previews)
             }
             SettingsGroup("Agent Activity") {
                 Toggle("Enable agent activity", isOn: $settings.agentActivityEnabled)
@@ -788,7 +794,7 @@ struct SettingsView: View {
                         Text(preference.displayName).tag(preference)
                     }
                 }
-                LiveActivityLayoutSettingsPreview(settings: settings)
+                LiveActivityLayoutSettingsPreview(settings: settings, dependencies: previews)
                 HelpText(
                     "Automatic placement keeps the strongest activity in the center and moves compatible compact activities into leading or trailing sidecars. Transient HUDs overlay the composition without destroying it."
                 )
@@ -1306,185 +1312,5 @@ private struct SystemHUDSettingsPreview: View {
             updatedAt: Date(),
             systemHUDKind: descriptor.kind
         )
-    }
-}
-
-
-struct LiveActivityLayoutSettingsPreview: View {
-    @ObservedObject var settings: AppSettings
-    @State private var scenario: LiveActivityLayoutPreviewScenario = .mediaTimer
-
-    private let canvasSize = CGSize(width: 320, height: 68)
-    private let primaryFrame = CGRect(x: 52, y: 19, width: 216, height: 34)
-
-    /// Grows downward only while a production HUD shell is shown, so the
-    /// taller HUD is never clipped and other scenarios keep their layout.
-    private var previewCanvasHeight: CGFloat {
-        guard let overlay = resolution.overlayTransient?.activity else { return canvasSize.height }
-        let hudHeight = SystemHUDShellPreview.geometry(settings: settings, activity: overlay).collapsedFrame.height
-        return max(canvasSize.height, (canvasSize.height - primaryFrame.maxY) + hudHeight + 8)
-    }
-
-    var body: some View {
-        VStack(spacing: 8) {
-            HStack {
-                Text("Layout Preview")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Picker("Scenario", selection: $scenario) {
-                    ForEach(LiveActivityLayoutPreviewScenario.allCases) { item in
-                        Text(item.rawValue).tag(item)
-                    }
-                }
-                .labelsHidden()
-                .frame(width: 215)
-            }
-
-            ZStack(alignment: .topLeading) {
-                Color.clear
-
-                previewPrimary
-                    .frame(width: primaryFrame.width, height: primaryFrame.height)
-                    .position(
-                        x: primaryFrame.midX,
-                        y: canvasSize.height - primaryFrame.midY
-                    )
-
-                LiveActivitySidecarLayer(
-                    resolution: resolution,
-                    compositeGeometry: compositeGeometry,
-                    canvasHeight: canvasSize.height,
-                    reduceMotion: true,
-                    onActivate: { _ in }
-                )
-
-                if let overlay = resolution.overlayTransient?.activity {
-                    // Production HUD shell, top-aligned with the primary
-                    // shell and growing downward exactly as on the island.
-                    let hudSize = SystemHUDShellPreview.geometry(settings: settings, activity: overlay).collapsedFrame.size
-                    SystemHUDShellPreview(settings: settings, activity: overlay)
-                        .position(
-                            x: primaryFrame.midX,
-                            y: (canvasSize.height - primaryFrame.maxY) + hudSize.height / 2
-                        )
-                }
-            }
-            .frame(width: canvasSize.width, height: previewCanvasHeight, alignment: .top)
-            .background(.white.opacity(0.02), in: RoundedRectangle(cornerRadius: 10))
-            .overlay {
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(.white.opacity(0.06), lineWidth: 1)
-            }
-        }
-    }
-
-    private var previewPrimary: some View {
-        HStack(spacing: 7) {
-            if resolution.primary?.activity.kind == .media {
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(.white.opacity(0.17))
-                    .frame(width: 22, height: 22)
-                    .overlay {
-                        Image(systemName: "music.note")
-                            .font(.system(size: 8, weight: .bold))
-                            .foregroundStyle(.white.opacity(0.75))
-                    }
-            } else if let primary = resolution.primary?.activity {
-                Image(systemName: primary.symbolName)
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(Color.white.opacity(0.85))
-                    .frame(width: 22)
-            }
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text(resolution.primary?.activity.title ?? "DynamicIsland")
-                    .font(.system(size: 9.5, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.9))
-                    .lineLimit(1)
-                if let subtitle = resolution.primary?.activity.subtitle {
-                    Text(subtitle)
-                        .font(.system(size: 7.5, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.44))
-                        .lineLimit(1)
-                }
-            }
-
-            Spacer(minLength: 4)
-
-            if resolution.primary?.activity.kind == .media {
-                HStack(alignment: .bottom, spacing: 2) {
-                    ForEach(0..<5, id: \.self) { index in
-                        Capsule()
-                            .fill(.white.opacity(0.62))
-                            .frame(width: 2, height: CGFloat(5 + (index % 3) * 3))
-                    }
-                }
-                .frame(width: 22, height: 15)
-            }
-        }
-        .padding(.horizontal, 8)
-        .background(Color.black.opacity(0.985), in: Capsule(style: .continuous))
-        .overlay {
-            Capsule(style: .continuous)
-                .stroke(.white.opacity(0.08), lineWidth: 1)
-        }
-    }
-
-    private var resolution: LiveActivityLayoutResolution {
-        LiveActivityLayoutResolver.resolve(
-            activities: activities,
-            context: LiveActivityLayoutContext(
-                availableWidth: scenario == .constrained ? 240 : canvasSize.width,
-                hasHardwareNotch: false,
-                hardwareNotchWidth: 0,
-                primaryMinimumWidth: 172,
-                primaryIdealWidth: primaryFrame.width,
-                sidecarDiameter: LiveActivitySidecarMetrics.diameter,
-                sidecarGap: LiveActivitySidecarMetrics.gap,
-                allowSimultaneousSidecars: settings.allowSimultaneousLiveActivitySidecars,
-                timerSidePreference: settings.timerSidecarPreference
-            )
-        )
-    }
-
-    private var compositeGeometry: LiveActivityCompositeGeometry {
-        LiveActivityCompositeGeometry.resolve(
-            primaryFrame: primaryFrame,
-            canvasSize: canvasSize,
-            resolution: resolution,
-            sidecarDiameter: LiveActivitySidecarMetrics.diameter,
-            sidecarGap: LiveActivitySidecarMetrics.gap
-        )
-    }
-
-    private var activities: [DynamicIslandLiveActivity] {
-        Self.publishedActivities(
-            LiveActivityPreviewCatalog.activities(for: scenario),
-            settings: LiveActivitySettingsSnapshot(settings: settings)
-        )
-    }
-
-    /// Applies the same per-source switches the composition root applies
-    /// before publishing media, timer, file tray and battery activities, so
-    /// toggling them updates this preview immediately.
-    static func publishedActivities(
-        _ activities: [DynamicIslandLiveActivity],
-        settings: LiveActivitySettingsSnapshot
-    ) -> [DynamicIslandLiveActivity] {
-        activities.filter { activity in
-            switch activity.kind {
-            case .media:
-                settings.liveActivitiesEnabled && settings.showMusicLiveActivity
-            case .timer:
-                settings.liveActivitiesEnabled && settings.showTimerLiveActivity
-            case .fileTray:
-                settings.liveActivitiesEnabled && settings.showFileDropLiveActivity
-            case .battery:
-                settings.liveActivitiesEnabled && settings.showBatteryLiveActivity
-            default:
-                true
-            }
-        }
     }
 }

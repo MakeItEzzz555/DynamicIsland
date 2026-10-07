@@ -297,6 +297,7 @@ struct AgentActivityDashboardView: View {
 
 struct AgentDashboardContentView: View {
     @Environment(\.workspaceApplyCompletion) private var applyCompletion
+    @Environment(\.expandedHeaderLayout) private var headerLayout
     let sessions: [AgentSession]
     let accountUsage: AgentUsage
     let showsUsage: Bool
@@ -415,7 +416,7 @@ struct AgentDashboardContentView: View {
             // projects usage widgets itself; the default layout renders the
             // configured usage band (Combined by default) above the split.
             let customizedLayout = customization.map { store in
-                editingWorkspace.wrappedValue || store.configuration.customizedSurfaces.contains(.agents)
+                editingWorkspace.wrappedValue || headerLayout.mode == .hidden || store.configuration.customizedSurfaces.contains(.agents)
             } ?? false
             let usageBand: [IslandWidget] = customization.map { store in
                 store.configuration.widgets(on: .agents).map(\.kind).filter(\.isUsage)
@@ -531,7 +532,7 @@ struct AgentDashboardContentView: View {
             .layoutPriority(2)
         } else {
             stagedAgentContent(index: 3) {
-                if let customization, editingWorkspace.wrappedValue || customization.configuration.customizedSurfaces.contains(.agents) {
+                if let customization, editingWorkspace.wrappedValue || headerLayout.mode == .hidden || customization.configuration.customizedSurfaces.contains(.agents) {
                     IslandWidgetEditor(store: customization, surface: .agents, editing: editingWorkspace,
                         eligibleWidgets: [.chat, .feed] + (terminal != nil ? [.terminal] : []) + (settings?.timerEnabled != false && timerWidget != nil ? [.timer] : [])
                             + (showsUsage ? [.agentUsage, .codexUsage, .claudeUsage] : []), extraMotion: !(settings?.reduceExtraMotion ?? false),

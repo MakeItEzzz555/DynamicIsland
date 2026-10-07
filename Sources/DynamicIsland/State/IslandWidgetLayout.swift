@@ -1073,7 +1073,10 @@ struct WorkspaceWidgetLayoutProjection: Equatable {
     private static func gridFor(_ regions: [WorkspaceWidgetRegion], width: CGFloat,
                                 metrics: ResolvedIslandMetrics) -> (WidgetGridMetrics, Int, Int) {
         let surface = surface(of: regions)
-        let grid = WidgetGridMetrics.make(surface: surface, metrics: metrics).fitted(to: width)
+        // A single Compact shell is legitimately one unit wide. Fitting the
+        // unit to a two-column host would shrink it again each time its
+        // intrinsic shell is resolved. Only display metrics own cell scale.
+        let grid = WidgetGridMetrics.make(surface: surface, metrics: metrics)
         let columns = grid.columns(fitting: width)
         let minimum = surface == .agents ? min(WidgetGridMetrics.agentsMinimumColumns, columns) : 0
         return (grid, columns, minimum)
