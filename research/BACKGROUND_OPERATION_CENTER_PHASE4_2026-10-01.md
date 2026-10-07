@@ -1,6 +1,6 @@
 # Phase 4 — Background Operation Center
 
-Date: 2026-10-01  
+Date: 2026-10-01
 Baseline: `31e74302b8c6d80f5d4574fd78e67372c15c9453` on `feature/agents-ui-overhaul-continuation`.
 
 ## Architecture
