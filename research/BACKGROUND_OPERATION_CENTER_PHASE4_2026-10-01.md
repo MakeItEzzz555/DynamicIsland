@@ -66,4 +66,3 @@ Snapshot coverage includes preparing, indeterminate, 25/50/90 percent, completed
 ## Deferred
 
 Phase 4 does not enable Quickshare/cloud upload, Floating Basket, OCR, watched folders, or extraction. Existing image conversion remains real ImageIO work but has not been migrated into the Background Operation Center because the current conversion path does not expose a truthful long-running progress/cancellation authority.
-

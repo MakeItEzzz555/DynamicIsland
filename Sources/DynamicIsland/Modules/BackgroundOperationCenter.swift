@@ -579,4 +579,3 @@ final class BackgroundOperationController: ObservableObject {
         "backgroundOperation.\(id.uuidString)"
     }
 }
-

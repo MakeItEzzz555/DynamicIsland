@@ -111,4 +111,3 @@ final class BackgroundOperationCenterSnapshotTests: XCTestCase {
         try png.write(to: url, options: .atomic)
     }
 }
-

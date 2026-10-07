@@ -251,4 +251,3 @@ final class MessagesConversationResolverTests: XCTestCase {
         MessagesDatabaseMessage(rowID: id, chatGUID: chat, isGroup: false, service: "iMessage", text: text, date: date, isFromMe: fromMe)
     }
 }
-

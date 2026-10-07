@@ -138,4 +138,3 @@ struct BackgroundOperationCenterView: View {
         }
     }
 }
-

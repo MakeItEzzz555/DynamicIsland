@@ -266,4 +266,3 @@ final class BackgroundOperationControllerTests: XCTestCase {
         }
     }
 }
-
