@@ -87,13 +87,22 @@ struct SpotifyPlaybackState: Equatable, Sendable {
     var shuffle: Bool
     var repeatState: Repeat
     var itemURI: String?
+    var activeDeviceID: String? = nil
+    var duration: Double? = nil
 
     static func parse(_ data: Data) -> SpotifyPlaybackState? {
         guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let shuffle = object["shuffle_state"] as? Bool else { return nil }
         let repeatState = (object["repeat_state"] as? String).flatMap(Repeat.init(rawValue:)) ?? .off
-        let uri = (object["item"] as? [String: Any])?["uri"] as? String
-        return SpotifyPlaybackState(shuffle: shuffle, repeatState: repeatState, itemURI: uri)
+        let item = object["item"] as? [String: Any]
+        let uri = item?["uri"] as? String
+        let device = object["device"] as? [String: Any]
+        let activeDeviceID = device?["is_active"] as? Bool == true ? device?["id"] as? String : nil
+        return SpotifyPlaybackState(shuffle: shuffle, repeatState: repeatState, itemURI: uri,
+                                    activeDeviceID: activeDeviceID,
+                                    duration: (item?["duration_ms"] as? NSNumber).flatMap {
+                                        MediaPlaybackTime.validDuration($0.doubleValue / 1_000)
+                                    })
     }
 }
 
@@ -859,6 +868,40 @@ final class SpotifyLibraryController: NSObject, ObservableObject {
     func playbackState() async throws -> SpotifyPlaybackState? {
         let data = try await get("me/player")
         return SpotifyPlaybackState.parse(data)
+    }
+
+    /// Prefer the authenticated backend only for the observed track and an
+    /// explicit active device. False means the observed context could not be
+    /// verified and no write was attempted.
+    func seek(
+        to position: Double,
+        duration: Double,
+        expectedTrackURI: String,
+        isCurrent: @MainActor () -> Bool
+    ) async throws -> Bool {
+        guard connectionState == .connected, isCurrent(),
+              MediaController.isValidSpotifyURI(expectedTrackURI),
+              let milliseconds = MediaPlaybackTime.spotifyMilliseconds(position, duration: duration) else { return false }
+        let operationGeneration = lifecycleGeneration
+        guard let state = try await playbackState(),
+              state.itemURI == expectedTrackURI,
+              let providerDuration = state.duration,
+              let expectedDurationMilliseconds = MediaPlaybackTime.spotifyDurationMilliseconds(duration),
+              MediaPlaybackTime.spotifyDurationMilliseconds(providerDuration) == expectedDurationMilliseconds,
+              let deviceID = state.activeDeviceID, !deviceID.isEmpty else { return false }
+        // Authentication may await a refresh. Resolve it before the final
+        // local-track check so no suspension occurs between validation and PUT.
+        let token = try await validAccessToken()
+        guard operationGeneration == lifecycleGeneration,
+              connectionState == .connected, isCurrent() else { return false }
+        var components = URLComponents(url: apiURL("me/player/seek"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "position_ms", value: String(milliseconds)),
+                                 URLQueryItem(name: "device_id", value: deviceID)]
+        guard let url = components.url else { throw SpotifyLibraryError.invalidResponse }
+        // No automatic replay of a player write; a failed/ambiguous request
+        // must not be duplicated or followed by an AppleScript seek.
+        _ = try await performRequest(method: "PUT", url: url, token: token, expectedStatusCodes: [204])
+        return true
     }
 
     /// `PUT me/player/shuffle?state=`.

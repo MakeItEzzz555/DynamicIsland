@@ -349,8 +349,9 @@ final class MediaAdvancedController: ObservableObject {
 
     /// "-3:16": remaining time with a negative prefix (Now Playing style).
     nonisolated static func remainingLabel(position: Double, duration: Double) -> String {
-        let remaining = max(0, (duration.isFinite ? duration : 0) - (position.isFinite ? position : 0))
-        let whole = Int(remaining.rounded())
+        guard let duration = MediaPlaybackTime.validDuration(duration) else { return "-0:00" }
+        let position = MediaPlaybackTime.clampedPosition(position.isFinite ? position : 0, duration: duration) ?? 0
+        let whole = Int((duration - position).rounded())
         return "-\(whole / 60):" + String(format: "%02d", whole % 60)
     }
 }

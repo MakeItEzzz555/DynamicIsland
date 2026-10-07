@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 import XCTest
 @testable import DynamicIsland
 
@@ -76,6 +77,12 @@ private final class SpotifyRequestCounter: @unchecked Sendable {
 
     func increment() { lock.withLock { count += 1 } }
     var value: Int { lock.withLock { count } }
+}
+
+@MainActor
+private final class SpotifySeekNoSystemProvider: MediaDetectionProvider {
+    let name = "Test"
+    func snapshot() async -> MediaSnapshot? { nil }
 }
 
 final class SpotifyLibraryTests: XCTestCase {
@@ -517,6 +524,210 @@ final class SpotifyLibraryTests: XCTestCase {
         XCTAssertEqual(counter.value, 3)
         XCTAssertEqual(controller.lastError, SpotifyLibraryError.quotaExceeded(retryAfterSeconds: 42).errorDescription)
         XCTAssertEqual(controller.connectionState, .connected)
+    }
+
+
+    @MainActor
+    private func seekController() -> SpotifyLibraryController {
+        SpotifyLibraryController(
+            configuration: SpotifyAuthConfiguration(clientID: "Abc123456", source: .appBundle),
+            tokens: SpotifyTestCredentialStore(SpotifyStoredCredentials(
+                accessToken: "access", accessTokenExpiry: Date().addingTimeInterval(600),
+                refreshToken: "refresh", authorizationDate: Date()
+            )), session: .spotifyTestSession()
+        )
+    }
+
+    @MainActor
+    func testSeekConvertsSecondsAndPinsVerifiedActiveDeviceExactlyOnce() async throws {
+        let writes = SpotifyRequestCounter()
+        let uri = "spotify:track:AAAAAAAAAAAAAAAAAAAAAA"
+        SpotifyMockURLProtocol.handler = { request in
+            if request.httpMethod == "GET" {
+                return (200, [:], Data(#"{"shuffle_state":false,"repeat_state":"off","item":{"uri":"spotify:track:AAAAAAAAAAAAAAAAAAAAAA","duration_ms":200000},"device":{"id":"computer-123","is_active":true}}"#.utf8))
+            }
+            writes.increment()
+            XCTAssertEqual(request.httpMethod, "PUT")
+            XCTAssertEqual(request.url?.path, "/v1/me/player/seek")
+            let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems!
+            XCTAssertEqual(query.first { $0.name == "position_ms" }?.value, "199750")
+            XCTAssertEqual(query.first { $0.name == "device_id" }?.value, "computer-123")
+            return (204, [:], Data())
+        }
+        let issued = try await seekController().seek(to: 205, duration: 200, expectedTrackURI: uri, isCurrent: { true })
+        XCTAssertTrue(issued)
+        XCTAssertEqual(writes.value, 1)
+    }
+
+    @MainActor
+    func testSeekRejectsMismatchedTrackOrUnavailableActiveDeviceWithoutWriting() async throws {
+        for response in [
+            #"{"shuffle_state":false,"item":{"uri":"spotify:track:BBBBBBBBBBBBBBBBBBBBBB","duration_ms":200000},"device":{"id":"computer-123","is_active":true}}"#,
+            #"{"shuffle_state":false,"item":{"uri":"spotify:track:AAAAAAAAAAAAAAAAAAAAAA","duration_ms":200000},"device":{"id":"computer-123","is_active":false}}"#,
+            #"{"shuffle_state":false,"item":{"uri":"spotify:track:AAAAAAAAAAAAAAAAAAAAAA","duration_ms":200000},"device":{"is_active":true}}"#,
+            #"{"shuffle_state":false,"item":{"uri":"spotify:track:AAAAAAAAAAAAAAAAAAAAAA","duration_ms":190000},"device":{"id":"computer-123","is_active":true}}"#
+        ] {
+            let writes = SpotifyRequestCounter()
+            SpotifyMockURLProtocol.handler = { request in
+                if request.httpMethod == "PUT" { writes.increment() }
+                return (200, [:], Data(response.utf8))
+            }
+            let issued = try await seekController().seek(to: 195, duration: 200,
+                expectedTrackURI: "spotify:track:AAAAAAAAAAAAAAAAAAAAAA", isCurrent: { true })
+            XCTAssertFalse(issued)
+            XCTAssertEqual(writes.value, 0)
+        }
+    }
+
+    @MainActor
+    func testTinyTrackAPISeekPinsDeviceAndUsesNonnegativeSafeMilliseconds() async throws {
+        let writes = SpotifyRequestCounter()
+        SpotifyMockURLProtocol.handler = { request in
+            if request.httpMethod == "GET" {
+                return (200, [:], Data(#"{"shuffle_state":false,"item":{"uri":"spotify:track:AAAAAAAAAAAAAAAAAAAAAA","duration_ms":100},"device":{"id":"computer-123","is_active":true}}"#.utf8))
+            }
+            writes.increment()
+            let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems!
+            XCTAssertEqual(query.first { $0.name == "position_ms" }?.value, "0")
+            XCTAssertEqual(query.first { $0.name == "device_id" }?.value, "computer-123")
+            return (204, [:], Data())
+        }
+        let issued = try await seekController().seek(to: 0.1, duration: 0.1,
+            expectedTrackURI: "spotify:track:AAAAAAAAAAAAAAAAAAAAAA", isCurrent: { true })
+        XCTAssertTrue(issued)
+        XCTAssertEqual(writes.value, 1)
+    }
+
+    @MainActor
+    func testSeekRevalidatesLocalIdentityAfterAwaitedPlaybackRead() async throws {
+        let writes = SpotifyRequestCounter()
+        SpotifyMockURLProtocol.handler = { request in
+            if request.httpMethod == "PUT" { writes.increment() }
+            return (200, [:], Data(#"{"shuffle_state":false,"item":{"uri":"spotify:track:AAAAAAAAAAAAAAAAAAAAAA","duration_ms":200000},"device":{"id":"computer-123","is_active":true}}"#.utf8))
+        }
+        var checks = 0
+        let issued = try await seekController().seek(to: 195, duration: 200,
+            expectedTrackURI: "spotify:track:AAAAAAAAAAAAAAAAAAAAAA", isCurrent: {
+                checks += 1
+                return checks == 1
+            })
+        XCTAssertFalse(issued)
+        XCTAssertEqual(checks, 2)
+        XCTAssertEqual(writes.value, 0)
+    }
+
+    @MainActor
+    func testSeekWriteFailureIsNotAutomaticallyReplayed() async {
+        let writes = SpotifyRequestCounter()
+        SpotifyMockURLProtocol.handler = { request in
+            if request.httpMethod == "PUT" {
+                writes.increment()
+                return (503, [:], Data())
+            }
+            return (200, [:], Data(#"{"shuffle_state":false,"item":{"uri":"spotify:track:AAAAAAAAAAAAAAAAAAAAAA","duration_ms":200000},"device":{"id":"computer-123","is_active":true}}"#.utf8))
+        }
+        do {
+            _ = try await seekController().seek(to: 195, duration: 200,
+                expectedTrackURI: "spotify:track:AAAAAAAAAAAAAAAAAAAAAA", isCurrent: { true })
+            XCTFail("Expected write failure")
+        } catch {
+            XCTAssertEqual(error as? SpotifyLibraryError, .requestFailed(503))
+        }
+        XCTAssertEqual(writes.value, 1)
+    }
+
+    @MainActor
+    func testSeekRejectsInvalidInputBeforeNetworking() async throws {
+        let requests = SpotifyRequestCounter()
+        SpotifyMockURLProtocol.handler = { _ in
+            requests.increment()
+            return (204, [:], Data())
+        }
+        let controller = seekController()
+        for position in [Double.nan, .infinity, -.infinity] {
+            let issued = try await controller.seek(to: position, duration: 200,
+                expectedTrackURI: "spotify:track:AAAAAAAAAAAAAAAAAAAAAA", isCurrent: { true })
+            XCTAssertFalse(issued)
+        }
+        XCTAssertEqual(requests.value, 0)
+    }
+
+
+    @MainActor
+    func testConnectedSpotifyReleasePrefersAPIAndNeverFallsBackAfterWriteFailure() async {
+        let writes = SpotifyRequestCounter()
+        let localSeeks = SpotifyRequestCounter()
+        SpotifyMockURLProtocol.handler = { request in
+            if request.httpMethod == "PUT" {
+                writes.increment()
+                return (503, [:], Data())
+            }
+            return (200, [:], Data(#"{"shuffle_state":false,"item":{"uri":"spotify:track:AAAAAAAAAAAAAAAAAAAAAA","duration_ms":200000},"device":{"id":"computer-123","is_active":true}}"#.utf8))
+        }
+        let executor = MediaAutomationExecutor(runner: { source, _ in
+            if source.contains("set player position") { localSeeks.increment() }
+            if source.contains("set playbackState"), source.contains("Spotify") {
+                return MediaAutomationScriptResult(
+                    output: "Track A||Artist||playing||Spotify||12||200||||40||spotify:track:AAAAAAAAAAAAAAAAAAAAAA", failure: nil)
+            }
+            return MediaAutomationScriptResult(output: "", failure: nil)
+        })
+        let media = MediaController(automationExecutor: executor,
+            systemNowPlayingProvider: SpotifySeekNoSystemProvider(), startsAutomatically: false)
+        let published = expectation(description: "local Spotify source")
+        let publishedSubscription = media.$playbackPosition.dropFirst().filter { $0 == 12 }.first()
+            .sink { _ in published.fulfill() }
+        media.refresh()
+        await fulfillment(of: [published], timeout: 3)
+        let failed = expectation(description: "API failure")
+        let failureSubscription = media.$seekError.compactMap { $0 }.first().sink { _ in failed.fulfill() }
+        media.setScrubbing(true)
+        media.updateScrubPosition(198)
+        let library = seekController()
+        media.setScrubbing(false, spotify: library)
+        media.setScrubbing(false, spotify: library)
+        await fulfillment(of: [failed], timeout: 3)
+        await executor.invalidateAndWaitForIdle()
+        XCTAssertEqual(writes.value, 1)
+        XCTAssertEqual(localSeeks.value, 0)
+        XCTAssertEqual(media.displayedPlaybackPosition, media.playbackPosition)
+        publishedSubscription.cancel()
+        failureSubscription.cancel()
+    }
+
+    @MainActor
+    func testConnectedSpotifyContextMismatchNeverFallsBackToLocalSeek() async {
+        let writes = SpotifyRequestCounter()
+        let localSeeks = SpotifyRequestCounter()
+        SpotifyMockURLProtocol.handler = { request in
+            if request.httpMethod == "PUT" { writes.increment() }
+            return (200, [:], Data(#"{"shuffle_state":false,"item":{"uri":"spotify:track:BBBBBBBBBBBBBBBBBBBBBB","duration_ms":200000},"device":{"id":"computer-123","is_active":true}}"#.utf8))
+        }
+        let executor = MediaAutomationExecutor(runner: { source, _ in
+            if source.contains("set player position") { localSeeks.increment() }
+            if source.contains("set playbackState"), source.contains("Spotify") {
+                return MediaAutomationScriptResult(output: "Track A||Artist||playing||Spotify||12||200||||40||spotify:track:AAAAAAAAAAAAAAAAAAAAAA", failure: nil)
+            }
+            return MediaAutomationScriptResult(output: "", failure: nil)
+        })
+        let media = MediaController(automationExecutor: executor,
+            systemNowPlayingProvider: SpotifySeekNoSystemProvider(), startsAutomatically: false)
+        let published = expectation(description: "local Spotify source")
+        let initial = media.$playbackPosition.dropFirst().filter { $0 == 12 }.first().sink { _ in published.fulfill() }
+        media.refresh()
+        await fulfillment(of: [published], timeout: 3)
+        initial.cancel()
+        let refreshed = expectation(description: "refresh after refused API context")
+        let completed = media.$playbackPosition.dropFirst().filter { $0 == 12 }.first().sink { _ in refreshed.fulfill() }
+        media.setScrubbing(true)
+        media.updateScrubPosition(198)
+        media.setScrubbing(false, spotify: seekController())
+        await fulfillment(of: [refreshed], timeout: 3)
+        await executor.invalidateAndWaitForIdle()
+        XCTAssertEqual(writes.value, 0)
+        XCTAssertEqual(localSeeks.value, 0)
+        XCTAssertEqual(media.displayedPlaybackPosition, media.playbackPosition)
+        completed.cancel()
     }
 
 }

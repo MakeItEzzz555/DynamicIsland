@@ -21,6 +21,7 @@ struct AudioVisualizerView: View {
     var cadence: IslandFrameCadence.Surface = .expandedDecoration
     var pauseDuringShellMorph = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.settingsPreviewReduceMotion) private var previewReduceMotion
     @Environment(\.isShellMorphing) private var isShellMorphing
     @State private var isPlaybackVisuallyActive = false
     @State private var playbackHoldGeneration = 0
@@ -48,6 +49,7 @@ struct AudioVisualizerView: View {
     private var shouldAnimateContinuously: Bool {
         isPlaybackVisuallyActive &&
             !reduceMotion &&
+            !previewReduceMotion &&
             !(pauseDuringShellMorph && isShellMorphing)
     }
 
@@ -311,6 +313,13 @@ struct MediaModuleView: View {
                 disabledState
             }
         }
+        .onDisappear { media.cancelScrubbing() }
+        .onChange(of: settings.showProgressSlider) { _, shown in
+            if !shown { media.cancelScrubbing() }
+        }
+        .onChange(of: settings.mediaEnabled) { _, enabled in
+            if !enabled { media.cancelScrubbing() }
+        }
 
         if availableHeight != nil, widgetPlacement.size.height > 0 {
             // Workspace grid: the semantic composition receives its exact cell
@@ -341,6 +350,14 @@ struct MediaModuleView: View {
         guard settings.mediaEnabled else { return false }
         guard media.hasActiveMediaSource else { return false }
         return settings.showMediaWhenPaused || media.isPlaying
+    }
+
+    private var playbackBinding: Binding<Double> {
+        Binding(get: { media.playbackSliderPosition }, set: { media.updateScrubPosition($0) })
+    }
+
+    private func playbackEditingChanged(_ editing: Bool) {
+        media.setScrubbing(editing, spotify: advancedControls?.spotify)
     }
 
     private var shouldShowLauncher: Bool {
@@ -490,22 +507,16 @@ struct MediaModuleView: View {
             VStack(spacing: sliderStackSpacing) {
                 if settings.showProgressSlider, media.hasPlaybackProgress {
                     Slider(
-                        value: Binding(
-                            get: { media.playbackPosition },
-                            set: { media.updateScrubPosition($0) }
-                        ),
-                        in: 0...max(media.duration, 1),
-                        onEditingChanged: { isEditing in
-                            if !isEditing {
-                                media.seek(to: media.playbackPosition)
-                            }
-                        }
+                        value: playbackBinding,
+                        in: 0...media.playbackSliderDuration,
+                        onEditingChanged: playbackEditingChanged
                     )
                     .tint(.white.opacity(0.70))
                     .opacity(media.isSeekControlAvailable ? 1 : 0.38)
-                    .disabled(!media.isSeekControlAvailable)
+                    .disabled(!media.isSeekControlAvailable || media.playbackSliderDuration == 0)
+                    .help(media.seekError ?? "Playback position")
                     HStack {
-                        Text(formatTime(media.playbackPosition))
+                        Text(formatTime(media.displayedPlaybackPosition))
                         Spacer()
                         Text(formatTime(media.duration))
                     }
@@ -680,23 +691,17 @@ struct MediaModuleView: View {
                 VStack(spacing: 3) {
                     if media.hasPlaybackProgress {
                         Slider(
-                            value: Binding(
-                                get: { media.playbackPosition },
-                                set: { media.updateScrubPosition($0) }
-                            ),
-                            in: 0...max(media.duration, 1),
-                            onEditingChanged: { isEditing in
-                                if !isEditing {
-                                    media.seek(to: media.playbackPosition)
-                                }
-                            }
+                            value: playbackBinding,
+                            in: 0...media.playbackSliderDuration,
+                            onEditingChanged: playbackEditingChanged
                         )
                         .tint(.white.opacity(0.70))
                         .opacity(media.isSeekControlAvailable ? 1 : 0.38)
-                        .disabled(!media.isSeekControlAvailable)
+                        .disabled(!media.isSeekControlAvailable || media.playbackSliderDuration == 0)
+                        .help(media.seekError ?? "Playback position")
 
                         HStack {
-                            Text(formatTime(media.playbackPosition))
+                            Text(formatTime(media.displayedPlaybackPosition))
                             Spacer()
                             Text(formatTime(media.duration))
                         }
@@ -1686,16 +1691,17 @@ extension MediaModuleView {
     private func semanticProgress(width: CGFloat, inlineTimes: Bool) -> some View {
         if settings.showProgressSlider {
             let available = media.hasPlaybackProgress
-            let current = available ? formatTime(media.playbackPosition) : "--:--"
+            let current = available ? formatTime(media.displayedPlaybackPosition) : "--:--"
             let total = available ? formatTime(media.duration) : "--:--"
             let track = Group {
                 if available {
-                    Slider(value: Binding(get: { media.playbackPosition }, set: { media.updateScrubPosition($0) }),
-                           in: 0...max(media.duration, 1),
-                           onEditingChanged: { editing in if !editing { media.seek(to: media.playbackPosition) } })
+                    Slider(value: playbackBinding,
+                           in: 0...media.playbackSliderDuration,
+                           onEditingChanged: playbackEditingChanged)
                         .tint(.white.opacity(0.70))
                         .opacity(media.isSeekControlAvailable ? 1 : 0.38)
-                        .disabled(!media.isSeekControlAvailable)
+                        .disabled(!media.isSeekControlAvailable || media.playbackSliderDuration == 0)
+                        .help(media.seekError ?? "Playback position")
                 } else {
                     Capsule(style: .continuous).fill(.white.opacity(0.16)).frame(height: 4).frame(height: 16)
                 }
@@ -1800,20 +1806,21 @@ extension MediaModuleView {
                 .position(x: frame.midX, y: frame.midY)
             }
             if let frame = plan.frames[.progress] {
-                Slider(value: Binding(get: { media.playbackPosition }, set: { media.updateScrubPosition($0) }),
-                       in: 0...max(media.duration, 1),
-                       onEditingChanged: { editing in if !editing { media.seek(to: media.playbackPosition) } })
+                Slider(value: playbackBinding,
+                       in: 0...media.playbackSliderDuration,
+                       onEditingChanged: playbackEditingChanged)
                     .controlSize(.mini)
                     .tint(.white.opacity(0.70))
                     .opacity(media.isSeekControlAvailable ? 1 : 0.38)
-                    .disabled(!media.isSeekControlAvailable)
+                    .disabled(!media.isSeekControlAvailable || media.playbackSliderDuration == 0)
+                    .help(media.seekError ?? "Playback position")
                     .accessibilityLabel("Playback position")
                     .frame(width: frame.width, height: frame.height)
                     .position(x: frame.midX, y: frame.midY)
             }
             if let frame = plan.frames[.times] {
                 HStack {
-                    Text(formatTime(media.playbackPosition))
+                    Text(formatTime(media.displayedPlaybackPosition))
                     Spacer(minLength: 0)
                     Text(formatTime(media.duration))
                 }
@@ -1887,20 +1894,21 @@ extension MediaModuleView {
                     .position(x: frame.midX, y: frame.midY)
             }
             if let elapsed = plan.frames[.elapsed], let track = plan.frames[.progress], let remaining = plan.frames[.remaining] {
-                Text(available ? formatTime(media.playbackPosition) : "--:--")
+                Text(available ? formatTime(media.displayedPlaybackPosition) : "--:--")
                     .font(.system(size: MediaStandardLayout.timeFont, weight: .semibold)).monospacedDigit()
                     .foregroundStyle(.white.opacity(available ? 0.6 : 0.35))
                     .frame(width: elapsed.width, height: elapsed.height, alignment: .leading)
                     .position(x: elapsed.midX, y: elapsed.midY)
                 Group {
                     if available {
-                        Slider(value: Binding(get: { media.playbackPosition }, set: { media.updateScrubPosition($0) }),
-                               in: 0...max(media.duration, 1),
-                               onEditingChanged: { editing in if !editing { media.seek(to: media.playbackPosition) } })
+                        Slider(value: playbackBinding,
+                               in: 0...media.playbackSliderDuration,
+                               onEditingChanged: playbackEditingChanged)
                             .controlSize(.small)
                             .tint(.white.opacity(0.75))
                             .opacity(media.isSeekControlAvailable ? 1 : 0.38)
-                            .disabled(!media.isSeekControlAvailable)
+                            .disabled(!media.isSeekControlAvailable || media.playbackSliderDuration == 0)
+                            .help(media.seekError ?? "Playback position")
                             .accessibilityLabel("Playback position")
                     } else {
                         Capsule(style: .continuous).fill(.white.opacity(0.16)).frame(height: 4)
@@ -1908,7 +1916,7 @@ extension MediaModuleView {
                 }
                 .frame(width: track.width, height: track.height)
                 .position(x: track.midX, y: track.midY)
-                Text(available ? MediaAdvancedController.remainingLabel(position: media.playbackPosition, duration: media.duration) : "--:--")
+                Text(available ? MediaAdvancedController.remainingLabel(position: media.displayedPlaybackPosition, duration: media.duration) : "--:--")
                     .font(.system(size: MediaStandardLayout.timeFont, weight: .semibold)).monospacedDigit()
                     .foregroundStyle(.white.opacity(available ? 0.6 : 0.35))
                     .frame(width: remaining.width, height: remaining.height, alignment: .trailing)
