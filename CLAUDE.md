@@ -4,6 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 DynamicIsland is a native macOS 14.6+ menu-bar (accessory, `LSUIElement`) app written in Swift 6 with SwiftPM only (no Xcode project). It renders a Dynamic Island–style overlay around the MacBook notch using SwiftUI hosted in a single AppKit `NSPanel`.
 
+## Mandatory design and implementation skills
+
+Follow the complete **Mandatory design and implementation skills** section in [AGENTS.md](AGENTS.md) for every implementation prompt, including planning, component work, and UI fixes. Evaluate skill applicability before editing, read the selected `SKILL.md` files from `.agents/skills/` or the agent's global skills directory, and briefly state the skills and validation tools being used. This standing requirement applies without an explicit skill invocation in the prompt.
+
+Use the relevant taste/design, redesign, `awesome-design` reference adapter, and image-reference skills for native visual quality, translating compatible principles into SwiftUI/AppKit and the existing semantic layout and motion tokens. Preserve macOS conventions, exact widget dimensions, shell geometry, native host ownership, accessibility, and Reduce Motion. Website-only stacks, CSS/GSAP code, and Playwright do not become native dependencies or native runtime evidence. Use `web-design-guidelines` and `playwright-cli` for actual web surfaces; validate DynamicIsland in its real macOS runtime with the repository's tests and packaging workflow. Report unavailable skills honestly and preserve active sessions and permissions during validation.
+
+For Swift implementation planning and components, also read the global `awesome-swift` adapter and the relevant section of `matteocrippa/awesome-swift` at `~/.codex/design-references/awesome-swift/`. Verify native macOS/Swift 6 support, concurrency, SwiftPM integration, maintenance, and license using candidate projects' primary documentation. Prefer existing modules and supported native APIs; inclusion in the catalog does not justify adding a dependency.
+
 ## Commands
 
 ```sh
