@@ -1,11 +1,11 @@
 import AppKit
 import SwiftUI
 
-private enum SettingsSection: String, CaseIterable, Identifiable {
+enum SettingsSection: String, CaseIterable, Identifiable {
     case island = "Island"
     case appearance = "Appearance"
     case motion = "Motion"
-    case tabs = "Tabs"
+    case tabs = "Navigation"
     case media = "Media"
     case tray = "Tray"
     case basket = "Basket"
@@ -17,7 +17,7 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
     case rightWorkspace = "Right Workspace"
     case messaging = "Messaging"
     case liveActivities = "Live Activities"
-    case gestures = "Gestures"
+    case gestures = "Gesture Shortcuts"
     case advanced = "Advanced"
 
     var id: String { rawValue }
@@ -146,6 +146,9 @@ struct SettingsView: View {
                         settingsForm("Messaging") {
                             if let messaging {
                                 MessagingSettingsView(controller: messaging)
+                                Button("Restore Messaging Defaults") {
+                                    messaging.preferences = .init()
+                                }
                             } else {
                                 HelpText("Messaging is unavailable.")
                             }
@@ -190,17 +193,20 @@ struct SettingsView: View {
                     value: $settings.autoCollapseGraceSeconds,
                     range: 0.10...2.00,
                     format: "%.2fs",
-                    disabled: settings.autoCollapseDelayPreset != .manual
+                    disabled: !settings.autoCollapseEnabled || settings.autoCollapseDelayPreset != .manual
                 )
             }
+            .disabled(!settings.autoCollapseEnabled)
 
-            SettingsGroup("Size") {
+            DisclosureGroup("Advanced sizing") {
+              SettingsGroup("Size") {
                 Toggle("Use adaptive notch sizing", isOn: $settings.useAdaptiveNotchSizing)
                 Toggle("Respect hardware notch", isOn: $settings.respectHardwareNotch)
                 SliderRow(title: "Collapsed width", value: $settings.collapsedWidth, range: 120...360, format: "%.0f pt")
                 SliderRow(title: "Collapsed height", value: $settings.collapsedHeight, range: 28...64, format: "%.0f pt")
                 SliderRow(title: "Expanded width", value: $settings.expandedWidth, range: 520...920, format: "%.0f pt")
                 SliderRow(title: "Expanded height", value: $settings.expandedHeight, range: 180...360, format: "%.0f pt")
+              }
             }
         }
     }
@@ -277,39 +283,56 @@ struct SettingsView: View {
                 SliderRow(title: "Shell speed", value: $settings.shellAnimationSpeed, range: 0.25...2.0, format: "%.2fx")
                 Toggle("Content animation", isOn: $settings.contentAnimationEnabled)
                 Toggle("Content stagger", isOn: $settings.contentStaggerEnabled)
-                SliderRow(title: "Stagger amount", value: $settings.contentStaggerAmount, range: 0...2.0, format: "%.2f", disabled: !settings.contentStaggerEnabled)
+                    .disabled(!settings.contentAnimationEnabled)
+                SliderRow(title: "Stagger amount", value: $settings.contentStaggerAmount, range: 0...2.0, format: "%.2f", disabled: !settings.contentAnimationEnabled || !settings.contentStaggerEnabled)
                 Toggle("Blur transitions", isOn: $settings.useBlurTransitions)
+                    .disabled(!settings.contentAnimationEnabled)
                 Toggle("Scale transitions", isOn: $settings.useScaleTransitions)
+                    .disabled(!settings.contentAnimationEnabled)
                 HelpText("Expansion still avoids fade-in. Opacity is only available to the staged removal path.")
             }
         }
     }
 
     private var tabsSection: some View {
-        settingsForm("Tabs") {
-            IslandShellSettingsPreview(settings: settings, dependencies: previews)
-            SettingsGroup("Visible Tabs") {
-                Toggle("Three-finger page navigation", isOn: $settings.threeFingerTabNavigationEnabled)
-                Text("Swipe left or right with three fingers to change pages. Turning this off restores navigation controls.")
-                    .font(.caption).foregroundStyle(.secondary)
-                Toggle("Show navigation controls", isOn: $settings.showNavigationControls)
-                Text("When hidden, use three-finger swipes to change pages. Hold or secondary-click the island background for workspace commands. Settings also remains in the menu bar.")
-                    .font(.caption).foregroundStyle(.secondary)
-                Toggle("Island tab", isOn: .constant(true))
-                    .disabled(true)
-                Toggle("Tray tab", isOn: $settings.showTrayTab)
-                Toggle("Timer tab", isOn: $settings.showTimerTab)
-                Toggle("Stats tab", isOn: $settings.showStatsTab)
-                Toggle("Tools tab", isOn: $settings.showToolsTab)
+        settingsForm("Navigation") {
+            SettingsGroup("Navigation") {
+                Picker("Navigation mode", selection: $settings.showNavigationControls) {
+                    Text("Visible Controls").tag(true)
+                    Text("Gesture Only").tag(false)
+                }
+                .pickerStyle(.segmented)
+                HelpText(settings.showNavigationControls
+                    ? "Page controls and workspace commands appear in the island header."
+                    : "Swipe with three fingers to change pages. Secondary-click the island background for workspace commands. Settings remains available in the menu bar.")
             }
-
-            SettingsGroup("Selection") {
-                Toggle("Remember last selected tab", isOn: $settings.rememberLastSelectedTab)
-                Picker("Default expanded tab", selection: $settings.defaultExpandedTab) {
-                    ForEach(DefaultExpandedTab.allCases) { tab in
+            IslandShellSettingsPreview(settings: settings, dependencies: previews)
+            SettingsGroup("Pages") {
+                Toggle("Island", isOn: .constant(true))
+                    .disabled(true)
+                Toggle("Agents", isOn: $settings.showAgentsTab).disabled(!settings.agentActivityEnabled)
+                Toggle("Tray", isOn: $settings.showTrayTab).disabled(!settings.trayEnabled)
+                Toggle("Timer", isOn: $settings.showTimerTab).disabled(!settings.timerEnabled)
+                Toggle("Stats", isOn: $settings.showStatsTab).disabled(!settings.statsEnabled)
+                Toggle("Tools", isOn: $settings.showToolsTab)
+                HelpText("Enable each feature in its category before showing its page. Workspace customization also controls page order and visibility.")
+            }
+            pointerShortcutSettings
+            DisclosureGroup("Advanced") {
+              SettingsGroup("Page selection") {
+                Toggle("Swipe between pages with three fingers", isOn: $settings.threeFingerTabNavigationEnabled)
+                HelpText("Turning off three-finger navigation restores visible controls.")
+                Toggle("Remember last page", isOn: $settings.rememberLastSelectedTab)
+                Picker("Starting page", selection: $settings.defaultExpandedTab) {
+                    ForEach([DefaultExpandedTab.island, .tray, .timer, .stats]) { tab in
                         Text(tab.displayName).tag(tab)
                     }
+                    if ![DefaultExpandedTab.island, .tray, .timer, .stats].contains(settings.defaultExpandedTab) {
+                        Text("Island (legacy selection)").tag(settings.defaultExpandedTab)
+                    }
                 }
+                .disabled(settings.rememberLastSelectedTab)
+              }
             }
         }
     }
@@ -323,29 +346,48 @@ struct SettingsView: View {
             SettingsGroup("Visibility") {
                 Toggle("Enable media", isOn: $settings.mediaEnabled)
                 Toggle("Show when paused", isOn: $settings.showMediaWhenPaused)
+                    .disabled(!settings.mediaEnabled)
                 Toggle("Show launcher when no source", isOn: $settings.showMediaWhenNoSource)
+                    .disabled(!settings.mediaEnabled)
                 Toggle("Show album artwork", isOn: $settings.showAlbumArtwork)
+                    .disabled(!settings.mediaEnabled)
                 Toggle("Show title", isOn: $settings.showMediaTitle)
+                    .disabled(!settings.mediaEnabled)
                 Toggle("Show artist", isOn: $settings.showMediaArtist)
+                    .disabled(!settings.mediaEnabled)
                 Toggle("Show source name", isOn: $settings.showMediaSourceName)
+                    .disabled(!settings.mediaEnabled)
                 Toggle("Show visualizer", isOn: $settings.showVisualizer)
+                    .disabled(!settings.mediaEnabled)
             }
 
             SettingsGroup("Controls") {
                 Toggle("Show playback controls", isOn: $settings.showPlaybackControls)
+                    .disabled(!settings.mediaEnabled)
                 Toggle("Show progress slider", isOn: $settings.showProgressSlider)
+                    .disabled(!settings.mediaEnabled)
                 Toggle("Show volume slider", isOn: $settings.showVolumeSlider)
+                    .disabled(!settings.mediaEnabled)
                 Toggle("Open source on artwork click", isOn: $settings.openSourceOnArtworkClick)
+                    .disabled(!settings.mediaEnabled)
                 Toggle("Collapse after opening source", isOn: $settings.collapseAfterOpeningMediaSource)
+                    .disabled(!settings.mediaEnabled || !settings.openSourceOnArtworkClick)
                 Toggle("Collapse after launcher", isOn: $settings.collapseAfterMediaLauncher)
+                    .disabled(!settings.mediaEnabled || !settings.mediaLauncherEnabled)
             }
+            .disabled(!settings.mediaEnabled)
 
             SettingsGroup("Launchers") {
                 Toggle("Enable launchers", isOn: $settings.mediaLauncherEnabled)
+                    .disabled(!settings.mediaEnabled)
                 Toggle("Show Apple Music launcher", isOn: $settings.showAppleMusicLauncher)
+                    .disabled(!settings.mediaEnabled || !settings.mediaLauncherEnabled)
                 Toggle("Show Spotify launcher", isOn: $settings.showSpotifyLauncher)
+                    .disabled(!settings.mediaEnabled || !settings.mediaLauncherEnabled)
                 Toggle("Show YouTube launcher", isOn: $settings.showYouTubeLauncher)
+                    .disabled(!settings.mediaEnabled || !settings.mediaLauncherEnabled)
             }
+            .disabled(!settings.mediaEnabled)
 
         }
     }
@@ -388,10 +430,15 @@ struct SettingsView: View {
             SettingsGroup("Tray") {
                 Toggle("Enable tray", isOn: $settings.trayEnabled)
                 Toggle("Enable file shelf", isOn: $settings.fileShelfEnabled)
+                    .disabled(!settings.trayEnabled)
                 Toggle("Enable AirDrop zone", isOn: $settings.airDropZoneEnabled)
+                    .disabled(!settings.trayEnabled)
                 Toggle("Allow collapsed file drops", isOn: $settings.allowFileDropsOnCollapsedIsland)
+                    .disabled(!settings.trayEnabled)
                 Toggle("Allow expanded tray drops", isOn: $settings.allowFileDropsOnExpandedTray)
+                    .disabled(!settings.trayEnabled)
                 Stepper("Max shelf files: \(settings.maxShelfFiles)", value: $settings.maxShelfFiles, in: 1...48)
+                    .disabled(!settings.trayEnabled || !settings.fileShelfEnabled)
             }
 
             SettingsGroup("Files") {
@@ -403,13 +450,19 @@ struct SettingsView: View {
                 Toggle("Persist shelf across launches", isOn: $settings.persistFileShelfAcrossLaunches)
                 HelpText("Persistence restores existing files on launch and silently drops missing files.")
             }
+            .disabled(!settings.trayEnabled || !settings.fileShelfEnabled)
 
             SettingsGroup("Actions") {
                 Toggle("Open file action", isOn: $settings.openFileActionEnabled)
+                    .disabled(!settings.trayEnabled || !settings.fileShelfEnabled)
                 Toggle("Reveal in Finder action", isOn: $settings.revealInFinderActionEnabled)
+                    .disabled(!settings.trayEnabled || !settings.fileShelfEnabled)
                 Toggle("Copy path actions", isOn: $settings.copyPathActionEnabled)
+                    .disabled(!settings.trayEnabled || !settings.fileShelfEnabled)
                 Toggle("Remove file action", isOn: $settings.removeFileActionEnabled)
+                    .disabled(!settings.trayEnabled || !settings.fileShelfEnabled)
                 Toggle("AirDrop fallback reveal in Finder", isOn: $settings.airDropFallbackRevealInFinder)
+                    .disabled(!settings.trayEnabled || !settings.airDropZoneEnabled)
             }
         }
     }
@@ -422,9 +475,13 @@ struct SettingsView: View {
             SettingsGroup("Timer") {
                 Toggle("Enable timer", isOn: $settings.timerEnabled)
                 Toggle("Preset buttons", isOn: $settings.timerPresetsEnabled)
+                    .disabled(!settings.timerEnabled)
                 Toggle("Show progress ring", isOn: $settings.showTimerProgressRing)
+                    .disabled(!settings.timerEnabled)
                 Toggle("Ring animation", isOn: $settings.timerRingAnimationEnabled)
+                    .disabled(!settings.timerEnabled || !settings.showTimerProgressRing)
                 Toggle("Collapse after starting timer", isOn: $settings.collapseAfterStartingTimer)
+                    .disabled(!settings.timerEnabled)
             }
 
             SettingsGroup("Presets") {
@@ -432,13 +489,16 @@ struct SettingsView: View {
                 Stepper("Preset 2: \(settings.timerPreset2Minutes)m", value: $settings.timerPreset2Minutes, in: 1...180)
                 Stepper("Preset 3: \(settings.timerPreset3Minutes)m", value: $settings.timerPreset3Minutes, in: 1...180)
             }
+            .disabled(!settings.timerEnabled || !settings.timerPresetsEnabled)
 
             SettingsGroup("Completion") {
                 Toggle("Timer notification", isOn: $settings.timerNotificationEnabled)
+                    .disabled(!settings.timerEnabled)
                 Toggle("Timer sound", isOn: $settings.timerSoundEnabled)
-                    .disabled(!settings.timerNotificationEnabled)
+                    .disabled(!settings.timerEnabled || !settings.timerNotificationEnabled)
                 HelpText("Timer completion notifications use the native macOS alert and system sound.")
             }
+            .disabled(!settings.timerEnabled)
 
         }
     }
@@ -487,6 +547,7 @@ struct SettingsView: View {
             }
 
             if let agentManagedControl, let agentProjects {
+              DisclosureGroup("Advanced diagnostics") {
                 SettingsGroup("Provider & Project Diagnostics") {
                     AgentDiagnosticsView(
                         agentEvents: agentEvents,
@@ -494,6 +555,7 @@ struct SettingsView: View {
                         projects: agentProjects
                     )
                 }
+              }
             }
 
             SettingsGroup("Provider Setup") {
@@ -675,8 +737,9 @@ struct SettingsView: View {
             }
             SettingsGroup("Stats") {
                 Toggle("Enable stats", isOn: $settings.statsEnabled)
-                SliderRow(title: "Refresh interval", value: $settings.statsRefreshIntervalSeconds, range: 0.5...10.0, format: "%.1fs")
+                SliderRow(title: "Refresh interval", value: $settings.statsRefreshIntervalSeconds, range: 0.5...10.0, format: "%.1fs", disabled: !settings.statsEnabled)
                 Toggle("Show live indicator", isOn: $settings.showActivityIndicator)
+                    .disabled(!settings.statsEnabled)
             }
 
             SettingsGroup("Visible Cards") {
@@ -688,6 +751,7 @@ struct SettingsView: View {
                 Toggle("Battery", isOn: $settings.showBattery)
                 Toggle("Uptime", isOn: $settings.showUptime)
             }
+            .disabled(!settings.statsEnabled)
 
         }
     }
@@ -708,9 +772,13 @@ struct SettingsView: View {
             SettingsGroup("Sources") {
                 Toggle("Enable live activities", isOn: $settings.liveActivitiesEnabled)
                 Toggle("Music live activity", isOn: $settings.showMusicLiveActivity)
+                    .disabled(!settings.liveActivitiesEnabled)
                 Toggle("Timer live activity", isOn: $settings.showTimerLiveActivity)
+                    .disabled(!settings.liveActivitiesEnabled)
                 Toggle("File drop live activity", isOn: $settings.showFileDropLiveActivity)
+                    .disabled(!settings.liveActivitiesEnabled)
                 Toggle("Battery live activity", isOn: $settings.showBatteryLiveActivity)
+                    .disabled(!settings.liveActivitiesEnabled)
             }
             SettingsGroup("System HUDs") {
                 Toggle("Enable system HUDs", isOn: $settings.systemHUDsEnabled)
@@ -789,18 +857,21 @@ struct SettingsView: View {
                     "Allow simultaneous sidecars",
                     isOn: $settings.allowSimultaneousLiveActivitySidecars
                 )
+                .disabled(!settings.liveActivitiesEnabled)
                 Picker("Timer side", selection: $settings.timerSidecarPreference) {
                     ForEach(LiveActivitySidePreference.allCases) { preference in
                         Text(preference.displayName).tag(preference)
                     }
                 }
+                .disabled(!settings.liveActivitiesEnabled || !settings.allowSimultaneousLiveActivitySidecars)
                 LiveActivityLayoutSettingsPreview(settings: settings, dependencies: previews)
                 HelpText(
                     "Automatic placement keeps the strongest activity in the center and moves compatible compact activities into leading or trailing sidecars. Transient HUDs overlay the composition without destroying it."
                 )
             }
 
-            SettingsGroup("Collapsed Live Activity Priority") {
+            DisclosureGroup("Advanced activity priority") {
+              SettingsGroup("Collapsed Live Activity Priority") {
                 PriorityStepperRow(
                     title: CollapsedLiveActivityPrioritySource.runningTimer.displayName,
                     value: $settings.collapsedPriorityRunningTimer
@@ -826,6 +897,7 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.borderless)
                 HelpText("Higher priority appears first in the collapsed island. If two activities have the same priority, DynamicIsland uses the default order.")
+              }
             }
         }
     }
@@ -872,17 +944,35 @@ struct SettingsView: View {
         }
     }
 
-    private var gesturesSection: some View {
-        settingsForm("Gestures") {
-            SettingsGroup("Pointer / Trackpad") {
-                Toggle("Enable gestures", isOn: $settings.gesturesEnabled)
+    private var pointerShortcutSettings: some View {
+        SettingsGroup("Gesture Shortcuts") {
+                Toggle("Enable pointer shortcuts", isOn: $settings.gesturesEnabled)
                 Picker("Input source", selection: $settings.gestureInputSource) {
                     ForEach(GestureInputSource.allCases) { source in
-                        Text(source.displayName).tag(source)
-                            .disabled(source == .camera)
+                        Text(source == .keyboardShortcut ? "Keyboard Shortcut (Unavailable)" : source.displayName).tag(source)
+                            .disabled(source == .camera || source == .keyboardShortcut)
                     }
                 }
                 .disabled(!settings.gesturesEnabled)
+                Text("Collapsed island").font(.subheadline.weight(.semibold))
+                    .accessibilityAddTraits(.isHeader)
+                gestureActionPicker("Double Click", selection: $settings.collapsedDoubleClickAction)
+                gestureActionPicker("Long Press", selection: $settings.collapsedLongPressAction)
+                Text("Expanded island").font(.subheadline.weight(.semibold))
+                    .accessibilityAddTraits(.isHeader)
+                gestureActionPicker("Double Click", selection: $settings.expandedDoubleClickAction)
+                gestureActionPicker("Long Press", selection: $settings.expandedLongPressAction)
+                Toggle("Require confirmation", isOn: $settings.requireGestureConfirmation)
+                    .disabled(!settings.gesturesEnabled || settings.gestureInputSource != .trackpad)
+                HelpText("Shortcuts act on the island background. Content controls keep their own clicks. Choose Pointer / Trackpad to use these mappings; camera and global keyboard input are unavailable.")
+        }
+    }
+
+    private var gesturesSection: some View {
+        settingsForm("Gesture Shortcuts") {
+            pointerShortcutSettings
+            DisclosureGroup("Advanced recognition") {
+              SettingsGroup("Pointer / Trackpad") {
                 Toggle("Expand gesture", isOn: $settings.expandGestureEnabled)
                     .disabled(!settings.gesturesEnabled || settings.gestureInputSource != .trackpad)
                 Toggle("Collapse gesture", isOn: $settings.collapseGestureEnabled)
@@ -909,27 +999,22 @@ struct SettingsView: View {
                     format: "%.2fs",
                     disabled: !settings.gesturesEnabled
                 )
-                Toggle("Require confirmation", isOn: $settings.requireGestureConfirmation)
-                    .disabled(!settings.gesturesEnabled)
                 HelpText("Pointer gestures use the mappings below. Camera gestures remain unavailable.")
+              }
             }
 
             SettingsGroup("Collapsed Media Pill Gestures") {
-                gestureActionPicker("Double Click", selection: $settings.collapsedDoubleClickAction, actions: collapsedMediaPillActions)
                 gestureActionPicker("Two-Finger Swipe Left", selection: $settings.collapsedSwipeLeftAction, actions: collapsedMediaPillActions)
                 gestureActionPicker("Two-Finger Swipe Right", selection: $settings.collapsedSwipeRightAction, actions: collapsedMediaPillActions)
                 gestureActionPicker("Two-Finger Swipe Down", selection: $settings.collapsedSwipeDownAction, actions: collapsedMediaPillActions)
                 gestureActionPicker("Two-Finger Swipe Up", selection: $settings.collapsedSwipeUpAction, actions: collapsedMediaPillActions)
-                gestureActionPicker("Long Press", selection: $settings.collapsedLongPressAction, actions: collapsedMediaPillActions)
             }
 
             SettingsGroup("Expanded Island Gestures") {
-                gestureActionPicker("Double Click", selection: $settings.expandedDoubleClickAction)
                 gestureActionPicker("Swipe Down", selection: $settings.expandedSwipeDownAction)
                 gestureActionPicker("Swipe Up", selection: $settings.expandedSwipeUpAction)
                 gestureActionPicker("Swipe Left", selection: $settings.expandedSwipeLeftAction)
                 gestureActionPicker("Swipe Right", selection: $settings.expandedSwipeRightAction)
-                gestureActionPicker("Long Press", selection: $settings.expandedLongPressAction)
             }
 
         }
@@ -958,9 +1043,11 @@ struct SettingsView: View {
 
     private var advancedSection: some View {
         settingsForm("Advanced") {
-            SettingsGroup("Debug") {
+            DisclosureGroup("Renderer options") {
+              SettingsGroup("Performance") {
                 Toggle("Disable visualizer during morph", isOn: $settings.disableVisualizerDuringMorph)
                 HelpText("Performance controls shown here are wired to the production renderer.")
+              }
             }
 
             SettingsGroup("Reset") {
@@ -968,13 +1055,14 @@ struct SettingsView: View {
                     Button("Reset All Settings") {
                         settings.resetAllSettings()
                     }
-                    Button("Reset Layout") {
+                    Button("Reset Shell & Motion") {
                         settings.resetLayoutSettings()
                     }
                     Button("Reset Modules") {
                         settings.resetModuleSettings()
                     }
                 }
+                HelpText("These resets affect preferences. Use Customize Workspace to reset saved widget placement.")
             }
         }
     }
@@ -982,9 +1070,18 @@ struct SettingsView: View {
     private func settingsForm<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             Text(title)
-                .font(.system(size: 24, weight: .bold, design: .rounded))
+                .font(.title2.weight(.semibold))
                 .foregroundStyle(.primary)
+                .accessibilityAddTraits(.isHeader)
             content()
+            if SettingsCategoryDefaults.supports(selectedSection) {
+                Button("Restore \(selectedSection.rawValue) Defaults") {
+                    SettingsCategoryDefaults.restore(selectedSection, settings: settings)
+                }
+                .help(selectedSection == .clipboard
+                    ? "Restore clipboard options. Application exclusions and history stay intact."
+                    : "Restore this category’s controls. Saved workspace placement stays intact.")
+            }
         }
     }
 }
@@ -1091,13 +1188,14 @@ struct SettingsGroup<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(title)
-                .font(.system(size: 14, weight: .bold))
+                .font(.headline)
+                .accessibilityAddTraits(.isHeader)
             VStack(alignment: .leading, spacing: 10) {
                 content
             }
-            .padding(14)
+            .padding(.vertical, 4)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.background.secondary, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            Divider()
         }
     }
 }
@@ -1115,11 +1213,13 @@ private struct SliderRow: View {
                 Text(title)
                 Spacer()
                 Text(String(format: format, value))
+                    .monospacedDigit()
                     .foregroundStyle(.secondary)
             }
             Slider(value: $value, in: range)
-                .disabled(disabled)
+                .accessibilityLabel(title)
         }
+        .disabled(disabled)
     }
 }
 
@@ -1185,132 +1285,5 @@ struct ShortcutEditorRow: View {
             shortcut[keyPath: keyPath] = newValue
             onUpdate(shortcut)
         }
-    }
-}
-
-
-private enum SystemHUDPreviewCase: String, CaseIterable, Identifiable {
-    case volume = "Volume"
-    case brightness = "Brightness"
-    case capsOn = "Caps Lock On"
-    case capsOff = "Caps Lock Off"
-    case charging = "Charging"
-    case lowBattery = "Low Battery"
-    case criticalBattery = "Critical Battery"
-    case airPods = "AirPods Pro"
-    case headphones = "Headphones"
-    case focus = "Focus"
-
-    var id: String { rawValue }
-}
-
-private struct SystemHUDSettingsPreview: View {
-    @ObservedObject var settings: AppSettings
-    @State private var previewValue = 0.68
-    @State private var previewCase: SystemHUDPreviewCase = .volume
-
-    var body: some View {
-        VStack(spacing: 8) {
-            HStack {
-                Text("Live Preview")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Picker("Preview", selection: $previewCase) {
-                    ForEach(SystemHUDPreviewCase.allCases) { item in
-                        Text(item.rawValue).tag(item)
-                    }
-                }
-                .labelsHidden()
-                .frame(width: 145)
-            }
-
-            SystemHUDShellPreview(settings: settings, activity: previewActivity)
-                .frame(maxWidth: .infinity, alignment: .top)
-
-            if previewActivity.progress != nil {
-                Slider(value: $previewValue, in: 0...1)
-                    .frame(maxWidth: 220)
-            }
-        }
-        .padding(.vertical, 4)
-        .allowsHitTesting(settings.systemHUDsEnabled)
-    }
-
-    private var previewActivity: DynamicIslandLiveActivity {
-        let descriptor: SystemHUDDescriptor
-        switch previewCase {
-        case .volume:
-            descriptor = SystemHUDDescriptor(
-                kind: .volume,
-                title: "Volume",
-                subtitle: "\(Int(previewValue * 100))%",
-                symbolName: "speaker.wave.2.fill",
-                progress: previewValue,
-                priority: 120
-            )
-        case .brightness:
-            descriptor = SystemHUDDescriptor(
-                kind: .brightness,
-                title: "Brightness",
-                subtitle: "\(Int(previewValue * 100))%",
-                symbolName: "sun.max.fill",
-                progress: previewValue,
-                priority: 120
-            )
-        case .capsOn:
-            descriptor = SystemHUDDescriptor(
-                kind: .capsLock, title: "Caps Lock On", subtitle: "ABC",
-                symbolName: "capslock.fill", priority: 130
-            )
-        case .capsOff:
-            descriptor = SystemHUDDescriptor(
-                kind: .capsLock, title: "Caps Lock Off", subtitle: "abc",
-                symbolName: "capslock", priority: 130
-            )
-        case .charging:
-            descriptor = SystemHUDDescriptor(
-                kind: .battery, title: "Charging", subtitle: "\(Int(previewValue * 100))%",
-                symbolName: "battery.100percent.bolt", progress: previewValue, priority: 155
-            )
-        case .lowBattery:
-            descriptor = SystemHUDDescriptor(
-                kind: .battery, title: "Low Battery", subtitle: "15%",
-                symbolName: "battery.25percent", progress: 0.15, priority: 180
-            )
-        case .criticalBattery:
-            descriptor = SystemHUDDescriptor(
-                kind: .battery, title: "Critical Battery", subtitle: "8%",
-                symbolName: "exclamationmark.triangle.fill", progress: 0.08, priority: 190
-            )
-        case .airPods:
-            descriptor = SystemHUDDescriptor(
-                kind: .audioDevice, title: "AirPods Pro", subtitle: "Output Changed",
-                symbolName: "airpodspro", priority: 165
-            )
-        case .headphones:
-            descriptor = SystemHUDDescriptor(
-                kind: .audioDevice, title: "Headphones", subtitle: "Output Changed",
-                symbolName: "headphones", priority: 165
-            )
-        case .focus:
-            descriptor = SystemHUDDescriptor(
-                kind: .focus, title: "Focus", subtitle: "On",
-                symbolName: "moon.fill", priority: 140
-            )
-        }
-
-        return DynamicIslandLiveActivity(
-            id: "settings-system-hud",
-            kind: .system,
-            title: descriptor.title,
-            subtitle: descriptor.subtitle,
-            symbolName: descriptor.symbolName,
-            priority: 200,
-            isActive: true,
-            progress: descriptor.progress,
-            updatedAt: Date(),
-            systemHUDKind: descriptor.kind
-        )
     }
 }

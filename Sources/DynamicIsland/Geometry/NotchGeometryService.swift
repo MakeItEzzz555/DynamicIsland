@@ -101,6 +101,18 @@ public struct CollapsedPresentationProfile: Equatable, Sendable {
         )
     }
 
+    /// A connection notification uses a model and a two-line device label.
+    /// It shares the physical top band without reserving a slider below it.
+    public static let audioDeviceHUD = Self(
+        kind: .systemHUD,
+        contentProfile: .audioDeviceHUD,
+        widthDelta: 12,
+        heightDelta: 0,
+        bottomCornerRadius: 14,
+        horizontalContentInset: 10,
+        glowStrength: 0
+    )
+
     public static let screenRecording = Self(
         kind: .screenRecording,
         contentProfile: .screenRecording,
@@ -209,6 +221,7 @@ public struct CollapsedActivityLayoutProfile: Equatable, Sendable {
         leftContentWidth: systemHUDLeftContentWidth,
         rightContentWidth: systemHUDRightContentWidth
     )
+    static let audioDeviceHUD = Self(leftContentWidth: 24, rightContentWidth: 96)
     static let genericActivity = Self(
         leftContentWidth: genericActivityLeftContentWidth,
         rightContentWidth: genericActivityRightContentWidth
@@ -389,7 +402,9 @@ struct ExpandedPresentationProfile: Equatable, Sendable {
 
     @MainActor
     private static func workspaceMaximumContentSize(settings: AppSettings, metrics: ResolvedIslandMetrics) -> CGSize {
-        let horizontal = IslandShellLayout.expandedHorizontalPadding(isNotchIntegrated: metrics.hasHardwareNotch && settings.respectHardwareNotch) * 2
+        let horizontal = IslandShellLayout.expandedHorizontalPadding(
+            isNotchIntegrated: metrics.hasHardwareNotch && settings.respectHardwareNotch,
+            showNavigationControls: settings.showNavigationControls) * 2
         return CGSize(width: max(1, max(520, metrics.logicalSize.width - 280) - horizontal),
                       height: ExpandedIslandLayoutMetrics.workspaceContentHeightBudget(metrics: metrics))
     }
@@ -406,7 +421,9 @@ struct ExpandedPresentationProfile: Equatable, Sendable {
             let size = resolvedSize(from: base)
             // Header invariant holds on every page: the shell is never narrower
             // than its notch-safe header.
-            let horizontal = IslandShellLayout.expandedHorizontalPadding(isNotchIntegrated: metrics.hasHardwareNotch && settings.respectHardwareNotch) * 2
+            let horizontal = IslandShellLayout.expandedHorizontalPadding(
+                isNotchIntegrated: metrics.hasHardwareNotch && settings.respectHardwareNotch,
+                showNavigationControls: settings.showNavigationControls) * 2
             let hidden = header.mode == .hidden
             let normalChrome = ExpandedIslandLayoutMetrics(containerSize: base, horizontalPadding: 0, displayMetrics: metrics)
             let currentChrome = ExpandedIslandLayoutMetrics(containerSize: base, horizontalPadding: 0, displayMetrics: metrics,
@@ -416,9 +433,15 @@ struct ExpandedPresentationProfile: Equatable, Sendable {
                               - normalChrome.workspaceVerticalChrome + currentChrome.workspaceVerticalChrome))
         }
         let regions = Self.eligibleRegions(configuration, surface: surface, settings: settings)
-        let horizontal = IslandShellLayout.expandedHorizontalPadding(isNotchIntegrated: metrics.hasHardwareNotch && settings.respectHardwareNotch) * 2
+        let horizontal = IslandShellLayout.expandedHorizontalPadding(
+            isNotchIntegrated: metrics.hasHardwareNotch && settings.respectHardwareNotch,
+            showNavigationControls: settings.showNavigationControls) * 2
         let compact = header.mode == .compactBelowNotch
         let hidden = header.mode == .hidden
+        let contentLane = hidden
+            ? ExpandedIslandLayoutMetrics.workspaceNotchLane(settings: settings, metrics: metrics,
+                pageCount: 1, hardwareNotchWidth: metrics.hardwareNotchWidth)
+            : lane
         let chrome = ExpandedIslandLayoutMetrics(containerSize: base, horizontalPadding: horizontal / 2, displayMetrics: metrics,
                                                  headerDrop: header.headerDrop, showHeader: !hidden)
         // Usage is a configured band widget inside the projection: nothing is
@@ -430,7 +453,7 @@ struct ExpandedPresentationProfile: Equatable, Sendable {
         // compact header sits below the notch, so it neither needs the
         // notch-wide winged minimum nor lets content rise into the notch lane.
         let content = WorkspaceWidgetLayoutProjection.preferredContentSize(regions: regions,
-            maximumSize: maximum, metrics: metrics, editing: editing, lane: compact || hidden ? .none : lane,
+            maximumSize: maximum, metrics: metrics, editing: editing, lane: compact ? .none : contentLane,
             minimumWidth: (compact || hidden) && !editing ? 0 : nil)
         let headerWidth = hidden ? 0 : compact ? header.compactRowWidth : min(minimumHeaderWidth, maximum.width)
         return CGSize(width: max(content.width, headerWidth) + horizontal,

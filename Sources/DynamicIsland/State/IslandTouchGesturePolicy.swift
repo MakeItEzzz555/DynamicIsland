@@ -37,6 +37,10 @@ enum IslandTouchPageAction: Equatable {
     case previous
 }
 
+enum IslandIndirectTouchPhase {
+    case began, moved, ended, cancelled
+}
+
 /// Values from raw NSTouch responder callbacks, never inferred from wheel or
 /// mouse events. The adapter assigns IDs using NSObjectProtocol.isEqual.
 struct IslandIndirectTouch: Equatable {
@@ -69,15 +73,18 @@ struct IslandTouchGesturePolicy {
     @discardableResult
     mutating func update(
         contacts: [IslandIndirectTouch],
-        began: Bool,
+        phase: IslandIndirectTouchPhase,
         canBegin: Bool,
         inputStillAllowed: Bool = true
     ) -> IslandTouchPageAction? {
-        guard !contacts.isEmpty else {
+        if phase == .cancelled || (phase == .ended && contacts.isEmpty) {
             cancel()
             return nil
         }
-        guard isSequenceActive || began else { return nil }
+        // A transient empty view-scoped snapshot is not physical release.
+        // Only an actual all-contacts-ended/cancelled callback rearms paging.
+        guard !contacts.isEmpty else { return nil }
+        guard isSequenceActive || phase == .began else { return nil }
         if !isSequenceActive {
             isSequenceActive = true
             eligible = canBegin

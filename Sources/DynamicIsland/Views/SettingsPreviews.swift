@@ -194,7 +194,7 @@ struct SettingsPreviewPresentation {
             hardwareNotchWidth: integrated ? Self.metrics.hardwareNotchWidth : 0)
         header = ExpandedPresentationProfile.headerLayout(page: page, configuration: configuration, editing: false,
             settings: settings, metrics: Self.metrics, pageCount: count)
-        lane = header.mode != .winged ? .none : ExpandedIslandLayoutMetrics.workspaceNotchLane(
+        lane = header.mode == .compactBelowNotch ? .none : ExpandedIslandLayoutMetrics.workspaceNotchLane(
             settings: settings, metrics: Self.metrics, pageCount: count,
             hardwareNotchWidth: integrated ? Self.metrics.hardwareNotchWidth : 0)
         let size = ExpandedPresentationProfile.resolve(for: page).resolvedSize(from: settings.expandedSize,
@@ -205,7 +205,8 @@ struct SettingsPreviewPresentation {
                 showsVisualizer: settings.showVisualizer && settings.showCollapsedVisualizer) : nil,
             useAdaptiveNotchSizing: settings.useAdaptiveNotchSizing, respectHardwareNotch: settings.respectHardwareNotch)
         chrome = ExpandedIslandLayoutMetrics(containerSize: geometry.expandedFrame.size,
-            horizontalPadding: IslandShellLayout.expandedHorizontalPadding(isNotchIntegrated: integrated),
+            horizontalPadding: IslandShellLayout.expandedHorizontalPadding(isNotchIntegrated: integrated,
+                showNavigationControls: settings.showNavigationControls),
             displayMetrics: Self.metrics, headerDrop: header.headerDrop, showHeader: header.mode != .hidden)
         let surface: WorkspaceSurface = page == .agents ? .agents : .media
         let allowed = WorkspaceWidgetAvailability.eligible(on: surface, settings: settings)
@@ -382,7 +383,9 @@ struct IslandShellSettingsPreview: View {
             configuration = value
             navigation.applyConfiguration(value, using: settings)
         }
-        .onChange(of: settings.showAgentsTab) { _, _ in navigation.applyConfiguration(configuration, using: settings) }
+        .onChange(of: navigation.availablePages(using: settings)) { _, _ in
+            navigation.ensureValidSelection(using: settings)
+        }
     }
 }
 
@@ -1345,5 +1348,177 @@ struct LiveActivityLayoutSettingsPreview: View {
                 true
             }
         }
+    }
+}
+
+// MARK: - Synthetic system HUD settings fixtures
+
+enum SystemHUDPreviewCase: String, CaseIterable, Identifiable {
+    case volume = "Volume"
+    case brightness = "Brightness"
+    case capsOn = "Caps Lock On"
+    case capsOff = "Caps Lock Off"
+    case charging = "Charging"
+    case lowBattery = "Low Battery"
+    case criticalBattery = "Critical Battery"
+    case airPods = "AirPods"
+    case airPodsPro = "AirPods Pro"
+    case airPodsGen3 = "AirPods (3rd generation)"
+    case airPodsMax = "AirPods Max"
+    case beats = "Beats"
+    case earbuds = "Earbuds"
+    case genericAudio = "USB Audio"
+    case headphones = "Headphones"
+    case focus = "Focus"
+
+    var id: String { rawValue }
+
+    @MainActor
+    func isEnabled(settings: AppSettings) -> Bool {
+        guard settings.systemHUDsEnabled else { return false }
+        switch self {
+        case .volume: return settings.volumeHUDEnabled
+        case .brightness: return settings.brightnessHUDEnabled
+        case .capsOn, .capsOff: return settings.capsLockHUDEnabled
+        case .charging: return settings.batteryStatusHUDEnabled
+        case .lowBattery, .criticalBattery: return settings.lowBatteryHUDEnabled
+        case .airPods, .airPodsPro, .airPodsGen3, .airPodsMax, .beats, .headphones, .earbuds, .genericAudio:
+            return settings.audioDeviceHUDEnabled
+        case .focus: return settings.focusHUDEnabled
+        }
+    }
+
+    var hasAdjustableLevel: Bool {
+        self == .volume || self == .brightness || self == .charging
+    }
+
+    func activity(value previewValue: Double = 0.68) -> DynamicIslandLiveActivity {
+        let descriptor: SystemHUDDescriptor
+        switch self {
+        case .volume:
+            descriptor = SystemHUDDescriptor(
+                kind: .volume,
+                title: "Volume",
+                subtitle: "\(Int(previewValue * 100))%",
+                symbolName: "speaker.wave.2.fill",
+                progress: previewValue,
+                priority: 120
+            )
+        case .brightness:
+            descriptor = SystemHUDDescriptor(
+                kind: .brightness,
+                title: "Brightness",
+                subtitle: "\(Int(previewValue * 100))%",
+                symbolName: "sun.max.fill",
+                progress: previewValue,
+                priority: 120
+            )
+        case .capsOn:
+            descriptor = SystemHUDDescriptor(
+                kind: .capsLock, title: "Caps Lock On", subtitle: "ABC",
+                symbolName: "capslock.fill", priority: 130
+            )
+        case .capsOff:
+            descriptor = SystemHUDDescriptor(
+                kind: .capsLock, title: "Caps Lock Off", subtitle: "abc",
+                symbolName: "capslock", priority: 130
+            )
+        case .charging:
+            descriptor = SystemHUDDescriptor(
+                kind: .battery, title: "Charging", subtitle: "\(Int(previewValue * 100))%",
+                symbolName: "battery.100percent.bolt", progress: previewValue, priority: 155
+            )
+        case .lowBattery:
+            descriptor = SystemHUDDescriptor(
+                kind: .battery, title: "Low Battery", subtitle: "15%",
+                symbolName: "battery.25percent", progress: 0.15, priority: 180
+            )
+        case .criticalBattery:
+            descriptor = SystemHUDDescriptor(
+                kind: .battery, title: "Critical Battery", subtitle: "8%",
+                symbolName: "exclamationmark.triangle.fill", progress: 0.08, priority: 190
+            )
+        case .airPods, .airPodsPro, .airPodsGen3, .airPodsMax, .beats, .headphones, .earbuds, .genericAudio:
+            let name: String
+            switch self {
+            case .airPods: name = "Maya’s AirPods"
+            case .airPodsPro: name = "Maya’s AirPods Pro"
+            case .airPodsGen3: name = "Maya’s AirPods (3rd generation)"
+            case .airPodsMax: name = "Maya’s AirPods Max"
+            case .beats: name = "Beats Studio Pro"
+            case .headphones: name = "Studio Headphones"
+            case .earbuds: name = "Travel Earbuds"
+            default: name = "Studio USB Audio"
+            }
+            let device = AudioDevicePresentation(name: name)
+            descriptor = SystemHUDDescriptor(
+                kind: .audioDevice, title: device.name, subtitle: device.status,
+                symbolName: device.family.symbolName, priority: 165
+            )
+        case .focus:
+            descriptor = SystemHUDDescriptor(
+                kind: .focus, title: "Focus", subtitle: "On",
+                symbolName: "moon.fill", priority: 140
+            )
+        }
+
+        return DynamicIslandLiveActivity(
+            id: "settings-system-hud",
+            kind: .system,
+            title: descriptor.title,
+            subtitle: descriptor.subtitle,
+            symbolName: descriptor.symbolName,
+            priority: 200,
+            isActive: true,
+            progress: descriptor.progress,
+            updatedAt: Date(),
+            systemHUDKind: descriptor.kind
+        )
+    }
+}
+
+struct SystemHUDSettingsPreview: View {
+    @ObservedObject var settings: AppSettings
+    @State private var previewValue = 0.68
+    @State private var previewCase: SystemHUDPreviewCase = .volume
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Text("Live preview · Sample content")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Picker("Preview", selection: $previewCase) {
+                    ForEach(SystemHUDPreviewCase.allCases) { item in
+                        Text(item.rawValue).tag(item)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 185)
+            }
+
+            SettingsPreviewSandbox(title: "System HUD Preview", usesSampleContent: true,
+                                   showsReduceMotionToggle: true, height: 70) { _ in
+                SystemHUDShellPreview(settings: settings, activity: previewActivity)
+                    .frame(maxWidth: .infinity, alignment: .top)
+                    .opacity(previewCase.isEnabled(settings: settings) ? 1 : 0.35)
+            }
+
+            if !previewCase.isEnabled(settings: settings) {
+                HelpText("This HUD is disabled in Settings.")
+            }
+            if previewCase.hasAdjustableLevel {
+                Slider(value: $previewValue, in: 0...1)
+                    .accessibilityLabel("Preview level")
+                    .frame(maxWidth: 220)
+            }
+        }
+        .padding(.vertical, 4)
+        .disabled(!settings.systemHUDsEnabled)
+    }
+
+    private var previewActivity: DynamicIslandLiveActivity {
+        previewCase.activity(value: previewValue)
     }
 }

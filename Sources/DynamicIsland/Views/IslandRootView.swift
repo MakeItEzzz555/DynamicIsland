@@ -258,13 +258,20 @@ enum IslandShellLayout {
     static let collapsedHorizontalPadding: CGFloat = 8
     static let floatingExpandedHorizontalPadding: CGFloat = 12
     static let integratedExpandedHorizontalPadding: CGFloat = 31
+    /// The notch-integrated shell has a 19pt shoulder; zero chrome keeps only
+    /// a 6pt visible inset beyond it, matching its bottom/notch clearance.
+    static let integratedExpandedShoulderWidth: CGFloat = 19
+    static let zeroChromeVisibleClearance: CGFloat = 6
 
     static func collapsedHorizontalPadding(isNotchIntegrated: Bool) -> CGFloat {
         collapsedHorizontalPadding
     }
 
-    static func expandedHorizontalPadding(isNotchIntegrated: Bool) -> CGFloat {
-        isNotchIntegrated ? integratedExpandedHorizontalPadding : floatingExpandedHorizontalPadding
+    static func expandedHorizontalPadding(isNotchIntegrated: Bool, showNavigationControls: Bool = true) -> CGFloat {
+        if !showNavigationControls {
+            return (isNotchIntegrated ? integratedExpandedShoulderWidth : 0) + zeroChromeVisibleClearance
+        }
+        return isNotchIntegrated ? integratedExpandedHorizontalPadding : floatingExpandedHorizontalPadding
     }
 
     static let collapsedTopPadding: CGFloat = 0
@@ -352,9 +359,9 @@ struct ExpandedHeaderLayout: Equatable, Sendable {
 
     static let winged = ExpandedHeaderLayout(mode: .winged, compactRowWidth: 0, headerDrop: 0)
     static func hidden(metrics: ResolvedIslandMetrics, isNotchIntegrated: Bool) -> Self {
+        // This is physical occlusion, not a hidden header's footprint.
         let drop = isNotchIntegrated && metrics.hasHardwareNotch
-            ? max(0, metrics.hardwareNotchHeight + ExpandedIslandLayoutMetrics.notchContentClearance(metrics: metrics)
-                  - 10 * metrics.spacingScale)
+            ? max(0, metrics.hardwareNotchHeight)
             : 0
         return Self(mode: .hidden, compactRowWidth: 0, headerDrop: drop)
     }
@@ -417,12 +424,15 @@ struct ExpandedIslandLayoutMetrics {
     /// Header rhythm (2026-10-06): a small intentional gap only. The header
     /// row stays notch-safe through the horizontal exclusion (winged) or by
     /// starting below the notch (compact), not padding.
-    var topPadding: CGFloat { 10 * displayMetrics.spacingScale + headerDrop }
+    var topPadding: CGFloat {
+        (showHeader ? 10 : IslandShellLayout.zeroChromeVisibleClearance) * displayMetrics.spacingScale + headerDrop
+    }
     /// One optical clearance below the lowest content (2026-10-06: was 20 pt);
     /// the same spacing family as the 12 pt side inset and the notch clearance.
-    var bottomPadding: CGFloat { Self.contentBottomClearance(metrics: displayMetrics) }
-    static func contentBottomClearance(metrics: ResolvedIslandMetrics) -> CGFloat {
-        IslandShellLayout.expandedBottomPadding * metrics.spacingScale
+    var bottomPadding: CGFloat { Self.contentBottomClearance(metrics: displayMetrics, showNavigationControls: showHeader) }
+    static func contentBottomClearance(metrics: ResolvedIslandMetrics, showNavigationControls: Bool = true) -> CGFloat {
+        (showNavigationControls ? IslandShellLayout.expandedBottomPadding : IslandShellLayout.zeroChromeVisibleClearance)
+            * metrics.spacingScale
     }
     var tabSwitcherHeight: CGFloat { showHeader ? 34 * displayMetrics.compactControlScale : 0 }
     var tabToPageSpacing: CGFloat { showHeader ? 4 * displayMetrics.spacingScale : 0 }
@@ -436,15 +446,25 @@ struct ExpandedIslandLayoutMetrics {
     var workspaceVerticalChrome: CGFloat { topPadding + bottomPadding + tabSwitcherHeight + tabToPageSpacing }
     /// Vertical notch-to-content clearance: the same distance the header
     /// keeps between the physical notch and its side buttons.
-    static func notchContentClearance(metrics: ResolvedIslandMetrics) -> CGFloat {
-        ExpandedIslandHeaderMetrics.notchClearance * metrics.spacingScale
+    static func notchContentClearance(metrics: ResolvedIslandMetrics, showNavigationControls: Bool = true) -> CGFloat {
+        (showNavigationControls ? ExpandedIslandHeaderMetrics.notchClearance : IslandShellLayout.zeroChromeVisibleClearance)
+            * metrics.spacingScale
     }
     /// The workspace notch lane for a notch-integrated shell (`.none`
     /// otherwise): how far centered top content may rise into the empty
     /// header band under the notch, and the header geometry that bounds it.
     static func workspaceNotchLane(metrics: ResolvedIslandMetrics, isNotchIntegrated: Bool,
-                                   pageCount: Int, clipboardEnabled: Bool, hardwareNotchWidth: CGFloat) -> WorkspaceNotchLane {
+                                   pageCount: Int, clipboardEnabled: Bool, hardwareNotchWidth: CGFloat,
+                                   showNavigationControls: Bool = true) -> WorkspaceNotchLane {
         guard isNotchIntegrated, metrics.hasHardwareNotch, metrics.hardwareNotchHeight > 0 else { return .none }
+        if !showNavigationControls {
+            let clearance = IslandShellLayout.zeroChromeVisibleClearance * metrics.spacingScale
+            let notchWidth = hardwareNotchWidth.isFinite && hardwareNotchWidth > 0
+                ? max(hardwareNotchWidth, metrics.hardwareNotchWidth) : metrics.hardwareNotchWidth
+            guard notchWidth > 0 else { return .none }
+            return WorkspaceNotchLane(rise: metrics.hardwareNotchHeight, headerGroupWidth: 0, clearance: clearance,
+                minimumInnerWidth: 0, exclusionWidth: notchWidth + 2 * clearance)
+        }
         let chrome = ExpandedIslandLayoutMetrics(containerSize: .zero, horizontalPadding: 0, displayMetrics: metrics)
         let contentTop = chrome.topPadding + chrome.tabSwitcherHeight + chrome.tabToPageSpacing
         let rise = max(0, contentTop - (metrics.hardwareNotchHeight + notchContentClearance(metrics: metrics)))
@@ -460,10 +480,9 @@ struct ExpandedIslandLayoutMetrics {
     @MainActor
     static func workspaceNotchLane(settings: AppSettings, metrics: ResolvedIslandMetrics, pageCount: Int,
                                    hardwareNotchWidth: CGFloat) -> WorkspaceNotchLane {
-        guard settings.showNavigationControls else { return .none }
         return workspaceNotchLane(metrics: metrics, isNotchIntegrated: metrics.hasHardwareNotch && settings.respectHardwareNotch,
                            pageCount: pageCount, clipboardEnabled: settings.clipboardHistoryEnabled,
-                           hardwareNotchWidth: hardwareNotchWidth)
+                           hardwareNotchWidth: hardwareNotchWidth, showNavigationControls: settings.showNavigationControls)
     }
     /// The most workspace content height this display can present (shared by
     /// the shell resolver and the grid's display row budget).
@@ -568,11 +587,12 @@ struct IslandRootView: View {
 
     private var workspaceNotchLane: WorkspaceNotchLane {
         // The compact header occupies the space under the notch.
-        guard expandedHeaderLayout.mode == .winged else { return .none }
+        guard expandedHeaderLayout.mode != .compactBelowNotch else { return .none }
         return ExpandedIslandLayoutMetrics.workspaceNotchLane(metrics: layoutStore.displayMetrics,
             isNotchIntegrated: layoutStore.displayMetrics.hasHardwareNotch && settings.respectHardwareNotch,
             pageCount: navigation.availablePages(using: settings).count, clipboardEnabled: settings.clipboardHistoryEnabled,
-            hardwareNotchWidth: layoutStore.hardwareNotchWidth)
+            hardwareNotchWidth: layoutStore.hardwareNotchWidth,
+            showNavigationControls: expandedHeaderLayout.mode != .hidden)
     }
     @State private var collapsedPreviewVisible = false
     @State private var collapsedPreviewGeneration = 0
@@ -701,7 +721,8 @@ struct IslandRootView: View {
         let metrics = layoutStore.displayMetrics
         let notchIntegrated = metrics.hasHardwareNotch && settings.respectHardwareNotch
         let chrome = ExpandedIslandLayoutMetrics(containerSize: surfaceSize,
-            horizontalPadding: IslandShellLayout.expandedHorizontalPadding(isNotchIntegrated: notchIntegrated),
+            horizontalPadding: IslandShellLayout.expandedHorizontalPadding(isNotchIntegrated: notchIntegrated,
+                showNavigationControls: expandedHeaderLayout.mode != .hidden),
             displayMetrics: metrics, headerDrop: expandedHeaderLayout.headerDrop,
             showHeader: expandedHeaderLayout.mode != .hidden)
         let shellOrigin = CGPoint(x: surfaceFrame.minX, y: layoutStore.canvasSize.height - surfaceFrame.maxY)
@@ -725,6 +746,16 @@ struct IslandRootView: View {
                 if !isExpanded {
                     layoutStore.preservePageForNextExpansion(navigation.selectedPage)
                     onRequestExpand()
+                }
+            },
+            onDoubleClick: {
+                gestureCoordinator.handle(.doubleClick, settings: settings, context: gestureContext, callbacks: gestureCallbacks)
+            },
+            onLongPress: {
+                if settings.gesturesEnabled && settings.gestureInputSource == .trackpad {
+                    gestureCoordinator.handle(.longPress, settings: settings, context: gestureContext, callbacks: gestureCallbacks)
+                } else {
+                    requestBackgroundWorkspaceAction(.edit)
                 }
             })
     }
@@ -1137,7 +1168,9 @@ struct IslandRootView: View {
                     modules.timer.resume()
                 }
             },
-            openSettings: onOpenSettings
+            openSettings: onOpenSettings,
+            openClipboard: { requestBackgroundWorkspaceAction(.clipboard) },
+            editWorkspace: { requestBackgroundWorkspaceAction(.edit) }
         )
     }
 
@@ -1978,6 +2011,8 @@ struct IslandShellBackgroundInteraction: NSViewRepresentable {
     let onClipboard: () -> Void
     let onSettings: () -> Void
     let onNavigate: (Bool) -> Void
+    var onDoubleClick: (() -> Void)? = nil
+    var onLongPress: (() -> Void)? = nil
     var shellShape = IslandShellShape(topCornerRadius: 0, bottomCornerRadius: 0)
 
     func clipped(to shape: IslandShellShape) -> Self {
@@ -2046,6 +2081,10 @@ final class IslandShellBackgroundInputView: NSView {
         case .notch:
             NSMenu.popUpContextMenu(actionsMenu(), with: event, for: self)
         case .background:
+            if event.clickCount == 2 {
+                configuration.onDoubleClick?()
+                return
+            }
             pressOrigin = point
             let generation = pressGeneration
             let work = DispatchWorkItem { [weak self] in
@@ -2055,7 +2094,7 @@ final class IslandShellBackgroundInputView: NSView {
                       let origin = self.pressOrigin,
                       configuration.geometry.region(at: origin) == .background else { return }
                 self.cancelPress()
-                configuration.onEdit()
+                (configuration.onLongPress ?? configuration.onEdit)()
             }
             pressWork = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.55, execute: work)
@@ -2593,7 +2632,8 @@ struct CompactIslandView: View {
                 CollapsedSystemHUDCompactView(
                     activity: overlay,
                     layout: sideSlotGeometry,
-                    controller: modules.systemHUD
+                    controller: modules.systemHUD,
+                    motionEnabled: !settings.reduceExtraMotion
                 )
                 .background(Color.black.opacity(0.97))
                 .transition(.compactMediaContent)
@@ -2644,7 +2684,8 @@ struct CompactIslandView: View {
             CollapsedSystemHUDCompactView(
                 activity: activity,
                 layout: sideSlotGeometry,
-                controller: modules.systemHUD
+                controller: modules.systemHUD,
+                motionEnabled: !settings.reduceExtraMotion
             )
             .transition(.compactMediaContent)
 
@@ -3083,6 +3124,7 @@ struct CollapsedSystemHUDCompactView: View {
     let activity: DynamicIslandLiveActivity
     let layout: CompactCollapsedSideSlotGeometry
     var controller: SystemHUDController? = nil
+    var motionEnabled = true
 
     @Environment(\.islandDisplayMetrics) private var displayMetrics
     @State private var confirmedProgress: Double = 0
@@ -3091,39 +3133,45 @@ struct CollapsedSystemHUDCompactView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            CompactCollapsedSideSlotLayout(geometry: layout) {
-                SafeSystemImage(symbolName: activity.symbolName, fallbackSymbolName: "slider.horizontal.3")
-                    .font(.system(size: displayMetrics.icon(11), weight: .bold))
-                    .foregroundStyle(accentColor.opacity(0.96))
-                    .frame(
-                        width: max(CollapsedActivityLayoutProfile.systemHUDLeftContentWidth * displayMetrics.collapsedSideContentScale, 16),
-                        height: max(CollapsedActivityLayoutProfile.systemHUDLeftContentWidth * displayMetrics.collapsedSideContentScale, 16)
-                    )
-                    .contentTransition(.symbolEffect(.replace.byLayer))
-            } right: {
-                if sliderKind != nil {
-                    Text(SystemHUDFormatting.percentage(confirmedProgress))
-                        .font(.system(size: displayMetrics.font(8.2, minimum: 7.4, maximum: 10), weight: .bold, design: .rounded))
-                        .monospacedDigit()
+            if resolvedKind == .audioDevice {
+                AudioDeviceHUDContentView(name: activity.title, layout: layout, motionEnabled: motionEnabled)
+                    .frame(maxHeight: .infinity)
+            } else {
+                CompactCollapsedSideSlotLayout(geometry: layout) {
+                    SafeSystemImage(symbolName: activity.symbolName, fallbackSymbolName: "slider.horizontal.3")
+                        .font(.system(size: displayMetrics.icon(11), weight: .bold))
                         .foregroundStyle(accentColor.opacity(0.96))
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                        .frame(minWidth: 30 * displayMetrics.compactControlScale, alignment: .trailing)
-                } else {
-                    Text(activity.subtitle ?? activity.title)
-                        .font(.system(size: displayMetrics.font(7.4, minimum: 7.2, maximum: 9.4), weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.84))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.72)
                         .frame(
-                            width: CollapsedActivityLayoutProfile.systemHUDRightContentWidth * displayMetrics.collapsedSideContentScale,
-                            alignment: .trailing
+                            width: max(CollapsedActivityLayoutProfile.systemHUDLeftContentWidth * displayMetrics.collapsedSideContentScale, 16),
+                            height: max(CollapsedActivityLayoutProfile.systemHUDLeftContentWidth * displayMetrics.collapsedSideContentScale, 16)
                         )
+                        .contentTransition(.symbolEffect(.replace.byLayer))
+                } right: {
+                    if sliderKind != nil {
+                        Text(SystemHUDFormatting.percentage(confirmedProgress))
+                            .font(.system(size: displayMetrics.font(8.2, minimum: 7.4, maximum: 10), weight: .bold, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(accentColor.opacity(0.96))
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .frame(minWidth: 30 * displayMetrics.compactControlScale, alignment: .trailing)
+                    } else {
+                        Text(activity.subtitle ?? activity.title)
+                            .font(.system(size: displayMetrics.font(7.4, minimum: 7.2, maximum: 9.4), weight: .bold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.84))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.72)
+                            .frame(
+                                width: CollapsedActivityLayoutProfile.systemHUDRightContentWidth * displayMetrics.collapsedSideContentScale,
+                                alignment: .trailing
+                            )
+                    }
                 }
+                // Row band: the physical top band (notch height or collapsed
+                // height), so the icon and percentage stay beside the notch.
+                .frame(maxHeight: .infinity)
+
             }
-            // Row band: the physical top band (notch height or collapsed
-            // height), so the icon and percentage stay beside the notch.
-            .frame(maxHeight: .infinity)
 
             if sliderKind != nil {
                 // Slider band hanging below the top band. The shell's bottom
@@ -3258,12 +3306,14 @@ struct SystemHUDShellPreview: View {
 
     static func geometry(settings: AppSettings, activity: DynamicIslandLiveActivity) -> IslandGeometry {
         let isInteractive = activity.systemHUDKind == .volume || activity.systemHUDKind == .brightness
+        let isAudioDevice = activity.systemHUDKind == .audioDevice
         return NotchGeometryService().geometry(
             for: referenceScreen,
             collapsedSize: settings.collapsedSize,
             expandedSize: settings.expandedSize,
-            collapsedActivityProfile: .systemHUD,
-            collapsedPresentationProfile: isInteractive ? .systemHUD(value: activity.progress ?? 0) : .normal,
+            collapsedActivityProfile: isAudioDevice ? .audioDeviceHUD : .systemHUD,
+            collapsedPresentationProfile: isAudioDevice ? .audioDeviceHUD
+                : isInteractive ? .systemHUD(value: activity.progress ?? 0) : .normal,
             useAdaptiveNotchSizing: true,
             respectHardwareNotch: true
         )
@@ -3286,7 +3336,8 @@ struct SystemHUDShellPreview: View {
                     leftRegionWidth: geometry.collapsedLeftRegionWidth,
                     notchCoreWidth: geometry.collapsedNotchCoreWidth,
                     rightRegionWidth: geometry.collapsedRightRegionWidth
-                )
+                ),
+                motionEnabled: !settings.reduceExtraMotion
             )
         }
         .notchIntegrated(true)
@@ -3685,7 +3736,8 @@ struct ExpandedIslandView: View {
             let metrics = ExpandedIslandLayoutMetrics(
                 containerSize: proxy.size,
                 horizontalPadding: IslandShellLayout.expandedHorizontalPadding(
-                    isNotchIntegrated: isNotchIntegratedShell
+                    isNotchIntegrated: isNotchIntegratedShell,
+                    showNavigationControls: headerLayout.mode != .hidden
                 ),
                 displayMetrics: layoutStore.displayMetrics,
                 headerDrop: headerLayout.headerDrop,

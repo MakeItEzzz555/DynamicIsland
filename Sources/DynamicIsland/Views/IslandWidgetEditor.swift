@@ -197,6 +197,7 @@ struct IslandWidgetEditor: View {
     private func dragSurfaces(_ region: WorkspaceWidgetRegion, title: String) -> some View {
         // The whole card is the drag source; content stays visible and inert.
         WorkspaceNativeDragHandle(title: title, symbol: region.widgets.first?.kind.symbol ?? "square",
+                                  nativeIcon: region.widgets.first.flatMap { NativeAppIconResolver.shared.installedIcon(for: $0.kind) },
                                   payload: region.id.rawValue, began: { begin(.existing(region.id)) }, ended: finishDrag)
             .accessibilityHidden(true)
         if region.isStack, let terminal = region.widgets.first(where: { $0.kind == .terminal }) {
@@ -210,7 +211,16 @@ struct IslandWidgetEditor: View {
     }
 
     private func paletteLandingLabel(_ kind: IslandWidget) -> some View {
-        Label("Add \(kind.title)", systemImage: kind.symbol)
+        Group {
+            if NativeAppIdentity.widget(kind) != nil {
+                HStack(spacing: 6) {
+                    NativeWidgetIconView(widget: kind, size: 20)
+                    Text("Add \(kind.title)")
+                }
+            } else {
+                Label("Add \(kind.title)", systemImage: kind.symbol)
+            }
+        }
             .font(.system(size: 11, weight: .semibold))
             .foregroundStyle(WorkspaceEditorChrome.accent)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -409,13 +419,7 @@ struct IslandWidgetEditor: View {
     private func paletteTile(_ kind: IslandWidget, present: Bool) -> some View {
         VStack(spacing: 3) {
             ZStack(alignment: .bottomTrailing) {
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(LinearGradient(colors: [kind.paletteTint.opacity(0.95), kind.paletteTint.opacity(0.70)],
-                                         startPoint: .top, endPoint: .bottom))
-                    .overlay {
-                        Image(systemName: kind.symbol).font(.system(size: 14, weight: .semibold)).foregroundStyle(.white)
-                    }
-                    .frame(width: 32, height: 32)
+                NativeWidgetIconView(widget: kind)
                 if present {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.system(size: 12, weight: .bold))
@@ -437,7 +441,8 @@ struct IslandWidgetEditor: View {
         .overlay {
             if !present && editing {
                 // Click adds; dragging places a live preview where it drops.
-                WorkspaceNativeDragHandle(title: kind.title, symbol: kind.symbol, payload: kind.rawValue,
+                WorkspaceNativeDragHandle(title: kind.title, symbol: kind.symbol,
+                                          nativeIcon: NativeAppIconResolver.shared.installedIcon(for: kind), payload: kind.rawValue,
                                           clicked: { modify("Added \(kind.title)") { $0.add(kind, on: surface) } },
                                           began: { begin(.palette(kind)) }, ended: finishDrag)
                     .accessibilityHidden(true)
@@ -676,6 +681,7 @@ struct WorkspaceNativeDragHandle: NSViewRepresentable {
     enum Style { case surface, chip }
     let title: String
     var symbol: String = "square"
+    var nativeIcon: NSImage? = nil
     let payload: String
     var style: Style = .surface
     var clicked: (() -> Void)? = nil
@@ -683,8 +689,9 @@ struct WorkspaceNativeDragHandle: NSViewRepresentable {
     var ended: () -> Void
     func makeNSView(context: Context) -> WorkspaceNativeDragView { WorkspaceNativeDragView() }
     func updateNSView(_ view: WorkspaceNativeDragView, context: Context) {
-        let restyled = view.style != style || view.title != title
+        let restyled = view.style != style || view.title != title || view.nativeIcon !== nativeIcon
         view.title = title; view.symbol = symbol; view.payload = payload; view.style = style
+        view.nativeIcon = nativeIcon
         view.clicked = clicked; view.began = began; view.ended = ended
         view.setAccessibilityLabel(title)
         if restyled { view.needsDisplay = true }
@@ -696,6 +703,7 @@ struct WorkspaceNativeDragHandle: NSViewRepresentable {
 final class WorkspaceNativeDragView: NSView, NSDraggingSource {
     var title = ""
     var symbol = "square"
+    var nativeIcon: NSImage?
     var payload = ""
     var style: WorkspaceNativeDragHandle.Style = .surface
     var clicked: (() -> Void)?
@@ -739,7 +747,7 @@ final class WorkspaceNativeDragView: NSView, NSDraggingSource {
         let item = NSPasteboardItem()
         item.setString(payload, forType: NSPasteboard.PasteboardType(WorkspaceNativeDragHandle.type.identifier))
         let dragItem = NSDraggingItem(pasteboardWriter: item)
-        let image = Self.dragImage(title: title, symbol: symbol)
+        let image = Self.dragImage(title: title, symbol: symbol, nativeIcon: nativeIcon)
         let origin = convert(down.locationInWindow, from: nil)
         dragItem.setDraggingFrame(NSRect(x: origin.x - image.size.width / 2, y: origin.y - image.size.height / 2,
                                          width: image.size.width, height: image.size.height), contents: image)
@@ -753,7 +761,7 @@ final class WorkspaceNativeDragView: NSView, NSDraggingSource {
         DispatchQueue.main.async { clicked() }
     }
     /// Lightweight proxy: icon + title pill. The live renderer never follows the pointer.
-    static func dragImage(title: String, symbol: String) -> NSImage {
+    static func dragImage(title: String, symbol: String, nativeIcon: NSImage? = nil) -> NSImage {
         let font = NSFont.systemFont(ofSize: 12, weight: .semibold)
         let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.white]
         let label = NSAttributedString(string: title, attributes: attributes)
@@ -764,7 +772,9 @@ final class WorkspaceNativeDragView: NSView, NSDraggingSource {
             let path = NSBezierPath(roundedRect: pill, xRadius: 11, yRadius: 11)
             NSColor(white: 0.08, alpha: 0.94).setFill(); path.fill()
             NSColor.white.withAlphaComponent(0.22).setStroke(); path.lineWidth = 1; path.stroke()
-            if let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+            if let nativeIcon {
+                nativeIcon.draw(in: NSRect(x: 10, y: rect.midY - 10, width: 20, height: 20))
+            } else if let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
                 .withSymbolConfiguration(.init(pointSize: 13, weight: .semibold)) {
                 image.tinted(.white).draw(in: NSRect(x: 12, y: rect.midY - 8, width: 16, height: 16))
             }

@@ -12,6 +12,8 @@ public enum IslandGestureAction: String, CaseIterable, Codable, Identifiable {
     case mediaPreviousTrack
     case timerStartStop
     case openSettings
+    case openClipboard
+    case editWorkspace
     case none
 
     public var id: String { rawValue }
@@ -38,6 +40,10 @@ public enum IslandGestureAction: String, CaseIterable, Codable, Identifiable {
             "Timer Start/Stop"
         case .openSettings:
             "Open Settings"
+        case .openClipboard:
+            "Open Clipboard"
+        case .editWorkspace:
+            "Edit Workspace"
         case .none:
             "None"
         }
@@ -93,6 +99,8 @@ struct IslandGestureCallbacks {
     var mediaPreviousTrack: () -> Void = {}
     var timerStartStop: () -> Void = {}
     var openSettings: () -> Void = {}
+    var openClipboard: () -> Void = {}
+    var editWorkspace: () -> Void = {}
 }
 
 @MainActor
@@ -234,8 +242,10 @@ final class IslandGestureCoordinator: ObservableObject {
             return settings.timerEnabled &&
                 settings.timerStartStopGestureEnabled &&
                 (context.timerIsRunning || context.timerCanResume)
-        case .openSettings:
+        case .openSettings, .editWorkspace:
             return true
+        case .openClipboard:
+            return settings.clipboardHistoryEnabled
         case .none:
             return false
         }
@@ -277,6 +287,10 @@ final class IslandGestureCoordinator: ObservableObject {
             callbacks.timerStartStop()
         case .openSettings:
             callbacks.openSettings()
+        case .openClipboard:
+            callbacks.openClipboard()
+        case .editWorkspace:
+            callbacks.editWorkspace()
         case .none:
             break
         }

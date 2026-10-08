@@ -275,6 +275,7 @@ enum AudioOutputDeviceKind: Equatable, Sendable {
     case airPods
     case airPodsPro
     case airPodsMax
+    case airPodsGen3
     case beats
     case headphones
     case earbuds
@@ -284,9 +285,14 @@ enum AudioOutputDeviceKind: Equatable, Sendable {
         let value = name.lowercased()
         if value.contains("airpods pro") { return .airPodsPro }
         if value.contains("airpods max") { return .airPodsMax }
-        if value.contains("airpods") { return .airPods }
-        if value.contains("beats") { return .beats }
-        if value.contains("earbud") || value.contains("buds") { return .earbuds }
+        if value.contains("airpods") {
+            // A number elsewhere in a person's device name isn't model evidence.
+            let gen3Pattern = #"airpods\s+(?:3\b|gen\s*3\b|\(3rd\b|third\b|3rd\b)"#
+            if value.range(of: gen3Pattern, options: .regularExpression) != nil { return .airPodsGen3 }
+            return .airPods
+        }
+        if value.contains("beats") || value.contains("studio buds") { return .beats }
+        if value.contains("earbud") || value.contains("buds") || value.contains("wf-") { return .earbuds }
         if value.contains("headphone") || value.contains("headset") || value.contains("wh-") {
             return .headphones
         }
@@ -295,10 +301,29 @@ enum AudioOutputDeviceKind: Equatable, Sendable {
 
     var symbolName: String {
         switch self {
-        case .airPods, .airPodsPro, .earbuds: "airpodspro"
+        case .airPods: "airpods"
+        case .airPodsPro: "airpodspro"
+        case .airPodsMax: "airpodsmax"
+        case .airPodsGen3: "airpods.gen3"
+        case .beats: "beats.headphones"
+        case .earbuds: "earbuds"
+        case .headphones: "headphones"
+        case .generic: "speaker.wave.2.fill"
+        }
+    }
+
+    var fallbackSymbolName: String {
+        switch self {
+        case .airPods, .airPodsPro, .airPodsGen3, .earbuds: "earbuds"
         case .airPodsMax, .beats, .headphones: "headphones"
         case .generic: "speaker.wave.2.fill"
         }
+    }
+
+    func resolvedSymbolName(isAvailable: (String) -> Bool) -> String {
+        if isAvailable(symbolName) { return symbolName }
+        if isAvailable(fallbackSymbolName) { return fallbackSymbolName }
+        return "speaker.wave.2.fill"
     }
 }
 
@@ -322,7 +347,7 @@ struct AudioOutputHUDStateTracker: Equatable, Sendable {
         return SystemHUDDescriptor(
             kind: .audioDevice,
             title: snapshot.name,
-            subtitle: "Output Changed",
+            subtitle: "Connected",
             symbolName: snapshot.kind.symbolName,
             priority: 165,
             updatedAt: date,

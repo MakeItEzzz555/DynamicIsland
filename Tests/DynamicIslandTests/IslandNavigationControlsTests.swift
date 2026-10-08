@@ -40,7 +40,8 @@ final class IslandNavigationControlsTests: XCTestCase {
             minimumHeaderWidth: ExpandedIslandHeaderMetrics.minimumContentWidth(pageCount: 4, clipboardEnabled: true,
                 hardwareNotchWidth: 186), header: header)
         let chrome = ExpandedIslandLayoutMetrics(containerSize: size,
-            horizontalPadding: IslandShellLayout.expandedHorizontalPadding(isNotchIntegrated: true), displayMetrics: notched,
+            horizontalPadding: IslandShellLayout.expandedHorizontalPadding(isNotchIntegrated: true,
+                showNavigationControls: settings.showNavigationControls), displayMetrics: notched,
             headerDrop: header.headerDrop, showHeader: header.mode != .hidden)
         let projection = WorkspaceWidgetLayoutProjection.make(regions: config.regions(on: surface),
             availableSize: CGSize(width: chrome.innerWidth, height: chrome.pageHeight), metrics: notched, editing: editing)
@@ -61,13 +62,17 @@ final class IslandNavigationControlsTests: XCTestCase {
                 XCTAssertEqual(chrome.tabSwitcherHeight, 0)
                 XCTAssertEqual(chrome.tabToPageSpacing, 0)
                 XCTAssertEqual(chrome.topPadding, notched.hardwareNotchHeight
-                    + ExpandedIslandLayoutMetrics.notchContentClearance(metrics: notched), accuracy: 0.001)
+                    + ExpandedIslandLayoutMetrics.notchContentClearance(metrics: notched, showNavigationControls: false), accuracy: 0.001)
             }
         }
         let external = ExpandedHeaderLayout.hidden(metrics: .fallback, isNotchIntegrated: false)
         XCTAssertEqual(external.headerDrop, 0)
-        XCTAssertEqual(ExpandedIslandLayoutMetrics.workspaceNotchLane(settings: settings, metrics: notched,
-            pageCount: 4, hardwareNotchWidth: 186), .none)
+        let lane = ExpandedIslandLayoutMetrics.workspaceNotchLane(settings: settings, metrics: notched,
+            pageCount: 4, hardwareNotchWidth: 186)
+        XCTAssertEqual(lane.rise, notched.hardwareNotchHeight)
+        XCTAssertEqual(lane.exclusionWidth, notched.hardwareNotchWidth + 2 * notched.spacing(6), accuracy: 0.001)
+        XCTAssertEqual(lane.headerGroupWidth, 0)
+        XCTAssertEqual(lane.minimumInnerWidth, 0)
     }
 
     func testHiddenHeaderShrinksShellWithoutChangingSemanticWidgetSize() throws {

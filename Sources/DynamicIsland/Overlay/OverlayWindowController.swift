@@ -334,8 +334,8 @@ final class OverlayWindowController {
         // mouse events cannot reliably provide finger counts.
         hostingView.allowedTouchTypes = [.indirect]
         hostingView.wantsRestingTouches = true
-        hostingView.onIndirectTouches = { [weak self] contacts, began, cancelled in
-            self?.handleIndirectTouches(contacts, began: began, cancelled: cancelled)
+        hostingView.onIndirectTouches = { [weak self] contacts, phase in
+            self?.handleIndirectTouches(contacts, phase: phase)
         }
         hostingView.wantsLayer = true
         hostingView.layer?.backgroundColor = NSColor.clear.cgColor
@@ -825,6 +825,10 @@ final class OverlayWindowController {
         if let hud = activeInteractiveSystemHUD(activities: activities) {
             return .systemHUD(value: hud.progress ?? 0)
         }
+        let hudResolution = collapsedLayoutResolution(activities: activities)
+        if (hudResolution.overlayTransient?.activity ?? hudResolution.primary?.activity)?.systemHUDKind == .audioDevice {
+            return .audioDeviceHUD
+        }
         let mode = collapsedContentMode(activities: activities)
         if case .screenRecording = mode {
             return .screenRecording
@@ -844,8 +848,8 @@ final class OverlayWindowController {
         activities: [DynamicIslandLiveActivity]
     ) -> CollapsedActivityLayoutProfile? {
         let resolution = collapsedLayoutResolution(activities: activities)
-        if resolution.primary == nil, resolution.overlayTransient != nil {
-            return .systemHUD
+        if resolution.primary == nil, let overlay = resolution.overlayTransient {
+            return overlay.activity.systemHUDKind == .audioDevice ? .audioDeviceHUD : .systemHUD
         }
 
         guard let primary = resolution.primary?.activity else { return nil }
@@ -866,7 +870,7 @@ final class OverlayWindowController {
         case .battery:
             return .battery
         case .system:
-            return .systemHUD
+            return primary.systemHUDKind == .audioDevice ? .audioDeviceHUD : .systemHUD
         case .screenRecording:
             return .screenRecording
         case .keepAwake, .terminalTask, .reminder, .voiceRecording,
@@ -1951,8 +1955,8 @@ final class OverlayWindowController {
         !layoutStore.transientInteractionOwners.contains(.workspaceEditor) && NSEvent.pressedMouseButtons == 0
     }
 
-    private func handleIndirectTouches(_ contacts: [IslandIndirectTouch], began: Bool, cancelled: Bool) {
-        if cancelled {
+    private func handleIndirectTouches(_ contacts: [IslandIndirectTouch], phase: IslandIndirectTouchPhase) {
+        if phase == .cancelled {
             touchPaging.cancel()
             // Keep already observed wheel-tail ownership until its native
             // ending/new beginning, so cancellation cannot turn it into media.
@@ -1966,7 +1970,7 @@ final class OverlayWindowController {
             screenRect(for: IslandCanvasCoordinateSpace.appKitLocalRect(
                 fromSwiftUI: frame, canvasHeight: layoutStore.canvasSize.height)).contains(pointer)
         }
-        let action = touchPaging.update(contacts: contacts, began: began,
+        let action = touchPaging.update(contacts: contacts, phase: phase,
             canBegin: touchPagingInputAllowed && !layoutStore.isShellMorphing && inside && !overControl,
             inputStillAllowed: touchPagingInputAllowed)
         if touchPaging.reservesIslandScroll { touchScrollOwnership.reserve() }
@@ -2192,6 +2196,12 @@ final class OverlayWindowController {
             return true
         case .openSettings:
             onOpenSettingsFromGesture()
+            expandedScrollGestureHandled = true
+            expandedScrollLastActionAt = CACurrentMediaTime()
+            expandedScrollDelta = .zero
+            return true
+        case .openClipboard, .editWorkspace:
+            requestWorkspaceAction(action == .openClipboard ? .clipboard : .edit)
             expandedScrollGestureHandled = true
             expandedScrollLastActionAt = CACurrentMediaTime()
             expandedScrollDelta = .zero
@@ -2876,7 +2886,7 @@ final class OverlayWindowController {
             modules.media.playPause()
             collapsedScrollLastActionAt = CACurrentMediaTime()
             return true
-        case .openSettings:
+        case .openSettings, .openClipboard, .editWorkspace:
             // Long press still owns Settings. Two-finger scroll gestures intentionally do not.
             debugGesture("blocked reason=open-settings-not-scroll-action")
             return false
@@ -3057,7 +3067,7 @@ private final class IslandHostingView<Content: View>: NSHostingView<Content> {
     var accessoryRegionsProvider: (() -> [NSRect])?
     var collapsedScrollGestureRegionProvider: (() -> NSRect)?
     var onCollapsedScrollWheel: ((NSEvent, NSPoint) -> Bool)?
-    var onIndirectTouches: (([IslandIndirectTouch], Bool, Bool) -> Void)?
+    var onIndirectTouches: (([IslandIndirectTouch], IslandIndirectTouchPhase) -> Void)?
     private var touchIdentities: [any NSCopying & NSObjectProtocol] = []
     private var touchDevices: [any NSObjectProtocol] = []
     private var trackingAreaReference: NSTrackingArea?
@@ -3087,22 +3097,22 @@ private final class IslandHostingView<Content: View>: NSHostingView<Content> {
     }
 
     override func touchesBegan(with event: NSEvent) {
-        reportIndirectTouches(event, began: true)
+        reportIndirectTouches(event, phase: .began)
         super.touchesBegan(with: event)
     }
 
     override func touchesMoved(with event: NSEvent) {
-        reportIndirectTouches(event)
+        reportIndirectTouches(event, phase: .moved)
         super.touchesMoved(with: event)
     }
 
     override func touchesEnded(with event: NSEvent) {
-        reportIndirectTouches(event)
+        reportIndirectTouches(event, phase: .ended)
         super.touchesEnded(with: event)
     }
 
     override func touchesCancelled(with event: NSEvent) {
-        onIndirectTouches?([], false, true)
+        onIndirectTouches?([], .cancelled)
         resetTouchIdentities()
         super.touchesCancelled(with: event)
     }
@@ -3112,15 +3122,16 @@ private final class IslandHostingView<Content: View>: NSHostingView<Content> {
         touchDevices.removeAll(keepingCapacity: true)
     }
 
-    private func reportIndirectTouches(_ event: NSEvent, began: Bool = false) {
-        // Query only raw touch callbacks, scoped to this host/descendants.
-        // NSTouch snapshots change objects; identity equality tracks fingers.
-        let touches = event.touches(matching: .touching, in: self).filter { $0.type == .indirect }
+    private func reportIndirectTouches(_ event: NSEvent, phase: IslandIndirectTouchPhase) {
+        // Page morphs can retarget touches to a different native descendant.
+        // nil observes every contact in this raw touch event regardless of
+        // its target view; a host-local empty set cannot end the sequence.
+        let touches = event.touches(matching: .touching, in: nil).filter { $0.type == .indirect }
         var contacts: [IslandIndirectTouch] = []
         for touch in touches {
             guard let device = touch.device as? any NSObjectProtocol else {
-                onIndirectTouches?([], false, true)
-                resetTouchIdentities()
+                // An unavailable device cannot rearm a consumed gesture.
+                onIndirectTouches?([], .moved)
                 return
             }
             if !touchIdentities.contains(where: { $0.isEqual(touch.identity) }) {
@@ -3134,8 +3145,8 @@ private final class IslandHostingView<Content: View>: NSHostingView<Content> {
             contacts.append(IslandIndirectTouch(identity: identityID, device: deviceID,
                 normalizedPosition: touch.normalizedPosition))
         }
-        onIndirectTouches?(contacts, began, false)
-        if contacts.isEmpty { resetTouchIdentities() }
+        onIndirectTouches?(contacts, phase)
+        if phase == .ended && contacts.isEmpty { resetTouchIdentities() }
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
