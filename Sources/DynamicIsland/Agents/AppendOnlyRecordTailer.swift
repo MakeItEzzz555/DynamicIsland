@@ -500,6 +500,9 @@ actor AppendOnlyRecordTailer {
             lifecycleGeneration: lifecycle,
             fileGeneration: file
         )
+        source.setRegistrationHandler {
+            Task { await owner.handleFileSignal(token) }
+        }
         source.setEventHandler {
             Task { await owner.handleFileSignal(token) }
         }
