@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import XCTest
 @testable import DynamicIsland
 
@@ -17,9 +18,9 @@ final class FileDragSessionTests: XCTestCase {
         try await Task.sleep(nanoseconds: 30_000_000)
         XCTAssertTrue(controller.isActive, "action target owns the drag after the shell region exits")
 
-        controller.setActionTargeted(.airDrop, false)
-        try await Task.sleep(nanoseconds: 40_000_000)
-        XCTAssertFalse(controller.isActive)
+        await expectSessionEnd(controller) {
+            controller.setActionTargeted(.airDrop, false)
+        }
         XCTAssertGreaterThan(controller.generation, generation)
     }
 
@@ -32,9 +33,9 @@ final class FileDragSessionTests: XCTestCase {
         try await Task.sleep(nanoseconds: 40_000_000)
         XCTAssertTrue(controller.isActive)
 
-        controller.setBridgeTargeted(false)
-        try await Task.sleep(nanoseconds: 40_000_000)
-        XCTAssertFalse(controller.isActive)
+        await expectSessionEnd(controller) {
+            controller.setBridgeTargeted(false)
+        }
     }
 
     func testExactlyOneDropMayBeClaimedPerGeneration() {
@@ -186,8 +187,20 @@ final class FileDragSessionTests: XCTestCase {
         try await Task.sleep(nanoseconds: 40_000_000)
         XCTAssertTrue(controller.isActive)
 
-        controller.setSourceTargeted(false, region: .trayAirDrop)
-        try await Task.sleep(nanoseconds: 40_000_000)
+        await expectSessionEnd(controller) {
+            controller.setSourceTargeted(false, region: .trayAirDrop)
+        }
+    }
+
+    private func expectSessionEnd(_ controller: FileDragSessionController, releaseFinalOwner: () -> Void) async {
+        let ended = expectation(description: "Unowned drag reaches idle after its exit task finishes")
+        let observation = controller.$phase
+            .dropFirst()
+            .first(where: { $0 == .idle })
+            .sink { _ in ended.fulfill() }
+        defer { observation.cancel() }
+        releaseFinalOwner()
+        await fulfillment(of: [ended], timeout: 1)
         XCTAssertFalse(controller.isActive)
     }
 

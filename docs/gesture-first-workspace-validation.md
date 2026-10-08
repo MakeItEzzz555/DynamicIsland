@@ -148,7 +148,7 @@ resolves to zero and availability is checked separately.
 
 - Integrated focused run: 100 tests, zero failures; final navigation/recovery
   run: 16 tests, zero failures (overlapping tests, not 116 unique tests).
-- Full working-tree suite: 2067 executed, 41 skipped, zero failures.
+- Final full working-tree suite: 2069 executed, 42 skipped, zero failures.
 - Debug build and Release build: passed on Xcode 26.2 build 17C52 / Swift 6.2.3.
 - Canonical temporary package: `/tmp/dynamicisland-ux-package/DynamicIsland.app`.
 - Strict app and all three helper signature checks: passed, ad-hoc signed.
@@ -160,6 +160,31 @@ resolves to zero and availability is checked separately.
 - Existing CI run 37626095153 failed in Swift 6.1.2 SIL lowering with signal 11,
   not a normal source diagnostic. CI now explicitly selects the locally verified
   Xcode 26.2 available in the [hosted runner image](https://raw.githubusercontent.com/actions/runner-images/macos-15-arm64/20260907.0337/images/macos/macos-15-arm64-Readme.md).
+
+The first two hosted Xcode 26.2 runs compiled successfully. Their test failures
+exposed existing fixture assumptions: short teardown sleeps race scheduled
+completion tasks, ImageRenderer snapshot allocation and frozen avatar replay
+do not measure live 120 Hz frame pacing, and an occluded native window correctly
+pauses its decorative clock. Production timing and rendering were unchanged.
+Tests now observe published completion, retain always-on finite geometry and
+exact rasterization checks, and establish/diagnose native window visibility
+before asserting animation. Snapshot cost remains an explicit diagnostic via
+`DYNAMIC_ISLAND_DECORATION_PERF=1`; no portable wall-time threshold is claimed.
+The corrected fixture checks passed locally: 19 completion/decoration tests
+(one explicit benchmark skip), two native Send interaction tests, and the
+separately enabled snapshot-cost diagnostic. The first post-correction full run
+had three failures in unchanged native-layout/mock-process timing tests; its log
+was preserved separately rather than counted as passing. An unmodified complete
+rerun passed all 2069 tests, with 42 skipped. The extra skip is the explicit
+snapshot benchmark; clean CI omits two unrelated dirty Calendar tests.
+
+An isolated native SwiftUI slider probe verified that keyboard arrows and native
+accessibility increment/decrement deliver editing begin, the value change while
+editing, then editing end. This validates the local scrubbing callback ordering,
+not complete VoiceOver acceptance. An isolated visibility probe confirmed that
+window occlusion bit 2 absent pauses frames and present allows frames; activation
+was not required on the local runtime. These probes did not close the installed
+app or its child sessions.
 
 Physical three-finger delivery (especially a non-key collapsed panel), system
 gesture conflicts, packaged pointer/gesture/preview acceptance, packaged Spotify
