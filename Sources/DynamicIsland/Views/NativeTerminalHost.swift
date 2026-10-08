@@ -17,8 +17,10 @@ struct NativeTerminalHost: NSViewRepresentable {
         let terminal = controller.terminalView
         // A retiring SwiftUI tree may still issue updates during its fade-out.
         // Only a newly visible/new host may claim an emulator owned elsewhere.
-        // Routine updates from the retiring host must never steal it back.
-        if isVisible && (!host.wasVisible || host.terminal !== terminal || terminal.superview === host) {
+        // Routine updates must never steal an owned emulator. If a transient
+        // host dismantled it, a surviving visible host can reclaim the orphan.
+        if isVisible && (!host.wasVisible || host.terminal !== terminal
+            || terminal.superview === host || terminal.superview == nil) {
             host.mount(terminal)
         }
         host.onFocusChange = onFocusChange

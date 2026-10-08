@@ -148,7 +148,7 @@ resolves to zero and availability is checked separately.
 
 - Integrated focused run: 100 tests, zero failures; final navigation/recovery
   run: 16 tests, zero failures (overlapping tests, not 116 unique tests).
-- Final full working-tree suite: 2070 executed, 42 skipped, zero failures.
+- Final full working-tree suite: 2071 executed, 42 skipped, zero failures.
 - Debug build and Release build: passed on Xcode 26.2 build 17C52 / Swift 6.2.3.
 - Canonical temporary package: `/tmp/dynamicisland-ux-package/DynamicIsland.app`.
 - Strict app and all three helper signature checks: passed, ad-hoc signed.
@@ -198,9 +198,22 @@ all 400 patched-source writes. The integrated 30-recreation regression and the
 attention/voice checks passed in a 56-test focused run. Final Debug and full
 working-tree validation passed: 2070 tests, 42 skipped, zero failures.
 
-One hosted attempt also failed an existing rapid Terminal remount fixture; the
-unchanged rerun passed it. Its transient attachment state remains a recorded
-failure, not a claim that the stress fixture was repaired.
+Hosted attempts also intermittently failed the existing rapid Terminal remount
+fixture. A controlled two-host SwiftUI handoff reproduced a real orphan recovery
+failure: host A retained its visible identity and emulator reference; host B
+claimed the emulator, then actual dismantleNSView detached it. A subsequent
+updateNSView on A could not reclaim the unowned renderer. Every prerequisite
+passed, including the guard against stealing B's owned renderer and exactly one
+shell start; only orphan reattachment failed on the original code.
+
+The visible-host guard now permits reclaim when the emulator has no superview.
+Owned renderers retain the existing handoff protection. The new real SwiftUI
+handoff regression and the unchanged 48-cycle stress test both pass. This proves
+and repairs the guard pathology; the earlier hosted stress logs did not capture
+each native host, so they cannot alone prove that every observed nil attachment
+had this cause. Preview guards were inactive in that fixture.
+The final Debug build and full local suite passed after this repair: 2071 tests,
+42 skipped, zero failures. Original stress timing and assertions remain intact.
 
 An isolated native SwiftUI slider probe verified that keyboard arrows and native
 accessibility increment/decrement deliver editing begin, the value change while
