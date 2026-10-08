@@ -238,3 +238,37 @@ force push or history rewrite was performed.
 PR #25 had already been merged externally at `5eb8f0b` on 2026-10-07T07:16:17Z;
 it cannot be kept open/unmerged by this phase. The existing feature review is
 PR #24, verified open and draft. No PR was merged by this work.
+
+## Final Terminal ownership repair — 2026-10-08
+
+The later hosted trace disproved the sufficiency of the orphan-only guard:
+the newest visible native mount remained in its window with a matching emulator
+reference, but the emulator itself had no superview/window. An older presentation
+disappeared after the newer presentation appeared. A deterministic two-host
+SwiftUI fixture reproduced both the stale acquisition and subsequent orphaning.
+
+TerminalSessionController now retains one MainActor TerminalMountCoordinator.
+Its lease combines native host identity with an ordered presentation/host
+generation. The Agents parent captures its immutable presentation generation
+before conditional Terminal children exist; creating a child late cannot promote
+a retiring parent. Host order resolves remounts within one parent. Acquire and
+native reparenting are synchronous; stale acquire/release are no-ops. Releasing
+the current owner preserves the generation watermark. Unexpected detachment can
+be reclaimed by the current lease, never by a retired host. Keyboard engagement
+also ignores window updates from a retired mount. The retained emulator,
+controller, PTY, cwd, environment and scrollback do not change on handoff.
+
+Six focused lease tests include the required A1 -> B2 -> late A acquire/release,
+current-owner orphan recovery, same-parent remounts, keyboard independence and an
+actual SwiftUI parent whose older Terminal child is created after the newer
+parent owns the emulator. The hosted stale-visibility regression and current
+lease reclaim fixture preserve one shell start. The original 48-cycle stress
+fixture and its timing are unchanged; investigation-only tracing is removed.
+Twenty consecutive executions passed all 960 cycles with zero failures. The
+focused Terminal/integration/geometry suite executed 55 tests, one existing
+opt-in snapshot skip, zero failures. Recent-feature regressions executed 118
+tests, one existing live-provider skip, zero failures. The full local suite
+executed 2078 tests, 42 skipped, zero failures. Debug, Release, canonical temporary
+packaging and strict helper/app signatures passed. Final-head CI is reported in
+the handoff; physical acceptance remains subject to the active sessions and
+input limitations documented above.

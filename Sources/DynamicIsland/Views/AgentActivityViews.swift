@@ -467,6 +467,7 @@ struct AgentDashboardContentView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: availableHeight, alignment: .topLeading)
         .foregroundStyle(.white)
+        .modifier(NativeTerminalPresentationScope())
         .onChange(of: sessions.map(\.id)) { _, _ in
             reconcileWorkspaceSelection()
         }

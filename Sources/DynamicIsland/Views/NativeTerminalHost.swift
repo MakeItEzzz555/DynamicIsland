@@ -1,6 +1,83 @@
 import AppKit
 import SwiftUI
 
+/// Allocated before conditional Terminal children appear, so a retiring page
+/// cannot gain a newer lease merely by creating its native child late.
+@MainActor
+struct NativeTerminalPresentationScope: ViewModifier {
+    @StateObject private var identity = TerminalPresentationIdentity()
+
+    func body(content: Content) -> some View {
+        content.environment(\.terminalPresentationGeneration, identity.generation)
+    }
+}
+
+private struct TerminalPresentationGenerationKey: EnvironmentKey {
+    static let defaultValue: UInt64? = nil
+}
+
+extension EnvironmentValues {
+    var terminalPresentationGeneration: UInt64? {
+        get { self[TerminalPresentationGenerationKey.self] }
+        set { self[TerminalPresentationGenerationKey.self] = newValue }
+    }
+}
+
+@MainActor
+private final class TerminalPresentationIdentity: ObservableObject {
+    let generation = TerminalMountGeneration.nextSequence()
+}
+
+struct TerminalMountGeneration: Comparable {
+    let presentation: UInt64
+    let host: UInt64
+    @MainActor private static var sequence: UInt64 = 0
+
+    @MainActor static func nextSequence() -> UInt64 {
+        sequence += 1
+        return sequence
+    }
+
+    static func < (lhs: Self, rhs: Self) -> Bool {
+        lhs.presentation == rhs.presentation ? lhs.host < rhs.host : lhs.presentation < rhs.presentation
+    }
+}
+
+/// The session retains authority independently of native attachment. All lease
+/// validation and reparenting happen synchronously on the AppKit main actor.
+@MainActor
+final class TerminalMountCoordinator {
+    struct Lease: Equatable {
+        let hostID: ObjectIdentifier
+        let generation: TerminalMountGeneration
+    }
+    private(set) var authoritativeLease: Lease?
+    private(set) weak var owner: TerminalMountView?
+    private weak var emulator: InteractiveTerminalView?
+
+    @discardableResult
+    func acquire(_ terminal: InteractiveTerminalView, by host: TerminalMountView) -> Bool {
+        let lease = Lease(hostID: ObjectIdentifier(host), generation: host.mountGeneration)
+        if let current = authoritativeLease {
+            guard lease.generation >= current.generation,
+                  lease.generation != current.generation || lease.hostID == current.hostID else { return false }
+        }
+        authoritativeLease = lease
+        owner = host
+        emulator = terminal
+        host.mount(terminal)
+        return true
+    }
+
+    func release(_ host: TerminalMountView) {
+        let lease = Lease(hostID: ObjectIdentifier(host), generation: host.mountGeneration)
+        guard authoritativeLease == lease, owner === host else { return }
+        if emulator?.superview === host { emulator?.removeFromSuperview() }
+        owner = nil
+        // Keep the generation watermark: stale callbacks cannot claim an orphan.
+    }
+}
+
 /// Mounts one controller-owned emulator. A host disappearing detaches only the
 /// native view; it never closes the PTY or discards shell/scrollback state.
 struct NativeTerminalHost: NSViewRepresentable {
@@ -9,20 +86,20 @@ struct NativeTerminalHost: NSViewRepresentable {
     let isVisible: Bool
     let focusRequest: Int
     var onFocusChange: (Bool) -> Void = { _ in }
+    @Environment(\.terminalPresentationGeneration) private var presentationGeneration
 
     func makeNSView(context: Context) -> TerminalMountView {
-        TerminalMountView()
+        let host = TerminalMountView()
+        if let presentationGeneration {
+            host.mountGeneration = TerminalMountGeneration(presentation: presentationGeneration,
+                                                           host: host.mountGeneration.host)
+        }
+        host.mountCoordinator = controller.mountCoordinator
+        return host
     }
     func updateNSView(_ host: TerminalMountView, context: Context) {
         let terminal = controller.terminalView
-        // A retiring SwiftUI tree may still issue updates during its fade-out.
-        // Only a newly visible/new host may claim an emulator owned elsewhere.
-        // Routine updates must never steal an owned emulator. If a transient
-        // host dismantled it, a surviving visible host can reclaim the orphan.
-        if isVisible && (!host.wasVisible || host.terminal !== terminal
-            || terminal.superview === host || terminal.superview == nil) {
-            host.mount(terminal)
-        }
+        if isVisible { controller.mountCoordinator.acquire(terminal, by: host) }
         host.onFocusChange = onFocusChange
         host.isHidden = !isVisible
         let requested = isVisible && (!host.wasVisible || host.focusRequest != focusRequest)
@@ -42,6 +119,7 @@ struct NativeTerminalHost: NSViewRepresentable {
             }
         } else {
             host.releaseFocus()
+            controller.mountCoordinator.release(host)
         }
     }
     static func dismantleNSView(_ host: TerminalMountView, coordinator: ()) {
@@ -52,6 +130,11 @@ struct NativeTerminalHost: NSViewRepresentable {
 
 @MainActor
 final class TerminalMountView: NSView {
+    var mountGeneration: TerminalMountGeneration = {
+        let generation = TerminalMountGeneration.nextSequence()
+        return TerminalMountGeneration(presentation: generation, host: generation)
+    }()
+    weak var mountCoordinator: TerminalMountCoordinator?
     weak var terminal: InteractiveTerminalView?
     var wasVisible = false
     var focusRequest = 0
@@ -70,12 +153,16 @@ final class TerminalMountView: NSView {
         }]
     }
     private func checkFocus() {
+        guard terminal?.superview === self else {
+            publishedFocus = false
+            return
+        }
         // Only user-engaged focus publishes text-input focus (which holds the
         // expanded island open on pointer exit). The Terminal page focuses the
         // emulator automatically so typing works immediately; that alone must
         // never veto collapse.
         let isResponder = wasVisible && terminal?.superview === self && window?.firstResponder === terminal
-        if !isResponder { terminal?.userEngaged = false }
+        if !isResponder, terminal?.superview === self { terminal?.userEngaged = false }
         let focused = isResponder && terminal?.userEngaged == true
         guard focused != publishedFocus else { return }
         publishedFocus = focused
@@ -119,7 +206,7 @@ final class TerminalMountView: NSView {
         DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(16), execute: work)
     }
     func releaseFocus() {
-        let terminal = terminal
+        guard let terminal else { return }
         let handler = onFocusChange
         let owner = ObjectIdentifier(self)
         DispatchQueue.main.async { [weak terminal, weak self] in
@@ -134,7 +221,11 @@ final class TerminalMountView: NSView {
     }
     func detach() {
         resizeWork?.cancel()
-        if terminal?.superview === self { terminal?.removeFromSuperview() }
+        if let mountCoordinator {
+            mountCoordinator.release(self)
+        } else if terminal?.superview === self {
+            terminal?.removeFromSuperview()
+        }
         terminal = nil
         wasVisible = false
     }
