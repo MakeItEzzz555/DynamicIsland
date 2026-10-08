@@ -148,7 +148,7 @@ resolves to zero and availability is checked separately.
 
 - Integrated focused run: 100 tests, zero failures; final navigation/recovery
   run: 16 tests, zero failures (overlapping tests, not 116 unique tests).
-- Final full working-tree suite: 2069 executed, 42 skipped, zero failures.
+- Final full working-tree suite: 2070 executed, 42 skipped, zero failures.
 - Debug build and Release build: passed on Xcode 26.2 build 17C52 / Swift 6.2.3.
 - Canonical temporary package: `/tmp/dynamicisland-ux-package/DynamicIsland.app`.
 - Strict app and all three helper signature checks: passed, ad-hoc signed.
@@ -177,6 +177,30 @@ had three failures in unchanged native-layout/mock-process timing tests; its log
 was preserved separately rather than counted as passing. An unmodified complete
 rerun passed all 2069 tests, with 42 skipped. The extra skip is the explicit
 snapshot benchmark; clean CI omits two unrelated dirty Calendar tests.
+
+Later hosted validation exposed the same completion task-start race: a fixed
+1.1-second test sleep sometimes ended before the child's one-second debounce.
+The test now captures the published presentation, verifies at least one second
+with ContinuousClock, and verifies a three-second peek from its own timestamps.
+Voice recovery expiry likewise awaits publication while preserving the existing
+weak-controller release assertion. Production debounce and expiry are unchanged.
+
+The recreated-file watcher failure was independently reproduced as real data
+loss. A file can be opened while empty and written before its DispatchSource
+registration becomes active. Unmodified production missed 29 of 400 writes,
+persisting beyond two seconds until manual reconciliation. A one-time registered
+file-source callback into the existing lifecycle/token-validated read path
+recovered all 400 in the same matrix. The narrow fix adds no polling, sleeps,
+retry layer or replacement watcher architecture. The recreated-write regression
+exercises this gap rather than hiding it with an increased timeout.
+The retained repeated-run trace lost 23 of 400 original-source writes and passed
+all 400 patched-source writes. The integrated 30-recreation regression and the
+attention/voice checks passed in a 56-test focused run. Final Debug and full
+working-tree validation passed: 2070 tests, 42 skipped, zero failures.
+
+One hosted attempt also failed an existing rapid Terminal remount fixture; the
+unchanged rerun passed it. Its transient attachment state remains a recorded
+failure, not a claim that the stress fixture was repaired.
 
 An isolated native SwiftUI slider probe verified that keyboard arrows and native
 accessibility increment/decrement deliver editing begin, the value change while
