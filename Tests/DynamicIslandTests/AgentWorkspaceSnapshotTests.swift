@@ -622,14 +622,37 @@ final class AgentWorkspaceSnapshotTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(3))
 
             if cycle.isMultiple(of: 2) {
+                let waitStarted = ProcessInfo.processInfo.systemUptime
+                var pollIterations = 0
+                let waitGeneration = state.generation
+                RunLoop.main.perform(inModes: [.default]) {
+                    MainActor.assumeIsolated { _ = state.runloopWaitGenerations.insert(waitGeneration) }
+                }
+                DispatchQueue.main.async { _ = state.dispatchWaitGenerations.insert(waitGeneration) }
                 let mountDeadline = ContinuousClock.now + .seconds(5)
                 while Self.findInteractiveTerminal(in: hosting) == nil, ContinuousClock.now < mountDeadline {
+                    pollIterations += 1
                     await Task.yield()
                     try await Task.sleep(for: .milliseconds(1))
                     hosting.layoutSubtreeIfNeeded()
                 }
-                let terminal = try XCTUnwrap(Self.findInteractiveTerminal(in: hosting),
-                    "Cycle \(cycle), Agents mounted: \(state.showsAgents), workspace: \(fixture.presentation.mode), emulator owner: \(String(describing: fixture.terminal.terminalView.superview))")
+                let mountedTerminal = Self.findInteractiveTerminal(in: hosting)
+                var diagnosticContext = ""
+                if mountedTerminal == nil {
+                    diagnosticContext = "\n" + [
+                        "TERMINAL-STRESS failure cycle=\(cycle) generation=\(state.generation) showsAgents=\(state.showsAgents) mode=\(fixture.presentation.mode) polls=\(pollIterations) elapsed=\(ProcessInfo.processInfo.systemUptime - waitStarted)",
+                        "TERMINAL-STRESS body generation=\(state.lastBodyGeneration) showsAgents=\(state.lastBodyShowsAgents) appeared=\(state.appearedGenerations.sorted())",
+                        "TERMINAL-STRESS waitCallbacks defaultRunLoop=\(state.runloopWaitGenerations.contains(waitGeneration)) dispatchMain=\(state.dispatchWaitGenerations.contains(waitGeneration))",
+                        "TERMINAL-STRESS runnerStarts=\(fixture.runner.startCount) process=\(String(describing: fixture.terminal.processID)) state=\(fixture.terminal.state) focusRequest=\(fixture.presentation.terminalFocusRequest)",
+                        "TERMINAL-STRESS window visible=\(window.isVisible) key=\(window.isKeyWindow) occlusion=\(window.occlusionState.rawValue) frame=\(window.frame) contentMatches=\(window.contentView === hosting) appActive=\(NSApp.isActive)",
+                        "TERMINAL-STRESS host frame=\(hosting.frame) bounds=\(hosting.bounds) needsLayout=\(hosting.needsLayout) needsDisplay=\(hosting.needsDisplay) subviews=\(hosting.subviews.count)",
+                        "TERMINAL-STRESS screens=\(NSScreen.screens.map(\.frame)) os=\(ProcessInfo.processInfo.operatingSystemVersionString)",
+                        Self.terminalMountDiagnostics(in: hosting, terminal: fixture.terminal.terminalView),
+                        "TERMINAL-STRESS last30 lifecycle events:\n\(state.lifecycleTrace.joined(separator: "\n"))"
+                    ].joined(separator: "\n")
+                }
+                let terminal = try XCTUnwrap(mountedTerminal,
+                    "Cycle \(cycle), Agents mounted: \(state.showsAgents), workspace: \(fixture.presentation.mode), emulator owner: \(String(describing: fixture.terminal.terminalView.superview))\(diagnosticContext)")
                 XCTAssertTrue(terminal === fixture.terminal.terminalView)
                 XCTAssertTrue(window.makeFirstResponder(terminal))
                 terminal.insertText("stress-\(cycle)", replacementRange: NSRange(location: NSNotFound, length: 0))
@@ -826,6 +849,25 @@ final class AgentWorkspaceSnapshotTests: XCTestCase {
         return nil
     }
 
+    private static func terminalMountDiagnostics(in root: NSView, terminal: InteractiveTerminalView) -> String {
+        func identity(_ object: AnyObject?) -> String { object.map { String(describing: ObjectIdentifier($0)) } ?? "nil" }
+        var mounts = 0
+        var views = 0
+        var lines: [String] = []
+        func visit(_ view: NSView) {
+            views += 1
+            if let mount = view as? TerminalMountView {
+                mounts += 1
+                lines.append("TERMINAL-STRESS mount id=\(identity(mount)) wasVisible=\(mount.wasVisible) hidden=\(mount.isHidden) ancestorHidden=\(mount.isHiddenOrHasHiddenAncestor) frame=\(mount.frame) bounds=\(mount.bounds) visibleRect=\(mount.visibleRect)")
+                lines.append("TERMINAL-STRESS mount terminalMatches=\(mount.terminal === terminal) ownerMatches=\(terminal.superview === mount) owner=\(identity(terminal.superview)) window=\(identity(mount.window)) rootWindow=\(identity(root.window)) windowMatches=\(mount.window === root.window) hasWindow=\(mount.window != nil) focusRequest=\(mount.focusRequest) parent=\(identity(mount.superview))")
+            }
+            view.subviews.forEach(visit)
+        }
+        visit(root)
+        lines.append("TERMINAL-STRESS hierarchy views=\(views) terminalMounts=\(mounts) emulator=\(identity(terminal)) owner=\(identity(terminal.superview)) hasWindow=\(terminal.window != nil) hidden=\(terminal.isHidden) frame=\(terminal.frame) bounds=\(terminal.bounds)")
+        return lines.joined(separator: "\n")
+    }
+
     private func compact(_ session: AgentSession) -> some View {
         HStack(spacing: 12) {
             AgentCompactRoutineLeadingView(session: session)
@@ -903,6 +945,24 @@ final class AgentWorkspaceSnapshotTests: XCTestCase {
 private final class AgentWorkspaceMountStressState: ObservableObject {
     @Published var showsAgents = true
     @Published var generation = 0
+    var lastBodyGeneration = -1
+    var lastBodyShowsAgents = false
+    var appearedGenerations: Set<Int> = []
+    var lifecycleTrace: [String] = []
+    var runloopWaitGenerations: Set<Int> = []
+    var dispatchWaitGenerations: Set<Int> = []
+
+    func recordBody(generation: Int, showsAgents: Bool) {
+        lastBodyGeneration = generation
+        lastBodyShowsAgents = showsAgents
+    }
+
+    func recordLifecycle(_ event: String, generation: Int) {
+        if event == "appear" { appearedGenerations.insert(generation) }
+        if event == "disappear" { appearedGenerations.remove(generation) }
+        lifecycleTrace.append("\(ProcessInfo.processInfo.systemUptime) generation=\(generation) \(event)")
+        if lifecycleTrace.count > 30 { lifecycleTrace.removeFirst(lifecycleTrace.count - 30) }
+    }
 }
 
 @MainActor
@@ -934,6 +994,8 @@ private struct AgentWorkspaceMountStressHarness: View {
     let selectedID: AgentSessionInstanceID
 
     var body: some View {
+        let generation = state.generation
+        let _ = state.recordBody(generation: generation, showsAgents: state.showsAgents)
         ZStack {
             if state.showsAgents {
                 AgentDashboardContentView(
@@ -952,7 +1014,9 @@ private struct AgentWorkspaceMountStressHarness: View {
                     workspacePresentation: presentation,
                     terminal: terminal
                 )
-                .id("agents-\(state.generation)")
+                .onAppear { state.recordLifecycle("appear", generation: generation) }
+                .onDisappear { state.recordLifecycle("disappear", generation: generation) }
+                .id("agents-\(generation)")
             } else {
                 Color.black.opacity(0.01)
                     .id("other-\(state.generation)")

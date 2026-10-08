@@ -708,8 +708,15 @@ final class AgentAttentionCoordinatorTests: XCTestCase {
             now: now
         )
 
+        let displayed = expectation(description: "Completion peek becomes visible before activity resumes")
+        let observation = coordinator.$presentation
+            .compactMap { $0 }
+            .first()
+            .sink { _ in displayed.fulfill() }
+        defer { observation.cancel() }
+
         coordinator.synchronize(attentionEvents: [event], sessions: [completed], now: now)
-        try await Task.sleep(for: .milliseconds(1_100))
+        await fulfillment(of: [displayed], timeout: 2)
         XCTAssertNotNil(coordinator.presentation)
 
         var active = completed
