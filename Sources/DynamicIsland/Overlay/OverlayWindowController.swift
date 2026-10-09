@@ -1971,7 +1971,7 @@ final class OverlayWindowController {
                 fromSwiftUI: frame, canvasHeight: layoutStore.canvasSize.height)).contains(pointer)
         }
         let action = touchPaging.update(contacts: contacts, phase: phase,
-            canBegin: touchPagingInputAllowed && !layoutStore.isShellMorphing && inside && !overControl,
+            canBegin: touchPagingInputAllowed && inside && !overControl,
             inputStillAllowed: touchPagingInputAllowed)
         if touchPaging.reservesIslandScroll { touchScrollOwnership.reserve() }
         guard let action else { return }
