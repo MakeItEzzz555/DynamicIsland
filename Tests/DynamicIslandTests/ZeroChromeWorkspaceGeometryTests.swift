@@ -100,10 +100,12 @@ final class ZeroChromeWorkspaceGeometryTests: XCTestCase {
             XCTAssertEqual(ExpandedIslandLayoutMetrics.workspaceNotchLane(metrics: metrics, isNotchIntegrated: true,
                 pageCount: 4, clipboardEnabled: false, hardwareNotchWidth: width, showNavigationControls: false), zeroChromeLane)
         }
+        let floatingLane = WorkspaceNotchLane(rise: 0, headerGroupWidth: 0, clearance: 0,
+            minimumInnerWidth: 0, anchorsMainContentToTop: true)
         XCTAssertEqual(ExpandedIslandLayoutMetrics.workspaceNotchLane(metrics: metrics, isNotchIntegrated: false,
-            pageCount: 4, clipboardEnabled: false, hardwareNotchWidth: 186, showNavigationControls: false), .none)
+            pageCount: 4, clipboardEnabled: false, hardwareNotchWidth: 186, showNavigationControls: false), floatingLane)
         XCTAssertEqual(ExpandedIslandLayoutMetrics.workspaceNotchLane(metrics: .fallback, isNotchIntegrated: true,
-            pageCount: 4, clipboardEnabled: false, hardwareNotchWidth: 186, showNavigationControls: false), .none)
+            pageCount: 4, clipboardEnabled: false, hardwareNotchWidth: 186, showNavigationControls: false), floatingLane)
         let settings = AppSettings(defaults: UserDefaults(suiteName: "ZeroChromeLane-\(UUID().uuidString)")!)
         settings.respectHardwareNotch = true
         settings.showNavigationControls = false
@@ -112,7 +114,7 @@ final class ZeroChromeWorkspaceGeometryTests: XCTestCase {
             "the committed runtime settings and direct preview resolve the same physical lane")
         settings.respectHardwareNotch = false
         XCTAssertEqual(ExpandedIslandLayoutMetrics.workspaceNotchLane(settings: settings, metrics: metrics,
-            pageCount: 4, hardwareNotchWidth: metrics.hardwareNotchWidth), .none)
+            pageCount: 4, hardwareNotchWidth: metrics.hardwareNotchWidth), floatingLane)
     }
 
     func testHiddenUsageBandHasNoRecoveryHeightFloor() throws {
@@ -147,7 +149,7 @@ final class ZeroChromeWorkspaceGeometryTests: XCTestCase {
         XCTAssertEqual(geometry.collapsedFrame.midX, try XCTUnwrap(geometry.notchRect).midX, accuracy: 0.001)
     }
 
-    func testWingPreviewAndRuntimeSharePositionsAfterEditorInset() throws {
+    func testWingPreviewAndRuntimeSharePositionsWithoutHiddenHeaderInset() throws {
         let regions = [region(.feed, .compact, order: 0), region(.chat, .standard, order: 1)]
         let available = CGSize(width: 700, height: 900)
         let runtime = WorkspaceWidgetLayoutProjection.make(regions: regions, availableSize: available,
@@ -157,20 +159,23 @@ final class ZeroChromeWorkspaceGeometryTests: XCTestCase {
         for frame in runtime.frames {
             let preview = try XCTUnwrap(editor.frames.first { $0.id == frame.id }).frame
             XCTAssertEqual(preview.minX, frame.frame.minX, accuracy: 0.001)
-            XCTAssertEqual(preview.minY - 7, frame.frame.minY, accuracy: 0.001)
+            XCTAssertEqual(preview.minY, frame.frame.minY, accuracy: 0.001)
             XCTAssertEqual(preview.size, frame.frame.size)
         }
     }
 
     func testWingsNeverWidenASoleWidgetOrBreakAStackOrRiseWhileScrolling() throws {
         let media = configuration([(.media, .compact)]).regions(on: .media)
-        let size = CGSize(width: 700, height: 900)
+        let size = WorkspaceWidgetLayoutProjection.preferredContentSize(regions: media,
+            maximumSize: CGSize(width: 700, height: 900), metrics: metrics, minimumWidth: 0)
         XCTAssertEqual(WorkspaceWidgetLayoutProjection.make(regions: media, availableSize: size, metrics: metrics, lane: zeroChromeLane),
                        WorkspaceWidgetLayoutProjection.make(regions: media, availableSize: size, metrics: metrics))
         var stacked = [region(.feed, .compact, order: 0), region(.chat, .standard, order: 1)]
         stacked[1].widgets[0].stacksBelowPrevious = true
-        XCTAssertEqual(WorkspaceWidgetLayoutProjection.make(regions: stacked, availableSize: size, metrics: metrics, lane: zeroChromeLane),
-                       WorkspaceWidgetLayoutProjection.make(regions: stacked, availableSize: size, metrics: metrics))
+        let stackedSize = WorkspaceWidgetLayoutProjection.preferredContentSize(regions: stacked,
+            maximumSize: CGSize(width: 700, height: 900), metrics: metrics, minimumWidth: 0)
+        XCTAssertEqual(WorkspaceWidgetLayoutProjection.make(regions: stacked, availableSize: stackedSize, metrics: metrics, lane: zeroChromeLane),
+                       WorkspaceWidgetLayoutProjection.make(regions: stacked, availableSize: stackedSize, metrics: metrics))
         let scrolling = [region(.feed, .compact, order: 0), region(.chat, .standard, order: 1)]
         let clipped = WorkspaceWidgetLayoutProjection.make(regions: scrolling,
             availableSize: CGSize(width: 700, height: 150), metrics: metrics, lane: zeroChromeLane)
