@@ -458,15 +458,18 @@ struct ExpandedIslandLayoutMetrics {
     static func workspaceNotchLane(metrics: ResolvedIslandMetrics, isNotchIntegrated: Bool,
                                    pageCount: Int, clipboardEnabled: Bool, hardwareNotchWidth: CGFloat,
                                    showNavigationControls: Bool = true) -> WorkspaceNotchLane {
-        guard isNotchIntegrated, metrics.hasHardwareNotch, metrics.hardwareNotchHeight > 0 else { return .none }
         if !showNavigationControls {
+            let topAnchored = WorkspaceNotchLane(rise: 0, headerGroupWidth: 0, clearance: 0,
+                minimumInnerWidth: 0, anchorsMainContentToTop: true)
+            guard isNotchIntegrated, metrics.hasHardwareNotch, metrics.hardwareNotchHeight > 0 else { return topAnchored }
             let clearance = IslandShellLayout.zeroChromeVisibleClearance * metrics.spacingScale
             let notchWidth = hardwareNotchWidth.isFinite && hardwareNotchWidth > 0
                 ? max(hardwareNotchWidth, metrics.hardwareNotchWidth) : metrics.hardwareNotchWidth
-            guard notchWidth > 0 else { return .none }
+            guard notchWidth > 0 else { return topAnchored }
             return WorkspaceNotchLane(rise: metrics.hardwareNotchHeight, headerGroupWidth: 0, clearance: clearance,
-                minimumInnerWidth: 0, exclusionWidth: notchWidth + 2 * clearance)
+                minimumInnerWidth: 0, exclusionWidth: notchWidth + 2 * clearance, anchorsMainContentToTop: true)
         }
+        guard isNotchIntegrated, metrics.hasHardwareNotch, metrics.hardwareNotchHeight > 0 else { return .none }
         let chrome = ExpandedIslandLayoutMetrics(containerSize: .zero, horizontalPadding: 0, displayMetrics: metrics)
         let contentTop = chrome.topPadding + chrome.tabSwitcherHeight + chrome.tabToPageSpacing
         let rise = max(0, contentTop - (metrics.hardwareNotchHeight + notchContentClearance(metrics: metrics)))

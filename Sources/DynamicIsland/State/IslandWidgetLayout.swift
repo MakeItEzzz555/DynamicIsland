@@ -1129,12 +1129,13 @@ struct WorkspaceWidgetLayoutProjection: Equatable {
         let width = finite(maximumSize.width)
         let height = finite(maximumSize.height)
         let inset: CGFloat = editing ? 7 : 0
+        let topInset: CGFloat = lane.anchorsMainContentToTop ? 0 : inset
         let palette: CGFloat = editing ? 54 + metrics.spacing(8) : 0
         var lane = lane
         if editing && lane.exclusionWidth == 0 { lane.rise = 0 }
         var laid = natural(regions, width: max(1, width - inset * 2), metrics: metrics,
                            lane: lane, headerInnerWidth: lane.minimumInnerWidth)
-        if laid.size.height > height - inset - palette + 0.5, lane.rise > 0 {
+        if laid.size.height > height - topInset - palette + 0.5, lane.rise > 0 {
             lane.rise = 0
             laid = natural(regions, width: max(1, width - inset * 2), metrics: metrics,
                            lane: lane, headerInnerWidth: lane.minimumInnerWidth)
@@ -1143,7 +1144,7 @@ struct WorkspaceWidgetLayoutProjection: Equatable {
         let minimumHeight = (lane.exclusionWidth > 0 || minimumWidth == 0) && !regions.isEmpty
             ? 0 : 120 * metrics.expandedCardScale
         return .init(width: min(width, max(minimumWidth ?? 260 * metrics.expandedCardScale, laid.size.width) + inset * 2),
-                     height: min(height, max(minimumHeight, laid.size.height) + inset + palette))
+                     height: min(height, max(minimumHeight, laid.size.height) + topInset + palette))
     }
 
     static func make(regions: [WorkspaceWidgetRegion], availableSize: CGSize,
@@ -1152,9 +1153,10 @@ struct WorkspaceWidgetLayoutProjection: Equatable {
         let width = finite(availableSize.width)
         let height = finite(availableSize.height)
         let inset: CGFloat = editing ? 7 : 0
+        let topInset: CGFloat = lane.anchorsMainContentToTop ? 0 : inset
         let palette: CGFloat = editing ? 54 + metrics.spacing(8) : 0
         let cardWidth = max(1, width - inset * 2)
-        let cardHeight = max(1, height - inset - palette)
+        let cardHeight = max(1, height - topInset - palette)
         // Intrinsic geometry; a wider shell centers the content. The notch
         // Header rise stays off while editing. A hidden header's physical
         // notch wings retain preview parity; scrolling disables every rise.
@@ -1170,7 +1172,11 @@ struct WorkspaceWidgetLayoutProjection: Equatable {
         // adds space below and never shifts the cards the pointer is over.
         // Risen content is anchored to the top (it sits against the notch).
         let risen = laid.frames.contains { $0.frame.minY < -0.01 }
-        let originY = inset + (scroll || editing || risen ? 0 : max(0, (cardHeight - laid.size.height) / 2))
+        // Hidden navigation owns only physical-notch exclusion plus optical
+        // clearance. Spare host height belongs below content, including during
+        // a shell morph; neither centering nor editor chrome adds another gap.
+        let originY = topInset + (scroll || editing || risen || lane.anchorsMainContentToTop
+            ? 0 : max(0, (cardHeight - laid.size.height) / 2))
         let originX = inset + max(0, (cardWidth - laid.size.width) / 2)
         let frames = laid.frames.map { WorkspaceWidgetFrame(id: $0.id, frame: $0.frame.offsetBy(dx: originX, dy: originY)) }
         return Self(frames: frames, contentSize: .init(width: width, height: max(height - palette, originY + laid.size.height)),
@@ -1194,6 +1200,9 @@ struct WorkspaceNotchLane: Equatable {
     /// Nonzero only with navigation hidden: the physical notch plus safe
     /// clearance on both sides. Existing header lanes leave this at zero.
     var exclusionWidth: CGFloat = 0
+    /// Gesture Only pins the main lane below the shared shell top inset,
+    /// including on floating displays. Wing exclusion/rise stays independent.
+    var anchorsMainContentToTop: Bool = false
 
     static let none = WorkspaceNotchLane(rise: 0, headerGroupWidth: 0, clearance: 0, minimumInnerWidth: 0)
 }

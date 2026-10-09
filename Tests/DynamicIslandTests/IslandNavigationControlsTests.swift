@@ -114,7 +114,7 @@ final class IslandNavigationControlsTests: XCTestCase {
             XCTAssertEqual(normal.0.mode, .hidden)
             XCTAssertEqual(editing.0.mode, .hidden)
             XCTAssertEqual(editing.1.height - normal.1.height,
-                7 + WorkspaceEditorChrome.paletteHeight + notched.spacing(8), accuracy: 0.01)
+                WorkspaceEditorChrome.paletteHeight + notched.spacing(8), accuracy: 0.01)
             XCTAssertEqual(normal.2.mapValues(\.size), editing.2.mapValues(\.size))
         }
     }
