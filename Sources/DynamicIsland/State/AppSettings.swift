@@ -210,7 +210,6 @@ public final class AppSettings: ObservableObject {
     @Published public var showNavigationControls: Bool {
         didSet {
             guard !isNormalizingSettings else { return }
-            if !showNavigationControls && !threeFingerTabNavigationEnabled { threeFingerTabNavigationEnabled = true }
             save(showNavigationControls, for: Key.showNavigationControls)
         }
     }
@@ -218,7 +217,6 @@ public final class AppSettings: ObservableObject {
     @Published public var threeFingerTabNavigationEnabled: Bool {
         didSet {
             guard !isNormalizingSettings else { return }
-            if !threeFingerTabNavigationEnabled && !showNavigationControls { showNavigationControls = true }
             save(threeFingerTabNavigationEnabled, for: Key.threeFingerTabNavigationEnabled)
         }
     }
@@ -1031,9 +1029,8 @@ public final class AppSettings: ObservableObject {
         gestureCooldownSeconds = normalizedDouble(gestureCooldownSeconds, fallback: 0.75, range: 0.1...10.0)
         agentVisualPreferences = agentVisualPreferences.normalized()
         showIslandTab = true
-        // Preserve an explicit paging opt-out when recovering old or externally
-        // written preferences that would otherwise remove both page routes.
-        if !showNavigationControls && !threeFingerTabNavigationEnabled { showNavigationControls = true }
+        // Gesture Only uses precise two-finger paging independently of the
+        // optional three-finger setting and legacy pointer shortcut switches.
         saveAllNormalizedValues()
     }
 

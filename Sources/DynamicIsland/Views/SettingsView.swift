@@ -45,6 +45,63 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     }
 }
 
+enum SettingsCategory: String, CaseIterable, Identifiable {
+    case general = "General"
+    case island = "Island"
+    case mediaDevices = "Media & Devices"
+    case productivity = "Productivity"
+    case agents = "Agents"
+    case system = "System"
+
+    var id: String { rawValue }
+    var sections: [SettingsSection] {
+        switch self {
+        case .general: [.island, .stats]
+        case .island: [.tabs, .appearance, .rightWorkspace, .motion, .liveActivities, .gestures]
+        case .mediaDevices: [.media]
+        case .productivity: [.timer, .clipboard, .tray, .basket, .productivity, .messaging]
+        case .agents: [.agents]
+        case .system: [.advanced]
+        }
+    }
+    var symbol: String {
+        switch self {
+        case .general: "gearshape"
+        case .island: "capsule.tophalf.filled"
+        case .mediaDevices: "headphones"
+        case .productivity: "calendar"
+        case .agents: "cpu"
+        case .system: "gearshape.2"
+        }
+    }
+    static func containing(_ section: SettingsSection) -> Self {
+        allCases.first { $0.sections.contains(section) }!
+    }
+    static func tabTitle(_ section: SettingsSection) -> String {
+        switch section {
+        case .island: "Overview"
+        case .tabs: "Navigation"
+        case .rightWorkspace: "Layout"
+        case .liveActivities: "Activities"
+        case .gestures: "Gestures"
+        case .tray: "Files"
+        case .productivity: "Calendar & Tools"
+        case .agents: "Workspace"
+        default: section.rawValue
+        }
+    }
+}
+
+enum AgentSettingsTab: String, CaseIterable, Identifiable {
+    case workspace = "Workspace", providers = "Providers", usage = "Usage", diagnostics = "Diagnostics"
+    var id: String { rawValue }
+}
+
+enum MediaDeviceSettingsTab: String, CaseIterable, Identifiable {
+    case media = "Media", audio = "Audio", hud = "HUD"
+    var id: String { rawValue }
+}
+
 struct SettingsView: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var shortcuts: ShortcutsStore
@@ -57,6 +114,8 @@ struct SettingsView: View {
     @StateObject private var agentSetup = AgentIntegrationSetupController()
     @StateObject private var agentDiagnostics: AgentIntegrationDiagnosticsController
     @State private var selectedSection: SettingsSection = .island
+    @State private var selectedAgentTab: AgentSettingsTab = .workspace
+    @State private var selectedMediaTab: MediaDeviceSettingsTab = .media
     @State private var systemHUDAccessibilityGranted = SystemHUDAccessibilityPermission.isGranted
 
     init(
@@ -88,86 +147,119 @@ struct SettingsView: View {
 
     var body: some View {
         NavigationSplitView {
-            List(SettingsSection.allCases, selection: $selectedSection) { section in
-                Label(section.rawValue, systemImage: section.symbol)
-                    .tag(section)
+            List(SettingsCategory.allCases, selection: Binding(
+                get: { SettingsCategory.containing(selectedSection) },
+                set: { selectedSection = $0.sections[0] })) { category in
+                Label(category.rawValue, systemImage: category.symbol)
+                    .tag(category)
             }
             .navigationSplitViewColumnWidth(min: 180, ideal: 210)
         } detail: {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    switch selectedSection {
-                    case .island:
-                        islandSection
-                    case .appearance:
-                        appearanceSection
-                    case .motion:
-                        motionSection
-                    case .tabs:
-                        tabsSection
-                    case .media:
-                        mediaSection
-                    case .tray:
-                        traySection
-                    case .basket:
-                        basketSection
-                    case .timer:
-                        timerSection
-                    case .stats:
-                        statsSection
-                    case .agents:
-                        agentsSection
-                    case .clipboard:
-                        clipboardSection
-                    case .productivity:
-                        settingsForm("Productivity") {
-                            if let previews {
-                                ProductivityDeckSettingsPreview(
-                                    workspace: previews.rightWorkspace,
-                                    productivity: productivity,
-                                    shelf: previews.previewShelf
-                                )
+            if SettingsCategory.containing(selectedSection).sections.count == 1 {
+                ScrollView {
+                    sectionContent(selectedSection)
+                        .padding(20)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                }
+            } else {
+                TabView(selection: $selectedSection) {
+                    ForEach(SettingsCategory.containing(selectedSection).sections) { section in
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 18) {
+                                sectionContent(section)
                             }
-                            ProductivitySettingsView(productivity: productivity)
+                            .padding(20)
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
                         }
-                    case .rightWorkspace:
-                        settingsForm("Right Workspace") {
-                            if let previews {
-                                RightWorkspaceSettingsView(
-                                    settings: settings,
-                                    workspace: previews.rightWorkspace,
-                                    dependencies: previews
-                                )
-                            } else {
-                                HelpText("Right workspace settings are unavailable.")
-                            }
-                        }
-                    case .messaging:
-                        settingsForm("Messaging") {
-                            if let messaging {
-                                MessagingSettingsView(controller: messaging)
-                                Button("Restore Messaging Defaults") {
-                                    messaging.preferences = .init()
-                                }
-                            } else {
-                                HelpText("Messaging is unavailable.")
-                            }
-                        }
-                    case .liveActivities:
-                        liveActivitiesSection
-                    case .gestures:
-                        gesturesSection
-                    case .advanced:
-                        advancedSection
+                        .tabItem { Text(SettingsCategory.tabTitle(section)) }
+                        .tag(section)
                     }
                 }
-                .padding(20)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .padding(.top, 8)
             }
         }
+        .toggleStyle(.switch)
         .frame(width: 920, height: 700)
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             systemHUDAccessibilityGranted = SystemHUDAccessibilityPermission.isGranted
+        }
+    }
+
+    @ViewBuilder
+    private func sectionContent(_ section: SettingsSection) -> some View {
+        switch section {
+        case .island:
+            islandSection
+        case .appearance:
+            appearanceSection
+        case .motion:
+            motionSection
+        case .tabs:
+            tabsSection
+        case .media:
+            VStack(alignment: .leading, spacing: 16) {
+                Picker("Media & Devices", selection: $selectedMediaTab) {
+                    ForEach(MediaDeviceSettingsTab.allCases) { tab in Text(tab.rawValue).tag(tab) }
+                }
+                .pickerStyle(.segmented)
+                switch selectedMediaTab {
+                case .media: mediaSection
+                case .audio: audioSection
+                case .hud: hudSection
+                }
+            }
+        case .tray:
+            traySection
+        case .basket:
+            basketSection
+        case .timer:
+            timerSection
+        case .stats:
+            statsSection
+        case .agents:
+            agentsSection
+        case .clipboard:
+            clipboardSection
+        case .productivity:
+            settingsForm("Productivity") {
+                if let previews {
+                    ProductivityDeckSettingsPreview(
+                        workspace: previews.rightWorkspace,
+                        productivity: productivity,
+                        shelf: previews.previewShelf
+                    )
+                }
+                ProductivitySettingsView(productivity: productivity)
+            }
+        case .rightWorkspace:
+            settingsForm("Right Workspace") {
+                if let previews {
+                    RightWorkspaceSettingsView(
+                        settings: settings,
+                        workspace: previews.rightWorkspace,
+                        dependencies: previews
+                    )
+                } else {
+                    HelpText("Right workspace settings are unavailable.")
+                }
+            }
+        case .messaging:
+            settingsForm("Messaging") {
+                if let messaging {
+                    MessagingSettingsView(controller: messaging)
+                    Button("Restore Messaging Defaults") {
+                        messaging.preferences = .init()
+                    }
+                } else {
+                    HelpText("Messaging is unavailable.")
+                }
+            }
+        case .liveActivities:
+            liveActivitiesSection
+        case .gestures:
+            gesturesSection
+        case .advanced:
+            advancedSection
         }
     }
 
@@ -296,15 +388,18 @@ struct SettingsView: View {
 
     private var tabsSection: some View {
         settingsForm("Navigation") {
-            SettingsGroup("Navigation") {
-                Picker("Navigation mode", selection: $settings.showNavigationControls) {
+            SettingsGroup("Navigation Style") {
+                Picker("Navigation Style", selection: $settings.showNavigationControls) {
                     Text("Visible Controls").tag(true)
                     Text("Gesture Only").tag(false)
                 }
                 .pickerStyle(.segmented)
+                .labelsHidden()
+                .accessibilityLabel("Navigation Style")
                 HelpText(settings.showNavigationControls
                     ? "Page controls and workspace commands appear in the island header."
-                    : "Swipe with three fingers to change pages. Secondary-click the island background for workspace commands. Settings remains available in the menu bar.")
+                    : "Swipe left or right with two fingers to change pages.")
+                HelpText("Secondary-click the island background for workspace commands. Settings remains available in the menu bar. Controls and scrollable widgets keep their own input.")
             }
             IslandShellSettingsPreview(settings: settings, dependencies: previews)
             SettingsGroup("Pages") {
@@ -321,7 +416,7 @@ struct SettingsView: View {
             DisclosureGroup("Advanced") {
               SettingsGroup("Page selection") {
                 Toggle("Swipe between pages with three fingers", isOn: $settings.threeFingerTabNavigationEnabled)
-                HelpText("Turning off three-finger navigation restores visible controls.")
+                HelpText("Optional. Gesture Only always supports two-finger page navigation.")
                 Toggle("Remember last page", isOn: $settings.rememberLastSelectedTab)
                 Picker("Starting page", selection: $settings.defaultExpandedTab) {
                     ForEach([DefaultExpandedTab.island, .tray, .timer, .stats]) { tab in
@@ -505,118 +600,138 @@ struct SettingsView: View {
 
     private var agentsSection: some View {
         settingsForm("AI Agents") {
-            if let control = previews?.agentManagedControl {
+            Picker("Agents", selection: $selectedAgentTab) {
+                ForEach(AgentSettingsTab.allCases) { tab in Text(tab.rawValue).tag(tab) }
+            }
+            .pickerStyle(.segmented)
+            if selectedAgentTab == .workspace, let control = previews?.agentManagedControl {
                 AgentsSettingsPreview(managedControl: control, settings: settings, dependencies: previews)
             }
-            SettingsGroup("Agent Activity") {
-                Toggle("Enable agent activity", isOn: $settings.agentActivityEnabled)
-                Toggle("Show Agents tab", isOn: $settings.showAgentsTab)
-                    .disabled(!settings.agentActivityEnabled)
-                Toggle("Completion alerts", isOn: $settings.agentCompletionAlertsEnabled)
-                    .disabled(!settings.agentActivityEnabled)
-                HStack {
-                    Toggle("Agent task completion sound", isOn: $settings.agentCompletionSoundEnabled)
-                        .disabled(!settings.agentActivityEnabled || !settings.agentCompletionAlertsEnabled)
-                    Spacer()
-                    Button("Preview") { SystemNotificationSoundPlayer.play(.completionChime) }
-                        .controlSize(.small)
+            if selectedAgentTab == .workspace {
+                SettingsGroup("Agent Activity") {
+                    Toggle("Enable agent activity", isOn: $settings.agentActivityEnabled)
+                    Toggle("Show Agents tab", isOn: $settings.showAgentsTab)
                         .disabled(!settings.agentActivityEnabled)
-                }
-                .help("One subtle system chime (Glass) when an agent finishes a task. Uses the completion alert, so it follows Completion alerts.")
-                Toggle("Input alerts", isOn: $settings.agentApprovalAlertsEnabled)
-                    .disabled(!settings.agentActivityEnabled)
-                Toggle("Usage metrics", isOn: $settings.agentUsageMetricsEnabled)
-                    .disabled(!settings.agentActivityEnabled)
-                Toggle("Record activities", isOn: $settings.agentActivityRecordingEnabled)
-                    .disabled(!settings.agentActivityEnabled)
-                    .help("Saves normalized agent activity (states, tools, approvals, usage) as local JSON Lines in Application Support/DynamicIsland/AgentActivity. Never prompts, transcripts, commands' arguments, paths or secrets. Kept 14 days, at most 20 MB.")
-                SliderRow(
-                    title: "Alert duration",
-                    value: $settings.agentPeekDurationSeconds,
-                    range: 1...10,
-                    format: "%.1fs",
-                    disabled: !settings.agentActivityEnabled
-                )
-                HelpText("Usage values are shown only when supported data is available.")
-            }
-
-            SettingsGroup("Appearance") {
-                AgentAppearanceSettingsView(settings: settings)
-                    .disabled(!settings.agentActivityEnabled)
-                HelpText("Orb, avatar, voice-beam and send-button previews are local presentation state and never change a live agent session.")
-            }
-
-            if let agentManagedControl, let agentProjects {
-              DisclosureGroup("Advanced diagnostics") {
-                SettingsGroup("Provider & Project Diagnostics") {
-                    AgentDiagnosticsView(
-                        agentEvents: agentEvents,
-                        managedControl: agentManagedControl,
-                        projects: agentProjects
-                    )
-                }
-              }
-            }
-
-            SettingsGroup("Provider Setup") {
-                agentProviderSetupRow(.codex)
-                Divider()
-                agentProviderSetupRow(.claude)
-
-                HStack(spacing: 8) {
-                    Button("Refresh status") {
-                        agentSetup.refresh()
-                        agentDiagnostics.refresh()
-                    }
-                    .disabled(agentSetup.isWorking || agentDiagnostics.isRefreshing)
-
-                    if agentSetup.isWorking || agentDiagnostics.isRefreshing {
-                        ProgressView()
+                    Toggle("Completion alerts", isOn: $settings.agentCompletionAlertsEnabled)
+                        .disabled(!settings.agentActivityEnabled)
+                    HStack {
+                        Toggle("Agent task completion sound", isOn: $settings.agentCompletionSoundEnabled)
+                            .disabled(!settings.agentActivityEnabled || !settings.agentCompletionAlertsEnabled)
+                        Spacer()
+                        Button("Preview") { SystemNotificationSoundPlayer.play(.completionChime) }
                             .controlSize(.small)
+                            .disabled(!settings.agentActivityEnabled)
                     }
+                    .help("One subtle system chime (Glass) when an agent finishes a task. Uses the completion alert, so it follows Completion alerts.")
+                    Toggle("Input alerts", isOn: $settings.agentApprovalAlertsEnabled)
+                        .disabled(!settings.agentActivityEnabled)
+                    Toggle("Record activities", isOn: $settings.agentActivityRecordingEnabled)
+                        .disabled(!settings.agentActivityEnabled)
+                        .help("Saves normalized agent activity (states, tools, approvals, usage) as local JSON Lines in Application Support/DynamicIsland/AgentActivity. Never prompts, transcripts, commands' arguments, paths or secrets. Kept 14 days, at most 20 MB.")
+                    SliderRow(
+                        title: "Alert duration",
+                        value: $settings.agentPeekDurationSeconds,
+                        range: 1...10,
+                        format: "%.1fs",
+                        disabled: !settings.agentActivityEnabled
+                    )
+                    HelpText("Usage values are shown only when supported data is available.")
                 }
 
-                if let error = agentSetup.lastError {
-                    Text(error)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.orange)
-                        .textSelection(.enabled)
+                SettingsGroup("Appearance") {
+                    AgentAppearanceSettingsView(settings: settings)
+                        .disabled(!settings.agentActivityEnabled)
+                    HelpText("Orb, avatar, voice-beam and send-button previews are local presentation state and never change a live agent session.")
                 }
-
-                HelpText(
-                    "Setup is opt-in. DynamicIsland previews the exact observer hooks before writing, " +
-                    "backs up the existing file, preserves unrelated JSON keys and handlers, and refuses " +
-                    "unsafe, malformed, read-only, or externally changed files. Hooks are observer-only " +
-                    "and cannot approve or deny actions. Restart the provider or start a new session after changes. " +
-                    "Codex also requires reviewing and trusting the installed hooks with /hooks."
-                )
             }
 
-            if let preview = agentSetup.preview {
-                SettingsGroup("Setup Preview") {
-                    Text(preview.provider.displayName + " • " + preview.configPath)
-                        .font(.system(size: 11, weight: .semibold))
-                        .textSelection(.enabled)
+            if selectedAgentTab == .usage {
+                SettingsGroup("Usage") {
+                    Toggle("Usage metrics", isOn: $settings.agentUsageMetricsEnabled)
+                        .disabled(!settings.agentActivityEnabled)
+                    HelpText("Usage values are shown only when supported data is available.")
+                }
+                if let control = previews?.agentManagedControl {
+                    AgentsSettingsPreview(managedControl: control, settings: settings, dependencies: previews)
+                }
+            }
 
-                    ScrollView(.vertical) {
-                        Text(preview.text)
-                            .font(.system(size: 9, design: .monospaced))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .textSelection(.enabled)
+            if selectedAgentTab == .diagnostics {
+                if let agentManagedControl, let agentProjects {
+                  DisclosureGroup("Advanced diagnostics") {
+                    SettingsGroup("Provider & Project Diagnostics") {
+                        AgentDiagnosticsView(
+                            agentEvents: agentEvents,
+                            managedControl: agentManagedControl,
+                            projects: agentProjects
+                        )
                     }
-                    .frame(maxHeight: 220)
+                  }
+                }
+                else { HelpText("Provider diagnostics appear when managed sessions are available.") }
+            }
+
+            if selectedAgentTab == .providers {
+                SettingsGroup("Provider Setup") {
+                    agentProviderSetupRow(.codex)
+                    Divider()
+                    agentProviderSetupRow(.claude)
 
                     HStack(spacing: 8) {
-                        Button("Apply") {
-                            agentSetup.applyPreview()
+                        Button("Refresh status") {
+                            agentSetup.refresh()
+                            agentDiagnostics.refresh()
                         }
-                        .keyboardShortcut(.defaultAction)
-                        .disabled(agentSetup.isWorking)
+                        .disabled(agentSetup.isWorking || agentDiagnostics.isRefreshing)
 
-                        Button("Cancel") {
-                            agentSetup.cancelPreview()
+                        if agentSetup.isWorking || agentDiagnostics.isRefreshing {
+                            ProgressView()
+                                .controlSize(.small)
                         }
-                        .disabled(agentSetup.isWorking)
+                    }
+
+                    if let error = agentSetup.lastError {
+                        Text(error)
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.orange)
+                            .textSelection(.enabled)
+                    }
+
+                    HelpText(
+                        "Setup is opt-in. DynamicIsland previews the exact observer hooks before writing, " +
+                        "backs up the existing file, preserves unrelated JSON keys and handlers, and refuses " +
+                        "unsafe, malformed, read-only, or externally changed files. Hooks are observer-only " +
+                        "and cannot approve or deny actions. Restart the provider or start a new session after changes. " +
+                        "Codex also requires reviewing and trusting the installed hooks with /hooks."
+                    )
+                }
+
+                if let preview = agentSetup.preview {
+                    SettingsGroup("Setup Preview") {
+                        Text(preview.provider.displayName + " • " + preview.configPath)
+                            .font(.system(size: 11, weight: .semibold))
+                            .textSelection(.enabled)
+
+                        ScrollView(.vertical) {
+                            Text(preview.text)
+                                .font(.system(size: 9, design: .monospaced))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .textSelection(.enabled)
+                        }
+                        .frame(maxHeight: 220)
+
+                        HStack(spacing: 8) {
+                            Button("Apply") {
+                                agentSetup.applyPreview()
+                            }
+                            .keyboardShortcut(.defaultAction)
+                            .disabled(agentSetup.isWorking)
+
+                            Button("Cancel") {
+                                agentSetup.cancelPreview()
+                            }
+                            .disabled(agentSetup.isWorking)
+                        }
                     }
                 }
             }
@@ -624,6 +739,12 @@ struct SettingsView: View {
         .onAppear {
             agentSetup.refresh()
             agentDiagnostics.refresh()
+        }
+        .onChange(of: selectedAgentTab) { _, tab in
+            if tab == .providers || tab == .diagnostics {
+                agentSetup.refresh()
+                agentDiagnostics.refresh()
+            }
         }
     }
 
@@ -780,6 +901,58 @@ struct SettingsView: View {
                 Toggle("Battery live activity", isOn: $settings.showBatteryLiveActivity)
                     .disabled(!settings.liveActivitiesEnabled)
             }
+            SettingsGroup("Multi-Activity Layout") {
+                Toggle(
+                    "Allow simultaneous sidecars",
+                    isOn: $settings.allowSimultaneousLiveActivitySidecars
+                )
+                .disabled(!settings.liveActivitiesEnabled)
+                Picker("Timer side", selection: $settings.timerSidecarPreference) {
+                    ForEach(LiveActivitySidePreference.allCases) { preference in
+                        Text(preference.displayName).tag(preference)
+                    }
+                }
+                .disabled(!settings.liveActivitiesEnabled || !settings.allowSimultaneousLiveActivitySidecars)
+                LiveActivityLayoutSettingsPreview(settings: settings, dependencies: previews)
+                HelpText(
+                    "Automatic placement keeps the strongest activity in the center and moves compatible compact activities into leading or trailing sidecars. Transient HUDs overlay the composition without destroying it."
+                )
+            }
+
+            DisclosureGroup("Advanced activity priority") {
+              SettingsGroup("Collapsed Live Activity Priority") {
+                PriorityStepperRow(
+                    title: CollapsedLiveActivityPrioritySource.runningTimer.displayName,
+                    value: $settings.collapsedPriorityRunningTimer
+                )
+                PriorityStepperRow(
+                    title: CollapsedLiveActivityPrioritySource.playingMedia.displayName,
+                    value: $settings.collapsedPriorityPlayingMedia
+                )
+                PriorityStepperRow(
+                    title: CollapsedLiveActivityPrioritySource.pausedTimer.displayName,
+                    value: $settings.collapsedPriorityPausedTimer
+                )
+                PriorityStepperRow(
+                    title: CollapsedLiveActivityPrioritySource.recentFiles.displayName,
+                    value: $settings.collapsedPriorityRecentFiles
+                )
+                PriorityStepperRow(
+                    title: CollapsedLiveActivityPrioritySource.pausedMedia.displayName,
+                    value: $settings.collapsedPriorityPausedMedia
+                )
+                Button("Restore Defaults") {
+                    settings.resetCollapsedLiveActivityPrioritySettings()
+                }
+                .buttonStyle(.borderless)
+                HelpText("Higher priority appears first in the collapsed island. If two activities have the same priority, DynamicIsland uses the default order.")
+              }
+            }
+        }
+    }
+
+    private var hudSection: some View {
+        settingsForm("System HUDs", defaultsSection: .liveActivities) {
             SettingsGroup("System HUDs") {
                 Toggle("Enable system HUDs", isOn: $settings.systemHUDsEnabled)
                 Toggle(
@@ -852,53 +1025,15 @@ struct SettingsView: View {
                 )
             }
 
-            SettingsGroup("Multi-Activity Layout") {
-                Toggle(
-                    "Allow simultaneous sidecars",
-                    isOn: $settings.allowSimultaneousLiveActivitySidecars
-                )
-                .disabled(!settings.liveActivitiesEnabled)
-                Picker("Timer side", selection: $settings.timerSidecarPreference) {
-                    ForEach(LiveActivitySidePreference.allCases) { preference in
-                        Text(preference.displayName).tag(preference)
-                    }
-                }
-                .disabled(!settings.liveActivitiesEnabled || !settings.allowSimultaneousLiveActivitySidecars)
-                LiveActivityLayoutSettingsPreview(settings: settings, dependencies: previews)
-                HelpText(
-                    "Automatic placement keeps the strongest activity in the center and moves compatible compact activities into leading or trailing sidecars. Transient HUDs overlay the composition without destroying it."
-                )
-            }
+        }
+    }
 
-            DisclosureGroup("Advanced activity priority") {
-              SettingsGroup("Collapsed Live Activity Priority") {
-                PriorityStepperRow(
-                    title: CollapsedLiveActivityPrioritySource.runningTimer.displayName,
-                    value: $settings.collapsedPriorityRunningTimer
-                )
-                PriorityStepperRow(
-                    title: CollapsedLiveActivityPrioritySource.playingMedia.displayName,
-                    value: $settings.collapsedPriorityPlayingMedia
-                )
-                PriorityStepperRow(
-                    title: CollapsedLiveActivityPrioritySource.pausedTimer.displayName,
-                    value: $settings.collapsedPriorityPausedTimer
-                )
-                PriorityStepperRow(
-                    title: CollapsedLiveActivityPrioritySource.recentFiles.displayName,
-                    value: $settings.collapsedPriorityRecentFiles
-                )
-                PriorityStepperRow(
-                    title: CollapsedLiveActivityPrioritySource.pausedMedia.displayName,
-                    value: $settings.collapsedPriorityPausedMedia
-                )
-                Button("Restore Defaults") {
-                    settings.resetCollapsedLiveActivityPrioritySettings()
-                }
-                .buttonStyle(.borderless)
-                HelpText("Higher priority appears first in the collapsed island. If two activities have the same priority, DynamicIsland uses the default order.")
-              }
-            }
+    private var audioSection: some View {
+        settingsForm("Audio Devices", defaultsSection: .liveActivities) {
+            Toggle("Show connected audio devices", isOn: $settings.audioDeviceHUDEnabled)
+                .disabled(!settings.systemHUDsEnabled)
+            HelpText("Enable system HUDs in the HUD tab to show connected devices. Device names are observed; battery is shown only when available.")
+            SystemHUDSettingsPreview(settings: settings, initialCase: .airPodsPro)
         }
     }
 
@@ -1067,18 +1202,19 @@ struct SettingsView: View {
         }
     }
 
-    private func settingsForm<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
+    private func settingsForm<Content: View>(_ title: String, defaultsSection: SettingsSection? = nil, @ViewBuilder content: () -> Content) -> some View {
+        let defaultsSection = defaultsSection ?? selectedSection
+        return VStack(alignment: .leading, spacing: 16) {
             Text(title)
                 .font(.title2.weight(.semibold))
                 .foregroundStyle(.primary)
                 .accessibilityAddTraits(.isHeader)
             content()
-            if SettingsCategoryDefaults.supports(selectedSection) {
-                Button("Restore \(selectedSection.rawValue) Defaults") {
-                    SettingsCategoryDefaults.restore(selectedSection, settings: settings)
+            if SettingsCategoryDefaults.supports(defaultsSection) {
+                Button("Restore \(defaultsSection.rawValue) Defaults") {
+                    SettingsCategoryDefaults.restore(defaultsSection, settings: settings)
                 }
-                .help(selectedSection == .clipboard
+                .help(defaultsSection == .clipboard
                     ? "Restore clipboard options. Application exclusions and history stay intact."
                     : "Restore this category’s controls. Saved workspace placement stays intact.")
             }

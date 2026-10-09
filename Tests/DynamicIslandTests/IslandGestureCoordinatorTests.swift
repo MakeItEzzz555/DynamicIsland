@@ -3,10 +3,10 @@ import XCTest
 
 @MainActor
 final class IslandGestureCoordinatorTests: XCTestCase {
-    func testClipboardAndEditorMappingsPerformExactlyOnceInEitherPresentation() {
+    func testSettingsClipboardAndEditorMappingsPerformExactlyOnceInEitherPresentation() {
         for state in [IslandPresentationState.collapsed, .expanded] {
             for gesture in [IslandPointerGesture.doubleClick, .longPress] {
-                for action in [IslandGestureAction.openClipboard, .editWorkspace] {
+                for action in [IslandGestureAction.openClipboard, .openSettings, .editWorkspace] {
                     let settings = makeSettings()
                     settings.gesturesEnabled = true
                     settings.gestureInputSource = .trackpad
@@ -21,13 +21,15 @@ final class IslandGestureCoordinatorTests: XCTestCase {
                     }
                     var clipboardCount = 0
                     var editCount = 0
-                    let callbacks = IslandGestureCallbacks(openClipboard: { clipboardCount += 1 }, editWorkspace: { editCount += 1 })
+                    var settingsCount = 0
+                    let callbacks = IslandGestureCallbacks(openSettings: { settingsCount += 1 }, openClipboard: { clipboardCount += 1 }, editWorkspace: { editCount += 1 })
                     let coordinator = IslandGestureCoordinator(now: { 100 })
                     XCTAssertTrue(coordinator.handle(gesture, settings: settings, context: makeContext(state: state), callbacks: callbacks))
                     XCTAssertEqual(clipboardCount, action == .openClipboard ? 1 : 0)
                     XCTAssertEqual(editCount, action == .editWorkspace ? 1 : 0)
+                    XCTAssertEqual(settingsCount, action == .openSettings ? 1 : 0)
                     XCTAssertFalse(coordinator.handle(gesture, settings: settings, context: makeContext(state: state), callbacks: callbacks))
-                    XCTAssertEqual(clipboardCount + editCount, 1)
+                    XCTAssertEqual(clipboardCount + editCount + settingsCount, 1)
                 }
             }
         }

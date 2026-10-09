@@ -44,7 +44,7 @@ final class ZeroChromeWorkspaceGeometryTests: XCTestCase {
                     page: .island, configuration: config, editing: false, settings: settings, metrics: metrics, header: header)
                 let chrome = ExpandedIslandLayoutMetrics(containerSize: size,
                     horizontalPadding: IslandShellLayout.expandedHorizontalPadding(isNotchIntegrated: true, showNavigationControls: false),
-                    displayMetrics: metrics, headerDrop: header.headerDrop, showHeader: false)
+                    displayMetrics: metrics, headerDrop: header.contentTopInset, showHeader: false)
                 let projection = WorkspaceWidgetLayoutProjection.make(regions: config.regions(on: .media),
                     availableSize: CGSize(width: chrome.innerWidth, height: chrome.pageHeight), metrics: metrics)
                 let frame = try XCTUnwrap(projection.frames.first?.frame)
@@ -61,7 +61,7 @@ final class ZeroChromeWorkspaceGeometryTests: XCTestCase {
         }
         let floating = ExpandedHeaderLayout.hidden(metrics: metrics, isNotchIntegrated: false)
         let floatingChrome = ExpandedIslandLayoutMetrics(containerSize: .zero, horizontalPadding: 6,
-            displayMetrics: metrics, headerDrop: floating.headerDrop, showHeader: false)
+            displayMetrics: metrics, headerDrop: floating.contentTopInset, showHeader: false)
         XCTAssertEqual(floatingChrome.topPadding, metrics.spacing(6), accuracy: 0.001)
         XCTAssertEqual(IslandShellLayout.expandedHorizontalPadding(isNotchIntegrated: false, showNavigationControls: false), 6)
     }
@@ -208,7 +208,7 @@ final class ZeroChromeWorkspaceGeometryTests: XCTestCase {
                             clipboardEnabled: settings.clipboardHistoryEnabled, hardwareNotchWidth: 186), header: header)
                     let chrome = ExpandedIslandLayoutMetrics(containerSize: size,
                         horizontalPadding: IslandShellLayout.expandedHorizontalPadding(isNotchIntegrated: true, showNavigationControls: shown),
-                        displayMetrics: metrics, headerDrop: header.headerDrop, showHeader: shown)
+                        displayMetrics: metrics, headerDrop: header.contentTopInset, showHeader: shown)
                     let projection = WorkspaceWidgetLayoutProjection.make(regions: config.regions(on: .media),
                         availableSize: CGSize(width: chrome.innerWidth, height: chrome.pageHeight), metrics: metrics)
                     let frame = try XCTUnwrap(projection.frames.first?.frame)

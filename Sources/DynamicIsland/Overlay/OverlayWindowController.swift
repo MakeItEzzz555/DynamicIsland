@@ -259,6 +259,7 @@ final class OverlayWindowController {
     private var rightWorkspaceSwipe = RightWorkspaceSwipeRecognizer()
     private var agentStackSwipe = RightWorkspaceSwipeRecognizer()
     private var touchPaging = IslandTouchGesturePolicy()
+    private var pageScrollGesture = IslandPageScrollGesture()
     private var touchScrollOwnership = IslandTouchScrollOwnership()
     private var expandedScrollLastActionAt: CFTimeInterval?
     private var expandedScrollGestureResetWorkItem: DispatchWorkItem?
@@ -1354,11 +1355,7 @@ final class OverlayWindowController {
                 return event
             }
 
-            if self.handleExpandedScrollWheelFromMonitor(event, source: "localScrollMonitor") {
-                return nil
-            }
-
-            if self.handleCollapsedScrollWheelFromMonitor(event, source: "localScrollMonitor") {
+            if self.handleIslandScrollWheelFromMonitor(event, source: "localScrollMonitor") {
                 return nil
             }
 
@@ -1372,11 +1369,7 @@ final class OverlayWindowController {
 
                 self.debugScrollWheelReceived(event, source: "globalScrollMonitor")
                 guard !self.touchSequenceSuppressesIslandScroll(event) else { return }
-                if self.handleExpandedScrollWheelFromMonitor(event, source: "globalScrollMonitor") {
-                    return
-                }
-
-                _ = self.handleCollapsedScrollWheelFromMonitor(event, source: "globalScrollMonitor")
+                _ = self.handleIslandScrollWheelFromMonitor(event, source: "globalScrollMonitor")
             }
         }
 
@@ -1929,6 +1922,7 @@ final class OverlayWindowController {
 
     private func handleIslandScrollWheelFromMonitor(_ event: NSEvent, source: String) -> Bool {
         guard acceptsOverlayScroll(event) else { return false }
+        if routePageScroll(event) { return true }
         switch islandState.state {
         case .collapsed:
             return handleCollapsedScrollWheelFromMonitor(event, source: source)
@@ -1940,11 +1934,58 @@ final class OverlayWindowController {
     private func handleIslandScrollWheel(_ event: NSEvent, localPoint: NSPoint, source: String) -> Bool {
         guard !touchSequenceSuppressesIslandScroll(event) else { return false }
         guard acceptsOverlayScroll(event) else { return false }
+        if routePageScroll(event) { return true }
         switch islandState.state {
         case .collapsed:
             return handleCollapsedScrollWheel(event, localPoint: localPoint, source: source)
         case .expanded:
             return handleExpandedScrollWheel(event, source: source)
+        }
+    }
+
+    private func routePageScroll(_ event: NSEvent) -> Bool {
+        let pointer = NSEvent.mouseLocation
+        let inside = islandState.state == .expanded
+            ? visibleExpandedShellScreenFrame().contains(pointer)
+            : collapsedVisibleLocalFrames.contains { screenRect(for: $0).contains(pointer) }
+        let overControl = layoutStore.nativeControlRegions.values.contains { frame in
+            screenRect(for: IslandCanvasCoordinateSpace.appKitLocalRect(
+                fromSwiftUI: frame, canvasHeight: layoutStore.canvasSize.height)).contains(pointer)
+        }
+        // Nested workspaces, Terminal and native content keep both axes.
+        let overContent = islandState.state == .expanded && [layoutStore.expandedContentScrollRegion,
+            layoutStore.agentWorkspaceScrollRegion, layoutStore.rightWorkspaceRegion].contains {
+                !$0.isEmpty && screenRect(for: $0).contains(pointer)
+            }
+        let left = islandState.state == .expanded ? settings.expandedSwipeLeftAction : settings.collapsedSwipeLeftAction
+        let right = islandState.state == .expanded ? settings.expandedSwipeRightAction : settings.collapsedSwipeRightAction
+        let legacyEnabled = settings.gesturesEnabled && settings.gestureInputSource == .trackpad && !settings.requireGestureConfirmation
+        func pages(_ action: IslandGestureAction) -> Bool {
+            (action == .nextTab && settings.nextTabGestureEnabled) ||
+            (action == .previousTab && settings.previousTabGestureEnabled)
+        }
+        let leftAllowed = !settings.showNavigationControls || (legacyEnabled && pages(left))
+        let rightAllowed = !settings.showNavigationControls || (legacyEnabled && pages(right))
+        let inputAllowed = canPresentOverlay && NSEvent.pressedMouseButtons == 0 &&
+            !layoutStore.isCollapseShellOnly && !layoutStore.isExpandedContentExiting &&
+            !layoutStore.isExpandedScrollGestureSuppressed && !modules.navigation.isFileDropTargeted &&
+            layoutStore.workspaceLayoutPreview == nil && !layoutStore.transientInteractionOwners.contains(.workspaceEditor)
+        let canBegin = inputAllowed && (leftAllowed || rightAllowed) && inside && !overControl && !overContent
+        let outcome = pageScrollGesture.update(
+            deltaX: IslandPageScrollGesture.fingerDelta(event.scrollingDeltaX, invertedFromDevice: event.isDirectionInvertedFromDevice),
+            deltaY: IslandPageScrollGesture.fingerDelta(event.scrollingDeltaY, invertedFromDevice: event.isDirectionInvertedFromDevice),
+            phase: IslandPageScrollGesture.phase(event), canBegin: canBegin,
+            leftAllowed: leftAllowed, rightAllowed: rightAllowed, inputStillAllowed: inputAllowed)
+        switch outcome {
+        case .ignored: return false
+        case .consumed: return true
+        case .next, .previous:
+            resetExpandedScrollTracking()
+            resetCollapsedScrollTracking()
+            resetMediaSwipeSession()
+            let action = outcome == .next ? left : right
+            navigatePage(forward: !settings.showNavigationControls ? outcome == .next : action == .nextTab)
+            return true
         }
     }
 
@@ -2144,6 +2185,7 @@ final class OverlayWindowController {
             expandedScrollDelta = .zero
             return true
         case .nextTab:
+            guard gesture != .swipeLeft && gesture != .swipeRight else { return true }
             guard settings.nextTabGestureEnabled else { return true }
             modules.navigation.selectNextPage(using: settings)
             expandedScrollGestureHandled = true
@@ -2151,6 +2193,7 @@ final class OverlayWindowController {
             expandedScrollDelta = .zero
             return true
         case .previousTab:
+            guard gesture != .swipeLeft && gesture != .swipeRight else { return true }
             guard settings.previousTabGestureEnabled else { return true }
             modules.navigation.selectPreviousPage(using: settings)
             expandedScrollGestureHandled = true
@@ -2585,6 +2628,9 @@ final class OverlayWindowController {
         if !collapsedScrollGestureHandled,
            let gesture = resolvedGesture {
             let action = collapsedMediaPillAction(for: gesture)
+            if (gesture == .swipeLeft || gesture == .swipeRight), action == .nextTab || action == .previousTab {
+                return true // Horizontal paging has one owner: routePageScroll.
+            }
             if isHorizontalMediaTrackAction(action), abs(collapsedScrollDelta.width) >= abs(collapsedScrollDelta.height) {
                 debugGesture("horizontal media swipe threshold reached; waiting for quiet finish action=\(action.rawValue)")
                 return true
