@@ -208,9 +208,10 @@ final class AgentRuntimeAuditRegressionTests: XCTestCase {
         let document = FlippedDocument(frame: CGRect(x: 0, y: 0, width: 400, height: 1_000))
         let scroll = NSScrollView(frame: CGRect(x: 0, y: 0, width: 400, height: 200))
         scroll.documentView = document
-        let window = NSWindow(contentRect: scroll.frame, styleMask: [.borderless], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false; window.contentView = scroll; window.orderFrontRegardless()
-        defer { window.contentView = nil; window.orderOut(nil) }
+        // This test owns layout epochs. Showing a window lets AppKit deliver an
+        // unrelated layout during the idle assertion, which is valid progress,
+        // not timer polling. Other viewport tests cover the mounted window.
+        scroll.layoutSubtreeIfNeeded()
         let session = AgentSessionInstanceID(sessionID: .init(provider: .codex, nativeID: "layout-driven-latest"), generation: .init(rawValue: 1))
         let anchor = AgentTranscriptTailAnchor()
         let probe = AgentTranscriptViewportProbe.Probe(frame: .zero)
@@ -218,18 +219,24 @@ final class AgentRuntimeAuditRegressionTests: XCTestCase {
         var attempts = 0
         probe.configure(sessionID: session, contentToken: "one", jumpRequest: 0, realizationID: "missing-tail",
                         tail: anchor, realizeLatest: { attempts += 1 }, changed: { _ in })
-        for _ in 0..<12 { await Task.yield() }
+        func finishScheduledCorrection() async {
+            await withCheckedContinuation { continuation in
+                DispatchQueue.main.async { continuation.resume() }
+            }
+        }
+        await finishScheduledCorrection()
         let idleAttempts = attempts
+        XCTAssertEqual(idleAttempts, 1, "Initial realization completes before testing an idle layout epoch")
         for _ in 0..<24 { await Task.yield() }
         XCTAssertEqual(attempts, idleAttempts, "No timer/retry polling without native layout progress")
         for _ in 0..<20 {
             probe.layout()
-            for _ in 0..<3 { await Task.yield() }
+            await finishScheduledCorrection()
         }
         XCTAssertEqual(attempts, AgentTranscriptViewportProbe.Probe.maximumRealizationAttempts)
         probe.detach()
         probe.layout()
-        for _ in 0..<8 { await Task.yield() }
+        await finishScheduledCorrection()
         XCTAssertEqual(attempts, AgentTranscriptViewportProbe.Probe.maximumRealizationAttempts,
                        "Retiring native callbacks cannot restart presentation work")
     }

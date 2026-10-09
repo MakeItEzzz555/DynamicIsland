@@ -434,7 +434,7 @@ struct ExpandedPresentationProfile: Equatable, Sendable {
             let hidden = header.mode == .hidden
             let normalChrome = ExpandedIslandLayoutMetrics(containerSize: base, horizontalPadding: 0, displayMetrics: metrics)
             let currentChrome = ExpandedIslandLayoutMetrics(containerSize: base, horizontalPadding: 0, displayMetrics: metrics,
-                                                            headerDrop: header.headerDrop, showHeader: !hidden)
+                                                            headerDrop: header.contentTopInset, showHeader: !hidden)
             return CGSize(width: max(size.width * metrics.expandedShellScale, (hidden ? 0 : minimumHeaderWidth) + horizontal),
                           height: max(1, size.height * metrics.expandedShellScale
                               - normalChrome.workspaceVerticalChrome + currentChrome.workspaceVerticalChrome))
@@ -452,7 +452,7 @@ struct ExpandedPresentationProfile: Equatable, Sendable {
                 hardwareNotchWidth: metrics.hardwareNotchWidth, showNavigationControls: showNavigationControls)
             : lane
         let chrome = ExpandedIslandLayoutMetrics(containerSize: base, horizontalPadding: horizontal / 2, displayMetrics: metrics,
-                                                 headerDrop: header.headerDrop, showHeader: !hidden)
+                                                 headerDrop: header.contentTopInset, showHeader: !hidden)
         // Usage is a configured band widget inside the projection: nothing is
         // reserved for it outside the configuration (zero when removed).
         let vertical = chrome.workspaceVerticalChrome

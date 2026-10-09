@@ -42,7 +42,7 @@ final class IslandNavigationControlsTests: XCTestCase {
         let chrome = ExpandedIslandLayoutMetrics(containerSize: size,
             horizontalPadding: IslandShellLayout.expandedHorizontalPadding(isNotchIntegrated: true,
                 showNavigationControls: settings.showNavigationControls), displayMetrics: notched,
-            headerDrop: header.headerDrop, showHeader: header.mode != .hidden)
+            headerDrop: header.contentTopInset, showHeader: header.mode != .hidden)
         let projection = WorkspaceWidgetLayoutProjection.make(regions: config.regions(on: surface),
             availableSize: CGSize(width: chrome.innerWidth, height: chrome.pageHeight), metrics: notched, editing: editing)
         return (header, size, Dictionary(uniqueKeysWithValues: projection.frames.map { ($0.id, $0.frame) }))
@@ -57,8 +57,10 @@ final class IslandNavigationControlsTests: XCTestCase {
                     settings: settings, metrics: notched, pageCount: 4)
                 XCTAssertEqual(header.mode, .hidden)
                 XCTAssertEqual(header.compactRowWidth, 0)
+                XCTAssertEqual(header.headerDrop, 0)
+                XCTAssertEqual(header.physicalNotchInset, notched.hardwareNotchHeight)
                 let chrome = ExpandedIslandLayoutMetrics(containerSize: .zero, horizontalPadding: 0,
-                    displayMetrics: notched, headerDrop: header.headerDrop, showHeader: false)
+                    displayMetrics: notched, headerDrop: header.contentTopInset, showHeader: false)
                 XCTAssertEqual(chrome.tabSwitcherHeight, 0)
                 XCTAssertEqual(chrome.tabToPageSpacing, 0)
                 XCTAssertEqual(chrome.topPadding, notched.hardwareNotchHeight
@@ -206,34 +208,34 @@ final class IslandNavigationControlsTests: XCTestCase {
         XCTAssertEqual(settings.gestureInputSource, .none)
     }
 
-    func testInvalidPersistedNavigationPairRestoresControlsAndPreservesPagingOptOut() {
+    func testExistingGestureOnlyPreferenceLoadsWithoutEnablingOptionalThreeFingerPaging() {
         let defaults = UserDefaults(suiteName: "NavigationRecovery-\(UUID().uuidString)")!
         defaults.set(false, forKey: "showNavigationControls")
         defaults.set(false, forKey: "threeFingerTabNavigationEnabled")
         let settings = AppSettings(defaults: defaults)
-        XCTAssertTrue(settings.showNavigationControls)
+        XCTAssertFalse(settings.showNavigationControls)
         XCTAssertFalse(settings.threeFingerTabNavigationEnabled)
-        XCTAssertTrue(defaults.bool(forKey: "showNavigationControls"))
+        XCTAssertFalse(defaults.bool(forKey: "showNavigationControls"))
         XCTAssertFalse(defaults.bool(forKey: "threeFingerTabNavigationEnabled"))
         XCTAssertFalse(AppSettings(defaults: defaults).threeFingerTabNavigationEnabled)
     }
 
-    func testHidingControlsEnablesPagingAndDisablingPagingRestoresControls() {
+    func testGestureOnlyIsIndependentOfOptionalThreeFingerPaging() {
         let defaults = UserDefaults(suiteName: "NavigationTransitions-\(UUID().uuidString)")!
         let settings = AppSettings(defaults: defaults)
         settings.threeFingerTabNavigationEnabled = false
         XCTAssertTrue(settings.showNavigationControls)
         settings.showNavigationControls = false
-        XCTAssertTrue(settings.threeFingerTabNavigationEnabled)
+        XCTAssertFalse(settings.threeFingerTabNavigationEnabled)
         XCTAssertFalse(settings.showNavigationControls)
         let hidden = AppSettings(defaults: defaults)
-        XCTAssertTrue(hidden.threeFingerTabNavigationEnabled)
+        XCTAssertFalse(hidden.threeFingerTabNavigationEnabled)
         XCTAssertFalse(hidden.showNavigationControls)
         settings.threeFingerTabNavigationEnabled = false
-        XCTAssertTrue(settings.showNavigationControls)
+        XCTAssertFalse(settings.showNavigationControls)
         XCTAssertFalse(settings.threeFingerTabNavigationEnabled)
         let restored = AppSettings(defaults: defaults)
-        XCTAssertTrue(restored.showNavigationControls)
+        XCTAssertFalse(restored.showNavigationControls)
         XCTAssertFalse(restored.threeFingerTabNavigationEnabled)
         restored.resetModuleSettings()
         let reset = AppSettings(defaults: defaults)
@@ -241,15 +243,15 @@ final class IslandNavigationControlsTests: XCTestCase {
         XCTAssertTrue(reset.threeFingerTabNavigationEnabled)
     }
 
-    func testReloadNormalizesInvalidPersistedPairWithoutObserverCrossWrites() {
+    func testReloadPreservesGestureOnlyAndOptionalPagingOptOut() {
         let defaults = UserDefaults(suiteName: "NavigationReload-\(UUID().uuidString)")!
         let settings = AppSettings(defaults: defaults)
         defaults.set(false, forKey: "showNavigationControls")
         defaults.set(false, forKey: "threeFingerTabNavigationEnabled")
         settings.resetLayoutSettings() // Existing public path reloads unrelated module preferences.
-        XCTAssertTrue(settings.showNavigationControls)
+        XCTAssertFalse(settings.showNavigationControls)
         XCTAssertFalse(settings.threeFingerTabNavigationEnabled)
-        XCTAssertTrue(defaults.bool(forKey: "showNavigationControls"))
+        XCTAssertFalse(defaults.bool(forKey: "showNavigationControls"))
         XCTAssertFalse(defaults.bool(forKey: "threeFingerTabNavigationEnabled"))
     }
 }

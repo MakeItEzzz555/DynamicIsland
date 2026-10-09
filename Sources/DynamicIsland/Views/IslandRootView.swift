@@ -356,6 +356,8 @@ struct ExpandedHeaderLayout: Equatable, Sendable {
     var compactRowWidth: CGFloat
     /// Extra top inset so the compact row starts one clearance below the notch.
     var headerDrop: CGFloat
+    var physicalNotchInset: CGFloat = 0
+    var contentTopInset: CGFloat { headerDrop + physicalNotchInset }
 
     static let winged = ExpandedHeaderLayout(mode: .winged, compactRowWidth: 0, headerDrop: 0)
     static func hidden(metrics: ResolvedIslandMetrics, isNotchIntegrated: Bool) -> Self {
@@ -363,7 +365,7 @@ struct ExpandedHeaderLayout: Equatable, Sendable {
         let drop = isNotchIntegrated && metrics.hasHardwareNotch
             ? max(0, metrics.hardwareNotchHeight)
             : 0
-        return Self(mode: .hidden, compactRowWidth: 0, headerDrop: drop)
+        return Self(mode: .hidden, compactRowWidth: 0, headerDrop: 0, physicalNotchInset: drop)
     }
     /// Minimum gap between the navigation and action groups in the row.
     static let compactGroupSpacing: CGFloat = 8
@@ -723,7 +725,7 @@ struct IslandRootView: View {
         let chrome = ExpandedIslandLayoutMetrics(containerSize: surfaceSize,
             horizontalPadding: IslandShellLayout.expandedHorizontalPadding(isNotchIntegrated: notchIntegrated,
                 showNavigationControls: expandedHeaderLayout.mode != .hidden),
-            displayMetrics: metrics, headerDrop: expandedHeaderLayout.headerDrop,
+            displayMetrics: metrics, headerDrop: expandedHeaderLayout.contentTopInset,
             showHeader: expandedHeaderLayout.mode != .hidden)
         let shellOrigin = CGPoint(x: surfaceFrame.minX, y: layoutStore.canvasSize.height - surfaceFrame.maxY)
         let geometry = IslandBackgroundInteractionGeometry(size: surfaceSize,
@@ -3740,7 +3742,7 @@ struct ExpandedIslandView: View {
                     showNavigationControls: headerLayout.mode != .hidden
                 ),
                 displayMetrics: layoutStore.displayMetrics,
-                headerDrop: headerLayout.headerDrop,
+                headerDrop: headerLayout.contentTopInset,
                 showHeader: headerLayout.mode != .hidden
             )
 
@@ -4731,7 +4733,7 @@ private final class AirDropURLAccumulator: @unchecked Sendable {
     }
 }
 
-private struct SettingsGearButton: View {
+struct SettingsGearButton: View {
     let action: () -> Void
     @State private var isHovering = false
 

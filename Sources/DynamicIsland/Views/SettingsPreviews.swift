@@ -210,7 +210,7 @@ struct SettingsPreviewPresentation {
         chrome = ExpandedIslandLayoutMetrics(containerSize: geometry.expandedFrame.size,
             horizontalPadding: IslandShellLayout.expandedHorizontalPadding(isNotchIntegrated: integrated,
                 showNavigationControls: settings.showNavigationControls),
-            displayMetrics: Self.metrics, headerDrop: header.headerDrop, showHeader: header.mode != .hidden)
+            displayMetrics: Self.metrics, headerDrop: header.contentTopInset, showHeader: header.mode != .hidden)
         let surface: WorkspaceSurface = page == .agents ? .agents : .media
         let allowed = WorkspaceWidgetAvailability.eligible(on: surface, settings: settings)
         regions = (configuration ?? .initial).regions(on: surface).compactMap { region in
@@ -371,9 +371,19 @@ struct IslandShellSettingsPreview: View {
                         if expanded {
                             VStack(alignment: .leading, spacing: presentation.chrome.tabToPageSpacing) {
                                 if presentation.chrome.showHeader {
-                                    ExpandedIslandPageSwitcher(settings: settings, navigation: navigation)
-                                        .fixedSize()
-                                        .frame(height: presentation.chrome.tabSwitcherHeight)
+                                    HStack(spacing: 6) {
+                                        ExpandedIslandPageSwitcher(settings: settings, navigation: navigation)
+                                            .fixedSize()
+                                        Spacer(minLength: ExpandedHeaderLayout.compactGroupSpacing)
+                                        if settings.clipboardHistoryEnabled {
+                                            ExpandedHeaderButton(systemImage: "clipboard", help: "Clipboard History",
+                                                accessibilityLabel: "Open Clipboard History") {}
+                                        }
+                                        ExpandedHeaderButton(systemImage: "square.grid.2x2", help: "Customize workspace",
+                                            accessibilityLabel: "Customize workspace") {}
+                                        SettingsGearButton {}
+                                    }
+                                    .frame(height: presentation.chrome.tabSwitcherHeight)
                                 }
                                 if let dependencies {
                                     SettingsPreviewWidgetGrid(settings: settings, dependencies: dependencies, presentation: presentation)
@@ -1503,6 +1513,11 @@ struct SystemHUDSettingsPreview: View {
     @ObservedObject var settings: AppSettings
     @State private var previewValue = 0.68
     @State private var previewCase: SystemHUDPreviewCase = .volume
+
+    init(settings: AppSettings, initialCase: SystemHUDPreviewCase = .volume) {
+        self.settings = settings
+        _previewCase = State(initialValue: initialCase)
+    }
 
     var body: some View {
         VStack(spacing: 8) {
