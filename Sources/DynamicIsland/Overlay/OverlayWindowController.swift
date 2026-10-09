@@ -336,6 +336,7 @@ final class OverlayWindowController {
         hostingView.allowedTouchTypes = [.indirect]
         hostingView.wantsRestingTouches = true
         hostingView.onIndirectTouches = { [weak self] contacts, phase in
+            if contacts.count >= 2 { self?.layoutStore.tabPointerAnchor.cancel() }
             self?.handleIndirectTouches(contacts, phase: phase)
         }
         hostingView.wantsLayer = true
@@ -483,6 +484,7 @@ final class OverlayWindowController {
             .dropFirst()
             .sink { [weak self] page in
                 guard let self else { return }
+                self.layoutStore.tabPointerAnchor.selectionChanged(to: page)
                 let sessionGeneration = self.presentationSession.generation
 
                 // @Published emits its new value before the backing property is
@@ -1137,6 +1139,7 @@ final class OverlayWindowController {
         islandPanel.animations.removeAll()
         panelMorphGeneration += 1
         let generation = panelMorphGeneration
+        let pointerGeneration = layoutStore.tabPointerAnchor.generation
         let current = islandPanel.frame
         let stage = current.isEmpty ? targetPanel : current.union(targetPanel)
         if !framesAreApproximatelyEqual(stage, current, tolerance: 0.35) {
@@ -1146,10 +1149,16 @@ final class OverlayWindowController {
         }
         updateLayout(panelFrame: stage, geometry: geometry, animated: true) { [weak self] in
             guard let self, generation == self.panelMorphGeneration else { return }
-            guard !self.framesAreApproximatelyEqual(stage, targetPanel, tolerance: 0.35) else { return }
-            self.applyCanonicalPanelFrame(targetPanel, reason: "\(reason) settle", animated: false)
-            self.updateLayout(panelFrame: targetPanel, geometry: geometry, animated: false)
-            self.updateMousePassthrough()
+            if !self.framesAreApproximatelyEqual(stage, targetPanel, tolerance: 0.35) {
+                self.applyCanonicalPanelFrame(targetPanel, reason: "\(reason) settle", animated: false)
+                self.updateLayout(panelFrame: targetPanel, geometry: geometry, animated: false)
+            }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, generation == self.panelMorphGeneration else { return }
+                self.islandPanel.contentView?.layoutSubtreeIfNeeded()
+                self.layoutStore.tabPointerAnchor.finish(generation: pointerGeneration)
+                self.updateMousePassthrough()
+            }
         }
     }
 
@@ -1338,6 +1347,7 @@ final class OverlayWindowController {
         localScrollWheelMonitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel]) { [weak self] event in
             guard let self else { return event }
 
+            self.layoutStore.tabPointerAnchor.cancel()
             self.debugScrollWheelReceived(event, source: "localScrollMonitor")
 
             // Panel events are routed exactly once by IslandHostingView. Running
@@ -1437,6 +1447,7 @@ final class OverlayWindowController {
         debugLog("collapse check grace passed elapsed=\(elapsedSinceExpansion)")
 
         let mouseLocation = currentMouseScreenLocation()
+        layoutStore.tabPointerAnchor.observePointer(mouseLocation)
         let canonicalFrame = visibleExpandedShellScreenFrame()
         // The safe region is the full rendered shell for the current page
         // profile. There is deliberately no absolute "distance below the
@@ -1467,6 +1478,7 @@ final class OverlayWindowController {
     private var currentExpandedHoverHolds: ExpandedHoverContainment.Holds {
         var holds: ExpandedHoverContainment.Holds = []
         if nativeMenuTracking.isTracking { holds.insert(.menuTracking) }
+        if layoutStore.tabPointerAnchor.isActive { holds.insert(.tabPointerAnchor) }
         if layoutStore.isTransientInteractionActive { holds.insert(.transientInteraction) }
         if layoutStore.isTextInputFocused, islandPanel.isKeyWindow { holds.insert(.textInput) }
         if modules.fileDragSession.isActive { holds.insert(.fileDrag) }

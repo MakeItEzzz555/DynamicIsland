@@ -922,6 +922,10 @@ struct SettingsView: View {
             DisclosureGroup("Advanced activity priority") {
               SettingsGroup("Collapsed Live Activity Priority") {
                 PriorityStepperRow(
+                    title: CollapsedLiveActivityPrioritySource.agent.displayName,
+                    value: $settings.collapsedPriorityAgent
+                )
+                PriorityStepperRow(
                     title: CollapsedLiveActivityPrioritySource.runningTimer.displayName,
                     value: $settings.collapsedPriorityRunningTimer
                 )

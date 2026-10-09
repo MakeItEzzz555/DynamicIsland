@@ -517,6 +517,7 @@ struct VoiceBeamGeometry: Equatable {
 }
 
 struct MetalSendButton: View {
+    static let actionSide: CGFloat = 34
     var configuration: MetalSendConfiguration
     var isEnabled: Bool
     var sessionID: AgentSessionInstanceID? = nil
@@ -598,6 +599,9 @@ private struct MetalSendPressStyle: ButtonStyle {
             .scaleEffect(feedback.scale)
             .brightness(feedback.brightness)
             .opacity(feedback.opacity)
+            // Press feedback must not shrink the mouse-up acceptance region.
+            .frame(width: MetalSendButton.actionSide, height: MetalSendButton.actionSide)
+            .contentShape(Rectangle())
             // Droppy press/release springs (editor tokens): press reacts
             // immediately, release/hover settle softly. No layout movement.
             .animation(WorkspaceEditorMotion.hover(entering: configuration.isPressed || hovering, reduceMotion: reduceMotion),

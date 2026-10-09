@@ -34,6 +34,7 @@ enum DynamicIslandLiveActivityKind: String, Equatable, Sendable {
 
 enum CollapsedLiveActivityPrioritySource: String, CaseIterable, Identifiable {
     case systemHUD
+    case agent
     case runningTimer
     case playingMedia
     case lowBattery
@@ -47,6 +48,8 @@ enum CollapsedLiveActivityPrioritySource: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
+        case .agent:
+            "Agent Activity"
         case .systemHUD:
             "System HUD"
         case .runningTimer:
@@ -70,6 +73,8 @@ enum CollapsedLiveActivityPrioritySource: String, CaseIterable, Identifiable {
 
     var defaultPriority: Int {
         switch self {
+        case .agent:
+            130
         case .systemHUD:
             200
         case .runningTimer:
@@ -91,24 +96,26 @@ enum CollapsedLiveActivityPrioritySource: String, CaseIterable, Identifiable {
 
     var defaultRank: Int {
         switch self {
+        case .agent:
+            1
         case .systemHUD:
             0
         case .runningTimer:
-            1
-        case .playingMedia:
             2
-        case .lowBattery:
+        case .playingMedia:
             3
-        case .pausedTimer:
+        case .lowBattery:
             4
-        case .recentFiles:
+        case .pausedTimer:
             5
-        case .pausedMedia:
+        case .recentFiles:
             6
-        case .chargingBattery:
+        case .pausedMedia:
             7
-        case .fullBattery:
+        case .chargingBattery:
             8
+        case .fullBattery:
+            9
         }
     }
 }
@@ -121,6 +128,7 @@ struct CollapsedLiveActivityPrioritySettings: Equatable {
     var pausedTimer: Int
     var recentFiles: Int
     var pausedMedia: Int
+    var agent: Int = CollapsedLiveActivityPrioritySource.agent.defaultPriority
 
     static var defaults: CollapsedLiveActivityPrioritySettings {
         CollapsedLiveActivityPrioritySettings(
@@ -135,6 +143,8 @@ struct CollapsedLiveActivityPrioritySettings: Equatable {
     func priority(for source: CollapsedLiveActivityPrioritySource) -> Int {
         let value: Int
         switch source {
+        case .agent:
+            value = agent
         case .systemHUD:
             value = source.defaultPriority
         case .runningTimer:
@@ -165,6 +175,7 @@ struct CollapsedLiveActivitySourceToggles: Equatable {
     var fileTrayEnabled: Bool
     var batteryEnabled: Bool
     var systemHUDEnabled: Bool = false
+    var agentEnabled: Bool = false
 }
 
 enum CollapsedIslandContentMode: Equatable {
@@ -280,13 +291,21 @@ struct DynamicIslandLiveActivity: Identifiable, Equatable, Sendable {
     }
 }
 
+extension DynamicIslandLiveActivity {
+    func withPriority(_ priority: Int) -> Self {
+        Self(id: id, kind: kind, title: title, subtitle: subtitle, symbolName: symbolName,
+            priority: priority, isActive: isActive, progress: progress, updatedAt: updatedAt,
+            systemHUDKind: systemHUDKind, batteryState: batteryState, lifecycle: lifecycle)
+    }
+}
+
 enum CollapsedLiveActivitySelector {
     static func select(
         activities: [DynamicIslandLiveActivity],
         priorities: CollapsedLiveActivityPrioritySettings,
         toggles: CollapsedLiveActivitySourceToggles
     ) -> CollapsedIslandContentMode {
-        guard toggles.liveActivitiesEnabled || toggles.systemHUDEnabled else { return .inactive }
+        guard toggles.liveActivitiesEnabled || toggles.systemHUDEnabled || toggles.agentEnabled else { return .inactive }
 
         guard let selected = candidates(
             activities: activities,
@@ -299,6 +318,8 @@ enum CollapsedLiveActivitySelector {
         }
 
         switch selected.source {
+        case .agent:
+            return .agent(selected.activity)
         case .systemHUD:
             return .system(selected.activity)
         case .playingMedia, .pausedMedia:
@@ -318,7 +339,7 @@ enum CollapsedLiveActivitySelector {
         toggles: CollapsedLiveActivitySourceToggles,
         maxCount: Int = 3
     ) -> [DynamicIslandLiveActivity] {
-        guard (toggles.liveActivitiesEnabled || toggles.systemHUDEnabled), maxCount > 0 else { return [] }
+        guard (toggles.liveActivitiesEnabled || toggles.systemHUDEnabled || toggles.agentEnabled), maxCount > 0 else { return [] }
 
         return candidates(
             activities: activities,
@@ -327,7 +348,9 @@ enum CollapsedLiveActivitySelector {
         )
         .sorted(by: candidateSort)
         .prefix(maxCount)
-        .map(\.activity)
+        .map { candidate in
+            candidate.activity.withPriority(candidate.priority)
+        }
     }
 
     private struct Candidate {
@@ -373,7 +396,9 @@ enum CollapsedLiveActivitySelector {
             }
         case .system:
             return .systemHUD
-        case .agent, .keepAwake, .terminalTask, .windowSnapPreview, .reminder,
+        case .agent:
+            return .agent
+        case .keepAwake, .terminalTask, .windowSnapPreview, .reminder,
              .voiceRecording, .voiceTranscription, .voiceStatus, .camera, .backgroundRemoval,
              .screenRecording, .message:
             return nil
@@ -385,6 +410,8 @@ enum CollapsedLiveActivitySelector {
         toggles: CollapsedLiveActivitySourceToggles
     ) -> Bool {
         switch source {
+        case .agent:
+            return toggles.agentEnabled
         case .systemHUD:
             return toggles.systemHUDEnabled
         case .runningTimer, .pausedTimer:

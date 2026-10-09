@@ -160,7 +160,7 @@ enum SettingsAuditCatalog {
         + entries(["replaceMacOSSystemHUDs"], .permission, "Requires Accessibility to intercept system HUD keys; status is shown in Settings.")
         + entries(["systemHUDDurationSeconds"], .behavioral, "How long a HUD stays visible.")
         + entries(["collapsedPriorityRunningTimer", "collapsedPriorityPlayingMedia", "collapsedPriorityPausedTimer",
-                   "collapsedPriorityRecentFiles", "collapsedPriorityPausedMedia"], .behavioral,
+                   "collapsedPriorityRecentFiles", "collapsedPriorityPausedMedia", "collapsedPriorityAgent"], .behavioral,
                   "Collapsed arbitration order, read through AppSettings' priority accessors.")
         // Gestures
         + entries(["gesturesEnabled", "gestureInputSource", "expandGestureEnabled", "collapseGestureEnabled",
@@ -340,7 +340,7 @@ enum SettingsCategoryDefaults {
                 Field(\.lowBatteryHUDEnabled), Field(\.audioDeviceHUDEnabled), Field(\.focusHUDEnabled),
                 Field(\.systemHUDDurationSeconds), Field(\.allowSimultaneousLiveActivitySidecars), Field(\.timerSidecarPreference),
                 Field(\.collapsedPriorityRunningTimer), Field(\.collapsedPriorityPlayingMedia), Field(\.collapsedPriorityPausedTimer),
-                Field(\.collapsedPriorityRecentFiles), Field(\.collapsedPriorityPausedMedia)
+                Field(\.collapsedPriorityRecentFiles), Field(\.collapsedPriorityPausedMedia), Field(\.collapsedPriorityAgent)
             ]
         case .clipboard:
             [

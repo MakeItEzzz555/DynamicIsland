@@ -35,7 +35,7 @@ final class SettingsAuditTests: XCTestCase {
 
     func testEveryAppSettingIsAuditedExactlyOnce() throws {
         let published = try publishedSettings()
-        XCTAssertEqual(published.count, 201)
+        XCTAssertEqual(published.count, 202)
         let audited = SettingsAuditCatalog.appSettingsKeys
         XCTAssertEqual(audited.count, Set(audited).count, "duplicate audit entries")
         XCTAssertEqual(Set(audited), Set(published),
@@ -141,7 +141,7 @@ final class SettingsAuditTests: XCTestCase {
         // Read only through AppSettings computed properties.
         let indirect: Set<String> = [
             "collapsedWidth", "expandedWidth", "autoCollapseDelayPreset", "autoCollapseGraceSeconds", "showIslandTab",
-            "collapsedPriorityRunningTimer", "collapsedPriorityPlayingMedia", "collapsedPriorityPausedTimer",
+            "collapsedPriorityAgent", "collapsedPriorityRunningTimer", "collapsedPriorityPlayingMedia", "collapsedPriorityPausedTimer",
             "collapsedPriorityRecentFiles", "collapsedPriorityPausedMedia"
         ]
         let settingsView = try source("Views/SettingsView.swift")

@@ -122,7 +122,7 @@ final class MetalSendInteractionTests: XCTestCase {
         host(enabled: true, metal: true)
         try await Task.sleep(for: .milliseconds(80))
         // Center, four rim points, and four points in the padded 34pt target.
-        let points = [CGPoint(x: 50, y: 50), CGPoint(x: 36, y: 50), CGPoint(x: 64, y: 50), CGPoint(x: 50, y: 36), CGPoint(x: 50, y: 64), CGPoint(x: 34, y: 34), CGPoint(x: 66, y: 34), CGPoint(x: 34, y: 66), CGPoint(x: 66, y: 66)]
+        let points = [CGPoint(x: 50, y: 50), CGPoint(x: 36, y: 50), CGPoint(x: 64, y: 50), CGPoint(x: 50, y: 36), CGPoint(x: 50, y: 64), CGPoint(x: 33.25, y: 33.25), CGPoint(x: 66.75, y: 33.25), CGPoint(x: 33.25, y: 66.75), CGPoint(x: 66.75, y: 66.75)]
         for (index, point) in points.enumerated() {
             try await click(point)
             XCTAssertEqual(sent, index + 1, "Dead hit zone at \(point)")

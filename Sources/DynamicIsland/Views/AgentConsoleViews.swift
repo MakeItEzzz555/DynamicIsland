@@ -211,6 +211,7 @@ struct AgentEmbeddedConsoleView: View {
                         loadDraft: loadDraft,
                         saveDraft: saveDraft
                     )
+                    .id(session.id)
                 }
             } else {
                 observedFooter
@@ -634,19 +635,26 @@ private struct AgentConsoleComposer: View {
 
     @State private var draft = ""
     @State private var submissionInFlight = false
+    @State private var actionOwner = UUID()
+    @State private var actionFrame = CGRect.null
+    @Environment(\.rightWorkspacePageIsActive) private var contentIsActive
+    @Environment(\.timerRulerInteractionRegistration) private var inputRegistration
     @Environment(\.agentVisualPreferences) private var visualPreferences
 
     var body: some View {
         composer
-            .onChange(of: session.id) { previous, current in
-                saveDraft?(draft, previous)
-                draft = loadDraft?(current) ?? ""
+            .onPreferenceChange(AgentComposerCanvasActionFrameKey.self) { frame in
+                actionFrame = frame
+                synchronizeActionRegion()
             }
+            .onChange(of: contentIsActive) { _, _ in synchronizeActionRegion() }
+            .onChange(of: inputRegistration.enabled) { _, _ in synchronizeActionRegion() }
             .onAppear {
                 if draft.isEmpty, let stored = loadDraft?(session.id) { draft = stored }
             }
             .onDisappear {
                 saveDraft?(draft, session.id)
+                layoutStore?.setNativeControlRegion(nil, owner: actionOwner)
             }
     }
 
@@ -667,8 +675,10 @@ private struct AgentConsoleComposer: View {
                 Button(action: onInterrupt) {
                     Image(systemName: "stop.circle.fill")
                         .font(.system(size: 18, weight: .semibold))
+                        .frame(width: MetalSendButton.actionSide, height: MetalSendButton.actionSide)
+                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.plain)
                 .foregroundStyle(.orange.opacity(0.92))
                 .fixedSize()
                 .layoutPriority(3)
@@ -693,6 +703,10 @@ private struct AgentConsoleComposer: View {
         .padding(.trailing, 5)
         .padding(.bottom, 3)
 
+    }
+
+    private func synchronizeActionRegion() {
+        layoutStore?.setNativeControlRegion(contentIsActive && inputRegistration.enabled ? actionFrame : nil, owner: actionOwner)
     }
 
     private var composerPlaceholder: String {
@@ -1610,6 +1624,14 @@ struct AgentComposerActionFrameKey: PreferenceKey {
     }
 }
 
+struct AgentComposerCanvasActionFrameKey: PreferenceKey {
+    static let defaultValue: CGRect = .null
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        let next = nextValue()
+        if !next.isNull { value = next }
+    }
+}
+
 private extension View {
     func reportsComposerActionFrame() -> some View {
         background {
@@ -1618,7 +1640,10 @@ private extension View {
                     key: AgentComposerActionFrameKey.self,
                     value: proxy.frame(in: .named(AgentComposerActionFrameKey.coordinateSpace))
                 )
+                .preference(key: AgentComposerCanvasActionFrameKey.self,
+                    value: proxy.frame(in: .named(IslandCanvasCoordinateSpace.name)))
             }
+            .allowsHitTesting(false)
         }
     }
 }

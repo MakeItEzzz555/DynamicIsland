@@ -174,7 +174,7 @@ struct CollapsedPreviewRowContent: Identifiable, Equatable {
     let isPrimary: Bool
 }
 
-private struct IslandPointerGestureModifier: ViewModifier {
+struct IslandPointerGestureModifier: ViewModifier {
     @ObservedObject var settings: AppSettings
     @ObservedObject var coordinator: IslandGestureCoordinator
     let context: IslandGestureContext
@@ -3859,7 +3859,7 @@ struct ExpandedIslandView: View {
             HStack(alignment: .center, spacing: 0) {
                 ZStack(alignment: .leading) {
                     if rendersExpandedVisualContent && shouldRenderContent && !isCollapseShellOnly {
-                        ExpandedIslandPageSwitcher(settings: settings, navigation: navigation)
+                        ExpandedIslandPageSwitcher(settings: settings, navigation: navigation, pointerAnchor: layoutStore.tabPointerAnchor)
                             .innerBlurScaleClean(
                                 settings: settings,
                                 isVisible: contentVisible,
@@ -4796,6 +4796,8 @@ struct ExpandedHeaderButton: View {
 struct ExpandedIslandPageSwitcher: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var navigation: IslandNavigationStore
+    var pointerAnchor: TabPointerAnchor? = nil
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(spacing: ExpandedIslandHeaderMetrics.tabSpacing) {
@@ -4804,7 +4806,15 @@ struct ExpandedIslandPageSwitcher: View {
                     page: page,
                     selected: navigation.selectedPage == page
                 ) {
+                    if navigation.selectedPage != page {
+                        let plan = ExpandedIslandMotion.plan(settings: settings, reduceMotion: reduceMotion || settings.reduceExtraMotion)
+                        pointerAnchor?.activate(page, eventType: NSApp.currentEvent?.type, pointer: NSEvent.mouseLocation,
+                            maximumDuration: plan.outgoingDuration + plan.shellDuration + 0.5)
+                    }
                     navigation.select(page)
+                }
+                .background {
+                    if let pointerAnchor { TabPointerFrame(page: page, anchor: pointerAnchor).allowsHitTesting(false) }
                 }
             }
         }
