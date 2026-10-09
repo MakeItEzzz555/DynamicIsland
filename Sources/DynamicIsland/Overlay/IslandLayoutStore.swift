@@ -38,6 +38,7 @@ struct IslandWorkspaceActionRequest: Equatable {
 
 @MainActor
 final class IslandLayoutStore: ObservableObject {
+    let tabPointerAnchor = TabPointerAnchor()
     /// Transient delivery to the existing expanded view, which still owns
     /// Clipboard presentation and the editor transaction.
     @Published private(set) var workspaceActionRequest: IslandWorkspaceActionRequest?
@@ -61,6 +62,7 @@ final class IslandLayoutStore: ObservableObject {
         return request.action
     }
     func cancelWorkspaceActionRequests() {
+        tabPointerAnchor.cancel()
         workspaceActionGeneration += 1
         workspaceActionRequest = nil
         requestedExpansionPage = nil

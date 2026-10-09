@@ -154,7 +154,7 @@ enum LiveActivityPresentationPolicy {
                 compactShape: .notchWing,
                 minimumWidth: 190,
                 idealWidth: 250,
-                priority: 130,
+                priority: activity.priority,
                 coexistencePolicy: .sidecarAllowed,
                 preemptionPolicy: .persistent
             )
@@ -399,7 +399,18 @@ enum LiveActivityLayoutResolver {
             .filter { $0.descriptor.allowsPrimary }
             .sorted(by: primarySort)
 
-        guard let primary = primaryCandidates.first else {
+        let agent = primaryCandidates.first { $0.activity.kind == .agent }
+        let other = primaryCandidates.first { $0.activity.kind != .agent }
+        let primaryChoice: LiveActivityPresentation?
+        if let agent, let other {
+            // Agent priority is configurable without changing other activities' placement policy.
+            let otherPriority = other.activity.kind.usesDirectLayoutProjection ? other.descriptor.priority : other.activity.priority
+            primaryChoice = agent.descriptor.priority >= otherPriority ? agent : other
+        } else {
+            primaryChoice = agent ?? other
+        }
+
+        guard let primary = primaryChoice else {
             return LiveActivityLayoutResolution(
                 leadingSidecar: nil,
                 primary: nil,
@@ -571,6 +582,8 @@ enum LiveActivityRuntimeProjection {
         agentSessions: [AgentSession],
         agentEnabled: Bool
     ) -> [DynamicIslandLiveActivity] {
+        var toggles = toggles
+        toggles.agentEnabled = agentEnabled
         var result = CollapsedLiveActivitySelector.previewActivities(
             activities: stored,
             priorities: priorities,
@@ -587,6 +600,7 @@ enum LiveActivityRuntimeProjection {
             sessions: agentSessions,
             enabled: agentEnabled
         ), let primary = compact.sessions.first {
+            result.removeAll { $0.kind == .agent }
             result.append(
                 DynamicIslandLiveActivity(
                     id: "agent:\(primary.id.sessionID.provider.deterministicSortKey):\(primary.id.sessionID.nativeID)",
@@ -598,7 +612,7 @@ enum LiveActivityRuntimeProjection {
                         at: Date()
                     ),
                     symbolName: AgentVisualStyle.providerSymbol(primary.id.sessionID.provider),
-                    priority: 130,
+                    priority: priorities.priority(for: .agent),
                     isActive: true,
                     progress: nil,
                     updatedAt: primary.lastUpdatedAt

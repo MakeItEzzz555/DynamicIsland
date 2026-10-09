@@ -39,6 +39,7 @@ enum ExpandedHoverContainment {
         /// An app-owned native popover window (e.g. the Calendar date
         /// picker) is visible; the pointer may legitimately be inside it.
         static let nativePopover = Holds(rawValue: 1 << 4)
+        static let tabPointerAnchor = Holds(rawValue: 1 << 5)
     }
 
     /// App-owned transient native windows (NSPopover-backed SwiftUI

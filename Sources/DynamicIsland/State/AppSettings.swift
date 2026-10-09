@@ -387,6 +387,9 @@ public final class AppSettings: ObservableObject {
     @Published public var audioDeviceHUDEnabled: Bool { didSet { save(audioDeviceHUDEnabled, for: Key.audioDeviceHUDEnabled) } }
     @Published public var focusHUDEnabled: Bool { didSet { save(focusHUDEnabled, for: Key.focusHUDEnabled) } }
     @Published public var systemHUDDurationSeconds: Double { didSet { save(systemHUDDurationSeconds, for: Key.systemHUDDurationSeconds) } }
+    @Published public var collapsedPriorityAgent: Int {
+        didSet { normalizeCollapsedPriorityAgent(oldValue: oldValue) }
+    }
     @Published public var collapsedPriorityRunningTimer: Int {
         didSet { normalizeCollapsedPriorityRunningTimer(oldValue: oldValue) }
     }
@@ -629,6 +632,7 @@ public final class AppSettings: ObservableObject {
         audioDeviceHUDEnabled = Self.bool(defaults, Key.audioDeviceHUDEnabled, true)
         focusHUDEnabled = Self.bool(defaults, Key.focusHUDEnabled, false)
         systemHUDDurationSeconds = Self.double(defaults, Key.systemHUDDurationSeconds, 1.4)
+        collapsedPriorityAgent = Self.int(defaults, Key.collapsedPriorityAgent, CollapsedLiveActivityPrioritySource.agent.defaultPriority)
         collapsedPriorityRunningTimer = Self.int(defaults, Key.collapsedPriorityRunningTimer, CollapsedLiveActivityPrioritySource.runningTimer.defaultPriority)
         collapsedPriorityPlayingMedia = Self.int(defaults, Key.collapsedPriorityPlayingMedia, CollapsedLiveActivityPrioritySource.playingMedia.defaultPriority)
         collapsedPriorityPausedTimer = Self.int(defaults, Key.collapsedPriorityPausedTimer, CollapsedLiveActivityPrioritySource.pausedTimer.defaultPriority)
@@ -762,12 +766,14 @@ public final class AppSettings: ObservableObject {
             playingMedia: collapsedPriorityPlayingMedia,
             pausedTimer: collapsedPriorityPausedTimer,
             recentFiles: collapsedPriorityRecentFiles,
-            pausedMedia: collapsedPriorityPausedMedia
+            pausedMedia: collapsedPriorityPausedMedia,
+            agent: collapsedPriorityAgent
         )
     }
 
     func resetCollapsedLiveActivityPrioritySettings() {
         let defaults = CollapsedLiveActivityPrioritySettings.defaults
+        collapsedPriorityAgent = defaults.agent
         collapsedPriorityRunningTimer = defaults.runningTimer
         collapsedPriorityPlayingMedia = defaults.playingMedia
         collapsedPriorityPausedTimer = defaults.pausedTimer
@@ -950,6 +956,7 @@ public final class AppSettings: ObservableObject {
         audioDeviceHUDEnabled = Self.bool(defaults, Key.audioDeviceHUDEnabled, true)
         focusHUDEnabled = Self.bool(defaults, Key.focusHUDEnabled, false)
         systemHUDDurationSeconds = Self.double(defaults, Key.systemHUDDurationSeconds, 1.4)
+        collapsedPriorityAgent = Self.int(defaults, Key.collapsedPriorityAgent, CollapsedLiveActivityPrioritySource.agent.defaultPriority)
         collapsedPriorityRunningTimer = Self.int(defaults, Key.collapsedPriorityRunningTimer, CollapsedLiveActivityPrioritySource.runningTimer.defaultPriority)
         collapsedPriorityPlayingMedia = Self.int(defaults, Key.collapsedPriorityPlayingMedia, CollapsedLiveActivityPrioritySource.playingMedia.defaultPriority)
         collapsedPriorityPausedTimer = Self.int(defaults, Key.collapsedPriorityPausedTimer, CollapsedLiveActivityPrioritySource.pausedTimer.defaultPriority)
@@ -1020,6 +1027,7 @@ public final class AppSettings: ObservableObject {
         activitiesRefreshIntervalSeconds = normalizedDouble(activitiesRefreshIntervalSeconds, fallback: 3.0, range: 0.5...30.0)
         clipboardHistoryMaximumItems = normalizedInt(clipboardHistoryMaximumItems, fallback: 50, range: 10...200)
         liveActivityAutoDismissSeconds = normalizedDouble(liveActivityAutoDismissSeconds, fallback: 6.0, range: 1.0...60.0)
+        collapsedPriorityAgent = normalizedCollapsedLiveActivityPriority(collapsedPriorityAgent)
         collapsedPriorityRunningTimer = normalizedCollapsedLiveActivityPriority(collapsedPriorityRunningTimer)
         collapsedPriorityPlayingMedia = normalizedCollapsedLiveActivityPriority(collapsedPriorityPlayingMedia)
         collapsedPriorityPausedTimer = normalizedCollapsedLiveActivityPriority(collapsedPriorityPausedTimer)
@@ -1137,6 +1145,11 @@ public final class AppSettings: ObservableObject {
 
     private func normalizeGestureCooldown(oldValue: Double) {
         normalizeAndSaveDouble(\.gestureCooldownSeconds, oldValue: oldValue, fallback: 0.75, range: 0.1...10.0, key: Key.gestureCooldownSeconds)
+    }
+
+    private func normalizeCollapsedPriorityAgent(oldValue: Int) {
+        normalizeAndSaveCollapsedPriority(\.collapsedPriorityAgent, oldValue: oldValue,
+            fallback: CollapsedLiveActivityPrioritySource.agent.defaultPriority, key: Key.collapsedPriorityAgent)
     }
 
     private func normalizeCollapsedPriorityRunningTimer(oldValue: Int) {
@@ -1285,6 +1298,7 @@ public final class AppSettings: ObservableObject {
         save(activitiesRefreshIntervalSeconds, for: Key.activitiesRefreshIntervalSeconds)
         save(clipboardHistoryMaximumItems, for: Key.clipboardHistoryMaximumItems)
         save(liveActivityAutoDismissSeconds, for: Key.liveActivityAutoDismissSeconds)
+        save(collapsedPriorityAgent, for: Key.collapsedPriorityAgent)
         save(collapsedPriorityRunningTimer, for: Key.collapsedPriorityRunningTimer)
         save(collapsedPriorityPlayingMedia, for: Key.collapsedPriorityPlayingMedia)
         save(collapsedPriorityPausedTimer, for: Key.collapsedPriorityPausedTimer)
@@ -1529,6 +1543,7 @@ private enum Key {
     static let audioDeviceHUDEnabled = "audioDeviceHUDEnabled"
     static let focusHUDEnabled = "focusHUDEnabled"
     static let systemHUDDurationSeconds = "systemHUDDurationSeconds"
+    static let collapsedPriorityAgent = "collapsedPriorityAgent"
     static let collapsedPriorityRunningTimer = "collapsedPriorityRunningTimer"
     static let collapsedPriorityPlayingMedia = "collapsedPriorityPlayingMedia"
     static let collapsedPriorityPausedTimer = "collapsedPriorityPausedTimer"
@@ -1613,7 +1628,7 @@ private enum Key {
         capsLockHUDEnabled, batteryStatusHUDEnabled, lowBatteryHUDEnabled, audioDeviceHUDEnabled,
         focusHUDEnabled, systemHUDDurationSeconds,
         collapsedPriorityRunningTimer, collapsedPriorityPlayingMedia, collapsedPriorityPausedTimer,
-        collapsedPriorityRecentFiles, collapsedPriorityPausedMedia,
+        collapsedPriorityRecentFiles, collapsedPriorityPausedMedia, collapsedPriorityAgent,
         gesturesEnabled, gestureInputSource, expandGestureEnabled, collapseGestureEnabled,
         nextTabGestureEnabled, previousTabGestureEnabled, mediaPlayPauseGestureEnabled,
         timerStartStopGestureEnabled, collapsedDoubleClickAction, collapsedSwipeDownAction,

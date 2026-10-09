@@ -325,7 +325,11 @@ struct MediaModuleView: View {
             // Workspace grid: the semantic composition receives its exact cell
             // so ViewThatFits can choose the variant that genuinely fits.
             content
-                .frame(width: widgetPlacement.size.width, height: widgetPlacement.size.height)
+                .frame(width: widgetPlacement.size.width, height: widgetPlacement.size.height,
+                    alignment: settings.showNavigationControls ? .center : .top)
+        } else if let availableHeight, !settings.showNavigationControls {
+            content.fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, minHeight: availableHeight, maxHeight: availableHeight, alignment: .topLeading)
         } else if let availableHeight {
             VStack(spacing: 0) {
                 Spacer(minLength: 0)
@@ -1752,7 +1756,7 @@ extension MediaModuleView {
             artist: settings.showMediaArtist && !media.artist.isEmpty,
             source: !source.isEmpty,
             progress: settings.showProgressSlider && media.hasPlaybackProgress,
-            volume: settings.showVolumeSlider))
+            volume: settings.showVolumeSlider), topAttached: !settings.showNavigationControls)
         return ZStack(alignment: .topLeading) {
             if let frame = plan.frames[.artwork] {
                 semanticArtwork(frame.width).position(x: frame.midX, y: frame.midY)
@@ -1864,7 +1868,7 @@ extension MediaModuleView {
             title: settings.showMediaTitle && !media.title.isEmpty,
             artist: settings.showMediaArtist && !media.artist.isEmpty,
             visualizer: visualizer,
-            progress: settings.showProgressSlider))
+            progress: settings.showProgressSlider), topAttached: !settings.showNavigationControls)
         let available = media.hasPlaybackProgress
         return ZStack(alignment: .topLeading) {
             if let frame = plan.frames[.artwork] {
@@ -1950,8 +1954,9 @@ extension MediaModuleView {
             semanticProgress(width: slider, inlineTimes: false)
             semanticVolume(width: slider)
         }
-        .padding(.vertical, 10)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.top, settings.showNavigationControls ? 10 : 0)
+        .padding(.bottom, 10)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: settings.showNavigationControls ? .center : .top)
     }
 }
 
@@ -1982,7 +1987,7 @@ struct MediaCompactLayout: Equatable {
 
     private enum Drop: CaseIterable { case times, volume, sourceLine, progress, sourceInline, artist }
 
-    static func make(cell: CGSize, content: Content) -> Self {
+    static func make(cell: CGSize, content: Content, topAttached: Bool = false) -> Self {
         let width = cell.width.isFinite ? max(0, cell.width) : 0
         let height = cell.height.isFinite ? max(0, cell.height) : 0
         let available = max(0, height - verticalPadding * 2)
@@ -2033,7 +2038,7 @@ struct MediaCompactLayout: Equatable {
         let transportWidth = transportHeight + 2 * (skipButton + transportSpacing)
         let showsSkip = width - horizontalPadding * 2 >= transportWidth
         let used = (content.artwork ? artwork : 0) + fixedHeight()
-        var y = verticalPadding + max(0, (available - used) / 2)
+        var y = topAttached ? 0 : verticalPadding + max(0, (available - used) / 2)
         var frames: [Slot: CGRect] = [:]
         let textWidth = max(0, width - horizontalPadding * 2)
         func put(_ slot: Slot, width w: CGFloat, height h: CGFloat) {
@@ -2079,7 +2084,7 @@ struct MediaStandardLayout: Equatable {
     let frames: [Slot: CGRect]
     let artworkSide: CGFloat
 
-    static func make(cell: CGSize, content: Content) -> Self {
+    static func make(cell: CGSize, content: Content, topAttached: Bool = false) -> Self {
         let width = cell.width.isFinite ? max(0, cell.width) : 0
         let height = cell.height.isFinite ? max(0, cell.height) : 0
         let inner = max(0, width - horizontalPadding * 2)
@@ -2088,7 +2093,7 @@ struct MediaStandardLayout: Equatable {
         let meta = (content.title ? titleHeight : 0) + (content.artist ? artistHeight : 0)
         let topRow = max(artwork, meta)
         let block = topRow + (content.progress ? rowGap + progressHeight : 0) + rowGap + controlsHeight
-        var y = verticalPadding + max(0, (available - block) / 2)
+        var y = topAttached ? 0 : verticalPadding + max(0, (available - block) / 2)
         let x0 = horizontalPadding
         var frames: [Slot: CGRect] = [:]
         if content.artwork { frames[.artwork] = CGRect(x: x0, y: y + (topRow - artwork) / 2, width: artwork, height: artwork) }

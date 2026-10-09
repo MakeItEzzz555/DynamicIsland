@@ -137,6 +137,138 @@ final class AgentWorkspaceSnapshotTests: XCTestCase {
 
 
 
+    func testSendAndStopAcrossProvidersChatSizesAndConsoleLifecycle() async throws {
+        for provider in [AgentProvider.codex, .claude] {
+            for semanticSize in WidgetPresentationSize.allCases {
+                for gestureOnly in [false, true] {
+                    let fixture = try await makeFixture()
+                    defer { fixture.controller.stop(); fixture.approvals.cancelAll(); fixture.terminal.terminate() }
+                    let session = try XCTUnwrap(fixture.store.sessions.first { $0.id.sessionID.provider == provider })
+                    let transport = try XCTUnwrap(fixture.providers[provider])
+                    fixture.controller.selectProvider(provider)
+                    fixture.controller.selectSession(session.id)
+                    let settings = AppSettings(defaults: SettingsPreviewDefaults())
+                    settings.showNavigationControls = !gestureOnly
+                    settings.gesturesEnabled = true
+                    settings.gestureInputSource = .trackpad
+                    let customization = WorkspaceCustomizationStore(defaults: SettingsPreviewDefaults())
+                    var configuration = WorkspaceConfiguration.initial
+                    for widget in configuration.widgets(on: .agents) { configuration.remove(widget.id) }
+                    configuration.add(.chat, on: .agents)
+                    let chatID = try XCTUnwrap(configuration.widgets(on: .agents).first?.id)
+                    configuration.setSize(semanticSize, for: chatID)
+                    configuration.markCustomized(.agents)
+                    customization.commit(configuration)
+                    let region = try XCTUnwrap(configuration.regions(on: .agents).first)
+                    let grid = WidgetGridMetrics.make(surface: .agents, metrics: .fallback)
+                    let cell = grid.size(for: semanticSize, kinds: [.chat])
+                    let size = CGSize(width: ceil(max(cell.width, grid.length(WidgetGridMetrics.agentsMinimumColumns))), height: ceil(cell.height))
+                    final class ActionFrame { var value = CGRect.null }
+                    let actionFrame = ActionFrame()
+                    let layout = IslandLayoutStore()
+                    layout.canvasSize = size
+                    let root = AgentDashboardContentView(sessions: fixture.store.sessions, showsUsage: false,
+                        approvalControl: fixture.approvals, managedControl: fixture.controller, layoutStore: layout,
+                        availableHeight: size.height, initialSelectedSessionID: session.id, settings: settings,
+                        reduceMotion: true, workspaceFeed: fixture.feed, workspacePresentation: fixture.presentation,
+                        terminal: fixture.terminal, customization: customization)
+                        .frame(width: size.width, height: size.height)
+                        .modifier(IslandPointerGestureModifier(settings: settings, coordinator: IslandGestureCoordinator(),
+                            context: IslandGestureContext(presentationState: .expanded, selectedPage: .agents,
+                                mediaControlAvailable: false, timerIsRunning: false, timerCanResume: false,
+                                collapsedPreviewActive: false, isShellMorphing: false, isCollapseShellOnly: false,
+                                isExpandedContentExiting: false, isFileDropTargeted: false),
+                            callbacks: IslandGestureCallbacks(), swipeSensitivity: 1, layoutStore: layout))
+                        .coordinateSpace(name: IslandCanvasCoordinateSpace.name)
+                        .onPreferenceChange(AgentComposerCanvasActionFrameKey.self) { actionFrame.value = $0 }
+                        .environment(\.nativeVisualSnapshotTime, 1.35)
+                    let host = NSHostingView(rootView: root)
+                    let window = NSWindow(contentRect: CGRect(origin: CGPoint(x: -5000, y: -5000), size: size),
+                        styleMask: [.borderless], backing: .buffered, defer: false)
+                    window.isReleasedWhenClosed = false
+                    window.contentView = host
+                    window.orderFrontRegardless()
+                    defer { window.makeFirstResponder(nil); window.contentView = nil; window.close() }
+                    func settle() async throws {
+                        for _ in 0..<12 { host.layoutSubtreeIfNeeded(); try await Task.sleep(for: .milliseconds(10)) }
+                    }
+                    func click(_ point: CGPoint) async throws {
+                        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                            let event = try XCTUnwrap(NSEvent.mouseEvent(with: type,
+                                location: CGPoint(x: point.x, y: size.height - point.y), modifierFlags: [],
+                                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                                context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0))
+                            window.sendEvent(event)
+                            try await Task.sleep(for: .milliseconds(10))
+                        }
+                        try await settle()
+                    }
+                    try await settle()
+                    let blankFrame = actionFrame.value
+                    XCTAssertFalse(blankFrame.isNull)
+                    try await click(CGPoint(x: blankFrame.midX, y: blankFrame.midY))
+                    let blankCount = await transport.submittedPrompts.count
+                    XCTAssertEqual(blankCount, 0)
+                    // Exercise the production in-place Terminal switch, then the same Chat region.
+                    fixture.presentation.switchConsole(to: .terminal, in: region, among: [region])
+                    try await settle()
+                    fixture.presentation.switchConsole(to: .chat, in: region, among: [region])
+                    try await settle()
+                    // Commit a real customization change, restore it, then resize the native shell.
+                    var changed = configuration
+                    changed.setSize(semanticSize == .compact ? .standard : .compact, for: chatID)
+                    customization.commit(changed)
+                    try await settle()
+                    customization.commit(configuration)
+                    try await settle()
+                    window.setContentSize(CGSize(width: size.width + 80, height: size.height + 60))
+                    try await settle()
+                    window.setContentSize(size)
+                    window.setFrameOrigin(CGPoint(x: -4950, y: -4950))
+                    try await settle()
+                    for pointIndex in 0..<7 {
+                        let editor = try XCTUnwrap(Self.findPromptEditor(in: host))
+                        window.makeFirstResponder(editor)
+                        editor.insertText("Send \(provider.stableName) \(semanticSize.rawValue) \(pointIndex)", replacementRange: NSRange(location: 0, length: editor.string.utf16.count))
+                        try await settle()
+                        let frame = actionFrame.value
+                        XCTAssertFalse(frame.isNull)
+                        XCTAssertGreaterThanOrEqual(frame.width, 34)
+                        XCTAssertGreaterThanOrEqual(frame.height, 34)
+                        XCTAssertTrue(CGRect(origin: .zero, size: size).contains(frame), "\(provider) \(semanticSize): \(frame)")
+                        if pointIndex < 5 {
+                            let points = [CGPoint(x: frame.midX, y: frame.midY),
+                                CGPoint(x: frame.minX + 1, y: frame.minY + 1), CGPoint(x: frame.maxX - 1, y: frame.minY + 1),
+                                CGPoint(x: frame.minX + 1, y: frame.maxY - 1), CGPoint(x: frame.maxX - 1, y: frame.maxY - 1)]
+                            try await click(points[pointIndex])
+                        } else {
+                            let key = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero,
+                                modifierFlags: pointIndex == 6 ? [.command] : [], timestamp: 0,
+                                windowNumber: window.windowNumber, context: nil, characters: "\r",
+                                charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36))
+                            editor.keyDown(with: key)
+                            try await settle()
+                        }
+                        let count = await transport.submittedPrompts.count
+                        XCTAssertEqual(count, pointIndex + 1, "\(provider) \(semanticSize) GestureOnly=\(gestureOnly) point=\(pointIndex)")
+                        XCTAssertEqual(fixture.controller.interactionState(for: session), .working(canInterrupt: true))
+                        if pointIndex == 0 {
+                            let stop = actionFrame.value
+                        XCTAssertFalse(stop.isNull)
+                            try await click(CGPoint(x: stop.minX + 1, y: stop.maxY - 1))
+                            let stops = await transport.interruptions
+                            XCTAssertEqual(stops, 1, "Stop's full action frame is clickable")
+                        }
+                        await transport.completeTurn()
+                        try await settle()
+                        XCTAssertEqual(fixture.controller.interactionState(for: session), .ready)
+                    }
+                    print("NATIVE_SEND \(provider.stableName) \(semanticSize.rawValue) gestureOnly=\(gestureOnly) center/corners/Stop/Return/CommandReturn exercised")
+                }
+            }
+        }
+    }
+
     func testPlainReturnSubmitsAgentPromptFromNativeEditor() async throws {
         let fixture = try await makeFixture()
         defer {
@@ -965,6 +1097,7 @@ final class AgentWorkspaceSnapshotTests: XCTestCase {
         let presentation: AgentWorkspacePresentation
         let terminal: TerminalSessionController
         let runner: WorkspaceSnapshotTerminalRunner
+        let providers: [AgentProvider: WorkspaceSnapshotProvider]
     }
 
     private func makeFixture() async throws -> Fixture {
@@ -972,7 +1105,9 @@ final class AgentWorkspaceSnapshotTests: XCTestCase {
         let feed = AgentWorkspaceFeedStore()
         store.appliedEventObserver = { [weak feed] event, session in feed?.handleApplied(event, session: session) }
         let approvals = AgentApprovalController(now: { AgentTestFixture.baseDate })
-        let controller = AgentManagedSessionController(providers: [WorkspaceSnapshotProvider(provider: .codex), WorkspaceSnapshotProvider(provider: .claude)],
+        let codex = WorkspaceSnapshotProvider(provider: .codex)
+        let claude = WorkspaceSnapshotProvider(provider: .claude)
+        let controller = AgentManagedSessionController(providers: [codex, claude],
             coordinator: AgentIngestionCoordinator(eventStore: store), eventStore: store, approvals: approvals)
         controller.startObserving()
         await controller.refreshPersistentSnapshot()
@@ -987,7 +1122,7 @@ final class AgentWorkspaceSnapshotTests: XCTestCase {
         let terminal = TerminalSessionController(liveActivities: LiveActivityStore(), capabilities: IslandCapabilityRegistry(), runner: runner,
                                                  workingDirectoryPath: "/tmp", now: { AgentTestFixture.baseDate })
         return Fixture(store: store, feed: feed, approvals: approvals, controller: controller,
-                       presentation: AgentWorkspacePresentation(), terminal: terminal, runner: runner)
+                       presentation: AgentWorkspacePresentation(), terminal: terminal, runner: runner, providers: [.codex: codex, .claude: claude])
     }
 
     private func emit(_ fixture: Fixture, session: AgentSessionInstanceID, type: AgentEventType,
@@ -1101,8 +1236,17 @@ private actor WorkspaceSnapshotProvider: AgentInteractiveProvider {
     }
     func startSession(cwd: String?, model: String?) async throws -> AgentManagedSessionDescriptor { descriptor }
     func resumeSession(nativeSessionID: String, cwd: String?) async throws -> AgentManagedSessionDescriptor { descriptor }
-    func submit(prompt: String, nativeSessionID: String, model: String?) async throws -> AgentManagedTurnDescriptor { .init(nativeSessionID: nativeSessionID, turnID: "fixture-turn") }
-    func interrupt(nativeSessionID: String, turnID: String) async throws {}
+    private(set) var submittedPrompts: [String] = []
+    private(set) var interruptions = 0
+    func submit(prompt: String, nativeSessionID: String, model: String?) async throws -> AgentManagedTurnDescriptor {
+        submittedPrompts.append(prompt)
+        return .init(nativeSessionID: nativeSessionID, turnID: "fixture-turn-\(submittedPrompts.count)")
+    }
+    func interrupt(nativeSessionID: String, turnID: String) async throws { interruptions += 1 }
+    func completeTurn() {
+        continuation.yield(.turnCompleted(.init(nativeSessionID: descriptor.nativeSessionID,
+            turnID: "fixture-turn-\(submittedPrompts.count)"), state: .idle, summary: nil))
+    }
     func resolveApproval(_ request: AgentManagedApprovalRequest, allow: Bool) async throws {}
     func stop() async { continuation.finish() }
 }
