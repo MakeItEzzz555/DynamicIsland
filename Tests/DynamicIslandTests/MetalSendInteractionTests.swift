@@ -21,7 +21,9 @@ private struct MetalSendMotionEnvironmentProbe: View {
 @MainActor
 final class MetalSendInteractionTests: XCTestCase {
     func testEnabledNativeHostUnpausesClockAndUnmountPausesIt() async throws {
-        _ = NSApplication.shared
+        // XCTest does not run NSApplication's normal launch sequence. Finish
+        // AppKit setup before requiring a live window's occlusion updates.
+        NSApplication.shared.finishLaunching()
         let id = AgentSessionInstanceID(sessionID: .init(provider: .codex, nativeID: "metal-visible-host"), generation: .init(rawValue: 1))
         let model = AgentMetalModelStore.model(for: id)
         model.setPaused(true, now: Date().timeIntervalSinceReferenceDate)
