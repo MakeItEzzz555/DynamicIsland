@@ -178,6 +178,9 @@ struct SettingsPreviewPresentation {
     let chrome: ExpandedIslandLayoutMetrics
     let regions: [WorkspaceWidgetRegion]
     let projection: WorkspaceWidgetLayoutProjection
+    /// Both navigation modes share one camera scale. Auto-fitting the current
+    /// shell made Gesture Only zoom its widgets up instead of showing packing.
+    let navigationFittingSize: CGSize
 
     static func mediaVisible(settings: AppSettings, media: MediaController) -> Bool {
         settings.mediaEnabled && media.hasActiveMediaSource && (settings.showMediaWhenPaused || media.isPlaying)
@@ -216,6 +219,25 @@ struct SettingsPreviewPresentation {
         }
         projection = WorkspaceWidgetLayoutProjection.make(regions: regions,
             availableSize: CGSize(width: chrome.innerWidth, height: chrome.pageHeight), metrics: Self.metrics, lane: lane)
+
+        let alternateControls = !settings.showNavigationControls
+        let alternateHeader = ExpandedPresentationProfile.headerLayout(page: page, configuration: configuration,
+            editing: false, settings: settings, metrics: Self.metrics, pageCount: count,
+            showNavigationControls: alternateControls)
+        let alternateLane = alternateHeader.mode == .compactBelowNotch ? WorkspaceNotchLane.none
+            : ExpandedIslandLayoutMetrics.workspaceNotchLane(metrics: Self.metrics, isNotchIntegrated: integrated,
+                pageCount: count, clipboardEnabled: settings.clipboardHistoryEnabled,
+                hardwareNotchWidth: integrated ? Self.metrics.hardwareNotchWidth : 0,
+                showNavigationControls: alternateControls)
+        let alternateSize = ExpandedPresentationProfile.resolve(for: page).resolvedSize(from: settings.expandedSize,
+            page: page, configuration: configuration, editing: false, settings: settings, metrics: Self.metrics,
+            minimumHeaderWidth: headerWidth, lane: alternateLane, header: alternateHeader,
+            showNavigationControls: alternateControls)
+        let alternateGeometry = NotchGeometryService().geometry(for: Self.screen,
+            collapsedSize: settings.collapsedSize, expandedSize: alternateSize,
+            useAdaptiveNotchSizing: settings.useAdaptiveNotchSizing, respectHardwareNotch: settings.respectHardwareNotch)
+        navigationFittingSize = CGSize(width: max(geometry.expandedFrame.width, alternateGeometry.expandedFrame.width),
+                                      height: max(geometry.expandedFrame.height, alternateGeometry.expandedFrame.height))
     }
 
     static func fit(size: CGSize, in available: CGSize) -> CGFloat {
@@ -340,7 +362,7 @@ struct IslandShellSettingsPreview: View {
                     let presentation = SettingsPreviewPresentation(settings: settings,
                         page: navigation.selectedPage, configuration: configuration)
                     let rawSize = expanded ? presentation.geometry.expandedFrame.size : presentation.geometry.collapsedFrame.size
-                    let scale = SettingsPreviewPresentation.fit(size: presentation.geometry.expandedFrame.size, in: proxy.size)
+                    let scale = SettingsPreviewPresentation.fit(size: presentation.navigationFittingSize, in: proxy.size)
                     IslandSurface(
                         settings: settings,
                         isExpanded: expanded,

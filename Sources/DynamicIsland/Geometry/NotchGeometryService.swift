@@ -371,17 +371,21 @@ struct ExpandedPresentationProfile: Equatable, Sendable {
     /// Widget content contributes requirements to the existing shell resolver;
     /// notch anchoring, display limits and attached sidecars stay in this path.
     @MainActor
-    /// The header mode for a page (see `ExpandedHeaderLayout.resolve`).
+    /// The header mode for a page (see `ExpandedHeaderLayout.resolve`). The
+    /// optional mode lets Settings measure both layouts without saving a change.
     static func headerLayout(page: ExpandedIslandPage, configuration: WorkspaceConfiguration?, editing: Bool,
-                             settings: AppSettings, metrics: ResolvedIslandMetrics, pageCount: Int) -> ExpandedHeaderLayout {
-        if !settings.showNavigationControls {
+                             settings: AppSettings, metrics: ResolvedIslandMetrics, pageCount: Int,
+                             showNavigationControls: Bool? = nil) -> ExpandedHeaderLayout {
+        let showNavigationControls = showNavigationControls ?? settings.showNavigationControls
+        if !showNavigationControls {
             return .hidden(metrics: metrics, isNotchIntegrated: metrics.hasHardwareNotch && settings.respectHardwareNotch)
         }
         let surface: WorkspaceSurface? = page == .island ? .media : (page == .agents ? .agents : nil)
         guard let surface, let configuration, !editing, configuration.customizedSurfaces.contains(surface) else { return .winged }
         let regions = eligibleRegions(configuration, surface: surface, settings: settings)
         guard regions.count == 1 else { return .winged }
-        let maximum = workspaceMaximumContentSize(settings: settings, metrics: metrics)
+        let maximum = workspaceMaximumContentSize(settings: settings, metrics: metrics,
+                                                  showNavigationControls: showNavigationControls)
         let intrinsic = WorkspaceWidgetLayoutProjection.intrinsicContentSize(regions: regions, maximumWidth: maximum.width, metrics: metrics)
         return ExpandedHeaderLayout.resolve(regionCount: regions.count, singleRegionWidth: intrinsic.width,
             contentHeight: intrinsic.height, editing: editing, metrics: metrics,
@@ -401,10 +405,11 @@ struct ExpandedPresentationProfile: Equatable, Sendable {
     }
 
     @MainActor
-    private static func workspaceMaximumContentSize(settings: AppSettings, metrics: ResolvedIslandMetrics) -> CGSize {
+    private static func workspaceMaximumContentSize(settings: AppSettings, metrics: ResolvedIslandMetrics,
+                                                    showNavigationControls: Bool) -> CGSize {
         let horizontal = IslandShellLayout.expandedHorizontalPadding(
             isNotchIntegrated: metrics.hasHardwareNotch && settings.respectHardwareNotch,
-            showNavigationControls: settings.showNavigationControls) * 2
+            showNavigationControls: showNavigationControls) * 2
         return CGSize(width: max(1, max(520, metrics.logicalSize.width - 280) - horizontal),
                       height: ExpandedIslandLayoutMetrics.workspaceContentHeightBudget(metrics: metrics))
     }
@@ -414,16 +419,18 @@ struct ExpandedPresentationProfile: Equatable, Sendable {
                       configuration: WorkspaceConfiguration?, editing: Bool,
                       settings: AppSettings, metrics: ResolvedIslandMetrics,
                       minimumHeaderWidth: CGFloat = 0, lane: WorkspaceNotchLane = .none,
-                      header: ExpandedHeaderLayout = .winged) -> CGSize {
+                      header: ExpandedHeaderLayout = .winged,
+                      showNavigationControls: Bool? = nil) -> CGSize {
+        let showNavigationControls = showNavigationControls ?? settings.showNavigationControls
         let surface: WorkspaceSurface? = page == .island ? .media : (page == .agents ? .agents : nil)
         guard let surface, let configuration,
-              editing || !settings.showNavigationControls || configuration.customizedSurfaces.contains(surface) else {
+              editing || !showNavigationControls || configuration.customizedSurfaces.contains(surface) else {
             let size = resolvedSize(from: base)
             // Header invariant holds on every page: the shell is never narrower
             // than its notch-safe header.
             let horizontal = IslandShellLayout.expandedHorizontalPadding(
                 isNotchIntegrated: metrics.hasHardwareNotch && settings.respectHardwareNotch,
-                showNavigationControls: settings.showNavigationControls) * 2
+                showNavigationControls: showNavigationControls) * 2
             let hidden = header.mode == .hidden
             let normalChrome = ExpandedIslandLayoutMetrics(containerSize: base, horizontalPadding: 0, displayMetrics: metrics)
             let currentChrome = ExpandedIslandLayoutMetrics(containerSize: base, horizontalPadding: 0, displayMetrics: metrics,
@@ -435,19 +442,22 @@ struct ExpandedPresentationProfile: Equatable, Sendable {
         let regions = Self.eligibleRegions(configuration, surface: surface, settings: settings)
         let horizontal = IslandShellLayout.expandedHorizontalPadding(
             isNotchIntegrated: metrics.hasHardwareNotch && settings.respectHardwareNotch,
-            showNavigationControls: settings.showNavigationControls) * 2
+            showNavigationControls: showNavigationControls) * 2
         let compact = header.mode == .compactBelowNotch
         let hidden = header.mode == .hidden
         let contentLane = hidden
-            ? ExpandedIslandLayoutMetrics.workspaceNotchLane(settings: settings, metrics: metrics,
-                pageCount: 1, hardwareNotchWidth: metrics.hardwareNotchWidth)
+            ? ExpandedIslandLayoutMetrics.workspaceNotchLane(metrics: metrics,
+                isNotchIntegrated: metrics.hasHardwareNotch && settings.respectHardwareNotch,
+                pageCount: 1, clipboardEnabled: settings.clipboardHistoryEnabled,
+                hardwareNotchWidth: metrics.hardwareNotchWidth, showNavigationControls: showNavigationControls)
             : lane
         let chrome = ExpandedIslandLayoutMetrics(containerSize: base, horizontalPadding: horizontal / 2, displayMetrics: metrics,
                                                  headerDrop: header.headerDrop, showHeader: !hidden)
         // Usage is a configured band widget inside the projection: nothing is
         // reserved for it outside the configuration (zero when removed).
         let vertical = chrome.workspaceVerticalChrome
-        let maximum = Self.workspaceMaximumContentSize(settings: settings, metrics: metrics)
+        let maximum = Self.workspaceMaximumContentSize(settings: settings, metrics: metrics,
+                                                        showNavigationControls: showNavigationControls)
         // Content owns the shell size; the header minimum may widen the shell
         // (the content is then centered) but never enlarges a widget. The
         // compact header sits below the notch, so it neither needs the

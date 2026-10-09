@@ -150,6 +150,56 @@ final class SettingsUXPolishTests: XCTestCase {
         XCTAssertEqual(restored.chrome.topPadding, visible.chrome.topPadding)
         XCTAssertEqual(restored.geometry.expandedFrame.size, visible.geometry.expandedFrame.size)
     }
+
+    func testNavigationPreviewKeepsWidgetZoomWhileShellShrinksInEitherStartingMode() throws {
+        let defaults = SettingsPreviewDefaults()
+        let settings = AppSettings(defaults: defaults)
+        settings.respectHardwareNotch = true
+        let available = CGSize(width: 700, height: 190)
+        for size in WidgetPresentationSize.allCases {
+            let configuration = WorkspaceConfiguration(placements: [
+                WidgetPlacement(kind: .media, surface: .media, order: 0, size: size)
+            ], customizedSurfaces: [.media]).normalized()
+            for startsVisible in [true, false] {
+                settings.showNavigationControls = startsVisible
+                let first = SettingsPreviewPresentation(settings: settings, configuration: configuration)
+                settings.showNavigationControls.toggle()
+                let second = SettingsPreviewPresentation(settings: settings, configuration: configuration)
+                XCTAssertEqual(first.navigationFittingSize, second.navigationFittingSize)
+                let firstZoom = SettingsPreviewPresentation.fit(size: first.navigationFittingSize, in: available)
+                let secondZoom = SettingsPreviewPresentation.fit(size: second.navigationFittingSize, in: available)
+                XCTAssertEqual(firstZoom, secondZoom, accuracy: 0.0001)
+                XCTAssertEqual(try XCTUnwrap(first.projection.frames.first).frame.size,
+                               try XCTUnwrap(second.projection.frames.first).frame.size)
+                let shown = startsVisible ? first : second
+                let hidden = startsVisible ? second : first
+                XCTAssertLessThan(hidden.geometry.expandedFrame.width * secondZoom,
+                                  shown.geometry.expandedFrame.width * firstZoom)
+                XCTAssertLessThan(hidden.geometry.expandedFrame.height * secondZoom,
+                                  shown.geometry.expandedFrame.height * firstZoom)
+                XCTAssertEqual(AppSettings(defaults: defaults).showNavigationControls, !startsVisible,
+                               "Resolving the alternate mode never mutates the user's saved setting")
+            }
+        }
+    }
+
+    func testNavigationPreviewFitIsStableForDefaultPagesAndNotchWingLayouts() {
+        let settings = AppSettings(defaults: SettingsPreviewDefaults())
+        let wingLayout = WorkspaceConfiguration(placements: [
+            WidgetPlacement(kind: .feed, surface: .agents, order: 0, size: .compact),
+            WidgetPlacement(kind: .chat, surface: .agents, order: 1, size: .standard)
+        ], customizedSurfaces: [.agents]).normalized()
+        for (page, configuration) in [(ExpandedIslandPage.island, WorkspaceConfiguration.initial),
+                                      (.agents, .initial), (.agents, wingLayout)] {
+            settings.showNavigationControls = true
+            let shown = SettingsPreviewPresentation(settings: settings, page: page, configuration: configuration)
+            settings.showNavigationControls = false
+            let hidden = SettingsPreviewPresentation(settings: settings, page: page, configuration: configuration)
+            XCTAssertEqual(shown.navigationFittingSize, hidden.navigationFittingSize)
+            XCTAssertGreaterThanOrEqual(shown.navigationFittingSize.width, shown.geometry.expandedFrame.width)
+            XCTAssertGreaterThanOrEqual(shown.navigationFittingSize.height, hidden.geometry.expandedFrame.height)
+        }
+    }
 }
 
 @MainActor
