@@ -17,6 +17,12 @@ For every implementation prompt, including plans, component changes, and UI repa
 
 Skills are installed in `.agents/skills/`; also check the current agent's global skill directory (`~/.codex/skills/` or `~/.claude/skills/`). Read the actual `SKILL.md` before applying it. A missing or incompatible skill must be reported accurately, with an appropriate available alternative.
 
+### Apple Design for every design prompt and audit
+
+Read and apply the installed `apple-design` skill from `emilkowalski/skills` for every design prompt and audit, throughout planning, implementation and review. Use its principles to review immediate feedback, direct manipulation, interruptible motion, velocity continuity, spatial consistency, typography, materials, wayfinding and accessibility. For a purely nonvisual audit, state which guidance applies without adding visual work.
+
+The upstream skill translates Apple design talks into web techniques. For DynamicIsland, adapt compatible principles through supported SwiftUI/AppKit APIs and existing `WorkspaceMotion`/layout primitives. Preserve native conventions, semantic widget sizes, shell geometry and established motion tokens. Respect Reduce Motion, contrast and transparency preferences. Do not add CSS/JavaScript frameworks, replace production tokens with its sample values, or use browser previews as native acceptance evidence. Verify Apple API/platform claims against primary documentation when needed.
+
 ### Native SwiftUI / AppKit application
 
 - DynamicIsland is a native macOS app. Use applicable design principles from `redesign-existing-projects`, `high-end-visual-design`, and the taste skills for hierarchy, typography, color, spacing, interaction states, and visual review. Preserve the existing product language and native macOS conventions. `design-taste-frontend` is primarily for landing pages and portfolios; its web layouts are not a default for the island.
