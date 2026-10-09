@@ -1,3 +1,4 @@
+import Combine
 import XCTest
 @testable import DynamicIsland
 
@@ -646,15 +647,31 @@ final class AgentAttentionCoordinatorTests: XCTestCase {
             now: now
         )
 
+        let displayed = expectation(description: "Debounced completion publishes its peek")
+        let clock = ContinuousClock()
+        var debounceStarted: ContinuousClock.Instant?
+        var publishedPresentation: AgentAttentionPresentation?
+        var publishedDelay: Duration?
+        let observation = coordinator.$presentation
+            .compactMap { $0 }
+            .first()
+            .sink { presentation in
+                publishedPresentation = presentation
+                if let debounceStarted { publishedDelay = clock.now - debounceStarted }
+                displayed.fulfill()
+            }
+        defer { observation.cancel() }
+
+        debounceStarted = clock.now
         coordinator.synchronize(attentionEvents: [event], sessions: [session], now: now)
         XCTAssertNil(coordinator.presentation)
 
-        try await Task.sleep(for: .milliseconds(1_100))
+        await fulfillment(of: [displayed], timeout: 2)
 
-        let presentation = try XCTUnwrap(coordinator.presentation)
+        let presentation = try XCTUnwrap(publishedPresentation)
         XCTAssertEqual(presentation.primary?.eventID.rawValue, "completed-once")
-        XCTAssertGreaterThan(presentation.retractAt.timeIntervalSince(Date()), 2.5)
-        XCTAssertLessThanOrEqual(presentation.retractAt.timeIntervalSince(Date()), 3.1)
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(publishedDelay), .seconds(1))
+        XCTAssertEqual(presentation.retractAt.timeIntervalSince(presentation.updatedAt), 3, accuracy: 0.001)
     }
 
     func testCompletionDebounceCancelsPresentationWhenSessionBecomesActiveAgain() async throws {
@@ -691,8 +708,15 @@ final class AgentAttentionCoordinatorTests: XCTestCase {
             now: now
         )
 
+        let displayed = expectation(description: "Completion peek becomes visible before activity resumes")
+        let observation = coordinator.$presentation
+            .compactMap { $0 }
+            .first()
+            .sink { _ in displayed.fulfill() }
+        defer { observation.cancel() }
+
         coordinator.synchronize(attentionEvents: [event], sessions: [completed], now: now)
-        try await Task.sleep(for: .milliseconds(1_100))
+        await fulfillment(of: [displayed], timeout: 2)
         XCTAssertNotNil(coordinator.presentation)
 
         var active = completed

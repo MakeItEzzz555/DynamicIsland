@@ -15,6 +15,7 @@ struct FocusTimerView: View {
     @AppStorage("focusTimerMinutes") private var focusMinutes = 25
     @AppStorage("breakTimerMinutes") private var breakMinutes = 5
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.isSettingsPreview) private var isSettingsPreview
     private var mode: FocusTimerMode { FocusTimerMode(rawValue: storedMode) ?? .focus }
     @AppStorage("focusTimerSeconds") private var focusSeconds = 0
     @AppStorage("breakTimerSeconds") private var breakSeconds = 0
@@ -188,6 +189,7 @@ struct FocusTimerView: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Focus and break timer")
         .onAppear {
+            guard !isSettingsPreview else { return }
             if focusSeconds <= 0 { focusSeconds = TimerDurationSelection.restored(seconds: focusSeconds, legacyMinutes: focusMinutes) }
             if breakSeconds <= 0 { breakSeconds = TimerDurationSelection.restored(seconds: breakSeconds, legacyMinutes: breakMinutes) }
         }

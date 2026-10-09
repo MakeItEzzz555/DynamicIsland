@@ -186,7 +186,9 @@ final class SystemHUDArbitrationTests: XCTestCase {
         XCTAssertNil(tracker.transition(to: same))
         let changed = tracker.transition(to: airPods)
         XCTAssertEqual(changed?.title, "AirPods Pro")
-        XCTAssertEqual(changed?.subtitle, "Output Changed")
+        XCTAssertEqual(changed?.subtitle, "Connected")
+        XCTAssertNil(changed?.progress, "CoreAudio output identity supplies no device battery reading")
+        XCTAssertEqual(changed?.symbolName, "airpodspro")
     }
 
     func testAudioOutputClassificationIsConservative() {

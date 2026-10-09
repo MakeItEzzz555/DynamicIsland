@@ -1047,8 +1047,41 @@ struct WorkspaceWidgetLayoutProjection: Equatable {
                                     allowWings: false),
                            grid: grid, metrics: metrics, minimumColumns: minimum, availableWidth: width)
         if laid.size.height >= plain.size.height - 0.5 { laid = plain }
+        if lane.exclusionWidth > 0 {
+            applyNotchWings(&laid, regions: regions, grid: grid, lane: lane)
+            return laid
+        }
         applyNotchRise(&laid, lane: lane, headerInnerWidth: headerInnerWidth)
         return laid
+    }
+
+    /// With navigation hidden, a Compact top row can occupy the physical
+    /// notch wings. Only use space already required by the remaining content:
+    /// the shell never grows wider to gain a few points of height. Every cell
+    /// keeps its semantic size and all rows share the same vertical offset.
+    private static func applyNotchWings(_ laid: inout Layout, regions: [WorkspaceWidgetRegion],
+                                        grid: WidgetGridMetrics, lane: WorkspaceNotchLane) {
+        guard lane.rise > 0, let top = laid.frames.map(\.frame.minY).min() else { return }
+        let topFrames = laid.frames.filter { $0.frame.minY <= top + 0.5 }
+        guard (1...2).contains(topFrames.count), topFrames.allSatisfy({ frame in
+            guard let index = regions.firstIndex(where: { $0.id == frame.id }),
+                  isLaneWingCandidate(regions[index], grid: grid) else { return false }
+            // A stack-below column must keep its horizontal anchor.
+            return index + 1 == regions.count || !regions[index + 1].stacksBelowPrevious
+        }) else { return }
+        let side = grid.length(1)
+        guard 2 * side + lane.exclusionWidth <= laid.size.width + 0.01 else { return }
+        let center = laid.size.width / 2
+        let ordered = topFrames.sorted { $0.frame.minX < $1.frame.minX }
+        laid.frames = laid.frames.map { item in
+            var frame = item.frame.offsetBy(dx: 0, dy: -lane.rise)
+            if let wing = ordered.firstIndex(where: { $0.id == item.id }) {
+                frame.origin.x = wing == 0 ? center - lane.exclusionWidth / 2 - side
+                                           : center + lane.exclusionWidth / 2
+            }
+            return .init(id: item.id, frame: frame)
+        }
+        laid.size.height = max(0, laid.size.height - lane.rise)
     }
 
     /// Notch rise (pure geometry, shared by editor and shell): when every
@@ -1073,7 +1106,10 @@ struct WorkspaceWidgetLayoutProjection: Equatable {
     private static func gridFor(_ regions: [WorkspaceWidgetRegion], width: CGFloat,
                                 metrics: ResolvedIslandMetrics) -> (WidgetGridMetrics, Int, Int) {
         let surface = surface(of: regions)
-        let grid = WidgetGridMetrics.make(surface: surface, metrics: metrics).fitted(to: width)
+        // A single Compact shell is legitimately one unit wide. Fitting the
+        // unit to a two-column host would shrink it again each time its
+        // intrinsic shell is resolved. Only display metrics own cell scale.
+        let grid = WidgetGridMetrics.make(surface: surface, metrics: metrics)
         let columns = grid.columns(fitting: width)
         let minimum = surface == .agents ? min(WidgetGridMetrics.agentsMinimumColumns, columns) : 0
         return (grid, columns, minimum)
@@ -1095,7 +1131,7 @@ struct WorkspaceWidgetLayoutProjection: Equatable {
         let inset: CGFloat = editing ? 7 : 0
         let palette: CGFloat = editing ? 54 + metrics.spacing(8) : 0
         var lane = lane
-        if editing { lane.rise = 0 }
+        if editing && lane.exclusionWidth == 0 { lane.rise = 0 }
         var laid = natural(regions, width: max(1, width - inset * 2), metrics: metrics,
                            lane: lane, headerInnerWidth: lane.minimumInnerWidth)
         if laid.size.height > height - inset - palette + 0.5, lane.rise > 0 {
@@ -1104,8 +1140,10 @@ struct WorkspaceWidgetLayoutProjection: Equatable {
                            lane: lane, headerInnerWidth: lane.minimumInnerWidth)
         }
         // An empty enabled-feature projection remains a readable recovery surface.
+        let minimumHeight = (lane.exclusionWidth > 0 || minimumWidth == 0) && !regions.isEmpty
+            ? 0 : 120 * metrics.expandedCardScale
         return .init(width: min(width, max(minimumWidth ?? 260 * metrics.expandedCardScale, laid.size.width) + inset * 2),
-                     height: min(height, max(120 * metrics.expandedCardScale, laid.size.height) + inset + palette))
+                     height: min(height, max(minimumHeight, laid.size.height) + inset + palette))
     }
 
     static func make(regions: [WorkspaceWidgetRegion], availableSize: CGSize,
@@ -1118,10 +1156,10 @@ struct WorkspaceWidgetLayoutProjection: Equatable {
         let cardWidth = max(1, width - inset * 2)
         let cardHeight = max(1, height - inset - palette)
         // Intrinsic geometry; a wider shell centers the content. The notch
-        // rise never applies while editing (edit chrome stays clear of the
-        // header) or when the content scrolls (a ScrollView clips it).
+        // Header rise stays off while editing. A hidden header's physical
+        // notch wings retain preview parity; scrolling disables every rise.
         var lane = lane
-        if editing { lane.rise = 0 }
+        if editing && lane.exclusionWidth == 0 { lane.rise = 0 }
         var laid = natural(regions, width: cardWidth, metrics: metrics, lane: lane, headerInnerWidth: width)
         if laid.size.height > cardHeight + 0.5, lane.rise > 0 {
             lane.rise = 0
@@ -1153,6 +1191,9 @@ struct WorkspaceNotchLane: Equatable {
     var clearance: CGFloat
     /// The header's own minimum inner width (notch-safe).
     var minimumInnerWidth: CGFloat
+    /// Nonzero only with navigation hidden: the physical notch plus safe
+    /// clearance on both sides. Existing header lanes leave this at zero.
+    var exclusionWidth: CGFloat = 0
 
     static let none = WorkspaceNotchLane(rise: 0, headerGroupWidth: 0, clearance: 0, minimumInnerWidth: 0)
 }

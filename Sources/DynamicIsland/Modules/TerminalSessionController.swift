@@ -70,6 +70,7 @@ final class TerminalSessionController: ObservableObject, IslandCapabilityAdapter
     /// The emulator is the only scrollback owner. Text is materialized only for explicit export/tests.
     var output: String { String(decoding: terminalView.getTerminal().getBufferAsData(), as: UTF8.self) }
     @Published private(set) var terminalView: InteractiveTerminalView
+    let mountCoordinator = TerminalMountCoordinator()
     var processID: Int32? { processHandle?.processID }
     static let maximumScrollbackLines = 2_000
     @Published private(set) var commandHistory: [String] = []

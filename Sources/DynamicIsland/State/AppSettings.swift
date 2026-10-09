@@ -207,6 +207,21 @@ public final class AppSettings: ObservableObject {
             save(showIslandTab, for: Key.showIslandTab)
         }
     }
+    @Published public var showNavigationControls: Bool {
+        didSet {
+            guard !isNormalizingSettings else { return }
+            if !showNavigationControls && !threeFingerTabNavigationEnabled { threeFingerTabNavigationEnabled = true }
+            save(showNavigationControls, for: Key.showNavigationControls)
+        }
+    }
+    /// Page navigation is available independently of optional legacy gestures.
+    @Published public var threeFingerTabNavigationEnabled: Bool {
+        didSet {
+            guard !isNormalizingSettings else { return }
+            if !threeFingerTabNavigationEnabled && !showNavigationControls { showNavigationControls = true }
+            save(threeFingerTabNavigationEnabled, for: Key.threeFingerTabNavigationEnabled)
+        }
+    }
     @Published public var showTrayTab: Bool { didSet { save(showTrayTab, for: Key.showTrayTab) } }
     @Published public var showTimerTab: Bool { didSet { save(showTimerTab, for: Key.showTimerTab) } }
     @Published public var showStatsTab: Bool { didSet { save(showStatsTab, for: Key.showStatsTab) } }
@@ -476,6 +491,8 @@ public final class AppSettings: ObservableObject {
         useScaleTransitions = Self.bool(defaults, Key.useScaleTransitions, true)
 
         showIslandTab = true
+        showNavigationControls = Self.bool(defaults, Key.showNavigationControls, true)
+        threeFingerTabNavigationEnabled = Self.bool(defaults, Key.threeFingerTabNavigationEnabled, true)
         showTrayTab = Self.bool(defaults, Key.showTrayTab, true)
         showTimerTab = Self.bool(defaults, Key.showTimerTab, true)
         showStatsTab = Self.bool(defaults, Key.showStatsTab, true)
@@ -715,7 +732,7 @@ public final class AppSettings: ObservableObject {
 
     public func resetModuleSettings() {
         reset(keys: [
-            Key.showTrayTab, Key.showTimerTab, Key.showStatsTab, Key.showToolsTab, Key.showAgentsTab,
+            Key.showNavigationControls, Key.threeFingerTabNavigationEnabled, Key.showTrayTab, Key.showTimerTab, Key.showStatsTab, Key.showToolsTab, Key.showAgentsTab,
             Key.agentActivityEnabled, Key.agentCompletionAlertsEnabled, Key.agentApprovalAlertsEnabled,
             Key.agentSoundsEnabled, Key.agentCompletionSoundEnabled, Key.agentUsageMetricsEnabled, Key.agentActivityRecordingEnabled,
             Key.agentPeekDurationSeconds,
@@ -802,6 +819,7 @@ public final class AppSettings: ObservableObject {
         useBlurTransitions = Self.bool(defaults, Key.useBlurTransitions, true)
         useScaleTransitions = Self.bool(defaults, Key.useScaleTransitions, true)
         showIslandTab = true
+        reloadNavigationPreferences()
         showTrayTab = Self.bool(defaults, Key.showTrayTab, true)
         showTimerTab = Self.bool(defaults, Key.showTimerTab, true)
         showStatsTab = Self.bool(defaults, Key.showStatsTab, true)
@@ -972,6 +990,14 @@ public final class AppSettings: ObservableObject {
         normalizeAll()
     }
 
+    private func reloadNavigationPreferences() {
+        let wasNormalizing = isNormalizingSettings
+        isNormalizingSettings = true
+        showNavigationControls = Self.bool(defaults, Key.showNavigationControls, true)
+        threeFingerTabNavigationEnabled = Self.bool(defaults, Key.threeFingerTabNavigationEnabled, true)
+        isNormalizingSettings = wasNormalizing
+    }
+
     private func normalizeAll() {
         isNormalizingSettings = true
         defer { isNormalizingSettings = false }
@@ -1005,6 +1031,9 @@ public final class AppSettings: ObservableObject {
         gestureCooldownSeconds = normalizedDouble(gestureCooldownSeconds, fallback: 0.75, range: 0.1...10.0)
         agentVisualPreferences = agentVisualPreferences.normalized()
         showIslandTab = true
+        // Preserve an explicit paging opt-out when recovering old or externally
+        // written preferences that would otherwise remove both page routes.
+        if !showNavigationControls && !threeFingerTabNavigationEnabled { showNavigationControls = true }
         saveAllNormalizedValues()
     }
 
@@ -1270,6 +1299,8 @@ public final class AppSettings: ObservableObject {
             save(data, for: Key.agentVisualPreferences)
         }
         save(showIslandTab, for: Key.showIslandTab)
+        save(showNavigationControls, for: Key.showNavigationControls)
+        save(threeFingerTabNavigationEnabled, for: Key.threeFingerTabNavigationEnabled)
     }
 
     private func save(_ value: Any, for key: String) {
@@ -1374,6 +1405,8 @@ private enum Key {
     static let useBlurTransitions = "useBlurTransitions"
     static let useScaleTransitions = "useScaleTransitions"
     static let showIslandTab = "showIslandTab"
+    static let showNavigationControls = "showNavigationControls"
+    static let threeFingerTabNavigationEnabled = "threeFingerTabNavigationEnabled"
     static let showTrayTab = "showTrayTab"
     static let showTimerTab = "showTimerTab"
     static let showStatsTab = "showStatsTab"
@@ -1546,7 +1579,7 @@ private enum Key {
         collapsedHoverPreviewShowTitle, collapsedHoverPreviewShowsArtist, collapsedHoverPreviewShowsSource,
         collapsedHoverPreviewTitleIconName, collapsedHoverPreviewArtistIconName, animationPreset, reduceExtraMotion,
         shellAnimationSpeed, contentAnimationEnabled, contentStaggerEnabled, contentStaggerAmount,
-        useBlurTransitions, useScaleTransitions, showIslandTab, showTrayTab,
+        useBlurTransitions, useScaleTransitions, showNavigationControls, threeFingerTabNavigationEnabled, showIslandTab, showTrayTab,
         showTimerTab, showStatsTab, showToolsTab, showAgentsTab, agentActivityEnabled,
         agentCompletionAlertsEnabled, agentApprovalAlertsEnabled, agentSoundsEnabled, agentCompletionSoundEnabled,
         agentUsageMetricsEnabled, agentActivityRecordingEnabled, agentPeekDurationSeconds,

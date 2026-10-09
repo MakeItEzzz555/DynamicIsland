@@ -20,7 +20,7 @@ final class IslandTextInputOwnershipTests: XCTestCase {
         XCTAssertFalse(IslandKeyboardFocusPolicy.claimsKeyboard(NSButton()))
     }
 
-    func testAutomaticTerminalFocusDoesNotHoldButUserInputDoes() {
+    func testAutomaticTerminalFocusDoesNotHoldButUserInputDoes() async {
         _ = NSApplication.shared
         let window = NSWindow(contentRect: CGRect(x: -4000, y: -4000, width: 400, height: 240),
                               styleMask: [.borderless], backing: .buffered, defer: false)
@@ -31,12 +31,16 @@ final class IslandTextInputOwnershipTests: XCTestCase {
         let terminal = InteractiveTerminalView()
         terminal.onSend = { _ in } // never touches a PTY
         var published: [Bool] = []
-        host.onFocusChange = { published.append($0) }
+        let engaged = expectation(description: "User-engaged terminal focus is published")
+        let released = expectation(description: "Leaving terminal focus is published")
+        host.onFocusChange = {
+            published.append($0)
+            if $0 { engaged.fulfill() } else { released.fulfill() }
+        }
         host.wasVisible = true
         host.mount(terminal)
         func update() {
             NotificationCenter.default.post(name: NSWindow.didUpdateNotification, object: window)
-            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
         }
         // Page shown: programmatic first responder only.
         XCTAssertTrue(window.makeFirstResponder(terminal))
@@ -45,10 +49,14 @@ final class IslandTextInputOwnershipTests: XCTestCase {
         // User types: engagement publishes text focus (holds while typing).
         terminal.send(source: terminal, data: ArraySlice([UInt8(ascii: "p")]))
         update()
+        // Focus publication is deliberately queued outside AppKit callbacks.
+        // Await that callback without blocking its main actor on a RunLoop spin.
+        await fulfillment(of: [engaged], timeout: 1)
         XCTAssertEqual(published.last, true)
         // Focus leaves: engagement clears and focus is released.
         window.makeFirstResponder(nil)
         update()
+        await fulfillment(of: [released], timeout: 1)
         XCTAssertEqual(published.last, false)
         XCTAssertFalse(terminal.userEngaged)
         // Refocus automatically (e.g. Chat -> Terminal again): still no hold.

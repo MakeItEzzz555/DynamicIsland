@@ -344,6 +344,8 @@ final class MediaController: ObservableObject {
     @Published private(set) var isTransportControlAvailable = false
     @Published private(set) var isSeekControlAvailable = false
     @Published private(set) var hasPlaybackProgress = false
+    @Published private(set) var seekError: String?
+    @Published private var scrubState = MediaScrubState()
     @Published private(set) var sourceKind: MediaSourceKind = .unknown
     @Published private(set) var sourceBundleIdentifier: String?
     @Published private(set) var artworkKey: String?
@@ -373,7 +375,7 @@ final class MediaController: ObservableObject {
     private var pendingPausedSwitchIdentity: MediaSourceIdentity?
     private var pendingPausedSwitchFirstSeenAt: Date?
     private var pendingPausedSwitchCount = 0
-    private var isScrubbing = false
+    private var currentNativeTrackID: String?
     private var refreshCoordinator = MediaRefreshCoordinator()
     private var refreshCandidatesByGeneration: [Int: [MediaCandidate]] = [:]
 
@@ -511,7 +513,10 @@ final class MediaController: ObservableObject {
         )
         publishSelectedCandidate(
             candidate,
-            reason: "System Now Playing confirmed same-source artwork handoff"
+            reason: "System Now Playing confirmed same-source artwork handoff",
+            nativeTrackID: candidate.identity == lastSelectedSourceIdentity &&
+                candidate.snapshot.title == title && candidate.snapshot.artist == artist &&
+                MediaPlaybackTime.validDuration(candidate.snapshot.duration) == duration ? currentNativeTrackID : nil
         )
     }
 
@@ -550,7 +555,8 @@ final class MediaController: ObservableObject {
             finishRefresh(generation)
             return
         }
-        publishSelectedCandidate(publishCandidate.candidate, reason: publishCandidate.reason)
+        publishSelectedCandidate(publishCandidate.candidate, reason: publishCandidate.reason,
+                                 nativeTrackID: Self.seekNativeTrackID(for: publishCandidate.candidate, candidates: candidates))
         finishRefresh(generation)
     }
 
@@ -562,6 +568,9 @@ final class MediaController: ObservableObject {
     }
 
     private func clearMediaState() {
+        scrubState.cancel(retainingInteraction: true)
+        currentNativeTrackID = nil
+        seekError = nil
         title = "Nothing Playing"
         artist = "Open Spotify or Music"
         isPlaying = false
@@ -686,18 +695,125 @@ final class MediaController: ObservableObject {
         artworkFlipRequest = nil
     }
 
-    func updateScrubPosition(_ position: Double) {
-        guard isSeekControlAvailable else { return }
-        isScrubbing = true
-        playbackPosition = min(max(0, position), duration)
+    /// UI preview is separate from the latest provider observation.
+    var displayedPlaybackPosition: Double { scrubState.previewPosition ?? playbackPosition }
+    var playbackSliderDuration: Double {
+        MediaPlaybackTime.maximumSeekPosition(duration: scrubState.context?.duration ?? duration,
+                                             player: scrubState.context?.player ?? (sourceKind == .spotify ? .spotify : .music)) ?? 0
+    }
+    /// The provider may report the real endpoint beyond Spotify's safe seek
+    /// range. Limit only the slider thumb; time labels retain provider timing.
+    var playbackSliderPosition: Double {
+        min(max(0, displayedPlaybackPosition), playbackSliderDuration)
     }
 
+    private var currentScrubContext: MediaScrubContext? {
+        guard hasPlaybackProgress, isSeekControlAvailable,
+              let identity = lastSelectedSourceIdentity,
+              MediaPlaybackTime.validDuration(duration) != nil,
+              sourceKind == .spotify || sourceKind == .music else { return nil }
+        return MediaScrubContext(identity: identity, nativeTrackID: currentNativeTrackID,
+                                 duration: duration, player: activePlayer,
+                                 title: title, artist: artist, generation: selectedPublishGeneration)
+    }
+
+    func setScrubbing(_ editing: Bool, spotify: SpotifyLibraryController? = nil) {
+        if editing {
+            seekError = nil
+            scrubState.begin(context: currentScrubContext, position: playbackPosition)
+        } else if let request = scrubState.finish(context: currentScrubContext) {
+            performSeek(request, spotify: spotify)
+        }
+    }
+
+    func updateScrubPosition(_ position: Double) {
+        scrubState.reconcile(context: currentScrubContext)
+        scrubState.update(position)
+    }
+
+    func cancelScrubbing() { scrubState.cancel() }
+
+    /// Direct commands retain the seconds-based API. Slider release consumes
+    /// its captured interaction instead of constructing a new command here.
     func seek(to position: Double) {
-        guard isSeekControlAvailable else { return }
-        let clampedPosition = min(max(0, position), duration)
-        send(command: "set player position to \(clampedPosition)", to: activePlayer)
-        isScrubbing = false
-        refresh()
+        scrubState.cancel()
+        guard let context = currentScrubContext,
+              let position = MediaPlaybackTime.clampedSeekPosition(position, duration: context.duration, player: context.player) else { return }
+        performSeek(MediaSeekRequest(context: context, position: position), spotify: nil)
+    }
+
+    private func performSeek(_ request: MediaSeekRequest, spotify: SpotifyLibraryController?) {
+        guard !isSettingsPreview, currentScrubContext == request.context else { return }
+        seekError = nil
+        if request.context.player == .spotify,
+           let spotify, spotify.connectionState == .connected {
+            guard let uri = request.context.nativeTrackID, Self.isValidSpotifyURI(uri) else { return }
+            Task { @MainActor [weak self] in
+                do {
+                    _ = try await spotify.seek(
+                        to: request.position, duration: request.context.duration,
+                        expectedTrackURI: uri,
+                        isCurrent: { [weak self] in self?.currentScrubContext == request.context }
+                    )
+                    guard let self else { return }
+                    self.refresh()
+                } catch {
+                    guard let self else { return }
+                    if self.currentScrubContext == request.context { self.seekError = error.localizedDescription }
+                    // A write failure is not retried through another backend.
+                    self.refresh()
+                }
+            }
+        } else {
+            submitLocalSeek(request)
+        }
+    }
+
+    private func submitLocalSeek(_ request: MediaSeekRequest) {
+        guard currentScrubContext == request.context else { return }
+        guard request.context.player != .spotify || request.context.nativeTrackID?.isEmpty == false else { return }
+        let target: MediaAutomationTarget = request.context.player == .spotify ? .spotify : .music
+        automationExecutor.submitCommand(MediaAutomationOperation(
+            target: target, source: Self.seekScript(request)
+        )) { [weak self] result in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if self.currentScrubContext == request.context { self.seekError = result.errorDescription }
+                self.refresh()
+            }
+        }
+    }
+
+    /// Validate again on the serial worker: a queued seek may execute after
+    /// the player has naturally advanced, before the next UI poll observes it.
+    nonisolated static func seekScript(_ request: MediaSeekRequest) -> String {
+        let context = request.context
+        guard let position = MediaPlaybackTime.clampedSeekPosition(request.position, duration: context.duration, player: context.player) else { return "" }
+        func literal(_ value: String) -> String {
+            "\"" + value.replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"") + "\""
+        }
+        let trackGuard: String
+        if let id = context.nativeTrackID {
+            let property = context.player == .spotify ? "id" : "persistent ID"
+            trackGuard = "(\(property) of current track as text) is \(literal(id))"
+        } else {
+            trackGuard = "(name of current track as text) is \(literal(context.title)) and (artist of current track as text) is \(literal(context.artist))"
+        }
+        let trackDuration = context.player == .spotify ? "((duration of current track) / 1000)" : "duration of current track"
+        return """
+        tell application "\(context.player.rawValue)"
+            if it is running then
+                considering case
+                    if \(trackGuard) then
+                        if \(trackDuration) is \(context.duration) then
+                            set player position to \(position)
+                        end if
+                    end if
+                end considering
+            end if
+        end tell
+        """
     }
 
     func setVolume(_ value: Double) {
@@ -775,7 +891,11 @@ final class MediaController: ObservableObject {
                     try
                         set trackName to name of current track
                         if trackName is not "" then
-                            return trackName & "||" & (artist of current track) & "||" & playbackState & "||\(player.displayName)" & "||" & (player position as text) & "||" & (\(durationExpression(for: player)) as text) & "||" & \(artworkExpression(for: player)) & "||" & (sound volume as text)
+                            set nativeTrackID to ""
+                            try
+                                set nativeTrackID to \(player == .spotify ? "id" : "persistent ID") of current track as text
+                            end try
+                            return trackName & "||" & (artist of current track) & "||" & playbackState & "||\(player.displayName)" & "||" & (player position as text) & "||" & (\(durationExpression(for: player)) as text) & "||" & \(artworkExpression(for: player)) & "||" & (sound volume as text) & "||" & nativeTrackID
                         end if
                     end try
                 end if
@@ -795,8 +915,13 @@ final class MediaController: ObservableObject {
                 let trackTitle = parts[0]
                 let trackArtist = parts[1]
                 let reportedPlaybackState = parts[2]
-                let parsedPlaybackPosition = Double(parts[safe: 4] ?? "") ?? 0
-                let parsedDuration = max(1, Double(parts[safe: 5] ?? "") ?? 1)
+                let parsedDuration = MediaPlaybackTime.validDuration(Double(parts[safe: 5] ?? ""))
+                let parsedPlaybackPosition = parsedDuration.flatMap { duration in
+                    Double(parts[safe: 4] ?? "").flatMap {
+                        MediaPlaybackTime.clampedPosition($0, duration: duration)
+                    }
+                }
+                let hasProgress = parsedDuration != nil && parsedPlaybackPosition != nil
                 let reportedVolume = Double(parts[safe: 7] ?? "")
                 let snapshot = MediaSnapshot(
                     sourceKind: player == .spotify ? .spotify : .music,
@@ -810,13 +935,14 @@ final class MediaController: ObservableObject {
                     duration: parsedDuration,
                     elapsedTime: parsedPlaybackPosition,
                     transportAvailable: true,
-                    seekAvailable: true,
-                    volumeAvailable: true
+                    seekAvailable: hasProgress,
+                    volumeAvailable: true,
+                    nativeTrackID: parts[safe: 8].flatMap { $0.isEmpty ? nil : $0 }
                 )
                 return MediaCandidate(
                     providerName: "\(player.displayName) AppleScript",
                     snapshot: snapshot,
-                    hasPlaybackProgress: true,
+                    hasPlaybackProgress: hasProgress,
                     artworkURL: parts[safe: 6],
                     volume: reportedVolume.map { min(max(0, $0 / 100), 1) },
                     activePlayer: player
@@ -1105,7 +1231,20 @@ final class MediaController: ObservableObject {
         pendingPausedSwitchCount = 0
     }
 
-    private func publishSelectedCandidate(_ candidate: MediaCandidate, reason: String) {
+    /// Seek enrichment does not replace the selected metadata/artwork candidate.
+    nonisolated static func seekNativeTrackID(for selected: MediaCandidate, candidates: [MediaCandidate]) -> String? {
+        if let id = selected.snapshot.nativeTrackID, !id.isEmpty { return id }
+        return candidates.first {
+            $0.identity == selected.identity &&
+                $0.snapshot.sourceKind == selected.snapshot.sourceKind &&
+                $0.activePlayer != nil &&
+                $0.snapshot.title == selected.snapshot.title && $0.snapshot.artist == selected.snapshot.artist &&
+                MediaPlaybackTime.validDuration($0.snapshot.duration) == MediaPlaybackTime.validDuration(selected.snapshot.duration) &&
+                $0.snapshot.nativeTrackID?.isEmpty == false
+        }?.snapshot.nativeTrackID
+    }
+
+    private func publishSelectedCandidate(_ candidate: MediaCandidate, reason: String, nativeTrackID: String? = nil) {
         let previousSource = sourceName
         let previousTitle = title
         let previousPlaying = isPlaying
@@ -1150,14 +1289,19 @@ final class MediaController: ObservableObject {
         sourceKind = snapshot.sourceKind
         hasActiveMediaSource = true
         isPlaying = snapshot.isPlaying
-        if !isScrubbing {
-            playbackPosition = candidate.hasPlaybackProgress ? (snapshot.elapsedTime ?? 0) : 0
+        let providerDuration = MediaPlaybackTime.validDuration(snapshot.duration)
+        let providerPosition = providerDuration.flatMap { duration in
+            snapshot.elapsedTime.flatMap { MediaPlaybackTime.clampedPosition($0, duration: duration) }
         }
-        duration = candidate.hasPlaybackProgress ? max(1, snapshot.duration ?? 1) : 1
+        let hasProgress = candidate.hasPlaybackProgress && providerDuration != nil && providerPosition != nil
+        playbackPosition = hasProgress ? (providerPosition ?? 0) : 0
+        duration = hasProgress ? (providerDuration ?? 1) : 1
         isTransportControlAvailable = snapshot.transportAvailable
-        isSeekControlAvailable = snapshot.seekAvailable
+        currentNativeTrackID = snapshot.nativeTrackID ?? nativeTrackID
+        isSeekControlAvailable = snapshot.seekAvailable && hasProgress &&
+            (snapshot.sourceKind != .spotify || currentNativeTrackID?.isEmpty == false)
         isVolumeControlAvailable = snapshot.volumeAvailable
-        hasPlaybackProgress = candidate.hasPlaybackProgress
+        hasPlaybackProgress = hasProgress
         currentYouTubeVideoID = candidate.youtubeVideoID
         lastSelectedSourceIdentity = candidate.identity
         lastSelectedSourceWasPlaying = candidate.snapshot.isPlaying
@@ -1177,6 +1321,8 @@ final class MediaController: ObservableObject {
                 break
             }
         }
+        scrubState.reconcile(context: currentScrubContext)
+        if identityChanged { seekError = nil }
 
         publishArtwork(for: candidate, generation: publishGeneration, sourceChanged: identityChanged)
 
@@ -2218,7 +2364,7 @@ struct MediaCandidate {
         self.providerName = providerName
         self.snapshot = snapshot
         self.hasPlaybackProgress = hasPlaybackProgress ??
-            (snapshot.duration.map { $0.isFinite && $0 > 1 } == true &&
+            (snapshot.duration.map { $0.isFinite && $0 > 0 } == true &&
                 snapshot.elapsedTime.map { $0.isFinite } == true)
         self.artworkURL = artworkURL?.isEmpty == false ? artworkURL : nil
         self.volume = volume

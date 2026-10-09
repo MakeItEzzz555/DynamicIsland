@@ -316,6 +316,35 @@ final class AppendOnlyRecordTailerTests: XCTestCase {
         await tailer.stop()
     }
 
+    func testImmediateRecreationReadsWritesThatRaceFileWatcherRegistration() async throws {
+        let fixture = try Fixture(existing: "")
+        defer { fixture.remove() }
+        let expected = (0..<30).map { "recreated-\($0)" }
+        let expectations = expected.map { expectation(description: "watcher delivered \($0)") }
+        let expectationsByRecord = Dictionary(uniqueKeysWithValues: zip(expected, expectations))
+        let sink = RecordSink { value in expectationsByRecord[value]?.fulfill() }
+        let tailer = fixture.tailer(policy: .fromEnd, replacementPolicy: .boundedCatchUp, sink: sink)
+        await tailer.start()
+
+        do {
+            for (index, record) in expected.enumerated() {
+                // Data.write publishes the empty inode before its bytes. A
+                // parent signal may capture size zero before the new file
+                // source registers, so its registration must reconcile again.
+                try FileManager.default.removeItem(at: fixture.fileURL)
+                try Data("\(record)\n".utf8).write(to: fixture.fileURL)
+                await fulfillment(of: [expectations[index]], timeout: 2)
+                let health = await tailer.healthSnapshot()
+                XCTAssertEqual(sink.strings, Array(expected.prefix(index + 1)),
+                    "Immediate recreation \(index) lost or duplicated a record: \(health)")
+            }
+        } catch {
+            await tailer.stop()
+            throw error
+        }
+        await tailer.stop()
+    }
+
     func testStaleFileSignalCannotAffectRestartedTailer() async throws {
         let fixture = try Fixture(existing: "")
         defer { fixture.remove() }

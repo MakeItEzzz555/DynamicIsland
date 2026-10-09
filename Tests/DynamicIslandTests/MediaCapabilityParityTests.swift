@@ -64,7 +64,7 @@ final class MediaCapabilityParityTests: XCTestCase {
             }
             if source.contains("with timeout"), source.contains("tell application \"Spotify\"") {
                 return MediaAutomationScriptResult(
-                    output: "Local Song||Local Artist||playing||Spotify||12||200||||40",
+                    output: "Local Song||Local Artist||playing||Spotify||12||200||||40||spotify:track:AAAAAAAAAAAAAAAAAAAAAA",
                     failure: nil
                 )
             }

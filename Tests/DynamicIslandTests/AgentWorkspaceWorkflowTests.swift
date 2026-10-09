@@ -127,7 +127,6 @@ final class AgentWorkspaceWorkflowTests: XCTestCase {
     /// Persisted history used to fill the 32-session store and make every
     /// new session fail silently ("New session" did nothing).
     func testLargeDiscoveredHistoryNeverBlocksNewSessions() async throws {
-        let harness = Harness(providers: [.claude, .codex])
         let history = (0..<120).map { index in
             AgentDiscoveredSessionDescriptor(
                 session: AgentManagedSessionDescriptor(
@@ -141,15 +140,18 @@ final class AgentWorkspaceWorkflowTests: XCTestCase {
                 updatedAt: Date(timeIntervalSince1970: 1_700_000_000 + Double(index))
             )
         }
-        await harness.fake(.codex).setDiscovered(history)
-        await harness.fake(.claude).setDiscovered([AgentDiscoveredSessionDescriptor(
+        let claudeHistory = AgentDiscoveredSessionDescriptor(
             session: AgentManagedSessionDescriptor(
                 provider: .claude, nativeSessionID: "claude-history", cwd: "/tmp/c",
                 model: nil, acceptsDirectInput: true
             ),
             runtimeState: .notLoaded,
             updatedAt: Date(timeIntervalSince1970: 1_700_000_000)
-        )])
+        )
+        let harness = Harness(providers: [.claude, .codex], discovered: [
+            .codex: history,
+            .claude: [claudeHistory]
+        ])
         await harness.controller.refreshPersistentSnapshot()
 
         let codexHistory = harness.store.sessions.filter { $0.id.sessionID.provider == .codex }
@@ -172,15 +174,14 @@ final class AgentWorkspaceWorkflowTests: XCTestCase {
     // MARK: Existing sessions
 
     func testResumableSessionOffersResumeAndBecomesComposerReady() async throws {
-        let harness = Harness(providers: [.claude])
-        await harness.fake(.claude).setDiscovered([AgentDiscoveredSessionDescriptor(
+        let harness = Harness(providers: [.claude], discovered: [.claude: [AgentDiscoveredSessionDescriptor(
             session: AgentManagedSessionDescriptor(
                 provider: .claude, nativeSessionID: "resume-me", cwd: try makeFolder("resume").path,
                 model: nil, acceptsDirectInput: true
             ),
             runtimeState: .notLoaded,
             updatedAt: Date()
-        )])
+        )]])
         await harness.controller.refreshPersistentSnapshot()
         let session = try XCTUnwrap(harness.store.sessions.first)
         harness.controller.selectSession(session.id)
@@ -525,8 +526,11 @@ private final class Harness {
     let flow = AgentNewSessionFlow()
     private let fakes: [AgentProvider: WorkflowFakeProvider]
 
-    init(providers: [AgentProvider]) {
-        let fakes = Dictionary(uniqueKeysWithValues: providers.map { ($0, WorkflowFakeProvider(provider: $0)) })
+    init(providers: [AgentProvider], discovered: [AgentProvider: [AgentDiscoveredSessionDescriptor]] = [:]) {
+        // Background refresh can start at the first actor hop; seed fixtures before observing.
+        let fakes = Dictionary(uniqueKeysWithValues: providers.map {
+            ($0, WorkflowFakeProvider(provider: $0, discovered: discovered[$0] ?? []))
+        })
         self.fakes = fakes
         controller = AgentManagedSessionController(
             providers: providers.compactMap { fakes[$0] },
@@ -577,8 +581,9 @@ private actor WorkflowFakeProvider: AgentInteractiveProvider {
     private let stream: AsyncStream<AgentInteractiveProviderEvent>
     private let continuation: AsyncStream<AgentInteractiveProviderEvent>.Continuation
 
-    init(provider: AgentProvider) {
+    init(provider: AgentProvider, discovered: [AgentDiscoveredSessionDescriptor] = []) {
         self.provider = provider
+        self.discovered = discovered
         var continuation: AsyncStream<AgentInteractiveProviderEvent>.Continuation!
         stream = AsyncStream { continuation = $0 }
         self.continuation = continuation

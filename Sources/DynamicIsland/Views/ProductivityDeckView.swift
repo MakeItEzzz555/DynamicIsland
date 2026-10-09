@@ -482,6 +482,7 @@ private struct BackgroundRemovalTile: View {
 private struct RemindersTile: View {
     @ObservedObject var controller: RemindersController
     let status: String?
+    @Environment(\.isSettingsPreview) private var isSettingsPreview
 
     var body: some View {
         Button {
@@ -500,7 +501,7 @@ private struct RemindersTile: View {
             )
         }
         .buttonStyle(WorkspaceTileButtonStyle())
-        .task { await controller.refresh() }
+        .task { if !isSettingsPreview { await controller.refresh() } }
         .accessibilityLabel("Reminders")
         .accessibilityValue(summary ?? "")
     }

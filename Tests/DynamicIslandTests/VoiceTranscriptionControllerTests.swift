@@ -1,4 +1,5 @@
 import AVFoundation
+import Combine
 import Foundation
 import Speech
 import XCTest
@@ -560,7 +561,12 @@ extension VoiceTranscriptionControllerTests {
         _ = try? await fixture!.controller.startRecording()
         let activities = fixture!.activities
         XCTAssertEqual(activities.activities.map(\.kind), [.voiceStatus])
-        try await Task.sleep(for: .milliseconds(40))
+        let expired = expectation(description: "Static voice recovery publishes its expiry")
+        let observation = activities.$activities
+            .first(where: { $0.isEmpty })
+            .sink { _ in expired.fulfill() }
+        defer { observation.cancel() }
+        await fulfillment(of: [expired], timeout: 1)
         XCTAssertTrue(activities.activities.isEmpty)
         weak var controller = fixture!.controller
         fixture = nil

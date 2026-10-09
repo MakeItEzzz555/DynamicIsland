@@ -11,9 +11,10 @@ struct OverlayGeometrySignature: Equatable, CustomStringConvertible {
     let collapsedPresentationProfile: CollapsedPresentationProfile
     let useAdaptiveNotchSizing: Bool
     let respectHardwareNotch: Bool
+    var showNavigationControls: Bool = true
 
     var description: String {
-        "collapsedSize=\(collapsedSize) expandedSize=\(expandedSize) expandedPresentation=\(expandedPresentationKind.rawValue) collapsedActivityProfile=\(String(describing: collapsedActivityProfile)) collapsedPresentationProfile=\(collapsedPresentationProfile.kind.rawValue) useAdaptiveNotchSizing=\(useAdaptiveNotchSizing) respectHardwareNotch=\(respectHardwareNotch)"
+        "collapsedSize=\(collapsedSize) expandedSize=\(expandedSize) expandedPresentation=\(expandedPresentationKind.rawValue) collapsedActivityProfile=\(String(describing: collapsedActivityProfile)) collapsedPresentationProfile=\(collapsedPresentationProfile.kind.rawValue) useAdaptiveNotchSizing=\(useAdaptiveNotchSizing) respectHardwareNotch=\(respectHardwareNotch) showNavigationControls=\(showNavigationControls)"
     }
 }
 
@@ -257,6 +258,8 @@ final class OverlayWindowController {
     private var expandedScrollGestureHandled = false
     private var rightWorkspaceSwipe = RightWorkspaceSwipeRecognizer()
     private var agentStackSwipe = RightWorkspaceSwipeRecognizer()
+    private var touchPaging = IslandTouchGesturePolicy()
+    private var touchScrollOwnership = IslandTouchScrollOwnership()
     private var expandedScrollLastActionAt: CFTimeInterval?
     private var expandedScrollGestureResetWorkItem: DispatchWorkItem?
     private var expandedContentScrollOwnership = ExpandedContentScrollSequenceOwnership()
@@ -326,6 +329,14 @@ final class OverlayWindowController {
         // the size difference (the Agents <-> tab "detach" bug).
         let hostingView = IslandHostingView(rootView: TopPinnedHostRoot(content: rootView))
         hostingView.autoresizingMask = [.width, .height]
+        // Public raw trackpad touch callbacks expose the actual contacts.
+        // NSGestureRecognizer does not receive trackpad touches, and wheel /
+        // mouse events cannot reliably provide finger counts.
+        hostingView.allowedTouchTypes = [.indirect]
+        hostingView.wantsRestingTouches = true
+        hostingView.onIndirectTouches = { [weak self] contacts, phase in
+            self?.handleIndirectTouches(contacts, phase: phase)
+        }
         hostingView.wantsLayer = true
         hostingView.layer?.backgroundColor = NSColor.clear.cgColor
         hostingView.onMouseExited = { [weak self] in
@@ -625,6 +636,10 @@ final class OverlayWindowController {
     }
 
     func setVisible(_ visible: Bool) {
+        layoutStore.cancelWorkspaceActionRequests()
+        touchPaging.cancel()
+        touchScrollOwnership.reset()
+        hostingView?.resetTouchIdentities()
         presentationSession.invalidate(at: ProcessInfo.processInfo.systemUptime)
         layoutStore.overlayPresentationGeneration = presentationSession.generation
         if visible {
@@ -810,6 +825,10 @@ final class OverlayWindowController {
         if let hud = activeInteractiveSystemHUD(activities: activities) {
             return .systemHUD(value: hud.progress ?? 0)
         }
+        let hudResolution = collapsedLayoutResolution(activities: activities)
+        if (hudResolution.overlayTransient?.activity ?? hudResolution.primary?.activity)?.systemHUDKind == .audioDevice {
+            return .audioDeviceHUD
+        }
         let mode = collapsedContentMode(activities: activities)
         if case .screenRecording = mode {
             return .screenRecording
@@ -829,8 +848,8 @@ final class OverlayWindowController {
         activities: [DynamicIslandLiveActivity]
     ) -> CollapsedActivityLayoutProfile? {
         let resolution = collapsedLayoutResolution(activities: activities)
-        if resolution.primary == nil, resolution.overlayTransient != nil {
-            return .systemHUD
+        if resolution.primary == nil, let overlay = resolution.overlayTransient {
+            return overlay.activity.systemHUDKind == .audioDevice ? .audioDeviceHUD : .systemHUD
         }
 
         guard let primary = resolution.primary?.activity else { return nil }
@@ -851,7 +870,7 @@ final class OverlayWindowController {
         case .battery:
             return .battery
         case .system:
-            return .systemHUD
+            return primary.systemHUDKind == .audioDevice ? .audioDeviceHUD : .systemHUD
         case .screenRecording:
             return .screenRecording
         case .keepAwake, .terminalTask, .reminder, .voiceRecording,
@@ -945,7 +964,7 @@ final class OverlayWindowController {
         let preview = layoutStore.workspaceLayoutPreview.flatMap { $0.surface == surface ? $0 : nil }
         return ExpandedPresentationProfile.headerLayout(page: page,
             configuration: preview?.configuration ?? modules.customization?.configuration,
-            editing: preview != nil, settings: settings, metrics: layoutStore.displayMetrics,
+            editing: preview != nil || layoutStore.transientInteractionOwners.contains(.workspaceEditor), settings: settings, metrics: layoutStore.displayMetrics,
             pageCount: modules.navigation.availablePages(using: settings).count)
     }
 
@@ -957,10 +976,10 @@ final class OverlayWindowController {
         let size = expandedPresentationProfile.resolvedSize(from: settings.expandedSize, page: page,
             configuration: preview?.configuration ?? modules.customization?.configuration,
             editing: preview != nil, settings: settings, metrics: layoutStore.displayMetrics,
-            minimumHeaderWidth: ExpandedIslandHeaderMetrics.minimumContentWidth(
+            minimumHeaderWidth: header.mode != .hidden ? ExpandedIslandHeaderMetrics.minimumContentWidth(
                 pageCount: modules.navigation.availablePages(using: settings).count,
                 clipboardEnabled: settings.clipboardHistoryEnabled,
-                hardwareNotchWidth: layoutStore.hardwareNotchWidth),
+                hardwareNotchWidth: layoutStore.hardwareNotchWidth) : 0,
             lane: ExpandedIslandLayoutMetrics.workspaceNotchLane(settings: settings, metrics: layoutStore.displayMetrics,
                 pageCount: modules.navigation.availablePages(using: settings).count,
                 hardwareNotchWidth: layoutStore.hardwareNotchWidth),
@@ -1010,7 +1029,8 @@ final class OverlayWindowController {
             collapsedActivityProfile: collapsedActivityLayoutProfile,
             collapsedPresentationProfile: collapsedPresentationProfile,
             useAdaptiveNotchSizing: settings.useAdaptiveNotchSizing,
-            respectHardwareNotch: settings.respectHardwareNotch
+            respectHardwareNotch: settings.respectHardwareNotch,
+            showNavigationControls: settings.showNavigationControls
         )
     }
 
@@ -1330,6 +1350,9 @@ final class OverlayWindowController {
             if let window = event.window, self.isTransientNativeWindow(window) {
                 return event
             }
+            if self.touchSequenceSuppressesIslandScroll(event) {
+                return event
+            }
 
             if self.handleExpandedScrollWheelFromMonitor(event, source: "localScrollMonitor") {
                 return nil
@@ -1348,6 +1371,7 @@ final class OverlayWindowController {
                 guard let self, self.allowsOverlayWork(generation: generation) else { return }
 
                 self.debugScrollWheelReceived(event, source: "globalScrollMonitor")
+                guard !self.touchSequenceSuppressesIslandScroll(event) else { return }
                 if self.handleExpandedScrollWheelFromMonitor(event, source: "globalScrollMonitor") {
                     return
                 }
@@ -1726,6 +1750,7 @@ final class OverlayWindowController {
             collapsedNotchCoreWidth: geometry.collapsedNotchCoreWidth,
             collapsedRightRegionWidth: geometry.collapsedRightRegionWidth,
             collapsedPresentationProfile: geometry.collapsedPresentationProfile,
+            header: currentHeaderLayout,
             animated: false
         )
 
@@ -1746,6 +1771,7 @@ final class OverlayWindowController {
     /// fade) while the shell keeps its expanded geometry; only once they are
     /// hidden does the island state collapse and the shell contract top-pinned.
     private func requestCollapseWithSequencing() {
+        layoutStore.cancelWorkspaceActionRequests()
         guard canPresentOverlay else { return }
         guard islandState.state == .expanded else { return }
         if layoutStore.isExpandedContentExiting {
@@ -1912,6 +1938,7 @@ final class OverlayWindowController {
     }
 
     private func handleIslandScrollWheel(_ event: NSEvent, localPoint: NSPoint, source: String) -> Bool {
+        guard !touchSequenceSuppressesIslandScroll(event) else { return false }
         guard acceptsOverlayScroll(event) else { return false }
         switch islandState.state {
         case .collapsed:
@@ -1919,6 +1946,74 @@ final class OverlayWindowController {
         case .expanded:
             return handleExpandedScrollWheel(event, source: source)
         }
+    }
+
+    private var touchPagingInputAllowed: Bool {
+        canPresentOverlay && settings.threeFingerTabNavigationEnabled && !layoutStore.isCollapseShellOnly &&
+        !layoutStore.isExpandedContentExiting && !layoutStore.isExpandedScrollGestureSuppressed &&
+        !modules.navigation.isFileDropTargeted && layoutStore.workspaceLayoutPreview == nil &&
+        !layoutStore.transientInteractionOwners.contains(.workspaceEditor) && NSEvent.pressedMouseButtons == 0
+    }
+
+    private func handleIndirectTouches(_ contacts: [IslandIndirectTouch], phase: IslandIndirectTouchPhase) {
+        if phase == .cancelled {
+            touchPaging.cancel()
+            // Keep already observed wheel-tail ownership until its native
+            // ending/new beginning, so cancellation cannot turn it into media.
+            return
+        }
+        let pointer = NSEvent.mouseLocation
+        let inside = islandState.state == .expanded
+            ? visibleExpandedShellScreenFrame().contains(pointer)
+            : collapsedVisibleLocalFrames.contains { screenRect(for: $0).contains(pointer) }
+        let overControl = layoutStore.nativeControlRegions.values.contains { frame in
+            screenRect(for: IslandCanvasCoordinateSpace.appKitLocalRect(
+                fromSwiftUI: frame, canvasHeight: layoutStore.canvasSize.height)).contains(pointer)
+        }
+        let action = touchPaging.update(contacts: contacts, phase: phase,
+            canBegin: touchPagingInputAllowed && inside && !overControl,
+            inputStillAllowed: touchPagingInputAllowed)
+        if touchPaging.reservesIslandScroll { touchScrollOwnership.reserve() }
+        guard let action else { return }
+        resetExpandedScrollTracking()
+        resetCollapsedScrollTracking()
+        resetMediaSwipeSession()
+        rightWorkspaceSwipe.reset()
+        agentStackSwipe.reset()
+        navigatePage(forward: action == .next)
+        debugGesture("raw three-finger page action=\(action)")
+    }
+
+    func navigatePage(forward: Bool) {
+        guard canPresentOverlay else { return }
+        if forward { modules.navigation.selectNextPage(using: settings) }
+        else { modules.navigation.selectPreviousPage(using: settings) }
+        if islandState.state == .collapsed {
+            layoutStore.preservePageForNextExpansion(modules.navigation.selectedPage)
+            expandFromCollapsedPreparingGeometry()
+        }
+    }
+
+    func requestWorkspaceAction(_ action: IslandWorkspaceAction) {
+        guard canPresentOverlay, action != .clipboard || settings.clipboardHistoryEnabled else { return }
+        if islandState.state == .collapsed {
+            layoutStore.preservePageForNextExpansion(modules.navigation.selectedPage)
+        }
+        layoutStore.requestWorkspaceAction(action)
+        if islandState.state == .collapsed { expandFromCollapsedPreparingGeometry() }
+    }
+
+    private func touchSequenceSuppressesIslandScroll(_ event: NSEvent) -> Bool {
+        let phase: IslandTouchScrollOwnership.Phase
+        if !event.hasPreciseScrollingDeltas || (event.phase.isEmpty && event.momentumPhase.isEmpty) { phase = .ordinaryWheel }
+        else if event.momentumPhase.contains(.ended) || event.momentumPhase.contains(.cancelled) { phase = .momentumEnded }
+        else if !event.momentumPhase.isEmpty { phase = .momentum }
+        else if event.phase.contains(.began) || event.phase.contains(.mayBegin) { phase = .began }
+        else if event.phase.contains(.cancelled) { phase = .cancelled }
+        else if event.phase.contains(.ended) { phase = .ended }
+        else { phase = .changed }
+        return touchScrollOwnership.suppressIslandRouting(phase: phase,
+            touchesReserved: touchPaging.reservesIslandScroll)
     }
 
     private func nativeControlOwnsScroll(_ event: NSEvent) -> Bool {
@@ -2101,6 +2196,12 @@ final class OverlayWindowController {
             return true
         case .openSettings:
             onOpenSettingsFromGesture()
+            expandedScrollGestureHandled = true
+            expandedScrollLastActionAt = CACurrentMediaTime()
+            expandedScrollDelta = .zero
+            return true
+        case .openClipboard, .editWorkspace:
+            requestWorkspaceAction(action == .openClipboard ? .clipboard : .edit)
             expandedScrollGestureHandled = true
             expandedScrollLastActionAt = CACurrentMediaTime()
             expandedScrollDelta = .zero
@@ -2785,7 +2886,7 @@ final class OverlayWindowController {
             modules.media.playPause()
             collapsedScrollLastActionAt = CACurrentMediaTime()
             return true
-        case .openSettings:
+        case .openSettings, .openClipboard, .editWorkspace:
             // Long press still owns Settings. Two-finger scroll gestures intentionally do not.
             debugGesture("blocked reason=open-settings-not-scroll-action")
             return false
@@ -2966,6 +3067,9 @@ private final class IslandHostingView<Content: View>: NSHostingView<Content> {
     var accessoryRegionsProvider: (() -> [NSRect])?
     var collapsedScrollGestureRegionProvider: (() -> NSRect)?
     var onCollapsedScrollWheel: ((NSEvent, NSPoint) -> Bool)?
+    var onIndirectTouches: (([IslandIndirectTouch], IslandIndirectTouchPhase) -> Void)?
+    private var touchIdentities: [any NSCopying & NSObjectProtocol] = []
+    private var touchDevices: [any NSObjectProtocol] = []
     private var trackingAreaReference: NSTrackingArea?
 
     override var intrinsicContentSize: NSSize {
@@ -2990,6 +3094,59 @@ private final class IslandHostingView<Content: View>: NSHostingView<Content> {
     override func mouseExited(with event: NSEvent) {
         onMouseExited?()
         super.mouseExited(with: event)
+    }
+
+    override func touchesBegan(with event: NSEvent) {
+        reportIndirectTouches(event, phase: .began)
+        super.touchesBegan(with: event)
+    }
+
+    override func touchesMoved(with event: NSEvent) {
+        reportIndirectTouches(event, phase: .moved)
+        super.touchesMoved(with: event)
+    }
+
+    override func touchesEnded(with event: NSEvent) {
+        reportIndirectTouches(event, phase: .ended)
+        super.touchesEnded(with: event)
+    }
+
+    override func touchesCancelled(with event: NSEvent) {
+        onIndirectTouches?([], .cancelled)
+        resetTouchIdentities()
+        super.touchesCancelled(with: event)
+    }
+
+    func resetTouchIdentities() {
+        touchIdentities.removeAll(keepingCapacity: true)
+        touchDevices.removeAll(keepingCapacity: true)
+    }
+
+    private func reportIndirectTouches(_ event: NSEvent, phase: IslandIndirectTouchPhase) {
+        // Page morphs can retarget touches to a different native descendant.
+        // nil observes every contact in this raw touch event regardless of
+        // its target view; a host-local empty set cannot end the sequence.
+        let touches = event.touches(matching: .touching, in: nil).filter { $0.type == .indirect }
+        var contacts: [IslandIndirectTouch] = []
+        for touch in touches {
+            guard let device = touch.device as? any NSObjectProtocol else {
+                // An unavailable device cannot rearm a consumed gesture.
+                onIndirectTouches?([], .moved)
+                return
+            }
+            if !touchIdentities.contains(where: { $0.isEqual(touch.identity) }) {
+                touchIdentities.append(touch.identity)
+            }
+            if !touchDevices.contains(where: { $0.isEqual(device) }) {
+                touchDevices.append(device)
+            }
+            guard let identityID = touchIdentities.firstIndex(where: { $0.isEqual(touch.identity) }),
+                  let deviceID = touchDevices.firstIndex(where: { $0.isEqual(device) }) else { continue }
+            contacts.append(IslandIndirectTouch(identity: identityID, device: deviceID,
+                normalizedPosition: touch.normalizedPosition))
+        }
+        onIndirectTouches?(contacts, phase)
+        if phase == .ended && contacts.isEmpty { resetTouchIdentities() }
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {

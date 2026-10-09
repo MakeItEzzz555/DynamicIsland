@@ -9,6 +9,10 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private let onQuit: () -> Void
     private let hiddenBasketCount: () -> Int
     private let onShowBaskets: () -> Void
+    private let onEditWorkspace: () -> Void
+    private let onOpenClipboard: () -> Void
+    private let onNextPage: () -> Void
+    private let onPreviousPage: () -> Void
 
     init(
         settings: AppSettings,
@@ -16,7 +20,11 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         onToggleOverlay: @escaping () -> Void,
         onQuit: @escaping () -> Void,
         hiddenBasketCount: @escaping () -> Int = { 0 },
-        onShowBaskets: @escaping () -> Void = {}
+        onShowBaskets: @escaping () -> Void = {},
+        onEditWorkspace: @escaping () -> Void = {},
+        onOpenClipboard: @escaping () -> Void = {},
+        onNextPage: @escaping () -> Void = {},
+        onPreviousPage: @escaping () -> Void = {}
     ) {
         self.settings = settings
         self.onOpenSettings = onOpenSettings
@@ -24,6 +32,10 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         self.onQuit = onQuit
         self.hiddenBasketCount = hiddenBasketCount
         self.onShowBaskets = onShowBaskets
+        self.onEditWorkspace = onEditWorkspace
+        self.onOpenClipboard = onOpenClipboard
+        self.onNextPage = onNextPage
+        self.onPreviousPage = onPreviousPage
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         super.init()
         statusItem.button?.image = NSImage(systemSymbolName: "capsule.tophalf.filled", accessibilityDescription: "DynamicIsland")
@@ -39,6 +51,15 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     private func populate(_ menu: NSMenu) {
         menu.addItem(NSMenuItem(title: "Settings...", action: #selector(openSettings), keyEquivalent: ","))
+        menu.addItem(NSMenuItem(title: "Edit Workspace...", action: #selector(editWorkspace), keyEquivalent: ""))
+        if settings.clipboardHistoryEnabled {
+            menu.addItem(NSMenuItem(title: "Clipboard History", action: #selector(openClipboard), keyEquivalent: ""))
+        }
+        menu.addItem(NSMenuItem(title: "Next Page", action: #selector(nextPage), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Previous Page", action: #selector(previousPage), keyEquivalent: ""))
+        if !settings.showNavigationControls {
+            menu.addItem(NSMenuItem(title: "Show Navigation Controls", action: #selector(showNavigation), keyEquivalent: ""))
+        }
         menu.addItem(NSMenuItem(title: settings.overlayEnabled ? "Hide Island" : "Show Island", action: #selector(toggleOverlay), keyEquivalent: "i"))
         // Recovery for auto-hidden Floating Baskets that still hold files.
         let hiddenBaskets = hiddenBasketCount()
@@ -63,6 +84,12 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     @objc private func showBaskets() {
         onShowBaskets()
     }
+
+    @objc private func editWorkspace() { onEditWorkspace() }
+    @objc private func openClipboard() { onOpenClipboard() }
+    @objc private func nextPage() { onNextPage() }
+    @objc private func previousPage() { onPreviousPage() }
+    @objc private func showNavigation() { settings.showNavigationControls = true }
 
     @objc private func openSettings() {
         onOpenSettings()

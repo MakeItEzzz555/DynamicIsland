@@ -7,7 +7,9 @@ RELAY_NAME="DynamicIslandAgentRelay"
 CODEX_RELAY_NAME="DynamicIslandCodexHookRelay"
 CLAUDE_RELAY_NAME="DynamicIslandClaudeHookRelay"
 BUILD_DIR="$ROOT_DIR/.build/release"
-DIST_DIR="$ROOT_DIR/dist"
+# Keep the installed package and its privacy identity intact during runtime
+# validation by allowing a separate output directory.
+DIST_DIR="${DYNAMICISLAND_PACKAGE_OUTPUT_DIR:-$ROOT_DIR/dist}"
 APP_DIR="$DIST_DIR/$APP_NAME.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"

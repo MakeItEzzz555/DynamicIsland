@@ -473,6 +473,196 @@ final class AgentWorkspaceSnapshotTests: XCTestCase {
 
     }
 
+    func testCurrentNativeTerminalHostReclaimsOrphanAndRejectsRetiredHost() async throws {
+        _ = NSApplication.shared
+        let runner = WorkspaceSnapshotTerminalRunner()
+        let controller = TerminalSessionController(liveActivities: LiveActivityStore(),
+            capabilities: IslandCapabilityRegistry(), runner: runner, workingDirectoryPath: "/tmp")
+        defer { controller.terminate() }
+        let size = CGSize(width: 420, height: 220)
+        func terminal(_ request: Int) -> AnyView {
+            AnyView(NativeTerminalHost(controller: controller, initialDirectory: "/tmp",
+                isVisible: true, focusRequest: request).frame(width: size.width, height: size.height))
+        }
+        let current = NSHostingView(rootView: terminal(0))
+        let transient = NSHostingView(rootView: AnyView(EmptyView()))
+        let currentWindow = NSWindow(contentRect: CGRect(origin: CGPoint(x: -5000, y: -5000), size: size),
+            styleMask: [.borderless], backing: .buffered, defer: false)
+        let transientWindow = NSWindow(contentRect: CGRect(origin: CGPoint(x: -6000, y: -5000), size: size),
+            styleMask: [.borderless], backing: .buffered, defer: false)
+        for window in [currentWindow, transientWindow] { window.isReleasedWhenClosed = false }
+        defer {
+            for window in [currentWindow, transientWindow] {
+                window.makeFirstResponder(nil)
+                window.orderOut(nil)
+                window.contentView = nil
+                window.close()
+            }
+        }
+        current.frame = CGRect(origin: .zero, size: size)
+        currentWindow.contentView = current
+        currentWindow.orderFrontRegardless()
+        let initialDeadline = ContinuousClock.now + .seconds(2)
+        while (controller.terminalView.superview == nil || !controller.isRunning), ContinuousClock.now < initialDeadline {
+            try await Task.sleep(for: .milliseconds(3))
+            current.layoutSubtreeIfNeeded()
+        }
+        let currentMount = try XCTUnwrap(controller.terminalView.superview as? TerminalMountView)
+        XCTAssertTrue(currentMount.isDescendant(of: current))
+        XCTAssertTrue(currentMount.wasVisible)
+        XCTAssertTrue(controller.isRunning)
+
+        transient.rootView = terminal(1)
+        transient.frame = CGRect(origin: .zero, size: size)
+        transientWindow.contentView = transient
+        transientWindow.orderFrontRegardless()
+        let claimDeadline = ContinuousClock.now + .seconds(2)
+        while controller.terminalView.superview === currentMount
+                || controller.terminalView.superview?.isDescendant(of: transient) != true,
+              ContinuousClock.now < claimDeadline {
+            try await Task.sleep(for: .milliseconds(3))
+            transient.layoutSubtreeIfNeeded()
+        }
+        let transientMount = try XCTUnwrap(controller.terminalView.superview as? TerminalMountView)
+        XCTAssertFalse(transientMount === currentMount)
+        XCTAssertTrue(transientMount.isDescendant(of: transient))
+
+        current.rootView = terminal(2)
+        let ownedUpdateDeadline = ContinuousClock.now + .seconds(2)
+        while currentMount.focusRequest != 2, ContinuousClock.now < ownedUpdateDeadline {
+            try await Task.sleep(for: .milliseconds(3))
+            current.layoutSubtreeIfNeeded()
+        }
+        XCTAssertEqual(currentMount.focusRequest, 2, "the original visible host received a routine update")
+        XCTAssertTrue(controller.terminalView.superview === transientMount,
+                      "a routine update must not steal an emulator claimed by another host")
+
+        // An unexpected native detach leaves the current lease authoritative.
+        // The retired host must not reclaim even though the emulator is orphaned.
+        controller.terminalView.removeFromSuperview()
+        XCTAssertNil(controller.terminalView.superview)
+        current.rootView = terminal(3)
+        let staleDeadline = ContinuousClock.now + .seconds(2)
+        while currentMount.focusRequest != 3, ContinuousClock.now < staleDeadline {
+            try await Task.sleep(for: .milliseconds(3))
+            current.layoutSubtreeIfNeeded()
+        }
+        XCTAssertEqual(currentMount.focusRequest, 3)
+        XCTAssertNil(controller.terminalView.superview, "an older lease cannot claim an orphan")
+
+        transient.rootView = terminal(4)
+        let reclaimDeadline = ContinuousClock.now + .seconds(2)
+        while transientMount.focusRequest != 4, ContinuousClock.now < reclaimDeadline {
+            try await Task.sleep(for: .milliseconds(3))
+            transient.layoutSubtreeIfNeeded()
+        }
+        XCTAssertEqual(transientMount.focusRequest, 4)
+        XCTAssertTrue(controller.terminalView.superview === transientMount)
+        XCTAssertTrue(transientMount.isDescendant(of: transient))
+
+        current.rootView = AnyView(EmptyView())
+        let removalDeadline = ContinuousClock.now + .seconds(2)
+        while currentMount.terminal != nil, ContinuousClock.now < removalDeadline {
+            try await Task.sleep(for: .milliseconds(3))
+            current.layoutSubtreeIfNeeded()
+        }
+        XCTAssertNil(currentMount.terminal)
+        XCTAssertTrue(controller.terminalView.superview === transientMount)
+        XCTAssertEqual(runner.startCount, 1)
+        XCTAssertTrue(controller.isRunning)
+    }
+
+    func testOlderNativeTerminalHostCannotStealFromNewerOwnerOnLateVisibilityUpdate() async throws {
+        _ = NSApplication.shared
+        let runner = WorkspaceSnapshotTerminalRunner()
+        let controller = TerminalSessionController(liveActivities: LiveActivityStore(),
+            capabilities: IslandCapabilityRegistry(), runner: runner, workingDirectoryPath: "/tmp")
+        defer { controller.terminate() }
+        let size = CGSize(width: 420, height: 220)
+        func terminal(visible: Bool, request: Int) -> AnyView {
+            AnyView(NativeTerminalHost(controller: controller, initialDirectory: "/tmp",
+                isVisible: visible, focusRequest: request).frame(width: size.width, height: size.height))
+        }
+        func findMount(in view: NSView) -> TerminalMountView? {
+            if let mount = view as? TerminalMountView { return mount }
+            for child in view.subviews { if let mount = findMount(in: child) { return mount } }
+            return nil
+        }
+        let older = NSHostingView(rootView: terminal(visible: false, request: 0))
+        let newer = NSHostingView(rootView: AnyView(EmptyView()))
+        let olderWindow = NSWindow(contentRect: CGRect(origin: CGPoint(x: -5000, y: -5000), size: size),
+            styleMask: [.borderless], backing: .buffered, defer: false)
+        let newerWindow = NSWindow(contentRect: CGRect(origin: CGPoint(x: -6000, y: -5000), size: size),
+            styleMask: [.borderless], backing: .buffered, defer: false)
+        for window in [olderWindow, newerWindow] { window.isReleasedWhenClosed = false }
+        defer {
+            for window in [olderWindow, newerWindow] {
+                window.makeFirstResponder(nil)
+                window.orderOut(nil)
+                window.contentView = nil
+                window.close()
+            }
+        }
+        older.frame = CGRect(origin: .zero, size: size)
+        olderWindow.contentView = older
+        olderWindow.orderFrontRegardless()
+        let olderDeadline = ContinuousClock.now + .seconds(2)
+        while findMount(in: older) == nil, ContinuousClock.now < olderDeadline {
+            try await Task.sleep(for: .milliseconds(3))
+            older.layoutSubtreeIfNeeded()
+        }
+        let olderMount = try XCTUnwrap(findMount(in: older))
+        XCTAssertFalse(olderMount.wasVisible)
+        XCTAssertTrue(olderMount.isHidden)
+        XCTAssertNil(controller.terminalView.superview)
+
+        newer.rootView = terminal(visible: true, request: 1)
+        newer.frame = CGRect(origin: .zero, size: size)
+        newerWindow.contentView = newer
+        newerWindow.orderFrontRegardless()
+        let newerDeadline = ContinuousClock.now + .seconds(2)
+        while (controller.terminalView.superview?.isDescendant(of: newer) != true || !controller.isRunning),
+              ContinuousClock.now < newerDeadline {
+            try await Task.sleep(for: .milliseconds(3))
+            newer.layoutSubtreeIfNeeded()
+        }
+        let newerMount = try XCTUnwrap(controller.terminalView.superview as? TerminalMountView)
+        XCTAssertTrue(newerMount.isDescendant(of: newer))
+        XCTAssertTrue(newerMount.wasVisible)
+        XCTAssertEqual(newerMount.focusRequest, 1)
+        XCTAssertTrue(controller.isRunning)
+
+        // A retiring tree can receive one last visibility update after a
+        // newer tree has claimed the shared emulator. Its identity is older
+        // even though this is the first visible update of its native host.
+        older.rootView = terminal(visible: true, request: 2)
+        let lateUpdateDeadline = ContinuousClock.now + .seconds(2)
+        while olderMount.focusRequest != 2, ContinuousClock.now < lateUpdateDeadline {
+            try await Task.sleep(for: .milliseconds(3))
+            older.layoutSubtreeIfNeeded()
+        }
+        XCTAssertEqual(olderMount.focusRequest, 2, "the retained older native host received its late update")
+        XCTAssertTrue(olderMount.wasVisible)
+        XCTAssertTrue(olderMount.isDescendant(of: older))
+        XCTAssertTrue(controller.terminalView.superview === newerMount,
+                      "an older host's first visible update must not steal from the newer owner")
+
+        older.rootView = AnyView(EmptyView())
+        let dismantleDeadline = ContinuousClock.now + .seconds(2)
+        while olderMount.superview != nil, ContinuousClock.now < dismantleDeadline {
+            try await Task.sleep(for: .milliseconds(3))
+            older.layoutSubtreeIfNeeded()
+        }
+        XCTAssertFalse(olderMount.wasVisible, "the older host passed through dismantleNSView")
+        XCTAssertNil(olderMount.terminal)
+        XCTAssertTrue(newerMount.isDescendant(of: newer))
+        XCTAssertEqual(newerMount.focusRequest, 1, "recovery must not depend on another update of the current tree")
+        XCTAssertTrue(controller.terminalView.superview === newerMount,
+                      "late teardown must leave the stable current host owning its emulator")
+        XCTAssertEqual(runner.startCount, 1)
+        XCTAssertTrue(controller.isRunning)
+    }
+
     func testRapidAgentsMountUnmountWithFocusedNativeEditorAndTerminalSwitching() async throws {
         let fixture = try await makeFixture()
         defer {

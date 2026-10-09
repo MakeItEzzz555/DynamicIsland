@@ -3,7 +3,7 @@ import Foundation
 /// Live preview surfaces available in Settings. Each renders production
 /// components (see SettingsPreviews.swift).
 enum SettingsPreviewID: String, CaseIterable, Sendable {
-    case islandShell = "Island Preview (Island, Appearance, Motion, Tabs)"
+    case islandShell = "Island Preview (Island, Appearance, Motion, Navigation)"
     case contentMotion = "Content Motion Preview"
     case collapsedMedia = "Collapsed Media Preview"
     case collapsedHover = "Collapsed Hover Preview"
@@ -85,10 +85,12 @@ enum SettingsAuditCatalog {
                   "collapsedHoverPreviewShowsSource", "collapsedHoverPreviewTitleIconName"], .collapsedHover,
                  "Renders the production IslandSurface and CollapsedPreviewRow; Replay Delay uses the configured delay.")
         + entries(["collapsedHoverPreviewArtistIconName"], .deprecatedHidden, deprecatedNote)
-        // Tabs
-        + visual(["showTrayTab", "showTimerTab", "showStatsTab", "showToolsTab", "showAgentsTab", "showIslandTab"], .islandShell,
-                 "The expanded preview renders the production page switcher.")
+        // Navigation
+        + visual(["showNavigationControls", "showTrayTab", "showTimerTab", "showStatsTab", "showToolsTab", "showAgentsTab", "showIslandTab"], .islandShell,
+                 "The native Visible Controls / Gesture Only picker binds directly to showNavigationControls; the preview uses production header, padding, notch lane, grid and shell motion.")
         + entries(["rememberLastSelectedTab", "defaultExpandedTab"], .behavioral, "Which tab opens on expansion.")
+        + entries(["threeFingerTabNavigationEnabled"], .behavioral,
+                  "Public trackpad touch navigation; disabling it restores visible navigation controls.")
         + entries(["showActivitiesTab", "showLiveActivitiesTab", "showGesturesTab"], .deprecatedHidden, deprecatedNote)
         // Agents
         + visual(["agentUsageMetricsEnabled"], .agents)
@@ -167,7 +169,8 @@ enum SettingsAuditCatalog {
                    "collapsedSwipeUpAction", "collapsedSwipeLeftAction", "collapsedSwipeRightAction", "collapsedLongPressAction",
                    "expandedDoubleClickAction", "expandedSwipeDownAction", "expandedSwipeUpAction", "expandedSwipeLeftAction",
                    "expandedSwipeRightAction", "expandedLongPressAction", "gestureSensitivity", "gestureCooldownSeconds",
-                   "requireGestureConfirmation"], .behavioral, "Gesture recognition and actions.")
+                   "requireGestureConfirmation"], .behavioral,
+                  "Double Click and Long Press are configured for both island states through the existing persisted mappings; native controls retain a saved selection when the available action subset changes.")
         + entries(["showGestureHints", "gesturePrivacyMode"], .deprecatedHidden, deprecatedNote)
         // Advanced
         + entries(["disableVisualizerDuringMorph"], .behavioral, "Performance behavior during shell morph.")
@@ -222,5 +225,145 @@ enum SettingsAuditCatalog {
             lines.append("| `\(entry.key)` | \(entry.classification.rawValue) | \(entry.preview?.rawValue ?? "—") | \(entry.note) |")
         }
         return lines.joined(separator: "\n") + "\n"
+    }
+}
+
+/// Restores only the controls owned by a category. The production settings
+/// initializer supplies default values in an isolated in-memory domain, so
+/// this list does not duplicate defaults or touch saved workspace placement.
+@MainActor
+enum SettingsCategoryDefaults {
+    private struct Field {
+        let restore: (AppSettings, AppSettings) -> Void
+
+        init<Value>(_ keyPath: ReferenceWritableKeyPath<AppSettings, Value>) {
+            restore = { settings, defaults in
+                settings[keyPath: keyPath] = defaults[keyPath: keyPath]
+            }
+        }
+    }
+
+    static func supports(_ section: SettingsSection) -> Bool {
+        !fields(for: section).isEmpty
+    }
+
+    static func restore(_ section: SettingsSection, settings: AppSettings) {
+        let fields = fields(for: section)
+        guard !fields.isEmpty else { return }
+        let defaults = AppSettings(defaults: SettingsPreviewDefaults())
+        for field in fields { field.restore(settings, defaults) }
+        if section == .agents { settings.resetAgentVisualPreferences() }
+    }
+
+    private static func fields(for section: SettingsSection) -> [Field] {
+        switch section {
+        case .island:
+            [
+                Field(\.overlayEnabled), Field(\.launchAtLoginEnabled), Field(\.expandOnClick),
+                Field(\.collapseOnMouseLeave), Field(\.autoCollapseEnabled), Field(\.autoCollapseDelayPreset),
+                Field(\.autoCollapseGraceSeconds), Field(\.useAdaptiveNotchSizing), Field(\.respectHardwareNotch),
+                Field(\.collapsedWidth), Field(\.collapsedHeight), Field(\.expandedWidth),
+                Field(\.expandedHeight)
+            ]
+        case .appearance:
+            [
+                Field(\.islandThemeStyle), Field(\.shellOpacity), Field(\.shellStrokeEnabled),
+                Field(\.useArtworkAccentColor), Field(\.visualizerAccentMode), Field(\.showCollapsedVisualizer),
+                Field(\.showExpandedVisualizer), Field(\.collapsedHoverPreviewEnabled), Field(\.collapsedHoverPreviewMediaEnabled),
+                Field(\.collapsedHoverPreviewHeight), Field(\.collapsedHoverPreviewDelay), Field(\.collapsedHoverPreviewShowTitle),
+                Field(\.collapsedHoverPreviewShowsArtist), Field(\.collapsedHoverPreviewShowsSource)
+            ]
+        case .motion:
+            [
+                Field(\.animationPreset), Field(\.reduceExtraMotion), Field(\.shellAnimationSpeed),
+                Field(\.contentAnimationEnabled), Field(\.contentStaggerEnabled), Field(\.contentStaggerAmount),
+                Field(\.useBlurTransitions), Field(\.useScaleTransitions)
+            ]
+        case .tabs:
+            [
+                Field(\.showNavigationControls), Field(\.showAgentsTab), Field(\.showTrayTab),
+                Field(\.showTimerTab), Field(\.showStatsTab), Field(\.showToolsTab),
+                Field(\.threeFingerTabNavigationEnabled), Field(\.rememberLastSelectedTab), Field(\.defaultExpandedTab),
+                Field(\.gesturesEnabled), Field(\.gestureInputSource), Field(\.collapsedDoubleClickAction),
+                Field(\.collapsedLongPressAction), Field(\.expandedDoubleClickAction), Field(\.expandedLongPressAction),
+                Field(\.requireGestureConfirmation)
+            ]
+        case .media:
+            [
+                Field(\.mediaEnabled), Field(\.showMediaWhenPaused), Field(\.showMediaWhenNoSource),
+                Field(\.showAlbumArtwork), Field(\.showMediaTitle), Field(\.showMediaArtist),
+                Field(\.showMediaSourceName), Field(\.showVisualizer), Field(\.showPlaybackControls),
+                Field(\.showProgressSlider), Field(\.showVolumeSlider), Field(\.openSourceOnArtworkClick),
+                Field(\.collapseAfterOpeningMediaSource), Field(\.collapseAfterMediaLauncher), Field(\.mediaLauncherEnabled),
+                Field(\.showAppleMusicLauncher), Field(\.showSpotifyLauncher), Field(\.showYouTubeLauncher)
+            ]
+        case .basket:
+            [
+                Field(\.floatingBasketEnabled), Field(\.basketJiggleSensitivity), Field(\.basketMultipleEnabled),
+                Field(\.basketAutoHideEnabled), Field(\.basketAutoHideDelay)
+            ]
+        case .tray:
+            [
+                Field(\.trayEnabled), Field(\.fileShelfEnabled), Field(\.airDropZoneEnabled),
+                Field(\.allowFileDropsOnCollapsedIsland), Field(\.allowFileDropsOnExpandedTray), Field(\.maxShelfFiles),
+                Field(\.showFileThumbnails), Field(\.deferThumbnailsDuringMorph), Field(\.showFileExtensions),
+                Field(\.showFileCountBadge), Field(\.confirmBeforeClearShelf), Field(\.persistFileShelfAcrossLaunches),
+                Field(\.openFileActionEnabled), Field(\.revealInFinderActionEnabled), Field(\.copyPathActionEnabled),
+                Field(\.removeFileActionEnabled), Field(\.airDropFallbackRevealInFinder)
+            ]
+        case .timer:
+            [
+                Field(\.timerEnabled), Field(\.timerPresetsEnabled), Field(\.showTimerProgressRing),
+                Field(\.timerRingAnimationEnabled), Field(\.collapseAfterStartingTimer), Field(\.timerPreset1Minutes),
+                Field(\.timerPreset2Minutes), Field(\.timerPreset3Minutes), Field(\.timerNotificationEnabled),
+                Field(\.timerSoundEnabled)
+            ]
+        case .agents:
+            [
+                Field(\.agentActivityEnabled), Field(\.showAgentsTab), Field(\.agentCompletionAlertsEnabled),
+                Field(\.agentCompletionSoundEnabled), Field(\.agentApprovalAlertsEnabled), Field(\.agentUsageMetricsEnabled),
+                Field(\.agentActivityRecordingEnabled), Field(\.agentPeekDurationSeconds)
+            ]
+        case .stats:
+            [
+                Field(\.statsEnabled), Field(\.statsRefreshIntervalSeconds), Field(\.showActivityIndicator),
+                Field(\.showCPU), Field(\.showMemory), Field(\.showGPU),
+                Field(\.showNetwork), Field(\.showDisk), Field(\.showBattery),
+                Field(\.showUptime)
+            ]
+        case .liveActivities:
+            [
+                Field(\.showExpandedLiveActivitiesSection), Field(\.liveActivitiesEnabled), Field(\.showMusicLiveActivity),
+                Field(\.showTimerLiveActivity), Field(\.showFileDropLiveActivity), Field(\.showBatteryLiveActivity),
+                Field(\.systemHUDsEnabled), Field(\.replaceMacOSSystemHUDs), Field(\.volumeHUDEnabled),
+                Field(\.brightnessHUDEnabled), Field(\.capsLockHUDEnabled), Field(\.batteryStatusHUDEnabled),
+                Field(\.lowBatteryHUDEnabled), Field(\.audioDeviceHUDEnabled), Field(\.focusHUDEnabled),
+                Field(\.systemHUDDurationSeconds), Field(\.allowSimultaneousLiveActivitySidecars), Field(\.timerSidecarPreference),
+                Field(\.collapsedPriorityRunningTimer), Field(\.collapsedPriorityPlayingMedia), Field(\.collapsedPriorityPausedTimer),
+                Field(\.collapsedPriorityRecentFiles), Field(\.collapsedPriorityPausedMedia)
+            ]
+        case .clipboard:
+            [
+                Field(\.clipboardHistoryEnabled), Field(\.clipboardHistoryMaximumItems), Field(\.clipboardHistoryCaptureImagesEnabled),
+                Field(\.clipboardHistoryAutoFocusSearch), Field(\.clipboardHistoryTagsEnabled), Field(\.clipboardHistoryPersistenceEnabled)
+            ]
+        case .gestures:
+            [
+                Field(\.expandGestureEnabled), Field(\.collapseGestureEnabled), Field(\.nextTabGestureEnabled),
+                Field(\.previousTabGestureEnabled), Field(\.mediaPlayPauseGestureEnabled), Field(\.timerStartStopGestureEnabled),
+                Field(\.gestureSensitivity), Field(\.gestureCooldownSeconds), Field(\.collapsedSwipeLeftAction),
+                Field(\.collapsedSwipeRightAction), Field(\.collapsedSwipeDownAction), Field(\.collapsedSwipeUpAction),
+                Field(\.expandedSwipeDownAction), Field(\.expandedSwipeUpAction), Field(\.expandedSwipeLeftAction),
+                Field(\.expandedSwipeRightAction), Field(\.gesturesEnabled), Field(\.gestureInputSource),
+                Field(\.collapsedDoubleClickAction), Field(\.collapsedLongPressAction), Field(\.expandedDoubleClickAction),
+                Field(\.expandedLongPressAction), Field(\.requireGestureConfirmation)
+            ]
+        case .advanced:
+            [
+                Field(\.disableVisualizerDuringMorph)
+            ]
+        case .productivity, .rightWorkspace, .messaging:
+            []
+        }
     }
 }

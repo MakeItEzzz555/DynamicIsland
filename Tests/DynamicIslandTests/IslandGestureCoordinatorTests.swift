@@ -3,6 +3,63 @@ import XCTest
 
 @MainActor
 final class IslandGestureCoordinatorTests: XCTestCase {
+    func testClipboardAndEditorMappingsPerformExactlyOnceInEitherPresentation() {
+        for state in [IslandPresentationState.collapsed, .expanded] {
+            for gesture in [IslandPointerGesture.doubleClick, .longPress] {
+                for action in [IslandGestureAction.openClipboard, .editWorkspace] {
+                    let settings = makeSettings()
+                    settings.gesturesEnabled = true
+                    settings.gestureInputSource = .trackpad
+                    settings.clipboardHistoryEnabled = true
+                    settings.requireGestureConfirmation = false
+                    if state == .collapsed {
+                        settings.collapsedDoubleClickAction = action
+                        settings.collapsedLongPressAction = action
+                    } else {
+                        settings.expandedDoubleClickAction = action
+                        settings.expandedLongPressAction = action
+                    }
+                    var clipboardCount = 0
+                    var editCount = 0
+                    let callbacks = IslandGestureCallbacks(openClipboard: { clipboardCount += 1 }, editWorkspace: { editCount += 1 })
+                    let coordinator = IslandGestureCoordinator(now: { 100 })
+                    XCTAssertTrue(coordinator.handle(gesture, settings: settings, context: makeContext(state: state), callbacks: callbacks))
+                    XCTAssertEqual(clipboardCount, action == .openClipboard ? 1 : 0)
+                    XCTAssertEqual(editCount, action == .editWorkspace ? 1 : 0)
+                    XCTAssertFalse(coordinator.handle(gesture, settings: settings, context: makeContext(state: state), callbacks: callbacks))
+                    XCTAssertEqual(clipboardCount + editCount, 1)
+                }
+            }
+        }
+    }
+
+    func testNewGestureActionsPersistWithoutChangingExistingMappings() {
+        let defaults = UserDefaults(suiteName: "GestureActionPersistence-\(UUID().uuidString)")!
+        let settings = AppSettings(defaults: defaults)
+        settings.collapsedDoubleClickAction = .openClipboard
+        settings.expandedLongPressAction = .editWorkspace
+        let restored = AppSettings(defaults: defaults)
+        XCTAssertEqual(restored.collapsedDoubleClickAction, .openClipboard)
+        XCTAssertEqual(restored.expandedLongPressAction, .editWorkspace)
+        XCTAssertEqual(restored.collapsedSwipeLeftAction, .mediaNextTrack)
+        XCTAssertEqual(restored.collapsedSwipeRightAction, .mediaPreviousTrack)
+        XCTAssertEqual(IslandGestureAction.openClipboard.displayName, "Open Clipboard")
+        XCTAssertEqual(IslandGestureAction.editWorkspace.displayName, "Edit Workspace")
+    }
+
+    func testClipboardGestureDoesNotClaimAnUnavailableFeature() {
+        let settings = makeSettings()
+        settings.gesturesEnabled = true
+        settings.gestureInputSource = .trackpad
+        settings.requireGestureConfirmation = false
+        settings.clipboardHistoryEnabled = false
+        settings.expandedDoubleClickAction = .openClipboard
+        var count = 0
+        XCTAssertFalse(IslandGestureCoordinator().handle(.doubleClick, settings: settings,
+            context: makeContext(state: .expanded), callbacks: IslandGestureCallbacks(openClipboard: { count += 1 })))
+        XCTAssertEqual(count, 0)
+    }
+
     func testDisabledGesturesDoNothing() {
         let settings = makeSettings()
         settings.gesturesEnabled = false

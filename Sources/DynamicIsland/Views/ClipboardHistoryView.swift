@@ -106,6 +106,7 @@ struct ClipboardHistoryView: View {
     @ObservedObject var store: ClipboardHistoryStore
     let onClose: () -> Void
     var externalActions: ClipboardHistoryExternalActions = .inert
+    @Environment(\.isSettingsPreview) private var isSettingsPreview
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.islandDisplayMetrics) private var metrics
@@ -133,7 +134,7 @@ struct ClipboardHistoryView: View {
     var body: some View {
         keyboardSurface
             .onAppear {
-                if store.autoFocusSearchEnabled {
+                if store.autoFocusSearchEnabled && !isSettingsPreview {
                     DispatchQueue.main.async { searchFocused = true }
                 }
                 reconcileSelection()

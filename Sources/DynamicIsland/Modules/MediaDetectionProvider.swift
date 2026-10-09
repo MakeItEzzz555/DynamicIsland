@@ -23,6 +23,9 @@ struct MediaSnapshot {
     var transportAvailable: Bool
     var seekAvailable: Bool
     var volumeAvailable: Bool
+    /// Provider-native track ID for commands; artwork arbitration keeps its
+    /// existing metadata identity independently.
+    var nativeTrackID: String? = nil
 }
 
 @MainActor

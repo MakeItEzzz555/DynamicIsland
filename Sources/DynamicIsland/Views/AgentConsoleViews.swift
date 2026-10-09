@@ -162,6 +162,7 @@ enum AgentConsoleTimelineProjectionCache {
 }
 
 struct AgentEmbeddedConsoleView: View {
+    @Environment(\.isSettingsPreview) private var isSettingsPreview
     @Environment(\.agentVisualPreferences) private var visualPreferences
     @Environment(\.islandDisplayMetrics) private var displayMetrics
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -243,22 +244,25 @@ struct AgentEmbeddedConsoleView: View {
                     .coordinateSpace(name: AgentConsoleCoordinateSpace.transcript)
                     .scrollBounceBehavior(.basedOnSize)
                     .background {
-                        AgentTranscriptViewportProbe(
-                            sessionID: session.id, contentToken: transcriptFollowToken,
-                            jumpRequest: scrollToLatestRequest, realizationID: String(describing: latestTranscriptAnchor), tail: transcriptTail,
-                            realizeLatest: { proxy.scrollTo(latestTranscriptAnchor, anchor: .bottom) },
-                            realizeReadingAnchor: { id in
-                                let entries = showsOperationalTraffic ? AgentConsoleTimelineProjectionCache.entries(session: session, transcript: transcriptEntries, limit: maximumActivityEntries, includePendingApprovals: actionableApproval == nil && externalPendingApproval == nil) : conversationEntries
-                                guard entries.contains(where: { $0.id == id }) else { return false }
-                                proxy.scrollTo(id, anchor: .top)
-                                return true
+                        if !isSettingsPreview {
+                            AgentTranscriptViewportProbe(
+                                sessionID: session.id, contentToken: transcriptFollowToken,
+                                jumpRequest: scrollToLatestRequest, realizationID: String(describing: latestTranscriptAnchor), tail: transcriptTail,
+                                realizeLatest: { proxy.scrollTo(latestTranscriptAnchor, anchor: .bottom) },
+                                realizeReadingAnchor: { id in
+                                    let entries = showsOperationalTraffic ? AgentConsoleTimelineProjectionCache.entries(session: session, transcript: transcriptEntries, limit: maximumActivityEntries, includePendingApprovals: actionableApproval == nil && externalPendingApproval == nil) : conversationEntries
+                                    guard entries.contains(where: { $0.id == id }) else { return false }
+                                    proxy.scrollTo(id, anchor: .top)
+                                    return true
+                                }
+                            ) { following in
+                                follow.restoreIntent(following: following)
                             }
-                        ) { following in
-                            follow.restoreIntent(following: following)
                         }
                     }
                     .onPreferenceChange(AgentTranscriptReadingAnchorKey.self) { frames in
-                        guard !follow.isFollowing, !AgentTranscriptViewportStore.shared.isRestoringHistory(for: session.id) else { return }
+                        guard !isSettingsPreview, !follow.isFollowing,
+                              !AgentTranscriptViewportStore.shared.isRestoringHistory(for: session.id) else { return }
                         let intersecting = frames.filter { $0.value.minY <= 0 && $0.value.maxY > 0 }
                         guard let anchor = (intersecting.isEmpty ? frames : intersecting)
                             .min(by: { abs($0.value.minY) < abs($1.value.minY) }) else { return }
