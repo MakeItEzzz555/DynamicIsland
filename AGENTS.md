@@ -38,3 +38,17 @@ For every Swift implementation plan and component task, read the installed `awes
 ### Source identity
 
 `image-to-code` currently comes from `Leonxlnx/taste-skill`. Do not label it as an OpenAI plugin: `openai/role-specific-plugins` was a placeholder when checked. `awesome-design` is a local skill adapter for `VoltAgent/awesome-design-md`, installed globally at `~/.codex/design-references/awesome-design-md/`. For visual design and component work, read the adapter and a relevant collection reference, then apply compatible principles under the native rules above. The upstream source is a design-reference library, not a plugin; do not overwrite the project's design language with a brand's website layout.
+
+## Mandatory Ponytail delivery review
+
+Use the installed `DietrichGebert/ponytail` rules for implementation and finishing work. Before every push and before any user-authorized merge, read and apply `ponytail-review` to the exact intended change plus connected callers, tests and configuration. Prefer the plugin command (`$ponytail:ponytail-review` in Codex, `/ponytail-review` in Claude Code); reading the installed `SKILL.md` and executing its review workflow is the fallback. Preserve unrelated dirty work and exclude it from the delivery diff.
+
+Review correctness, security/data loss, ownership/concurrency, actual workload, meaningful regression coverage, performance and unnecessary code. Preserve native SwiftUI/AppKit architecture, semantic widget sizes, generation-safe Terminal ownership, provider boundaries, accessibility and Reduce Motion. Fix confirmed issues within the authorized scope, run affected validation and record the reviewed SHA and any unchecked acceptance gates. Use `ponytail-audit` for an explicitly requested broader audit or an evidence-backed need; do not restart a whole-repository audit for every push.
+
+After a push, verify local/remote HEAD agreement, final-head CI, current main ancestry and PR conflict state. Ponytail review supplements actual native/runtime acceptance; it does not turn synthetic input, previews or unit tests into physical trackpad/device evidence. Preserve active sessions, credentials and permissions. Review never authorizes a merge: PR #24 remains open and unmerged until the user explicitly instructs otherwise.
+
+## Agent Reach research workflow
+
+Use the installed `Panniantong/Agent-Reach` skill for applicable internet research and supported platform URLs. Prefer an existing specialized platform skill when available, read the relevant reference, and use `agent-reach doctor --json` to select available multi-backend channels. Follow primary-source and citation requirements; report unavailable channels accurately. This is research tooling, not native SwiftUI/AppKit acceptance tooling.
+
+Installation does not authorize posting, messaging, browser-cookie extraction, login, credential/account changes or system-level channel installs. Preserve user-controlled sessions. Keep temporary research outputs in `/tmp/` and persistent tool data in `~/.agent-reach/`, outside this repository.

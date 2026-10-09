@@ -12,6 +12,10 @@ Use the relevant taste/design, redesign, `awesome-design` reference adapter, and
 
 For Swift implementation planning and components, also read the global `awesome-swift` adapter and the relevant section of `matteocrippa/awesome-swift` at `~/.codex/design-references/awesome-swift/`. Verify native macOS/Swift 6 support, concurrency, SwiftPM integration, maintenance, and license using candidate projects' primary documentation. Prefer existing modules and supported native APIs; inclusion in the catalog does not justify adding a dependency.
 
+Apply the **Mandatory Ponytail delivery review** in [AGENTS.md](AGENTS.md) throughout implementation and before every push or user-authorized merge. Use the installed `ponytail` and `ponytail-review` skills/plugin, review the intended diff and connected code, preserve unrelated work, and report actual validation and unchecked runtime gates. After pushing, verify the remote SHA, final-head CI and main/conflict state. Do not merge PR #24 without explicit user authorization.
+
+Apply the **Agent Reach research workflow** in [AGENTS.md](AGENTS.md) for relevant internet research and platform URLs. Use the installed `agent-reach` skill and available public tools; preserve credentials, browser sessions and project files. Agent Reach does not replace native runtime validation.
+
 ## Commands
 
 ```sh
