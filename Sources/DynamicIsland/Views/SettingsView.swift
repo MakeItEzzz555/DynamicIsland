@@ -110,6 +110,7 @@ struct SettingsView: View {
     let agentManagedControl: AgentManagedSessionController?
     let agentProjects: AgentProjectProjectionStore?
     let messaging: MessagingController?
+    let faceTime: FaceTimeAccessibilityProvider?
     let previews: SettingsPreviewDependencies?
     @StateObject private var agentSetup = AgentIntegrationSetupController()
     @StateObject private var agentDiagnostics: AgentIntegrationDiagnosticsController
@@ -127,9 +128,11 @@ struct SettingsView: View {
         agentManagedControl: AgentManagedSessionController? = nil,
         agentProjects: AgentProjectProjectionStore? = nil,
         messaging: MessagingController? = nil,
+        faceTime: FaceTimeAccessibilityProvider? = nil,
         previews: SettingsPreviewDependencies? = nil
     ) {
         self.messaging = messaging
+        self.faceTime = faceTime
         self.previews = previews
         self.settings = settings
         self.shortcuts = shortcuts
@@ -880,6 +883,9 @@ struct SettingsView: View {
                     .disabled(!settings.liveActivitiesEnabled)
                 Toggle("Battery live activity", isOn: $settings.showBatteryLiveActivity)
                     .disabled(!settings.liveActivitiesEnabled)
+            }
+            if let faceTime, let messaging {
+                CommunicationsIntegrationView(faceTime: faceTime, messaging: messaging)
             }
             SettingsGroup("Multi-Activity Layout") {
                 Toggle(

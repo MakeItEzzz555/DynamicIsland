@@ -4,7 +4,7 @@ import SwiftUI
 enum NativeCallAuthority {
     static let canObserve = false
     static let canControl = false
-    static let limitation = "CallKit call observation and controls are unavailable on native macOS. These are sample call presentations only."
+    static let limitation = "CallKit call observation and controls are unavailable on native macOS. FaceTime integration is opt-in under Communications Integration; call controls require separately verified Accessibility evidence."
 }
 
 struct CollapsedCallActivityView: View {
@@ -17,12 +17,16 @@ struct CollapsedCallActivityView: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.green)
         } right: {
-            AudioVisualizerView(isPlaying: activity.isActive, accentColor: .green,
-                palette: .call, barCount: 7, cadence: .ambient)
-                .accessibilityHidden(true)
+            if activity.id == FaceTimeAccessibilityProvider.notificationActivityID {
+                Text("Notification").font(.system(size: 9, weight: .medium)).foregroundStyle(.secondary)
+            } else {
+                AudioVisualizerView(isPlaying: activity.isActive, accentColor: .green,
+                    palette: .call, barCount: 7, cadence: .ambient)
+                    .accessibilityHidden(true)
+            }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Call, \(activity.subtitle ?? activity.title)")
+        .accessibilityLabel("\(activity.title), \(activity.subtitle ?? "")")
     }
 }
 

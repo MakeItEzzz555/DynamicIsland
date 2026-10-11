@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import Combine
 import SwiftUI
 
@@ -63,6 +64,17 @@ extension AppSettings {
 struct DynamicIslandApp {
     static func main() {
         let application = NSApplication.shared
+        if CommandLine.arguments == [CommandLine.arguments[0], "--probe-facetime"] {
+            if !AXIsProcessTrusted() { print("Accessibility permission required"); return }
+            guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: FaceTimeAccessibilityProvider.bundleIdentifier).first else {
+                print("FaceTime not running"); return
+            }
+            let element = AXUIElementCreateApplication(app.processIdentifier)
+            AXUIElementSetMessagingTimeout(element, 0.05)
+            if let data = try? JSONEncoder().encode(FaceTimeAccessibilityProvider.inspect(element)),
+               let text = String(data: data, encoding: .utf8) { print(text) }
+            return
+        }
         if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--validate-live-activities" {
             application.setActivationPolicy(.accessory)
             Task { @MainActor in
@@ -182,6 +194,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         preferences: messagingPreferences.load(),
         presentationEnabled: { [weak self] in self?.settings.liveActivitiesEnabled ?? true }
     )
+    private lazy var faceTime = FaceTimeAccessibilityProvider(liveActivities: liveActivities)
     private let agentAttention = AgentAttentionCoordinator()
     private let agentActivityRecorder = AgentActivityRecorder()
     private let agentWorkspaceFeed = AgentWorkspaceFeedStore()
@@ -270,6 +283,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         basketPresenter.start()
         agentProjects.observe(agentEvents.$sessions)
         installMessagingObservers()
+        faceTime.onEnabledChanged = { UserDefaults.standard.set($0, forKey: FaceTimeAccessibilityProvider.enabledKey) }
+        faceTime.setEnabled(UserDefaults.standard.bool(forKey: FaceTimeAccessibilityProvider.enabledKey))
         #if DEBUG
         debugPrint(
             "DynamicIsland AppDelegate modules",
@@ -393,6 +408,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         backgroundRemoval.terminate()
         basketPresenter.stop()
         systemHUDController.stop()
+        faceTime.stop()
         agentBridge.stop()
         agentManagedControl.stop()
         agentActivityRecorder.flushForTermination()
@@ -444,6 +460,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 agentManagedControl: agentManagedControl,
                 agentProjects: agentProjects,
                 messaging: messaging,
+                faceTime: faceTime,
                 previews: settingsPreviewDependencies()
             )
         }

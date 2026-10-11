@@ -14,6 +14,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         agentManagedControl: AgentManagedSessionController? = nil,
         agentProjects: AgentProjectProjectionStore? = nil,
         messaging: MessagingController? = nil,
+        faceTime: FaceTimeAccessibilityProvider? = nil,
         previews: SettingsPreviewDependencies? = nil
     ) {
         window = NSWindow(
@@ -35,6 +36,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
                 agentManagedControl: agentManagedControl,
                 agentProjects: agentProjects,
                 messaging: messaging,
+                faceTime: faceTime,
                 previews: previews
             )
         )

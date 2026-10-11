@@ -1,5 +1,22 @@
 import Foundation
 
+/// Undocumented bulletin name is only a wake-up hint; records still come from SQLite.
+@MainActor
+private enum NotificationDatabaseDarwinHint {
+    static let name = Notification.Name("DynamicIsland.NotificationDatabaseHint")
+    static let observer = NSObject()
+    static var installed = false
+
+    static func install() {
+        guard !installed else { return }
+        installed = true
+        CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(),
+            Unmanaged.passUnretained(observer).toOpaque(), { _, _, _, _, _ in
+                NotificationCenter.default.post(name: Notification.Name("DynamicIsland.NotificationDatabaseHint"), object: nil)
+            }, "com.apple.notificationcenterui.bulletin_added" as CFString, nil, .deliverImmediately)
+    }
+}
+
 /// One delivered macOS notification, normalized. Bodies stay in memory.
 struct SystemNotificationRecord: Equatable, Sendable {
     let recordID: Int64
@@ -145,14 +162,19 @@ final class SystemNotificationMonitor: ObservableObject {
     private var watchers: [DispatchSourceFileSystemObject] = []
     private var pollTimer: Timer?
     private var fetching = false
+    private var fetchAgain = false
+    private var hintObserver: NSObjectProtocol?
+    private let useDarwinHints: Bool
     private var generation = 0
 
     init(
         makeSource: @escaping () -> SystemNotificationSource? = { NotificationCenterDatabaseSource.locate() },
-        fullDiskAccess: @escaping () -> FullDiskAccessState = { FullDiskAccessProbe.state() }
+        fullDiskAccess: @escaping () -> FullDiskAccessState = { FullDiskAccessProbe.state() },
+        useDarwinHints: Bool = true
     ) {
         self.makeSource = makeSource
         self.fullDiskAccess = fullDiskAccess
+        self.useDarwinHints = useDarwinHints
     }
 
     func start() {
@@ -181,6 +203,16 @@ final class SystemNotificationMonitor: ObservableObject {
         self.source = source
         state = .running
         installWatchers(for: source.watchedPaths)
+        if useDarwinHints {
+            NotificationDatabaseDarwinHint.install()
+            let token = generation
+            hintObserver = NotificationCenter.default.addObserver(forName: NotificationDatabaseDarwinHint.name, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self, self.generation == token else { return }
+                    self.fetch()
+                }
+            }
+        }
         pollTimer = Timer.scheduledTimer(withTimeInterval: Self.pollInterval, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in self?.fetch() }
         }
@@ -188,6 +220,9 @@ final class SystemNotificationMonitor: ObservableObject {
 
     func stop() {
         generation += 1
+        if let hintObserver { NotificationCenter.default.removeObserver(hintObserver) }
+        hintObserver = nil
+        fetchAgain = false
         watchers.forEach { $0.cancel() }
         watchers = []
         pollTimer?.invalidate()
@@ -199,7 +234,8 @@ final class SystemNotificationMonitor: ObservableObject {
 
     /// Fetches records newer than the last seen id. Exposed for tests.
     func fetch() {
-        guard let source, !fetching, state == .running else { return }
+        guard let source, state == .running else { return }
+        guard !fetching else { fetchAgain = true; return }
         fetching = true
         let after = lastRecordID
         let token = generation
@@ -209,13 +245,17 @@ final class SystemNotificationMonitor: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self, self.generation == token else { return }
                 self.fetching = false
+                let pendingHint = self.fetchAgain
+                self.fetchAgain = false
                 switch result {
                 case .success(let records):
                     for record in records where record.recordID > self.lastRecordID {
+                        guard self.generation == token, self.state == .running else { return }
                         self.lastRecordID = record.recordID
                         self.lastEventAt = record.deliveredAt
                         self.onRecord?(record)
                     }
+                    if pendingHint || records.count == limit { self.fetch() }
                 case .failure(ReadOnlySQLiteError.notPermitted):
                     self.stop()
                     self.state = .permissionRequired
