@@ -64,6 +64,15 @@ extension AppSettings {
 struct DynamicIslandApp {
     static func main() {
         let application = NSApplication.shared
+        if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--validate-camera-navigation" {
+            application.setActivationPolicy(.accessory)
+            Task { @MainActor in
+                await CameraNavigationNativeAcceptance.run(directory: URL(fileURLWithPath: CommandLine.arguments[2]))
+                application.terminate(nil)
+            }
+            application.run()
+            return
+        }
         if CommandLine.arguments == [CommandLine.arguments[0], "--probe-facetime"] {
             if !AXIsProcessTrusted() { print("Accessibility permission required"); return }
             guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: FaceTimeAccessibilityProvider.bundleIdentifier).first else {
@@ -132,6 +141,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         liveActivities: liveActivities,
         capabilities: capabilityRegistry
     )
+    private lazy var cameraNavigation = CameraNavigationController(camera: cameraPreview)
     private let rightWorkspace = RightWorkspaceStore()
     private let customization = WorkspaceCustomizationStore()
     private lazy var mediaAdvanced = MediaAdvancedController(media: media, spotify: workspaceServices.spotify)
@@ -299,7 +309,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             geometryService: geometryService,
             onOpenSettings: { [weak self] in
                 self?.openSettings()
-            }
+            },
+            cameraNavigation: cameraNavigation
         )
         self.overlayController = overlayController
         screenRecordingSetup.anchorProvider = { [weak overlayController] in
@@ -405,6 +416,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         terminalController.terminate()
         voiceTranscription.cancel()
         cameraPreview.terminate()
+        cameraNavigation.terminate()
         backgroundRemoval.terminate()
         basketPresenter.stop()
         systemHUDController.stop()
@@ -461,6 +473,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 agentProjects: agentProjects,
                 messaging: messaging,
                 faceTime: faceTime,
+                cameraNavigation: cameraNavigation,
                 previews: settingsPreviewDependencies()
             )
         }

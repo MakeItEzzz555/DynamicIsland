@@ -80,8 +80,7 @@ protocol CameraDeviceProviding: AnyObject {
     func availableDevices() -> [CameraDeviceDescriptor]
 }
 
-/// Preview-only capture: no outputs are attached, so no frames are recorded
-/// or persisted.
+/// Shared capture; navigation adds an on-device output that never persists frames.
 @MainActor
 protocol CameraCaptureSessionControlling: AnyObject {
     /// The running session for an `AVCaptureVideoPreviewLayer`; nil in tests.
@@ -94,6 +93,13 @@ protocol CameraCaptureSessionControlling: AnyObject {
     func stop() async
     /// Synchronous teardown for application termination. Idempotent.
     func stopImmediately()
+    func setNavigationProcessor(_ processor: HandPoseFrameProcessor?) async throws
+}
+
+extension CameraCaptureSessionControlling {
+    func setNavigationProcessor(_ processor: HandPoseFrameProcessor?) async throws {
+        if processor != nil { throw CameraPreviewError.sessionFailed("Hand tracking output is unavailable.") }
+    }
 }
 
 // MARK: - AVFoundation implementations
@@ -142,6 +148,44 @@ final class AVFoundationCameraSession: CameraCaptureSessionControlling {
 
     private let queue = DispatchQueue(label: "DynamicIsland.CameraPreview.session")
     private var observers: [NSObjectProtocol] = []
+    private var navigationOutput: AVCaptureVideoDataOutput?
+
+    func setNavigationProcessor(_ processor: HandPoseFrameProcessor?) async throws {
+        guard let capture = previewSession else {
+            if processor != nil { throw CameraPreviewError.deviceUnavailable }
+            return
+        }
+        let box = SessionBox(capture)
+        let previous = navigationOutput
+        let output = processor.map { _ in AVCaptureVideoDataOutput() }
+        navigationOutput = output
+        let succeeded = await withCheckedContinuation { continuation in
+            queue.async {
+                box.session.beginConfiguration()
+                if let previous { previous.setSampleBufferDelegate(nil, queue: nil); box.session.removeOutput(previous) }
+                var succeeded = true
+                if let output, let processor {
+                    output.alwaysDiscardsLateVideoFrames = true
+                    if box.session.canAddOutput(output) {
+                        box.session.addOutput(output)
+                        let formats = output.availableVideoPixelFormatTypes
+                        let preferred = [kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange]
+                        if let format = preferred.first(where: { formats.contains($0) }) {
+                            output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: format]
+                        }
+                        if let connection = output.connection(with: .video), connection.isVideoMirroringSupported {
+                            connection.automaticallyAdjustsVideoMirroring = false
+                            connection.isVideoMirrored = false
+                        }
+                        output.setSampleBufferDelegate(processor, queue: processor.queue)
+                    } else { succeeded = false }
+                }
+                box.session.commitConfiguration()
+                continuation.resume(returning: succeeded)
+            }
+        }
+        if !succeeded { navigationOutput = nil; throw CameraPreviewError.sessionFailed("Hand tracking output could not attach.") }
+    }
 
     func start(deviceID: String) async throws {
         await stop()
@@ -181,6 +225,8 @@ final class AVFoundationCameraSession: CameraCaptureSessionControlling {
     }
 
     func stop() async {
+        navigationOutput?.setSampleBufferDelegate(nil, queue: nil)
+        navigationOutput = nil
         removeObservers()
         guard let session = previewSession else { return }
         previewSession = nil
@@ -188,6 +234,8 @@ final class AVFoundationCameraSession: CameraCaptureSessionControlling {
     }
 
     func stopImmediately() {
+        navigationOutput?.setSampleBufferDelegate(nil, queue: nil)
+        navigationOutput = nil
         removeObservers()
         guard let session = previewSession else { return }
         previewSession = nil
@@ -302,6 +350,25 @@ final class CameraMirrorConsumerLease {
 }
 
 // MARK: - Controller
+
+@MainActor
+final class CameraNavigationLease {
+    private let controller: CameraPreviewController
+    private let owner = UUID()
+    private(set) var isHeld = false
+    init(controller: CameraPreviewController) { self.controller = controller }
+    func acquire() async throws {
+        guard !isHeld else { return }
+        isHeld = true
+        do { try await controller.acquireNavigation(owner: owner) }
+        catch { isHeld = false; throw error }
+    }
+    func release() async {
+        guard isHeld else { return }
+        isHeld = false
+        await controller.releaseNavigation(owner: owner)
+    }
+}
 
 @MainActor
 final class CameraPreviewController: ObservableObject, IslandCapabilityAdapter {
@@ -510,11 +577,12 @@ final class CameraPreviewController: ObservableObject, IslandCapabilityAdapter {
     }
 
     /// Idempotent. The activity is removed only after the session stopped.
-    /// Stops capture for every owner and clears all ownership claims.
+    /// Closes preview ownership; navigation keeps its independent claim.
     func close() async {
         userIntent = .closed
         explicitOwnerActive = false
         consumerStartedSession = false
+        guard navigationOwners.isEmpty else { return }
         await stopCapture()
     }
 
@@ -544,6 +612,7 @@ final class CameraPreviewController: ObservableObject, IslandCapabilityAdapter {
     /// consumer (an independent explicit owner keeps its own capture).
     func recordUserClose() {
         userIntent = .closed
+        guard navigationOwners.isEmpty else { return }
         generation += 1
         if phase == .starting, !explicitOwnerActive {
             // Cancel an in-flight mirror start; the lease release finishes
@@ -557,6 +626,7 @@ final class CameraPreviewController: ObservableObject, IslandCapabilityAdapter {
     func releaseExplicitPreview() async {
         guard explicitOwnerActive else { return }
         explicitOwnerActive = false
+        guard navigationOwners.isEmpty else { return }
         if previewConsumers > 0 {
             // A visible mirror inherits the session and releases it later.
             consumerStartedSession = true
@@ -570,6 +640,27 @@ final class CameraPreviewController: ObservableObject, IslandCapabilityAdapter {
     private var previewConsumers = 0
     private var consumerStartedSession = false
     private var explicitOwnerActive = false
+    private var navigationOwners: Set<UUID> = []
+
+    var activeNavigationOwners: Int { navigationOwners.count }
+
+    func acquireNavigation(owner: UUID) async throws {
+        navigationOwners.insert(owner)
+        do { try await startCapture() }
+        catch { navigationOwners.remove(owner); throw error }
+    }
+
+    func releaseNavigation(owner: UUID) async {
+        guard navigationOwners.remove(owner) != nil, navigationOwners.isEmpty else { return }
+        if explicitOwnerActive { return }
+        if previewConsumers > 0, userIntent == .wantsPreview { consumerStartedSession = true; return }
+        await stopCapture()
+    }
+
+    func setNavigationProcessor(_ processor: HandPoseFrameProcessor?) async throws {
+        guard processor == nil || !navigationOwners.isEmpty else { throw CameraPreviewError.disabled }
+        try await session.setNavigationProcessor(processor)
+    }
 
     /// A visible preview surface appeared. Passive: it only registers the
     /// consumer. Capture starts exclusively from an explicit Start/Allow
@@ -613,7 +704,7 @@ final class CameraPreviewController: ObservableObject, IslandCapabilityAdapter {
         guard consumerStartedSession else { return }
         consumerStartedSession = false
         // An explicit owner that joined the mirror's session keeps it.
-        guard !explicitOwnerActive else { return }
+        guard !explicitOwnerActive, navigationOwners.isEmpty else { return }
         await stopCapture()
     }
 
@@ -623,7 +714,7 @@ final class CameraPreviewController: ObservableObject, IslandCapabilityAdapter {
     /// re-expanding never restarts the camera. An explicit owner outside the
     /// island (the Settings preview's `open()`) is unaffected.
     func islandDidCollapse() async {
-        guard !explicitOwnerActive else { return }
+        guard !explicitOwnerActive, navigationOwners.isEmpty else { return }
         if userIntent == .wantsPreview { userIntent = .undecided }
         let mirrorOwnsCapture = consumerStartedSession || phase == .starting || isRunning
         consumerStartedSession = false
@@ -643,12 +734,13 @@ final class CameraPreviewController: ObservableObject, IslandCapabilityAdapter {
         // Restart keeps the existing ownership (mirror consumer vs explicit).
         await stopCapture()
         // A close/disable/termination that raced the stop wins.
-        guard userIntent.allowsPassiveStart, isEnabled, explicitOwnerActive || previewConsumers > 0 else { return }
+        guard isEnabled, !navigationOwners.isEmpty || (userIntent.allowsPassiveStart && (explicitOwnerActive || previewConsumers > 0)) else { return }
         try await startCapture()
     }
 
     func setEnabled(_ enabled: Bool) async {
         if !enabled {
+            navigationOwners.removeAll()
             await close()
         }
         isEnabled = enabled
@@ -657,6 +749,7 @@ final class CameraPreviewController: ObservableObject, IslandCapabilityAdapter {
 
     /// Synchronous teardown for application termination.
     func terminate() {
+        navigationOwners.removeAll()
         userIntent = .closed
         generation += 1
         explicitOwnerActive = false

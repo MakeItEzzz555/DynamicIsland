@@ -292,7 +292,7 @@ struct TimerRuler: View {
                 if !update.crossedTicks.isEmpty { tickFeedback() }
             }.onEnded { _ in
                 guard drag != nil, ownership.source == .pointer else { return }
-                onCommit(seconds)
+                if !CameraInteractionRouter.isCancellationEvent(NSApp.currentEvent) { onCommit(seconds) }
                 drag = nil
                 ownership.end()
                 onDragging(false)

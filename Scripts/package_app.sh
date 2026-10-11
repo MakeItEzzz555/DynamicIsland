@@ -87,7 +87,9 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <key>NSCalendarsUsageDescription</key>
   <string>After you allow access, DynamicIsland reads your calendar events for the days you view in the island. It does not create, change or share events.</string>
   <key>NSCameraUsageDescription</key>
-  <string>DynamicIsland shows a live camera preview in the island only while you have the camera preview open. Frames are not recorded or saved.</string>
+  <string>When you enable Camera Mirror or Camera Navigation, DynamicIsland processes camera frames on this Mac. Frames are never recorded, saved, or uploaded.</string>
+  <key>NSCameraUseContinuityCameraDeviceType</key>
+  <true/>
   <key>NSFocusStatusUsageDescription</key>
   <string>DynamicIsland can show a brief notch HUD when your Focus status changes.</string>
   <key>NSMicrophoneUsageDescription</key>

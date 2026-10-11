@@ -920,6 +920,7 @@ final class BasketMouseNSView: NSView, NSDraggingSource {
     }
 
     override func mouseDragged(with event: NSEvent) {
+        if CameraInteractionRouter.isCameraEvent(event) { mouseDownEvent = nil; didDrag = true; return }
         guard let start = mouseDownEvent, !didDrag else { return }
         let dx = event.locationInWindow.x - start.locationInWindow.x
         let dy = event.locationInWindow.y - start.locationInWindow.y
@@ -946,6 +947,7 @@ final class BasketMouseNSView: NSView, NSDraggingSource {
 
     override func mouseUp(with event: NSEvent) {
         defer { mouseDownEvent = nil }
+        guard !CameraInteractionRouter.isCancellationEvent(event) else { return }
         guard !didDrag else { return }
         onClick(event.modifierFlags, event.clickCount)
     }

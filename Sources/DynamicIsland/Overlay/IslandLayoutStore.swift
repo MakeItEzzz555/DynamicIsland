@@ -20,6 +20,7 @@ enum IslandCanvasCoordinateSpace {
 }
 
 enum TransientInteractionOwner: Hashable, Sendable {
+    case cameraNavigation(UUID)
     case workspaceEditor
     case agentsLauncher
     case calendarDatePicker
@@ -38,6 +39,7 @@ struct IslandWorkspaceActionRequest: Equatable {
 
 @MainActor
 final class IslandLayoutStore: ObservableObject {
+    let cameraPointerStore = CameraPointerStore()
     let tabPointerAnchor = TabPointerAnchor()
     /// Transient delivery to the existing expanded view, which still owns
     /// Clipboard presentation and the editor transaction.

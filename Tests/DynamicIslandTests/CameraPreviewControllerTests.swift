@@ -24,6 +24,8 @@ private final class FakeCameraDevices: CameraDeviceProviding {
 
 @MainActor
 private final class FakeCaptureSession: CameraCaptureSessionControlling {
+    var outputAttached = false
+    func setNavigationProcessor(_ processor: HandPoseFrameProcessor?) async throws { outputAttached = processor != nil }
     var previewSession: AVCaptureSession? { nil }
     var onUnexpectedStop: ((String) -> Void)?
     var startError: Error?
@@ -92,6 +94,118 @@ private final class GatedCaptureSession: CameraCaptureSessionControlling {
 
 @MainActor
 final class CameraPreviewControllerTests: XCTestCase {
+    func testCameraNavigationReportsPreparationUntilFirstVisionResult() async {
+        let f = makeFixture(authorized: true)
+        let controller = CameraNavigationController(camera: f.controller, defaults: UserDefaults(suiteName: "camera-prepare-\(UUID())")!)
+        await controller.start()
+        XCTAssertEqual(controller.status, "Preparing hand tracking…")
+        controller.consume(.init(observation: nil, generation: controller.trackingGeneration, latency: 0.02))
+        XCTAssertEqual(controller.status, "Waiting for the island")
+        await controller.stop(); controller.terminate()
+    }
+    func testFrameMailboxCoalescesWithoutRetainingFramesOrTasks() async {
+        var received: [Int] = []
+        let mailbox = HandPoseResultMailbox { received.append($0.generation) }
+        for i in 0..<500 { mailbox.submit(.init(observation: nil, generation: i, latency: 0.001)) }
+        for _ in 0..<10 { await Task.yield() }
+        XCTAssertEqual(received, [499])
+    }
+    func testNavigationControllerRejectsStaleFramesAndHoldsOnlyExpandedInteraction() async {
+        let f = makeFixture(authorized: true)
+        let defaults = UserDefaults(suiteName: "camera-navigation-tests-\(UUID())")!
+        let controller = CameraNavigationController(camera: f.controller, defaults: defaults)
+        let layout = IslandLayoutStore()
+        layout.expandedSurfaceFrame = CGRect(x: 0, y: 0, width: 640, height: 200)
+        var expanded = false
+        let window = NSWindow()
+        controller.connect(window: window, layout: layout, isExpanded: { expanded }, canInteract: { true }, expand: {}, page: { _ in })
+        await controller.start()
+        let time = ProcessInfo.processInfo.systemUptime
+        let hand = HandNavigationObservation(fingertip: CGPoint(x: 0.5, y: 0.5), palm: CGPoint(x: 0.5, y: 0.5),
+            handScale: 0.2, pinchRatio: 1, pose: .pointer, confidence: 0.9, timestamp: time)
+        controller.consume(.init(observation: hand, generation: controller.trackingGeneration - 1, latency: 0.01))
+        XCTAssertFalse(controller.isTracking)
+        controller.consume(.init(observation: hand, generation: controller.trackingGeneration, latency: 0.01))
+        XCTAssertTrue(controller.isTracking)
+        XCTAssertFalse(layout.isTransientInteractionActive)
+        expanded = true
+        controller.consume(.init(observation: hand, generation: controller.trackingGeneration, latency: 0.01))
+        XCTAssertTrue(layout.isTransientInteractionActive)
+        controller.consume(.init(observation: nil, generation: controller.trackingGeneration, latency: 0.01))
+        XCTAssertFalse(controller.isTracking)
+        XCTAssertTrue(layout.isTransientInteractionActive, "Tracking loss keeps only the bounded grace hold")
+        await controller.stop()
+        XCTAssertFalse(layout.isTransientInteractionActive)
+        XCTAssertFalse(f.session.outputAttached)
+        controller.consume(.init(observation: hand, generation: controller.trackingGeneration - 1, latency: 0.01))
+        XCTAssertFalse(controller.isTracking)
+        controller.terminate()
+    }
+    func testNavigationAndMirrorShareOneSession() async throws {
+        let f = makeFixture(authorized: true)
+        let navigation = CameraNavigationLease(controller: f.controller)
+        let mirror = CameraMirrorConsumerLease(controller: f.controller)
+        try await navigation.acquire()
+        await mirror.acquire(); try await mirror.startExplicitly()
+        XCTAssertEqual(f.session.startedDeviceIDs.count, 1)
+        await mirror.closeByUser()
+        XCTAssertTrue(f.controller.isRunning)
+        await f.controller.islandDidCollapse()
+        XCTAssertTrue(f.controller.isRunning)
+        await navigation.release()
+        XCTAssertFalse(f.controller.isRunning)
+        XCTAssertEqual(f.controller.activeNavigationOwners, 0)
+    }
+    func testNavigationReleaseTransfersToVisibleMirror() async throws {
+        let f = makeFixture(authorized: true)
+        let navigation = CameraNavigationLease(controller: f.controller)
+        let mirror = CameraMirrorConsumerLease(controller: f.controller)
+        try await navigation.acquire(); await mirror.acquire(); try await mirror.startExplicitly()
+        await navigation.release()
+        XCTAssertTrue(f.controller.isRunning)
+        await mirror.release()
+        XCTAssertFalse(f.controller.isRunning)
+    }
+    func testMirrorFirstNavigationOutlivesMirrorCollapse() async throws {
+        let f = makeFixture(authorized: true)
+        let mirror = CameraMirrorConsumerLease(controller: f.controller)
+        await mirror.acquire(); try await mirror.startExplicitly()
+        let navigation = CameraNavigationLease(controller: f.controller)
+        try await navigation.acquire()
+        await f.controller.islandDidCollapse(); await mirror.release()
+        XCTAssertTrue(f.controller.isRunning)
+        XCTAssertEqual(f.session.startedDeviceIDs.count, 1)
+        await navigation.release(); XCTAssertFalse(f.controller.isRunning)
+    }
+    func testNavigationExplicitPermissionAndDeniedCleanup() async throws {
+        let f = makeFixture()
+        f.devices.grant = .denied
+        let navigation = CameraNavigationLease(controller: f.controller)
+        XCTAssertEqual(f.devices.requestCount, 0)
+        do { try await navigation.acquire(); XCTFail("Expected permission gate") } catch {}
+        XCTAssertEqual(f.devices.requestCount, 1)
+        XCTAssertEqual(f.controller.activeNavigationOwners, 0)
+        XCTAssertFalse(navigation.isHeld)
+    }
+    func testMultipleNavigationOwnersReleaseIndependently() async throws {
+        let f = makeFixture(authorized: true)
+        let first = CameraNavigationLease(controller: f.controller), second = CameraNavigationLease(controller: f.controller)
+        try await first.acquire(); try await second.acquire()
+        await first.release(); await first.release()
+        XCTAssertEqual(f.controller.activeNavigationOwners, 1)
+        XCTAssertTrue(f.controller.isRunning)
+        await second.release(); XCTAssertFalse(f.controller.isRunning)
+    }
+    func testNavigationDeviceSwitchRetainsOwnershipDespiteMirrorClose() async throws {
+        let f = makeFixture(authorized: true)
+        let navigation = CameraNavigationLease(controller: f.controller)
+        try await navigation.acquire(); f.controller.recordUserClose()
+        try await f.controller.selectDevice(id: "ext")
+        XCTAssertTrue(f.controller.isRunning)
+        XCTAssertEqual(f.controller.activeNavigationOwners, 1)
+        XCTAssertEqual(f.session.startedDeviceIDs, ["builtin", "ext"])
+        await navigation.release()
+    }
     func testPermissionMapping() {
         XCTAssertEqual(SystemCameraDeviceProvider.map(.notDetermined), .notDetermined)
         XCTAssertEqual(SystemCameraDeviceProvider.map(.denied), .denied)

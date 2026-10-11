@@ -521,6 +521,7 @@ struct MediaModuleView: View {
                         in: 0...media.playbackSliderDuration,
                         onEditingChanged: playbackEditingChanged
                     )
+                    .background(CameraSliderEditingBridge(onEditingChanged: playbackEditingChanged, onCancel: media.cancelScrubbing))
                     .tint(.white.opacity(0.70))
                     .opacity(media.isSeekControlAvailable ? 1 : 0.38)
                     .disabled(!media.isSeekControlAvailable || media.playbackSliderDuration == 0)
@@ -705,6 +706,7 @@ struct MediaModuleView: View {
                             in: 0...media.playbackSliderDuration,
                             onEditingChanged: playbackEditingChanged
                         )
+                    .background(CameraSliderEditingBridge(onEditingChanged: playbackEditingChanged, onCancel: media.cancelScrubbing))
                         .tint(.white.opacity(0.70))
                         .opacity(media.isSeekControlAvailable ? 1 : 0.38)
                         .disabled(!media.isSeekControlAvailable || media.playbackSliderDuration == 0)
@@ -1708,6 +1710,7 @@ extension MediaModuleView {
                     Slider(value: playbackBinding,
                            in: 0...media.playbackSliderDuration,
                            onEditingChanged: playbackEditingChanged)
+                    .background(CameraSliderEditingBridge(onEditingChanged: playbackEditingChanged, onCancel: media.cancelScrubbing))
                         .tint(.white.opacity(0.70))
                         .opacity(media.isSeekControlAvailable ? 1 : 0.38)
                         .disabled(!media.isSeekControlAvailable || media.playbackSliderDuration == 0)
@@ -1819,6 +1822,7 @@ extension MediaModuleView {
                 Slider(value: playbackBinding,
                        in: 0...media.playbackSliderDuration,
                        onEditingChanged: playbackEditingChanged)
+                    .background(CameraSliderEditingBridge(onEditingChanged: playbackEditingChanged, onCancel: media.cancelScrubbing))
                     .controlSize(.mini)
                     .tint(.white.opacity(0.70))
                     .opacity(media.isSeekControlAvailable ? 1 : 0.38)
@@ -1914,6 +1918,7 @@ extension MediaModuleView {
                         Slider(value: playbackBinding,
                                in: 0...media.playbackSliderDuration,
                                onEditingChanged: playbackEditingChanged)
+                    .background(CameraSliderEditingBridge(onEditingChanged: playbackEditingChanged, onCancel: media.cancelScrubbing))
                             .controlSize(.small)
                             .tint(.white.opacity(0.75))
                             .opacity(media.isSeekControlAvailable ? 1 : 0.38)

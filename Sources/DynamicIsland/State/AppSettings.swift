@@ -126,7 +126,7 @@ public enum GestureInputSource: String, CaseIterable, Identifiable {
 
     public var displayName: String {
         switch self {
-        case .camera: "Camera (Coming Soon)"
+        case .camera: "Camera"
         case .trackpad: "Pointer / Trackpad"
         case .keyboardShortcut: "Keyboard Shortcut"
         case .none: "None"

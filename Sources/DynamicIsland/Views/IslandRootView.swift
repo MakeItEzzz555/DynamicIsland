@@ -712,6 +712,8 @@ struct IslandRootView: View {
 
                 collapsedSidecarOverlay
                 trayQuickActionOverlay
+                CameraPointerOverlay(store: layoutStore.cameraPointerStore, canvasSize: layoutStore.canvasSize)
+                    .allowsHitTesting(false)
             }
         }
         .shellMorphing(layoutStore.isShellMorphing)
@@ -3221,7 +3223,7 @@ private struct SystemHUDCompactSlider: View {
                         onChange(min(max(gesture.location.x / width, 0), 1), false)
                     }
                     .onEnded { gesture in
-                        guard isEnabled else { return }
+                        guard isEnabled, !CameraInteractionRouter.isCancellationEvent(NSApp.currentEvent) else { return }
                         onChange(min(max(gesture.location.x / width, 0), 1), true)
                     }
             )
@@ -4645,7 +4647,8 @@ struct ExpandedIslandPageSwitcher: View {
                     if navigation.selectedPage != page {
                         let plan = ExpandedIslandMotion.plan(settings: settings, reduceMotion: reduceMotion || settings.reduceExtraMotion)
                         pointerAnchor?.activate(page, eventType: NSApp.currentEvent?.type, pointer: NSEvent.mouseLocation,
-                            maximumDuration: plan.outgoingDuration + plan.shellDuration + 0.5)
+                            maximumDuration: plan.outgoingDuration + plan.shellDuration + 0.5,
+                            isCameraInput: NSApp.currentEvent.map(CameraInteractionRouter.isCameraEvent) ?? false)
                     }
                     navigation.select(page)
                 }
