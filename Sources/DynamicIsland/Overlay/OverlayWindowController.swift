@@ -876,8 +876,10 @@ final class OverlayWindowController {
             return primary.systemHUDKind == .audioDevice ? .audioDeviceHUD : .systemHUD
         case .screenRecording:
             return .screenRecording
+        case .message:
+            return .init(leftContentWidth: 16, rightContentWidth: 130)
         case .keepAwake, .terminalTask, .reminder, .voiceRecording,
-             .voiceTranscription, .voiceStatus, .camera, .backgroundRemoval, .message:
+             .voiceTranscription, .voiceStatus, .camera, .backgroundRemoval, .call:
             return .genericActivity
         case .windowSnapPreview:
             return .systemHUD
@@ -906,7 +908,7 @@ final class OverlayWindowController {
         case .screenRecording:
             return .screenRecording(primary)
         case .keepAwake, .terminalTask, .windowSnapPreview, .reminder,
-             .voiceRecording, .voiceTranscription, .voiceStatus, .camera, .backgroundRemoval, .message:
+             .voiceRecording, .voiceTranscription, .voiceStatus, .camera, .backgroundRemoval, .message, .call:
             return .generic(primary)
         }
     }

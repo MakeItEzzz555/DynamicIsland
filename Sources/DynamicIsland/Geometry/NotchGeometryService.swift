@@ -161,7 +161,7 @@ public struct CollapsedPresentationProfile: Equatable, Sendable {
             kind: .agentPermission,
             contentProfile: .init(leftContentWidth: 32 + (grows ? 10 : 0), rightContentWidth: 32 + (grows ? 10 : 0)),
             widthDelta: 120 + (grows ? AgentCompactPermissionMotion.hoverWidth : 0),
-            heightDelta: 68 + (grows ? AgentCompactPermissionMotion.hoverHeight : 0),
+            heightDelta: CollapsedActivityHoverPolicy.agentApprovalHeight + (grows ? AgentCompactPermissionMotion.hoverHeight : 0),
             bottomCornerRadius: 20, horizontalContentInset: 16, glowStrength: 0
         )
     }

@@ -11,11 +11,14 @@ struct CompactMediaView: View {
     }
 }
 
+enum AudioVisualizerPalette { case media, call }
+
 struct AudioVisualizerView: View {
     let isPlaying: Bool
     var isActive = true
     var accentColor: Color = ArtworkAccentColorExtractor.fallbackColor
     var variant: AudioVisualizerVariant = .compact
+    var palette: AudioVisualizerPalette = .media
     var barCount = 12
     /// Collapsed (always-on) visualizers use the cheaper ambient cadence.
     var cadence: IslandFrameCadence.Surface = .expandedDecoration
@@ -83,7 +86,10 @@ struct AudioVisualizerView: View {
         HStack(alignment: .center, spacing: variant.spacing) {
             ForEach(0..<barCount, id: \.self) { index in
                 Capsule(style: .continuous)
-                    .fill(accentColor.opacity(opacity))
+                    .fill(palette == .call
+                        ? AnyShapeStyle(LinearGradient(colors: [.green, .yellow], startPoint: .bottom, endPoint: .top))
+                        : AnyShapeStyle(accentColor))
+                    .opacity(opacity)
                     .frame(width: variant.barWidth, height: barHeight(index: index, tick: tick))
                     .shadow(color: accentColor.opacity(tick == nil || reduceMotion ? 0 : 0.22), radius: 3)
             }

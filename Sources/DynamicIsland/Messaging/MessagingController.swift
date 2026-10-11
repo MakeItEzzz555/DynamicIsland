@@ -285,6 +285,11 @@ final class MessagingController: ObservableObject {
         visibleEntries.first
     }
 
+    var collapsedEntry: MessagingQueueEntry? {
+        let focused = focus.isFocused == true
+        return visibleEntries.first { !($0.heldByFocus && focused) }
+    }
+
     var visibleEntries: [MessagingQueueEntry] {
         guard preferences.enabled else { return [] }
         return queue.entries.filter { !preferences.mutedProviders.contains($0.latest.conversation.provider) }
@@ -470,16 +475,14 @@ final class MessagingController: ObservableObject {
             objectWillChange.send()
             return
         }
-        let focused = focus.isFocused == true
-        let presentable = visibleEntries.filter { !($0.heldByFocus && focused) }
-        guard let entry = presentable.first else {
+        guard let entry = collapsedEntry else {
             liveActivities.remove(id: Self.activityID)
             objectWillChange.send()
             return
         }
         liveActivities.update(Self.makeActivity(
             for: entry,
-            queuedCount: presentable.count,
+            queuedCount: visibleEntries.filter { !($0.heldByFocus && focus.isFocused == true) }.count,
             showBody: preferences.showPreviewOnCompact,
             updatedAt: entry.latest.receivedAt
         ))

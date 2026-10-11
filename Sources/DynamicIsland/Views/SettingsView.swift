@@ -308,7 +308,7 @@ struct SettingsView: View {
             IslandShellSettingsPreview(settings: settings, dependencies: previews)
             if let previews {
                 CollapsedMediaSettingsPreview(settings: settings, media: previews.previewMedia)
-                CollapsedHoverSettingsPreview(settings: settings, media: previews.previewMedia)
+                LiveActivityLayoutSettingsPreview(settings: settings, scenario: .messageReply)
             }
             SettingsGroup("Shell") {
                 Picker("Island Theme", selection: $settings.islandThemeStyle) {
@@ -332,31 +332,11 @@ struct SettingsView: View {
                 Toggle("Show expanded visualizer", isOn: $settings.showExpandedVisualizer)
             }
 
-            SettingsGroup("Collapsed Preview") {
-                Toggle("Enable hover preview", isOn: $settings.collapsedHoverPreviewEnabled)
-                Toggle("Use media preview", isOn: $settings.collapsedHoverPreviewMediaEnabled)
-                    .disabled(!settings.collapsedHoverPreviewEnabled)
-                SliderRow(
-                    title: "Preview height",
-                    value: $settings.collapsedHoverPreviewHeight,
-                    range: 44...96,
-                    format: "%.0f pt",
-                    disabled: !settings.collapsedHoverPreviewEnabled
-                )
-                SliderRow(
-                    title: "Preview delay",
-                    value: $settings.collapsedHoverPreviewDelay,
-                    range: 0...0.4,
-                    format: "%.2fs",
-                    disabled: !settings.collapsedHoverPreviewEnabled
-                )
-                Toggle("Show song name", isOn: $settings.collapsedHoverPreviewShowTitle)
-                    .disabled(!settings.collapsedHoverPreviewEnabled || !settings.collapsedHoverPreviewMediaEnabled)
-                Toggle("Show artist", isOn: $settings.collapsedHoverPreviewShowsArtist)
-                    .disabled(!settings.collapsedHoverPreviewEnabled || !settings.collapsedHoverPreviewMediaEnabled)
-                Toggle("Use source name if artist missing", isOn: $settings.collapsedHoverPreviewShowsSource)
-                    .disabled(!settings.collapsedHoverPreviewEnabled || !settings.collapsedHoverPreviewMediaEnabled || !settings.collapsedHoverPreviewShowsArtist)
-                HelpText("Hover preview expands the collapsed pill visually without resizing the overlay panel.")
+            SettingsGroup("Collapsed message interaction") {
+                Toggle("Enable message hover", isOn: $settings.collapsedHoverPreviewEnabled)
+                SliderRow(title: "Message hover delay", value: $settings.collapsedHoverPreviewDelay,
+                    range: 0...0.4, format: "%.2fs", disabled: !settings.collapsedHoverPreviewEnabled)
+                HelpText("Messages grow only enough for an exact-target reply. Informational activities keep their height; exact Agent permissions use bounded controls.")
             }
         }
     }
@@ -914,6 +894,7 @@ struct SettingsView: View {
                 }
                 .disabled(!settings.liveActivitiesEnabled || !settings.allowSimultaneousLiveActivitySidecars)
                 LiveActivityLayoutSettingsPreview(settings: settings, dependencies: previews)
+                HelpText(NativeCallAuthority.limitation)
                 HelpText(
                     "Automatic placement keeps the strongest activity in the center and moves compatible compact activities into leading or trailing sidecars. Transient HUDs overlay the composition without destroying it."
                 )

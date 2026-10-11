@@ -306,7 +306,7 @@ enum LiveActivityPresentationPolicy {
                 priority: max(activity.priority, 146)
             )
 
-        case .message:
+        case .message, .call:
             // Persistent (not a transient overlay): a message awaiting the
             // user's action survives volume/brightness HUDs. Priority comes
             // from MessagingController (fresh vs acknowledged).

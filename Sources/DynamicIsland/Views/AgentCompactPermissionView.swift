@@ -50,7 +50,22 @@ struct AgentCompactPermissionView: View {
     var openFeed: (() -> Void)? = nil
 
     var body: some View {
-        let state = approvals.deliveryState(for: permission.request.key)
+        AgentCompactPermissionContent(permission: permission,
+            state: approvals.deliveryState(for: permission.request.key), topBandHeight: topBandHeight,
+            openFeed: openFeed, dismiss: { approvals.dismissFailedDelivery(permission.request.key) },
+            decide: { permission.decide($0, approvals: approvals) })
+    }
+}
+
+struct AgentCompactPermissionContent: View {
+    let permission: AgentCompactPermission
+    let state: AgentApprovalDeliveryState?
+    let topBandHeight: CGFloat
+    var openFeed: (() -> Void)? = nil
+    var dismiss: () -> Void = {}
+    var decide: (AgentBridgePermissionDecision) -> Void = { _ in }
+
+    var body: some View {
         VStack(spacing: 5) {
             // Keep controls below the physical notch, centered at fixed offsets.
             Color.clear.frame(height: topBandHeight)
@@ -68,7 +83,7 @@ struct AgentCompactPermissionView: View {
                         .help("Open the full permission context")
                 }
                 if case .failed = state {
-                    Button("Dismiss") { approvals.dismissFailedDelivery(permission.request.key) }
+                    Button("Dismiss", action: dismiss)
                         .buttonStyle(.plain)
                         .accessibilityLabel("Dismiss this unconfirmed decision")
                         .help("Dismiss presentation without approving or denying again")
@@ -100,7 +115,7 @@ struct AgentCompactPermissionView: View {
     }
 
     private func decisionButton(_ title: String, decision: AgentBridgePermissionDecision, enabled: Bool) -> some View {
-        Button { permission.decide(decision, approvals: approvals) } label: {
+        Button { decide(decision) } label: {
             Text(title).font(.system(size: 10, weight: .semibold))
                 .frame(width: AgentCompactPermissionMotion.buttonWidth, height: AgentCompactPermissionMotion.buttonHeight)
                 .foregroundStyle(decision == .allow ? Color.black : Color.white)

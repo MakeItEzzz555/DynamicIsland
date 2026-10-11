@@ -63,6 +63,15 @@ extension AppSettings {
 struct DynamicIslandApp {
     static func main() {
         let application = NSApplication.shared
+        if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--validate-live-activities" {
+            application.setActivationPolicy(.accessory)
+            Task { @MainActor in
+                await LiveActivityNativeAcceptance.run(directory: URL(fileURLWithPath: CommandLine.arguments[2]))
+                application.terminate(nil)
+            }
+            application.run()
+            return
+        }
         let delegate = AppDelegate()
         application.delegate = delegate
         application.setActivationPolicy(.accessory)

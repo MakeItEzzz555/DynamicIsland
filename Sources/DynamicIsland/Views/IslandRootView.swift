@@ -584,6 +584,8 @@ struct IslandRootView: View {
     /// Isolated clock for the workspace geometry children-exit (same reason as
     /// `childExitClock`: content-tree completions can be lost with live sessions).
     @State private var workspaceExitClock: Double = 0
+    @State private var compactMessageKey: String?
+    @State private var compactMessageFocused = false
     @State private var isCollapsedHovering = false
 
     /// Committed with the shell geometry (animated with it), never read
@@ -796,6 +798,9 @@ struct IslandRootView: View {
             .onChange(of: layoutStore.workspaceGeometryTransition) { _, transition in
                 handleWorkspaceGeometryTransition(transition)
             }
+            .onChange(of: compactMessageSending) { _, sending in
+                if !sending, !compactMessageFocused, !isCollapsedHovering { deactivateCollapsedPreview() }
+            }
             .onChange(of: isCollapsedPreviewActive) { _, _ in
                 updateCollapsedPreviewLayout()
                 synchronizeCollapsedSidecarGeometry()
@@ -956,17 +961,27 @@ struct IslandRootView: View {
                         modules.navigation.showAgents()
                         islandState.expand()
                     })
+            } else if isCollapsedPreviewActive, let entry = collapsedMessageEntry {
+                CollapsedMessageHoverView(controller: modules.messaging, entry: entry,
+                    topBandHeight: max(layoutStore.displayMetrics.hardwareNotchHeight, 24),
+                    onFocus: { focused in
+                        compactMessageFocused = focused
+                        layoutStore.setTextInputFocused(focused)
+                        if !focused, !compactMessageSending { deactivateCollapsedPreview() }
+                        updateCollapsedPreviewLayout()
+                    }, onDismiss: {
+                        compactMessageFocused = false
+                        layoutStore.setTextInputFocused(false)
+                        deactivateCollapsedPreview()
+                    })
             } else {
         CompactIslandView(
             settings: settings,
             modules: modules,
             contentMode: collapsedContentMode,
             layoutResolution: collapsedLayoutResolution,
-            previewContent: CollapsedPreviewContent.mounted(
-                collapsedPreviewContent,
-                previewActive: isCollapsedPreviewActive
-            ),
-            previewActive: isCollapsedPreviewActive,
+            previewContent: nil,
+            previewActive: false,
             hardwareNotchWidth: layoutStore.hardwareNotchWidth,
             collapsedLeftRegionWidth: layoutStore.collapsedLeftRegionWidth,
             collapsedNotchCoreWidth: layoutStore.collapsedNotchCoreWidth,
@@ -982,7 +997,7 @@ struct IslandRootView: View {
         .contentShape(Rectangle())
         .onHover(perform: handleCollapsedHover)
         .onTapGesture {
-            guard settings.expandOnClick, compactPermission == nil else { return }
+            guard settings.expandOnClick, compactPermission == nil, !isCollapsedPreviewActive else { return }
             deactivateCollapsedPreview()
             if let attention = agentAttention.presentation,
                let primary = attention.primary {
@@ -1189,23 +1204,26 @@ struct IslandRootView: View {
         return layoutStore.collapsedSurfaceFrame
     }
 
-    private var collapsedPreviewSurfaceFrame: CGRect {
-        let base = layoutStore.collapsedSurfaceFrame
-        let rowCount = collapsedPreviewContent?.rows.count ?? 0
-        let liveActivityPreviewHeight = base.height + CGFloat(max(rowCount, 1) * 20) + 8
-        let previewHeight = max(base.height, CGFloat(settings.collapsedHoverPreviewHeight), liveActivityPreviewHeight)
-        return CGRect(
-            x: base.minX,
-            y: base.maxY - previewHeight,
-            width: base.width,
-            height: previewHeight
-        ).integral
+    private var collapsedHoverPolicy: CollapsedActivityHoverPolicy {
+        CollapsedActivityHoverPolicy.resolve(kind: collapsedLayoutResolution.primary?.activity.kind,
+            exactMessageReply: collapsedMessageEntry.map { modules.messaging.canReply(to: $0) } ?? false,
+            exactAgentApproval: compactPermission != nil)
     }
 
-    private var collapsedPreviewContent: CollapsedPreviewContent? {
-        let rows = collapsedPreviewRows
-        guard !rows.isEmpty else { return nil }
-        return CollapsedPreviewContent(rows: rows)
+    private var compactMessageSending: Bool {
+        collapsedMessageEntry.map { modules.messaging.draft(for: $0).state.isSending } ?? false
+    }
+
+    private var collapsedMessageEntry: MessagingQueueEntry? {
+        guard collapsedLayoutResolution.primary?.activity.kind == .message else { return nil }
+        if let key = compactMessageKey,
+           let pinned = modules.messaging.visibleEntries.first(where: { $0.key == key }) { return pinned }
+        return modules.messaging.collapsedEntry
+    }
+
+    private var collapsedPreviewSurfaceFrame: CGRect {
+        let base = layoutStore.collapsedSurfaceFrame
+        return collapsedHoverPolicy.frame(from: base)
     }
 
     private var collapsedSourceToggles: CollapsedLiveActivitySourceToggles {
@@ -1283,7 +1301,7 @@ struct IslandRootView: View {
         case .voiceTranscription:
             return .voiceTranscription(primary)
         case .keepAwake, .terminalTask, .windowSnapPreview, .reminder,
-             .voiceStatus, .camera, .backgroundRemoval, .message:
+             .voiceStatus, .camera, .backgroundRemoval, .message, .call:
             return .generic(primary)
         }
     }
@@ -1313,7 +1331,7 @@ struct IslandRootView: View {
             navigation.showTray()
             onRequestExpand()
         case .battery, .system, .keepAwake, .terminalTask, .windowSnapPreview,
-             .reminder, .voiceRecording, .voiceTranscription, .voiceStatus, .camera, .backgroundRemoval:
+             .reminder, .voiceRecording, .voiceTranscription, .voiceStatus, .camera, .backgroundRemoval, .call:
             break
         case .screenRecording:
             navigation.showIsland()
@@ -1347,7 +1365,8 @@ struct IslandRootView: View {
         guard compactPermission == nil else { return false }
         return islandState.state == .collapsed &&
             settings.collapsedHoverPreviewEnabled &&
-            collapsedPreviewContent != nil &&
+            collapsedHoverPolicy != .none &&
+            collapsedMessageEntry != nil &&
             !navigation.isFileDropTargeted &&
             !layoutStore.isShellMorphing &&
             !layoutStore.isCollapseShellOnly &&
@@ -1356,7 +1375,7 @@ struct IslandRootView: View {
     }
 
     private var isCollapsedPreviewActive: Bool {
-        collapsedPreviewVisible && isCollapsedPreviewAllowed
+        (collapsedPreviewVisible || compactMessageFocused || compactMessageSending) && isCollapsedPreviewAllowed
     }
 
     private var collapsedPreviewAnimation: Animation {
@@ -1365,188 +1384,6 @@ struct IslandRootView: View {
         }
         let duration = settings.contentAnimationEnabled ? 0.18 / max(settings.shellAnimationSpeed, 0.25) : 0.01
         return .smooth(duration: min(max(duration, 0.12), 0.24))
-    }
-
-    private var mediaCollapsedPreviewContent: CollapsedPreviewContent? {
-        let rows = mediaCollapsedPreviewRows(isPrimary: true)
-        guard !rows.isEmpty else { return nil }
-        return CollapsedPreviewContent(rows: rows)
-    }
-
-    private var collapsedPreviewRows: [CollapsedPreviewRowContent] {
-        let toggles = CollapsedLiveActivitySourceToggles(
-            liveActivitiesEnabled: settings.liveActivitiesEnabled,
-            timerEnabled: settings.timerEnabled && settings.showTimerLiveActivity,
-            mediaEnabled: settings.mediaEnabled &&
-                settings.showMusicLiveActivity &&
-                settings.collapsedHoverPreviewMediaEnabled &&
-                (settings.showMediaWhenPaused || media.isPlaying),
-            fileTrayEnabled: settings.trayEnabled && settings.fileShelfEnabled && settings.showFileDropLiveActivity,
-            batteryEnabled: settings.showBatteryLiveActivity
-        )
-        let previewActivities = CollapsedLiveActivitySelector.previewActivities(
-            activities: liveActivities.activities,
-            priorities: settings.collapsedLiveActivityPrioritySettings,
-            toggles: toggles,
-            maxCount: 3
-        )
-
-        if previewActivities.isEmpty {
-            return mediaCollapsedPreviewRows(isPrimary: true)
-        }
-
-        return previewActivities.enumerated().compactMap { index, activity in
-            previewRow(for: activity, isPrimary: index == 0)
-        }
-    }
-
-    private func mediaCollapsedPreviewRows(isPrimary: Bool) -> [CollapsedPreviewRowContent] {
-        guard settings.mediaEnabled,
-              settings.collapsedHoverPreviewMediaEnabled,
-              media.hasActiveMediaSource,
-              settings.showMediaWhenPaused || media.isPlaying else {
-            return []
-        }
-
-        let title = settings.collapsedHoverPreviewShowTitle && settings.showMediaTitle
-            ? media.title.trimmedForCollapsedPreview
-            : nil
-        let artist: String?
-        if settings.collapsedHoverPreviewShowsArtist {
-            let artistCandidate = settings.showMediaArtist
-                ? media.artist.trimmedForCollapsedPreview
-                : nil
-            artist = artistCandidate ?? (
-                settings.collapsedHoverPreviewShowsSource && settings.showMediaSourceName
-                    ? media.sourceName.trimmedForCollapsedPreview
-                    : nil
-            )
-        } else {
-            artist = nil
-        }
-
-        guard title != nil || artist != nil else {
-            return []
-        }
-
-        return [
-            CollapsedPreviewRowContent(
-                id: LiveActivityStore.mediaActivityID,
-                title: title ?? "Now Playing",
-                subtitle: artist,
-                trailingText: nil,
-                symbolName: settings.collapsedHoverPreviewTitleIconName,
-                fallbackSymbolName: "music.note",
-                kind: .media,
-                isPrimary: isPrimary
-            )
-        ]
-    }
-
-    private func previewRow(
-        for activity: DynamicIslandLiveActivity,
-        isPrimary: Bool
-    ) -> CollapsedPreviewRowContent? {
-        switch activity.kind {
-        case .timer:
-            let remainingTime = timerText(for: activity)
-            return CollapsedPreviewRowContent(
-                id: activity.id,
-                title: "Timer",
-                subtitle: activity.isActive ? "Running" : "Paused",
-                trailingText: remainingTime,
-                symbolName: activity.isActive ? "timer" : "pause.circle.fill",
-                fallbackSymbolName: "timer",
-                kind: .timer,
-                isPrimary: isPrimary
-            )
-        case .media:
-            let title = settings.showMediaTitle ? media.title.trimmedForCollapsedPreview : nil
-            let subtitle = settings.showMediaArtist
-                ? media.artist.trimmedForCollapsedPreview
-                : (settings.showMediaSourceName ? media.sourceName.trimmedForCollapsedPreview : nil)
-            guard title != nil || subtitle != nil else { return nil }
-            return CollapsedPreviewRowContent(
-                id: activity.id,
-                title: title ?? "Now Playing",
-                subtitle: subtitle,
-                trailingText: activity.isActive ? "Playing" : "Paused",
-                symbolName: "music.note",
-                fallbackSymbolName: "music.note",
-                kind: .media,
-                isPrimary: isPrimary
-            )
-        case .fileTray:
-            return CollapsedPreviewRowContent(
-                id: activity.id,
-                title: activity.title,
-                subtitle: activity.subtitle,
-                trailingText: nil,
-                symbolName: "tray.and.arrow.down.fill",
-                fallbackSymbolName: "tray.full",
-                kind: .fileDrop,
-                isPrimary: isPrimary
-            )
-        case .backgroundOperation:
-            return CollapsedPreviewRowContent(
-                id: activity.id,
-                title: activity.title,
-                subtitle: activity.subtitle,
-                trailingText: activity.progress.map { "\(Int(($0 * 100).rounded()))%" },
-                symbolName: activity.symbolName,
-                fallbackSymbolName: "archivebox",
-                kind: .liveActivity,
-                isPrimary: isPrimary
-            )
-        case .battery:
-            return CollapsedPreviewRowContent(
-                id: activity.id,
-                title: activity.title,
-                subtitle: activity.subtitle,
-                trailingText: batteryPercentText(for: activity),
-                symbolName: activity.symbolName,
-                fallbackSymbolName: "battery.75percent",
-                kind: .battery,
-                isPrimary: isPrimary
-            )
-        case .agent:
-            return CollapsedPreviewRowContent(
-                id: activity.id,
-                title: activity.title,
-                subtitle: activity.subtitle,
-                trailingText: nil,
-                symbolName: activity.symbolName,
-                fallbackSymbolName: "cpu",
-                kind: .liveActivity,
-                isPrimary: isPrimary
-            )
-        case .system:
-            return nil
-        case .keepAwake, .terminalTask, .windowSnapPreview, .reminder,
-             .voiceRecording, .voiceTranscription, .voiceStatus, .camera, .backgroundRemoval,
-             .screenRecording, .message:
-            return CollapsedPreviewRowContent(
-                id: activity.id,
-                title: activity.title,
-                subtitle: activity.subtitle,
-                trailingText: nil,
-                symbolName: activity.symbolName,
-                fallbackSymbolName: "circle.fill",
-                kind: .liveActivity,
-                isPrimary: isPrimary
-            )
-        }
-    }
-
-    private func batteryPercentText(for activity: DynamicIslandLiveActivity) -> String? {
-        guard let progress = LiveActivityStore.clampedProgress(activity.progress) else { return nil }
-        return "\(Int((progress * 100).rounded()))%"
-    }
-
-    private func timerText(for activity: DynamicIslandLiveActivity) -> String {
-        (activity.subtitle ?? activity.title)
-            .replacingOccurrences(of: "Paused • ", with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private var fileDropTargetBinding: Binding<Bool> {
@@ -1787,6 +1624,8 @@ struct IslandRootView: View {
         let generation = collapsedPreviewGeneration
 
         guard isHovering else {
+            if compactMessageFocused || compactMessageSending { return }
+            compactMessageKey = nil
             collapsedPreviewVisible = false
             updateCollapsedPreviewLayout()
             return
@@ -1805,12 +1644,14 @@ struct IslandRootView: View {
             guard settings.overlayEnabled, sessionGeneration == layoutStore.overlayPresentationGeneration,
                   generation == collapsedPreviewGeneration else { return }
             guard isCollapsedHovering, isCollapsedPreviewAllowed else { return }
+            compactMessageKey = modules.messaging.collapsedEntry?.key
             collapsedPreviewVisible = true
             updateCollapsedPreviewLayout()
         }
     }
 
     private func deactivateCollapsedPreview() {
+        compactMessageKey = nil
         isCollapsedHovering = false
         collapsedPreviewVisible = false
         collapsedPreviewGeneration += 1
@@ -1823,18 +1664,6 @@ struct IslandRootView: View {
             active: active,
             frame: active ? collapsedPreviewSurfaceFrame : .zero
         )
-    }
-}
-
-private extension String {
-    var trimmedForCollapsedPreview: String? {
-        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty,
-              trimmed != "Nothing Playing",
-              trimmed != "Open Spotify or Music" else {
-            return nil
-        }
-        return trimmed
     }
 }
 
@@ -2730,10 +2559,15 @@ struct CompactIslandView: View {
             .transition(.compactMediaContent)
 
         case .generic(let activity):
-            CollapsedGenericActivityCompactView(
-                activity: activity,
-                layout: sideSlotGeometry
-            )
+            Group {
+                if activity.kind == .call {
+                    CollapsedCallActivityView(activity: activity, layout: sideSlotGeometry)
+                } else if activity.kind == .message {
+                    CollapsedMessageActivityView(activity: activity, layout: sideSlotGeometry)
+                } else {
+                    CollapsedGenericActivityCompactView(activity: activity, layout: sideSlotGeometry)
+                }
+            }
             .transition(.compactMediaContent)
 
         case .inactive:
@@ -5023,7 +4857,7 @@ struct LiveActivitiesModuleView: View {
         case .message:
             navigation.showMessages()
         case .keepAwake, .terminalTask, .windowSnapPreview, .reminder,
-             .voiceRecording, .voiceTranscription, .voiceStatus, .camera, .backgroundRemoval:
+             .voiceRecording, .voiceTranscription, .voiceStatus, .camera, .backgroundRemoval, .call:
             break
         case .screenRecording:
             navigation.showIsland()

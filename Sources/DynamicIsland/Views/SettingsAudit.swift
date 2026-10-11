@@ -80,11 +80,12 @@ enum SettingsAuditCatalog {
         + visual(["useArtworkAccentColor", "visualizerAccentMode", "showExpandedVisualizer"], .media)
         + visual(["showCollapsedVisualizer"], .collapsedMedia,
                  "Renders the production CompactMediaView and AudioVisualizerView with labeled sample media.")
-        + visual(["collapsedHoverPreviewEnabled", "collapsedHoverPreviewMediaEnabled", "collapsedHoverPreviewHeight",
-                  "collapsedHoverPreviewDelay", "collapsedHoverPreviewShowTitle", "collapsedHoverPreviewShowsArtist",
-                  "collapsedHoverPreviewShowsSource", "collapsedHoverPreviewTitleIconName"], .collapsedHover,
-                 "Renders the production IslandSurface and CollapsedPreviewRow; Replay Delay uses the configured delay.")
-        + entries(["collapsedHoverPreviewArtistIconName"], .deprecatedHidden, deprecatedNote)
+        + visual(["collapsedHoverPreviewEnabled", "collapsedHoverPreviewDelay"], .collapsedHover,
+                 "Production message hover uses semantic interaction geometry and the shared native reply composer.")
+        + entries(["collapsedHoverPreviewMediaEnabled", "collapsedHoverPreviewHeight", "collapsedHoverPreviewShowTitle",
+                   "collapsedHoverPreviewShowsArtist", "collapsedHoverPreviewShowsSource", "collapsedHoverPreviewTitleIconName",
+                   "collapsedHoverPreviewArtistIconName"], .deprecatedHidden,
+                  "Generic informational hover growth was replaced with activity-specific interaction requirements; values retained for migration.")
         // Navigation
         + visual(["showNavigationControls", "showTrayTab", "showTimerTab", "showStatsTab", "showToolsTab", "showAgentsTab", "showIslandTab"], .islandShell,
                  "The native Visible Controls / Gesture Only picker binds directly to showNavigationControls; the preview uses production header, padding, notch lane, grid and shell motion.")

@@ -1,3 +1,4 @@
+import AgentBridgeShared
 import AppKit
 import Combine
 import SwiftUI
@@ -265,6 +266,7 @@ struct SettingsPreviewSandbox<Controls: View, Content: View>: View {
     @ViewBuilder var controls: () -> Controls
     @ViewBuilder var content: (_ reduceMotion: Bool) -> Content
 
+    @Environment(\.settingsPreviewReduceMotion) private var inheritedReduceMotion
     @State private var reduceMotion = false
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @State private var defaults = SettingsPreviewDefaults()
@@ -292,10 +294,10 @@ struct SettingsPreviewSandbox<Controls: View, Content: View>: View {
                         .controlSize(.small)
                 }
             }
-            content(systemReduceMotion || reduceMotion)
+            content(systemReduceMotion || reduceMotion || inheritedReduceMotion)
                 .environment(\.isSettingsPreview, true)
-                .environment(\.settingsPreviewReduceMotion, systemReduceMotion || reduceMotion)
-                .environment(\.nativeVisualSnapshotTime, systemReduceMotion || reduceMotion ? 0.6 : nil)
+                .environment(\.settingsPreviewReduceMotion, systemReduceMotion || reduceMotion || inheritedReduceMotion)
+                .environment(\.nativeVisualSnapshotTime, systemReduceMotion || reduceMotion || inheritedReduceMotion ? 0.6 : nil)
                 .environment(\.colorScheme, .dark)
                 .defaultAppStorage(defaults)
                 .transformEnvironment(\.timerRulerInteractionRegistration) { $0.enabled = false }
@@ -707,98 +709,6 @@ struct SettingsPreviewCollapsedMediaRow: View {
                 }
             }
             .frame(height: 16)
-    }
-}
-
-struct CollapsedHoverSettingsPreview: View {
-    @ObservedObject var settings: AppSettings
-    @ObservedObject var media: MediaController
-    @State private var revealed = true
-    @State private var replayGeneration = 0
-
-    var body: some View {
-        SettingsPreviewSandbox(
-            title: "Collapsed Hover Preview",
-            usesSampleContent: true,
-            height: 126,
-            controls: {
-                Button("Replay Delay") { replay() }
-                    .controlSize(.small)
-            },
-            content: { reduceMotion in
-                let presentation = SettingsPreviewPresentation(settings: settings,
-                    mediaVisible: SettingsPreviewPresentation.mediaVisible(settings: settings, media: media))
-                let base = presentation.geometry.collapsedFrame.size
-                let content = previewContent
-                let rowCount = content.rows.count
-                let liveHeight = base.height + CGFloat(max(rowCount, 1) * 20) + 8
-                let active = settings.collapsedHoverPreviewEnabled && settings.collapsedHoverPreviewMediaEnabled
-                    && SettingsPreviewPresentation.mediaVisible(settings: settings, media: media) && revealed
-                let previewHeight = active
-                    ? max(base.height, CGFloat(settings.collapsedHoverPreviewHeight), liveHeight)
-                    : base.height
-
-                IslandSurface(settings: settings, isExpanded: false, visualProgress: 0) {
-                    VStack(spacing: 0) {
-                        SettingsPreviewCollapsedMediaRow(settings: settings, media: media, geometry: presentation.geometry)
-                            .frame(height: 16)
-                            .padding(.top, active ? 2 : max(0, (base.height - 16) / 2))
-                        Spacer(minLength: 0)
-                        if active {
-                            CollapsedPreviewRow(content: content)
-                                .transition(.opacity)
-                        }
-                    }
-                }
-                .notchIntegrated(presentation.geometry.hasHardwareNotch && settings.respectHardwareNotch)
-                .environment(\.islandDisplayMetrics, SettingsPreviewPresentation.metrics)
-                .frame(width: base.width, height: previewHeight)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .animation(IslandShellMotion.shellAnimation(settings: settings, reduceMotion: reduceMotion, opening: revealed), value: previewHeight)
-            }
-        )
-    }
-
-    private var previewContent: CollapsedPreviewContent {
-        let title = settings.collapsedHoverPreviewShowTitle && settings.showMediaTitle
-            ? media.title
-            : "Media"
-        let subtitle: String? = if settings.collapsedHoverPreviewShowsArtist {
-            if !media.artist.isEmpty {
-                media.artist
-            } else if settings.collapsedHoverPreviewShowsSource {
-                media.sourceName
-            } else {
-                nil
-            }
-        } else {
-            nil
-        }
-        return CollapsedPreviewContent(rows: [
-            CollapsedPreviewRowContent(
-                id: "settings-preview-media",
-                title: title,
-                subtitle: settings.collapsedHoverPreviewMediaEnabled ? subtitle : nil,
-                trailingText: "2:41",
-                symbolName: settings.collapsedHoverPreviewTitleIconName,
-                fallbackSymbolName: "music.note",
-                kind: .media,
-                isPrimary: true
-            )
-        ])
-    }
-
-    private func replay() {
-        replayGeneration += 1
-        let token = replayGeneration
-        revealed = false
-        let delay = settings.collapsedHoverPreviewEnabled
-            ? max(settings.collapsedHoverPreviewDelay, 0)
-            : 0
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-            guard token == replayGeneration else { return }
-            revealed = true
-        }
     }
 }
 
@@ -1216,7 +1126,15 @@ struct LiveActivityLayoutSettingsPreview: View {
     @ObservedObject var settings: AppSettings
     var dependencies: SettingsPreviewDependencies? = nil
     @State private var scenario: LiveActivityLayoutPreviewScenario = .mediaTimer
+    @StateObject private var messages = CommunicationPreviewMessages()
     @StateObject private var media = MediaController.settingsPreview()
+
+    init(settings: AppSettings, dependencies: SettingsPreviewDependencies? = nil,
+         scenario: LiveActivityLayoutPreviewScenario = .mediaTimer) {
+        self.settings = settings
+        self.dependencies = dependencies
+        _scenario = State(initialValue: scenario)
+    }
 
     struct Presentation {
         let geometry: IslandGeometry
@@ -1256,6 +1174,9 @@ struct LiveActivityLayoutSettingsPreview: View {
         case .timer: profile = .timer
         case .fileTray: profile = .file
         case .battery: profile = .battery
+        case .message: profile = .init(leftContentWidth: 16, rightContentWidth: 130)
+        case .call: profile = .media(showsArtwork: true, showsVisualizer: true)
+        case .screenRecording: profile = .screenRecording
         case .none: profile = nil
         default: profile = .genericActivity
         }
@@ -1264,7 +1185,8 @@ struct LiveActivityLayoutSettingsPreview: View {
             geometry(profile: .systemHUD, presentation:
                 activity.systemHUDKind == .volume || activity.systemHUDKind == .brightness
                 ? .systemHUD(value: activity.progress ?? 0) : .normal)
-        } ?? geometry(profile: profile, presentation: preliminary.primary?.activity.kind == .agent
+        } ?? geometry(profile: profile, presentation: preliminary.primary?.activity.kind == .screenRecording
+            ? .screenRecording : preliminary.primary?.activity.kind == .agent
             ? AgentCollapsedShellPresentation.routine(sessions: [SettingsPreviewFixtures.agentSession(provider: .codex)],
                 enabled: settings.agentActivityEnabled) ?? .normal : .normal)
         let sideSpace = LiveActivitySidecarMetrics.diameter + LiveActivitySidecarMetrics.gap
@@ -1274,18 +1196,34 @@ struct LiveActivityLayoutSettingsPreview: View {
         let primaryX = scenario == .constrained && resolution.hasSidecars
             ? (resolution.leadingSidecar != nil ? sideSpace : 0)
             : (width - shell.collapsedFrame.width) / 2
-        let primary = CGRect(x: primaryX,
+        let primaryBase = CGRect(x: primaryX,
             y: canvas.height - shell.collapsedFrame.height - 8,
             width: shell.collapsedFrame.width, height: shell.collapsedFrame.height)
-        return Presentation(geometry: shell, canvasSize: canvas, resolution: resolution,
-            composite: LiveActivityCompositeGeometry.resolve(primaryFrame: primary, canvasSize: canvas,
+        var primary = primaryBase
+        var resolvedCanvas = canvas
+        if scenario == .messageReply {
+            primary = CollapsedActivityHoverPolicy.resolve(kind: .message, exactMessageReply: true).frame(from: primaryBase)
+            resolvedCanvas.height = primary.height + 16
+            primary.origin.y = 8
+        }
+        if scenario == .permissionHover {
+            let permission = geometry(profile: nil, presentation: .agentPermission(hovered: true, reduceMotion: settings.reduceExtraMotion))
+            primary.size = permission.collapsedFrame.size
+            primary.origin = CGPoint(x: (max(width, primary.width) - primary.width) / 2, y: 8)
+            resolvedCanvas = CGSize(width: max(width, primary.width), height: primary.height + 16)
+            return Presentation(geometry: permission, canvasSize: resolvedCanvas, resolution: resolution,
+                composite: LiveActivityCompositeGeometry.resolve(primaryFrame: primary, canvasSize: resolvedCanvas,
+                    resolution: resolution, sidecarDiameter: LiveActivitySidecarMetrics.diameter, sidecarGap: LiveActivitySidecarMetrics.gap))
+        }
+        return Presentation(geometry: shell, canvasSize: resolvedCanvas, resolution: resolution,
+            composite: LiveActivityCompositeGeometry.resolve(primaryFrame: primary, canvasSize: resolvedCanvas,
                 resolution: resolution, sidecarDiameter: LiveActivitySidecarMetrics.diameter,
                 sidecarGap: LiveActivitySidecarMetrics.gap))
     }
 
     var body: some View {
         SettingsPreviewSandbox(title: "Layout Preview", usesSampleContent: true,
-            showsReduceMotionToggle: true, height: 100, controls: {
+            showsReduceMotionToggle: true, height: scenario == .messageReply || scenario == .permissionHover ? 180 : 100, controls: {
                 Picker("Scenario", selection: $scenario) {
                     ForEach(LiveActivityLayoutPreviewScenario.allCases) { item in
                         Text(item.rawValue).tag(item)
@@ -1328,10 +1266,26 @@ struct LiveActivityLayoutSettingsPreview: View {
             isNotchIntegrated: geometry.hasHardwareNotch && settings.respectHardwareNotch,
             leftRegionWidth: geometry.collapsedLeftRegionWidth, notchCoreWidth: geometry.collapsedNotchCoreWidth,
             rightRegionWidth: geometry.collapsedRightRegionWidth)
-        if let overlay = display.resolution.overlayTransient?.activity {
+        if scenario == .messageReply, let entry = messages.controller.collapsedEntry {
+            CollapsedMessageHoverView(controller: messages.controller, entry: entry,
+                topBandHeight: SettingsPreviewPresentation.metrics.hardwareNotchHeight)
+        } else if scenario == .permissionHover {
+            let session = SettingsPreviewFixtures.agentSession(provider: .codex)
+            let request = AgentApprovalControlRequest(key: .init(session: session.id,
+                requestID: AgentCorrelationID(rawValue: "preview")), summary: "Read project files (sample)",
+                expiresAt: Date.distantFuture)
+            AgentCompactPermissionContent(permission: .init(request: request, session: session),
+                state: .awaitingDecision, topBandHeight: max(display.geometry.collapsedFrame.height - display.geometry.collapsedPresentationProfile.heightDelta, 20))
+        } else if let overlay = display.resolution.overlayTransient?.activity {
             CollapsedSystemHUDCompactView(activity: overlay, layout: layout)
         } else if let primary = display.resolution.primary?.activity {
             switch primary.kind {
+            case .call:
+                CollapsedCallActivityView(activity: primary, layout: layout)
+            case .message:
+                CollapsedMessageActivityView(activity: primary, layout: layout)
+            case .screenRecording:
+                ScreenRecordingCompactContent(phase: .recording, duration: "0:03", previewImage: nil, layout: layout)
             case .media:
                 SettingsPreviewCollapsedMediaRow(settings: settings, media: media, geometry: geometry)
             case .timer:

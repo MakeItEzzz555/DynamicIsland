@@ -83,6 +83,11 @@ final class MessagesAppAdapter: MessagingProviderAdapter {
         }
         switch observationState {
         case .running:
+            if automationPermission == .denied {
+                return MessagingProviderCapabilities(supported: [.observeIncoming, .openApp], limitations: [
+                    .sendReply: "Allow DynamicIsland to control Messages in Privacy & Security › Automation"
+                ])
+            }
             return MessagingProviderCapabilities(
                 supported: [.observeIncoming, .openApp, .composeDraft, .sendReply, .confirmSend,
                             .exactConversationTarget, .preserveDraft, .retrySend],

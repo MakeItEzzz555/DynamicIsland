@@ -24,12 +24,13 @@ final class FakeMessagesStore: MessagesConversationStore, @unchecked Sendable {
 
 final class FakeMessagesAutomation: MessagesAutomating, @unchecked Sendable {
     private let lock = NSLock()
+    var permissionResult: MessagesAutomationPermission = .granted
     var exists = true
     var sendError: MessagesAutomationError?
     var sent: [(String, String)] = []
     var onSend: ((String, String) -> Void)?
 
-    func permission(askIfNeeded: Bool) -> MessagesAutomationPermission { .granted }
+    func permission(askIfNeeded: Bool) -> MessagesAutomationPermission { permissionResult }
 
     func chatExists(_ chatGUID: String) async throws -> Bool { lock.withLock { exists } }
 
@@ -77,6 +78,36 @@ final class MessagesAppAdapterAuthorityTests: XCTestCase {
         XCTAssertEqual(adapter.observationState, .permissionRequired)
         XCTAssertFalse(adapter.capabilities.supportsInlineReply)
         XCTAssertEqual(adapter.capabilities.limitations[.observeIncoming], MessagesAppAdapter.fullDiskAccessLimitation)
+    }
+
+    func testKnownAutomationDenialRemovesInlineReplyWithoutStoppingObservation() {
+        let automation = FakeMessagesAutomation()
+        automation.permissionResult = .denied
+        let adapter = makeAdapter(store: FakeMessagesStore(), automation: automation)
+        adapter.setObservationEnabled(true)
+        XCTAssertEqual(adapter.observationState, .running)
+        XCTAssertTrue(adapter.capabilities.contains(.observeIncoming))
+        XCTAssertFalse(adapter.capabilities.supportsInlineReply)
+        XCTAssertTrue(adapter.capabilities.contains(.openApp))
+    }
+
+    func testNotificationReachesProductionCollapsedMessageActivity() async throws {
+        let store = FakeMessagesStore()
+        store.incoming = [incoming(1, chat: "exact-chat", text: "Fixture body")]
+        let adapter = makeAdapter(store: store, automation: FakeMessagesAutomation())
+        let activities = LiveActivityStore()
+        var preferences = MessagingController.Preferences()
+        preferences.readsSystemNotifications = true
+        let controller = MessagingController(adapters: [adapter], liveActivities: activities,
+            focus: FakeFocus(), preferences: preferences)
+        adapter.handle(notification(1, title: "Fixture sender", body: "Fixture body"))
+        for _ in 0..<100 where controller.collapsedEntry == nil { try await Task.sleep(for: .milliseconds(5)) }
+        let activity = try XCTUnwrap(activities.activities.first)
+        XCTAssertEqual(activity.id, MessagingController.activityID)
+        XCTAssertEqual(activity.kind, .message)
+        XCTAssertEqual(activity.title, "Fixture sender")
+        XCTAssertEqual(activity.subtitle, "Fixture body")
+        XCTAssertEqual(controller.collapsedEntry?.conversation.id?.nativeID, "exact-chat")
     }
 
     func testUnsupportedMessagesSchemaFailsClosed() {

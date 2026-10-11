@@ -29,6 +29,19 @@ private final class FakeScreenCaptureAuthorization: ScreenCaptureAuthorizing {
 
 @MainActor
 final class ScreenRecordingAccessTests: XCTestCase {
+    func testMissingFirstFrameFailsOnlyThePendingStartAndRejectsALateFrame() {
+        var machine = ScreenRecordingStateMachine()
+        XCTAssertFalse(machine.failIfPreparing())
+        XCTAssertTrue(machine.beginPreparing())
+        XCTAssertTrue(machine.failIfPreparing())
+        XCTAssertEqual(machine.phase, .failed)
+        XCTAssertFalse(machine.didStart())
+        XCTAssertTrue(machine.beginPreparing())
+        XCTAssertTrue(machine.didStart())
+        XCTAssertFalse(machine.failIfPreparing())
+        XCTAssertEqual(machine.phase, .recording)
+    }
+
     func testAccessStateMatrix() {
         typealias C = ScreenRecordingController
         XCTAssertEqual(C.accessState(preflight: false, contentAvailable: true, requestAttempted: false), .granted,
@@ -57,7 +70,7 @@ final class ScreenRecordingAccessTests: XCTestCase {
         await controller.prepareTargets(requestPermission: true)
         XCTAssertEqual(auth.requests, 1)
         XCTAssertEqual(controller.accessState, .notActive)
-        XCTAssertTrue(controller.statusText.contains("Relaunch"), controller.statusText)
+        XCTAssertTrue(controller.statusText.contains("Settings"), controller.statusText)
         XCTAssertTrue(controller.statusText.contains("ad-hoc"), "rebuilt ad-hoc builds need the entry re-added")
         XCTAssertTrue(controller.displays.isEmpty)
     }
@@ -68,7 +81,7 @@ final class ScreenRecordingAccessTests: XCTestCase {
         let controller = makeController(auth)
         await controller.prepareTargets(requestPermission: false)
         XCTAssertEqual(auth.contentFetches, 1)
-        XCTAssertEqual(controller.accessState, .notActive)
+        XCTAssertEqual(controller.accessState, .relaunchRequired)
     }
 
     func testStartWithoutActivePermissionFailsVisiblyAndNeverReportsRecording() async {
@@ -120,6 +133,30 @@ final class ScreenRecordingAccessTests: XCTestCase {
         let granted = makeController(auth, adHoc: true, ledger: ledger)
         await granted.prepareTargets(requestPermission: false)
         XCTAssertNotEqual(granted.accessState, .notGranted)
+    }
+
+    func testRepeatedAllowNeverRepeatsTheRequest() async {
+        let auth = FakeScreenCaptureAuthorization()
+        let controller = makeController(auth)
+        await controller.prepareTargets(requestPermission: true)
+        await controller.prepareTargets(requestPermission: true)
+        XCTAssertEqual(auth.requests, 1)
+        XCTAssertEqual(controller.accessState, .notActive)
+    }
+
+    func testAcceptedGrantThatNeedsRestartOffersOneRelaunchThenSettings() async {
+        let auth = FakeScreenCaptureAuthorization()
+        auth.requestResult = true
+        let defaults = UserDefaults(suiteName: "relaunch-\(UUID())")!
+        let ledger = ScreenCaptureRequestLedger(defaults: defaults, buildIdentity: "same-build")
+        let first = makeController(auth, ledger: ledger)
+        await first.prepareTargets(requestPermission: true)
+        XCTAssertEqual(first.accessState, .relaunchRequired)
+        let relaunched = makeController(auth, ledger: ledger)
+        await relaunched.prepareTargets(requestPermission: false)
+        XCTAssertEqual(relaunched.accessState, .notActive)
+        await relaunched.prepareTargets(requestPermission: true)
+        XCTAssertEqual(auth.requests, 1)
     }
 
     private func makeController(_ auth: FakeScreenCaptureAuthorization, adHoc: Bool = false,

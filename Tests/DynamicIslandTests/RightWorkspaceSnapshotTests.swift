@@ -175,7 +175,7 @@ final class SettingsPreviewSnapshotTests: XCTestCase {
             ("57-settings-productivity", AnyView(ProductivityDeckSettingsPreview(workspace: deps.rightWorkspace, productivity: deps.productivity, shelf: deps.previewShelf))),
             ("58-settings-content-motion", AnyView(ContentMotionSettingsPreview(settings: settings))),
             ("59-settings-collapsed-media", AnyView(CollapsedMediaSettingsPreview(settings: settings, media: deps.previewMedia))),
-            ("60-settings-collapsed-hover", AnyView(CollapsedHoverSettingsPreview(settings: settings, media: deps.previewMedia))),
+            ("60-settings-collapsed-hover", AnyView(LiveActivityLayoutSettingsPreview(settings: settings, scenario: .messageReply))),
             ("61-settings-media-launcher", AnyView(MediaLauncherSettingsPreview(settings: settings, media: deps.previewMedia)))
         ]
         for (name, view) in views {

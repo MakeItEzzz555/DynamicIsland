@@ -1,6 +1,12 @@
 import Foundation
 
 enum LiveActivityLayoutPreviewScenario: String, CaseIterable, Identifiable {
+    case activeCall = "Call · Connecting (sample)"
+    case connectedCall = "Call · Connected (sample)"
+    case message = "Message"
+    case messageReply = "Message Hover Reply"
+    case recording = "Screen Recording"
+    case permissionHover = "Permission Approval Hover"
     case media = "Media"
     case mediaTimer = "Media + Timer"
     case mediaBatteryTimer = "Battery + Media + Timer"
@@ -27,6 +33,11 @@ enum LiveActivityPreviewCatalog {
 
     static func activities(for scenario: LiveActivityLayoutPreviewScenario) -> [DynamicIslandLiveActivity] {
         switch scenario {
+        case .activeCall: [call(connected: false)]
+        case .connectedCall: [call(connected: true)]
+        case .message, .messageReply: [message]
+        case .recording: [recording]
+        case .permissionHover: [agent]
         case .media:
             [media]
         case .mediaTimer:
@@ -55,6 +66,19 @@ enum LiveActivityPreviewCatalog {
             [keepAwake, volume]
         }
     }
+
+    static func call(connected: Bool) -> DynamicIslandLiveActivity {
+        DynamicIslandLiveActivity(id: "preview-call", kind: .call, title: "Call",
+            subtitle: connected ? "Connected (sample)" : "Connecting (sample)", symbolName: "phone.fill",
+            priority: 145, isActive: connected, progress: nil, updatedAt: referenceDate)
+    }
+
+    static let message = DynamicIslandLiveActivity(id: "preview-message", kind: .message, title: "Alex (sample)",
+        subtitle: "See you at seven", symbolName: "message.fill", priority: 124, isActive: true,
+        progress: nil, updatedAt: referenceDate)
+    static let recording = DynamicIslandLiveActivity(id: "preview-recording", kind: .screenRecording,
+        title: "Screen Recording", subtitle: "REC · 0:03", symbolName: "record.circle.fill",
+        priority: 146, isActive: true, progress: nil, updatedAt: referenceDate)
 
     // MARK: Existing sources (published inline by AppDelegate)
 

@@ -97,6 +97,12 @@ struct ScreenRecordingStateMachine: Equatable, Sendable {
         return true
     }
 
+    mutating func failIfPreparing() -> Bool {
+        guard phase == .preparing else { return false }
+        fail()
+        return true
+    }
+
     mutating func fail() { phase = .failed }
     mutating func reset() { phase = .idle }
 }
@@ -411,6 +417,11 @@ final class ScreenRecordingStreamOutput: NSObject, SCStreamOutput, SCStreamDeleg
         didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
         of type: SCStreamOutputType
     ) {
+        consume(sampleBuffer, type: type)
+    }
+
+    /// Invoked on `queue` by ScreenCaptureKit, including the first-frame and timeline path.
+    func consume(_ sampleBuffer: CMSampleBuffer, type: SCStreamOutputType) {
         guard !finished,
               CMSampleBufferIsValid(sampleBuffer),
               CMSampleBufferDataIsReady(sampleBuffer) else {
