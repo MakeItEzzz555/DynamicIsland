@@ -28,7 +28,7 @@ struct CommunicationsIntegrationView: View {
             ForEach(["Answer", "Decline", "End", "Mute"], id: \.self) { row($0, "Not Verified") }
             Group {
                 let capabilities = messaging.capabilities(for: .messages)
-                row("Messages notifications", capabilities.contains(.observeIncoming) ? "Available" : "Permission Required")
+                row("Messages notifications", Self.messageObservationStatus((messaging.adapters[.messages] as? MessagesAppAdapter)?.observationState))
                 row("Exact conversation matching", capabilities.contains(.exactConversationTarget) ? "Available" : "Not Verified")
                 row("Send reply", sendStatus)
                 row("Send confirmation", capabilities.contains(.confirmSend) ? "Available" : "Not Verified")
@@ -38,6 +38,15 @@ struct CommunicationsIntegrationView: View {
                 Text("Interface elements: \(faceTime.snapshot?.nodes.count ?? 0) · observer events: \(faceTime.supportedEvents.count) · scan bounded: \(faceTime.snapshot?.truncated == true ? "yes" : "no")")
                 Text("Messages replies use the exact conversation and clear only after the outgoing message is confirmed. Accessibility previews cannot authorize a reply.")
             }.font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    static func messageObservationStatus(_ state: MessagesAppAdapter.ObservationState?) -> String {
+        switch state {
+        case .running: "Available"
+        case .permissionRequired: "Permission Required"
+        case .disabled: "Not Verified"
+        case .unavailable, nil: "Unsupported"
         }
     }
 

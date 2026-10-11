@@ -95,6 +95,14 @@ final class FaceTimeAccessibilityTests: XCTestCase {
         XCTAssertNil(provider.snapshot)
     }
 
+    func testDisabledMessagingObservationDoesNotClaimMissingPermission() {
+        XCTAssertEqual(CommunicationsIntegrationView.messageObservationStatus(.disabled), "Not Verified")
+        XCTAssertEqual(CommunicationsIntegrationView.messageObservationStatus(.permissionRequired), "Permission Required")
+        XCTAssertEqual(CommunicationsIntegrationView.messageObservationStatus(.running), "Available")
+        XCTAssertEqual(CommunicationsIntegrationView.messageObservationStatus(.unavailable("unsupported schema")), "Unsupported")
+        XCTAssertEqual(CommunicationsIntegrationView.messageObservationStatus(nil), "Unsupported")
+    }
+
     func testProbeSerializationHasOnlyStructuralMetadata() throws {
         let snapshot = FaceTimeAXSnapshot(nodes: [.init(depth: 0, role: kAXWindowRole, subrole: nil,
             identifierSHA256: nil, actions: [], enabled: false)], readStatus: 0, truncated: false)

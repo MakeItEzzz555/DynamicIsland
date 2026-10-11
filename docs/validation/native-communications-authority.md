@@ -28,7 +28,7 @@ Primary API sources: [Apple AXUIElement reference](https://developer.apple.com/d
 
 ## Validation
 
-Final Debug build and diff hygiene passed. Full suite: 2,173 tests, 42 skips, 0 failures. Release/package/signature results and final-head CI are recorded in the PR and handoff. Focused run: 143 tests, 5 opt-in recording tests skipped, 0 failures. Nine new deterministic tests cover opt-in / permission / absent or wrong process, unverified call trees / stale elements, notification-only preview and removal, private-text-free serialization, inert native diagnostics geometry, Darwin/file deduplication, in-flight hint retention and batch draining / stop.
+Final Debug build and diff hygiene passed. Full suite: 2,174 tests, 42 skips, 0 failures. Release/package/signature results and final-head CI are recorded in the PR and handoff. Focused run: 144 tests, 5 opt-in recording tests skipped, 0 failures. Ten new deterministic tests cover opt-in / permission / absent or wrong process, unverified call trees / stale elements, notification-only preview and removal, private-text-free serialization, inert native diagnostics geometry, disabled-vs-permission diagnostics classification, Darwin/file deduplication, in-flight hint retention and batch draining / stop.
 
 Recording subset: 40 tests, 5 opt-in live tests skipped, 0 failures.
 
