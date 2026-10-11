@@ -12,7 +12,7 @@ No real call state, caller identity, connected timestamp, or call-control author
 
 The existing Notification Center → exact Messages database resolution → controller queue/draft book → exact-chat Apple Events → outgoing database confirmation path is retained. A fixture integration test reaches `message.current` through the real adapter/controller boundary. Exact and ambiguous resolution, ordering/deduplication, timeout/failure draft retention, confirmed clearing, and per-conversation drafts pass. A known Automation denial removes inline-reply capability without stopping incoming observation.
 
-Collapsed hover uses the same Focus-filtered entry that publishes the activity. The shared production native composer registers its frame through the existing native-control ownership channel using the single-value `onGeometryChange` API (SDK availability macOS 13+, compatible with the app's target). AppKit tests exercise Return, one send to the selected conversation, confirmed clearing, Escape, focus notification, and region release on unmount. They use synthetic native events and fixture providers, not real message sends or physical input.
+Collapsed hover uses the same Focus-filtered entry that publishes the activity. Focus or an in-flight send retains only a conversation already opened by hover; sending from the expanded page never opens collapsed hover, and Esc clears the pin even while confirmation is pending. The shared production native composer registers its frame through the existing native-control ownership channel using the single-value `onGeometryChange` API (SDK availability macOS 13+, compatible with the app's target). A non-hit-testing NSView associates the composer with its actual host window. Owned-window resignation dismisses a pending-send hover; another window's signal cannot dismiss it. AppKit tests exercise Return, one send to the selected conversation, confirmed clearing, Escape, focus/scoped window notifications, and region release on unmount. They use synthetic native events and fixture providers, not real message sends or physical input. This XCTest session did not make nonactivating panels key windows, so physical key-window transitions are not claimed.
 
 | Activity | Hover policy |
 | --- | --- |
@@ -42,29 +42,29 @@ It writes `acceptance.json`, native preview PNGs, and temporary MP4s for inspect
 
 ## Real recording acceptance matrix
 
-The final packaged run (`cdhash 32a450eaa047925cfbac833909267f6152b93b81`) passed CG preflight and ScreenCaptureKit access. Earlier sessions returned no shareable display, delivered no first frame, or recorded black Display/Area pictures; those results were rejected. The final session exposed the display and captured the blue test-owned window. Valid metadata alone was not accepted. No permission request was made by the runner.
+The final packaged run (`cdhash 99b1a2edf3729ae4f40feb76713f2f6786d1c1b3`) passed CG preflight and ScreenCaptureKit access. Earlier sessions returned no shareable display, delivered no first frame, or recorded black Display/Area pictures; those results were rejected. The final session exposed the display and captured the blue test-owned window. Valid metadata alone was not accepted. No permission request was made by the runner. An earlier package (`ff825cdedcf3f6aa8fc8b35963af74a488b93ccf`) exercised the real no-frame timeout and left no new output files.
 
 | Check | Observed result |
 | --- | --- |
 | Source enumeration | Passed: display and exact test-owned window enumerated after current permission checks. |
-| Display | Passed: 1352×878, 3.133 s, video track duration matches, decoded frame contains the blue test window at its expected screen position. |
-| Window | Passed: 960×640, 3.062 s, decoded blue test window. |
-| Area | Passed: 960×640, 3.075 s, decoded blue test window at the selected crop. |
+| Display | Passed: 1352×878, 3.128 s, video track duration matches, decoded frame contains the blue test window at its expected screen position. |
+| Window | Passed: 960×640, 3.108 s, decoded blue test window. |
+| Area | Passed: 960×640, 3.105 s, decoded blue test window at the selected crop. |
 | Static timeline | Passed: live static window/area last about 3 s. Production writer test: one frame → 3 s asset and video track, 64×48, decoded successfully. |
-| Pause / resume | Passed: 1.5 s recording + 1 s paused + 1.5 s recording → 3.170 s output; paused counter stayed fixed. Deterministic clock tests also pass. |
+| Pause / resume | Passed: 1.5 s recording + 1 s paused + 1.5 s recording → 3.168 s output; paused counter stayed fixed. Deterministic clock tests also pass. |
 | Stop / playable output | Passed: all eight exercised source/options runs finalized, loaded video tracks, and decoded frames. |
-| Cursor toggle | Passed: real captured pixel difference between cursor-hidden and cursor-shown Area runs, 3.095 / 3.098 s. Pointer restored. |
-| System audio | Passed: 3.092 s output, one audio track, 145,920 decoded PCM frames; independent Float PCM check found a nonzero signal after the synthetic Glass sound. |
+| Cursor toggle | Passed: real captured pixel difference between cursor-hidden and cursor-shown Area runs, 3.100 / 3.082 s. Pointer restored. |
+| System audio | Passed: 3.125 s output, one audio track, 146,880 decoded PCM frames; independent Float PCM check found a nonzero signal after the synthetic Glass sound. |
 | Microphone | Not exercised; runner never requests mic access. Enable Microphone audio and Start in the packaged app; grant macOS permission if requested (macOS 15+). |
 | Exclude DynamicIsland | Passed: included Area center BGR `[247,130,59]`, excluded `[0,0,0]`; the test-owned window was removed. Existing production filter retained. |
-| Failed-start cleanup | Passed: invalid window rejected, no activity remains, no new recording files left in the Movies output directory. Zero-video cancellation and first-frame timeout state checks pass deterministically; final live success did not exercise the no-frame timeout branch. |
+| Failed-start cleanup | Passed: invalid window rejected, no activity remains, no new recording files left in the Movies output directory. Zero-video cancellation and first-frame timeout state checks pass deterministically; the earlier no-frame packaged run also verified real timeout cleanup. |
 | Activity removal | Passed after each live finalization and the invalid-target failure. |
 
 Messages live acceptance is also gated: the packaged probe reported Full Disk Access denied. A new incoming notification and a user-selected exact recipient/text are still needed; no real message was sent. Native preview screenshots and fixture tests do not substitute for those checks.
 
 ## Checks
 
-Focused final run: 198 tests, 7 skipped, 0 failures. Full final suite: 2,162 tests, 42 skipped, 0 failures. Skips cover opt-in integrations/hardware evidence; they are not claimed as passes. An earlier full run had one unchanged Metal Send visibility-fixture failure; its isolated recheck (2 tests) and the final full rerun passed. The regression test and production Send behavior were left intact.
+Focused final run: 200 tests, 7 skipped, 0 failures. Full final suite: 2,164 tests, 42 skipped, 0 failures. Skips cover opt-in integrations/hardware evidence; they are not claimed as passes. Earlier full runs had intermittent failures in unchanged Metal Send visibility and Agent submission-end fixtures; their isolated rechecks (2 / 1 tests) and the final full rerun passed. The regression tests and production Agent/Send behavior were left intact.
 
 Final Debug and Release builds, packaging into a separate `/tmp` directory, three helper strict signatures, and app deep/strict signature passed. Native screenshots were inspected for collapsed density, downward hover geometry, readable controls, and both normal/Reduce Motion presentations. Real VoiceOver navigation and physical trackpad calibration were not exercised.
 

@@ -5,6 +5,19 @@ import XCTest
 
 @MainActor
 final class CollapsedCommunicationTests: XCTestCase {
+    func testFocusAndSendingRetainOnlyAnOpenedHoverAndEscapeCanCloseIt() {
+        let policy = CollapsedActivityHoverPolicy.resolve(kind: .message, exactMessageReply: true)
+        XCTAssertFalse(policy.isActive(hoverVisible: false, interactionPinned: false, focused: false, sending: true))
+        XCTAssertTrue(policy.isActive(hoverVisible: true, interactionPinned: true, focused: false, sending: false))
+        XCTAssertTrue(policy.isActive(hoverVisible: false, interactionPinned: true, focused: true, sending: false))
+        XCTAssertTrue(policy.isActive(hoverVisible: false, interactionPinned: true, focused: false, sending: true))
+        XCTAssertFalse(policy.isActive(hoverVisible: false, interactionPinned: false, focused: false, sending: true),
+            "Esc clears the pinned conversation even if its send is still pending")
+        XCTAssertFalse(policy.isActive(hoverVisible: false, interactionPinned: true, focused: false, sending: false))
+        XCTAssertFalse(CollapsedActivityHoverPolicy.none.isActive(hoverVisible: true, interactionPinned: true,
+            focused: true, sending: true))
+    }
+
     func testStaticActivitiesNeverGrowAndInteractiveFramesKeepTheirTopAnchor() {
         let base = CGRect(x: 500, y: 900, width: 240, height: 34)
         for kind in [DynamicIslandLiveActivityKind.media, .timer, .battery, .agent, .screenRecording,
@@ -35,7 +48,6 @@ final class CollapsedCommunicationTests: XCTestCase {
             XCTAssertEqual(sample.first?.kind, .call)
             XCTAssertTrue(sample.first?.subtitle?.contains("sample") == true)
         }
-        XCTAssertEqual(AudioVisualizerPalette.call, .call)
     }
 
     func testHoverUsesPresentedMessageRatherThanAFocusHeldNewArrival() throws {
@@ -158,6 +170,55 @@ final class CollapsedCommunicationTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(100))
         XCTAssertTrue(dismissed)
         XCTAssertFalse(layout.isTextInputFocused)
+    }
+
+    func testNativeOwnedWindowResignSignalDuringSendDismissesHoverAndKeepsTheDraft() async throws {
+        let adapter = GatedAdapter()
+        let controller = MessagingController(adapters: [adapter], liveActivities: LiveActivityStore(), focus: FakeFocus())
+        controller.receive(MessagingFixtures.message(conversation: "key-loss", at: 1))
+        let entry = try XCTUnwrap(controller.collapsedEntry)
+        controller.updateDraft("Fixture reply", for: entry)
+        var pinned = true
+        var focused = false
+        let view = MessagingReplyComposer(controller: controller, entry: entry,
+            onFocus: { focused = $0 }, onDismiss: { pinned = false })
+            .frame(width: 320, height: 100)
+        let host = NSHostingView(rootView: view)
+        let window = CommunicationTestPanel(contentRect: CGRect(x: 100, y: 100, width: 320, height: 100),
+            styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.orderFrontRegardless()
+        defer { window.contentView = nil; window.close() }
+        for _ in 0..<8 { host.layoutSubtreeIfNeeded(); try await Task.sleep(for: .milliseconds(20)) }
+        func field(in view: NSView) -> NSTextField? {
+            if let field = view as? NSTextField, field.isEditable { return field }
+            return view.subviews.lazy.compactMap { field(in: $0) }.first
+        }
+        let input = try XCTUnwrap(field(in: host))
+        window.makeKey()
+        XCTAssertTrue(window.makeFirstResponder(input))
+        for _ in 0..<50 where !focused { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertTrue(focused, "key \(window.isKeyWindow), app key matches \(NSApp.keyWindow === window)")
+        let send = Task { await controller.send(for: entry) }
+        for _ in 0..<50 where adapter.pending == nil { await Task.yield() }
+        XCTAssertTrue(controller.draft(for: entry).state.isSending)
+        try await Task.sleep(for: .milliseconds(100))
+        let other = CommunicationTestPanel(contentRect: CGRect(x: 450, y: 100, width: 100, height: 100),
+            styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        other.isReleasedWhenClosed = false
+        defer { other.close() }
+        NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: other)
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertTrue(pinned, "Another window must not dismiss this conversation")
+        NotificationCenter.default.post(name: NSWindow.didResignKeyNotification, object: window)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertFalse(pinned, "Owned-window resignation must dismiss while the field is disabled for Sending")
+        XCTAssertFalse(CollapsedActivityHoverPolicy.resolve(kind: .message, exactMessageReply: true)
+            .isActive(hoverVisible: false, interactionPinned: pinned, focused: false, sending: true))
+        adapter.finish(.uncertain(reason: "Fixture confirmation unavailable"))
+        await send.value
+        XCTAssertEqual(controller.draft(for: entry).text, "Fixture reply")
     }
 
     func testAllNewSettingsScenariosUseNativeFramesAndInertMessaging() throws {

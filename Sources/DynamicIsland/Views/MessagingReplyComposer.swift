@@ -65,6 +65,7 @@ struct MessagingReplyComposer: View {
                 openAppButton(for: entry)
             }
         }
+        .background(ReplyComposerWindowOwner { inputWindow = $0 })
         .onGeometryChange(for: CGRect.self) { proxy in
             proxy.frame(in: .named(IslandCanvasCoordinateSpace.name))
         } action: { frame in
@@ -77,15 +78,12 @@ struct MessagingReplyComposer: View {
             inputRegistration.report(inputOwner, enabled ? measuredFrame.frame : nil)
         }
         .onChange(of: composerFocused) { _, focused in
-            if focused { inputWindow = NSApp.keyWindow }
             onFocus(focused)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
-            if composerFocused { inputWindow = notification.object as? NSWindow }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { notification in
             if let window = notification.object as? NSWindow, window === inputWindow {
                 composerFocused = false
+                onDismiss()
             }
         }
         .onExitCommand {
@@ -93,6 +91,7 @@ struct MessagingReplyComposer: View {
             onDismiss()
         }
         .onDisappear {
+            inputWindow = nil
             inputRegistration.report(inputOwner, nil)
             onFocus(false)
         }
@@ -136,4 +135,25 @@ struct MessagingReplyComposer: View {
         Task { await controller.send(for: entry) }
     }
 
+}
+
+private struct ReplyComposerWindowOwner: NSViewRepresentable {
+    let changed: (NSWindow?) -> Void
+    func makeNSView(context: Context) -> Probe { Probe(changed: changed) }
+    func updateNSView(_ view: Probe, context: Context) { view.changed = changed }
+    static func dismantleNSView(_ view: Probe, coordinator: ()) { view.changed = { _ in } }
+
+    final class Probe: NSView {
+        var changed: (NSWindow?) -> Void
+        init(changed: @escaping (NSWindow?) -> Void) { self.changed = changed; super.init(frame: .zero) }
+        required init?(coder: NSCoder) { fatalError("init(coder:) unavailable") }
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.changed(self.window)
+            }
+        }
+    }
 }

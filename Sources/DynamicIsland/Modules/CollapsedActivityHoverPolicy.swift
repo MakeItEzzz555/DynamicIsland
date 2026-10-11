@@ -18,6 +18,10 @@ enum CollapsedActivityHoverPolicy: Equatable {
         }
     }
 
+    func isActive(hoverVisible: Bool, interactionPinned: Bool, focused: Bool, sending: Bool) -> Bool {
+        self != .none && (hoverVisible || (interactionPinned && (focused || sending)))
+    }
+
     func frame(from base: CGRect) -> CGRect {
         let height: CGFloat
         switch self {

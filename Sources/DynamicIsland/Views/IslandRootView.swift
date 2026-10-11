@@ -1375,7 +1375,9 @@ struct IslandRootView: View {
     }
 
     private var isCollapsedPreviewActive: Bool {
-        (collapsedPreviewVisible || compactMessageFocused || compactMessageSending) && isCollapsedPreviewAllowed
+        collapsedHoverPolicy.isActive(hoverVisible: collapsedPreviewVisible,
+            interactionPinned: compactMessageKey != nil, focused: compactMessageFocused,
+            sending: compactMessageSending) && isCollapsedPreviewAllowed
     }
 
     private var collapsedPreviewAnimation: Animation {
