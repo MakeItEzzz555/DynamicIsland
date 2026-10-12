@@ -122,6 +122,7 @@ final class CameraNavigationController: ObservableObject {
     private let instanceCount: () -> Int
     private let frameTimeout: Duration
     private let deliversInput: Bool
+    private let now: () -> TimeInterval
     private var transitionTask: Task<Void, Never>?
     private var frameWatchdog: Task<Void, Never>?
     private var reconciled = false
@@ -151,8 +152,9 @@ final class CameraNavigationController: ObservableObject {
 
     init(camera: CameraPreviewController, defaults: UserDefaults = .standard,
          settings: AppSettings? = nil, frameTimeout: Duration = .seconds(2), deliversInput: Bool = true,
-         instanceCount: @escaping () -> Int = { CameraNavigationController.normalInstanceCount() }) {
-        self.camera = camera; self.defaults = defaults
+         instanceCount: @escaping () -> Int = { CameraNavigationController.normalInstanceCount() },
+         now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
+        self.camera = camera; self.defaults = defaults; self.now = now
         self.frameTimeout = frameTimeout; self.instanceCount = instanceCount; self.deliversInput = deliversInput
         lease = CameraNavigationLease(controller: camera)
         preferences = defaults.data(forKey: Self.preferenceKey).flatMap { try? JSONDecoder().decode(CameraNavigationPreferences.self, from: $0) } ?? .init()
@@ -261,7 +263,7 @@ final class CameraNavigationController: ObservableObject {
         self.window = window; self.layout = layout; self.isExpanded = isExpanded
         self.canInteract = canInteract; self.expand = expand; self.page = page
         self.canExpand = canExpand; self.canCollapse = canCollapse; self.collapse = collapse
-        router = CameraInteractionRouter(window: window)
+        router = CameraInteractionRouter(window: window, now: now)
         router?.allowsCameraInput = { [weak self] in
             guard let self else { return false }
             return self.isEnabled && self.isExpanded() && self.canInteract() && self.camera.isRunning
@@ -308,7 +310,7 @@ final class CameraNavigationController: ObservableObject {
                     self.runtimeState = .noFrames
                 }
             }
-            metricsStartedAt = ProcessInfo.processInfo.systemUptime; metricCount = 0; latencySamples = []
+            metricsStartedAt = now(); metricCount = 0; latencySamples = []
             if renderTimer == nil {
                 let timer = Timer(timeInterval: 1 / 60, repeats: true) { [weak self] _ in
                     MainActor.assumeIsolated { self?.render() }
@@ -367,7 +369,7 @@ final class CameraNavigationController: ObservableObject {
         }
         if result.isSampleReceipt { return }
         if result.observation?.isValid == true { validHandObserved = true }
-        let time = ProcessInfo.processInfo.systemUptime
+        let time = now()
         if !hasReceivedFrame {
             hasReceivedFrame = true
             metricsStartedAt = time; metricCount = 0; latencySamples = []
@@ -500,7 +502,7 @@ final class CameraNavigationController: ObservableObject {
 
     private func render() {
         guard isEnabled, hasReceivedFrame else { return }
-        let time = ProcessInfo.processInfo.systemUptime
+        let time = now()
         if time - lastTrackedAt > 0.65 { loseTracking(immediately: true); return }
         guard isTracking, let target, let layout else { hidePointer(); return }
         guard router?.physicalOwnsInput != true else {
@@ -518,7 +520,7 @@ final class CameraNavigationController: ObservableObject {
     }
 
     private func loseTracking(immediately: Bool) {
-        let expired = immediately || ProcessInfo.processInfo.systemUptime - lastTrackedAt > 0.65
+        let expired = immediately || now() - lastTrackedAt > 0.65
         if expired {
             _ = machine.reset()
             filter.reset(); target = nil; rendered = nil

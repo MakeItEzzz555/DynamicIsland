@@ -8,6 +8,7 @@ protocol CameraLocalEventWindow: AnyObject {
 @MainActor
 final class CameraInteractionRouter {
     private weak var window: NSWindow?
+    private let now: () -> TimeInterval
     private var monitor: Any?
     private var globalMonitor: Any?
     private var sequence = 1
@@ -22,8 +23,8 @@ final class CameraInteractionRouter {
     var onPhysicalInput: (() -> Void)?
     var allowsCameraInput: () -> Bool = { true }
 
-    init(window: NSWindow) {
-        self.window = window
+    init(window: NSWindow, now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
+        self.window = window; self.now = now
         (window as? CameraLocalEventWindow)?.cameraEventGate = { [weak self] event in self?.accept(event) ?? true }
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp, .leftMouseDragged,
             .rightMouseDown, .rightMouseUp, .mouseMoved, .scrollWheel, .keyDown]) { [weak self] event in
@@ -62,17 +63,17 @@ final class CameraInteractionRouter {
         guard let event, isCameraEvent(event) else { return false }
         return (event.cgEvent?.getIntegerValueField(.eventSourceUserData) ?? 0) & 1 == 1
     }
-    var physicalOwnsInput: Bool { physicalButtonDown || physicalTouchActive || ProcessInfo.processInfo.systemUptime < physicalUntil }
+    var physicalOwnsInput: Bool { physicalButtonDown || physicalTouchActive || now() < physicalUntil }
 
     func physicalTouchSession(active: Bool) {
         guard active != physicalTouchActive else { return }
         physicalTouchActive = active
-        physicalUntil = ProcessInfo.processInfo.systemUptime + 0.7
+        physicalUntil = now() + 0.7
         cancel(); onPhysicalInput?()
     }
 
     private func recordPhysical(_ event: NSEvent) {
-        physicalUntil = ProcessInfo.processInfo.systemUptime + 0.7
+        physicalUntil = now() + 0.7
         if event.type == .leftMouseDown || event.type == .rightMouseDown { physicalButtonDown = true }
         if event.type == .leftMouseUp || event.type == .rightMouseUp { physicalButtonDown = false }
         cancel()
@@ -162,7 +163,7 @@ final class CameraInteractionRouter {
 
     private func post(_ type: NSEvent.EventType, point: CGPoint, atStart: Bool = false, cancelled: Bool = false) {
         guard let window, let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
-            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+            timestamp: now(), windowNumber: window.windowNumber,
             context: nil, eventNumber: eventNumber, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1) else { return }
         guard let cg = event.cgEvent else { return }
         cg.setIntegerValueField(.eventSourceUserData, value: eventTag | (cancelled ? 1 : 0))

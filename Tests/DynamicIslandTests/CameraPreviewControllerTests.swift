@@ -104,9 +104,10 @@ private final class GatedCaptureSession: CameraCaptureSessionControlling {
 @MainActor
 final class CameraPreviewControllerTests: XCTestCase {
     private func navigation(_ camera: CameraPreviewController, settings: AppSettings? = nil,
-                            timeout: Duration = .seconds(2), deliversInput: Bool = true, instances: @escaping () -> Int = { 1 }) -> CameraNavigationController {
+                            timeout: Duration = .seconds(2), deliversInput: Bool = true, instances: @escaping () -> Int = { 1 },
+                            now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) -> CameraNavigationController {
         CameraNavigationController(camera: camera, defaults: UserDefaults(suiteName: "camera-repair-\(UUID())")!,
-                                   settings: settings, frameTimeout: timeout, deliversInput: deliversInput, instanceCount: instances)
+                                   settings: settings, frameTimeout: timeout, deliversInput: deliversInput, instanceCount: instances, now: now)
     }
     private func settle(_ controller: CameraNavigationController) async {
         await controller.waitForReconciliation()
@@ -329,7 +330,8 @@ final class CameraPreviewControllerTests: XCTestCase {
         await controller.shutdown()
     }
     func testCameraCollapsedPinchIgnoresTinyTargetAndExpandOnClickPreference() async {
-        let f = makeFixture(authorized: true), controller = navigation(f.controller)
+        var time = 100.0
+        let f = makeFixture(authorized: true), controller = navigation(f.controller, now: { time })
         let settings = AppSettings(defaults: UserDefaults(suiteName: "camera-no-click-\(UUID())")!)
         settings.expandOnClick = false
         let layout = IslandLayoutStore(), window = NSWindow()
@@ -343,9 +345,9 @@ final class CameraPreviewControllerTests: XCTestCase {
         for pinch in [1.0, 0.1, 0.1, 0.1, 0.1, 0.1] {
             controller.consume(.init(observation: .init(fingertip: CGPoint(x: -2, y: 2), palm: CGPoint(x: -2, y: 2),
                 handScale: 0.2, pinchRatio: pinch, pose: .pointer, confidence: 0.9,
-                timestamp: ProcessInfo.processInfo.systemUptime), generation: controller.trackingGeneration, latency: 0.01))
+                timestamp: time), generation: controller.trackingGeneration, latency: 0.01))
             XCTAssertNil(layout.cameraPointerStore.presentation)
-            try? await Task.sleep(for: .milliseconds(50))
+            time += 0.05
         }
         XCTAssertFalse(settings.expandOnClick)
         XCTAssertEqual(expansions, 1)
@@ -354,7 +356,8 @@ final class CameraPreviewControllerTests: XCTestCase {
     }
 
     func testCameraProtectedCompactControlDoesNotExpandOrClick() async {
-        let f = makeFixture(authorized: true), controller = navigation(f.controller)
+        var time = 100.0
+        let f = makeFixture(authorized: true), controller = navigation(f.controller, now: { time })
         let layout = IslandLayoutStore(), window = NSWindow()
         layout.collapsedSurfaceFrame = CGRect(x: 20, y: 20, width: 200, height: 36)
         layout.updateCollapsedSidecars(.init(leadingSidecarFrame: nil, primaryFrame: layout.collapsedSurfaceFrame,
@@ -364,60 +367,62 @@ final class CameraPreviewControllerTests: XCTestCase {
         controller.reconcile(gesturesEnabled: true, inputSource: .camera); await settle(controller)
         for pinch in [1.0, 0.1, 0.1, 0.1] {
             controller.consume(.init(observation: .init(fingertip: .zero, palm: .zero, handScale: 0.2,
-                pinchRatio: pinch, pose: .pointer, confidence: 0.9, timestamp: ProcessInfo.processInfo.systemUptime),
+                pinchRatio: pinch, pose: .pointer, confidence: 0.9, timestamp: time),
                 generation: controller.trackingGeneration, latency: 0.01))
             XCTAssertNil(layout.cameraPointerStore.presentation)
-            try? await Task.sleep(for: .milliseconds(50))
+            time += 0.05
         }
         XCTAssertEqual(controller.lastGestureAction, "None")
         await controller.shutdown()
     }
 
     func testCameraPageMorphHidesPointerWithoutLosingHandAndRemapsOnRecovery() async {
-        let f = makeFixture(authorized: true), controller = navigation(f.controller)
+        var time = 100.0
+        let f = makeFixture(authorized: true), controller = navigation(f.controller, now: { time })
         let layout = IslandLayoutStore(), window = NSWindow()
         layout.expandedSurfaceFrame = CGRect(x: 20, y: 20, width: 500, height: 260)
         var available = true, pages = 0
         controller.connect(window: window, layout: layout, isExpanded: { true }, canInteract: { available },
             expand: {}, page: { _ in pages += 1; available = false })
         controller.reconcile(gesturesEnabled: true, inputSource: .camera); await settle(controller)
-        func inject(_ pose: HandNavigationPose, x: Double) async {
+        func inject(_ pose: HandNavigationPose, x: Double) {
             controller.consume(.init(observation: .init(fingertip: CGPoint(x: x, y: 0.5), palm: CGPoint(x: x, y: 0.5),
                 handScale: 0.2, pinchRatio: 1, pose: pose, confidence: 0.9,
-                timestamp: ProcessInfo.processInfo.systemUptime), generation: controller.trackingGeneration, latency: 0.01))
-            try? await Task.sleep(for: .milliseconds(50))
+                timestamp: time), generation: controller.trackingGeneration, latency: 0.01))
+            time += 0.05
         }
-        await inject(.pointer, x: 0.7)
+        inject(.pointer, x: 0.7)
         XCTAssertNotNil(layout.cameraPointerStore.presentation)
-        for i in 0...6 { await inject(.openPalm, x: 0.7 - Double(i) * 0.03) }
+        for i in 0...6 { inject(.openPalm, x: 0.7 - Double(i) * 0.03) }
         XCTAssertEqual(pages, 1)
         XCTAssertTrue(controller.isTracking)
         XCTAssertNil(layout.cameraPointerStore.presentation)
-        for _ in 0..<8 { await inject(.pointer, x: 0.52) }
+        for _ in 0..<8 { inject(.pointer, x: 0.52) }
         XCTAssertTrue(controller.isTracking, "A shell morph is not hand loss")
         XCTAssertNil(layout.cameraPointerStore.presentation)
         layout.expandedSurfaceFrame = CGRect(x: 10, y: 0, width: 640, height: 500)
         available = true
-        await inject(.pointer, x: 0.52)
+        inject(.pointer, x: 0.52)
         XCTAssertNotNil(layout.cameraPointerStore.presentation)
         XCTAssertTrue(layout.expandedSurfaceFrame.contains(layout.cameraPointerStore.presentation!.point))
         controller.preferences.showPointer = false
-        await inject(.pointer, x: 0.52)
+        inject(.pointer, x: 0.52)
         XCTAssertNil(layout.cameraPointerStore.presentation)
         controller.preferences.showPointer = true
         controller.physicalTouchSession(active: true)
-        await inject(.pointer, x: 0.52)
+        inject(.pointer, x: 0.52)
         XCTAssertNil(layout.cameraPointerStore.presentation)
         XCTAssertTrue(controller.isTracking)
         controller.physicalTouchSession(active: false)
-        for _ in 0..<16 { await inject(.pointer, x: 0.52) }
+        for _ in 0..<16 { inject(.pointer, x: 0.52) }
         XCTAssertNotNil(layout.cameraPointerStore.presentation, "Physical ownership ending automatically restores pointing")
         await controller.shutdown()
     }
 
     func testCameraDownSwipeRespectsTextAndTransientOwnership() async {
         for protection in 0...3 {
-            let f = makeFixture(authorized: true), controller = navigation(f.controller)
+            var time = 100.0
+            let f = makeFixture(authorized: true), controller = navigation(f.controller, now: { time })
             let layout = IslandLayoutStore(), window = NSWindow()
             layout.expandedSurfaceFrame = CGRect(x: 0, y: 0, width: 640, height: 400)
             if protection == 1 { layout.setTextInputFocused(true) }
@@ -430,10 +435,10 @@ final class CameraPreviewControllerTests: XCTestCase {
             for i in 0...7 {
                 let point = CGPoint(x: 0.5, y: 0.7 - Double(i) * 0.03)
                 controller.consume(.init(observation: .init(fingertip: point, palm: point, handScale: 0.2,
-                    pinchRatio: 1, pose: .openPalm, confidence: 0.9, timestamp: ProcessInfo.processInfo.systemUptime),
+                    pinchRatio: 1, pose: .openPalm, confidence: 0.9, timestamp: time),
                     generation: controller.trackingGeneration, latency: 0.01))
                 XCTAssertNil(layout.cameraPointerStore.presentation)
-                try? await Task.sleep(for: .milliseconds(50))
+                time += 0.05
             }
             XCTAssertEqual(collapses, protection == 0 ? 1 : 0)
             await controller.shutdown()
