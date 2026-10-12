@@ -7,12 +7,19 @@ import Darwin
 @MainActor
 enum CameraNavigationNativeAcceptance {
     static func run(directory: URL) async {
-        var report: [String: Any] = ["framesSaved": false, "globalInputPosted": false]
+        let settings = AppSettings()
+        var report: [String: Any] = ["framesSaved": false, "globalInputPosted": false,
+            "configuredInputSource": settings.gestureInputSource.rawValue,
+            "desiredCameraNavigation": settings.gesturesEnabled && settings.gestureInputSource == .camera,
+            "cameraPermission": "not verified", "cameraRunning": false, "navigationOwners": 0,
+            "videoOutputAttached": false, "firstFrameReceived": false, "visionFPS": 0.0,
+            "validHandObserved": false, "pointerPresentationProduced": false,
+            "duplicateDynamicIslandInstances": CameraNavigationController.normalInstanceCount()]
         let camera = CameraPreviewController(liveActivities: LiveActivityStore(), capabilities: IslandCapabilityRegistry())
         await camera.refresh()
-        report["permission"] = String(describing: camera.permissionState)
+        report["cameraPermission"] = String(describing: camera.permissionState)
         guard camera.permissionState == .authorized else {
-            report["gate"] = "Open DynamicIsland Settings → Island → Gestures → Enable Camera Navigation, then allow Camera access."
+            report["gate"] = "Select Camera under Settings → Island → Gestures, enable gesture navigation, then press Allow Camera."
             write(report, directory: directory); return
         }
         guard let device = camera.devices.first(where: \.isBuiltIn) ?? camera.devices.first else {
@@ -23,70 +30,104 @@ enum CameraNavigationNativeAcceptance {
             write(report, directory: directory); return
         }
         camera.selectedDeviceID = device.id
-        let navigation = CameraNavigationLease(controller: camera)
+        let fixtureSettings = AppSettings(defaults: SettingsPreviewDefaults())
+        fixtureSettings.gesturesEnabled = settings.gesturesEnabled
+        fixtureSettings.gestureInputSource = settings.gestureInputSource
+        fixtureSettings.clipboardHistoryEnabled = false
+        let state = IslandStateStore()
+        // Run the actual production root/window with inert services and no input delivery.
+        let controller = CameraNavigationController(camera: camera, settings: settings, deliversInput: false)
+        let overlay = OverlayWindowController(settings: fixtureSettings, islandState: state,
+            modules: probeModules(settings: fixtureSettings, camera: camera),
+            geometryService: NotchGeometryService(), cameraNavigation: controller)
+        overlay.setVisible(true)
         let mirror = CameraMirrorConsumerLease(controller: camera)
-        let metrics = Metrics()
-        let mailbox = HandPoseResultMailbox { result in
-            if !metrics.ready {
-                metrics.ready = true; metrics.startupInferenceMS = result.latency * 1000
-            } else { metrics.latencies.append(result.latency * 1000) }
-            if result.failed { metrics.failed = true }
-            if result.observation != nil { metrics.handFrames += 1 }
-        }
-        let processor = HandPoseFrameProcessor(generation: 1) { mailbox.submit($0) }
-        defer { processor.stop(); camera.terminate() }
+        defer { controller.terminate(); camera.terminate(); overlay.setVisible(false) }
         do {
-            try await navigation.acquire()
-            let session = camera.previewSession
-            try await camera.setNavigationProcessor(processor)
-            await mirror.acquire(); try await mirror.startExplicitly()
-            report["sameCaptureSession"] = session === camera.previewSession
-            await mirror.closeByUser()
-            report["mirrorCloseKeepsNavigation"] = camera.isRunning
+            await controller.waitForReconciliation()
             for _ in 0..<400 {
-                if metrics.ready { break }
+                if controller.visionHasProducedResult || controller.runtimeState == .noFrames || !controller.isEnabled { break }
                 try await Task.sleep(for: .milliseconds(50))
             }
-            guard metrics.ready, !metrics.failed else { throw CameraPreviewError.sessionFailed("Hand tracking could not initialize.") }
-            report["startupInferenceMS"] = metrics.startupInferenceMS
-            metrics.latencies = []; metrics.handFrames = 0
-            let started = ProcessInfo.processInfo.systemUptime
+            report["cameraRunning"] = camera.isRunning
+            report["navigationOwners"] = camera.activeNavigationOwners
+            report["videoOutputAttached"] = controller.videoOutputAttached
+            report["firstFrameReceived"] = controller.firstFrameReceived
+            report["collapsedPointerOverlayMounted"] = overlay.cameraPointerOverlayMounted
+            state.expand()
+            try await Task.sleep(for: .milliseconds(100))
+            report["expandedPointerOverlayMounted"] = overlay.cameraPointerOverlayMounted
             report["activeMemoryMB"] = memoryMB()
-            for _ in 0..<200 {
-                let before = ProcessInfo.processInfo.systemUptime
-                try await Task.sleep(for: .milliseconds(50))
-                metrics.uiDelays.append(max(0, ProcessInfo.processInfo.systemUptime - before - 0.05) * 1000)
+            if controller.visionHasProducedResult {
+                let session = camera.previewSession
+                await mirror.acquire(); try await mirror.startExplicitly()
+                report["sameCaptureSession"] = session === camera.previewSession
+                await mirror.closeByUser()
+                report["mirrorCloseKeepsNavigation"] = camera.isRunning
+                for _ in 0..<200 { try await Task.sleep(for: .milliseconds(50)) }
+                report["visionFPS"] = controller.recognitionFPS
+                report["visionMeanMS"] = controller.meanLatencyMS
+                report["visionP95MS"] = controller.p95LatencyMS
+                report["validHandObserved"] = controller.validHandObserved
+                report["pointerPresentationProduced"] = controller.pointerPresentationProduced
+                report["runtimeState"] = controller.status
+                controller.refreshInstanceDiagnostic()
+                report["duplicateDynamicIslandInstances"] = controller.duplicateDynamicIslandInstances
+                report["endActiveMemoryMB"] = memoryMB()
+                await mirror.acquire(); try await mirror.startExplicitly()
+                await controller.shutdown()
+                report["navigationStopKeepsMirror"] = camera.isRunning
+                await mirror.release()
+                report["finalOwnerStopsCapture"] = !camera.isRunning && camera.previewSession == nil
+                report["afterStopMemoryMB"] = memoryMB()
+                report["gate"] = "Physical hand direction, pinch/drag, swipes, scroll separation and mouse priority require a user exercise. Quit other DynamicIsland copies manually before using the repaired package."
+            } else {
+                report["runtimeState"] = controller.status
+                report["gate"] = controller.desiredCameraNavigation ? "Check Again or select another camera; quit other DynamicIsland copies manually if needed." : "Enable gesture navigation and select Camera."
+                await controller.shutdown()
             }
-            let elapsed = ProcessInfo.processInfo.systemUptime - started
-            report["inferenceFPS"] = Double(metrics.latencies.count) / elapsed
-            report["visionMeanMS"] = metrics.latencies.reduce(0, +) / Double(max(1, metrics.latencies.count))
-            report["visionP95MS"] = percentile(metrics.latencies)
-            report["uiDelayP95MS"] = percentile(metrics.uiDelays)
-            report["handFrames"] = metrics.handFrames
-            report["endActiveMemoryMB"] = memoryMB()
-            processor.stop(); try await camera.setNavigationProcessor(nil)
-            await mirror.acquire(); try await mirror.startExplicitly()
-            await navigation.release()
-            report["navigationStopKeepsMirror"] = camera.isRunning
-            await mirror.release()
-            report["finalOwnerStopsCapture"] = !camera.isRunning && camera.previewSession == nil
-            report["afterStopMemoryMB"] = memoryMB()
-            report["gate"] = "Physical hand direction, pinch/drag, page swipes and mouse priority still require a user exercise in the running island."
-        } catch { report["gate"] = error.localizedDescription }
+        } catch { report["gate"] = error.localizedDescription; await controller.shutdown() }
         write(report, directory: directory)
     }
-    private final class Metrics {
-        var ready = false
-        var failed = false
-        var startupInferenceMS = 0.0
-        var latencies: [Double] = []
-        var uiDelays: [Double] = []
-        var handFrames = 0
+    private static func probeModules(settings: AppSettings, camera: CameraPreviewController) -> IslandModules {
+        let defaults = SettingsPreviewDefaults(), activities = LiveActivityStore(), capabilities = IslandCapabilityRegistry()
+        let shelf = FileShelfStore(settings: settings, defaults: defaults)
+        let operations = BackgroundOperationController(liveActivities: activities)
+        let events = AgentEventStore(), approvals = AgentApprovalController()
+        let coordinator = AgentIngestionCoordinator(eventStore: events)
+        let recorder = ScreenRecordingController(liveActivities: activities, capabilities: capabilities)
+        let removal = BackgroundRemovalController(liveActivities: activities, capabilities: capabilities, addToShelf: { _ in })
+        let basket = BasketManager(settings: settings, shelf: shelf, operations: operations)
+        return IslandModules(media: MediaController(), fileShelf: shelf, backgroundOperations: operations,
+            fileDragSession: FileDragSessionController(), shortcuts: ShortcutsStore(), timer: TimerController(),
+            stats: SystemStatsController(), liveActivities: activities,
+            clipboardHistory: ClipboardHistoryStore(settings: settings, automaticallySchedulesTimer: false),
+            navigation: IslandNavigationStore(), agentEvents: events, agentAttention: AgentAttentionCoordinator(),
+            agentApprovalControl: approvals,
+            agentManagedControl: AgentManagedSessionController(provider: nil, coordinator: coordinator, eventStore: events, approvals: approvals),
+            agentProjects: AgentProjectProjectionStore(), agentActivityRecorder: AgentActivityRecorder(),
+            productivity: ProductivityModules(capabilities: capabilities,
+                keepAwake: KeepAwakeController(liveActivities: activities, capabilities: capabilities),
+                windowSnap: WindowSnapController(liveActivities: activities, capabilities: capabilities),
+                terminal: TerminalSessionController(liveActivities: activities, capabilities: capabilities),
+                reminders: RemindersController(liveActivities: activities, capabilities: capabilities),
+                voice: VoiceTranscriptionController(liveActivities: activities, capabilities: capabilities, addToShelf: { _ in }),
+                camera: camera, backgroundRemoval: removal, screenRecording: recorder,
+                screenRecordingSetup: .production(controller: recorder)),
+            systemHUD: SystemHUDController(settings: settings, liveActivities: activities),
+            messaging: MessagingController(adapters: [], liveActivities: activities),
+            rightWorkspace: RightWorkspaceStore(defaults: defaults),
+            workspaceServices: WorkspaceServices(appLibrary: AppLibraryStore(defaults: defaults),
+                calendar: CalendarEventsController(), spotify: SpotifyLibraryController(defaults: defaults, tokens: EmptyCredentials())),
+            basketPresenter: BasketPresenter(manager: basket, settings: settings, fileShelf: shelf, backgroundRemoval: removal))
     }
-    private static func percentile(_ values: [Double]) -> Double {
-        let sorted = values.sorted()
-        return sorted.isEmpty ? 0 : sorted[min(sorted.count - 1, Int(Double(sorted.count) * 0.95))]
+
+    private struct EmptyCredentials: SpotifyCredentialStoring {
+        func credentials() -> SpotifyStoredCredentials { .init() }
+        func store(accessToken: String, expiresAt: Date, refreshToken: String?, authorizationDate: Date?) {}
+        func clear() {}
     }
+
     private static func memoryMB() -> Double {
         var info = mach_task_basic_info()
         var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size / MemoryLayout<integer_t>.size)

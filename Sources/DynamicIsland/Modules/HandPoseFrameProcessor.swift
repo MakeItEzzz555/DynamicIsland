@@ -17,6 +17,7 @@ struct HandPoseFrameResult: Sendable {
     var generation: Int
     var latency: Double
     var failed = false
+    var isSampleReceipt = false
 }
 
 /// All Vision state is confined to this serial output queue. Only numeric
@@ -30,6 +31,7 @@ final class HandPoseFrameProcessor: NSObject, AVCaptureVideoDataOutputSampleBuff
     private var previousObservation: HandNavigationObservation?
     private let lock = NSLock()
     private var stopped = false
+    private var reportedFirstSample = false
 
     init(generation: Int, deliver: @escaping @Sendable (HandPoseFrameResult) -> Void) {
         self.generation = generation; self.deliver = deliver
@@ -44,6 +46,10 @@ final class HandPoseFrameProcessor: NSObject, AVCaptureVideoDataOutputSampleBuff
 
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         guard !isStopped else { return }
+        if !reportedFirstSample {
+            reportedFirstSample = true
+            deliver(.init(observation: nil, generation: generation, latency: 0, isSampleReceipt: true))
+        }
         let time = ProcessInfo.processInfo.systemUptime
         guard let pixels = CMSampleBufferGetImageBuffer(sampleBuffer), cadence.accepts(time) else { return }
         autoreleasepool {

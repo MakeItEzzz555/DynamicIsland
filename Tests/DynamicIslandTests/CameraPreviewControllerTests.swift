@@ -12,9 +12,12 @@ private final class FakeCameraDevices: CameraDeviceProviding {
         CameraDeviceDescriptor(id: "builtin", name: "FaceTime HD Camera", isBuiltIn: true)
     ]
     var requestCount = 0
+    var permissionGate: CheckedContinuation<Void, Never>?
+    var delayPermission = false
 
     func requestAccess() async -> CameraPermissionState {
         requestCount += 1
+        if delayPermission { await withCheckedContinuation { permissionGate = $0 } }
         permissionState = grant
         return permissionState
     }
@@ -25,7 +28,11 @@ private final class FakeCameraDevices: CameraDeviceProviding {
 @MainActor
 private final class FakeCaptureSession: CameraCaptureSessionControlling {
     var outputAttached = false
-    func setNavigationProcessor(_ processor: HandPoseFrameProcessor?) async throws { outputAttached = processor != nil }
+    var outputAttachCount = 0
+    func setNavigationProcessor(_ processor: HandPoseFrameProcessor?) async throws {
+        outputAttached = processor != nil
+        if processor != nil { outputAttachCount += 1 }
+    }
     var previewSession: AVCaptureSession? { nil }
     var onUnexpectedStop: ((String) -> Void)?
     var startError: Error?
@@ -65,6 +72,8 @@ private final class FakeCaptureSession: CameraCaptureSessionControlling {
 /// the real AVCaptureSession startup window.
 @MainActor
 private final class GatedCaptureSession: CameraCaptureSessionControlling {
+    var outputAttached = false
+    func setNavigationProcessor(_ processor: HandPoseFrameProcessor?) async throws { outputAttached = processor != nil }
     var previewSession: AVCaptureSession? { nil }
     var onUnexpectedStop: ((String) -> Void)?
     private(set) var isRunning = false
@@ -94,14 +103,249 @@ private final class GatedCaptureSession: CameraCaptureSessionControlling {
 
 @MainActor
 final class CameraPreviewControllerTests: XCTestCase {
+    private func navigation(_ camera: CameraPreviewController, settings: AppSettings? = nil,
+                            timeout: Duration = .seconds(2), deliversInput: Bool = true, instances: @escaping () -> Int = { 1 }) -> CameraNavigationController {
+        CameraNavigationController(camera: camera, defaults: UserDefaults(suiteName: "camera-repair-\(UUID())")!,
+                                   settings: settings, frameTimeout: timeout, deliversInput: deliversInput, instanceCount: instances)
+    }
+    private func settle(_ controller: CameraNavigationController) async {
+        await controller.waitForReconciliation()
+        for _ in 0..<20 { await Task.yield() }
+        await controller.waitForReconciliation()
+    }
+    func testAuthorizedCameraSelectionStartsOneOwnerAndOutput() async {
+        let f = makeFixture(authorized: true)
+        let controller = navigation(f.controller)
+        controller.reconcile(gesturesEnabled: true, inputSource: .camera)
+        await settle(controller)
+        for _ in 0..<20 { controller.reconcile(gesturesEnabled: true, inputSource: .camera) }
+        await settle(controller)
+        XCTAssertTrue(controller.desiredCameraNavigation)
+        XCTAssertTrue(f.controller.isRunning)
+        XCTAssertEqual(f.controller.activeNavigationOwners, 1)
+        XCTAssertEqual(f.session.startedDeviceIDs.count, 1)
+        XCTAssertEqual(f.session.outputAttachCount, 1)
+        XCTAssertEqual(f.devices.requestCount, 0)
+        await controller.shutdown()
+    }
+    func testCameraSelectionNeverPromptsUntilExplicitAllow() async {
+        let f = makeFixture(), controller = navigation(f.controller)
+        controller.reconcile(gesturesEnabled: true, inputSource: .camera)
+        await settle(controller)
+        XCTAssertEqual(controller.runtimeState, .permissionRequired)
+        XCTAssertEqual(f.devices.requestCount, 0)
+        XCTAssertEqual(f.controller.activeNavigationOwners, 0)
+        XCTAssertFalse(f.session.outputAttached)
+        await controller.allowCamera(); await settle(controller)
+        XCTAssertEqual(f.devices.requestCount, 1)
+        XCTAssertTrue(f.controller.isRunning)
+        XCTAssertTrue(f.session.outputAttached)
+        await controller.shutdown()
+    }
+    func testSourceSwitchAndDisableReleaseCapture() async {
+        for source in [GestureInputSource.trackpad, .none, .camera] {
+            let f = makeFixture(authorized: true)
+            let nav = navigation(f.controller)
+            nav.reconcile(gesturesEnabled: true, inputSource: .camera); await settle(nav)
+            nav.reconcile(gesturesEnabled: source != .camera, inputSource: source)
+            XCTAssertFalse(nav.isEnabled, "Input authority ends synchronously")
+            await settle(nav)
+            XCTAssertFalse(f.controller.isRunning)
+            XCTAssertFalse(f.session.outputAttached)
+            XCTAssertEqual(f.controller.activeNavigationOwners, 0)
+            XCTAssertEqual(nav.runtimeState, .off)
+            await nav.shutdown()
+        }
+    }
+    func testPersistedAuthorizedCameraSourceResumesAndObservedChangesStop() async {
+        let defaults = UserDefaults(suiteName: "camera-launch-\(UUID())")!
+        defaults.set(true, forKey: "gesturesEnabled"); defaults.set("camera", forKey: "gestureInputSource")
+        let settings = AppSettings(defaults: defaults), f = makeFixture(authorized: true)
+        let controller = navigation(f.controller, settings: settings)
+        await settle(controller)
+        XCTAssertTrue(controller.desiredCameraNavigation)
+        XCTAssertTrue(f.controller.isRunning)
+        settings.gestureInputSource = .trackpad; await settle(controller)
+        XCTAssertFalse(f.controller.isRunning)
+        settings.gestureInputSource = .camera; await settle(controller)
+        XCTAssertTrue(f.controller.isRunning)
+        settings.gesturesEnabled = false; await settle(controller)
+        XCTAssertFalse(f.controller.isRunning)
+        await controller.shutdown()
+    }
+    func testStalePermissionCompletionCannotAcquireNavigation() async {
+        let f = makeFixture(), controller = navigation(f.controller)
+        f.devices.delayPermission = true
+        controller.reconcile(gesturesEnabled: true, inputSource: .camera); await settle(controller)
+        let allow = Task { await controller.allowCamera() }
+        while f.devices.permissionGate == nil { await Task.yield() }
+        controller.reconcile(gesturesEnabled: true, inputSource: .trackpad)
+        f.devices.permissionGate?.resume(); f.devices.permissionGate = nil
+        await allow.value; await settle(controller)
+        XCTAssertFalse(f.controller.isRunning)
+        XCTAssertTrue(f.session.startedDeviceIDs.isEmpty)
+        XCTAssertFalse(f.session.outputAttached)
+        XCTAssertEqual(f.controller.activeNavigationOwners, 0)
+        await controller.shutdown()
+    }
+    func testRapidSourceReenableSerializesOldStartupAndLease() async {
+        let devices = FakeCameraDevices(); devices.permissionState = .authorized
+        let session = GatedCaptureSession()
+        let camera = CameraPreviewController(liveActivities: LiveActivityStore(), capabilities: IslandCapabilityRegistry(),
+                                             deviceProvider: devices, session: session)
+        let controller = navigation(camera)
+        controller.reconcile(gesturesEnabled: true, inputSource: .camera)
+        while !session.hasPendingStart { await Task.yield() }
+        controller.reconcile(gesturesEnabled: true, inputSource: .none)
+        controller.reconcile(gesturesEnabled: true, inputSource: .camera)
+        session.releasePendingStart()
+        while !session.hasPendingStart { await Task.yield() }
+        session.releasePendingStart(); await settle(controller)
+        XCTAssertEqual(camera.activeNavigationOwners, 1)
+        XCTAssertTrue(camera.isRunning)
+        await controller.shutdown()
+        XCTAssertFalse(camera.isRunning)
+    }
+    func testDuplicateInstanceWarningDoesNotTakeDownCapture() async {
+        let f = makeFixture(authorized: true)
+        var instances = 2
+        let controller = navigation(f.controller, instances: { instances })
+        controller.reconcile(gesturesEnabled: true, inputSource: .camera); await settle(controller)
+        XCTAssertEqual(controller.duplicateInstanceWarning, "Another DynamicIsland instance is running")
+        XCTAssertTrue(f.controller.isRunning)
+        instances = 1; controller.refreshInstanceDiagnostic()
+        XCTAssertNil(controller.duplicateInstanceWarning)
+        await controller.shutdown()
+    }
+    func testNoFrameWatchdogReportsFailureWithoutRestarting() async throws {
+        let f = makeFixture(authorized: true)
+        let nav = navigation(f.controller, timeout: .milliseconds(15))
+        nav.reconcile(gesturesEnabled: true, inputSource: .camera); await settle(nav)
+        try await Task.sleep(for: .milliseconds(40))
+        XCTAssertEqual(nav.runtimeState, .noFrames)
+        nav.reconcile(gesturesEnabled: true, inputSource: .camera); await settle(nav)
+        XCTAssertEqual(f.session.startedDeviceIDs.count, 1)
+        XCTAssertEqual(f.session.outputAttachCount, 1)
+        await nav.shutdown()
+        XCTAssertEqual(nav.runtimeState, .off)
+    }
+    func testFirstSampleCancelsWatchdogBeforeVisionCompletes() async throws {
+        let f = makeFixture(authorized: true), controller = navigation(f.controller, timeout: .milliseconds(15))
+        controller.reconcile(gesturesEnabled: true, inputSource: .camera); await settle(controller)
+        controller.submit(.init(observation: nil, generation: controller.trackingGeneration, latency: 0, isSampleReceipt: true))
+        for _ in 0..<20 { await Task.yield() }
+        try await Task.sleep(for: .milliseconds(40))
+        XCTAssertTrue(controller.firstFrameReceived)
+        XCTAssertEqual(controller.runtimeState, .preparing)
+        XCTAssertEqual(controller.recognitionFPS, 0)
+        await controller.shutdown()
+    }
+    func testMailboxToFilterToPointerStoreForCollapsedAndExpandedThenLoss() async {
+        let f = makeFixture(authorized: true), controller = navigation(f.controller)
+        controller.reconcile(gesturesEnabled: true, inputSource: .camera); await settle(controller)
+        let window = NSWindow(), layout = IslandLayoutStore()
+        layout.collapsedSurfaceFrame = CGRect(x: 20, y: 20, width: 200, height: 36)
+        layout.updateCollapsedSidecars(.init(leadingSidecarFrame: nil, primaryFrame: layout.collapsedSurfaceFrame, trailingSidecarFrame: nil, interactionFrame: layout.collapsedSurfaceFrame))
+        layout.expandedSurfaceFrame = CGRect(x: 20, y: 20, width: 500, height: 260)
+        var expanded = false
+        controller.connect(window: window, layout: layout, isExpanded: { expanded }, canInteract: { true }, expand: {}, page: { _ in })
+        for value in [false, true] {
+            expanded = value
+            let hand = HandNavigationObservation(fingertip: CGPoint(x: 0.5, y: 0.5), palm: CGPoint(x: 0.5, y: 0.5),
+                handScale: 0.2, pinchRatio: 1, pose: .pointer, confidence: 0.9, timestamp: ProcessInfo.processInfo.systemUptime)
+            controller.submit(.init(observation: hand, generation: controller.trackingGeneration, latency: 0.02))
+            for _ in 0..<20 { await Task.yield() }
+            XCTAssertNotNil(layout.cameraPointerStore.presentation)
+            XCTAssertTrue(controller.pointerPresentationProduced)
+            XCTAssertEqual(controller.runtimeState, .tracking)
+        }
+        controller.submit(.init(observation: nil, generation: controller.trackingGeneration, latency: 0.02))
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertNil(layout.cameraPointerStore.presentation)
+        XCTAssertEqual(controller.runtimeState, .noHand)
+        await controller.shutdown(); controller.terminate()
+    }
+    func testDeviceChangeReattachesOutputAndRejectsOldFrameWatchdog() async throws {
+        let f = makeFixture(authorized: true), controller = navigation(f.controller, timeout: .milliseconds(25))
+        controller.reconcile(gesturesEnabled: true, inputSource: .camera); await settle(controller)
+        let old = controller.trackingGeneration
+        try await f.controller.selectDevice(id: "ext"); await settle(controller)
+        XCTAssertTrue(controller.isEnabled)
+        XCTAssertTrue(f.controller.isRunning)
+        XCTAssertEqual(f.controller.activeNavigationOwners, 1)
+        XCTAssertEqual(f.session.outputAttachCount, 2)
+        XCTAssertGreaterThan(controller.trackingGeneration, old)
+        controller.submit(.init(observation: nil, generation: old, latency: 0, isSampleReceipt: true))
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertFalse(controller.firstFrameReceived)
+        controller.submit(.init(observation: nil, generation: controller.trackingGeneration, latency: 0, isSampleReceipt: true))
+        for _ in 0..<20 { await Task.yield() }
+        try await Task.sleep(for: .milliseconds(60))
+        XCTAssertEqual(controller.runtimeState, .preparing)
+        await controller.shutdown()
+        try await Task.sleep(for: .milliseconds(40))
+        XCTAssertEqual(controller.runtimeState, .off)
+    }
+    func testMirrorAndRuntimeNavigationReleaseIndependently() async throws {
+        let f = makeFixture(authorized: true), controller = navigation(f.controller)
+        let mirror = CameraMirrorConsumerLease(controller: f.controller)
+        controller.reconcile(gesturesEnabled: true, inputSource: .camera); await settle(controller)
+        await mirror.acquire(); try await mirror.startExplicitly()
+        await mirror.closeByUser()
+        XCTAssertTrue(f.controller.isRunning)
+        XCTAssertTrue(f.session.outputAttached)
+        await mirror.acquire(); try await mirror.startExplicitly()
+        controller.reconcile(gesturesEnabled: true, inputSource: .trackpad); await settle(controller)
+        XCTAssertTrue(f.controller.isRunning)
+        XCTAssertFalse(f.session.outputAttached)
+        XCTAssertEqual(f.controller.activeNavigationOwners, 0)
+        await mirror.release()
+        XCTAssertFalse(f.controller.isRunning)
+        await controller.shutdown()
+    }
+    func testReadOnlyAcceptanceProducesPointerWithoutExecutingPinchActions() async {
+        let f = makeFixture(authorized: true), controller = navigation(f.controller, deliversInput: false)
+        let layout = IslandLayoutStore(), window = NSWindow()
+        layout.collapsedSurfaceFrame = CGRect(x: 20, y: 20, width: 200, height: 36)
+        layout.updateCollapsedSidecars(.init(leadingSidecarFrame: nil, primaryFrame: layout.collapsedSurfaceFrame,
+            trailingSidecarFrame: nil, interactionFrame: layout.collapsedSurfaceFrame))
+        var expanded = 0
+        controller.connect(window: window, layout: layout, isExpanded: { false }, canInteract: { true },
+                           expand: { expanded += 1 }, page: { _ in XCTFail("Read-only probe cannot navigate") })
+        controller.reconcile(gesturesEnabled: true, inputSource: .camera); await settle(controller)
+        let base = ProcessInfo.processInfo.systemUptime - 0.2
+        for (offset, pinch) in [(0.0, 1.0), (0.02, 0.1), (0.09, 0.1), (0.12, 1.0)] {
+            let hand = HandNavigationObservation(fingertip: CGPoint(x: 0.5, y: 0.5), palm: CGPoint(x: 0.5, y: 0.5),
+                handScale: 0.2, pinchRatio: pinch, pose: .pointer, confidence: 0.9, timestamp: base + offset)
+            controller.consume(.init(observation: hand, generation: controller.trackingGeneration, latency: 0.01))
+        }
+        XCTAssertTrue(controller.pointerPresentationProduced)
+        XCTAssertNotNil(layout.cameraPointerStore.presentation)
+        XCTAssertEqual(expanded, 0)
+        await controller.shutdown()
+    }
+    func testDeniedPermissionCheckAgainDoesNotPrompt() async {
+        let f = makeFixture(), controller = navigation(f.controller)
+        f.devices.permissionState = .denied
+        await f.controller.refresh()
+        controller.reconcile(gesturesEnabled: true, inputSource: .camera); await settle(controller)
+        await controller.checkAgain(); await settle(controller)
+        XCTAssertEqual(controller.runtimeState, .permissionRequired)
+        XCTAssertEqual(f.devices.requestCount, 0)
+        f.devices.permissionState = .authorized
+        await controller.checkAgain(); await settle(controller)
+        XCTAssertTrue(f.controller.isRunning)
+        await controller.shutdown()
+    }
     func testCameraNavigationReportsPreparationUntilFirstVisionResult() async {
         let f = makeFixture(authorized: true)
         let controller = CameraNavigationController(camera: f.controller, defaults: UserDefaults(suiteName: "camera-prepare-\(UUID())")!)
-        await controller.start()
+        controller.reconcile(gesturesEnabled: true, inputSource: .camera)
+        await controller.waitForReconciliation()
         XCTAssertEqual(controller.status, "Preparing hand tracking…")
         controller.consume(.init(observation: nil, generation: controller.trackingGeneration, latency: 0.02))
         XCTAssertEqual(controller.status, "Waiting for the island")
-        await controller.stop(); controller.terminate()
+        await controller.shutdown(); controller.terminate()
     }
     func testFrameMailboxCoalescesWithoutRetainingFramesOrTasks() async {
         var received: [Int] = []
@@ -116,10 +360,14 @@ final class CameraPreviewControllerTests: XCTestCase {
         let controller = CameraNavigationController(camera: f.controller, defaults: defaults)
         let layout = IslandLayoutStore()
         layout.expandedSurfaceFrame = CGRect(x: 0, y: 0, width: 640, height: 200)
+        layout.collapsedSurfaceFrame = CGRect(x: 200, y: 160, width: 240, height: 36)
+        layout.updateCollapsedSidecars(.init(leadingSidecarFrame: nil, primaryFrame: layout.collapsedSurfaceFrame,
+            trailingSidecarFrame: nil, interactionFrame: layout.collapsedSurfaceFrame))
         var expanded = false
         let window = NSWindow()
         controller.connect(window: window, layout: layout, isExpanded: { expanded }, canInteract: { true }, expand: {}, page: { _ in })
-        await controller.start()
+        controller.reconcile(gesturesEnabled: true, inputSource: .camera)
+        await controller.waitForReconciliation()
         let time = ProcessInfo.processInfo.systemUptime
         let hand = HandNavigationObservation(fingertip: CGPoint(x: 0.5, y: 0.5), palm: CGPoint(x: 0.5, y: 0.5),
             handScale: 0.2, pinchRatio: 1, pose: .pointer, confidence: 0.9, timestamp: time)
@@ -134,7 +382,7 @@ final class CameraPreviewControllerTests: XCTestCase {
         controller.consume(.init(observation: nil, generation: controller.trackingGeneration, latency: 0.01))
         XCTAssertFalse(controller.isTracking)
         XCTAssertTrue(layout.isTransientInteractionActive, "Tracking loss keeps only the bounded grace hold")
-        await controller.stop()
+        await controller.shutdown()
         XCTAssertFalse(layout.isTransientInteractionActive)
         XCTAssertFalse(f.session.outputAttached)
         controller.consume(.init(observation: hand, generation: controller.trackingGeneration - 1, latency: 0.01))

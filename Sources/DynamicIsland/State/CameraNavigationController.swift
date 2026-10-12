@@ -19,11 +19,45 @@ struct CameraPointerPresentation: Equatable {
     var overControl: Bool
 }
 
+enum CameraNavigationRuntimeState: Equatable {
+    case off, starting, preparing, tracking, noHand, suspendedPhysicalInput, waitingForIsland
+    case permissionRequired, noFrames, unavailable(String)
+
+    var message: String {
+        switch self {
+        case .off: "Camera navigation is off"
+        case .starting: "Starting camera…"
+        case .preparing: "Preparing hand tracking…"
+        case .tracking: "Tracking"
+        case .noHand: "Camera active · No hand"
+        case .suspendedPhysicalInput: "Using mouse/trackpad/keyboard"
+        case .waitingForIsland: "Waiting for the island"
+        case .permissionRequired: "Camera access is required"
+        case .noFrames: "No camera frames received"
+        case .unavailable(let reason): "Camera unavailable · \(reason)"
+        }
+    }
+}
+
 @MainActor
 final class CameraNavigationController: ObservableObject {
-    @Published private(set) var isEnabled = false
+    // Runtime capture intent, derived only from reconciliation; never persisted.
+    private var captureRequested = false
+    var isEnabled: Bool { captureRequested }
+    @Published private(set) var desiredCameraNavigation = false
+    @Published private(set) var configuredInputSource: GestureInputSource = .none
+    @Published private(set) var runtimeState: CameraNavigationRuntimeState = .off
+    var status: String { runtimeState.message }
+    @Published private(set) var duplicateDynamicIslandInstances = 0
+    var duplicateInstanceWarning: String? {
+        duplicateDynamicIslandInstances > 1 ? "Another DynamicIsland instance is running" : nil
+    }
+    @Published private(set) var firstFrameReceived = false
+    @Published private(set) var videoOutputAttached = false
+    @Published private(set) var validHandObserved = false
+    @Published private(set) var pointerPresentationProduced = false
+    @Published private(set) var calibrationError: String?
     @Published private(set) var isTracking = false
-    @Published private(set) var status = "Camera navigation is off"
     @Published private(set) var recognitionFPS = 0.0
     @Published private(set) var meanLatencyMS = 0.0
     @Published private(set) var p95LatencyMS = 0.0
@@ -41,6 +75,14 @@ final class CameraNavigationController: ObservableObject {
     private var processor: HandPoseFrameProcessor?
     private var outputGeneration: Int?
     private var phaseSubscription: AnyCancellable?
+    private var settingsSubscription: AnyCancellable?
+    private var instanceSubscription: AnyCancellable?
+    private let instanceCount: () -> Int
+    private let frameTimeout: Duration
+    private let deliversInput: Bool
+    private var transitionTask: Task<Void, Never>?
+    private var frameWatchdog: Task<Void, Never>?
+    private var reconciled = false
     private var renderTimer: Timer?
     private var machine = HandNavigationStateMachine()
     private var filter = HandPointerFilter()
@@ -51,6 +93,7 @@ final class CameraNavigationController: ObservableObject {
     private var metricsStartedAt: TimeInterval = 0
     private var metricCount = 0
     private var hasReceivedFrame = false
+    var visionHasProducedResult: Bool { hasReceivedFrame }
     private var calibrationSamples: [Double] = []
     private weak var window: NSWindow?
     private var layout: IslandLayoutStore?
@@ -62,8 +105,11 @@ final class CameraNavigationController: ObservableObject {
     private var collapsedPress = false
     private lazy var mailbox = HandPoseResultMailbox { [weak self] result in self?.consume(result) }
 
-    init(camera: CameraPreviewController, defaults: UserDefaults = .standard) {
+    init(camera: CameraPreviewController, defaults: UserDefaults = .standard,
+         settings: AppSettings? = nil, frameTimeout: Duration = .seconds(2), deliversInput: Bool = true,
+         instanceCount: @escaping () -> Int = { CameraNavigationController.normalInstanceCount() }) {
         self.camera = camera; self.defaults = defaults
+        self.frameTimeout = frameTimeout; self.instanceCount = instanceCount; self.deliversInput = deliversInput
         lease = CameraNavigationLease(controller: camera)
         preferences = defaults.data(forKey: Self.preferenceKey).flatMap { try? JSONDecoder().decode(CameraNavigationPreferences.self, from: $0) } ?? .init()
         phaseSubscription = camera.$phase.dropFirst().sink { [weak self] phase in
@@ -71,22 +117,100 @@ final class CameraNavigationController: ObservableObject {
             switch phase {
             case .starting, .stopping:
                 if self.processor != nil { self.generation += 1 }
-                self.processor?.stop(); self.processor = nil; self.outputGeneration = nil
+                self.resetOutputState()
+                self.runtimeState = .starting
                 self.loseTracking(immediately: true)
             case .running:
                 Task { @MainActor [weak self] in await self?.attachOutput() }
-            case .failed, .idle:
+            case .failed(let message):
+                self.queueFailure(message)
+            case .idle:
+                let token = self.generation
                 Task { @MainActor [weak self] in
-                    guard let self, self.isEnabled, self.camera.phase == phase else { return }
-                    let status = self.camera.statusText
-                    await self.stop(); self.status = status
+                    guard let self, self.generation == token, self.isEnabled, self.camera.phase == .idle else { return }
+                    self.queueFailure("Camera session stopped")
                 }
             }
+        }
+        instanceSubscription = Publishers.Merge(
+            NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didLaunchApplicationNotification),
+            NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didTerminateApplicationNotification)
+        ).sink { [weak self] _ in
+            Task { @MainActor [weak self] in self?.refreshInstanceDiagnostic() }
+        }
+        refreshInstanceDiagnostic()
+        if let settings {
+            settingsSubscription = settings.$gesturesEnabled.combineLatest(settings.$gestureInputSource)
+                .removeDuplicates { $0.0 == $1.0 && $0.1 == $1.1 }
+                .sink { [weak self] enabled, source in self?.reconcile(gesturesEnabled: enabled, inputSource: source) }
+        }
+    }
+
+    static func normalInstanceCount() -> Int {
+        let probe = CommandLine.arguments.dropFirst().contains { $0.hasPrefix("--validate-") || $0.hasPrefix("--probe-") }
+        return NSRunningApplication.runningApplications(withBundleIdentifier: "com.local.dynamicisland")
+            .filter { !$0.isTerminated && (!probe || $0.processIdentifier != ProcessInfo.processInfo.processIdentifier) }.count
+    }
+
+    func refreshInstanceDiagnostic() { duplicateDynamicIslandInstances = instanceCount() }
+
+    /// AppSettings is the sole durable authority; initial publication also resumes an authorized launch.
+    func reconcile(gesturesEnabled: Bool, inputSource: GestureInputSource) {
+        configuredInputSource = inputSource
+        let desired = gesturesEnabled && inputSource == .camera
+        guard !reconciled || desired != desiredCameraNavigation else { return }
+        reconciled = true; desiredCameraNavigation = desired
+        queueReconciliation(requestPermission: false)
+    }
+
+    func allowCamera() async {
+        guard desiredCameraNavigation, camera.permissionState == .notDetermined else { return }
+        queueReconciliation(requestPermission: true)
+        await waitForReconciliation()
+    }
+
+    func checkAgain() async {
+        await camera.refresh(); refreshInstanceDiagnostic()
+        if desiredCameraNavigation, !isEnabled || runtimeState == .noFrames {
+            queueReconciliation(requestPermission: false)
+            await waitForReconciliation()
+        }
+    }
+
+    func waitForReconciliation() async { await transitionTask?.value }
+
+    private func queueReconciliation(requestPermission: Bool) {
+        let previous = transitionTask
+        invalidate()
+        let token = generation
+        if desiredCameraNavigation {
+            runtimeState = camera.permissionState == .authorized || requestPermission ? .starting : .permissionRequired
+        }
+        transitionTask = Task { @MainActor [weak self] in
+            await previous?.value
+            guard let self else { return }
+            // Serialize release and reacquisition of the same lease, including rapid source changes.
+            await self.releaseCapture()
+            guard token == self.generation, self.desiredCameraNavigation else { return }
+            if requestPermission { await self.camera.requestNavigationAccess() }
+            guard token == self.generation, self.desiredCameraNavigation else { return }
+            guard self.camera.permissionState == .authorized else { self.runtimeState = .permissionRequired; return }
+            await self.startRuntime()
+        }
+    }
+
+    private func queueFailure(_ message: String) {
+        let previous = transitionTask
+        invalidate(); runtimeState = .unavailable(message)
+        transitionTask = Task { @MainActor [weak self] in
+            await previous?.value
+            await self?.releaseCapture()
         }
     }
 
     func connect(window: NSWindow, layout: IslandLayoutStore, isExpanded: @escaping () -> Bool,
                  canInteract: @escaping () -> Bool, expand: @escaping () -> Void, page: @escaping (Bool) -> Void) {
+        loseTracking(immediately: true)
         router?.shutdown()
         self.window = window; self.layout = layout; self.isExpanded = isExpanded
         self.canInteract = canInteract; self.expand = expand; self.page = page
@@ -101,18 +225,17 @@ final class CameraNavigationController: ObservableObject {
         }
     }
 
-    /// Only called by the explicit Settings toggle, never by view appearance.
-    func start() async {
+    private func startRuntime() async {
         guard !isEnabled else { return }
-        generation += 1; let token = generation
-        isEnabled = true; status = "Starting camera…"
+        let token = generation
+        captureRequested = true; runtimeState = .starting
         do {
-            try await lease.acquire()
+            try await lease.acquire(requestPermission: false)
             guard token == generation, isEnabled else { return }
             if camera.isRunning { await attachOutput() }
         } catch {
             guard token == generation else { return }
-            await stop(); status = error.localizedDescription
+            queueFailure(error.localizedDescription)
         }
     }
 
@@ -126,7 +249,16 @@ final class CameraNavigationController: ObservableObject {
         do {
             try await camera.setNavigationProcessor(processor)
             guard token == generation, isEnabled else { processor.stop(); return }
-            hasReceivedFrame = false; status = "Preparing hand tracking…"
+            videoOutputAttached = true
+            if !hasReceivedFrame { runtimeState = .preparing }
+            if !firstFrameReceived {
+                frameWatchdog = Task { @MainActor [weak self, frameTimeout] in
+                    do { try await Task.sleep(for: frameTimeout) } catch { return }
+                    guard let self, self.generation == token, self.isEnabled,
+                          self.videoOutputAttached, !self.firstFrameReceived else { return }
+                    self.runtimeState = .noFrames
+                }
+            }
             metricsStartedAt = ProcessInfo.processInfo.systemUptime; metricCount = 0; latencySamples = []
             if renderTimer == nil {
                 let timer = Timer(timeInterval: 1 / 60, repeats: true) { [weak self] _ in
@@ -136,46 +268,67 @@ final class CameraNavigationController: ObservableObject {
             }
         } catch {
             guard token == generation else { return }
-            await stop(); status = error.localizedDescription
+            queueFailure(error.localizedDescription)
         }
     }
 
-    func stop() async {
-        invalidate()
+    private func releaseCapture() async {
         try? await camera.setNavigationProcessor(nil)
         await lease.release()
     }
 
+    func shutdown() async {
+        settingsSubscription?.cancel()
+        desiredCameraNavigation = false
+        queueReconciliation(requestPermission: false)
+        await waitForReconciliation()
+    }
+
     func terminate() {
+        settingsSubscription?.cancel(); instanceSubscription?.cancel()
         invalidate(); router?.shutdown()
     }
 
     func physicalTouchSession(active: Bool) { router?.physicalTouchSession(active: active) }
 
     private func invalidate() {
-        generation += 1; isEnabled = false; outputGeneration = nil
-        hasReceivedFrame = false
-        processor?.stop(); processor = nil
+        generation += 1; captureRequested = false
+        resetOutputState()
         renderTimer?.invalidate(); renderTimer = nil
         calibrationStep = nil; calibrationSamples = []
-        loseTracking(immediately: true); status = "Camera navigation is off"
+        loseTracking(immediately: true); runtimeState = .off
     }
 
+    private func resetOutputState() {
+        frameWatchdog?.cancel(); frameWatchdog = nil
+        firstFrameReceived = false; hasReceivedFrame = false; videoOutputAttached = false
+        validHandObserved = false; pointerPresentationProduced = false
+        recognitionFPS = 0; meanLatencyMS = 0; p95LatencyMS = 0
+        outputGeneration = nil; processor?.stop(); processor = nil
+    }
+
+    /// Same bounded mailbox used by the sample delegate and deterministic integration acceptance.
+    func submit(_ result: HandPoseFrameResult) { mailbox.submit(result) }
+
     func consume(_ result: HandPoseFrameResult) {
+        guard isEnabled, result.generation == generation else { return }
+        if !firstFrameReceived {
+            firstFrameReceived = true; frameWatchdog?.cancel(); frameWatchdog = nil
+            runtimeState = .preparing
+        }
+        if result.isSampleReceipt { return }
+        if result.observation?.isValid == true { validHandObserved = true }
         let time = ProcessInfo.processInfo.systemUptime
-        if isEnabled, result.generation == generation, !hasReceivedFrame {
+        if !hasReceivedFrame {
             hasReceivedFrame = true
             metricsStartedAt = time; metricCount = 0; latencySamples = []
         }
-        if isEnabled, result.generation == generation, result.failed {
+        if result.failed {
             loseTracking(immediately: true)
-            Task { @MainActor [weak self] in
-                guard let self, self.isEnabled, result.generation == self.generation else { return }
-                await self.stop(); self.status = "Hand tracking is unavailable. Try enabling it again."
-            }
+            queueFailure("Hand tracking failed. Check Again to retry.")
             return
         }
-        if isEnabled, result.generation == generation {
+        do {
             metricCount += 1
             latencySamples.append(result.latency * 1000)
             if latencySamples.count > 120 { latencySamples.removeFirst() }
@@ -187,20 +340,21 @@ final class CameraNavigationController: ObservableObject {
                 metricsStartedAt = time; metricCount = 0
             }
         }
-        guard isEnabled, result.generation == generation, canInteract(), router?.physicalOwnsInput != true,
+        guard isEnabled, result.generation == generation, canInteract(), !interactionFrame.isEmpty, router?.physicalOwnsInput != true,
               let observation = result.observation, observation.isValid,
               time - observation.timestamp >= 0, time - observation.timestamp < 0.25 else {
-            if isEnabled, result.generation == generation { loseTracking(immediately: false) }
+            loseTracking(immediately: false)
             return
         }
         lastTrackedAt = time
-        if !isTracking { isTracking = true; status = "Tracking" }
+        if !isTracking { isTracking = true }; runtimeState = .tracking
         target = filter.update(preferences.calibration.map(observation.fingertip, sensitivity: preferences.sensitivity),
                                at: observation.timestamp, smoothing: preferences.smoothing)
         if rendered == nil { rendered = target }
         let actions = machine.update(observation, pinchSensitivity: preferences.pinchSensitivity,
                                      pageSwipe: preferences.horizontalPageSwipe, scroll: preferences.twoFingerScroll)
         render()
+        guard deliversInput else { return }
         for action in actions {
             if calibrationStep != nil {
                 if action == .press { recordCalibration(observation.fingertip) }
@@ -276,6 +430,7 @@ final class CameraNavigationController: ObservableObject {
         if let point = canvasPoint, preferences.showPointer {
             let next = CameraPointerPresentation(point: point, phase: machine.phase, overControl: isOverNativeControl || windowPoint.map { router?.isInteractive(at: $0) ?? false } == true)
             if layout.cameraPointerStore.presentation != next { layout.cameraPointerStore.presentation = next }
+            pointerPresentationProduced = true
         } else if layout.cameraPointerStore.presentation != nil { layout.cameraPointerStore.presentation = nil }
     }
 
@@ -288,9 +443,11 @@ final class CameraNavigationController: ObservableObject {
                 layout?.cameraPointerStore.presentation = nil
             }
         }
-        let nextStatus = !hasReceivedFrame ? "Preparing hand tracking…" : router?.physicalOwnsInput == true
-            ? "Using mouse, trackpad or keyboard" : !canInteract() ? "Waiting for the island" : "No hand"
-        if isEnabled, status != nextStatus { status = nextStatus }
+        if isEnabled, hasReceivedFrame {
+            let next: CameraNavigationRuntimeState = router?.physicalOwnsInput == true ? .suspendedPhysicalInput
+                : !canInteract() || interactionFrame.isEmpty ? .waitingForIsland : .noHand
+            if runtimeState != next { runtimeState = next }
+        }
         if immediately || ProcessInfo.processInfo.systemUptime - lastTrackedAt > 0.65 {
             layout?.setTransientInteraction(false, owner: holdOwner)
         }
@@ -298,7 +455,7 @@ final class CameraNavigationController: ObservableObject {
 
     func beginCalibration() {
         guard isEnabled else { return }
-        router?.cancel(); _ = machine.reset(); calibrationStep = 0; calibrationSamples = []
+        router?.cancel(); _ = machine.reset(); calibrationError = nil; calibrationStep = 0; calibrationSamples = []
     }
     func cancelCalibration() { calibrationStep = nil; calibrationSamples = [] }
     func resetCalibration() { cancelCalibration(); preferences.calibration = .init() }
@@ -309,6 +466,6 @@ final class CameraNavigationController: ObservableObject {
         let calibration = HandNavigationCalibration(left: calibrationSamples[0], right: calibrationSamples[1],
                                                      bottom: calibrationSamples[3], top: calibrationSamples[2])
         if calibration.isValid { preferences.calibration = calibration; cancelCalibration() }
-        else { calibrationSamples = []; calibrationStep = 0; status = "Calibration bounds were too close. Try again." }
+        else { calibrationSamples = []; calibrationStep = 0; calibrationError = "Calibration bounds were too close. Try again." }
     }
 }

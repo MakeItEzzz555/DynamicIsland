@@ -713,6 +713,7 @@ struct IslandRootView: View {
                 collapsedSidecarOverlay
                 trayQuickActionOverlay
                 CameraPointerOverlay(store: layoutStore.cameraPointerStore, canvasSize: layoutStore.canvasSize)
+                    .zIndex(100)
                     .allowsHitTesting(false)
             }
         }

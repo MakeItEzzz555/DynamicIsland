@@ -4,6 +4,7 @@ import SwiftUI
 @MainActor
 final class CameraPointerStore: ObservableObject {
     @Published var presentation: CameraPointerPresentation?
+    @Published var isMounted = false
 }
 
 struct CameraPointerOverlay: View {
@@ -18,6 +19,8 @@ struct CameraPointerOverlay: View {
         }
         .frame(width: canvasSize.width, height: canvasSize.height)
         .allowsHitTesting(false)
+        .onAppear { store.isMounted = true }
+        .onDisappear { store.isMounted = false }
     }
 }
 
@@ -47,15 +50,11 @@ struct CameraNavigationSettingsView: View {
     var body: some View {
         GroupBox("Camera Navigation") {
             VStack(alignment: .leading, spacing: 12) {
-                Toggle("Enable Camera Navigation", isOn: Binding(get: { navigation.isEnabled }, set: { enabled in
-                    changing = true
-                    Task { @MainActor in
-                        if enabled { await navigation.start() } else { await navigation.stop() }
-                        changing = false
-                    }
-                }))
-                .toggleStyle(.switch)
-                .disabled(changing)
+                if let warning = navigation.duplicateInstanceWarning {
+                    Label(warning, systemImage: "exclamationmark.triangle")
+                    Text("Quit other DynamicIsland copies if camera tracking does not start.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 LabeledContent("Status", value: navigation.status)
                 LabeledContent("Camera permission", value: camera.permissionState == .authorized ? "Granted" : "Required")
                 Picker("Camera", selection: Binding(get: { camera.selectedDeviceID ?? "" }, set: { id in
@@ -69,11 +68,17 @@ struct CameraNavigationSettingsView: View {
                     if camera.devices.isEmpty { Text("No available camera").tag("") }
                     ForEach(camera.devices) { device in Text(device.name).tag(device.id) }
                 }.disabled(changing || camera.devices.isEmpty)
-                if camera.permissionState != .authorized {
+                if camera.permissionState == .notDetermined {
+                    Button("Allow Camera") { Task { await navigation.allowCamera() } }
+                        .disabled(!navigation.desiredCameraNavigation || navigation.runtimeState == .starting)
+                } else if camera.permissionState != .authorized {
                     Button("Open Camera Settings") {
                         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera") { NSWorkspace.shared.open(url) }
                     }
-                    Button("Check Again") { Task { await camera.refresh() } }
+                }
+                Button("Check Again") { Task { await navigation.checkAgain() } }
+                if navigation.runtimeState == .noFrames {
+                    Text("Check Again or select another camera.").font(.caption).foregroundStyle(.secondary)
                 }
                 Toggle("Show virtual pointer", isOn: $navigation.preferences.showPointer)
                 Toggle("Magnetic controls", isOn: $navigation.preferences.magneticControls)
@@ -86,6 +91,7 @@ struct CameraNavigationSettingsView: View {
                     Button("Calibrate…") { navigation.beginCalibration() }.disabled(!navigation.isEnabled)
                     Button("Reset Calibration") { navigation.resetCalibration() }
                 }
+                if let error = navigation.calibrationError { Text(error).font(.caption) }
                 if let step = navigation.calibrationStep {
                     Text("Point \(["left", "right", "top", "bottom"][step]), then pinch to confirm.")
                     Button("Cancel Calibration") { navigation.cancelCalibration() }
@@ -93,7 +99,13 @@ struct CameraNavigationSettingsView: View {
                 Text("Use one hand: point with your index finger, pinch to click or drag, and open your palm to cancel. Text entry uses the keyboard. Processing stays on this Mac; camera images are never saved.")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 DisclosureGroup("Diagnostics") {
-                    LabeledContent("Recognition", value: String(format: "%.1f FPS", navigation.recognitionFPS))
+                    LabeledContent("Capture session running", value: camera.isRunning ? "Yes" : "No")
+                    LabeledContent("Video output attached", value: navigation.videoOutputAttached ? "Yes" : "No")
+                    LabeledContent("Video frames received", value: navigation.firstFrameReceived ? "Yes" : "No")
+                    LabeledContent("Hand", value: navigation.isTracking ? "Tracking" : "No hand")
+                    if navigation.firstFrameReceived {
+                        LabeledContent("Recognition", value: String(format: "%.1f FPS", navigation.recognitionFPS))
+                    }
                     LabeledContent("Vision latency", value: String(format: "%.1f ms mean · %.1f ms p95", navigation.meanLatencyMS, navigation.p95LatencyMS))
                     LabeledContent("Session owners", value: "Navigation \(camera.activeNavigationOwners) · Mirror \(camera.activePreviewConsumers)")
                 }

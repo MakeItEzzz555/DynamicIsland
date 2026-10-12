@@ -357,10 +357,10 @@ final class CameraNavigationLease {
     private let owner = UUID()
     private(set) var isHeld = false
     init(controller: CameraPreviewController) { self.controller = controller }
-    func acquire() async throws {
+    func acquire(requestPermission: Bool = true) async throws {
         guard !isHeld else { return }
         isHeld = true
-        do { try await controller.acquireNavigation(owner: owner) }
+        do { try await controller.acquireNavigation(owner: owner, requestPermission: requestPermission) }
         catch { isHeld = false; throw error }
     }
     func release() async {
@@ -526,7 +526,7 @@ final class CameraPreviewController: ObservableObject, IslandCapabilityAdapter {
         }
     }
 
-    private func startCapture() async throws {
+    private func startCapture(requestPermission: Bool = true) async throws {
         guard isEnabled else { throw CameraPreviewError.disabled }
         if case .running = phase { return }
         if phase == .starting { return }
@@ -537,7 +537,7 @@ final class CameraPreviewController: ObservableObject, IslandCapabilityAdapter {
         publishState()
 
         if deviceProvider.permissionState == .notDetermined {
-            permissionState = await deviceProvider.requestAccess()
+            permissionState = requestPermission ? await deviceProvider.requestAccess() : .notDetermined
         } else {
             permissionState = deviceProvider.permissionState
         }
@@ -644,9 +644,9 @@ final class CameraPreviewController: ObservableObject, IslandCapabilityAdapter {
 
     var activeNavigationOwners: Int { navigationOwners.count }
 
-    func acquireNavigation(owner: UUID) async throws {
+    func acquireNavigation(owner: UUID, requestPermission: Bool = true) async throws {
         navigationOwners.insert(owner)
-        do { try await startCapture() }
+        do { try await startCapture(requestPermission: requestPermission) }
         catch { navigationOwners.remove(owner); throw error }
     }
 
@@ -660,6 +660,14 @@ final class CameraPreviewController: ObservableObject, IslandCapabilityAdapter {
     func setNavigationProcessor(_ processor: HandPoseFrameProcessor?) async throws {
         guard processor == nil || !navigationOwners.isEmpty else { throw CameraPreviewError.disabled }
         try await session.setNavigationProcessor(processor)
+    }
+
+    /// Explicit Allow only. Permission completion does not acquire capture ownership.
+    func requestNavigationAccess() async {
+        if deviceProvider.permissionState == .notDetermined {
+            permissionState = await deviceProvider.requestAccess()
+        }
+        await refresh()
     }
 
     /// A visible preview surface appeared. Passive: it only registers the

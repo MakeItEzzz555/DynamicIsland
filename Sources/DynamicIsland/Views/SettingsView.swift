@@ -1075,7 +1075,7 @@ struct SettingsView: View {
 
     private var pointerShortcutSettings: some View {
         SettingsGroup("Gesture Shortcuts") {
-                Toggle("Enable pointer shortcuts", isOn: $settings.gesturesEnabled)
+                Toggle("Enable gesture navigation", isOn: $settings.gesturesEnabled)
                 Picker("Input source", selection: $settings.gestureInputSource) {
                     ForEach(GestureInputSource.allCases) { source in
                         Text(source == .keyboardShortcut ? "Keyboard Shortcut (Unavailable)" : source.displayName).tag(source)
@@ -1093,16 +1093,16 @@ struct SettingsView: View {
                 gestureActionPicker("Long Press", selection: $settings.expandedLongPressAction)
                 Toggle("Require confirmation", isOn: $settings.requireGestureConfirmation)
                     .disabled(!settings.gesturesEnabled || settings.gestureInputSource != .trackpad)
-                HelpText("Shortcuts act on the island background. Content controls keep their own clicks. Camera Navigation has its own explicit enable switch below.")
+                HelpText("Select Camera to use hand navigation. Pointer / Trackpad shortcuts act on the island background; content controls keep their own clicks.")
         }
     }
 
     private var gesturesSection: some View {
         settingsForm("Gesture Shortcuts") {
-            if let cameraNavigation {
+            pointerShortcutSettings
+            if settings.gestureInputSource == .camera, let cameraNavigation {
                 CameraNavigationSettingsView(navigation: cameraNavigation, camera: cameraNavigation.camera)
             }
-            pointerShortcutSettings
             DisclosureGroup("Advanced recognition") {
               SettingsGroup("Pointer / Trackpad") {
                 Toggle("Expand gesture", isOn: $settings.expandGestureEnabled)

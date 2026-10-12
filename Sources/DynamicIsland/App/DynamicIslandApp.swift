@@ -141,7 +141,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         liveActivities: liveActivities,
         capabilities: capabilityRegistry
     )
-    private lazy var cameraNavigation = CameraNavigationController(camera: cameraPreview)
+    private lazy var cameraNavigation = CameraNavigationController(camera: cameraPreview, settings: settings)
     private let rightWorkspace = RightWorkspaceStore()
     private let customization = WorkspaceCustomizationStore()
     private lazy var mediaAdvanced = MediaAdvancedController(media: media, spotify: workspaceServices.spotify)

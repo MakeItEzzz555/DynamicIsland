@@ -200,6 +200,7 @@ struct OverlayPresentationSession {
 
 @MainActor
 final class OverlayWindowController {
+    var cameraPointerOverlayMounted: Bool { layoutStore.cameraPointerStore.isMounted }
     private enum OverlayPersistence {
         static let level: NSWindow.Level = .statusBar
 
