@@ -92,7 +92,7 @@ final class HandPoseFrameProcessor: NSObject, AVCaptureVideoDataOutputSampleBuff
         let middleExtended = distance(point(.middleTip), wrist) > distance(middleMCP, wrist) + scale * 0.45
         let ringExtended: Bool? = points[.ringTip].flatMap { $0.confidence >= 0.5 ? distance(HandNavigationCoordinates.oriented($0.location), wrist) > distance(middleMCP, wrist) + scale * 0.4 : nil }
         let pinkyExtended: Bool? = points[.littleTip].flatMap { $0.confidence >= 0.5 ? distance(HandNavigationCoordinates.oriented($0.location), wrist) > distance(pinkyMCP, wrist) + scale * 0.4 : nil }
-        let pose: HandNavigationPose = indexExtended && middleExtended && ringExtended == true && pinkyExtended == true ? .openPalm
+        let pose: HandNavigationPose = indexExtended && middleExtended && (ringExtended == true || pinkyExtended == true) ? .openPalm
             : indexExtended && middleExtended && ringExtended == false && pinkyExtended == false ? .twoFinger
             : indexExtended ? .pointer : .other
         return HandNavigationObservation(fingertip: point(.indexTip),

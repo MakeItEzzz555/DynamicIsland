@@ -101,100 +101,197 @@ struct HandPointerFilter {
     }
 }
 
+/// Optional fingertips may be absent; two explicitly folded fingers remain a scroll pose.
+struct NavigationPoseClassifier {
+    private(set) var pose: HandNavigationPose = .other
+    private(set) var palmCandidate = false
+    private var candidateAt: TimeInterval?
+    private var accepted = 0
+    private var lastPalmAt: TimeInterval?
+    private var degradedFrames = 0
+
+    static func hasOpenHandEvidence(_ hand: HandNavigationObservation) -> Bool {
+        let fingers = hand.fingers
+        return fingers.index && fingers.middle &&
+            (fingers.ring == true || fingers.little == true ||
+             ((fingers.ring == nil || fingers.little == nil) && hand.pinchRatio >= 0.8))
+    }
+
+    mutating func update(_ hand: HandNavigationObservation, releaseThreshold: Double) {
+        let candidate = hand.pinchRatio > releaseThreshold &&
+            (hand.pose == .openPalm || Self.hasOpenHandEvidence(hand))
+        if candidate {
+            if candidateAt == nil { candidateAt = hand.timestamp }
+            accepted += 1; degradedFrames = 0; lastPalmAt = hand.timestamp; palmCandidate = true
+            pose = accepted >= 2 && hand.timestamp - (candidateAt ?? hand.timestamp) >= 0.08 ? .openPalm : .other
+        } else if palmCandidate, let lastPalmAt, hand.timestamp - lastPalmAt <= 0.12, degradedFrames < 2,
+                  hand.pinchRatio > releaseThreshold {
+            degradedFrames += 1
+        } else {
+            self = Self(); pose = hand.pose == .openPalm ? .other : hand.pose
+        }
+    }
+}
+
 enum HandNavigationAction: Equatable {
     case press, drag, release, cancel
+    case expandIsland, collapseIsland
     case page(forward: Bool)
     case scroll(Double)
 }
 
 struct HandNavigationStateMachine {
     enum Phase: String { case tracking, pinchCandidate, pressed, dragging }
+    enum Mode: String { case collapsedGesture, pointer, navigation, rearming }
     private(set) var phase: Phase = .tracking
+    private(set) var mode: Mode = .pointer
+    private(set) var classifier = NavigationPoseClassifier()
+    private(set) var swipeArmed = true
+    private(set) var swipeDisplacement = CGPoint.zero
+    private(set) var swipeVelocity = 0.0
     private var candidateAt: TimeInterval?
     private var pressPoint: CGPoint?
     private var previous: HandNavigationObservation?
     private var needsRelease = true
     private var swipeOrigin: CGPoint?
     private var swipeAt: TimeInterval?
-    private var swipeArmed = true
     private var neutralAt: TimeInterval?
     private var scrollAt: TimeInterval?
+    private var navigationOwnsHand = false
+    private var wasExpanded: Bool?
+
+    var hasPrecisionInteraction: Bool {
+        mode == .pointer && (classifier.pose == .pointer || isPressed || phase == .pinchCandidate)
+    }
+    var isPressed: Bool { phase == .pressed || phase == .dragging }
 
     mutating func reset() -> [HandNavigationAction] {
-        let actions: [HandNavigationAction] = phase == .pressed || phase == .dragging ? [.cancel] : []
+        let actions: [HandNavigationAction] = isPressed ? [.cancel] : []
         let rearmRequired = !swipeArmed
         self = Self()
-        if rearmRequired { swipeArmed = false }
+        if rearmRequired { swipeArmed = false; navigationOwnsHand = true; mode = .rearming }
+        return actions
+    }
+
+    /// Suspending injection must not erase a valid hand, filter or navigation lifecycle.
+    mutating func suspendInteraction() -> [HandNavigationAction] {
+        let actions: [HandNavigationAction] = isPressed ? [.cancel] : []
+        phase = .tracking; candidateAt = nil; pressPoint = nil; needsRelease = true
         return actions
     }
 
     mutating func update(_ observation: HandNavigationObservation?, pinchSensitivity: Double = 0.5,
-                         pageSwipe: Bool = true, scroll: Bool = false) -> [HandNavigationAction] {
+                         pageSwipe: Bool = true, scroll: Bool = false, expanded: Bool = true,
+                         interactionAvailable: Bool = true, expandOnPinch: Bool = true,
+                         leftAction: IslandGestureAction = .nextTab, rightAction: IslandGestureAction = .previousTab,
+                         downAction: IslandGestureAction = .none) -> [HandNavigationAction] {
         guard let current = observation, current.isValid else { return reset() }
         if let previous, current.timestamp <= previous.timestamp { return [] }
         if let previous, (previous.side != .unknown && current.side != .unknown && previous.side != current.side) ||
             current.timestamp - previous.timestamp > 0.3 ||
             hypot(current.palm.x - previous.palm.x, current.palm.y - previous.palm.y) > 0.35 {
-            let cancellation = reset()
-            self.previous = current
-            return cancellation
+            let cancellation = reset(); self.previous = current; return cancellation
         }
-        let last = previous
-        previous = current
+        let last = previous; previous = current
         let pressThreshold = 0.18 + min(max(pinchSensitivity, 0), 1) * 0.16
         let releaseThreshold = pressThreshold + 0.13
-        if current.pinchRatio > releaseThreshold { needsRelease = false }
-        if current.pose == .openPalm {
-            let cancellation: [HandNavigationAction] = phase == .pressed || phase == .dragging ? [.cancel] : []
-            phase = .tracking; candidateAt = nil; pressPoint = nil; scrollAt = nil
-            if !cancellation.isEmpty { needsRelease = true; swipeArmed = false; neutralAt = nil; return cancellation }
-            guard pageSwipe, current.pinchRatio > releaseThreshold else { return [] }
-            if swipeOrigin == nil { swipeOrigin = current.palm; swipeAt = current.timestamp }
-            let dt = last.map { max(current.timestamp - $0.timestamp, 0.001) } ?? 0.05
-            let speed = last.map { hypot(current.palm.x - $0.palm.x, current.palm.y - $0.palm.y) / dt } ?? 0
-            if !swipeArmed {
-                if speed < 0.15 {
-                    if neutralAt == nil { neutralAt = current.timestamp }
-                    if current.timestamp - (neutralAt ?? current.timestamp) >= 0.35 {
-                        swipeArmed = true; swipeOrigin = current.palm; swipeAt = current.timestamp
-                    }
-                } else { neutralAt = nil }
-                return []
-            }
-            if let origin = swipeOrigin, let started = swipeAt {
-                let dx = current.palm.x - origin.x, dy = current.palm.y - origin.y
-                if current.timestamp - started > 0.7 { swipeOrigin = current.palm; swipeAt = current.timestamp }
-                else if abs(dx) > 0.22, abs(dx) > abs(dy) * 1.8, speed > 0.45 {
-                    swipeArmed = false; neutralAt = nil
-                    return [.page(forward: dx < 0)]
-                }
-            }
-            return []
+        var cancellation: [HandNavigationAction] = []
+        if let wasExpanded, wasExpanded != expanded {
+            cancellation = suspendInteraction()
+            navigationOwnsHand = true; neutralAt = nil
         }
-        swipeOrigin = nil; swipeAt = nil
-        if !swipeArmed {
-            if neutralAt == nil { neutralAt = current.timestamp }
-            if current.timestamp - (neutralAt ?? current.timestamp) >= 0.2 { swipeArmed = true }
-        } else { neutralAt = nil }
-        if phase == .pressed || phase == .dragging {
+        wasExpanded = expanded
+        if current.pinchRatio > releaseThreshold { needsRelease = false }
+        classifier.update(current, releaseThreshold: releaseThreshold)
+        if !interactionAvailable { cancellation += suspendInteraction() }
+
+        if !expanded {
+            mode = .collapsedGesture; swipeOrigin = nil; swipeAt = nil; scrollAt = nil
+            guard interactionAvailable else { return cancellation }
+            let pinch = updatePinch(current, pressThreshold: pressThreshold, releaseThreshold: releaseThreshold)
+            if pinch.contains(.press) {
+                phase = .tracking; pressPoint = nil; needsRelease = true
+                return cancellation + (expandOnPinch ? [.expandIsland] : [])
+            }
+            return cancellation
+        }
+
+        if classifier.palmCandidate {
+            mode = .navigation; navigationOwnsHand = true; neutralAt = nil; scrollAt = nil
+            if swipeOrigin == nil { swipeOrigin = current.palm; swipeAt = current.timestamp }
+            if isPressed {
+                swipeArmed = false
+                return cancellation + suspendInteraction()
+            }
+            phase = .tracking; candidateAt = nil
+            guard classifier.pose == .openPalm, swipeArmed,
+                  let origin = swipeOrigin, let started = swipeAt else { return cancellation }
+            let dx = current.palm.x - origin.x, dy = current.palm.y - origin.y
+            let duration = current.timestamp - started
+            swipeDisplacement = CGPoint(x: dx, y: dy)
+            swipeVelocity = duration > 0 ? hypot(dx, dy) / duration : 0
+            if duration > 0.85 { swipeOrigin = current.palm; swipeAt = current.timestamp; return cancellation }
+            // Palm travel scales with hand size, with a minimum that rejects camera jitter.
+            let travel = max(0.08, min(0.16, current.handScale * 0.65))
+            guard duration >= 0.08, swipeVelocity >= 0.25 else { return cancellation }
+            let action: IslandGestureAction
+            if pageSwipe, abs(dx) >= travel, abs(dx) > abs(dy) * 1.6 { action = dx < 0 ? leftAction : rightAction }
+            else if -dy >= travel, -dy > abs(dx) * 1.6 { action = downAction }
+            else { return cancellation }
+            swipeArmed = false
+            guard interactionAvailable else { return cancellation }
+            return cancellation + semanticAction(action)
+        }
+
+        // A held pinch retains precision ownership; two-finger scrolling cannot steal its drag.
+        if isPressed {
+            mode = .pointer
+            return cancellation + updatePinch(current, pressThreshold: pressThreshold, releaseThreshold: releaseThreshold)
+        }
+        if classifier.pose == .twoFinger, current.pinchRatio > releaseThreshold {
+            mode = .navigation; navigationOwnsHand = true; neutralAt = nil
+            swipeOrigin = nil; swipeAt = nil; candidateAt = nil; phase = .tracking
+            guard scroll, interactionAvailable else { return cancellation }
+            if scrollAt == nil { scrollAt = current.timestamp }
+            guard current.timestamp - (scrollAt ?? current.timestamp) >= 0.12,
+                  let last, last.pose == .twoFinger else { return cancellation }
+            let dy = current.palm.y - last.palm.y, dx = current.palm.x - last.palm.x
+            return cancellation + (abs(dy) > abs(dx) * 1.5 && abs(dy) > 0.001 ? [.scroll(dy * 600)] : [])
+        }
+        scrollAt = nil; swipeOrigin = nil; swipeAt = nil
+        if navigationOwnsHand {
+            mode = .rearming
+            if classifier.pose == .pointer, current.pinchRatio > releaseThreshold {
+                if neutralAt == nil { neutralAt = current.timestamp }
+                if current.timestamp - (neutralAt ?? current.timestamp) >= 0.15 {
+                    navigationOwnsHand = false; swipeArmed = true; neutralAt = nil
+                }
+            } else { neutralAt = nil }
+            if navigationOwnsHand { return cancellation }
+        }
+        mode = .pointer
+        guard interactionAvailable else { return cancellation }
+        return cancellation + updatePinch(current, pressThreshold: pressThreshold, releaseThreshold: releaseThreshold)
+    }
+
+    private func semanticAction(_ action: IslandGestureAction) -> [HandNavigationAction] {
+        switch action {
+        case .nextTab: [.page(forward: true)]
+        case .previousTab: [.page(forward: false)]
+        case .collapse: [.collapseIsland]
+        default: []
+        }
+    }
+
+    private mutating func updatePinch(_ current: HandNavigationObservation, pressThreshold: Double,
+                                      releaseThreshold: Double) -> [HandNavigationAction] {
+        if isPressed {
             if current.pinchRatio > releaseThreshold {
                 phase = .tracking; pressPoint = nil; return [.release]
             }
-            if let pressPoint, hypot(current.fingertip.x - pressPoint.x, current.fingertip.y - pressPoint.y) > 0.025 {
-                phase = .dragging
-            }
+            if let pressPoint, hypot(current.fingertip.x - pressPoint.x, current.fingertip.y - pressPoint.y) > 0.025 { phase = .dragging }
             return phase == .dragging ? [.drag] : []
         }
-        if current.pose == .twoFinger, current.pinchRatio > releaseThreshold {
-            candidateAt = nil; phase = .tracking
-            guard scroll else { return [] }
-            if scrollAt == nil { scrollAt = current.timestamp }
-            guard current.timestamp - (scrollAt ?? current.timestamp) >= 0.12,
-                  let last, last.pose == .twoFinger else { return [] }
-            let dy = current.palm.y - last.palm.y, dx = current.palm.x - last.palm.x
-            return abs(dy) > abs(dx) * 1.5 && abs(dy) > 0.001 ? [.scroll(dy * 600)] : []
-        }
-        scrollAt = nil
         guard !needsRelease, current.pinchRatio < pressThreshold else {
             phase = .tracking; candidateAt = nil; return []
         }

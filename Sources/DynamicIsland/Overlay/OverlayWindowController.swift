@@ -374,11 +374,22 @@ final class OverlayWindowController {
                     !self.hasVisibleTransientNativeWindow
             },
             expand: { [weak self] in
-                guard let self, self.settings.expandOnClick,
-                      AgentCompactPermission.current(sessions: self.modules.agentEvents.sessions,
-                        approvals: self.modules.agentApprovalControl, managed: self.modules.agentManagedControl) == nil else { return }
-                self.expandFromCollapsedPreparingGeometry()
-            }, page: { [weak self] forward in self?.navigatePage(forward: forward) })
+                self?.expandFromCollapsedPreparingGeometry()
+            }, page: { [weak self] forward in self?.navigatePage(forward: forward) },
+            canExpand: { [weak self] in
+                guard let self else { return false }
+                // Compact approval, hover composers and HUD controls keep their exact authority.
+                return !self.layoutStore.collapsedPreviewActive &&
+                    self.activeInteractiveSystemHUD(activities: self.modules.liveActivities.activities) == nil &&
+                    AgentCompactPermission.current(sessions: self.modules.agentEvents.sessions,
+                        approvals: self.modules.agentApprovalControl, managed: self.modules.agentManagedControl) == nil
+            }, canCollapse: { [weak self] in
+                guard let self else { return false }
+                return !self.nativeMenuTracking.isTracking && !self.hasVisibleTransientNativeWindow &&
+                    !self.modules.fileDragSession.isActive && !self.modules.navigation.isFileDropTargeted &&
+                    AgentCompactPermission.current(sessions: self.modules.agentEvents.sessions,
+                        approvals: self.modules.agentApprovalControl, managed: self.modules.agentManagedControl) == nil
+            }, collapse: { [weak self] in self?.requestCollapseWithSequencing() })
         self.hostingView = hostingView
         debugGesture("Island hosting view installed")
 

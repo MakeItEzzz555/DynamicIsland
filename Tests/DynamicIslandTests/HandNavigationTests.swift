@@ -142,9 +142,10 @@ final class HandNavigationTests: XCTestCase {
         XCTAssertEqual(machine.update(hand(0.1, point: CGPoint(x: 0.5, y: 0.5), pose: .openPalm)), [.page(forward: false)])
         XCTAssertEqual(machine.update(hand(0.2, point: CGPoint(x: 0.8, y: 0.5), pose: .openPalm)), [])
         _ = machine.update(hand(0.25, point: CGPoint(x: 0.8, y: 0.5)))
-        _ = machine.update(hand(0.5, point: CGPoint(x: 0.8, y: 0.5)))
-        _ = machine.update(hand(0.55, point: CGPoint(x: 0.8, y: 0.5), pose: .openPalm))
-        XCTAssertEqual(machine.update(hand(0.65, point: CGPoint(x: 0.5, y: 0.5), pose: .openPalm)), [.page(forward: true)])
+        _ = machine.update(hand(0.4, point: CGPoint(x: 0.8, y: 0.5)))
+        _ = machine.update(hand(0.56, point: CGPoint(x: 0.8, y: 0.5)))
+        _ = machine.update(hand(0.7, point: CGPoint(x: 0.8, y: 0.5), pose: .openPalm))
+        XCTAssertEqual(machine.update(hand(0.8, point: CGPoint(x: 0.5, y: 0.5), pose: .openPalm)), [.page(forward: true)])
     }
     func testPoseFlickerAndBriefTrackingLossCannotRearmSwipe() {
         var machine = HandNavigationStateMachine()

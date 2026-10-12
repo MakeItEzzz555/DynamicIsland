@@ -80,10 +80,23 @@ struct CameraNavigationSettingsView: View {
                 if navigation.runtimeState == .noFrames {
                     Text("Check Again or select another camera.").font(.caption).foregroundStyle(.secondary)
                 }
-                Toggle("Show virtual pointer", isOn: $navigation.preferences.showPointer)
+                GroupBox("Camera Gestures") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Picker("Pinch while collapsed", selection: $navigation.preferences.collapsedPinchAction) {
+                            Text("Expand Island").tag(IslandGestureAction.expand)
+                            Text("None").tag(IslandGestureAction.none)
+                        }
+                        swipePicker("Open-palm swipe left", action: $navigation.preferences.swipeLeftAction)
+                        swipePicker("Open-palm swipe right", action: $navigation.preferences.swipeRightAction)
+                        Picker("Open-palm swipe down", selection: $navigation.preferences.swipeDownAction) {
+                            Text("Collapse Island").tag(IslandGestureAction.collapse)
+                            Text("None").tag(IslandGestureAction.none)
+                        }
+                        Toggle("Two-finger vertical gesture · Scroll Content", isOn: $navigation.preferences.twoFingerScroll)
+                        Toggle("Show pointer while expanded", isOn: $navigation.preferences.showPointer)
+                    }
+                }
                 Toggle("Magnetic controls", isOn: $navigation.preferences.magneticControls)
-                Toggle("Horizontal page swipe", isOn: $navigation.preferences.horizontalPageSwipe)
-                Toggle("Two-finger scroll", isOn: $navigation.preferences.twoFingerScroll)
                 LabeledContent("Pointer sensitivity") { Slider(value: $navigation.preferences.sensitivity, in: 0...1).accessibilityLabel("Pointer sensitivity") }
                 LabeledContent("Pointer smoothing") { Slider(value: $navigation.preferences.smoothing, in: 0...1).accessibilityLabel("Pointer smoothing") }
                 LabeledContent("Pinch sensitivity") { Slider(value: $navigation.preferences.pinchSensitivity, in: 0...1).accessibilityLabel("Pinch sensitivity") }
@@ -96,13 +109,20 @@ struct CameraNavigationSettingsView: View {
                     Text("Point \(["left", "right", "top", "bottom"][step]), then pinch to confirm.")
                     Button("Cancel Calibration") { navigation.cancelCalibration() }
                 }
-                Text("Use one hand: point with your index finger, pinch to click or drag, and open your palm to cancel. Text entry uses the keyboard. Processing stays on this Mac; camera images are never saved.")
+                Text("Use one hand: pinch to expand, point to click or drag, and swipe with an open palm to change pages or swipe down to collapse. Return to pointing after each swipe. Text entry uses the keyboard. Camera images stay on this Mac and are never saved.")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 DisclosureGroup("Diagnostics") {
                     LabeledContent("Capture session running", value: camera.isRunning ? "Yes" : "No")
                     LabeledContent("Video output attached", value: navigation.videoOutputAttached ? "Yes" : "No")
                     LabeledContent("Video frames received", value: navigation.firstFrameReceived ? "Yes" : "No")
                     LabeledContent("Hand", value: navigation.isTracking ? "Tracking" : "No hand")
+                    LabeledContent("Detected pose", value: navigation.detectedPose)
+                    LabeledContent("Input mode", value: navigation.gestureMode)
+                    LabeledContent("Gesture candidate", value: navigation.gestureCandidate)
+                    LabeledContent("Last action", value: navigation.lastGestureAction)
+                    LabeledContent("Action time", value: String(format: "%.3f", navigation.lastGestureTimestamp))
+                    LabeledContent("Rearm", value: navigation.gestureRearm)
+                    LabeledContent("Palm movement", value: String(format: "%.2f / %.2f · %.2f/s", navigation.swipeDisplacement.x, navigation.swipeDisplacement.y, navigation.swipeVelocity))
                     if navigation.firstFrameReceived {
                         LabeledContent("Recognition", value: String(format: "%.1f FPS", navigation.recognitionFPS))
                     }
@@ -120,4 +140,13 @@ struct CameraNavigationSettingsView: View {
             .padding(8)
         }
     }
+    private func swipePicker(_ title: String, action: Binding<IslandGestureAction>) -> some View {
+        Picker(title, selection: action) {
+            Text("Next Page").tag(IslandGestureAction.nextTab)
+            Text("Previous Page").tag(IslandGestureAction.previousTab)
+            Text("Collapse Island").tag(IslandGestureAction.collapse)
+            Text("None").tag(IslandGestureAction.none)
+        }
+    }
+
 }
