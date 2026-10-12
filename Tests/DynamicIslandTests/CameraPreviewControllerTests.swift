@@ -329,7 +329,7 @@ final class CameraPreviewControllerTests: XCTestCase {
         XCTAssertEqual(expanded, 0)
         await controller.shutdown()
     }
-    func testCameraCollapsedPinchIgnoresTinyTargetAndExpandOnClickPreference() async {
+    func testCameraCollapsedPinchIgnoresEmptyFramePrecisionGateAndExpandOnClickPreference() async {
         var time = 100.0
         let f = makeFixture(authorized: true), controller = navigation(f.controller, now: { time })
         let settings = AppSettings(defaults: UserDefaults(suiteName: "camera-no-click-\(UUID())")!)
@@ -338,9 +338,15 @@ final class CameraPreviewControllerTests: XCTestCase {
         layout.collapsedSurfaceFrame = CGRect(x: 20, y: 20, width: 20, height: 20)
         layout.updateCollapsedSidecars(.init(leadingSidecarFrame: nil, primaryFrame: layout.collapsedSurfaceFrame,
             trailingSidecarFrame: nil, interactionFrame: layout.collapsedSurfaceFrame))
+        layout.updateCollapsedSidecars(.init(leadingSidecarFrame: nil, primaryFrame: .zero,
+            trailingSidecarFrame: nil, interactionFrame: .zero))
+        layout.collapsedPreviewActive = true
         var expansions = 0
-        controller.connect(window: window, layout: layout, isExpanded: { false }, canInteract: { true },
-            expand: { expansions += 1 }, page: { _ in XCTFail("Collapsed pinch cannot page") })
+        controller.connect(window: window, layout: layout, isExpanded: { false }, canInteract: { false },
+            expand: {
+                XCTAssertTrue(layout.isTransientInteractionActive, "Camera hold precedes expansion authority")
+                expansions += 1
+            }, page: { _ in XCTFail("Collapsed pinch cannot page") })
         controller.reconcile(gesturesEnabled: true, inputSource: .camera); await settle(controller)
         for pinch in [1.0, 0.1, 0.1, 0.1, 0.1, 0.1] {
             controller.consume(.init(observation: .init(fingertip: CGPoint(x: -2, y: 2), palm: CGPoint(x: -2, y: 2),
@@ -444,6 +450,125 @@ final class CameraPreviewControllerTests: XCTestCase {
             await controller.shutdown()
         }
     }
+    func testCameraExpansionProtectionAllowsPassivePreviewAndRejectsExactOwners() {
+        let layout = IslandLayoutStore()
+        layout.collapsedPreviewActive = true
+        func allowed(approval: Bool = false, hud: Bool = false, native: Bool = false, drag: Bool = false) -> Bool {
+            layout.cameraExpansionAllowed(exactApproval: approval, interactiveHUD: hud, nativeInteraction: native, fileDrag: drag)
+        }
+        XCTAssertTrue(allowed(), "Passive preview does not own input")
+        let cameraOwner = TransientInteractionOwner.cameraNavigation(UUID())
+        layout.setTransientInteraction(true, owner: cameraOwner)
+        XCTAssertTrue(allowed(), "Camera's own hold must not block its expansion")
+        XCTAssertFalse(allowed(approval: true))
+        XCTAssertFalse(allowed(hud: true))
+        XCTAssertFalse(allowed(native: true))
+        XCTAssertFalse(allowed(drag: true))
+        layout.setTextInputFocused(true); XCTAssertFalse(allowed())
+        layout.setTextInputFocused(false)
+        layout.collapsedMessageInteractionProtected = true; XCTAssertFalse(allowed())
+        layout.collapsedMessageInteractionProtected = false
+        layout.setTransientInteraction(true, owner: .workspaceEditor); XCTAssertFalse(allowed())
+        layout.setTransientInteraction(false, owner: .workspaceEditor); XCTAssertTrue(allowed())
+    }
+
+    func testCameraCollapsedPinchCannotStealFocusedOrPinnedComposer() async {
+        for pinned in [false, true] {
+            var time = 100.0
+            let f = makeFixture(authorized: true), controller = navigation(f.controller, now: { time })
+            let layout = IslandLayoutStore(), window = NSWindow()
+            if pinned { layout.collapsedMessageInteractionProtected = true }
+            else { layout.setTextInputFocused(true) }
+            controller.connect(window: window, layout: layout, isExpanded: { false }, canInteract: { false },
+                expand: { XCTFail("Composer authority cannot be stolen") }, page: { _ in })
+            controller.reconcile(gesturesEnabled: true, inputSource: .camera); await settle(controller)
+            for pinch in [1.0, 0.1, 0.1, 0.1] {
+                controller.consume(.init(observation: .init(fingertip: .zero, palm: .zero, handScale: 0.2,
+                    pinchRatio: pinch, pose: .pointer, confidence: 0.9, timestamp: time),
+                    generation: controller.trackingGeneration, latency: 0.01))
+                time += 0.05
+            }
+            XCTAssertNil(layout.cameraPointerStore.presentation)
+            XCTAssertEqual(controller.lastGestureAction, "None")
+            await controller.shutdown()
+        }
+    }
+
+    func testCameraPinchDuringCollapseDefersUntilSafeThenHoldSurvivesExpansionAndClears() async {
+        var time = 100.0
+        let f = makeFixture(authorized: true), controller = navigation(f.controller, now: { time })
+        let layout = IslandLayoutStore(), window = NSWindow()
+        var expanded = true, expansions = 0
+        layout.isExpandedContentExiting = true
+        layout.isShellMorphing = true
+        controller.connect(window: window, layout: layout, isExpanded: { expanded }, canInteract: { false },
+            expand: {
+                XCTAssertTrue(layout.isTransientInteractionActive, "Acquire before calling expansion")
+                expansions += 1; expanded = true; layout.isShellMorphing = true
+            }, page: { _ in })
+        controller.reconcile(gesturesEnabled: true, inputSource: .camera); await settle(controller)
+        func inject(_ pinch: Double) {
+            controller.consume(.init(observation: .init(fingertip: .zero, palm: .zero, handScale: 0.2,
+                pinchRatio: pinch, pose: pinch == 1 ? .openPalm : .other, confidence: 0.9, timestamp: time),
+                generation: controller.trackingGeneration, latency: 0.01))
+            time += 0.05
+        }
+        inject(1); inject(0.1); inject(0.1); inject(0.1)
+        XCTAssertEqual(expansions, 0)
+        expanded = false; layout.isExpandedContentExiting = false; layout.isCollapseShellOnly = true
+        inject(0.1)
+        XCTAssertEqual(expansions, 0)
+        layout.isCollapseShellOnly = false; layout.isShellMorphing = false
+        inject(0.1)
+        XCTAssertEqual(expansions, 1)
+        XCTAssertTrue(layout.isTransientInteractionActive)
+        inject(0.1); inject(0.1)
+        XCTAssertTrue(layout.isTransientInteractionActive, "Expansion morph keeps auto-collapse hold")
+        XCTAssertEqual(ExpandedHoverContainment.decide(pointer: CGPoint(x: -100, y: -100),
+            shellFrame: layout.expandedSurfaceFrame,
+            holds: layout.isTransientInteractionActive ? .transientInteraction : []), .held(.transientInteraction),
+            "The production mouse-leave decision cannot reverse the held expansion")
+        XCTAssertNil(layout.cameraPointerStore.presentation)
+        layout.isShellMorphing = false
+        inject(1)
+        XCTAssertTrue(layout.isTransientInteractionActive)
+        time += 0.3
+        controller.consume(.init(observation: nil, generation: controller.trackingGeneration, latency: 0.01))
+        XCTAssertTrue(layout.isTransientInteractionActive, "Actual loss gets the normal grace period")
+        time += 0.4
+        controller.consume(.init(observation: nil, generation: controller.trackingGeneration, latency: 0.01))
+        XCTAssertFalse(layout.isTransientInteractionActive)
+        inject(1); inject(1)
+        XCTAssertTrue(layout.isTransientInteractionActive)
+        await controller.shutdown()
+        XCTAssertFalse(layout.isTransientInteractionActive, "Stop immediately releases only camera's hold")
+    }
+
+    func testProductionControllerRepeatedPalmPagesSurviveMorphWithoutPointer() async {
+        var time = 100.0
+        let f = makeFixture(authorized: true), controller = navigation(f.controller, now: { time })
+        let layout = IslandLayoutStore(), window = NSWindow()
+        var available = true, pages: [Bool] = []
+        controller.connect(window: window, layout: layout, isExpanded: { true }, canInteract: { available },
+            expand: {}, page: { pages.append($0); available = false; layout.isShellMorphing = true })
+        controller.reconcile(gesturesEnabled: true, inputSource: .camera); await settle(controller)
+        for stroke in 0..<3 {
+            for (i, x) in [0.8, 0.65, 0.48, 0.3, 0.4, 0.6, 0.8, 0.8, 0.8, 0.8, 0.8].enumerated() {
+                if i == 10 { available = true; layout.isShellMorphing = false }
+                controller.consume(.init(observation: .init(fingertip: CGPoint(x: x, y: 0.5), palm: CGPoint(x: x, y: 0.5),
+                    handScale: 0.2, pinchRatio: 1, pose: .openPalm, confidence: 0.9, timestamp: time),
+                    generation: controller.trackingGeneration, latency: 0.01))
+                time += 0.05
+                XCTAssertNil(layout.cameraPointerStore.presentation)
+                XCTAssertTrue(controller.isTracking)
+            }
+            XCTAssertEqual(pages.count, stroke + 1)
+        }
+        XCTAssertEqual(pages, [true, true, true])
+        XCTAssertEqual(controller.gestureMode, "navigation")
+        await controller.shutdown()
+    }
+
     func testDeniedPermissionCheckAgainDoesNotPrompt() async {
         let f = makeFixture(), controller = navigation(f.controller)
         f.devices.permissionState = .denied

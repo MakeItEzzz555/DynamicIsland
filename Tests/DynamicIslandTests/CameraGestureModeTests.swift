@@ -40,22 +40,99 @@ final class CameraGestureModeTests: XCTestCase {
         XCTAssertFalse(machine.hasPrecisionInteraction)
     }
 
-    func testGradualTwentyFPSSwipeOnceThenNeutralAndOppositeSwipe() {
+    func testThreePalmStrokesRearmWhilePalmRemainsOpenAndReturnMotionIsIgnored() {
         var machine = HandNavigationStateMachine()
         var actions: [HandNavigationAction] = []
-        for i in 0...7 {
-            actions += machine.update(hand(Double(i) * 0.05, x: 0.7 - Double(i) * 0.03, pose: .openPalm,
-                ring: i == 2 ? nil : true, little: i == 3 ? nil : true))
+        var time = 0.0
+        func inject(_ x: Double, available: Bool = true) {
+            actions += machine.update(hand(time, x: x, pose: .openPalm), interactionAvailable: available)
+            XCTAssertFalse(machine.hasPrecisionInteraction)
+            time += 0.05
+        }
+        for stroke in 0..<3 {
+            for x in [0.8, 0.65, 0.48, 0.3, 0.2] { inject(x) }
+            XCTAssertEqual(actions.count, stroke + 1, "Continuous sweep fires once")
+            for x in [0.35, 0.5, 0.65, 0.8] { inject(x) }
+            XCTAssertEqual(actions.count, stroke + 1, "Moving recenter cannot fire Previous")
+            XCTAssertFalse(machine.swipeArmed)
+            for _ in 0..<4 { inject(0.8) }
+            XCTAssertTrue(machine.swipeArmed)
+        }
+        XCTAssertEqual(actions, Array(repeating: .page(forward: true), count: 3))
+    }
+
+    func testPalmDwellRearmsOppositeStrokeWithoutPointing() {
+        var machine = HandNavigationStateMachine()
+        var actions: [HandNavigationAction] = []
+        let xs = [0.8, 0.65, 0.48, 0.3, 0.4, 0.5, 0.5, 0.5, 0.5, 0.5, 0.6, 0.7, 0.8]
+        for (i, x) in xs.enumerated() {
+            actions += machine.update(hand(Double(i) * 0.05, x: x, pose: .openPalm,
+                ring: i == 7 ? nil : true, little: i == 8 ? nil : true))
+        }
+        XCTAssertEqual(actions, [.page(forward: true), .page(forward: false)])
+        XCTAssertFalse(machine.hasPrecisionInteraction)
+    }
+
+    func testContinuousSweepCannotRepeatOrRearm() {
+        var machine = HandNavigationStateMachine()
+        var actions: [HandNavigationAction] = []
+        for i in 0...14 {
+            actions += machine.update(hand(Double(i) * 0.05, x: 0.8 - Double(i) * 0.05, pose: .openPalm))
         }
         XCTAssertEqual(actions, [.page(forward: true)])
-        for i in 8...15 { XCTAssertEqual(machine.update(hand(Double(i) * 0.05, x: 0.49, pose: .openPalm)), []) }
-        XCTAssertFalse(machine.swipeArmed, "A held palm never rearms, even when stationary")
-        for i in 16...24 { _ = machine.update(hand(Double(i) * 0.05, x: 0.49)) }
-        XCTAssertTrue(machine.swipeArmed)
-        XCTAssertTrue(machine.hasPrecisionInteraction)
-        actions = []
-        for i in 25...32 { actions += machine.update(hand(Double(i) * 0.05, x: 0.49 + Double(i - 25) * 0.03, pose: .openPalm)) }
-        XCTAssertEqual(actions, [.page(forward: false)])
+        XCTAssertFalse(machine.swipeArmed)
+    }
+
+    func testPalmStrokeAndStillDwellSurvivePageMorphWithoutPointing() {
+        var machine = HandNavigationStateMachine()
+        var actions: [HandNavigationAction] = []
+        let xs = [0.8, 0.65, 0.48, 0.3, 0.45, 0.55, 0.55, 0.55, 0.55, 0.55, 0.45, 0.35]
+        for (i, x) in xs.enumerated() {
+            actions += machine.update(hand(Double(i) * 0.05, x: x, pose: .openPalm),
+                interactionAvailable: !(3...8).contains(i))
+            XCTAssertEqual(machine.mode, .navigation)
+        }
+        XCTAssertEqual(actions, [.page(forward: true), .page(forward: true)])
+    }
+
+    func testCollapsedPinchIsIndependentOfPrecisionGateAndWaitsForSafeShell() {
+        var machine = HandNavigationStateMachine()
+        _ = machine.update(hand(0, pose: .openPalm), expanded: false, interactionAvailable: false,
+            collapsedGestureAvailable: false)
+        _ = machine.update(hand(0.05, pinch: 0.1), expanded: false, interactionAvailable: false,
+            collapsedGestureAvailable: false)
+        XCTAssertEqual(machine.update(hand(0.15, pinch: 0.1), expanded: false, interactionAvailable: false,
+            collapsedGestureAvailable: false), [])
+        XCTAssertEqual(machine.update(hand(0.2, pinch: 0.1), expanded: false, interactionAvailable: false), [.expandIsland])
+        XCTAssertEqual(machine.update(hand(0.25, pinch: 0.1), expanded: false, interactionAvailable: false), [])
+        XCTAssertFalse(machine.hasPrecisionInteraction)
+    }
+
+    func testReleasedPendingPinchCannotExpandLater() {
+        var machine = HandNavigationStateMachine()
+        for (i, pinch) in [1.0, 0.1, 0.1, 0.1, 1.0].enumerated() {
+            XCTAssertEqual(machine.update(hand(Double(i) * 0.05, pinch: pinch), expanded: false,
+                interactionAvailable: false, collapsedGestureAvailable: false), [])
+        }
+        XCTAssertEqual(machine.update(hand(0.25), expanded: false, interactionAvailable: false), [])
+        _ = machine.update(hand(0.3, pinch: 0.1), expanded: false, interactionAvailable: false)
+        XCTAssertEqual(machine.update(hand(0.4, pinch: 0.1), expanded: false, interactionAvailable: false), [.expandIsland])
+    }
+
+    func testDownCollapseOpenHandThenPinchNeedsNoPointerRearm() {
+        var machine = HandNavigationStateMachine()
+        var actions: [HandNavigationAction] = []
+        for i in 0...5 {
+            actions += machine.update(hand(Double(i) * 0.05, y: 0.7 - Double(i) * 0.04, pose: .openPalm), downAction: .collapse)
+        }
+        XCTAssertEqual(actions, [.collapseIsland])
+        _ = machine.update(hand(0.3, y: 0.5, pose: .openPalm), expanded: false, interactionAvailable: false,
+            collapsedGestureAvailable: false)
+        _ = machine.update(hand(0.35, y: 0.5, pinch: 0.1), expanded: false, interactionAvailable: false,
+            collapsedGestureAvailable: false)
+        XCTAssertEqual(machine.update(hand(0.45, y: 0.5, pinch: 0.1), expanded: false, interactionAvailable: false,
+            collapsedGestureAvailable: false), [])
+        XCTAssertEqual(machine.update(hand(0.5, y: 0.5, pinch: 0.1), expanded: false, interactionAvailable: false), [.expandIsland])
     }
 
     func testJitterDiagonalVerticalAndSlowDriftNeverPage() {

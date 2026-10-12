@@ -109,7 +109,7 @@ struct CameraNavigationSettingsView: View {
                     Text("Point \(["left", "right", "top", "bottom"][step]), then pinch to confirm.")
                     Button("Cancel Calibration") { navigation.cancelCalibration() }
                 }
-                Text("Use one hand: pinch to expand, point to click or drag, and swipe with an open palm to change pages or swipe down to collapse. Return to pointing after each swipe. Text entry uses the keyboard. Camera images stay on this Mac and are never saved.")
+                Text("Use one hand: pinch to expand, point to click or drag, and swipe with an open palm to change pages or swipe down to collapse. Keep your palm open and briefly hold it still between page swipes. Text entry uses the keyboard. Camera images stay on this Mac and are never saved.")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 DisclosureGroup("Diagnostics") {
                     LabeledContent("Capture session running", value: camera.isRunning ? "Yes" : "No")

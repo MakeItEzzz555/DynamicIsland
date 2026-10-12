@@ -147,6 +147,7 @@ final class CameraNavigationController: ObservableObject {
     private var page: (Bool) -> Void = { _ in }
     private var collapse: () -> Void = {}
     private var canExpand: () -> Bool = { true }
+    private var canUseCollapsedGestures: () -> Bool = { true }
     private var canCollapse: () -> Bool = { true }
     private lazy var mailbox = HandPoseResultMailbox { [weak self] result in self?.consume(result) }
 
@@ -257,12 +258,14 @@ final class CameraNavigationController: ObservableObject {
     func connect(window: NSWindow, layout: IslandLayoutStore, isExpanded: @escaping () -> Bool,
                  canInteract: @escaping () -> Bool, expand: @escaping () -> Void, page: @escaping (Bool) -> Void,
                  canExpand: @escaping () -> Bool = { true }, canCollapse: @escaping () -> Bool = { true },
+                 canUseCollapsedGestures: @escaping () -> Bool = { true },
                  collapse: @escaping () -> Void = {}) {
         loseTracking(immediately: true)
         router?.shutdown()
         self.window = window; self.layout = layout; self.isExpanded = isExpanded
         self.canInteract = canInteract; self.expand = expand; self.page = page
         self.canExpand = canExpand; self.canCollapse = canCollapse; self.collapse = collapse
+        self.canUseCollapsedGestures = canUseCollapsedGestures
         router = CameraInteractionRouter(window: window, now: now)
         router?.allowsCameraInput = { [weak self] in
             guard let self else { return false }
@@ -398,23 +401,33 @@ final class CameraNavigationController: ObservableObject {
         }
         lastTrackedAt = time
         if !isTracking { isTracking = true }
-        let available = canInteract() && !interactionFrame.isEmpty && router?.physicalOwnsInput != true
-        runtimeState = router?.physicalOwnsInput == true ? .suspendedPhysicalInput
-            : !available ? .waitingForIsland : .tracking
+        let physicalOwnsInput = router?.physicalOwnsInput == true
+        let precisionAvailable = canInteract() && !interactionFrame.isEmpty && !physicalOwnsInput
+        let expandedMode = isExpanded() && layout?.isExpandedContentExiting != true && layout?.isCollapseShellOnly != true
+        let collapsedAvailable = layout != nil && !isExpanded() && layout?.isShellMorphing != true &&
+            layout?.isExpandedContentExiting != true && layout?.isCollapseShellOnly != true &&
+            canUseCollapsedGestures() && !physicalOwnsInput
+        runtimeState = physicalOwnsInput ? .suspendedPhysicalInput
+            : !(expandedMode ? precisionAvailable : collapsedAvailable) ? .waitingForIsland : .tracking
         target = filter.update(preferences.calibration.map(observation.fingertip, sensitivity: preferences.sensitivity),
                                at: observation.timestamp, smoothing: preferences.smoothing)
         if rendered == nil { rendered = target }
+        let wasSwipeArmed = machine.swipeArmed
+        if physicalOwnsInput { _ = machine.suspendInteraction() }
         let actions = machine.update(observation, pinchSensitivity: preferences.pinchSensitivity,
-            scroll: preferences.twoFingerScroll, expanded: isExpanded(), interactionAvailable: available,
-            expandOnPinch: calibrationStep != nil || (preferences.collapsedPinchAction == .expand && canExpand()),
+            scroll: preferences.twoFingerScroll, expanded: expandedMode, interactionAvailable: precisionAvailable,
+            expandOnPinch: !physicalOwnsInput && (calibrationStep != nil ||
+                (preferences.collapsedPinchAction == .expand && !hasProtectedInteraction && canExpand())),
+            collapsedGestureAvailable: collapsedAvailable,
             leftAction: preferences.swipeLeftAction, rightAction: preferences.swipeRightAction,
             downAction: preferences.swipeDownAction)
         detectedPose = machine.classifier.palmCandidate ? "Open palm" : machine.classifier.pose.rawValue
         gestureMode = machine.mode.rawValue
         gestureCandidate = machine.classifier.palmCandidate ? "Palm swipe" : machine.phase == .pinchCandidate ? "Pinch" : "None"
-        gestureRearm = machine.mode == .rearming || !machine.swipeArmed ? "Return to pointing" : "Ready"
+        gestureRearm = machine.classifier.palmCandidate ? (machine.swipeArmed ? (wasSwipeArmed ? "Palm ready" : "Palm rearmed") : "Hold palm still")
+            : machine.mode == .pointer ? "Pointer mode" : "Ready"
         swipeDisplacement = machine.swipeDisplacement; swipeVelocity = machine.swipeVelocity
-        if !available { router?.cancel() }
+        if !precisionAvailable { router?.cancel() }
         render()
         guard deliversInput else { return }
         for action in actions {
@@ -424,24 +437,27 @@ final class CameraNavigationController: ObservableObject {
             }
             switch action {
             case .expandIsland:
-                guard available, canExpand() else { continue }
+                guard collapsedAvailable, !hasProtectedInteraction, canExpand() else { continue }
+                layout?.setTransientInteraction(true, owner: holdOwner)
                 recordGesture("Expand", at: observation.timestamp); hidePointer(); expand()
             case .collapseIsland:
-                guard available, !routerIsPressed, !hasProtectedInteraction, canCollapse() else { continue }
+                guard precisionAvailable, !routerIsPressed, !hasProtectedInteraction, canCollapse() else { continue }
+                layout?.setTransientInteraction(false, owner: holdOwner)
                 recordGesture("Collapse", at: observation.timestamp); hidePointer(); collapse()
             case .page(let forward):
-                guard available else { continue }
+                guard precisionAvailable else { continue }
                 recordGesture(forward ? "Next Page" : "Previous Page", at: observation.timestamp)
+                gestureRearm = "Swipe fired"
                 hidePointer(); page(forward)
             case .cancel: router?.cancel()
             case .press:
-                if available, isExpanded(), let point = windowPoint { router?.press(at: point) }
+                if precisionAvailable, isExpanded(), let point = windowPoint { router?.press(at: point) }
             case .drag:
-                if available, isExpanded(), let point = windowPoint { router?.drag(to: point) }
+                if precisionAvailable, isExpanded(), let point = windowPoint { router?.drag(to: point) }
             case .release:
                 if let point = windowPoint { router?.release(at: point) }
             case .scroll(let delta):
-                if available, isExpanded(), let point = windowPoint { router?.scroll(at: point, delta: delta) }
+                if precisionAvailable, isExpanded(), let point = windowPoint { router?.scroll(at: point, delta: delta) }
             }
         }
     }
@@ -489,10 +505,7 @@ final class CameraNavigationController: ObservableObject {
     private var routerIsPressed: Bool { router?.isPressed ?? false }
     private var hasProtectedInteraction: Bool {
         guard let layout else { return true }
-        return layout.isTextInputFocused || layout.transientInteractionOwners.contains { owner in
-            if case .cameraNavigation = owner { return false }
-            return true
-        }
+        return layout.cameraGestureInteractionProtected
     }
     private func windowPoint(fromCanvas point: CGPoint) -> CGPoint {
         CGPoint(x: point.x, y: point.y + (window?.contentView?.bounds.height ?? 0) - (layout?.canvasSize.height ?? 0))
@@ -511,7 +524,11 @@ final class CameraNavigationController: ObservableObject {
         let previous = rendered ?? target
         // Linear display-rate interpolation; no spring, including Reduce Motion.
         rendered = CGPoint(x: previous.x + (target.x - previous.x) * 0.5, y: previous.y + (target.y - previous.y) * 0.5)
-        layout.setTransientInteraction(isExpanded(), owner: holdOwner)
+        if layout.isExpandedContentExiting || layout.isCollapseShellOnly {
+            layout.setTransientInteraction(false, owner: holdOwner)
+        } else if isExpanded() {
+            layout.setTransientInteraction(true, owner: holdOwner)
+        }
         if let point = canvasPoint, preferences.showPointer, isExpanded(), canInteract(), machine.hasPrecisionInteraction {
             let next = CameraPointerPresentation(point: point, phase: machine.phase, overControl: isOverNativeControl || windowPoint.map { router?.isInteractive(at: $0) ?? false } == true)
             if layout.cameraPointerStore.presentation != next { layout.cameraPointerStore.presentation = next }
@@ -527,7 +544,7 @@ final class CameraNavigationController: ObservableObject {
         } else { _ = machine.suspendInteraction() }
         router?.cancel()
         detectedPose = "No hand"; gestureCandidate = "None"
-        gestureRearm = machine.swipeArmed ? "Waiting for hand" : "Return to pointing"
+        gestureRearm = "Waiting for hand"
         if isTracking { isTracking = false }
         if layout?.cameraPointerStore.presentation != nil {
             withAnimation(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? nil : .easeOut(duration: 0.12)) {

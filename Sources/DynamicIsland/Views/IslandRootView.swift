@@ -803,6 +803,7 @@ struct IslandRootView: View {
             }
             .onChange(of: compactMessageSending) { _, sending in
                 if !sending, !compactMessageFocused, !isCollapsedHovering { deactivateCollapsedPreview() }
+                updateCollapsedPreviewLayout()
             }
             .onChange(of: isCollapsedPreviewActive) { _, _ in
                 updateCollapsedPreviewLayout()
@@ -1665,6 +1666,12 @@ struct IslandRootView: View {
 
     private func updateCollapsedPreviewLayout() {
         let active = isCollapsedPreviewActive
+        if case .interactive = collapsedHoverPolicy, collapsedMessageEntry != nil {
+            layoutStore.collapsedMessageInteractionProtected = active &&
+                (compactMessageKey != nil || compactMessageFocused || compactMessageSending)
+        } else {
+            layoutStore.collapsedMessageInteractionProtected = false
+        }
         layoutStore.updateCollapsedPreview(
             active: active,
             frame: active ? collapsedPreviewSurfaceFrame : .zero

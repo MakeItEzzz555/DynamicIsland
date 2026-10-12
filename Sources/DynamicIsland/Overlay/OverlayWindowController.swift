@@ -378,18 +378,20 @@ final class OverlayWindowController {
             }, page: { [weak self] forward in self?.navigatePage(forward: forward) },
             canExpand: { [weak self] in
                 guard let self else { return false }
-                // Compact approval, hover composers and HUD controls keep their exact authority.
-                return !self.layoutStore.collapsedPreviewActive &&
-                    self.activeInteractiveSystemHUD(activities: self.modules.liveActivities.activities) == nil &&
-                    AgentCompactPermission.current(sessions: self.modules.agentEvents.sessions,
-                        approvals: self.modules.agentApprovalControl, managed: self.modules.agentManagedControl) == nil
+                return self.canPresentOverlay && self.layoutStore.cameraExpansionAllowed(
+                    exactApproval: AgentCompactPermission.current(sessions: self.modules.agentEvents.sessions,
+                        approvals: self.modules.agentApprovalControl, managed: self.modules.agentManagedControl) != nil,
+                    interactiveHUD: self.activeInteractiveSystemHUD(activities: self.modules.liveActivities.activities) != nil,
+                    nativeInteraction: self.nativeMenuTracking.isTracking || self.hasVisibleTransientNativeWindow,
+                    fileDrag: self.modules.fileDragSession.isActive || self.modules.navigation.isFileDropTargeted)
             }, canCollapse: { [weak self] in
                 guard let self else { return false }
                 return !self.nativeMenuTracking.isTracking && !self.hasVisibleTransientNativeWindow &&
                     !self.modules.fileDragSession.isActive && !self.modules.navigation.isFileDropTargeted &&
                     AgentCompactPermission.current(sessions: self.modules.agentEvents.sessions,
                         approvals: self.modules.agentApprovalControl, managed: self.modules.agentManagedControl) == nil
-            }, collapse: { [weak self] in self?.requestCollapseWithSequencing() })
+            }, canUseCollapsedGestures: { [weak self] in self?.canPresentOverlay == true },
+            collapse: { [weak self] in self?.requestCollapseWithSequencing() })
         self.hostingView = hostingView
         debugGesture("Island hosting view installed")
 

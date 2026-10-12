@@ -159,6 +159,8 @@ struct HandNavigationStateMachine {
     private var scrollAt: TimeInterval?
     private var navigationOwnsHand = false
     private var wasExpanded: Bool?
+    private var palmStillAt: TimeInterval?
+    private var collapsedPinchPending = false
 
     var hasPrecisionInteraction: Bool {
         mode == .pointer && (classifier.pose == .pointer || isPressed || phase == .pinchCandidate)
@@ -177,12 +179,14 @@ struct HandNavigationStateMachine {
     mutating func suspendInteraction() -> [HandNavigationAction] {
         let actions: [HandNavigationAction] = isPressed ? [.cancel] : []
         phase = .tracking; candidateAt = nil; pressPoint = nil; needsRelease = true
+        collapsedPinchPending = false
         return actions
     }
 
     mutating func update(_ observation: HandNavigationObservation?, pinchSensitivity: Double = 0.5,
                          pageSwipe: Bool = true, scroll: Bool = false, expanded: Bool = true,
                          interactionAvailable: Bool = true, expandOnPinch: Bool = true,
+                         collapsedGestureAvailable: Bool = true,
                          leftAction: IslandGestureAction = .nextTab, rightAction: IslandGestureAction = .previousTab,
                          downAction: IslandGestureAction = .none) -> [HandNavigationAction] {
         guard let current = observation, current.isValid else { return reset() }
@@ -199,19 +203,26 @@ struct HandNavigationStateMachine {
         if let wasExpanded, wasExpanded != expanded {
             cancellation = suspendInteraction()
             navigationOwnsHand = true; neutralAt = nil
+            palmStillAt = nil
         }
         wasExpanded = expanded
         if current.pinchRatio > releaseThreshold { needsRelease = false }
         classifier.update(current, releaseThreshold: releaseThreshold)
-        if !interactionAvailable { cancellation += suspendInteraction() }
+        if expanded, !interactionAvailable, isPressed || phase == .pinchCandidate {
+            cancellation += suspendInteraction()
+        }
 
         if !expanded {
             mode = .collapsedGesture; swipeOrigin = nil; swipeAt = nil; scrollAt = nil
-            guard interactionAvailable else { return cancellation }
+            if current.pinchRatio > releaseThreshold || !expandOnPinch { collapsedPinchPending = false }
             let pinch = updatePinch(current, pressThreshold: pressThreshold, releaseThreshold: releaseThreshold)
             if pinch.contains(.press) {
                 phase = .tracking; pressPoint = nil; needsRelease = true
-                return cancellation + (expandOnPinch ? [.expandIsland] : [])
+                collapsedPinchPending = expandOnPinch
+            }
+            if collapsedPinchPending, collapsedGestureAvailable {
+                collapsedPinchPending = false
+                return cancellation + [.expandIsland]
             }
             return cancellation
         }
@@ -224,6 +235,21 @@ struct HandNavigationStateMachine {
                 return cancellation + suspendInteraction()
             }
             phase = .tracking; candidateAt = nil
+            if !swipeArmed {
+                // Moving returns are ignored; a still palm starts the next independent stroke.
+                let dt = current.timestamp - (last?.timestamp ?? current.timestamp)
+                let speed = dt > 0 ? hypot(current.palm.x - (last?.palm.x ?? current.palm.x),
+                    current.palm.y - (last?.palm.y ?? current.palm.y)) / dt / current.handScale : .infinity
+                if classifier.pose == .openPalm, speed < 0.45 {
+                    if palmStillAt == nil { palmStillAt = current.timestamp }
+                    if current.timestamp - (palmStillAt ?? current.timestamp) >= 0.15 - 0.000001 {
+                        swipeArmed = true; palmStillAt = nil
+                        swipeOrigin = current.palm; swipeAt = current.timestamp
+                        swipeDisplacement = .zero; swipeVelocity = 0
+                    }
+                } else { palmStillAt = nil }
+                return cancellation
+            }
             guard classifier.pose == .openPalm, swipeArmed,
                   let origin = swipeOrigin, let started = swipeAt else { return cancellation }
             let dx = current.palm.x - origin.x, dy = current.palm.y - origin.y
@@ -239,6 +265,7 @@ struct HandNavigationStateMachine {
             else if -dy >= travel, -dy > abs(dx) * 1.6 { action = downAction }
             else { return cancellation }
             swipeArmed = false
+            palmStillAt = nil
             guard interactionAvailable else { return cancellation }
             return cancellation + semanticAction(action)
         }
@@ -258,7 +285,7 @@ struct HandNavigationStateMachine {
             let dy = current.palm.y - last.palm.y, dx = current.palm.x - last.palm.x
             return cancellation + (abs(dy) > abs(dx) * 1.5 && abs(dy) > 0.001 ? [.scroll(dy * 600)] : [])
         }
-        scrollAt = nil; swipeOrigin = nil; swipeAt = nil
+        scrollAt = nil; swipeOrigin = nil; swipeAt = nil; palmStillAt = nil
         if navigationOwnsHand {
             mode = .rearming
             if classifier.pose == .pointer, current.pinchRatio > releaseThreshold {
