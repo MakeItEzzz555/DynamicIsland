@@ -203,3 +203,12 @@ Native acceptance not done:
 - whether a click on Pause inside the collapsed island ever falls through to click-to-expand
 - notchless and external displays
 - the multi-session orb row
+
+### Full-suite checkpoint after F (`ad8d098`)
+
+- `swift test`: **2,451 tests, 42 skipped, 4 failed cases (10 assertion failures)**, 184.6 s.
+  - The 2 known `IslandKeyboardAcquisitionTests` cases, unchanged.
+  - `SettingsWindowTests.testSettingsWindowAcceptsLocalPointerEventsThroughItsNativeHierarchy`: passed 2/2 in isolation; the native-input flake also seen in Codex's runs.
+  - `WorkspaceNativeEditorTests.testNativeAddCancelDoneAndResetOnlyPersistCommittedTransaction`: failed while the machine was loaded right after a Release build. Afterwards it passed 3/3 on this commit and 3/3 on the pre-F commit `1236f62` (temporary worktree). It is a synthetic-event timing test whose fixture hosts only `IslandWidgetEditor`, which F does not touch.
+- `swift build -c release`: passed (258 s).
+- Packaging and signing: not run in this checkpoint.
