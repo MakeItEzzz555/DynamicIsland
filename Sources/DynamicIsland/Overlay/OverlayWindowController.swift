@@ -200,6 +200,7 @@ struct OverlayPresentationSession {
 
 @MainActor
 final class OverlayWindowController {
+    var cameraPointerOverlayMounted: Bool { layoutStore.cameraPointerStore.isMounted }
     private enum OverlayPersistence {
         static let level: NSWindow.Level = .statusBar
 
@@ -287,7 +288,8 @@ final class OverlayWindowController {
         islandState: IslandStateStore,
         modules: IslandModules,
         geometryService: NotchGeometryService,
-        onOpenSettings: @escaping () -> Void = {}
+        onOpenSettings: @escaping () -> Void = {},
+        cameraNavigation: CameraNavigationController? = nil
     ) {
         self.settings = settings
         self.islandState = islandState
@@ -336,6 +338,11 @@ final class OverlayWindowController {
         hostingView.allowedTouchTypes = [.indirect]
         hostingView.wantsRestingTouches = true
         hostingView.onIndirectTouches = { [weak self] contacts, phase in
+            if phase == .cancelled || (phase == .ended && contacts.isEmpty) {
+                cameraNavigation?.physicalTouchSession(active: false)
+            } else if !contacts.isEmpty {
+                cameraNavigation?.physicalTouchSession(active: true)
+            }
             if contacts.count >= 2 { self?.layoutStore.tabPointerAnchor.cancel() }
             self?.handleIndirectTouches(contacts, phase: phase)
         }
@@ -357,6 +364,34 @@ final class OverlayWindowController {
             self?.handleIslandScrollWheel(event, localPoint: localPoint, source: "hostingView") ?? false
         }
         islandPanel.contentView = hostingView
+        cameraNavigation?.connect(window: islandPanel, layout: layoutStore,
+            isExpanded: { [weak self] in self?.islandState.state == .expanded },
+            canInteract: { [weak self] in
+                guard let self else { return false }
+                return self.canPresentOverlay && !self.layoutStore.isShellMorphing &&
+                    !self.layoutStore.isExpandedContentExiting && !self.layoutStore.isCollapseShellOnly &&
+                    !self.modules.navigation.isFileDropTargeted && !self.nativeMenuTracking.isTracking &&
+                    !self.hasVisibleTransientNativeWindow
+            },
+            expand: { [weak self] in
+                self?.expandFromCollapsedPreparingGeometry()
+            }, page: { [weak self] forward in self?.navigatePage(forward: forward) },
+            canExpand: { [weak self] in
+                guard let self else { return false }
+                return self.canPresentOverlay && self.layoutStore.cameraExpansionAllowed(
+                    exactApproval: AgentCompactPermission.current(sessions: self.modules.agentEvents.sessions,
+                        approvals: self.modules.agentApprovalControl, managed: self.modules.agentManagedControl) != nil,
+                    interactiveHUD: self.activeInteractiveSystemHUD(activities: self.modules.liveActivities.activities) != nil,
+                    nativeInteraction: self.nativeMenuTracking.isTracking || self.hasVisibleTransientNativeWindow,
+                    fileDrag: self.modules.fileDragSession.isActive || self.modules.navigation.isFileDropTargeted)
+            }, canCollapse: { [weak self] in
+                guard let self else { return false }
+                return !self.nativeMenuTracking.isTracking && !self.hasVisibleTransientNativeWindow &&
+                    !self.modules.fileDragSession.isActive && !self.modules.navigation.isFileDropTargeted &&
+                    AgentCompactPermission.current(sessions: self.modules.agentEvents.sessions,
+                        approvals: self.modules.agentApprovalControl, managed: self.modules.agentManagedControl) == nil
+            }, canUseCollapsedGestures: { [weak self] in self?.canPresentOverlay == true },
+            collapse: { [weak self] in self?.requestCollapseWithSequencing() })
         self.hostingView = hostingView
         debugGesture("Island hosting view installed")
 
@@ -3082,7 +3117,8 @@ final class OverlayWindowController {
     }
 }
 
-private final class IslandOverlayPanel: NSPanel {
+private final class IslandOverlayPanel: NSPanel, CameraLocalEventWindow {
+    var cameraEventGate: ((NSEvent) -> Bool)?
     override var canBecomeKey: Bool {
         true
     }
@@ -3094,6 +3130,7 @@ private final class IslandOverlayPanel: NSPanel {
     /// after such a click - the same path the Terminal page's programmatic
     /// focus already used successfully - without activating the app.
     override func sendEvent(_ event: NSEvent) {
+        guard cameraEventGate?(event) != false else { return }
         super.sendEvent(event)
         guard event.type == .leftMouseDown,
               IslandKeyboardFocusPolicy.claimsKeyboard(firstResponder) else { return }

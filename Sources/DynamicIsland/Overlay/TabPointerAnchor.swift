@@ -46,9 +46,9 @@ final class TabPointerAnchor {
 
     @discardableResult
     func activate(_ page: ExpandedIslandPage, eventType: NSEvent.EventType?,
-                  pointer: CGPoint, maximumDuration: TimeInterval) -> Int? {
+                  pointer: CGPoint, maximumDuration: TimeInterval, isCameraInput: Bool = false) -> Int? {
         cancel()
-        guard eventType == .leftMouseUp, let frame = validFrame(page), frame.contains(pointer) else { return nil }
+        guard !isCameraInput, eventType == .leftMouseUp, let frame = validFrame(page), frame.contains(pointer) else { return nil }
         target = Target(page: page, generation: generation,
             offset: CGPoint(x: pointer.x - frame.minX, y: pointer.y - frame.minY), pointer: pointer, frame: frame)
         let expected = generation

@@ -738,6 +738,8 @@ final class WorkspaceNativeDragView: NSView, NSDraggingSource {
     }
     override func mouseDown(with event: NSEvent) { down = event; dragging = false }
     override func mouseDragged(with event: NSEvent) {
+        // WindowServer drag sessions follow the physical cursor, not local input.
+        if CameraInteractionRouter.isCameraEvent(event) { down = nil; return }
         guard let down, !dragging else { return }
         let dx = event.locationInWindow.x - down.locationInWindow.x
         let dy = event.locationInWindow.y - down.locationInWindow.y
@@ -756,6 +758,7 @@ final class WorkspaceNativeDragView: NSView, NSDraggingSource {
     }
     override func mouseUp(with event: NSEvent) {
         defer { down = nil }
+        guard !CameraInteractionRouter.isCancellationEvent(event) else { return }
         guard down != nil, !dragging, let clicked else { return }
         // Click (no drag): deliver after the AppKit event finishes.
         DispatchQueue.main.async { clicked() }

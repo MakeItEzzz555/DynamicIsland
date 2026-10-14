@@ -712,6 +712,9 @@ struct IslandRootView: View {
 
                 collapsedSidecarOverlay
                 trayQuickActionOverlay
+                CameraPointerOverlay(store: layoutStore.cameraPointerStore, canvasSize: layoutStore.canvasSize)
+                    .zIndex(100)
+                    .allowsHitTesting(false)
             }
         }
         .shellMorphing(layoutStore.isShellMorphing)
@@ -800,6 +803,7 @@ struct IslandRootView: View {
             }
             .onChange(of: compactMessageSending) { _, sending in
                 if !sending, !compactMessageFocused, !isCollapsedHovering { deactivateCollapsedPreview() }
+                updateCollapsedPreviewLayout()
             }
             .onChange(of: isCollapsedPreviewActive) { _, _ in
                 updateCollapsedPreviewLayout()
@@ -1662,6 +1666,12 @@ struct IslandRootView: View {
 
     private func updateCollapsedPreviewLayout() {
         let active = isCollapsedPreviewActive
+        if case .interactive = collapsedHoverPolicy, collapsedMessageEntry != nil {
+            layoutStore.collapsedMessageInteractionProtected = active &&
+                (compactMessageKey != nil || compactMessageFocused || compactMessageSending)
+        } else {
+            layoutStore.collapsedMessageInteractionProtected = false
+        }
         layoutStore.updateCollapsedPreview(
             active: active,
             frame: active ? collapsedPreviewSurfaceFrame : .zero
@@ -3221,7 +3231,7 @@ private struct SystemHUDCompactSlider: View {
                         onChange(min(max(gesture.location.x / width, 0), 1), false)
                     }
                     .onEnded { gesture in
-                        guard isEnabled else { return }
+                        guard isEnabled, !CameraInteractionRouter.isCancellationEvent(NSApp.currentEvent) else { return }
                         onChange(min(max(gesture.location.x / width, 0), 1), true)
                     }
             )
@@ -4645,7 +4655,8 @@ struct ExpandedIslandPageSwitcher: View {
                     if navigation.selectedPage != page {
                         let plan = ExpandedIslandMotion.plan(settings: settings, reduceMotion: reduceMotion || settings.reduceExtraMotion)
                         pointerAnchor?.activate(page, eventType: NSApp.currentEvent?.type, pointer: NSEvent.mouseLocation,
-                            maximumDuration: plan.outgoingDuration + plan.shellDuration + 0.5)
+                            maximumDuration: plan.outgoingDuration + plan.shellDuration + 0.5,
+                            isCameraInput: NSApp.currentEvent.map(CameraInteractionRouter.isCameraEvent) ?? false)
                     }
                     navigation.select(page)
                 }

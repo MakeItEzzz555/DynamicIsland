@@ -20,6 +20,7 @@ enum IslandCanvasCoordinateSpace {
 }
 
 enum TransientInteractionOwner: Hashable, Sendable {
+    case cameraNavigation(UUID)
     case workspaceEditor
     case agentsLauncher
     case calendarDatePicker
@@ -38,6 +39,7 @@ struct IslandWorkspaceActionRequest: Equatable {
 
 @MainActor
 final class IslandLayoutStore: ObservableObject {
+    let cameraPointerStore = CameraPointerStore()
     let tabPointerAnchor = TabPointerAnchor()
     /// Transient delivery to the existing expanded view, which still owns
     /// Clipboard presentation and the editor transaction.
@@ -152,6 +154,7 @@ final class IslandLayoutStore: ObservableObject {
     @Published var isCollapseShellOnly = false
     @Published var isExpandedContentExiting = false
     @Published var collapsedPreviewActive = false
+    @Published var collapsedMessageInteractionProtected = false
     @Published var collapsedPreviewSurfaceFrame: CGRect = .zero
     @Published private(set) var collapsedLeadingSidecarFrame: CGRect = .zero
     @Published private(set) var collapsedTrailingSidecarFrame: CGRect = .zero
@@ -208,6 +211,17 @@ final class IslandLayoutStore: ObservableObject {
             guard transientInteractionOwners.contains(owner) else { return }
             transientInteractionOwners.remove(owner)
         }
+    }
+
+    var cameraGestureInteractionProtected: Bool {
+        isTextInputFocused || collapsedMessageInteractionProtected || transientInteractionOwners.contains {
+            if case .cameraNavigation = $0 { return false }
+            return true
+        }
+    }
+
+    func cameraExpansionAllowed(exactApproval: Bool, interactiveHUD: Bool, nativeInteraction: Bool, fileDrag: Bool) -> Bool {
+        !cameraGestureInteractionProtected && !exactApproval && !interactiveHUD && !nativeInteraction && !fileDrag
     }
     /// Visible accessories attached below the expanded shell (panel-local,
     /// AppKit coordinates). They own hover, hit-testing and passthrough
