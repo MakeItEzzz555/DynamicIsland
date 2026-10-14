@@ -139,6 +139,23 @@ final class FileTrayQuickActionTests: XCTestCase {
         XCTAssertNotNil(CGImageSourceCreateImageAtIndex(source, 0, nil))
     }
 
+    func testChosenImageDestinationPreservesExistingOutputAndRejectsInvalidFolder() async throws {
+        let source = try makePNG(named: "chosen.png")
+        let original = try Data(contentsOf: source)
+        let folder = directory.appendingPathComponent("output", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+        let occupied = folder.appendingPathComponent("chosen.jpg")
+        try Data("keep".utf8).write(to: occupied)
+        let output = try await FileConversionController.convert(source, to: .jpeg, outputDirectory: folder)
+        XCTAssertEqual(output, folder.appendingPathComponent("chosen 2.jpg"))
+        XCTAssertNotNil(CGImageSourceCreateWithURL(output as CFURL, nil).flatMap { CGImageSourceCreateImageAtIndex($0, 0, nil) })
+        XCTAssertEqual(try Data(contentsOf: occupied), Data("keep".utf8))
+        XCTAssertEqual(try Data(contentsOf: source), original)
+        do { _ = try await FileConversionController.convert(source, to: .jpeg, outputDirectory: source); XCTFail("File is not a folder") }
+        catch { XCTAssertEqual(try Data(contentsOf: source), original) }
+        XCTAssertEqual(Set(try FileManager.default.contentsOfDirectory(atPath: folder.path)), ["chosen.jpg", "chosen 2.jpg"])
+    }
+
     func testUnsupportedConversionFailsWithoutWriting() async throws {
         let png = try makePNG(named: "same.png")
         do {
@@ -149,6 +166,19 @@ final class FileTrayQuickActionTests: XCTestCase {
         }
         let contents = try FileManager.default.contentsOfDirectory(atPath: directory.path)
         XCTAssertEqual(contents, ["same.png"])
+    }
+
+    func testCancelledImageConversionDoesNotPublishOrLeaveStagingFiles() async throws {
+        let png = try makePNG(named: "cancel.png")
+        let original = try Data(contentsOf: png)
+        let task = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await FileConversionController.convert(png, to: .jpeg)
+        }
+        do { _ = try await task.value; XCTFail("Cancelled conversion published output") }
+        catch is CancellationError {}
+        XCTAssertEqual(try Data(contentsOf: png), original)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: directory.path), ["cancel.png"])
     }
 
     // MARK: Hover geometry

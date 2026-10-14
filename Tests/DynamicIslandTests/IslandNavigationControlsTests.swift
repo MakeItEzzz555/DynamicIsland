@@ -41,7 +41,7 @@ final class IslandNavigationControlsTests: XCTestCase {
                 hardwareNotchWidth: 186), header: header)
         let chrome = ExpandedIslandLayoutMetrics(containerSize: size,
             horizontalPadding: IslandShellLayout.expandedHorizontalPadding(isNotchIntegrated: true,
-                showNavigationControls: settings.showNavigationControls), displayMetrics: notched,
+                showNavigationControls: header.mode != .hidden), displayMetrics: notched,
             headerDrop: header.contentTopInset, showHeader: header.mode != .hidden)
         let projection = WorkspaceWidgetLayoutProjection.make(regions: config.regions(on: surface),
             availableSize: CGSize(width: chrome.innerWidth, height: chrome.pageHeight), metrics: notched, editing: editing)
@@ -94,7 +94,7 @@ final class IslandNavigationControlsTests: XCTestCase {
                 XCTAssertEqual(before.width, after.width, accuracy: 0.01, "\(kind) \(semanticSize)")
                 XCTAssertEqual(before.height, after.height, accuracy: 0.01, "\(kind) \(semanticSize)")
                 if kind == .media && semanticSize == .compact {
-                    XCTAssertLessThan(hidden.1.width, shown.1.width - 1, "no header minimum remains")
+                    XCTAssertEqual(hidden.1.width, shown.1.width, accuracy: 0.001, "detached navigation never changes widget geometry")
                     let editing = geometry(config: config, page: page, editing: true, settings: settings)
                     XCTAssertEqual(editing.0.mode, .hidden)
                     XCTAssertGreaterThan(editing.1.width, hidden.1.width, "editor palette retains its own recovery footprint")
@@ -263,9 +263,10 @@ final class IslandBackgroundInteractionTests: XCTestCase {
             bottomPadding: 12, contentTop: 48, notchSize: CGSize(width: 186, height: 32), allowsBackground: true)
     }
 
-    func testPhysicalNotchAndPaddingAreTheOnlyHitRegions() {
+    func testNotchMenuIncludesAccessibleClearanceButNeverContent() {
         XCTAssertEqual(geometry.region(at: CGPoint(x: 300, y: 20)), .notch)
-        XCTAssertNil(geometry.region(at: CGPoint(x: 300, y: 33)), "no synthetic band below the notch")
+        XCTAssertEqual(geometry.region(at: CGPoint(x: 300, y: 33)), .notch)
+        XCTAssertNil(geometry.region(at: CGPoint(x: 300, y: 38)), "page content remains outside the menu strip")
         XCTAssertNil(geometry.region(at: CGPoint(x: 206, y: 20)), "no interaction outside hardware notch width")
         XCTAssertEqual(geometry.region(at: CGPoint(x: 6, y: 100)), .background)
         XCTAssertEqual(geometry.region(at: CGPoint(x: 300, y: 294)), .background)

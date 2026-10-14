@@ -257,10 +257,10 @@ struct IslandPointerGestureModifier: ViewModifier {
 enum IslandShellLayout {
     static let collapsedHorizontalPadding: CGFloat = 8
     static let floatingExpandedHorizontalPadding: CGFloat = 12
-    static let integratedExpandedHorizontalPadding: CGFloat = 31
-    /// The notch-integrated shell has a 19pt shoulder; zero chrome keeps only
+    static let integratedExpandedHorizontalPadding: CGFloat = 40
+    /// The notch-integrated shell has a 28pt shoulder; zero chrome keeps only
     /// a 6pt visible inset beyond it, matching its bottom/notch clearance.
-    static let integratedExpandedShoulderWidth: CGFloat = 19
+    static let integratedExpandedShoulderWidth: CGFloat = 28
     static let zeroChromeVisibleClearance: CGFloat = 6
 
     static func collapsedHorizontalPadding(isNotchIntegrated: Bool) -> CGFloat {
@@ -269,7 +269,7 @@ enum IslandShellLayout {
 
     static func expandedHorizontalPadding(isNotchIntegrated: Bool, showNavigationControls: Bool = true) -> CGFloat {
         if !showNavigationControls {
-            return (isNotchIntegrated ? integratedExpandedShoulderWidth : 0) + zeroChromeVisibleClearance
+            return (isNotchIntegrated ? integratedExpandedShoulderWidth : 0) + floatingExpandedHorizontalPadding
         }
         return isNotchIntegrated ? integratedExpandedHorizontalPadding : floatingExpandedHorizontalPadding
     }
@@ -291,6 +291,21 @@ enum IslandShellMotion {
         let response = settings.animationPreset.shellDuration / max(settings.shellAnimationSpeed, 0.25)
         return WorkspaceMotion.shellSpring(opening: opening, baseResponse: response,
                                            reduceMotion: reduceMotion || settings.reduceExtraMotion)
+    }
+}
+
+enum DetachedIslandNavigationMetrics {
+    static let gap: CGFloat = 3
+    static let height: CGFloat = 42
+    static let accessoryHeight = gap + height + 4
+
+    static func width(pageCount: Int) -> CGFloat {
+        ExpandedIslandHeaderMetrics.leadingGroupWidth(pageCount: pageCount) + 8 + 30 + 8
+    }
+    static func frame(shell: CGRect, pageCount: Int, precedingAccessoryHeight: CGFloat = 0) -> CGRect {
+        CGRect(x: shell.midX - width(pageCount: pageCount) / 2,
+               y: shell.minY - precedingAccessoryHeight - gap - height,
+               width: width(pageCount: pageCount), height: height)
     }
 }
 
@@ -433,8 +448,7 @@ struct ExpandedIslandLayoutMetrics {
     /// the same spacing family as the 12 pt side inset and the notch clearance.
     var bottomPadding: CGFloat { Self.contentBottomClearance(metrics: displayMetrics, showNavigationControls: showHeader) }
     static func contentBottomClearance(metrics: ResolvedIslandMetrics, showNavigationControls: Bool = true) -> CGFloat {
-        (showNavigationControls ? IslandShellLayout.expandedBottomPadding : IslandShellLayout.zeroChromeVisibleClearance)
-            * metrics.spacingScale
+        IslandShellLayout.expandedBottomPadding * metrics.spacingScale
     }
     var tabSwitcherHeight: CGFloat { showHeader ? 34 * displayMetrics.compactControlScale : 0 }
     var tabToPageSpacing: CGFloat { showHeader ? 4 * displayMetrics.spacingScale : 0 }
@@ -559,6 +573,7 @@ struct IslandRootView: View {
     let modules: IslandModules
     let rendersExpandedVisualContent: Bool
     let onRequestExpand: () -> Void
+    let onRequestAutomaticExpand: () -> Void
     let onRequestCollapse: () -> Void
     let onOpenSettings: () -> Void
     @ObservedObject private var media: MediaController
@@ -614,6 +629,7 @@ struct IslandRootView: View {
         modules: IslandModules,
         rendersExpandedVisualContent: Bool,
         onRequestExpand: @escaping () -> Void,
+        onRequestAutomaticExpand: (() -> Void)? = nil,
         onRequestCollapse: @escaping () -> Void,
         onOpenSettings: @escaping () -> Void
     ) {
@@ -624,6 +640,7 @@ struct IslandRootView: View {
         self.modules = modules
         self.rendersExpandedVisualContent = rendersExpandedVisualContent
         self.onRequestExpand = onRequestExpand
+        self.onRequestAutomaticExpand = onRequestAutomaticExpand ?? onRequestExpand
         self.onRequestCollapse = onRequestCollapse
         self.onOpenSettings = onOpenSettings
         media = modules.media
@@ -712,6 +729,7 @@ struct IslandRootView: View {
 
                 collapsedSidecarOverlay
                 trayQuickActionOverlay
+                detachedNavigationOverlay
                 CameraPointerOverlay(store: layoutStore.cameraPointerStore, canvasSize: layoutStore.canvasSize)
                     .zIndex(100)
                     .allowsHitTesting(false)
@@ -761,6 +779,10 @@ struct IslandRootView: View {
             onDoubleClick: {
                 gestureCoordinator.handle(.doubleClick, settings: settings, context: gestureContext, callbacks: gestureCallbacks)
             },
+            onClick: isExpanded ? nil : {
+                guard settings.expandOnClick else { return }
+                gestureCallbacks.expand()
+            },
             onLongPress: {
                 if settings.gesturesEnabled && settings.gestureInputSource == .trackpad {
                     gestureCoordinator.handle(.longPress, settings: settings, context: gestureContext, callbacks: gestureCallbacks)
@@ -789,6 +811,9 @@ struct IslandRootView: View {
                 sequenceGeneration += 1
                 deactivateCollapsedPreview()
                 finalizeCompactPresentation()
+            }
+            .onChange(of: layoutStore.isReturningToNormalCollapsedSize) { _, _ in
+                synchronizeCollapsedSidecarGeometry()
             }
             .onChange(of: islandState.state) { _, newValue in
                 handleStateChange(newValue)
@@ -948,7 +973,9 @@ struct IslandRootView: View {
 
     private var compactIslandContent: some View {
         Group {
-            if let compactPermission {
+            if layoutStore.isReturningToNormalCollapsedSize {
+                Color.clear.accessibilityHidden(true)
+            } else if let compactPermission {
                 AgentCompactPermissionView(permission: compactPermission, approvals: modules.agentApprovalControl,
                     topBandHeight: max(layoutStore.collapsedSize.height - layoutStore.collapsedPresentationProfile.heightDelta, 20),
                     openFeed: {
@@ -1025,6 +1052,28 @@ struct IslandRootView: View {
     /// Positioned from the shell frame so they follow it; their frame is
     /// reported to the layout store for hover, hit-test and passthrough.
     @ViewBuilder
+    private var detachedNavigationOverlay: some View {
+        if settings.showNavigationControls, isExpanded, showsExpandedContent,
+           !layoutStore.isCollapseShellOnly {
+            let frame = DetachedIslandNavigationMetrics.frame(shell: layoutStore.expandedSurfaceFrame,
+                pageCount: navigation.availablePages(using: settings).count,
+                precedingAccessoryHeight: navigation.selectedPage == .tray ? FileTrayQuickActionMetrics.accessoryHeight : 0)
+            DetachedIslandNavigationBar(settings: settings, navigation: navigation, pointerAnchor: layoutStore.tabPointerAnchor,
+                onEdit: { requestBackgroundWorkspaceAction(.toggleEdit) },
+                onEditTabs: { requestBackgroundWorkspaceAction(.editNavigation) },
+                onReset: { requestBackgroundWorkspaceAction(.resetLayout) })
+            .frame(width: frame.width, height: frame.height)
+            .position(x: frame.midX, y: layoutStore.canvasSize.height - frame.midY)
+            .innerBlurScaleClean(settings: settings, isVisible: contentVisible, isRemoval: isContentRemoving,
+                index: 0, reduceMotion: reduceMotion)
+            .allowsHitTesting(contentVisible && !layoutStore.isShellMorphing)
+            .onAppear { layoutStore.setExpandedAccessoryFrames([frame], owner: .navigation) }
+            .onChange(of: frame) { _, next in layoutStore.setExpandedAccessoryFrames([next], owner: .navigation) }
+            .onDisappear { layoutStore.setExpandedAccessoryFrames([], owner: .navigation) }
+        }
+    }
+
+    @ViewBuilder
     private var trayQuickActionOverlay: some View {
         if showsExpandedContent,
            isExpanded,
@@ -1074,6 +1123,7 @@ struct IslandRootView: View {
     @ViewBuilder
     private var collapsedSidecarOverlay: some View {
         if !showsExpandedContent,
+           !layoutStore.isReturningToNormalCollapsedSize,
            agentAttention.presentation == nil,
            !isCollapsedPreviewActive {
             LiveActivitySidecarLayer(
@@ -1349,6 +1399,7 @@ struct IslandRootView: View {
 
     private func synchronizeCollapsedSidecarGeometry() {
         if islandState.state == .collapsed,
+           !layoutStore.isReturningToNormalCollapsedSize,
            agentAttention.presentation == nil,
            !isCollapsedPreviewActive {
             layoutStore.updateCollapsedSidecars(collapsedCompositeGeometry)
@@ -1368,6 +1419,7 @@ struct IslandRootView: View {
     private var isCollapsedPreviewAllowed: Bool {
         guard compactPermission == nil else { return false }
         return islandState.state == .collapsed &&
+            !layoutStore.isReturningToNormalCollapsedSize &&
             settings.collapsedHoverPreviewEnabled &&
             collapsedHoverPolicy != .none &&
             collapsedMessageEntry != nil &&
@@ -1417,20 +1469,19 @@ struct IslandRootView: View {
         guard islandState.state == .collapsed,
               renderedContentMode == .compact,
               canAcceptCollapsedFileDrop,
-              loader.canLoad(providers) else {
+              loader.canLoad(providers),
+              let claim = fileDragSession.claimShelfDrop() else {
             modules.navigation.endFileDropTargeting()
             return false
         }
         modules.navigation.endFileDropTargeting()
-        fileDragSession.cancel()
+        let presentationGeneration = layoutStore.overlayPresentationGeneration
 
         loader.loadURLs(from: providers) { urls in
             Task { @MainActor in
-                guard canAcceptCollapsedFileDrop else {
-                    FileShelfTemporaryStorage.shared.removeIfOwned(urls)
-                    return
-                }
-                modules.fileShelf.add(urls)
+                _ = fileDragSession.completeShelfDrop(claim, urls: urls, shelf: modules.fileShelf,
+                    allowed: settings.overlayEnabled && canAcceptCollapsedFileDrop &&
+                        layoutStore.overlayPresentationGeneration == presentationGeneration)
             }
         }
         return true
@@ -1616,7 +1667,7 @@ struct IslandRootView: View {
     }
 
     private func handleCollapsedHover(_ isHovering: Bool) {
-        guard settings.overlayEnabled else { return }
+        guard settings.overlayEnabled, !layoutStore.isReturningToNormalCollapsedSize else { return }
         let sessionGeneration = layoutStore.overlayPresentationGeneration
         if compactPermission != nil {
             withAnimation(AgentCompactPermissionMotion.animation(reduceMotion: reduceMotion || settings.reduceExtraMotion)) {
@@ -1637,7 +1688,7 @@ struct IslandRootView: View {
             return
         }
 
-        guard isCollapsedPreviewAllowed else {
+        guard isCollapsedPreviewAllowed || collapsedHoverPolicy.allowsAutomaticExpansion(enabled: settings.expandOnHover) else {
             collapsedPreviewVisible = false
             updateCollapsedPreviewLayout()
             return
@@ -1649,7 +1700,12 @@ struct IslandRootView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
             guard settings.overlayEnabled, sessionGeneration == layoutStore.overlayPresentationGeneration,
                   generation == collapsedPreviewGeneration else { return }
-            guard isCollapsedHovering, isCollapsedPreviewAllowed else { return }
+            guard isCollapsedHovering, !isExpanded, !layoutStore.isShellMorphing else { return }
+            if collapsedHoverPolicy.allowsAutomaticExpansion(enabled: settings.expandOnHover) {
+                onRequestAutomaticExpand()
+                return
+            }
+            guard isCollapsedPreviewAllowed else { return }
             compactMessageKey = modules.messaging.collapsedEntry?.key
             collapsedPreviewVisible = true
             updateCollapsedPreviewLayout()
@@ -1858,6 +1914,7 @@ struct IslandShellBackgroundInteraction: NSViewRepresentable {
     let onSettings: () -> Void
     let onNavigate: (Bool) -> Void
     var onDoubleClick: (() -> Void)? = nil
+    var onClick: (() -> Void)? = nil
     var onLongPress: (() -> Void)? = nil
     var shellShape = IslandShellShape(topCornerRadius: 0, bottomCornerRadius: 0)
 
@@ -1919,45 +1976,71 @@ final class IslandShellBackgroundInputView: NSView {
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    func acceptsNotchClick(at windowPoint: NSPoint) -> Bool {
+        let point = convert(windowPoint, from: nil)
+        return window != nil && !isHiddenOrHasHiddenAncestor && configuration?.enabled == true
+            && configuration?.geometry.region(at: point) == .notch
+            && configuration?.shellShape.path(in: bounds).contains(point) == true
+    }
+
     override func mouseDown(with event: NSEvent) {
         cancelPress()
         let point = convert(event.locationInWindow, from: nil)
-        guard let configuration, configuration.enabled else { return }
-        switch configuration.geometry.region(at: point) {
-        case .notch:
-            NSMenu.popUpContextMenu(actionsMenu(), with: event, for: self)
-        case .background:
-            if event.clickCount == 2 {
-                configuration.onDoubleClick?()
-                return
-            }
-            pressOrigin = point
-            let generation = pressGeneration
-            let work = DispatchWorkItem { [weak self] in
-                guard let self, self.pressGeneration == generation,
-                      self.window != nil, NSEvent.pressedMouseButtons & 1 != 0,
-                      let configuration = self.configuration, configuration.enabled,
-                      let origin = self.pressOrigin,
-                      configuration.geometry.region(at: origin) == .background else { return }
-                self.cancelPress()
-                (configuration.onLongPress ?? configuration.onEdit)()
-            }
-            pressWork = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.55, execute: work)
-        case nil:
-            break
+        guard let configuration, configuration.enabled,
+              configuration.geometry.region(at: point) != nil else { return }
+        if event.clickCount == 2 {
+            configuration.onDoubleClick?()
+            return
         }
+        pressOrigin = point
+        let generation = pressGeneration
+        let work = DispatchWorkItem { [weak self] in
+            guard NSEvent.pressedMouseButtons & 1 != 0 else { self?.cancelPress(); return }
+            self?.completeLongPress(generation: generation)
+        }
+        pressWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.55, execute: work)
+    }
+
+    func completeLongPress(generation: Int? = nil) {
+        guard generation == nil || generation == pressGeneration,
+              window != nil, let origin = pressOrigin,
+              let configuration, configuration.enabled,
+              configuration.geometry.region(at: origin) != nil else { return }
+        cancelPress()
+        (configuration.onLongPress ?? configuration.onEdit)()
     }
 
     override func mouseDragged(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         if let origin = pressOrigin,
-           hypot(point.x - origin.x, point.y - origin.y) > 10 || configuration?.geometry.region(at: point) != .background {
+           hypot(point.x - origin.x, point.y - origin.y) > 10 ||
+            configuration?.geometry.region(at: point) != configuration?.geometry.region(at: origin) {
             cancelPress()
         }
     }
 
-    override func mouseUp(with event: NSEvent) { cancelPress() }
+    override func mouseUp(with event: NSEvent) {
+        let origin = pressOrigin
+        let point = convert(event.locationInWindow, from: nil)
+        cancelPress()
+        guard let origin, let configuration, configuration.enabled,
+              configuration.geometry.region(at: origin) == .notch,
+              configuration.geometry.region(at: point) == .notch else { return }
+        if let onClick = configuration.onClick {
+            onClick()
+        } else if configuration.geometry.allowsBackground {
+            // Wait for AppKit's double-click interval so the menu cannot swallow a shortcut's second press.
+            let generation = pressGeneration
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, self.pressGeneration == generation,
+                      self.acceptsNotchClick(at: event.locationInWindow) else { return }
+                NSMenu.popUpContextMenu(self.actionsMenu(), with: event, for: self)
+            }
+            pressWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + NSEvent.doubleClickInterval, execute: work)
+        }
+    }
 
     override func viewWillMove(toWindow newWindow: NSWindow?) {
         if newWindow == nil { cancelPress() }
@@ -1978,6 +2061,7 @@ final class IslandShellBackgroundInputView: NSView {
 
     override func accessibilityPerformPress() -> Bool {
         guard configuration?.enabled == true else { return false }
+        if let onClick = configuration?.onClick { onClick(); return true }
         let notch = configuration?.geometry.notchRect ?? .zero
         actionsMenu().popUp(positioning: nil,
             at: notch.isEmpty ? CGPoint(x: bounds.midX, y: bounds.maxY - 6) : CGPoint(x: notch.midX, y: notch.maxY), in: self)
@@ -2185,9 +2269,9 @@ private struct AgentNotchGlowBorder: View {
 
 struct IslandShellRadii: Equatable {
     static let collapsedTop: CGFloat = 6
-    static let expandedTop: CGFloat = 19
+    static let expandedTop: CGFloat = 28
     static let collapsedBottom: CGFloat = 14
-    static let expandedBottom: CGFloat = 24
+    static let expandedBottom: CGFloat = 40
 
     let top: CGFloat
     let bottom: CGFloat
@@ -3701,84 +3785,6 @@ struct ExpandedIslandView: View {
 
     private func expandedBaseLayer(metrics: ExpandedIslandLayoutMetrics) -> some View {
         VStack(alignment: .leading, spacing: metrics.tabToPageSpacing) {
-            if metrics.showHeader {
-            HStack(alignment: .center, spacing: 0) {
-                ZStack(alignment: .leading) {
-                    if rendersExpandedVisualContent && shouldRenderContent && !isCollapseShellOnly {
-                        ExpandedIslandPageSwitcher(settings: settings, navigation: navigation, pointerAnchor: layoutStore.tabPointerAnchor)
-                            .innerBlurScaleClean(
-                                settings: settings,
-                                isVisible: contentVisible,
-                                isRemoval: isContentRemoving,
-                                index: 0,
-                                reduceMotion: reduceMotion
-                            )
-                    }
-                }
-                .frame(height: metrics.tabSwitcherHeight)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                // Hardware-notch exclusion: equal flexible halves keep this gap
-                // centered on the notch; nothing interactive is placed in it.
-                // The compact header row sits below the notch: only the
-                // minimum group spacing remains.
-                Color.clear
-                    .frame(width: headerLayout.mode == .compactBelowNotch
-                           ? ExpandedHeaderLayout.compactGroupSpacing
-                           : ExpandedIslandHeaderMetrics.notchExclusionWidth(hardwareNotchWidth: layoutStore.hardwareNotchWidth))
-                    .accessibilityHidden(true)
-
-                HStack(spacing: 6) {
-                    if rendersExpandedVisualContent && shouldRenderContent && !isCollapseShellOnly {
-                        ExpandedHeaderButton(systemImage: "square.grid.2x2", help: "Customize workspace", accessibilityLabel: "Customize workspace") {
-                            closeClipboardHistoryImmediately()
-                            if navigation.selectedPage == .island || navigation.selectedPage == .agents {
-                                editingNavigation = false
-                                editingWidgets.toggle()
-                            } else {
-                                editingWidgets = false
-                                editingNavigation.toggle()
-                            }
-                        }
-                        .contextMenu {
-                            Button("Customize tabs") {
-                                editingWidgets = false
-                                editingNavigation = true
-                            }
-                            Button("Reset to Default Layout") {
-                                customization.reset()
-                                editingWidgets = false
-                                editingNavigation = false
-                            }
-                        }
-                        if settings.clipboardHistoryEnabled {
-                            ExpandedHeaderButton(
-                                systemImage: "clipboard",
-                                help: "Clipboard History",
-                                accessibilityLabel: "Open Clipboard History"
-                            ) {
-                                toggleClipboardHistory()
-                            }
-                        }
-                        SettingsGearButton {
-                            closeClipboardHistoryAnimated()
-                            onOpenSettings()
-                        }
-                    }
-                }
-                .innerBlurScaleClean(
-                    settings: settings,
-                    isVisible: contentVisible,
-                    isRemoval: isContentRemoving,
-                    index: 0,
-                    reduceMotion: reduceMotion
-                )
-                .frame(height: metrics.tabSwitcherHeight)
-                .frame(maxWidth: .infinity, alignment: .trailing)
-            }
-            .frame(height: metrics.tabSwitcherHeight)
-            }
-
             // Top-centered: pages are laid out at the target metrics while the
             // shell still morphs around its horizontal center, so an incoming
             // page overflows (or insets) symmetrically instead of detaching
@@ -3828,6 +3834,27 @@ struct ExpandedIslandView: View {
             editingWidgets = false
             editingNavigation = false
             openClipboardHistory()
+        case .resetLayout:
+            closeClipboardHistoryImmediately()
+            customization.reset()
+            editingWidgets = false
+            editingNavigation = false
+            synchronizeCustomizationEditing()
+        case .toggleEdit:
+            closeClipboardHistoryImmediately()
+            if navigation.selectedPage == .island || navigation.selectedPage == .agents {
+                editingNavigation = false
+                editingWidgets.toggle()
+            } else {
+                editingWidgets = false
+                editingNavigation.toggle()
+            }
+            synchronizeCustomizationEditing()
+        case .editNavigation:
+            closeClipboardHistoryImmediately()
+            editingWidgets = false
+            editingNavigation = true
+            synchronizeCustomizationEditing()
         case .edit:
             closeClipboardHistoryImmediately()
             editingWidgets = navigation.selectedPage == .island || navigation.selectedPage == .agents
@@ -4477,22 +4504,20 @@ struct ExpandedIslandView: View {
 
     private func loadDroppedFiles(from providers: [NSItemProvider]) -> Bool {
         let loader = FileDropProviderLoader()
-        guard canAcceptExpandedFileDrop, loader.canLoad(providers) else {
+        guard canAcceptExpandedFileDrop, loader.canLoad(providers), let claim = modules.fileDragSession.claimShelfDrop() else {
             isFilesTargeted = false
             navigation.endFileDropTargeting()
             return false
         }
         isFilesTargeted = false
         navigation.endFileDropTargeting()
-        modules.fileDragSession.cancel()
+        let presentationGeneration = layoutStore.overlayPresentationGeneration
 
         loader.loadURLs(from: providers) { urls in
             Task { @MainActor in
-                guard canAcceptExpandedFileDrop else {
-                    FileShelfTemporaryStorage.shared.removeIfOwned(urls)
-                    return
-                }
-                modules.fileShelf.add(urls)
+                _ = modules.fileDragSession.completeShelfDrop(claim, urls: urls, shelf: modules.fileShelf,
+                    allowed: settings.overlayEnabled && canAcceptExpandedFileDrop &&
+                        layoutStore.overlayPresentationGeneration == presentationGeneration)
             }
         }
         return true
@@ -4639,6 +4664,29 @@ struct ExpandedHeaderButton: View {
     }
 }
 
+struct DetachedIslandNavigationBar: View {
+    @ObservedObject var settings: AppSettings
+    @ObservedObject var navigation: IslandNavigationStore
+    var pointerAnchor: TabPointerAnchor? = nil
+    let onEdit: () -> Void
+    let onEditTabs: () -> Void
+    let onReset: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ExpandedIslandPageSwitcher(settings: settings, navigation: navigation, pointerAnchor: pointerAnchor)
+                .frame(width: ExpandedIslandHeaderMetrics.leadingGroupWidth(pageCount: navigation.availablePages(using: settings).count))
+            ExpandedHeaderButton(systemImage: "square.grid.2x2", help: "Customize workspace", accessibilityLabel: "Customize workspace", action: onEdit)
+                .contextMenu {
+                    Button("Customize tabs", action: onEditTabs)
+                    Button("Reset to Default Layout", action: onReset)
+                }
+        }
+        .padding(4)
+        .background(.black, in: Capsule())
+    }
+}
+
 struct ExpandedIslandPageSwitcher: View {
     @ObservedObject var settings: AppSettings
     @ObservedObject var navigation: IslandNavigationStore
@@ -4666,7 +4714,7 @@ struct ExpandedIslandPageSwitcher: View {
             }
         }
         .padding(ExpandedIslandHeaderMetrics.tabPadding)
-        .background(.white.opacity(0.07), in: Capsule(style: .continuous))
+        .background(.black, in: Capsule(style: .continuous))
         .overlay {
             Capsule(style: .continuous)
                 .stroke(.white.opacity(0.07), lineWidth: 1)

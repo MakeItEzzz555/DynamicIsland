@@ -9,10 +9,12 @@ protocol CameraLocalEventWindow: AnyObject {
 final class CameraInteractionRouter {
     private weak var window: NSWindow?
     private let now: () -> TimeInterval
+    private let monitorsPhysicalInput: Bool
     private var monitor: Any?
     private var globalMonitor: Any?
     private var sequence = 1
     private(set) var isPressed = false
+    private(set) var postedPointerEventCounts: [NSEvent.EventType: Int] = [:]
     private var pendingSequence = false
     private weak var slider: NSSlider?
     private weak var editingBridge: CameraSliderEditingBridge.EditingView?
@@ -23,9 +25,11 @@ final class CameraInteractionRouter {
     var onPhysicalInput: (() -> Void)?
     var allowsCameraInput: () -> Bool = { true }
 
-    init(window: NSWindow, now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
-        self.window = window; self.now = now
+    init(window: NSWindow, monitorsPhysicalInput: Bool = true, now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
+        self.window = window; self.now = now; self.monitorsPhysicalInput = monitorsPhysicalInput
         (window as? CameraLocalEventWindow)?.cameraEventGate = { [weak self] event in self?.accept(event) ?? true }
+        // Native acceptance fixtures isolate external user input; production always monitors it.
+        guard monitorsPhysicalInput else { return }
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp, .leftMouseDragged,
             .rightMouseDown, .rightMouseUp, .mouseMoved, .scrollWheel, .keyDown]) { [weak self] event in
             guard let self else { return event }
@@ -45,6 +49,7 @@ final class CameraInteractionRouter {
             if event.type == .leftMouseUp { pendingSequence = false }
             return true
         }
+        guard monitorsPhysicalInput else { return true }
         guard [.leftMouseDown, .leftMouseUp, .leftMouseDragged, .rightMouseDown, .rightMouseUp,
                .mouseMoved, .scrollWheel, .keyDown].contains(event.type) else { return true }
         let cancelBeforePhysical = isPressed || pendingSequence
@@ -68,16 +73,18 @@ final class CameraInteractionRouter {
     func physicalTouchSession(active: Bool) {
         guard active != physicalTouchActive else { return }
         physicalTouchActive = active
+        suspendForPhysicalInput()
+    }
+
+    func suspendForPhysicalInput() {
         physicalUntil = now() + 0.7
         cancel(); onPhysicalInput?()
     }
 
     private func recordPhysical(_ event: NSEvent) {
-        physicalUntil = now() + 0.7
         if event.type == .leftMouseDown || event.type == .rightMouseDown { physicalButtonDown = true }
         if event.type == .leftMouseUp || event.type == .rightMouseUp { physicalButtonDown = false }
-        cancel()
-        onPhysicalInput?()
+        suspendForPhysicalInput()
     }
 
     func press(at point: CGPoint) {
@@ -169,6 +176,7 @@ final class CameraInteractionRouter {
         cg.setIntegerValueField(.eventSourceUserData, value: eventTag | (cancelled ? 1 : 0))
         guard let tagged = NSEvent(cgEvent: cg) else { return }
         NSApp.postEvent(tagged, atStart: atStart)
+        if !cancelled { postedPointerEventCounts[type, default: 0] += 1 }
     }
 
     func scroll(at point: CGPoint, delta: Double) {

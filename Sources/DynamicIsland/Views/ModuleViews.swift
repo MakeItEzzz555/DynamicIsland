@@ -805,7 +805,7 @@ private struct ClickableAlbumArtworkButton: View {
 
     var body: some View {
         Group {
-            if settings.openSourceOnArtworkClick {
+            if settings.openSourceOnArtworkClick && !media.isSettingsPreview {
                 Button(action: action) {
                     artwork
                 }
@@ -815,8 +815,8 @@ private struct ClickableAlbumArtworkButton: View {
             }
         }
         .onHover { isHovering = $0 }
-        .accessibilityLabel("Open media source")
-        .accessibilityHint("Opens the app currently playing this media")
+        .accessibilityLabel(media.isSettingsPreview ? "Sample album artwork" : "Open media source")
+        .accessibilityHint(media.isSettingsPreview ? "Source app launching is disabled in Settings previews" : "Opens the app currently playing this media")
     }
 
     private var artwork: some View {
@@ -1290,6 +1290,7 @@ struct ShelfFileTile: View {
             }
         }
         .contextMenu {
+            Button("File Actions…") { fileShelf.requestFileActions(for: contextTargets) }
             Button("Quick Look") {
                 FileShelfActions.quickLook(url)
             }

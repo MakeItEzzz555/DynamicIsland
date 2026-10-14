@@ -57,6 +57,7 @@ final class BasketPresenter: ObservableObject {
         monitor = BasketDragMonitor(
             probe: probe,
             sensitivity: { [weak settings] in settings?.basketJiggleSensitivity ?? 3 },
+            instantAppear: { [weak settings] in settings?.basketInstantAppear ?? false },
             onJiggle: { [weak self] _, location in self?.handleJiggle(at: location) },
             onDragEnded: { [weak self] _ in self?.handleDragEnded() }
         )
@@ -105,6 +106,13 @@ final class BasketPresenter: ObservableObject {
 
     func revealHiddenBaskets() {
         reveal(manager.hiddenBasketsWithItems, around: NSEvent.mouseLocation)
+    }
+
+    @discardableResult
+    func showPrimaryBasket() -> Bool {
+        guard settings.floatingBasketEnabled, let basket = manager.baskets.first ?? manager.createBasket() else { return false }
+        present(basket, near: NSEvent.mouseLocation, atLastPosition: true)
+        return true
     }
 
     /// Shelf → Basket ("Move to Basket"): frontmost visible basket, else a

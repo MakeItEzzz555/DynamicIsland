@@ -48,7 +48,7 @@ struct SettingsPreviewDependencies {
     let previewShelf: FileShelfStore
     /// Preview-only: background removal controller that never processes.
     let previewBackgroundRemoval: BackgroundRemovalController
-    /// The live placement model is read only; previews never commit to it.
+    /// Rendering is read-only; the explicit workspace editor commits only on Done.
     var customization: WorkspaceCustomizationStore? = nil
 }
 
@@ -175,6 +175,7 @@ struct SettingsPreviewPresentation {
 
     let geometry: IslandGeometry
     let header: ExpandedHeaderLayout
+    let showsDetachedNavigation: Bool
     let lane: WorkspaceNotchLane
     let chrome: ExpandedIslandLayoutMetrics
     let regions: [WorkspaceWidgetRegion]
@@ -189,6 +190,7 @@ struct SettingsPreviewPresentation {
 
     init(settings: AppSettings, page: ExpandedIslandPage = .island,
          configuration: WorkspaceConfiguration? = nil, mediaVisible: Bool = true) {
+        showsDetachedNavigation = settings.showNavigationControls
         let navigation = IslandNavigationStore()
         if let configuration { navigation.applyConfiguration(configuration, using: settings) }
         let count = navigation.availablePages(using: settings).count
@@ -198,9 +200,9 @@ struct SettingsPreviewPresentation {
             hardwareNotchWidth: integrated ? Self.metrics.hardwareNotchWidth : 0)
         header = ExpandedPresentationProfile.headerLayout(page: page, configuration: configuration, editing: false,
             settings: settings, metrics: Self.metrics, pageCount: count)
-        lane = header.mode == .compactBelowNotch ? .none : ExpandedIslandLayoutMetrics.workspaceNotchLane(
-            settings: settings, metrics: Self.metrics, pageCount: count,
-            hardwareNotchWidth: integrated ? Self.metrics.hardwareNotchWidth : 0)
+        lane = ExpandedIslandLayoutMetrics.workspaceNotchLane(metrics: Self.metrics, isNotchIntegrated: integrated,
+            pageCount: count, clipboardEnabled: settings.clipboardHistoryEnabled,
+            hardwareNotchWidth: integrated ? Self.metrics.hardwareNotchWidth : 0, showNavigationControls: false)
         let size = ExpandedPresentationProfile.resolve(for: page).resolvedSize(from: settings.expandedSize,
             page: page, configuration: configuration, editing: false, settings: settings,
             metrics: Self.metrics, minimumHeaderWidth: headerWidth, lane: lane, header: header)
@@ -210,7 +212,7 @@ struct SettingsPreviewPresentation {
             useAdaptiveNotchSizing: settings.useAdaptiveNotchSizing, respectHardwareNotch: settings.respectHardwareNotch)
         chrome = ExpandedIslandLayoutMetrics(containerSize: geometry.expandedFrame.size,
             horizontalPadding: IslandShellLayout.expandedHorizontalPadding(isNotchIntegrated: integrated,
-                showNavigationControls: settings.showNavigationControls),
+                showNavigationControls: header.mode != .hidden),
             displayMetrics: Self.metrics, headerDrop: header.contentTopInset, showHeader: header.mode != .hidden)
         let surface: WorkspaceSurface = page == .agents ? .agents : .media
         let allowed = WorkspaceWidgetAvailability.eligible(on: surface, settings: settings)
@@ -229,7 +231,7 @@ struct SettingsPreviewPresentation {
             : ExpandedIslandLayoutMetrics.workspaceNotchLane(metrics: Self.metrics, isNotchIntegrated: integrated,
                 pageCount: count, clipboardEnabled: settings.clipboardHistoryEnabled,
                 hardwareNotchWidth: integrated ? Self.metrics.hardwareNotchWidth : 0,
-                showNavigationControls: alternateControls)
+                showNavigationControls: alternateHeader.mode != .hidden)
         let alternateSize = ExpandedPresentationProfile.resolve(for: page).resolvedSize(from: settings.expandedSize,
             page: page, configuration: configuration, editing: false, settings: settings, metrics: Self.metrics,
             minimumHeaderWidth: headerWidth, lane: alternateLane, header: alternateHeader,
@@ -237,8 +239,8 @@ struct SettingsPreviewPresentation {
         let alternateGeometry = NotchGeometryService().geometry(for: Self.screen,
             collapsedSize: settings.collapsedSize, expandedSize: alternateSize,
             useAdaptiveNotchSizing: settings.useAdaptiveNotchSizing, respectHardwareNotch: settings.respectHardwareNotch)
-        navigationFittingSize = CGSize(width: max(geometry.expandedFrame.width, alternateGeometry.expandedFrame.width),
-                                      height: max(geometry.expandedFrame.height, alternateGeometry.expandedFrame.height))
+        navigationFittingSize = CGSize(width: max(geometry.expandedFrame.width, alternateGeometry.expandedFrame.width, DetachedIslandNavigationMetrics.width(pageCount: count)),
+                                      height: max(geometry.expandedFrame.height, alternateGeometry.expandedFrame.height) + DetachedIslandNavigationMetrics.accessoryHeight)
     }
 
     static func fit(size: CGSize, in available: CGSize) -> CGFloat {
@@ -262,6 +264,7 @@ struct SettingsPreviewSandbox<Controls: View, Content: View>: View {
     let title: String
     var usesSampleContent = false
     var showsReduceMotionToggle = false
+    var allowsInteraction = false
     var height: CGFloat = 200
     @ViewBuilder var controls: () -> Controls
     @ViewBuilder var content: (_ reduceMotion: Bool) -> Content
@@ -276,7 +279,7 @@ struct SettingsPreviewSandbox<Controls: View, Content: View>: View {
             HStack(spacing: 8) {
                 Label(title, systemImage: "eye")
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.secondary).lineLimit(1)
                 if usesSampleContent {
                     Text("Sample content")
                         .font(.caption2.weight(.semibold))
@@ -287,12 +290,14 @@ struct SettingsPreviewSandbox<Controls: View, Content: View>: View {
                         .help("This preview uses sample data. Production views never use it.")
                 }
                 Spacer()
-                controls()
                 if showsReduceMotionToggle {
                     Toggle("Reduce Motion", isOn: $reduceMotion)
                         .toggleStyle(.checkbox)
-                        .controlSize(.small)
+                        .controlSize(.small).fixedSize()
                 }
+            }
+            if Controls.self != EmptyView.self {
+                HStack { controls(); Spacer(minLength: 0) }
             }
             content(systemReduceMotion || reduceMotion || inheritedReduceMotion)
                 .environment(\.isSettingsPreview, true)
@@ -301,8 +306,8 @@ struct SettingsPreviewSandbox<Controls: View, Content: View>: View {
                 .environment(\.colorScheme, .dark)
                 .defaultAppStorage(defaults)
                 .transformEnvironment(\.timerRulerInteractionRegistration) { $0.enabled = false }
-                .disabled(true)
-                .allowsHitTesting(false)
+                .disabled(!allowsInteraction)
+                .allowsHitTesting(allowsInteraction)
                 .frame(maxWidth: .infinity, minHeight: height, maxHeight: height)
                 .padding(10)
                 .background(Color.black, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
@@ -317,12 +322,14 @@ extension SettingsPreviewSandbox where Controls == EmptyView {
     init(
         title: String,
         usesSampleContent: Bool = false,
+        allowsInteraction: Bool = false,
         showsReduceMotionToggle: Bool = false,
         height: CGFloat = 200,
         @ViewBuilder content: @escaping (_ reduceMotion: Bool) -> Content
     ) {
         self.title = title
         self.usesSampleContent = usesSampleContent
+        self.allowsInteraction = allowsInteraction
         self.showsReduceMotionToggle = showsReduceMotionToggle
         self.height = height
         self.controls = { EmptyView() }
@@ -365,6 +372,7 @@ struct IslandShellSettingsPreview: View {
                         page: navigation.selectedPage, configuration: configuration)
                     let rawSize = expanded ? presentation.geometry.expandedFrame.size : presentation.geometry.collapsedFrame.size
                     let scale = SettingsPreviewPresentation.fit(size: presentation.navigationFittingSize, in: proxy.size)
+                    VStack(spacing: DetachedIslandNavigationMetrics.gap) {
                     IslandSurface(
                         settings: settings,
                         isExpanded: expanded,
@@ -372,21 +380,6 @@ struct IslandShellSettingsPreview: View {
                     ) {
                         if expanded {
                             VStack(alignment: .leading, spacing: presentation.chrome.tabToPageSpacing) {
-                                if presentation.chrome.showHeader {
-                                    HStack(spacing: 6) {
-                                        ExpandedIslandPageSwitcher(settings: settings, navigation: navigation)
-                                            .fixedSize()
-                                        Spacer(minLength: ExpandedHeaderLayout.compactGroupSpacing)
-                                        if settings.clipboardHistoryEnabled {
-                                            ExpandedHeaderButton(systemImage: "clipboard", help: "Clipboard History",
-                                                accessibilityLabel: "Open Clipboard History") {}
-                                        }
-                                        ExpandedHeaderButton(systemImage: "square.grid.2x2", help: "Customize workspace",
-                                            accessibilityLabel: "Customize workspace") {}
-                                        SettingsGearButton {}
-                                    }
-                                    .frame(height: presentation.chrome.tabSwitcherHeight)
-                                }
                                 if let dependencies {
                                     SettingsPreviewWidgetGrid(settings: settings, dependencies: dependencies, presentation: presentation)
                                         .frame(width: presentation.chrome.innerWidth, height: presentation.chrome.pageHeight)
@@ -404,8 +397,16 @@ struct IslandShellSettingsPreview: View {
                     .environment(\.expandedHeaderLayout, presentation.header)
                     .environment(\.agentVisualPreferences, settings.agentVisualPreferences)
                     .frame(width: rawSize.width, height: rawSize.height)
+                    if expanded, presentation.showsDetachedNavigation {
+                        ExpandedIslandPageSwitcher(settings: settings, navigation: navigation)
+                            .fixedSize()
+                            .background(.black, in: Capsule())
+                    }
+                    }
+
                     .scaleEffect(scale, anchor: .top)
-                    .frame(width: rawSize.width * scale, height: rawSize.height * scale, alignment: .top)
+                    .frame(width: max(rawSize.width, DetachedIslandNavigationMetrics.width(pageCount: navigation.availablePages(using: settings).count)) * scale,
+                           height: (rawSize.height + (expanded && settings.showNavigationControls ? DetachedIslandNavigationMetrics.accessoryHeight : 0)) * scale, alignment: .top)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                     .animation(IslandShellMotion.shellAnimation(settings: settings, reduceMotion: reduceMotion,
                         opening: expanded), value: expanded)
@@ -425,10 +426,12 @@ struct IslandShellSettingsPreview: View {
 
 /// The shell's miniature uses the production grid frames and presentation
 /// contexts. The content never mounts a PTY or an interactive provider.
-private struct SettingsPreviewWidgetGrid: View {
+struct SettingsPreviewWidgetGrid: View {
     @ObservedObject var settings: AppSettings
     let dependencies: SettingsPreviewDependencies
     let presentation: SettingsPreviewPresentation
+    var regionOverride: WorkspaceWidgetRegion? = nil
+    var sizeOverride: CGSize? = nil
     @StateObject private var approvals = AgentApprovalController()
     @StateObject private var activities = LiveActivityStore()
     @StateObject private var navigation = IslandNavigationStore()
@@ -440,6 +443,9 @@ private struct SettingsPreviewWidgetGrid: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
+            if let regionOverride, let sizeOverride {
+                widget(regionOverride, size: sizeOverride)
+            } else {
             ForEach(presentation.regions) { region in
                 if let frame = presentation.projection.frames.first(where: { $0.id == region.id })?.frame {
                     widget(region, size: frame.size)
@@ -451,8 +457,9 @@ private struct SettingsPreviewWidgetGrid: View {
                         .position(x: frame.midX, y: frame.midY)
                 }
             }
+            }
         }
-        .frame(width: presentation.projection.contentSize.width, height: presentation.projection.contentSize.height, alignment: .topLeading)
+        .frame(width: sizeOverride?.width ?? presentation.projection.contentSize.width, height: sizeOverride?.height ?? presentation.projection.contentSize.height, alignment: .topLeading)
         .environment(\.rightWorkspacePageIsActive, false)
         .clipped()
         .onAppear { syncActivities() }
@@ -721,7 +728,7 @@ struct MediaSettingsPreview: View {
     @State private var configuration: WorkspaceConfiguration? = nil
 
     var body: some View {
-        SettingsPreviewSandbox(title: "Media Player Preview", usesSampleContent: true, height: 160) { _ in
+        SettingsPreviewSandbox(title: "Media Player Preview", usesSampleContent: true, allowsInteraction: true, height: 160) { _ in
             GeometryReader { proxy in
                 let placement = SettingsPreviewPresentation.placement(kind: .media, configuration: configuration)
                 let scale = SettingsPreviewPresentation.fit(size: placement.size, in: proxy.size)
@@ -1001,13 +1008,66 @@ struct FileTraySettingsPreview: View {
 
 // MARK: - Clipboard, timer, stats, productivity
 
-struct ClipboardSettingsPreview: View {
-    @ObservedObject var store: ClipboardHistoryStore
-
-    var body: some View {
-        SettingsPreviewSandbox(title: "Clipboard Preview (your current history)", height: 240) { _ in
-            ClipboardHistoryView(store: store, onClose: {})
+/// All clipboard preview input/output stays in memory; no system pasteboard or archive is touched.
+@MainActor
+final class SettingsClipboardPreviewModel: ObservableObject {
+    final class Pasteboard: ClipboardPasteboardClient {
+        var changeCount = 0
+        var value: ClipboardHistoryPayload = .text(.init(plainText: "", rtfData: nil, htmlData: nil))
+        func readSupportedPayload(limits: ClipboardHistoryLimits, capturesImages: Bool) -> ClipboardPasteboardReadResult { .payload(value) }
+        func write(_ payload: ClipboardHistoryPayload) -> ClipboardPasteboardWriteResult {
+            value = payload; changeCount += 1
+            return .init(succeeded: true, resultingChangeCount: changeCount)
         }
+    }
+    final class Persistence: ClipboardHistoryPersistence, @unchecked Sendable {
+        let archiveURL = URL(fileURLWithPath: "/DynamicIslandPreview/clipboard.json")
+        func loadData() -> Data? { nil }
+        func saveDataAtomically(_ data: Data) throws {}
+        func deleteArchive() throws {}
+    }
+    let settings: AppSettings
+    let pasteboard = Pasteboard()
+    let store: ClipboardHistoryStore
+    init() {
+        settings = AppSettings(defaults: SettingsPreviewDefaults())
+        settings.clipboardHistoryEnabled = true
+        settings.clipboardHistoryPersistenceEnabled = false
+        settings.clipboardHistoryAutoFocusSearch = false
+        store = ClipboardHistoryStore(settings: settings, pasteboard: pasteboard,
+            persistence: Persistence(), automaticallySchedulesTimer: false,
+            sourceApplicationProvider: { nil })
+        var payloads: [ClipboardHistoryPayload] = [.url(URL(string: "https://example.invalid/preview")!),
+            .text(.init(plainText: "Plan the next release", rtfData: nil, htmlData: nil))]
+        if let image = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 16, pixelsHigh: 16, bitsPerSample: 8,
+            samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 64, bitsPerPixel: 32) {
+            for x in 0..<16 { for y in 0..<16 { image.setColor(NSColor(calibratedRed: Double(x)/32, green: Double(y)/32, blue: 0.8, alpha: 1), atX: x, y: y) } }
+            if let png = image.representation(using: .png, properties: [:]) { payloads.append(.imagePNG(png)) }
+        }
+        for payload in payloads {
+            pasteboard.value = payload; pasteboard.changeCount += 1; store.pollNow()
+        }
+        store.stopMonitoring()
+    }
+}
+
+struct ClipboardSettingsPreview: View {
+    @ObservedObject var settings: AppSettings
+    @StateObject private var model = SettingsClipboardPreviewModel()
+    @State private var visible = true
+    var body: some View {
+        SettingsPreviewSandbox(title: "Clipboard Preview", usesSampleContent: true, allowsInteraction: true, height: 272,
+            controls: { Button("Reopen preview") { visible = true } }) { _ in
+            if visible { ClipboardHistoryView(store: model.store, onClose: { visible = false }) }
+            else { Text("Preview closed. Choose Restore preview to reopen it.").font(.caption).foregroundStyle(.secondary) }
+        }
+        .onChange(of: settings.clipboardHistoryTagsEnabled, initial: true) { _, enabled in model.settings.clipboardHistoryTagsEnabled = enabled }
+        .onChange(of: settings.clipboardHistoryCopyAndFavorite, initial: true) { _, enabled in model.settings.clipboardHistoryCopyAndFavorite = enabled }
+        .onChange(of: settings.clipboardHistoryCardsLayout, initial: true) { _, value in model.settings.clipboardHistoryCardsLayout = value }
+        .onChange(of: settings.clipboardHistoryShowTypeFilters, initial: true) { _, value in model.settings.clipboardHistoryShowTypeFilters = value }
+        .onChange(of: settings.clipboardHistoryShowTitles, initial: true) { _, value in model.settings.clipboardHistoryShowTitles = value }
+        .onChange(of: settings.clipboardHistoryShowSourceIcons, initial: true) { _, value in model.settings.clipboardHistoryShowSourceIcons = value }
+        .opacity(settings.clipboardHistoryEnabled ? 1 : 0.6)
     }
 }
 
@@ -1049,19 +1109,21 @@ struct ProductivityDeckSettingsPreview: View {
 
 // MARK: - Timer page
 
-/// The production Timer page with the app's real timer, read-only.
+/// The production Timer page with an isolated timer and no lifecycle integrations.
 struct TimerPageSettingsPreview: View {
     @ObservedObject var settings: AppSettings
     let timer: TimerController
+    @StateObject private var sampleTimer = TimerController()
+    @StateObject private var sampleSettings = AppSettings(defaults: SettingsPreviewDefaults())
     var customization: WorkspaceCustomizationStore? = nil
     @State private var configuration: WorkspaceConfiguration? = nil
 
     var body: some View {
-        SettingsPreviewSandbox(title: "Timer Page Preview (live timer)", height: 190) { _ in
+        SettingsPreviewSandbox(title: "Timer Page Preview", usesSampleContent: true, allowsInteraction: true, height: 190) { _ in
             GeometryReader { proxy in
                 let placement = SettingsPreviewPresentation.placement(kind: .timer, configuration: configuration)
                 let scale = SettingsPreviewPresentation.fit(size: placement.size, in: proxy.size)
-                FocusTimerView(timer: timer, settings: settings, showsPanel: false)
+                FocusTimerView(timer: sampleTimer, settings: sampleSettings, showsPanel: false)
                     .environment(\.workspaceWidgetPlacement, placement)
                     .environment(\.islandDisplayMetrics, SettingsPreviewPresentation.metrics)
                     .frame(width: placement.size.width, height: placement.size.height)
@@ -1070,6 +1132,10 @@ struct TimerPageSettingsPreview: View {
                     .opacity(settings.timerEnabled ? 1 : 0.35)
             }
         }
+        .onChange(of: settings.timerSoundEnabled, initial: true) { _, value in sampleSettings.timerSoundEnabled = value }
+        .onChange(of: settings.reduceExtraMotion, initial: true) { _, value in sampleSettings.reduceExtraMotion = value }
+        .onChange(of: settings.showTimerProgressRing, initial: true) { _, value in sampleSettings.showTimerProgressRing = value }
+        .onDisappear { sampleTimer.stop() }
         .onReceive(customization?.$configuration.map(Optional.some).eraseToAnyPublisher() ?? Just(nil).eraseToAnyPublisher()) { configuration = $0 }
     }
 }
@@ -1125,15 +1191,22 @@ final class FloatingBasketPreviewSamples: ObservableObject {
 struct LiveActivityLayoutSettingsPreview: View {
     @ObservedObject var settings: AppSettings
     var dependencies: SettingsPreviewDependencies? = nil
-    @State private var scenario: LiveActivityLayoutPreviewScenario = .mediaTimer
+    @State private var localScenario: LiveActivityLayoutPreviewScenario = .mediaTimer
+    private let scenarioSelection: Binding<LiveActivityLayoutPreviewScenario>?
+    private var scenario: LiveActivityLayoutPreviewScenario { scenarioSelection?.wrappedValue ?? localScenario }
+    private var selection: Binding<LiveActivityLayoutPreviewScenario> {
+        scenarioSelection ?? Binding(get: { localScenario }, set: { localScenario = $0 })
+    }
     @StateObject private var messages = CommunicationPreviewMessages()
     @StateObject private var media = MediaController.settingsPreview()
 
     init(settings: AppSettings, dependencies: SettingsPreviewDependencies? = nil,
-         scenario: LiveActivityLayoutPreviewScenario = .mediaTimer) {
+         scenario: LiveActivityLayoutPreviewScenario = .mediaTimer,
+         scenarioSelection: Binding<LiveActivityLayoutPreviewScenario>? = nil) {
         self.settings = settings
         self.dependencies = dependencies
-        _scenario = State(initialValue: scenario)
+        _localScenario = State(initialValue: scenario)
+        self.scenarioSelection = scenarioSelection
     }
 
     struct Presentation {
@@ -1223,8 +1296,9 @@ struct LiveActivityLayoutSettingsPreview: View {
 
     var body: some View {
         SettingsPreviewSandbox(title: "Layout Preview", usesSampleContent: true,
-            showsReduceMotionToggle: true, height: scenario == .messageReply || scenario == .permissionHover ? 180 : 100, controls: {
-                Picker("Scenario", selection: $scenario) {
+            showsReduceMotionToggle: true, allowsInteraction: scenario == .messageReply,
+            height: scenario == .messageReply || scenario == .permissionHover ? 180 : 100, controls: {
+                Picker("Scenario", selection: selection) {
                     ForEach(LiveActivityLayoutPreviewScenario.allCases) { item in
                         Text(item.rawValue).tag(item)
                     }

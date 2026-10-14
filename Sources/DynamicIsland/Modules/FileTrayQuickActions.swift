@@ -2,6 +2,12 @@ import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 
+struct FileTrayActionRequest: Identifiable, Equatable {
+    let id: UUID
+    let urls: [URL]
+    var openShelfAfterDrop = false
+}
+
 /// Sizes for the quick-action circles attached below the expanded island.
 enum FileTrayQuickActionMetrics {
     static let diameter: CGFloat = 36
@@ -150,6 +156,14 @@ enum FileConversionError: LocalizedError, Equatable {
 /// Local image format conversion with ImageIO. Only formats this Mac can
 /// actually encode are offered. The original is never modified.
 enum FileConversionController {
+    static func checkedOutputDirectory(_ directory: URL?, source: URL) throws -> URL {
+        let folder = directory ?? source.deletingLastPathComponent()
+        var isDirectory: ObjCBool = false
+        guard folder.isFileURL, FileManager.default.fileExists(atPath: folder.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            throw CocoaError(.fileWriteInvalidFileName)
+        }
+        return folder
+    }
     /// Encoders available on this system (checked at runtime).
     static var availableFormats: [FileConversionFormat] {
         let encodable = Set((CGImageDestinationCopyTypeIdentifiers() as? [String]) ?? [])
@@ -170,9 +184,10 @@ enum FileConversionController {
     static func outputURL(
         for source: URL,
         format: FileConversionFormat,
+        outputDirectory: URL? = nil,
         fileExists: (URL) -> Bool = { FileManager.default.fileExists(atPath: $0.path) }
     ) -> URL {
-        let directory = source.deletingLastPathComponent()
+        let directory = outputDirectory ?? source.deletingLastPathComponent()
         let base = source.deletingPathExtension().lastPathComponent.isEmpty ? "Converted" : source.deletingPathExtension().lastPathComponent
         var index = 1
         while true {
@@ -187,15 +202,17 @@ enum FileConversionController {
 
     /// Converts off the main thread. Keeps orientation and metadata by
     /// re-encoding from the image source; validates the written file.
-    static func convert(_ source: URL, to format: FileConversionFormat) async throws -> URL {
+    static func convert(_ source: URL, to format: FileConversionFormat, outputDirectory: URL? = nil) async throws -> URL {
         guard targetFormats(for: source).contains(format) else { throw FileConversionError.unsupported }
-        return try await Task.detached(priority: .userInitiated) {
+        let worker = Task.detached(priority: .userInitiated) {
+            try Task.checkCancellation()
+            let folder = try checkedOutputDirectory(outputDirectory, source: source)
             guard let imageSource = CGImageSourceCreateWithURL(source as CFURL, nil),
                   CGImageSourceGetCount(imageSource) > 0,
                   CGImageSourceCreateImageAtIndex(imageSource, 0, nil) != nil else {
                 throw FileConversionError.decodeFailed
             }
-            let destinationURL = outputURL(for: source, format: format)
+            let destinationURL = outputURL(for: source, format: format, outputDirectory: folder)
             let data = NSMutableData()
             guard let destination = CGImageDestinationCreateWithData(data, format.type.identifier as CFString, 1, nil) else {
                 throw FileConversionError.encodeFailed
@@ -206,17 +223,31 @@ enum FileConversionController {
             }
             CGImageDestinationAddImageFromSource(destination, imageSource, 0, properties as CFDictionary)
             guard CGImageDestinationFinalize(destination) else { throw FileConversionError.encodeFailed }
+            guard CGImageSourceCreateWithData(data as CFData, nil)
+                .flatMap({ CGImageSourceCreateImageAtIndex($0, 0, nil) }) != nil else {
+                throw FileConversionError.encodeFailed
+            }
+            try Task.checkCancellation()
+            let staging = folder.appendingPathComponent(".DynamicIsland-Image-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: false)
+            defer { try? FileManager.default.removeItem(at: staging) }
+            let temporary = staging.appendingPathComponent("output")
             do {
-                try (data as Data).write(to: destinationURL, options: .withoutOverwriting)
+                try (data as Data).write(to: temporary, options: .atomic)
+                try Task.checkCancellation()
+                // moveItem fails if another process created the destination.
+                try FileManager.default.moveItem(at: temporary, to: destinationURL)
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
                 throw FileConversionError.writeFailed(error.localizedDescription)
             }
-            guard CGImageSourceCreateWithURL(destinationURL as CFURL, nil)
-                .flatMap({ CGImageSourceCreateImageAtIndex($0, 0, nil) }) != nil else {
+            if Task.isCancelled {
                 try? FileManager.default.removeItem(at: destinationURL)
-                throw FileConversionError.encodeFailed
+                throw CancellationError()
             }
             return destinationURL
-        }.value
+        }
+        return try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
     }
 }

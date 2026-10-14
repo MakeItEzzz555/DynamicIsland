@@ -513,6 +513,13 @@ final class WorkspaceCustomizationStore: ObservableObject {
         defaults.set(false, forKey: "islandWidgetLayoutEnabled")
         persistenceWriteCount += 1
     }
+    func persistedConfigurationMatches(_ expected: WorkspaceConfiguration) -> Bool {
+        guard let data = defaults.data(forKey: Self.persistenceKey),
+              let stored = try? JSONDecoder().decode(WorkspaceConfiguration.self, from: data) else {
+            return expected == .initial && defaults.object(forKey: Self.persistenceKey) == nil
+        }
+        return stored == expected
+    }
 }
 
 // MARK: - Pure drop resolution

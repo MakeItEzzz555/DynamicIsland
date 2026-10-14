@@ -22,6 +22,10 @@ enum CollapsedActivityHoverPolicy: Equatable {
         self != .none && (hoverVisible || (interactionPinned && (focused || sending)))
     }
 
+    func allowsAutomaticExpansion(enabled: Bool) -> Bool {
+        enabled && self == .none
+    }
+
     func frame(from base: CGRect) -> CGRect {
         let height: CGFloat
         switch self {

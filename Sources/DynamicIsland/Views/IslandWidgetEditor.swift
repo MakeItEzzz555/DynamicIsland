@@ -11,12 +11,15 @@ struct IslandWidgetEditor: View {
     let eligibleWidgets: [IslandWidget]
     var extraMotion = true
     var onLayoutPreview: ((WorkspaceConfiguration?) -> Void)? = nil
-    /// Drag in flight: the host keeps the shell from shrinking under the pointer.
+    /// Drag in flight: the host holds the shell's footprint under the pointer.
     var onDragActive: ((Bool) -> Void)? = nil
     /// Semantic completion: the layout was saved and editing ended. The owner
     /// decides what follows (the island collapses through its normal
     /// children-exit sequence); the editor never touches shell state.
     var onApplyCompleted: (() -> Void)? = nil
+    /// Optional native acceptance access to the same callbacks used by DropDelegate.
+    var onDropInteraction: ((WorkspaceEditorDropInteraction?) -> Void)? = nil
+    var onNativeActionAnchor: ((String, NSView) -> Void)? = nil
     var content: (WorkspaceWidgetRegion, CGFloat) -> AnyView
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.islandDisplayMetrics) private var displayMetrics
@@ -31,14 +34,6 @@ struct IslandWidgetEditor: View {
 
     private var motion: Animation? { WorkspaceEditorMotion.reorder(reduceMotion: reduceMotion || !extraMotion) }
     private var configuration: WorkspaceConfiguration { editing ? draft : store.configuration }
-    private var visibleConfiguration: WorkspaceConfiguration {
-        // The prospective layout: neighbours move to exactly the result of a drop.
-        guard let drag, let target else { return configuration }
-        switch target {
-        case .insert, .stack: return preview(configuration, drag: drag, target: target)
-        case .combine, .invalid: return configuration
-        }
-    }
 
     var body: some View {
         let _ = AgentPerformanceProbe.count("workspace.editor.body")
@@ -49,22 +44,18 @@ struct IslandWidgetEditor: View {
         .animation(WorkspaceEditorMotion.chrome(opening: editing, reduceMotion: reduceMotion || !extraMotion), value: editing)
         .onAppear {
             draft = store.configuration
+            onDropInteraction?(.init(updated: updateTarget, dropped: commitDrop))
             if editing { onLayoutPreview?(draft) }
         }
         .onChange(of: editing) { _, active in
-            drag = nil; target = nil
+            finishDrag()
             if active { draft = store.configuration }
             onLayoutPreview?(active ? draft : nil)
         }
         .onChange(of: draft) { _, configuration in
             if editing { onLayoutPreview?(configuration) }
         }
-        // The shell creates/reclaims space for the prospective layout while
-        // dragging; cancelling returns it to the draft. Discrete per target.
-        .onChange(of: target) { _, _ in
-            if editing { onLayoutPreview?(visibleConfiguration) }
-        }
-        .onDisappear { onLayoutPreview?(nil); onDragActive?(false) }
+        .onDisappear { onLayoutPreview?(nil); onDragActive?(false); onDropInteraction?(nil) }
         .onExitCommand(perform: editing ? { cancel() } : nil)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(editing ? "Customize \(surface.rawValue) widgets" : "\(surface.rawValue) widgets")
@@ -75,7 +66,7 @@ struct IslandWidgetEditor: View {
         // Plain storage (no publication): the drop resolver reads the size the
         // committed layout is projected into right now.
         measurements.size = size
-        let visibleRegions = regions(in: visibleConfiguration)
+        let visibleRegions = regions(in: configuration)
         let projection = WorkspaceWidgetLayoutProjection.make(regions: visibleRegions, availableSize: size,
             metrics: displayMetrics, editing: editing, lane: notchLane)
         let height = max(1, size.height - (editing ? WorkspaceEditorChrome.paletteHeight + displayMetrics.spacing(8) : 0))
@@ -142,7 +133,7 @@ struct IslandWidgetEditor: View {
         let stackedTarget: Bool = target == .combine(chat: chatID)
         let placeholder: Bool = isPlaceholder(region)
         let placement = WorkspaceWidgetPlacementContext(
-            isSole: regions(in: visibleConfiguration).count == 1,
+            isSole: regions(in: configuration).count == 1,
             size: CGSize(width: width, height: height),
             fillsRow: true,
             presentationSize: WorkspaceWidgetLayoutProjection.presentationSize(of: region))
@@ -152,7 +143,6 @@ struct IslandWidgetEditor: View {
             .frame(width: width, height: height, alignment: .top)
         let hovered = editing && intent?.hovered == region.id
         return layers
-            .scaleEffect(hovered ? 0.975 : 1)
             // Target feedback is a press/release, not a layout move: quick
             // in, softer out (Droppy press/release), independent of reflow.
             .animation(WorkspaceEditorMotion.hover(entering: hovered, reduceMotion: reduceMotion || !extraMotion), value: hovered)
@@ -386,7 +376,7 @@ struct IslandWidgetEditor: View {
                 }
                 .buttonStyle(.plain).help("Reset to Default Layout")
                 .accessibilityLabel("Reset to Default Layout")
-                .workspaceEditorAction("reset")
+                .workspaceEditorAction("reset", anchor: onNativeActionAnchor)
                 Button(action: cancel) {
                     Image(systemName: "xmark").font(.system(size: 10, weight: .bold))
                         .foregroundStyle(.white.opacity(0.85))
@@ -396,7 +386,7 @@ struct IslandWidgetEditor: View {
                 }
                 .buttonStyle(.plain).help("Cancel")
                 .accessibilityLabel("Cancel widget changes")
-                .workspaceEditorAction("cancel")
+                .workspaceEditorAction("cancel", anchor: onNativeActionAnchor)
                 Button(action: apply) {
                     Image(systemName: "checkmark").font(.system(size: 11, weight: .bold))
                         .foregroundStyle(.white)
@@ -406,7 +396,7 @@ struct IslandWidgetEditor: View {
                 }
                 .buttonStyle(.plain).help("Done")
                 .accessibilityLabel("Save widget layout")
-                .workspaceEditorAction("done")
+                .workspaceEditorAction("done", anchor: onNativeActionAnchor)
             }
         }
         .frame(height: WorkspaceEditorChrome.paletteHeight)
@@ -440,7 +430,7 @@ struct IslandWidgetEditor: View {
         .opacity(present ? 0.6 : 1)
         .overlay {
             if !present && editing {
-                // Click adds; dragging places a live preview where it drops.
+                // Click adds; dragging highlights the destination until release.
                 WorkspaceNativeDragHandle(title: kind.title, symbol: kind.symbol,
                                           nativeIcon: NativeAppIconResolver.shared.installedIcon(for: kind), payload: kind.rawValue,
                                           clicked: { modify("Added \(kind.title)") { $0.add(kind, on: surface) } },
@@ -449,7 +439,7 @@ struct IslandWidgetEditor: View {
                     .transition(.identity)
             }
         }
-        .workspaceEditorAction("add.\(kind.rawValue)")
+        .workspaceEditorAction("add.\(kind.rawValue)", anchor: onNativeActionAnchor)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Add \(kind.title) widget")
         .accessibilityValue(present ? "Already added" : "Available")
@@ -520,11 +510,7 @@ struct IslandWidgetEditor: View {
     }
     private func updateTarget(_ location: CGPoint) -> Bool {
         guard editing, let drag else { return false }
-        // Slots come from the same projection that draws the committed draft
-        // at the editor's *current* size. Frames measured at drag start went
-        // stale as soon as the preview resized the shell (rows re-center), so
-        // the pointer resolved against cards that were no longer there and
-        // the target flickered back to nil: no glow, no prospective motion.
+        // Hover resolves against frozen committed slots; only a drop changes the draft.
         let committed = regions(in: draft)
         let reference = measurements.dragStartSize == .zero ? measurements.size : measurements.dragStartSize
         let projection = WorkspaceWidgetLayoutProjection.make(regions: committed, availableSize: reference,
@@ -562,11 +548,16 @@ struct IslandWidgetEditor: View {
     }
 }
 
+struct WorkspaceEditorDropInteraction {
+    let updated: (CGPoint) -> Bool
+    let dropped: (CGPoint) -> Bool
+}
+
 /// Shared semantic tokens translated from transitions.dev resize/tabs guidance.
 enum WorkspaceEditorMotion {
     /// Interactive reorder/resize use critically damped springs (no bounce).
     /// Unlike a timing curve, a spring retargeted mid-flight keeps its
-    /// velocity, so neighbours glide continuously as the hover target changes
+    /// velocity, so neighbours glide continuously after a committed drop
     /// (the iOS home-screen feel) instead of restarting from rest.
     static let reorderDuration = 0.32
     static let resizeDuration = 0.36
@@ -645,7 +636,7 @@ private final class WorkspaceEditorMeasurements {
     var dragStartSize: CGSize = .zero
 }
 
-private struct WorkspaceEditorFrameKey: PreferenceKey {
+struct WorkspaceEditorFrameKey: PreferenceKey {
     static var defaultValue: [WidgetID: CGRect] { [:] }
     static func reduce(value: inout [WidgetID: CGRect], nextValue: () -> [WidgetID: CGRect]) {
         value.merge(nextValue(), uniquingKeysWith: { _, latest in latest })
@@ -803,13 +794,24 @@ struct WorkspaceEditorActionFrames: PreferenceKey {
         value.merge(nextValue(), uniquingKeysWith: { _, latest in latest })
     }
 }
+private struct WorkspaceEditorNativeActionAnchor: NSViewRepresentable {
+    let action: String
+    let register: (String, NSView) -> Void
+    func makeNSView(context: Context) -> Anchor { Anchor() }
+    func updateNSView(_ view: Anchor, context: Context) { register(action, view) }
+    final class Anchor: NSView {
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+        override func isAccessibilityElement() -> Bool { false }
+    }
+}
 private extension View {
-    func workspaceEditorAction(_ action: String) -> some View {
+    func workspaceEditorAction(_ action: String, anchor: ((String, NSView) -> Void)? = nil) -> some View {
         background {
             GeometryReader { geometry in
                 Color.clear.preference(key: WorkspaceEditorActionFrames.self,
                                        value: [action: geometry.frame(in: .named(WorkspaceEditorActionFrames.coordinateSpace))])
             }
+            if let anchor { WorkspaceEditorNativeActionAnchor(action: action, register: anchor) }
         }
     }
 }

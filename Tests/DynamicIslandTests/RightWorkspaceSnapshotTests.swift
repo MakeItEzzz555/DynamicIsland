@@ -164,7 +164,7 @@ final class SettingsPreviewSnapshotTests: XCTestCase {
         )
         let settings = harness.settings
         let views: [(String, AnyView)] = [
-            ("50-settings-island", AnyView(IslandShellSettingsPreview(settings: settings))),
+            ("50-settings-island", AnyView(IslandShellSettingsPreview(settings: settings, dependencies: deps))),
             ("51-settings-media", AnyView(MediaSettingsPreview(settings: settings, media: deps.previewMedia))),
             ("52-settings-right-workspace", AnyView(RightWorkspaceSettingsView(settings: settings, workspace: deps.rightWorkspace, dependencies: deps))),
             ("53-settings-agents", AnyView(AgentsSettingsPreview(managedControl: agents))),

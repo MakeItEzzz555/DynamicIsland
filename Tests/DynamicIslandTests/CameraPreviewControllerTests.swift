@@ -1,5 +1,7 @@
 import AVFoundation
 import Foundation
+import SwiftUI
+import Combine
 import XCTest
 @testable import DynamicIsland
 
@@ -114,6 +116,233 @@ final class CameraPreviewControllerTests: XCTestCase {
         for _ in 0..<20 { await Task.yield() }
         await controller.waitForReconciliation()
     }
+    func testV4PointerCoastsThroughFlickerButUnreliableTrackingCancelsPress() async {
+        var time = 100.0
+        let f = makeFixture(authorized: true), controller = navigation(f.controller, deliversInput: false, now: { time })
+        let layout = IslandLayoutStore(), window = NSWindow()
+        layout.expandedSurfaceFrame = CGRect(x: 0, y: 0, width: 640, height: 360)
+        controller.connect(window: window, layout: layout, isExpanded: { true }, canInteract: { true }, expand: {}, page: { _ in })
+        controller.reconcile(gesturesEnabled: true, inputSource: .camera); await settle(controller)
+        func inject(_ pose: HandNavigationPose?, pinch: Double = 1) {
+            let h = pose.map { HandNavigationObservation(fingertip: CGPoint(x: 0.5, y: 0.5), palm: CGPoint(x: 0.5, y: 0.4),
+                handScale: 0.2, pinchRatio: pinch, pose: $0, confidence: 0.9, timestamp: time) }
+            controller.consume(.init(observation: h, generation: controller.trackingGeneration, latency: 0.01))
+            time += 0.05
+        }
+        var visible = 0
+        for pose in [HandNavigationPose.pointer, .other, .pointer, .twoFinger, .pointer, .pointer] {
+            inject(pose); if layout.cameraPointerStore.presentation != nil { visible += 1 }
+        }
+        XCTAssertEqual(visible, 6)
+        inject(.pointer, pinch: 0.1); inject(.pointer, pinch: 0.1); inject(.pointer, pinch: 0.1)
+        XCTAssertEqual(layout.cameraPointerStore.presentation?.phase, .pressed)
+        controller.consume(.init(observation: .init(fingertip: .zero, palm: .zero, handScale: 0.2,
+            pinchRatio: 0.1, pose: .pointer, confidence: 0.9, timestamp: time - 0.2),
+            generation: controller.trackingGeneration, latency: 0.2))
+        XCTAssertEqual(layout.cameraPointerStore.presentation?.phase, .tracking, "Delayed Vision results invalidate press authority")
+        inject(nil)
+        XCTAssertNotNil(layout.cameraPointerStore.presentation)
+        XCTAssertEqual(layout.cameraPointerStore.presentation?.phase, .tracking)
+        for _ in 0..<3 { inject(.pointer, pinch: 0.1) }
+        XCTAssertEqual(layout.cameraPointerStore.presentation?.phase, .tracking, "Loss invalidates press until release")
+        inject(.pointer); inject(nil); time += 0.2; inject(nil)
+        XCTAssertNil(layout.cameraPointerStore.presentation)
+        inject(.pointer)
+        XCTAssertNotNil(layout.cameraPointerStore.presentation)
+        print("CAMERA_V4_VISIBILITY validFlicker=6/6 dropoutTolerance=180ms recovery=nextValidObservation")
+        await controller.shutdown()
+    }
+
+    func testV4SemanticPalmPagingAcrossAgentsAndTrayWithNoPointerFrame() async {
+        var time = 100.0
+        let f = makeFixture(authorized: true), controller = navigation(f.controller, now: { time })
+        let layout = IslandLayoutStore(), window = NSWindow(), navigation = IslandNavigationStore()
+        let settings = AppSettings(defaults: SettingsPreviewDefaults())
+        settings.agentActivityEnabled = true; settings.showAgentsTab = true
+        settings.trayEnabled = true; settings.showTrayTab = true
+        let pages = navigation.availablePages(using: settings)
+        XCTAssertTrue(pages.contains(.agents)); XCTAssertTrue(pages.contains(.tray))
+        var deliveries: [ExpandedIslandPage] = []
+        controller.connect(window: window, layout: layout, isExpanded: { true }, canInteract: { false }, expand: {},
+            page: { forward in
+                if forward { navigation.selectNextPage(using: settings) } else { navigation.selectPreviousPage(using: settings) }
+                deliveries.append(navigation.selectedPage)
+            }, canNavigate: { !layout.isShellMorphing })
+        controller.reconcile(gesturesEnabled: true, inputSource: .camera); await settle(controller)
+        for forward in [true, false] {
+            navigation.select(forward ? .agents : .tray)
+            for _ in 0..<3 {
+                let before = navigation.selectedPage
+                let index = pages.firstIndex(of: before)!
+                let expected = pages[(index + (forward ? 1 : pages.count - 1)) % pages.count]
+                let xs = forward ? [0.5, 0.35, 0.18, 0.05, 0.2, 0.35, 0.5, 0.5, 0.5, 0.5, 0.5]
+                    : [0.5, 0.65, 0.82, 0.95, 0.8, 0.65, 0.5, 0.5, 0.5, 0.5, 0.5]
+                for (i, x) in xs.enumerated() {
+                    layout.isShellMorphing = (3...7).contains(i)
+                    controller.consume(.init(observation: .init(fingertip: CGPoint(x: x, y: 0.5), palm: CGPoint(x: x, y: 0.5),
+                        handScale: 0.2, pinchRatio: 1, pose: .openPalm, confidence: 0.9, timestamp: time),
+                        generation: controller.trackingGeneration, latency: 0.01))
+                    time += 0.05
+                    XCTAssertNil(layout.cameraPointerStore.presentation)
+                }
+                XCTAssertEqual(navigation.selectedPage, expected)
+            }
+        }
+        XCTAssertEqual(deliveries.count, 6)
+        print("CAMERA_V4_PAGING Agents/Tray bothDirections=6/6 strokes reverseDuringReturn=0 precisionFrame=empty")
+        await controller.shutdown()
+    }
+
+    func testV4FocusedComposerAndExactOwnerBlockSemanticPaging() async {
+        for protected in 0...2 {
+            var time = 100.0
+            let f = makeFixture(authorized: true), controller = navigation(f.controller, now: { time })
+            let layout = IslandLayoutStore(), window = NSWindow()
+            if protected == 0 { layout.setTextInputFocused(true) }
+            if protected == 1 { layout.collapsedMessageInteractionProtected = true }
+            if protected == 2 { layout.setTransientInteraction(true, owner: .workspaceEditor) }
+            controller.connect(window: window, layout: layout, isExpanded: { true }, canInteract: { false },
+                expand: { XCTFail("Camera expansion forbidden") }, page: { _ in XCTFail("Protected owner cannot be bypassed") }, canNavigate: { true })
+            controller.reconcile(gesturesEnabled: true, inputSource: .camera); await settle(controller)
+            for x in [0.8, 0.65, 0.48, 0.3] {
+                controller.consume(.init(observation: .init(fingertip: CGPoint(x: x, y: 0.5), palm: CGPoint(x: x, y: 0.5),
+                    handScale: 0.2, pinchRatio: 1, pose: .openPalm, confidence: 0.9, timestamp: time),
+                    generation: controller.trackingGeneration, latency: 0.01))
+                time += 0.05
+            }
+            XCTAssertEqual(controller.lastGestureAction, "None")
+            await controller.shutdown()
+        }
+    }
+
+    func testV4CollapsedCalibrationStillConfirmsWithoutExpansion() async {
+        var time = 100.0
+        let f = makeFixture(authorized: true), controller = navigation(f.controller, now: { time })
+        let layout = IslandLayoutStore(), window = NSWindow()
+        controller.connect(window: window, layout: layout, isExpanded: { false }, canInteract: { false },
+            expand: { XCTFail("Calibration cannot expand") }, page: { _ in XCTFail("Calibration cannot page") })
+        controller.reconcile(gesturesEnabled: true, inputSource: .camera); await settle(controller)
+        controller.beginCalibration()
+        for point in [CGPoint(x: 0.2, y: 0.5), CGPoint(x: 0.8, y: 0.5), CGPoint(x: 0.5, y: 0.8), CGPoint(x: 0.5, y: 0.2)] {
+            for ratio in [1.0, 0.1, 0.1, 0.1] {
+                controller.consume(.init(observation: .init(fingertip: point, palm: CGPoint(x: 0.5, y: 0.5), handScale: 0.2,
+                    pinchRatio: ratio, pose: .pointer, confidence: 0.9, timestamp: time), generation: controller.trackingGeneration, latency: 0.01))
+                time += 0.05
+            }
+        }
+        XCTAssertNil(controller.calibrationStep)
+        XCTAssertEqual(controller.preferences.calibration, .init(left: 0.2, right: 0.8, bottom: 0.2, top: 0.8))
+        XCTAssertNil(layout.cameraPointerStore.presentation)
+        await controller.shutdown()
+    }
+
+    func testV4PinchFormationClicksNativeButtonAtAnchorOnceAndLossCannotClick() async throws {
+        var time = 100.0, clicks = 0
+        let f = makeFixture(authorized: true), controller = navigation(f.controller, now: { time })
+        let size = CGSize(width: 640, height: 360)
+        let window = CameraNativeHostedFixture.hosted(Button("Anchored native click") { clicks += 1 }, size: size)
+        defer { controller.terminate(); window.close() }
+        let layout = IslandLayoutStore(); layout.canvasSize = size
+        layout.expandedSurfaceFrame = CGRect(origin: .zero, size: size)
+        controller.connect(window: window, layout: layout, isExpanded: { true }, canInteract: { true }, expand: {}, page: { _ in })
+        controller.reconcile(gesturesEnabled: true, inputSource: .camera); await settle(controller)
+        let gateWindow = try XCTUnwrap(window as? CameraHostedWindow), gate = gateWindow.cameraEventGate
+        var downs = 0
+        gateWindow.cameraEventGate = { event in
+            let accepted = gate?(event) != false
+            if accepted, CameraInteractionRouter.isCameraEvent(event), !CameraInteractionRouter.isCancellationEvent(event) {
+                if event.type == .leftMouseDown { downs += 1 }
+            }
+            return accepted
+        }
+        func inject(_ ratio: Double?, y: Double = 0.5) {
+            let h = ratio.map { HandNavigationObservation(fingertip: CGPoint(x: 0.5, y: y), palm: CGPoint(x: 0.5, y: 0.4),
+                handScale: 0.2, pinchRatio: $0, pose: .pointer, confidence: 0.9, timestamp: time) }
+            controller.consume(.init(observation: h, generation: controller.trackingGeneration, latency: 0.01)); time += 0.05
+        }
+        let pointerBefore = NSEvent.mouseLocation
+        for (ratio, y) in [(1.0,0.5),(0.62,0.5),(0.45,0.498),(0.24,0.48),(0.18,0.46),(0.12,0.44),(0.1,0.43),(1.0,0.5)] { inject(ratio, y: y) }
+        CameraNativeHostedFixture.pump()
+        XCTAssertEqual(clicks, 1); XCTAssertEqual(downs, 1)
+        let posted = controller.postedPointerEventCounts
+        XCTAssertEqual(posted[.leftMouseDown], 1); XCTAssertEqual(posted[.leftMouseUp], 1)
+        XCTAssertNil(posted[.leftMouseDragged], "Fingertip closure must not queue a ghost drag")
+        for ratio in [1.0,0.1,0.1,0.1] { inject(ratio) }
+        inject(nil); inject(0.1)
+        CameraNativeHostedFixture.pump()
+        XCTAssertEqual(clicks, 1, "Cancellation invalidates the queued down before native tracking starts")
+        for ratio in [1.0,0.1,0.1,0.1] { inject(ratio) }
+        NotificationCenter.default.post(name: NSApplication.didResignActiveNotification, object: NSApp)
+        inject(1)
+        XCTAssertEqual(controller.runtimeState, .suspendedPhysicalInput)
+        CameraNativeHostedFixture.pump()
+        XCTAssertEqual(clicks, 1, "Deactivation cancels queued input")
+        time += 0.75; inject(1)
+        XCTAssertNotNil(layout.cameraPointerStore.presentation, "Valid pointing recovers after physical grace")
+        XCTAssertEqual(NSEvent.mouseLocation, pointerBefore)
+        print("CAMERA_V4_NATIVE_CLICK clicks=\(clicks) postedDown=\(posted[.leftMouseDown] ?? 0) postedUp=\(posted[.leftMouseUp] ?? 0) cancelledClick=0 globalCursorMoved=false")
+        await controller.shutdown()
+    }
+
+    func testV4AnchoredPinchDragUsesExistingNativeSliderAndCommitsOnce() async {
+        var time = 100.0, value = 0.5, edits: [Bool] = []
+        let f = makeFixture(authorized: true), controller = navigation(f.controller, now: { time })
+        let size = CGSize(width: 640, height: 360)
+        let window = CameraNativeHostedFixture.hosted(Slider(value: Binding(get: { value }, set: { value = $0 }), in: 0...1)
+            .frame(width: 500).background(CameraSliderEditingBridge(onEditingChanged: { edits.append($0) }, onCancel: {})), size: size)
+        defer { controller.terminate(); window.close() }
+        let layout = IslandLayoutStore(); layout.canvasSize = size
+        layout.expandedSurfaceFrame = CGRect(origin: .zero, size: size)
+        controller.connect(window: window, layout: layout, isExpanded: { true }, canInteract: { true }, expand: {}, page: { _ in })
+        controller.reconcile(gesturesEnabled: true, inputSource: .camera); await settle(controller)
+        func inject(_ ratio: Double, tip: CGPoint, palm: CGPoint) {
+            controller.consume(.init(observation: .init(fingertip: tip, palm: palm, handScale: 0.2, pinchRatio: ratio,
+                pose: .pointer, confidence: 0.9, timestamp: time), generation: controller.trackingGeneration, latency: 0.01)); time += 0.05
+        }
+        for ratio in [1.0,0.62,0.45,0.24,0.18,0.12] { inject(ratio, tip: .init(x: 0.5, y: 0.5), palm: .init(x: 0.5, y: 0.4)) }
+        XCTAssertEqual(edits, [true])
+        XCTAssertEqual(value, 0.5, accuracy: 0.02)
+        for i in 1...5 { inject(0.1, tip: .init(x: 0.5 + Double(i) * 0.03, y: 0.5), palm: .init(x: 0.5 + Double(i) * 0.03, y: 0.4)) }
+        inject(1, tip: .init(x: 0.65, y: 0.5), palm: .init(x: 0.65, y: 0.4))
+        CameraNativeHostedFixture.pump()
+        XCTAssertGreaterThan(value, 0.7)
+        XCTAssertEqual(edits, [true, false], "Existing editing bridge owns exactly one commit")
+        print("CAMERA_V4_NATIVE_DRAG value=\(value) editingStarts=1 editingEnds=1")
+        await controller.shutdown()
+    }
+
+    func testV4SteadyPointerPublicationsAndConsumeCostAreBounded() async {
+        var time = 100.0
+        let f = makeFixture(authorized: true), controller = navigation(f.controller, deliversInput: false, now: { time })
+        let layout = IslandLayoutStore(), window = NSWindow()
+        layout.expandedSurfaceFrame = CGRect(x: 0, y: 0, width: 640, height: 360)
+        controller.connect(window: window, layout: layout, isExpanded: { true }, canInteract: { true }, expand: {}, page: { _ in })
+        controller.reconcile(gesturesEnabled: true, inputSource: .camera); await settle(controller)
+        var pointerChanges = 0, diagnosticsChanges = 0, costs: [Double] = []
+        let pointerObserver = layout.cameraPointerStore.$presentation.dropFirst().sink { _ in pointerChanges += 1 }
+        let diagnosticObserver = controller.objectWillChange.sink { diagnosticsChanges += 1 }
+        for _ in 0..<120 {
+            let started = ProcessInfo.processInfo.systemUptime
+            controller.consume(.init(observation: .init(fingertip: CGPoint(x: 0.5, y: 0.5), palm: CGPoint(x: 0.5, y: 0.4), handScale: 0.2,
+                pinchRatio: 1, pose: .pointer, confidence: 0.9, timestamp: time), generation: controller.trackingGeneration, latency: 0.01))
+            costs.append((ProcessInfo.processInfo.systemUptime - started) * 1000); time += 0.05
+        }
+        XCTAssertEqual(pointerChanges, 1)
+        XCTAssertLessThan(diagnosticsChanges, 60)
+        let sorted = costs.sorted()
+        print(String(format: "CAMERA_V4_UPDATE observations=120 pointerPublications=%d diagnosticPublications=%d mean=%.4fms p95=%.4fms scope=model-not-display", pointerChanges, diagnosticsChanges, costs.reduce(0,+)/120, sorted[114]))
+        let beforeNoHand = diagnosticsChanges
+        for _ in 0..<120 {
+            controller.consume(.init(observation: nil, generation: controller.trackingGeneration, latency: 0.01)); time += 0.05
+        }
+        XCTAssertLessThan(diagnosticsChanges - beforeNoHand, 60, "No-hand frames must not republish identical diagnostics")
+        print("CAMERA_V4_NO_HAND observations=120 diagnosticPublications=\(diagnosticsChanges - beforeNoHand)")
+        controller.physicalTouchSession(active: true)
+        XCTAssertNil(layout.cameraPointerStore.presentation)
+        pointerObserver.cancel(); diagnosticObserver.cancel()
+        await controller.shutdown()
+    }
+
     func testAuthorizedCameraSelectionStartsOneOwnerAndOutput() async {
         let f = makeFixture(authorized: true)
         let controller = navigation(f.controller)
@@ -265,6 +494,8 @@ final class CameraPreviewControllerTests: XCTestCase {
         }
         controller.submit(.init(observation: nil, generation: controller.trackingGeneration, latency: 0.02))
         for _ in 0..<20 { await Task.yield() }
+        XCTAssertNotNil(layout.cameraPointerStore.presentation, "Brief invalid observations retain only the visual pointer")
+        try? await Task.sleep(for: .milliseconds(220))
         XCTAssertNil(layout.cameraPointerStore.presentation)
         XCTAssertEqual(controller.runtimeState, .noHand)
         await controller.shutdown(); controller.terminate()
@@ -329,7 +560,7 @@ final class CameraPreviewControllerTests: XCTestCase {
         XCTAssertEqual(expanded, 0)
         await controller.shutdown()
     }
-    func testCameraCollapsedPinchIgnoresEmptyFramePrecisionGateAndExpandOnClickPreference() async {
+    func testCameraCollapsedPinchIsDisabledRegardlessOfFrameAndMouseExpansionPreference() async {
         var time = 100.0
         let f = makeFixture(authorized: true), controller = navigation(f.controller, now: { time })
         let settings = AppSettings(defaults: UserDefaults(suiteName: "camera-no-click-\(UUID())")!)
@@ -356,8 +587,8 @@ final class CameraPreviewControllerTests: XCTestCase {
             time += 0.05
         }
         XCTAssertFalse(settings.expandOnClick)
-        XCTAssertEqual(expansions, 1)
-        XCTAssertEqual(controller.lastGestureAction, "Expand")
+        XCTAssertEqual(expansions, 0)
+        XCTAssertEqual(controller.lastGestureAction, "None")
         await controller.shutdown()
     }
 
@@ -494,54 +725,29 @@ final class CameraPreviewControllerTests: XCTestCase {
         }
     }
 
-    func testCameraPinchDuringCollapseDefersUntilSafeThenHoldSurvivesExpansionAndClears() async {
+    func testCameraPinchDuringCollapseAndRecoveryNeverExpandsOrClaimsExpansionHold() async {
         var time = 100.0
         let f = makeFixture(authorized: true), controller = navigation(f.controller, now: { time })
         let layout = IslandLayoutStore(), window = NSWindow()
-        var expanded = true, expansions = 0
-        layout.isExpandedContentExiting = true
-        layout.isShellMorphing = true
+        var expanded = true
+        layout.isExpandedContentExiting = true; layout.isShellMorphing = true
+        controller.preferences.collapsedPinchAction = .expand
         controller.connect(window: window, layout: layout, isExpanded: { expanded }, canInteract: { false },
-            expand: {
-                XCTAssertTrue(layout.isTransientInteractionActive, "Acquire before calling expansion")
-                expansions += 1; expanded = true; layout.isShellMorphing = true
-            }, page: { _ in })
+            expand: { XCTFail("Legacy expansion is inactive at dispatch") }, page: { _ in })
         controller.reconcile(gesturesEnabled: true, inputSource: .camera); await settle(controller)
-        func inject(_ pinch: Double) {
-            controller.consume(.init(observation: .init(fingertip: .zero, palm: .zero, handScale: 0.2,
-                pinchRatio: pinch, pose: pinch == 1 ? .openPalm : .other, confidence: 0.9, timestamp: time),
-                generation: controller.trackingGeneration, latency: 0.01))
+        for i in 0..<24 {
+            if i == 4 { expanded = false; layout.isExpandedContentExiting = false; layout.isCollapseShellOnly = true }
+            if i == 6 { layout.isCollapseShellOnly = false; layout.isShellMorphing = false }
+            let hand = i % 8 == 5 ? nil : HandNavigationObservation(fingertip: .zero, palm: .zero, handScale: 0.2,
+                pinchRatio: i % 8 == 0 ? 1 : 0.1, pose: .pointer, confidence: 0.9, timestamp: time)
+            controller.consume(.init(observation: hand, generation: controller.trackingGeneration, latency: 0.01))
             time += 0.05
+            XCTAssertNil(layout.cameraPointerStore.presentation)
+            XCTAssertFalse(layout.isTransientInteractionActive)
         }
-        inject(1); inject(0.1); inject(0.1); inject(0.1)
-        XCTAssertEqual(expansions, 0)
-        expanded = false; layout.isExpandedContentExiting = false; layout.isCollapseShellOnly = true
-        inject(0.1)
-        XCTAssertEqual(expansions, 0)
-        layout.isCollapseShellOnly = false; layout.isShellMorphing = false
-        inject(0.1)
-        XCTAssertEqual(expansions, 1)
-        XCTAssertTrue(layout.isTransientInteractionActive)
-        inject(0.1); inject(0.1)
-        XCTAssertTrue(layout.isTransientInteractionActive, "Expansion morph keeps auto-collapse hold")
-        XCTAssertEqual(ExpandedHoverContainment.decide(pointer: CGPoint(x: -100, y: -100),
-            shellFrame: layout.expandedSurfaceFrame,
-            holds: layout.isTransientInteractionActive ? .transientInteraction : []), .held(.transientInteraction),
-            "The production mouse-leave decision cannot reverse the held expansion")
-        XCTAssertNil(layout.cameraPointerStore.presentation)
-        layout.isShellMorphing = false
-        inject(1)
-        XCTAssertTrue(layout.isTransientInteractionActive)
-        time += 0.3
-        controller.consume(.init(observation: nil, generation: controller.trackingGeneration, latency: 0.01))
-        XCTAssertTrue(layout.isTransientInteractionActive, "Actual loss gets the normal grace period")
-        time += 0.4
-        controller.consume(.init(observation: nil, generation: controller.trackingGeneration, latency: 0.01))
-        XCTAssertFalse(layout.isTransientInteractionActive)
-        inject(1); inject(1)
-        XCTAssertTrue(layout.isTransientInteractionActive)
+        XCTAssertEqual(controller.lastGestureAction, "None")
         await controller.shutdown()
-        XCTAssertFalse(layout.isTransientInteractionActive, "Stop immediately releases only camera's hold")
+        XCTAssertFalse(layout.isTransientInteractionActive)
     }
 
     func testProductionControllerRepeatedPalmPagesSurviveMorphWithoutPointer() async {

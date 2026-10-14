@@ -66,10 +66,10 @@ enum SettingsAuditCatalog {
                "Width values are read through AppSettings.collapsedSize/expandedSize.")
         + visual(["useAdaptiveNotchSizing"], .islandShell,
                  "The Island preview uses the production NotchGeometryService against a deterministic notched-screen sandbox.")
-        + entries(["overlayEnabled", "launchAtLoginEnabled", "expandOnClick", "collapseOnMouseLeave", "autoCollapseEnabled",
-                   "autoCollapseDelayPreset", "autoCollapseGraceSeconds"], .behavioral,
+        + entries(["overlayEnabled", "externalDisplayVisibility", "showOverlayInFullscreen", "hiddenInAppBundleIDs", "notchRightClickAction", "launchAtLoginEnabled", "menuBarIconEnabled", "dockIconEnabled", "expandOnClick", "collapseOnMouseLeave", "autoCollapseEnabled",
+                   "autoCollapseDelayPreset", "autoCollapseGraceSeconds", "expandOnHover"], .behavioral,
                   "Pointer/launch behavior; auto-collapse values are read through AppSettings computed timing.")
-        + entries(["startCollapsedOnLaunch", "expandOnHover"], .deprecatedHidden, deprecatedNote)
+        + entries(["startCollapsedOnLaunch"], .deprecatedHidden, deprecatedNote)
         // Motion
         + visual(["animationPreset", "reduceExtraMotion", "shellAnimationSpeed"], .islandShell,
                  "Replay shows the shared IslandShellMotion animation.")
@@ -121,9 +121,9 @@ enum SettingsAuditCatalog {
                    "confirmBeforeClearShelf", "revealInFinderActionEnabled", "copyPathActionEnabled", "removeFileActionEnabled",
                    "openFileActionEnabled", "airDropFallbackRevealInFinder", "deferThumbnailsDuringMorph"], .behavioral,
                   "Drop, context-menu and performance behavior.")
-        + entries(["maxShelfFiles", "persistFileShelfAcrossLaunches"], .dataPersistence, "Shelf capacity and persistence.")
+        + entries(["maxShelfFiles", "persistFileShelfAcrossLaunches", "shelfFileRetention"], .dataPersistence, "Shelf capacity, persistence and reference retention; borrowed originals are never deleted.")
         // Floating Basket
-        + entries(["floatingBasketEnabled", "basketJiggleSensitivity", "basketMultipleEnabled",
+        + entries(["floatingBasketEnabled", "basketInstantAppear", "basketJiggleSensitivity", "basketMultipleEnabled",
                    "basketAutoHideEnabled", "basketAutoHideDelay"], .behavioral,
                   "Read by BasketPresenter/BasketDragMonitor/BasketManager; the Basket settings card shows the production FloatingBasketView sandbox.")
         // Timer
@@ -142,12 +142,12 @@ enum SettingsAuditCatalog {
         + entries(["activitiesEnabled", "activitiesRefreshIntervalSeconds", "showRunningAppsActivity", "showDownloadsActivity",
                    "showCalendarActivity", "showNowPlayingActivity"], .deprecatedHidden, deprecatedNote)
         // Clipboard
-        + entries(["clipboardHistoryEnabled", "clipboardHistoryAutoFocusSearch"], .behavioral,
+        + entries(["clipboardHistoryEnabled", "clipboardHistoryAutoFocusSearch", "clipboardHistoryCopyAndFavorite"], .behavioral,
                   "Starts/stops pasteboard monitoring and controls Clipboard search focus.")
-        + entries(["clipboardHistoryMaximumItems", "clipboardHistoryPersistenceEnabled", "clipboardHistoryCaptureImagesEnabled",
+        + entries(["clipboardHistoryMaximumItems", "clipboardHistoryNoEntryLimit", "clipboardHistoryRetentionDays", "clipboardHistoryClearOnQuit", "clipboardHistoryPersistenceEnabled", "clipboardHistoryCaptureImagesEnabled",
                    "clipboardHistoryExcludedAppBundleIDs"],
                   .dataPersistence, "History size, persistence, image capture and source-app privacy exclusions.")
-        + visual(["clipboardHistoryTagsEnabled"], .clipboard,
+        + visual(["clipboardHistoryTagsEnabled", "clipboardHistoryCardsLayout", "clipboardHistoryShowTypeFilters", "clipboardHistoryShowTitles", "clipboardHistoryShowSourceIcons"], .clipboard,
                  "Shows or hides the production Clipboard tag controls.")
         // Live Activities
         + visual(["liveActivitiesEnabled", "showExpandedLiveActivitiesSection"], .rightWorkspace, "Overview page.")
@@ -260,7 +260,7 @@ enum SettingsCategoryDefaults {
         switch section {
         case .island:
             [
-                Field(\.overlayEnabled), Field(\.launchAtLoginEnabled), Field(\.expandOnClick),
+                Field(\.overlayEnabled), Field(\.externalDisplayVisibility), Field(\.showOverlayInFullscreen), Field(\.hiddenInAppBundleIDs), Field(\.launchAtLoginEnabled), Field(\.expandOnClick), Field(\.expandOnHover),
                 Field(\.collapseOnMouseLeave), Field(\.autoCollapseEnabled), Field(\.autoCollapseDelayPreset),
                 Field(\.autoCollapseGraceSeconds), Field(\.useAdaptiveNotchSizing), Field(\.respectHardwareNotch),
                 Field(\.collapsedWidth), Field(\.collapsedHeight), Field(\.expandedWidth),
@@ -300,7 +300,7 @@ enum SettingsCategoryDefaults {
             ]
         case .basket:
             [
-                Field(\.floatingBasketEnabled), Field(\.basketJiggleSensitivity), Field(\.basketMultipleEnabled),
+                Field(\.floatingBasketEnabled), Field(\.basketInstantAppear), Field(\.basketJiggleSensitivity), Field(\.basketMultipleEnabled),
                 Field(\.basketAutoHideEnabled), Field(\.basketAutoHideDelay)
             ]
         case .tray:
@@ -308,7 +308,7 @@ enum SettingsCategoryDefaults {
                 Field(\.trayEnabled), Field(\.fileShelfEnabled), Field(\.airDropZoneEnabled),
                 Field(\.allowFileDropsOnCollapsedIsland), Field(\.allowFileDropsOnExpandedTray), Field(\.maxShelfFiles),
                 Field(\.showFileThumbnails), Field(\.deferThumbnailsDuringMorph), Field(\.showFileExtensions),
-                Field(\.showFileCountBadge), Field(\.confirmBeforeClearShelf), Field(\.persistFileShelfAcrossLaunches),
+                Field(\.showFileCountBadge), Field(\.confirmBeforeClearShelf), Field(\.persistFileShelfAcrossLaunches), Field(\.shelfFileRetention),
                 Field(\.openFileActionEnabled), Field(\.revealInFinderActionEnabled), Field(\.copyPathActionEnabled),
                 Field(\.removeFileActionEnabled), Field(\.airDropFallbackRevealInFinder)
             ]
@@ -345,8 +345,9 @@ enum SettingsCategoryDefaults {
             ]
         case .clipboard:
             [
-                Field(\.clipboardHistoryEnabled), Field(\.clipboardHistoryMaximumItems), Field(\.clipboardHistoryCaptureImagesEnabled),
-                Field(\.clipboardHistoryAutoFocusSearch), Field(\.clipboardHistoryTagsEnabled), Field(\.clipboardHistoryPersistenceEnabled)
+                Field(\.clipboardHistoryEnabled), Field(\.clipboardHistoryCaptureImagesEnabled),
+                Field(\.clipboardHistoryAutoFocusSearch), Field(\.clipboardHistoryCopyAndFavorite), Field(\.clipboardHistoryTagsEnabled), Field(\.clipboardHistoryClearOnQuit),
+                Field(\.clipboardHistoryCardsLayout), Field(\.clipboardHistoryShowTypeFilters), Field(\.clipboardHistoryShowTitles), Field(\.clipboardHistoryShowSourceIcons)
             ]
         case .gestures:
             [

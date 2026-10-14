@@ -25,18 +25,18 @@ final class IslandShellRadiiTests: XCTestCase {
         )
         XCTAssertEqual(
             IslandShellRadii.interpolated(progress: 0.5, isNotchIntegrated: true),
-            IslandShellRadii(top: 12.5, bottom: 19)
+            IslandShellRadii(top: 17, bottom: 27)
         )
         XCTAssertEqual(
             IslandShellRadii.interpolated(progress: 1, isNotchIntegrated: true),
-            IslandShellRadii(top: 19, bottom: 24)
+            IslandShellRadii(top: 28, bottom: 40)
         )
     }
 
     func testNonNotchShellKeepsPlainTopEdge() {
         XCTAssertEqual(
             IslandShellRadii.interpolated(progress: 0.5, isNotchIntegrated: false),
-            IslandShellRadii(top: 0, bottom: 19)
+            IslandShellRadii(top: 0, bottom: 27)
         )
     }
 
@@ -47,7 +47,7 @@ final class IslandShellRadiiTests: XCTestCase {
         )
         XCTAssertEqual(
             IslandShellRadii.interpolated(progress: 2, isNotchIntegrated: true),
-            IslandShellRadii(top: 19, bottom: 24)
+            IslandShellRadii(top: 28, bottom: 40)
         )
         XCTAssertEqual(
             IslandShellRadii.interpolated(progress: .nan, isNotchIntegrated: true),
@@ -80,7 +80,7 @@ final class IslandShellRadiiTests: XCTestCase {
         )
         XCTAssertEqual(
             IslandShellRadii.interpolated(progress: 1, isNotchIntegrated: true, collapsedBottom: 19),
-            IslandShellRadii(top: 19, bottom: 24)
+            IslandShellRadii(top: 28, bottom: 40)
         )
     }
 

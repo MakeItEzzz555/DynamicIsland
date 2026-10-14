@@ -12,6 +12,7 @@ protocol MessagingProviderAdapter: AnyObject {
     var capabilities: MessagingProviderCapabilities { get }
     /// Set by the controller; adapters deliver normalized incoming messages.
     var onIncoming: ((MessagingMessage) -> Void)? { get set }
+    var onStateChange: (() -> Void)? { get set }
     /// Only called when `capabilities.supportsInlineReply` and the
     /// conversation has an exact target.
     func send(_ text: String, to conversation: MessagingConversationID) async -> MessagingSendOutcome
@@ -25,6 +26,7 @@ protocol MessagingProviderAdapter: AnyObject {
 }
 
 extension MessagingProviderAdapter {
+    var onStateChange: (() -> Void)? { get { nil } set {} }
     func setObservationEnabled(_ enabled: Bool) {}
 }
 
@@ -259,6 +261,7 @@ final class MessagingController: ObservableObject {
         self.preferences = preferences
         self.now = now
         for adapter in adapters {
+            adapter.onStateChange = { [weak self] in self?.objectWillChange.send() }
             adapter.onIncoming = { [weak self] message in
                 self?.receive(message)
             }

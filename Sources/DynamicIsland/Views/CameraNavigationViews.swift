@@ -82,10 +82,9 @@ struct CameraNavigationSettingsView: View {
                 }
                 GroupBox("Camera Gestures") {
                     VStack(alignment: .leading, spacing: 10) {
-                        Picker("Pinch while collapsed", selection: $navigation.preferences.collapsedPinchAction) {
-                            Text("Expand Island").tag(IslandGestureAction.expand)
-                            Text("None").tag(IslandGestureAction.none)
-                        }
+                        LabeledContent("Pinch while collapsed", value: "Temporarily unavailable")
+                        Text("Expand the island with the mouse or trackpad. Camera gestures cannot expand it.")
+                            .font(.caption).foregroundStyle(.secondary)
                         swipePicker("Open-palm swipe left", action: $navigation.preferences.swipeLeftAction)
                         swipePicker("Open-palm swipe right", action: $navigation.preferences.swipeRightAction)
                         Picker("Open-palm swipe down", selection: $navigation.preferences.swipeDownAction) {
@@ -109,7 +108,7 @@ struct CameraNavigationSettingsView: View {
                     Text("Point \(["left", "right", "top", "bottom"][step]), then pinch to confirm.")
                     Button("Cancel Calibration") { navigation.cancelCalibration() }
                 }
-                Text("Use one hand: pinch to expand, point to click or drag, and swipe with an open palm to change pages or swipe down to collapse. Keep your palm open and briefly hold it still between page swipes. Text entry uses the keyboard. Camera images stay on this Mac and are never saved.")
+                Text("Use one hand: point to click or drag, and swipe with an open palm to change pages or swipe down to collapse. Keep your palm open and briefly hold it still between page swipes. Camera expansion is temporarily unavailable. Text entry uses the keyboard. Camera images stay on this Mac and are never saved.")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 DisclosureGroup("Diagnostics") {
                     LabeledContent("Capture session running", value: camera.isRunning ? "Yes" : "No")

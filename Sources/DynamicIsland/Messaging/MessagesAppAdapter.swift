@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import Combine
 
 /// Apple Messages provider.
 ///
@@ -15,7 +16,7 @@ import Foundation
 @MainActor
 final class MessagesAppAdapter: MessagingProviderAdapter {
     static let bundleIdentifier = "com.apple.MobileSMS"
-    static let notificationBundleIdentifiers: Set<String> = ["com.apple.mobilesms", "com.apple.ichat"]
+    nonisolated static let notificationBundleIdentifiers: Set<String> = ["com.apple.mobilesms", "com.apple.ichat"]
     static let confirmationTimeout: TimeInterval = 6
     static let confirmationPollInterval: TimeInterval = 0.4
 
@@ -36,11 +37,16 @@ final class MessagesAppAdapter: MessagingProviderAdapter {
 
     let provider: MessagingProviderID = .messages
     var onIncoming: ((MessagingMessage) -> Void)?
+    var onStateChange: (() -> Void)?
     private(set) var availability: MessagingProviderAvailability
-    private(set) var observationState: ObservationState = .disabled
+    private(set) var observationState: ObservationState = .disabled {
+        didSet { if observationState != oldValue { onStateChange?() } }
+    }
 
     private let applicationURL: () -> URL?
     private let openApplication: (URL) -> Bool
+    private let notificationOwner = UUID()
+    private var monitorStateObservation: AnyCancellable?
     private let monitor: SystemNotificationMonitor
     private let store: MessagesConversationStore
     private let automation: MessagesAutomating
@@ -72,9 +78,22 @@ final class MessagesAppAdapter: MessagingProviderAdapter {
         self.now = now
         self.sleep = sleep
         self.availability = applicationURL() == nil ? .notInstalled : .available
-        monitor.onRecord = { [weak self] record in
+        monitorStateObservation = monitor.$state.sink { [weak self] state in
+            guard let self, self.observationState != .disabled else { return }
+            switch state {
+            case .permissionRequired: self.observationState = .permissionRequired
+            case .unavailable(let reason), .failed(let reason): self.observationState = .unavailable(reason)
+            case .running, .stopped: break
+            }
+        }
+        monitor.observeRecords(owner: notificationOwner) { [weak self] record in
             self?.handle(record)
         }
+    }
+
+    deinit {
+        let owner = notificationOwner, monitor = monitor
+        Task { @MainActor in monitor.removeObserver(owner: owner) }
     }
 
     var capabilities: MessagingProviderCapabilities {
@@ -127,24 +146,24 @@ final class MessagesAppAdapter: MessagingProviderAdapter {
 
     func setObservationEnabled(_ enabled: Bool) {
         guard enabled, availability == .available else {
-            monitor.stop()
+            monitor.setObservationEnabled(false, owner: notificationOwner)
             observationState = .disabled
             return
         }
-        monitor.start()
+        monitor.setObservationEnabled(true, owner: notificationOwner)
         switch monitor.state {
         case .running:
             do {
                 _ = try store.messages(from: now(), to: now(), limit: 1)
                 observationState = .running
             } catch ReadOnlySQLiteError.notPermitted {
-                monitor.stop()
+                monitor.setObservationEnabled(false, owner: notificationOwner)
                 observationState = .permissionRequired
             } catch ReadOnlySQLiteError.unsupportedSchema(let detail) {
-                monitor.stop()
+                monitor.setObservationEnabled(false, owner: notificationOwner)
                 observationState = .unavailable("Unsupported Messages database: \(detail)")
             } catch {
-                monitor.stop()
+                monitor.setObservationEnabled(false, owner: notificationOwner)
                 observationState = .unavailable("The Messages database could not be read")
             }
         case .permissionRequired:
@@ -163,8 +182,8 @@ final class MessagesAppAdapter: MessagingProviderAdapter {
         guard Self.notificationBundleIdentifiers.contains(record.bundleIdentifier.lowercased()) else { return }
         let store = store
         resolveQueue.async { @Sendable [weak self] in
-            let low = record.deliveredAt.addingTimeInterval(-MessagesConversationResolver.windowBefore)
-            let high = record.deliveredAt.addingTimeInterval(MessagesConversationResolver.windowAfter)
+            let low = (record.deliveredAt ?? record.observedAt).addingTimeInterval(-MessagesConversationResolver.windowBefore)
+            let high = (record.deliveredAt ?? record.observedAt).addingTimeInterval(MessagesConversationResolver.windowAfter)
             let resolution: MessagesResolution
             if let candidates = try? store.messages(from: low, to: high, limit: 200) {
                 resolution = MessagesConversationResolver.resolve(notification: record, candidates: candidates)
@@ -190,7 +209,7 @@ final class MessagesAppAdapter: MessagingProviderAdapter {
         }
         let title = record.title ?? record.subtitle ?? "Messages"
         onIncoming?(MessagingMessage(
-            id: MessagingMessageID(provider: .messages, nativeID: "notification:\(record.recordID)"),
+            id: MessagingMessageID(provider: .messages, nativeID: "notification:\(record.epoch):\(record.recordID)"),
             conversation: MessagingConversation(
                 id: conversationID,
                 provider: .messages,
@@ -200,7 +219,7 @@ final class MessagesAppAdapter: MessagingProviderAdapter {
             ),
             senderDisplayName: title,
             body: record.body,
-            receivedAt: record.deliveredAt,
+            receivedAt: record.deliveredAt ?? record.observedAt,
             direction: .incoming,
             authority: .systemNotification
         ))

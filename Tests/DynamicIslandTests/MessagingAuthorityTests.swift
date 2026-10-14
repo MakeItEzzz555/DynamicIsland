@@ -13,6 +13,8 @@ final class FixtureSQLite {
     init(directory: URL, name: String) throws {
         path = directory.appendingPathComponent(name).path
         guard sqlite3_open(path, &db) == SQLITE_OK else { throw NSError(domain: "fixture", code: 1) }
+        // Monitoring reads concurrently; wait for its short transaction before writing the fixture.
+        XCTAssertEqual(sqlite3_busy_timeout(db, 1_000), SQLITE_OK)
     }
 
     deinit { sqlite3_close(db) }

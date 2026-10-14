@@ -58,7 +58,7 @@ final class SettingsUXPolishTests: XCTestCase {
         settings.clipboardHistoryExcludedAppBundleIDs = ["com.example.private-notes"]
         SettingsCategoryDefaults.restore(.clipboard, settings: settings)
         XCTAssertEqual(settings.clipboardHistoryEnabled, expected.clipboardHistoryEnabled)
-        XCTAssertEqual(settings.clipboardHistoryMaximumItems, expected.clipboardHistoryMaximumItems)
+        XCTAssertEqual(settings.clipboardHistoryMaximumItems, 133, "Restoring presentation options cannot prune saved history")
         XCTAssertEqual(settings.clipboardHistoryExcludedAppBundleIDs, ["com.example.private-notes"],
                        "restoring options keeps explicit privacy exclusions")
     }
@@ -135,15 +135,17 @@ final class SettingsUXPolishTests: XCTestCase {
         }
         try await settle()
         let visible = try XCTUnwrap(recorder.presentation)
-        XCTAssertTrue(visible.chrome.showHeader)
+        XCTAssertFalse(visible.chrome.showHeader)
+        XCTAssertTrue(visible.showsDetachedNavigation)
         settings.showNavigationControls = false
         try await settle()
         let hidden = try XCTUnwrap(recorder.presentation)
         XCTAssertEqual(hidden.header.mode, .hidden)
         XCTAssertFalse(hidden.chrome.showHeader)
+        XCTAssertFalse(hidden.showsDetachedNavigation)
         XCTAssertEqual(hidden.chrome.tabSwitcherHeight, 0)
         XCTAssertEqual(hidden.chrome.tabToPageSpacing, 0)
-        XCTAssertLessThan(hidden.chrome.workspaceVerticalChrome, visible.chrome.workspaceVerticalChrome)
+        XCTAssertEqual(hidden.chrome.workspaceVerticalChrome, visible.chrome.workspaceVerticalChrome, accuracy: 0.001)
         settings.showNavigationControls = true
         try await settle()
         let restored = try XCTUnwrap(recorder.presentation)
@@ -151,7 +153,7 @@ final class SettingsUXPolishTests: XCTestCase {
         XCTAssertEqual(restored.geometry.expandedFrame.size, visible.geometry.expandedFrame.size)
     }
 
-    func testNavigationPreviewKeepsWidgetZoomWhileShellShrinksInEitherStartingMode() throws {
+    func testDetachedNavigationPreviewKeepsWidgetZoomAndShellSizeInEitherStartingMode() throws {
         let defaults = SettingsPreviewDefaults()
         let settings = AppSettings(defaults: defaults)
         settings.respectHardwareNotch = true
@@ -173,10 +175,10 @@ final class SettingsUXPolishTests: XCTestCase {
                                try XCTUnwrap(second.projection.frames.first).frame.size)
                 let shown = startsVisible ? first : second
                 let hidden = startsVisible ? second : first
-                XCTAssertLessThan(hidden.geometry.expandedFrame.width * secondZoom,
-                                  shown.geometry.expandedFrame.width * firstZoom)
-                XCTAssertLessThan(hidden.geometry.expandedFrame.height * secondZoom,
-                                  shown.geometry.expandedFrame.height * firstZoom)
+                XCTAssertEqual(hidden.geometry.expandedFrame.width * secondZoom,
+                               shown.geometry.expandedFrame.width * firstZoom, accuracy: 0.001)
+                XCTAssertEqual(hidden.geometry.expandedFrame.height * secondZoom,
+                               shown.geometry.expandedFrame.height * firstZoom, accuracy: 0.001)
                 XCTAssertEqual(AppSettings(defaults: defaults).showNavigationControls, !startsVisible,
                                "Resolving the alternate mode never mutates the user's saved setting")
             }

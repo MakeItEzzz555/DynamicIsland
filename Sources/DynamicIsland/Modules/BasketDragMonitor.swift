@@ -45,20 +45,24 @@ final class BasketDragMonitor: ObservableObject {
 
     private let probe: BasketDragProbe
     private let sensitivity: () -> Int
+    private let instantAppear: () -> Bool
     private let onJiggle: (Int, CGPoint) -> Void
     private let onDragEnded: (Int) -> Void
     private var detector: BasketJiggleDetector
     private var lastChangeCount: Int
     private var timer: Timer?
+    private var instantGeneration: Int?
 
     init(
         probe: BasketDragProbe,
         sensitivity: @escaping () -> Int,
+        instantAppear: @escaping () -> Bool = { false },
         onJiggle: @escaping (Int, CGPoint) -> Void,
         onDragEnded: @escaping (Int) -> Void
     ) {
         self.probe = probe
         self.sensitivity = sensitivity
+        self.instantAppear = instantAppear
         self.onJiggle = onJiggle
         self.onDragEnded = onDragEnded
         detector = BasketJiggleDetector(sensitivity: sensitivity())
@@ -95,6 +99,10 @@ final class BasketDragMonitor: ObservableObject {
             isDragging = true
             detector.setSensitivity(sensitivity())
             detector.beginDrag(generation: generation, at: probe.pointerLocation)
+            if instantAppear() {
+                instantGeneration = generation
+                onJiggle(generation, probe.pointerLocation)
+            }
             return
         }
 
@@ -103,6 +111,7 @@ final class BasketDragMonitor: ObservableObject {
             return
         }
         let location = probe.pointerLocation
+        guard instantGeneration != generation else { return }
         if detector.sample(location, at: probe.now, generation: generation) {
             onJiggle(generation, location)
         }
@@ -111,6 +120,7 @@ final class BasketDragMonitor: ObservableObject {
     private func finishDrag() {
         isDragging = false
         detector.endDrag()
+        instantGeneration = nil
         onDragEnded(generation)
     }
 }

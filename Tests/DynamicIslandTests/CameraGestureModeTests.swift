@@ -95,7 +95,7 @@ final class CameraGestureModeTests: XCTestCase {
         XCTAssertEqual(actions, [.page(forward: true), .page(forward: true)])
     }
 
-    func testCollapsedPinchIsIndependentOfPrecisionGateAndWaitsForSafeShell() {
+    func testCollapsedPinchCannotExpandEvenAfterShellBecomesSafe() {
         var machine = HandNavigationStateMachine()
         _ = machine.update(hand(0, pose: .openPalm), expanded: false, interactionAvailable: false,
             collapsedGestureAvailable: false)
@@ -103,7 +103,7 @@ final class CameraGestureModeTests: XCTestCase {
             collapsedGestureAvailable: false)
         XCTAssertEqual(machine.update(hand(0.15, pinch: 0.1), expanded: false, interactionAvailable: false,
             collapsedGestureAvailable: false), [])
-        XCTAssertEqual(machine.update(hand(0.2, pinch: 0.1), expanded: false, interactionAvailable: false), [.expandIsland])
+        XCTAssertEqual(machine.update(hand(0.2, pinch: 0.1), expanded: false, interactionAvailable: false), [])
         XCTAssertEqual(machine.update(hand(0.25, pinch: 0.1), expanded: false, interactionAvailable: false), [])
         XCTAssertFalse(machine.hasPrecisionInteraction)
     }
@@ -116,7 +116,7 @@ final class CameraGestureModeTests: XCTestCase {
         }
         XCTAssertEqual(machine.update(hand(0.25), expanded: false, interactionAvailable: false), [])
         _ = machine.update(hand(0.3, pinch: 0.1), expanded: false, interactionAvailable: false)
-        XCTAssertEqual(machine.update(hand(0.4, pinch: 0.1), expanded: false, interactionAvailable: false), [.expandIsland])
+        XCTAssertEqual(machine.update(hand(0.4, pinch: 0.1), expanded: false, interactionAvailable: false), [])
     }
 
     func testDownCollapseOpenHandThenPinchNeedsNoPointerRearm() {
@@ -132,7 +132,7 @@ final class CameraGestureModeTests: XCTestCase {
             collapsedGestureAvailable: false)
         XCTAssertEqual(machine.update(hand(0.45, y: 0.5, pinch: 0.1), expanded: false, interactionAvailable: false,
             collapsedGestureAvailable: false), [])
-        XCTAssertEqual(machine.update(hand(0.5, y: 0.5, pinch: 0.1), expanded: false, interactionAvailable: false), [.expandIsland])
+        XCTAssertEqual(machine.update(hand(0.5, y: 0.5, pinch: 0.1), expanded: false, interactionAvailable: false), [])
     }
 
     func testJitterDiagonalVerticalAndSlowDriftNeverPage() {
@@ -149,16 +149,16 @@ final class CameraGestureModeTests: XCTestCase {
         }
     }
 
-    func testCollapsedPinchPressExpandsOnceWithoutClickOrReleaseAction() {
+    func testCollapsedPinchNeverExpandsOrClicksAcrossRepeatedPinches() {
         var machine = HandNavigationStateMachine()
         _ = machine.update(hand(0, x: -2), expanded: false)
         XCTAssertFalse(machine.hasPrecisionInteraction)
         _ = machine.update(hand(0.05, x: -2, pinch: 0.1), expanded: false)
-        XCTAssertEqual(machine.update(hand(0.15, x: -2, pinch: 0.1), expanded: false), [.expandIsland])
+        XCTAssertEqual(machine.update(hand(0.15, x: -2, pinch: 0.1), expanded: false), [])
         for i in 4...8 { XCTAssertEqual(machine.update(hand(Double(i) * 0.05, x: -2, pinch: 0.1), expanded: false), []) }
         _ = machine.update(hand(0.5, x: -2), expanded: false)
         _ = machine.update(hand(0.55, x: -2, pinch: 0.1), expanded: false)
-        XCTAssertEqual(machine.update(hand(0.65, x: -2, pinch: 0.1), expanded: false), [.expandIsland])
+        XCTAssertEqual(machine.update(hand(0.65, x: -2, pinch: 0.1), expanded: false), [])
     }
 
     func testCollapsedNoneOrProtectedControlConsumesPinchWithoutExpansion() {
@@ -230,7 +230,7 @@ final class CameraGestureModeTests: XCTestCase {
         let old = Data(#"{"showPointer":false,"horizontalPageSwipe":false,"smoothing":0.8,"twoFingerScroll":true,"calibration":{"left":0.1,"right":0.9,"bottom":0.2,"top":0.8}}"#.utf8)
         var prefs = try JSONDecoder().decode(CameraNavigationPreferences.self, from: old)
         XCTAssertFalse(prefs.showPointer); XCTAssertEqual(prefs.swipeLeftAction, .none); XCTAssertEqual(prefs.swipeRightAction, .none)
-        XCTAssertEqual(prefs.collapsedPinchAction, .expand); XCTAssertEqual(prefs.swipeDownAction, .collapse)
+        XCTAssertEqual(prefs.collapsedPinchAction, .none); XCTAssertEqual(prefs.swipeDownAction, .collapse)
         XCTAssertEqual(prefs.smoothing, 0.8); XCTAssertEqual(prefs.calibration.top, 0.8)
         prefs.swipeRightAction = .nextTab; prefs.collapsedPinchAction = .none
         XCTAssertEqual(try JSONDecoder().decode(CameraNavigationPreferences.self, from: JSONEncoder().encode(prefs)), prefs)

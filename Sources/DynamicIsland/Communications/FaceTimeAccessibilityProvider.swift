@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import CryptoKit
+import Combine
 
 /// Only structural AX metadata leaves the probe. Titles, descriptions, values and caller text are never read.
 struct FaceTimeAXNode: Codable, Equatable, Sendable {
@@ -24,7 +25,7 @@ struct FaceTimeAXSnapshot: Codable, Equatable, Sendable {
 
 @MainActor
 final class FaceTimeAccessibilityProvider: ObservableObject {
-    static let bundleIdentifier = "com.apple.FaceTime"
+    nonisolated static let bundleIdentifier = "com.apple.FaceTime"
     static let enabledKey = "faceTimeAccessibilityIntegrationEnabled"
     static let notificationActivityID = "facetime.notification"
 
@@ -36,6 +37,9 @@ final class FaceTimeAccessibilityProvider: ObservableObject {
         case unsupported = "This FaceTime interface could not be read"
     }
 
+    @Published private(set) var notificationMonitoringState: SystemNotificationMonitorState = .stopped
+    private let notificationOwner = UUID()
+    private var notificationStateObservation: AnyCancellable?
     @Published private(set) var enabled = false
     @Published private(set) var state: State = .disabled
     @Published private(set) var snapshot: FaceTimeAXSnapshot?
@@ -67,7 +71,15 @@ final class FaceTimeAccessibilityProvider: ObservableObject {
         self.notifications = notifications
         self.trusted = trusted
         self.running = running
-        notifications.onRecord = { [weak self] in self?.receive($0) }
+        notificationStateObservation = notifications.$state.sink { [weak self] value in
+            self?.notificationMonitoringState = value
+        }
+        notifications.observeRecords(owner: notificationOwner) { [weak self] in self?.receive($0) }
+    }
+
+    deinit {
+        let owner = notificationOwner, notifications = notifications
+        Task { @MainActor in notifications.removeObserver(owner: owner) }
     }
 
     func setEnabled(_ value: Bool) {
@@ -75,7 +87,6 @@ final class FaceTimeAccessibilityProvider: ObservableObject {
         enabled = value
         onEnabledChanged(value)
         guard value else { state = .disabled; return }
-        notifications.start()
         for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
             workspaceObservers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] notification in
                 guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
@@ -91,7 +102,7 @@ final class FaceTimeAccessibilityProvider: ObservableObject {
         state = .disabled
         rescan?.cancel(); rescan = nil
         expiration?.cancel(); expiration = nil
-        notifications.stop()
+        notifications.setObservationEnabled(false, owner: notificationOwner)
         workspaceObservers.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
         workspaceObservers = []
         detachObserver()
@@ -102,6 +113,7 @@ final class FaceTimeAccessibilityProvider: ObservableObject {
 
     func checkAgain() {
         guard enabled else { return }
+        notifications.setObservationEnabled(true, owner: notificationOwner)
         guard trusted() else {
             detachObserver(); snapshot = nil; state = .permissionRequired
             return
@@ -160,10 +172,10 @@ final class FaceTimeAccessibilityProvider: ObservableObject {
     /// Notification evidence never establishes a connected, held or ended call.
     func receive(_ record: SystemNotificationRecord) {
         guard enabled, record.bundleIdentifier.lowercased() == Self.bundleIdentifier.lowercased() else { return }
-        notificationObservedAt = record.deliveredAt
+        notificationObservedAt = (record.deliveredAt ?? record.observedAt)
         liveActivities.update(DynamicIslandLiveActivity(id: Self.notificationActivityID, kind: .call,
             title: "FaceTime notification", subtitle: "Notification observed · open FaceTime", symbolName: "phone.fill",
-            priority: 75, isActive: false, progress: nil, updatedAt: record.deliveredAt,
+            priority: 75, isActive: false, progress: nil, updatedAt: (record.deliveredAt ?? record.observedAt),
             lifecycle: .init(authority: .integrationAdapter, startEvidence: "FaceTime Notification Center record",
                 progressEvidence: nil, completionEvidence: "Notification preview expired, not call end",
                 dismissPolicy: .automatic, supportsCancellation: false)))

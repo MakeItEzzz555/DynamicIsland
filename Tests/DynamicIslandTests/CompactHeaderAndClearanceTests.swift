@@ -57,7 +57,7 @@ final class CompactHeaderAndClearanceTests: XCTestCase {
                         header: ExpandedHeaderLayout) -> [WidgetID: CGRect] {
         let padding = IslandShellLayout.expandedHorizontalPadding(isNotchIntegrated: true)
         let chrome = ExpandedIslandLayoutMetrics(containerSize: size, horizontalPadding: padding, displayMetrics: notched,
-                                                 headerDrop: header.mode == .compactBelowNotch ? header.headerDrop : 0)
+                                                 headerDrop: header.contentTopInset, showHeader: header.mode != .hidden)
         let projection = WorkspaceWidgetLayoutProjection.make(regions: config.regions(on: surface),
             availableSize: CGSize(width: chrome.innerWidth, height: chrome.pageHeight), metrics: notched)
         return Dictionary(uniqueKeysWithValues: projection.frames.map { ($0.id, $0.frame) })
@@ -65,13 +65,13 @@ final class CompactHeaderAndClearanceTests: XCTestCase {
 
     // MARK: Header mode
 
-    func testSingleStandardWidgetUsesTheCompactRowAndTheShellNarrows() throws {
+    func testDetachedNavigationRemovesTheHeaderAndPreservesWidgetSize() throws {
         let settings = settings()
         for (surface, kind, size) in [(WorkspaceSurface.media, IslandWidget.media, WidgetPresentationSize.standard),
                                       (.media, .media, .large)] {
             let config = config(surface, [(kind, size)])
             let compact = header(config, surface, settings: settings)
-            XCTAssertEqual(compact.mode, .compactBelowNotch, "\(kind)")
+            XCTAssertEqual(compact.mode, .hidden, "\(kind)")
             let narrow = shell(config, surface, header: compact, settings: settings)
             let wide = shell(config, surface, header: .winged, settings: settings)
             XCTAssertLessThan(narrow.width, wide.width - 0.5, "\(kind): no notch-wide side wings")
@@ -84,40 +84,29 @@ final class CompactHeaderAndClearanceTests: XCTestCase {
         }
     }
 
-    func testCompactRowStartsBelowTheNotchWithFullSizeButtons() {
+    func testDetachedNavigationReservesNoInternalRowAndKeepsNotchClearance() {
         let settings = settings()
-        let compact = header(config(.media, [(.media, .large)]), .media, settings: settings)
-        XCTAssertEqual(compact.mode, .compactBelowNotch)
+        let header = header(config(.media, [(.media, .large)]), .media, settings: settings)
+        XCTAssertEqual(header.mode, .hidden)
         let chrome = ExpandedIslandLayoutMetrics(containerSize: .zero, horizontalPadding: 0, displayMetrics: notched,
-                                                 headerDrop: compact.headerDrop)
-        XCTAssertGreaterThanOrEqual(chrome.topPadding, notched.hardwareNotchHeight + ExpandedIslandLayoutMetrics.notchContentClearance(metrics: notched) - 0.01,
-                                    "the row can never intersect the notch")
-        XCTAssertEqual(compact.compactRowWidth,
-                       ExpandedIslandHeaderMetrics.leadingGroupWidth(pageCount: pageCount) + ExpandedHeaderLayout.compactGroupSpacing
-                       + ExpandedIslandHeaderMetrics.trailingGroupWidth(clipboardEnabled: settings.clipboardHistoryEnabled),
-                       accuracy: 0.01, "buttons keep their 30 pt hit size")
+            headerDrop: header.contentTopInset, showHeader: false)
+        XCTAssertEqual(chrome.tabSwitcherHeight, 0)
+        XCTAssertEqual(chrome.tabToPageSpacing, 0)
+        XCTAssertEqual(chrome.topPadding, notched.hardwareNotchHeight + notched.spacing(6), accuracy: 0.001)
         XCTAssertEqual(ExpandedIslandHeaderMetrics.buttonWidth, 30)
     }
 
-    func testFallbacksKeepTheWingedHeader() {
+    func testEveryProductionPageAndEditorUsesDetachedNavigation() {
         let settings = settings()
-        // Chat is mandatory on Agents; a lone Standard Chat (shown as Chat or,
-        // switched in place, Terminal) is already wider than the winged
-        // header, so compact would only add height.
-        let chat = config(.agents, [])
-        XCTAssertEqual(chat.regions(on: .agents).count, 1)
-        XCTAssertEqual(header(chat, .agents, settings: settings).mode, .winged, "no width gain")
-        XCTAssertEqual(header(config(.media, [(.media, .standard), (.timer, .compact)]), .media, settings: settings).mode, .winged,
-                       "two widgets")
-        XCTAssertEqual(header(config(.media, [(.media, .compact)]), .media, settings: settings).mode, .winged,
-                       "a Compact widget is narrower than the full row: never shrink buttons")
-        XCTAssertEqual(header(config(.media, [(.media, .standard)]), .media, editing: true, settings: settings).mode, .winged,
-                       "editing keeps pointer geometry stable")
-        settings.respectHardwareNotch = false
-        XCTAssertEqual(header(config(.media, [(.media, .standard)]), .media, settings: settings).mode, .winged, "no notch shell")
-        XCTAssertEqual(ExpandedHeaderLayout.resolve(regionCount: 1, singleRegionWidth: 900, contentHeight: 10_000, editing: false,
-            metrics: notched, isNotchIntegrated: true, pageCount: pageCount, clipboardEnabled: true).mode, .winged,
-            "no vertical room")
+        for respectsNotch in [false, true] {
+            settings.respectHardwareNotch = respectsNotch
+            for editing in [false, true] {
+                for page in ExpandedIslandPage.allCases {
+                    XCTAssertEqual(ExpandedPresentationProfile.headerLayout(page: page, configuration: .initial,
+                        editing: editing, settings: settings, metrics: notched, pageCount: pageCount).mode, .hidden)
+                }
+            }
+        }
     }
 
     // MARK: Bottom clearance
@@ -135,7 +124,7 @@ final class CompactHeaderAndClearanceTests: XCTestCase {
             let size = shell(config, surface, header: mode, settings: settings)
             let chrome = ExpandedIslandLayoutMetrics(containerSize: size,
                 horizontalPadding: IslandShellLayout.expandedHorizontalPadding(isNotchIntegrated: true), displayMetrics: notched,
-                headerDrop: mode.mode == .compactBelowNotch ? mode.headerDrop : 0)
+                headerDrop: mode.contentTopInset, showHeader: mode.mode != .hidden)
             let lowest = try XCTUnwrap(frames(config, surface, shell: size, header: mode).values.map(\.maxY).max())
             let pageTop = chrome.topPadding + chrome.tabSwitcherHeight + chrome.tabToPageSpacing
             XCTAssertEqual(size.height - (pageTop + lowest), clearance, accuracy: 0.5, "\(widgets)")

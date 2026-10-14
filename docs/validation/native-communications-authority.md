@@ -40,3 +40,62 @@ The native NSHostingView diagnostics fixture fits the Settings content width. It
 - The exact packaged build may need Accessibility access; use its explicit Request Accessibility / Open Accessibility Settings actions. Notification reading also needs Full Disk Access and Check Again. No TCC reset or installed-app replacement was performed.
 - Real incoming Messages plus an explicitly authorized exact recipient and text are still needed for a live reply test; Automation → Messages is requested only by explicit send. No recipient/text authorization was supplied during this phase.
 - Mic recording, physical keyboard/focus/trackpad and VoiceOver remain unchecked from PR #31. Permission grants and physical acceptance cannot be inferred from deterministic tests.
+
+
+## v5 checkpoint — 2026-10-14 (uncommitted)
+
+### Ownership and scope
+
+Settings v3.4 and Camera v4 were idle before editing. Branch remains `feature/camera-hand-navigation` at `1cd01b4d3a90b49f497176d0c9c19f91eda904a1`. A preservation manifest recorded 475 pre-existing dirty/untracked file hashes outside the repository. No branch switch, staging, commit, push, merge, preference changes, TCC changes or installed-app replacement occurred.
+
+Production repairs:
+
+- `Messaging/SystemNotificationMonitor.swift`: optional original delivery time, independent observation time, bounded UUID validation, atomic read-only snapshots, device/inode identity, conservative epoch rebasing, UUID continuity, bounded identity-only deduplication, token-scoped vnode rearming, late-WAL discovery on the existing 4-second poll, descriptor cancellation counters, mid-run error propagation, and owner-scoped event subscriptions. All SQLite work and path stat checks execute on the existing serial queue; cursor/publication authority remains MainActor. Startup retains its synchronous contract, dispatching the initial snapshot to that queue. Poll/watcher snapshots are asynchronous; the legacy startup API remains synchronous and can block its caller during the bounded SQLite read. No startup responsiveness claim is made.
+- `Messaging/MessagesAppAdapter.swift`: monitor-state subscription, independent observation lease, explicit observation-time fallback, epoch-qualified incoming identities. Exact chat resolution, Apple Events sends and outgoing DB confirmation are unchanged.
+- `Messaging/MessagingController.swift`: optional adapter state-change relay invalidates the existing UI immediately when observation/reply capability changes; existing provider fixtures retain their default behavior.
+- `Messaging/MessagesConversationResolver.swift`: explicit observation-time fallback for the existing exact-match window.
+- `Communications/FaceTimeAccessibilityProvider.swift`: notification-state propagation and independent observation lease. Notification evidence still cannot establish call state or actions.
+
+Independently testable additions, **not connected to normal application services yet**:
+
+- `Messaging/GeneralNotificationQueue.swift`: opt-in/allowlist eligibility, provider-specific exclusions, source/identity/timestamp provenance, optional transient content, identity deduplication, 10-item/8-second queue, dismissal, and conservative Focus/protected-owner/source/deactivation gates. No notification content is logged, hashed or persisted. No native banner suppression exists. The integration must clear/redact queued content immediately when privacy preferences change.
+- `Communications/MeetingPresence.swift`: pure confidence reducer. App presence alone cannot establish a meeting. Sustained input IO in a recognized app advances possible → likely after two seconds; only direct provider evidence can establish confirmed. Stale evidence expires after eight seconds. No microphone-derived meeting start time or camera/mute status is invented.
+- `Communications/MeetingPresenceProvider.swift`: supported CoreAudio process-list/input-IO property listeners on a serial queue, exact bundle/PID presence checks, allowlisted meeting applications, generation cancellation, sleep/wake cleanup, bounded evidence validation and explicit unavailable state. Read-completion timestamps survive the actor hop, delayed/out-of-order results cannot refresh authority, validation precedes expiry to avoid artificial presence flicker, and an unresponsive reader cannot keep stale presence indefinitely. Confidence values are evidence tiers, not calibrated probabilities. Off by default; no audio samples, taps, recordings, permission prompts, keystrokes or controls. Input IO indicates an active input stream, including possible virtual inputs; it is not proof of physical microphone capture or a live call.
+
+The installed Apple SDK `CoreAudio/AudioHardware.h` documents `kAudioHardwarePropertyProcessObjectList`, `kAudioProcessPropertyPID`, `kAudioProcessPropertyBundleID` and `kAudioProcessPropertyIsRunningInput`. Runtime support is checked with `AudioObjectHasProperty`; property/listener failures produce unavailable evidence. Current FaceTime AX identities remain unverified, so no production direct-provider meeting confirmation exists.
+
+### P0 acceptance and focused evidence
+
+`SystemNotificationMonitorResilienceTests`: 21 tests, all passing. A1 inode replacement and next watcher delivery within two seconds; A2 late WAL and WAL wake; A3 record-ID regression/no history; A4 renumbered replacement/no replay; A4b UUID continuity; A5 permission loss; A6 schema failure at start/mid-run; A7 identical-content distinct records; A8 unknown delivery time plus exact Messages resolution using observation time; A9 vanished DB/unavailable/restart; A10 cancelled watcher and old-generation/epoch delivery rejection; A11 Messages/FaceTime state propagation; A12 100 re-arms with exact cancellation accounting, bounded 512-ID history and no preferences/files written. Additional coverage proves independent subscription ownership, malformed rows cannot block batch draining, superseded re-arm tasks cannot block subsequent replacements, real relocation prefers an existing DB over an obsolete parent, FaceTime Check Again retries notification access independently of AX, and Messages UI capability invalidation follows permission loss immediately. Empty/oversized UUIDs are not accepted as stable identities.
+
+Focused total: **74 tests, 0 failures**, 9.055 seconds (`/tmp/dynamicisland-v5-focused-final.log`). General queue: 6; meeting: 7; resilience: 21; inherited ingestion/wake-up/Messages/FaceTime/controller tests: 40. Existing test intent and assertions were preserved.
+
+Measured synthetic source read: 100 snapshots × 50 rows, mean **0.607 ms**, p95 **0.678 ms**. This measures the fixture reader, not production notification latency, idle CPU or packaged-app UI performance. Watcher counters verify resource disposal; no live notification database or personal content was read.
+
+### Approval and native gates
+
+Two explicit approval requests remain pending: (1) additive preferences for general notifications, per-app filtering and preview privacy, default off/hidden; (2) minimal shared-monitor app wiring, new notification/meeting activity routing and controls in the existing Communications section. No persistence or dependent integration edits were made. The current app still constructs separate default Messages and FaceTime monitors; the shared-owner contract is tested but not yet selected by the composition root. P1 production presentation and P2 production meeting activities are therefore **incomplete**, not claimed working. P3 native visual/accessibility/performance acceptance awaits that integration.
+
+The display reports `active=0 asleep=1`. Real Notification Center replacement, FDA revoke/re-grant, authorized incoming notifications, live meeting telemetry and visible packaged-app/VoiceOver acceptance remain unverified. No privacy grant/revocation or live calls/messages were initiated.
+
+
+### Final validation, reviewed checkpoint and preservation
+
+- `git diff --check`: exit 0.
+- Focused command: `swift test --filter 'SystemNotificationMonitorResilienceTests|NotificationWakeupTests|NotificationCenterIngestionTests|MessagesAppAdapterAuthorityTests|FaceTimeAccessibilityTests|MeetingPresenceTests|GeneralNotificationQueueTests|MessagingControllerTests'`: exit 0, **74/0**, 9.055 s. `/tmp/dynamicisland-v5-focused-final.log`.
+- `swift build`: exit 0, 0.96 s. `/tmp/dynamicisland-v5-debug-final.log`.
+- Final `swift test`: exit 1, **2,397 total, 42 skipped, 2 failures, 2,353 passed**, 182.291 s. `/tmp/dynamicisland-v5-full-suite-final.log`. Failures remain `MetalSendInteractionTests.testEnabledNativeHostUnpausesClockAndUnmountPausesIt` (line 69, app inactive/host occluded) and `SettingsWindowTests.testSettingsWindowAcceptsLocalPointerEventsThroughItsNativeHierarchy` (line 70, no native action). Both match the existing asleep-display Camera v4 checkpoint. Assertions were neither weakened nor skipped. The 2,275/35/0 baseline is historical; this run adds earlier Settings/camera tests plus 34 new v5 tests and retains their opt-in skips.
+- `swift build -c release`: exit 0, 157.75 s. `/tmp/dynamicisland-v5-release-final.log`.
+- Isolated `Scripts/package_app.sh`: exit 0. `/tmp/dynamicisland-v5-package.log`. Package: `/var/folders/7r/6kmfjt993f543jhm9vvq49nc0000gn/T/dynamicisland-v5-package-bu1pelip/DynamicIsland.app`. New ad-hoc package only; installed builds and TCC identity were not replaced.
+- All three helper `codesign --verify --strict` checks and app `codesign --verify --deep --strict`: exit 0. `/tmp/dynamicisland-v5-package-validation.json`.
+- Live API capability check: `processListPropertySupported=true`, `listenerAddStatus=0`, `listenerRemoveStatus=0`, **telemetryRead=false**. `/tmp/dynamicisland-v5-coreaudio-capability.log`. This proves transport availability only; input telemetry permission, app/helper attribution and meeting detection remain unverified.
+- Isolated graph update: exit 0, 16,536 nodes / 49,234 edges. Original `graphify-out/` and `.playwright-cli/` were not edited. The existing MediaAdvancedControls parser limitation remains separate from passing native compilation.
+- Review: intended 8 production files and 3 new tests plus connected monitor, Messaging UI/controller, FaceTime and SQLite callers. Fixed watcher task supersession, notification recovery, obsolete-path preference, timestamp/stale-evidence handling and observable capability propagation. No unresolved blocking P0 source finding; P1/P2 normal-app wiring and native/performance acceptance remain gated. Reviewed HEAD is unchanged; exact source/test hashes are in `/tmp/dynamicisland-v5-review-manifest.json`.
+
+Only intended source/tests and appended engineering documentation changed. The original 475 dirty/untracked hashes are verified unchanged apart from the intended append to `context.md`; its original contents remain byte-for-byte intact. The existing communications report prefix is also intact. Git index remains unchanged, and no commit/push/merge occurred. Final manifest: `/tmp/dynamicisland-v5-final-manifest.json`.
+
+### Next unfinished milestone
+
+After explicit approval, connect the existing single monitor to Messages, FaceTime and the opt-in general surface, add truthful notification/meeting Live Activity cases with current priority/protected-owner rules, and put functional controls in the existing Communications section. Proposed additive notification keys: `generalNotificationPresentationEnabled=false`, `generalNotificationAllowedApplications=[]`, `generalNotificationContentPreviewsEnabled=false`. Meeting observation remains explicit/off until separately enabled; no new persistent meeting schema is authorized. Production integration must clear queued content immediately when preview/filter/enable preferences change.
+
+Then validate real queues/dismissal, unknown/authorized Focus, UI ownership, VoiceOver/keyboard/Reduce Motion, display scaling and process/sleep cleanup in an unlocked packaged app. Observe authorized, controlled notification/meeting scenarios before claiming live coverage. Browser and vendor-helper attribution, AX meeting evidence and direct provider confirmations/controls are deferred until independently proven. Idle/active CPU, process memory, redraw cost and real telemetry latency were not measured; fixture timings are not substitutes.

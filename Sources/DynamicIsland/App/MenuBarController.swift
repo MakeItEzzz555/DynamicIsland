@@ -39,8 +39,11 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         super.init()
         statusItem.button?.image = NSImage(systemSymbolName: "capsule.tophalf.filled", accessibilityDescription: "DynamicIsland")
+        statusItem.isVisible = settings.menuBarIconEnabled
         rebuildMenu()
     }
+
+    func setVisible(_ visible: Bool) { statusItem.isVisible = visible }
 
     private func rebuildMenu() {
         let menu = NSMenu()

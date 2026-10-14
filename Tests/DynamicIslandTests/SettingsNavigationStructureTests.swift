@@ -40,7 +40,7 @@ final class SettingsNavigationStructureTests: XCTestCase {
         XCTAssertEqual(restored.expandedLongPressAction, .openSettings)
     }
 
-    func testLiveNavigationPreviewRemovesHeaderAndPreservesProductionWidgetFrames() throws {
+    func testDetachedNavigationPreviewPreservesProductionWidgetFrames() throws {
         let settings = AppSettings(defaults: SettingsPreviewDefaults())
         settings.clipboardHistoryEnabled = true
         for size in [WidgetPresentationSize.standard, .compact] {
@@ -54,15 +54,15 @@ final class SettingsNavigationStructureTests: XCTestCase {
             let shown = SettingsPreviewPresentation(settings: settings, configuration: configuration)
             settings.showNavigationControls = false
             let hidden = SettingsPreviewPresentation(settings: settings, configuration: configuration)
-            XCTAssertTrue(shown.chrome.showHeader)
+            XCTAssertFalse(shown.chrome.showHeader)
             XCTAssertFalse(hidden.chrome.showHeader)
             XCTAssertEqual(hidden.header.mode, .hidden)
             XCTAssertEqual(hidden.header.headerDrop, 0)
             XCTAssertEqual(hidden.header.compactRowWidth, 0)
             XCTAssertEqual(hidden.chrome.tabSwitcherHeight, 0)
             XCTAssertEqual(hidden.chrome.tabToPageSpacing, 0)
-            XCTAssertLessThan(hidden.geometry.expandedFrame.height, shown.geometry.expandedFrame.height)
-            XCTAssertLessThan(hidden.geometry.expandedFrame.width, shown.geometry.expandedFrame.width)
+            XCTAssertEqual(hidden.geometry.expandedFrame.height, shown.geometry.expandedFrame.height, accuracy: 0.001)
+            XCTAssertEqual(hidden.geometry.expandedFrame.width, shown.geometry.expandedFrame.width, accuracy: 0.001)
             XCTAssertEqual(hidden.projection.frames.map(\.frame.size), shown.projection.frames.map(\.frame.size))
             XCTAssertEqual(hidden.navigationFittingSize, shown.navigationFittingSize,
                 "the preview camera cannot disguise shell packing by scaling the widget")

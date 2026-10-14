@@ -64,6 +64,16 @@ extension AppSettings {
 struct DynamicIslandApp {
     static func main() {
         let application = NSApplication.shared
+        if CommandLine.arguments.count == 3, ["--validate-keyboard", "--validate-keyboard-peer"].contains(CommandLine.arguments[1]) {
+            application.setActivationPolicy(.accessory)
+            Task { @MainActor in
+                await IslandKeyboardNativeAcceptance.run(directory: URL(fileURLWithPath: CommandLine.arguments[2]),
+                    peerMode: CommandLine.arguments[1] == "--validate-keyboard-peer")
+                application.terminate(nil)
+            }
+            application.run()
+            return
+        }
         if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--validate-camera-navigation" {
             application.setActivationPolicy(.accessory)
             Task { @MainActor in
@@ -88,6 +98,15 @@ struct DynamicIslandApp {
             application.setActivationPolicy(.accessory)
             Task { @MainActor in
                 await LiveActivityNativeAcceptance.run(directory: URL(fileURLWithPath: CommandLine.arguments[2]))
+                application.terminate(nil)
+            }
+            application.run()
+            return
+        }
+        if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--validate-settings" {
+            application.setActivationPolicy(.regular)
+            Task { @MainActor in
+                await SettingsNativeAcceptance.run(directory: URL(fileURLWithPath: CommandLine.arguments[2]))
                 application.terminate(nil)
             }
             application.run()
@@ -291,6 +310,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.navigation.applyConfiguration(configuration, using: self.settings)
         }.store(in: &cancellables)
         basketPresenter.start()
+        fileShelf.startRetentionMonitoring()
         agentProjects.observe(agentEvents.$sessions)
         installMessagingObservers()
         faceTime.onEnabledChanged = { UserDefaults.standard.set($0, forKey: FaceTimeAccessibilityProvider.enabledKey) }
@@ -317,14 +337,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             overlayController?.screenRecordingSetupAnchor()
         }
         overlayController.setVisible(settings.overlayEnabled)
-        LaunchAtLoginController.setEnabled(settings.launchAtLoginEnabled)
-
         settings.$launchAtLoginEnabled
             .removeDuplicates()
             .sink { enabled in
                 LaunchAtLoginController.setEnabled(enabled)
             }
             .store(in: &cancellables)
+
+        settings.$menuBarIconEnabled.removeDuplicates().sink { [weak self] visible in
+            self?.menuController?.setVisible(visible)
+        }.store(in: &cancellables)
+        settings.$dockIconEnabled.removeDuplicates().sink { [weak self] visible in
+            let settingsOpen = self?.settingsController?.window.isVisible == true
+            NSApp.setActivationPolicy(visible || settingsOpen ? .regular : .accessory)
+        }.store(in: &cancellables)
 
         settings.$statsRefreshIntervalSeconds
             .removeDuplicates()
@@ -405,7 +431,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .store(in: &cancellables)
     }
 
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        openSettings()
+        return true
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
+        fileShelf.stopRetentionMonitoring()
         let clipboardFinalization = clipboardHistory.finalizePersistenceForTermination()
         #if DEBUG
         if clipboardFinalization != .completed {

@@ -12,6 +12,7 @@ struct OverlayGeometrySignature: Equatable, CustomStringConvertible {
     let useAdaptiveNotchSizing: Bool
     let respectHardwareNotch: Bool
     var showNavigationControls: Bool = true
+    var expandedAccessorySize: CGSize = .zero
 
     var description: String {
         "collapsedSize=\(collapsedSize) expandedSize=\(expandedSize) expandedPresentation=\(expandedPresentationKind.rawValue) collapsedActivityProfile=\(String(describing: collapsedActivityProfile)) collapsedPresentationProfile=\(collapsedPresentationProfile.kind.rawValue) useAdaptiveNotchSizing=\(useAdaptiveNotchSizing) respectHardwareNotch=\(respectHardwareNotch) showNavigationControls=\(showNavigationControls)"
@@ -204,13 +205,11 @@ final class OverlayWindowController {
     private enum OverlayPersistence {
         static let level: NSWindow.Level = .statusBar
 
-        static let collectionBehavior: NSWindow.CollectionBehavior = [
-            .fullScreenAuxiliary,
-            .canJoinAllSpaces,
-            .ignoresCycle
-        ]
     }
 
+    private var displaySuppressed = false
+    private lazy var fileActionPresenter = FileActionPresenter(shelf: modules.fileShelf,
+        operations: modules.backgroundOperations, layout: layoutStore)
     private let expandedHoverTolerance: CGFloat = ExpandedHoverContainment.tolerance
     private let collapsedHoverTolerance: CGFloat = 4
     private let collapsedScrollBaseThreshold: CGFloat = 8
@@ -226,6 +225,7 @@ final class OverlayWindowController {
     private let islandPanel: IslandOverlayPanel
     private var cancellables: Set<AnyCancellable> = []
     private var mouseContainmentTimer: Timer?
+    private var normalCollapseDisplayBeat: NormalCollapseDisplayBeat?
     private var localMouseMovedMonitor: Any?
     private var globalMouseMovedMonitor: Any?
     private var localScrollWheelMonitor: Any?
@@ -308,7 +308,25 @@ final class OverlayWindowController {
             backing: .buffered,
             defer: false
         )
-        Self.configure(islandPanel)
+        Self.configure(islandPanel, showInFullscreen: settings.showOverlayInFullscreen)
+        islandPanel.onNotchRightClick = { [weak self] event in
+            guard let self, self.canPresentOverlay,
+                  let host = self.islandPanel.contentView,
+                  self.currentInteractiveRegion().contains(host.convert(event.locationInWindow, from: nil)) else { return false }
+            let protected = !self.layoutStore.cameraExpansionAllowed(
+                exactApproval: AgentCompactPermission.current(sessions: self.modules.agentEvents.sessions,
+                    approvals: self.modules.agentApprovalControl, managed: self.modules.agentManagedControl) != nil,
+                interactiveHUD: self.activeInteractiveSystemHUD(activities: self.modules.liveActivities.activities) != nil,
+                nativeInteraction: self.nativeMenuTracking.isTracking || self.hasVisibleTransientNativeWindow,
+                fileDrag: self.modules.fileDragSession.isActive || self.modules.navigation.isFileDropTargeted)
+            guard NotchRightClickAction.permitted(collapsed: self.islandState.state == .collapsed,
+                morphing: self.layoutStore.isShellMorphing, protected: protected) else { return false }
+            switch self.settings.notchRightClickAction {
+            case .openSettings: onOpenSettings()
+            case .hide: self.settings.overlayEnabled = false
+            }
+            return true
+        }
 
         let rootView = IslandRootView(
             settings: settings,
@@ -319,6 +337,15 @@ final class OverlayWindowController {
             rendersExpandedVisualContent: true,
             onRequestExpand: { [weak self] in
                 self?.expandFromCollapsedPreparingGeometry()
+            },
+            onRequestAutomaticExpand: { [weak self] in
+                guard let self, self.layoutStore.cameraExpansionAllowed(
+                    exactApproval: AgentCompactPermission.current(sessions: self.modules.agentEvents.sessions,
+                        approvals: self.modules.agentApprovalControl, managed: self.modules.agentManagedControl) != nil,
+                    interactiveHUD: self.activeInteractiveSystemHUD(activities: self.modules.liveActivities.activities) != nil,
+                    nativeInteraction: self.nativeMenuTracking.isTracking || self.hasVisibleTransientNativeWindow,
+                    fileDrag: self.modules.fileDragSession.isActive || self.modules.navigation.isFileDropTargeted) else { return }
+                self.expandFromCollapsedPreparingGeometry()
             },
             onRequestCollapse: { [weak self] in
                 self?.requestCollapseWithSequencing()
@@ -391,7 +418,8 @@ final class OverlayWindowController {
                     AgentCompactPermission.current(sessions: self.modules.agentEvents.sessions,
                         approvals: self.modules.agentApprovalControl, managed: self.modules.agentManagedControl) == nil
             }, canUseCollapsedGestures: { [weak self] in self?.canPresentOverlay == true },
-            collapse: { [weak self] in self?.requestCollapseWithSequencing() })
+            collapse: { [weak self] in self?.requestCollapseWithSequencing() },
+            canNavigate: { [weak self] in self?.cameraPageNavigationAllowed == true })
         self.hostingView = hostingView
         debugGesture("Island hosting view installed")
 
@@ -445,6 +473,7 @@ final class OverlayWindowController {
                         self.resetExpandedContentScrollTracking()
                         self.layoutStore.setExpandedContentScrollRegion(.zero)
                     }
+                    if state == .expanded { self.cancelNormalCollapsedReturn() }
                     self.beginVisualMorph(for: state)
                     if state == .expanded {
                         self.expandedAt = CACurrentMediaTime()
@@ -514,6 +543,17 @@ final class OverlayWindowController {
             }
             .store(in: &cancellables)
 
+        modules.navigation.$configuration.combineLatest(modules.navigation.$hasActionableMessages)
+            .dropFirst()
+            .sink { [weak self] _ in
+                let generation = self?.presentationSession.generation
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.allowsOverlayWork(generation: generation) else { return }
+                    self.reposition(animated: true, reason: "detachedNavigationPagesChanged")
+                }
+            }
+            .store(in: &cancellables)
+
         modules.navigation.$selectedPage
             .removeDuplicates()
             .dropFirst()
@@ -556,6 +596,32 @@ final class OverlayWindowController {
             }
             .store(in: &cancellables)
 
+        let presentationEvents: [AnyPublisher<Void, Never>] = [
+            settings.$externalDisplayVisibility.map { _ in () }.eraseToAnyPublisher(),
+            settings.$showOverlayInFullscreen.map { _ in () }.eraseToAnyPublisher(),
+            settings.$hiddenInAppBundleIDs.map { _ in () }.eraseToAnyPublisher(),
+            NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didActivateApplicationNotification).map { _ in () }.eraseToAnyPublisher(),
+            modules.liveActivities.$activities.map { _ in () }.eraseToAnyPublisher(),
+            modules.agentEvents.$sessions.map { _ in () }.eraseToAnyPublisher(),
+            modules.fileDragSession.$phase.map { _ in () }.eraseToAnyPublisher(),
+            modules.fileShelf.$fileActionRequest.map { _ in () }.eraseToAnyPublisher(),
+            modules.navigation.$isFileDropTargeted.map { _ in () }.eraseToAnyPublisher(),
+            islandState.$state.map { _ in () }.eraseToAnyPublisher(),
+            layoutStore.$transientInteractionOwners.map { _ in () }.eraseToAnyPublisher(),
+            layoutStore.$isTextInputFocused.map { _ in () }.eraseToAnyPublisher(),
+            layoutStore.$collapsedMessageInteractionProtected.map { _ in () }.eraseToAnyPublisher(),
+            layoutStore.$isShellMorphing.map { _ in () }.eraseToAnyPublisher(),
+            NotificationCenter.default.publisher(for: NSMenu.didEndTrackingNotification).map { _ in () }.eraseToAnyPublisher(),
+            NotificationCenter.default.publisher(for: NSWindow.willCloseNotification).map { _ in () }.eraseToAnyPublisher(),
+            NotificationCenter.default.publisher(for: NSWindow.didEndSheetNotification).map { _ in () }.eraseToAnyPublisher()
+        ]
+        Publishers.MergeMany(presentationEvents).sink { [weak self] _ in
+            DispatchQueue.main.async { [weak self] in
+                self?.reconcileDisplayVisibility()
+                self?.presentPendingFileActions()
+            }
+        }.store(in: &cancellables)
+
         settings.objectWillChange
             .sink { [weak self] _ in
                 let generation = self?.presentationSession.generation
@@ -575,7 +641,7 @@ final class OverlayWindowController {
             self?.workspaceGeometryLiveness.previewChanged(isPresent: preview != nil)
             self?.scheduleWorkspaceGeometryCheck()
         }.store(in: &cancellables)
-        layoutStore.$workspaceDragFloor.removeDuplicates().sink { [weak self] _ in
+        layoutStore.$workspaceDragSize.removeDuplicates().sink { [weak self] _ in
             self?.scheduleWorkspaceGeometryCheck()
         }.store(in: &cancellables)
         layoutStore.$workspaceGeometryTransition.removeDuplicates().sink { [weak self] transition in
@@ -641,6 +707,7 @@ final class OverlayWindowController {
 
         NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)
             .sink { [weak self] _ in
+                self?.reconcileDisplayVisibility()
                 self?.debugOverlayPersistence("screen parameters changed")
                 self?.reposition(animated: false, reason: "screenParametersChanged", force: true)
             }
@@ -650,27 +717,102 @@ final class OverlayWindowController {
     }
 
     private var canPresentOverlay: Bool {
-        presentationSession.allowsWork(overlayEnabled: settings.overlayEnabled)
+        presentationSession.allowsWork(overlayEnabled: settings.overlayEnabled && !displaySuppressed)
     }
 
     private func allowsOverlayWork(generation: Int?) -> Bool {
         guard let generation else { return false }
-        return presentationSession.allowsWork(overlayEnabled: settings.overlayEnabled, generation: generation)
+        return presentationSession.allowsWork(overlayEnabled: settings.overlayEnabled && !displaySuppressed, generation: generation)
     }
 
     private func acceptsOverlayScroll(_ event: NSEvent) -> Bool {
         presentationSession.acceptsScroll(
-            overlayEnabled: settings.overlayEnabled, timestamp: event.timestamp,
+            overlayEnabled: settings.overlayEnabled && !displaySuppressed, timestamp: event.timestamp,
             phase: event.phase, quietPeriod: collapsedScrollQuietResetDelay
         )
     }
 
     func show() {
+        reconcileDisplayVisibility()
         guard canPresentOverlay else { return }
         islandState.collapse()
         reposition(animated: false, reason: "initialShow", force: true)
         updateWindowVisibility()
         logAtollParityConfigurationIfNeeded()
+    }
+
+    private func reconcileDisplayVisibility() {
+        let behavior = OverlayDisplayPolicy.collectionBehavior(showInFullscreen: settings.showOverlayInFullscreen)
+        if islandPanel.collectionBehavior != behavior { islandPanel.collectionBehavior = behavior }
+        let screen = islandPanel.screen ?? NotchGeometryService.preferredScreen()
+        let needsVisibilityRule = settings.externalDisplayVisibility != .always && OverlayDisplayPolicy.isExternal(screen)
+        let appExcluded = OverlayDisplayPolicy.hidesInApp(NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
+            exclusions: settings.hiddenInAppBundleIDs, ownBundleID: Bundle.main.bundleIdentifier)
+        let externalDenied = !settings.externalDisplayVisibility.permits(isExternal: needsVisibilityRule,
+            active: islandState.state != .collapsed || !modules.liveActivities.activities.isEmpty, protectedInteraction: false)
+        let protected = (appExcluded || externalDenied) && ((externalDenied && layoutStore.isTransientInteractionActive) || !layoutStore.cameraExpansionAllowed(
+            exactApproval: AgentCompactPermission.current(sessions: modules.agentEvents.sessions,
+                approvals: modules.agentApprovalControl, managed: modules.agentManagedControl) != nil,
+            interactiveHUD: activeInteractiveSystemHUD(activities: modules.liveActivities.activities) != nil,
+            nativeInteraction: nativeMenuTracking.isTracking || hasVisibleTransientNativeWindow,
+            fileDrag: modules.fileDragSession.isActive || modules.navigation.isFileDropTargeted))
+        let suppressed = (appExcluded || externalDenied) && !protected
+        guard displaySuppressed != suppressed else { return }
+        displaySuppressed = suppressed
+        setVisible(settings.overlayEnabled && !suppressed)
+    }
+
+    private func presentPendingFileActions() {
+        if let request = modules.fileShelf.fileActionRequest, request.openShelfAfterDrop {
+            modules.fileShelf.consumeAutoOpenRequest(request.id)
+            if !layoutStore.isShellMorphing, requestShelfPresentation() { return }
+        }
+        guard canPresentOverlay, !layoutStore.isShellMorphing, !fileActionPresenter.isShown,
+              let request = modules.fileShelf.fileActionRequest, let view = islandPanel.contentView else { return }
+        let permitted = layoutStore.cameraExpansionAllowed(
+            exactApproval: AgentCompactPermission.current(sessions: modules.agentEvents.sessions,
+                approvals: modules.agentApprovalControl, managed: modules.agentManagedControl) != nil,
+            interactiveHUD: activeInteractiveSystemHUD(activities: modules.liveActivities.activities) != nil,
+            nativeInteraction: nativeMenuTracking.isTracking || hasVisibleTransientNativeWindow,
+            fileDrag: modules.fileDragSession.isActive || modules.navigation.isFileDropTargeted)
+        fileActionPresenter.present(request, relativeTo: currentInteractiveRegion(), of: view, permitted: permitted,
+            reduceMotion: settings.reduceExtraMotion || settings.animationPreset == .instant)
+    }
+
+    private var productivityInteractionAllowed: Bool {
+        layoutStore.productivityPresentationAllowed(
+            exactApproval: AgentCompactPermission.current(sessions: modules.agentEvents.sessions,
+                approvals: modules.agentApprovalControl, managed: modules.agentManagedControl) != nil,
+            interactiveHUD: activeInteractiveSystemHUD(activities: modules.liveActivities.activities) != nil,
+            nativeInteraction: nativeMenuTracking.isTracking || hasVisibleTransientNativeWindow,
+            fileDrag: modules.fileDragSession.isActive || modules.navigation.isFileDropTargeted)
+    }
+
+    @discardableResult
+    func requestShelfPresentation() -> Bool {
+        guard canPresentOverlay, productivityInteractionAllowed, settings.trayEnabled,
+              settings.fileShelfEnabled, settings.showTrayTab,
+              modules.navigation.availablePages(using: settings).contains(.tray) else { return false }
+        modules.navigation.select(.tray)
+        if islandState.state == .collapsed {
+            layoutStore.preservePageForNextExpansion(.tray)
+            expandFromCollapsedPreparingGeometry()
+        }
+        return true
+    }
+
+    func performProductivityShortcut(_ action: ProductivityShortcutAction) -> String? {
+        guard productivityInteractionAllowed else { return "Finish the active interaction before opening another surface." }
+        switch action {
+        case .shelf:
+            return requestShelfPresentation() ? nil : "Show the island and enable its File Tray to use this shortcut."
+        case .basket:
+            return modules.basketPresenter.showPrimaryBasket() ? nil : "Enable Floating Basket to use this shortcut."
+        case .clipboard:
+            guard canPresentOverlay, settings.clipboardHistoryEnabled else { return "Show the island and enable Clipboard History to use this shortcut." }
+            requestWorkspaceAction(.clipboard)
+            return nil
+        }
     }
 
     func setVisible(_ visible: Bool) {
@@ -687,6 +829,8 @@ final class OverlayWindowController {
                 self.show()
             }
         } else {
+            fileActionPresenter.close()
+            modules.fileDragSession.cancel()
             morphGeneration += 1
             visibilityGeneration += 1
             stopMouseContainmentTimer()
@@ -710,6 +854,7 @@ final class OverlayWindowController {
             escapeRouter.setTopmostPresentation(nil)
             modules.navigation.setFileDropTargeted(false)
             collapseRequest.cancel()
+            cancelNormalCollapsedReturn()
             islandState.collapse()
             islandPanel.ignoresMouseEvents = true
             islandPanel.orderOut(nil)
@@ -851,6 +996,7 @@ final class OverlayWindowController {
     private func collapsedPresentationProfile(
         activities: [DynamicIslandLiveActivity]
     ) -> CollapsedPresentationProfile {
+        if layoutStore.isReturningToNormalCollapsedSize { return .normal }
         if AgentCompactPermission.current(sessions: modules.agentEvents.sessions,
             approvals: modules.agentApprovalControl, managed: modules.agentManagedControl) != nil {
             return .agentPermission(hovered: layoutStore.compactPermissionHovered,
@@ -885,6 +1031,7 @@ final class OverlayWindowController {
     private func collapsedActivityLayoutProfile(
         activities: [DynamicIslandLiveActivity]
     ) -> CollapsedActivityLayoutProfile? {
+        if layoutStore.isReturningToNormalCollapsedSize { return nil }
         let resolution = collapsedLayoutResolution(activities: activities)
         if resolution.primary == nil, let overlay = resolution.overlayTransient {
             return overlay.activity.systemHUDKind == .audioDevice ? .audioDeviceHUD : .systemHUD
@@ -988,7 +1135,12 @@ final class OverlayWindowController {
     }
 
     private var expandedPresentationProfile: ExpandedPresentationProfile {
-        ExpandedPresentationProfile.resolve(for: modules.navigation.selectedPage)
+        var profile = ExpandedPresentationProfile.resolve(for: modules.navigation.selectedPage)
+        if settings.showNavigationControls {
+            profile.accessoryHeight += DetachedIslandNavigationMetrics.accessoryHeight
+            profile.accessoryWidth = DetachedIslandNavigationMetrics.width(pageCount: modules.navigation.availablePages(using: settings).count)
+        }
+        return profile
     }
 
     private var resolvedExpandedSize: CGSize {
@@ -1024,7 +1176,7 @@ final class OverlayWindowController {
                 pageCount: modules.navigation.availablePages(using: settings).count,
                 hardwareNotchWidth: layoutStore.hardwareNotchWidth),
             header: header)
-        return preview == nil ? size : IslandLayoutStore.dragFloored(size, floor: layoutStore.workspaceDragFloor)
+        return layoutStore.workspacePresentationSize(size)
     }
 
     /// While editing (and for the change that ends editing), shell geometry
@@ -1070,16 +1222,17 @@ final class OverlayWindowController {
             collapsedPresentationProfile: collapsedPresentationProfile,
             useAdaptiveNotchSizing: settings.useAdaptiveNotchSizing,
             respectHardwareNotch: settings.respectHardwareNotch,
-            showNavigationControls: settings.showNavigationControls
+            showNavigationControls: settings.showNavigationControls,
+            expandedAccessorySize: CGSize(width: expandedPresentationProfile.accessoryWidth, height: expandedPresentationProfile.accessoryHeight)
         )
     }
 
-    private static func configure(_ panel: NSPanel) {
+    private static func configure(_ panel: NSPanel, showInFullscreen: Bool) {
         panel.isFloatingPanel = true
-        panel.becomesKeyOnlyIfNeeded = false
+        panel.becomesKeyOnlyIfNeeded = true
         panel.styleMask = [.borderless, .nonactivatingPanel]
         panel.level = OverlayPersistence.level
-        panel.collectionBehavior = OverlayPersistence.collectionBehavior
+        panel.collectionBehavior = OverlayDisplayPolicy.collectionBehavior(showInFullscreen: showInFullscreen)
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.sharingType = .readOnly
@@ -1433,6 +1586,12 @@ final class OverlayWindowController {
             guard event.window == nil || event.window === self.islandPanel else {
                 return event
             }
+            if self.escapeRouter.topmostPresentation == nil,
+               let editor = self.islandPanel.firstResponder as? AgentPromptTextView, editor.hasMarkedText() {
+                return event
+            }
+            if IslandKeyboardFocusPolicy.releaseComposerForEscape(self.islandPanel.firstResponder,
+                hasPresentation: self.escapeRouter.topmostPresentation != nil) { return nil }
             switch IslandEscapeRoutingPolicy.route(
                 islandState: self.islandState.state,
                 topmostPresentation: self.escapeRouter.topmostPresentation
@@ -1573,23 +1732,6 @@ final class OverlayWindowController {
         canonicalPanelFrame.isEmpty ? islandPanel.frame : canonicalPanelFrame
     }
 
-    private var currentVisibleIslandScreenRect: NSRect {
-        let localRect: CGRect
-        let tolerance: CGFloat
-
-        if islandState.state == .expanded || layoutStore.isCollapseShellOnly {
-            localRect = layoutStore.expandedSurfaceFrame
-            tolerance = expandedHoverTolerance
-        } else {
-            localRect = collapsedInteractiveSurfaceFrame
-            tolerance = collapsedHoverTolerance
-        }
-
-        let visibleRect = screenRect(for: localRect)
-        guard !visibleRect.isEmpty else { return .zero }
-        return visibleRect.insetBy(dx: -tolerance, dy: -tolerance)
-    }
-
     private func updateMousePassthrough(at screenPoint: NSPoint = NSEvent.mouseLocation) {
         guard canPresentOverlay else {
             islandPanel.ignoresMouseEvents = true
@@ -1606,13 +1748,9 @@ final class OverlayWindowController {
         // can still block clicks for other apps when its frame covers the screen.
         let shouldReceiveMouse: Bool
         if islandState.state == .expanded || layoutStore.isCollapseShellOnly {
-            let interactiveRect = currentVisibleIslandScreenRect
-            let shellFrame = visibleExpandedShellScreenFrame()
-            let overAccessory = ExpandedHoverContainment.accessoryRegions(
-                shellFrame: shellFrame,
-                accessoryFrames: visibleExpandedAccessoryScreenFrames()
+            shouldReceiveMouse = ExpandedHoverContainment.interactiveRegions(
+                frames: [visibleExpandedShellScreenFrame()] + visibleExpandedAccessoryScreenFrames()
             ).contains { $0.contains(screenPoint) }
-            shouldReceiveMouse = (!interactiveRect.isEmpty && interactiveRect.contains(screenPoint)) || overAccessory
         } else {
             shouldReceiveMouse = collapsedVisibleLocalFrames.contains { frame in
                 let screenFrame = screenRect(for: frame)
@@ -1740,7 +1878,8 @@ final class OverlayWindowController {
     }
 
     private func beginCollapsedPresentationMorph() {
-        guard canPresentOverlay, islandState.state == .collapsed else { return }
+        guard canPresentOverlay, islandState.state == .collapsed,
+              !layoutStore.isReturningToNormalCollapsedSize else { return }
         let sessionGeneration = presentationSession.generation
         morphGeneration += 1
         let generation = morphGeneration
@@ -1764,6 +1903,7 @@ final class OverlayWindowController {
         guard canPresentOverlay else { return }
         if cancelPendingCollapseForExpansion() { return }
         guard islandState.state == .collapsed else { return }
+        cancelNormalCollapsedReturn()
         committedExpandedPage = modules.navigation.selectedPage
 
         let targetScreen = islandPanel.screen ?? NotchGeometryService.preferredScreen()
@@ -1841,9 +1981,42 @@ final class OverlayWindowController {
     }
 
     private func commitCollapse(generation: Int) {
-        // A stale or cancelled collapse never hides newer expanded content.
         guard collapseRequest.commit(generation), islandState.state == .expanded else { return }
-        islandState.collapse()
+        normalCollapseDisplayBeat?.cancel()
+        let token = layoutStore.beginNormalCollapsedReturn()
+        let sessionGeneration = presentationSession.generation
+        reposition(animated: false, reason: "collapseToNormal", force: true)
+        withAnimation(IslandShellMotion.shellAnimation(settings: settings, reduceMotion: overlayReducesMotion, opening: false),
+                      completionCriteria: .logicallyComplete) {
+            islandState.collapse()
+        } completion: { [weak self] in
+            guard let self, self.allowsOverlayWork(generation: sessionGeneration),
+                  self.islandState.state == .collapsed, self.layoutStore.isCurrentNormalCollapsedReturn(generation: token) else { return }
+            let finish = { [weak self] in
+                guard let self, self.allowsOverlayWork(generation: sessionGeneration),
+                      self.islandState.state == .collapsed,
+                      self.layoutStore.finishNormalCollapsedReturn(generation: token) else { return }
+                self.normalCollapseDisplayBeat = nil
+                guard self.currentGeometrySignature != self.lastAppliedGeometrySignature else { return }
+                self.beginCollapsedPresentationMorph()
+                self.reposition(animated: true, reason: "normalCollapseDisplayBeat", force: true)
+            }
+            guard let view = self.hostingView, self.islandPanel.isVisible,
+                  self.islandPanel.occlusionState.contains(.visible) else { finish(); return }
+            let displayID = (view.window?.screen?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value ?? CGMainDisplayID()
+            guard CGDisplayIsActive(displayID) != 0, CGDisplayIsAsleep(displayID) == 0 else { finish(); return }
+            self.normalCollapseDisplayBeat = NormalCollapseDisplayBeat(view: view, isCurrent: { [weak self] in
+                guard let self else { return false }
+                return self.allowsOverlayWork(generation: sessionGeneration) && self.islandState.state == .collapsed &&
+                    self.layoutStore.isCurrentNormalCollapsedReturn(generation: token)
+            }, completion: finish)
+        }
+    }
+
+    private func cancelNormalCollapsedReturn() {
+        normalCollapseDisplayBeat?.cancel()
+        normalCollapseDisplayBeat = nil
+        layoutStore.cancelNormalCollapsedReturn()
     }
 
     /// An expansion request that arrives while children are exiting keeps the
@@ -1893,14 +2066,11 @@ final class OverlayWindowController {
         }
     }
 
-    /// Panel-local regions for attached accessories, including the bridge
-    /// to the shell, so clicks there reach SwiftUI.
+    /// Only rendered accessories receive clicks; hover corridors remain click-through.
     private func currentAccessoryInteractiveRegions() -> [NSRect] {
         guard islandState.state == .expanded else { return [] }
-        return ExpandedHoverContainment.accessoryRegions(
-            shellFrame: layoutStore.expandedSurfaceFrame,
-            accessoryFrames: layoutStore.expandedAccessoryFrames,
-            tolerance: 2
+        return ExpandedHoverContainment.interactiveRegions(
+            frames: layoutStore.expandedAccessoryFrames, tolerance: 0
         )
     }
 
@@ -1910,7 +2080,7 @@ final class OverlayWindowController {
 
         if islandState.state == .expanded || layoutStore.isCollapseShellOnly {
             baseRegion = layoutStore.expandedSurfaceFrame.integral
-            tolerance = 2
+            tolerance = 0
         } else {
             baseRegion = collapsedInteractiveSurfaceFrame.integral
             tolerance = 4
@@ -2072,6 +2242,17 @@ final class OverlayWindowController {
         agentStackSwipe.reset()
         navigatePage(forward: action == .next)
         debugGesture("raw three-finger page action=\(action)")
+    }
+
+    private var cameraPageNavigationAllowed: Bool {
+        canPresentOverlay && islandState.state == .expanded && !layoutStore.isShellMorphing &&
+        !layoutStore.isExpandedContentExiting && !layoutStore.isCollapseShellOnly &&
+        layoutStore.cameraExpansionAllowed(
+            exactApproval: AgentCompactPermission.current(sessions: modules.agentEvents.sessions,
+                approvals: modules.agentApprovalControl, managed: modules.agentManagedControl) != nil,
+            interactiveHUD: activeInteractiveSystemHUD(activities: modules.liveActivities.activities) != nil,
+            nativeInteraction: nativeMenuTracking.isTracking || hasVisibleTransientNativeWindow,
+            fileDrag: modules.fileDragSession.isActive || modules.navigation.isFileDropTargeted)
     }
 
     func navigatePage(forward: Bool) {
@@ -3117,27 +3298,65 @@ final class OverlayWindowController {
     }
 }
 
-private final class IslandOverlayPanel: NSPanel, CameraLocalEventWindow {
+final class IslandOverlayPanel: NSPanel, CameraLocalEventWindow {
     var cameraEventGate: ((NSEvent) -> Bool)?
+    var onNotchRightClick: ((NSEvent) -> Bool)?
+    private weak var notchPressTarget: IslandShellBackgroundInputView?
     override var canBecomeKey: Bool {
         true
     }
 
-    /// The island is a non-activating panel: another app stays active while it
-    /// is expanded. A click that lands in a native text input (Agent composer,
-    /// SwiftTerm) made it first responder, but keyboard focus stayed with the
-    /// active app, so typing went nowhere. Claim key status one run-loop turn
-    /// after such a click - the same path the Terminal page's programmatic
-    /// focus already used successfully - without activating the app.
+    // Acquire during the click, before AppKit dispatches it to the editor; a queued makeKey can steal focus later.
     override func sendEvent(_ event: NSEvent) {
         guard cameraEventGate?(event) != false else { return }
-        super.sendEvent(event)
-        guard event.type == .leftMouseDown,
-              IslandKeyboardFocusPolicy.claimsKeyboard(firstResponder) else { return }
-        DispatchQueue.main.async { [weak self] in
-            guard let self, self.isVisible, IslandKeyboardFocusPolicy.claimsKeyboard(self.firstResponder) else { return }
-            self.makeKey()
+        if event.type == .rightMouseDown, onNotchRightClick?(event) == true { return }
+        if event.type == .leftMouseDown, let notch = notchActionsTarget(for: event) {
+            notchPressTarget = notch
+            notch.mouseDown(with: event)
+            return
         }
+        if let notch = notchPressTarget {
+            if event.type == .leftMouseDragged { notch.mouseDragged(with: event); return }
+            if event.type == .leftMouseUp {
+                notchPressTarget = nil
+                notch.mouseUp(with: event)
+                return
+            }
+        }
+        if event.type == .leftMouseDown, let contentView,
+           let target = contentView.hitTest(contentView.convert(event.locationInWindow, from: nil)),
+           IslandKeyboardFocusPolicy.claimsKeyboard(target) {
+            makeKey()
+            makeFirstResponder(target)
+            debugKeyboardOwnership(reason: "editorClick")
+        }
+        super.sendEvent(event)
+    }
+
+    // SwiftUI's full-frame compact/expanded content can occlude the lower background sibling.
+    func notchActionsTarget(for event: NSEvent) -> IslandShellBackgroundInputView? {
+        guard event.type == .leftMouseDown, event.windowNumber == windowNumber, let contentView else { return nil }
+        func find(in view: NSView) -> IslandShellBackgroundInputView? {
+            if let notch = view as? IslandShellBackgroundInputView,
+               notch.acceptsNotchClick(at: event.locationInWindow) { return notch }
+            for child in view.subviews {
+                if let notch = find(in: child) { return notch }
+            }
+            return nil
+        }
+        return find(in: contentView)
+    }
+
+    override func resignKey() {
+        super.resignKey()
+        debugKeyboardOwnership(reason: "resignedKey")
+    }
+
+    private func debugKeyboardOwnership(reason: String) {
+        #if DEBUG
+        guard ProcessInfo.processInfo.environment["DYNAMIC_ISLAND_KEYBOARD_DIAGNOSTICS"] == "1" else { return }
+        print("[IslandKeyboard] reason=\(reason) window=\(windowNumber) key=\(isKeyWindow) responder=\(firstResponder.map { String(describing: type(of: $0)) } ?? "none")")
+        #endif
     }
 
     override var canBecomeMain: Bool {
@@ -3148,6 +3367,14 @@ private final class IslandOverlayPanel: NSPanel, CameraLocalEventWindow {
 
 /// Which first responders own typed input (and therefore need key status).
 enum IslandKeyboardFocusPolicy {
+    @MainActor
+    static func releaseComposerForEscape(_ responder: NSResponder?, hasPresentation: Bool) -> Bool {
+        guard !hasPresentation, let editor = responder as? AgentPromptTextView,
+              editor.isEditable, !editor.hasMarkedText(), editor.window?.firstResponder === editor else { return false }
+        editor.releaseKeyboardOwnership()
+        return true
+    }
+
     @MainActor
     static func claimsKeyboard(_ responder: NSResponder?) -> Bool {
         // Explicit types only: the SwiftUI hosting view is itself a text-input
@@ -3274,4 +3501,32 @@ private final class IslandHostingView<Content: View>: NSHostingView<Content> {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
         true
     }
+}
+
+/// A bounded, display-synchronized normal-size beat, without waiting for the spring's long tail.
+@MainActor
+final class NormalCollapseDisplayBeat: NSObject {
+    private var link: CADisplayLink?
+    private(set) var deliveredFrameCount = 0
+    private let isCurrent: () -> Bool
+    private let completion: () -> Void
+
+    init(view: NSView, isCurrent: @escaping () -> Bool, completion: @escaping () -> Void) {
+        self.isCurrent = isCurrent
+        self.completion = completion
+        super.init()
+        let link = view.displayLink(target: self, selector: #selector(tick(_:)))
+        self.link = link
+        link.add(to: .main, forMode: .common)
+    }
+
+    @objc private func tick(_ link: CADisplayLink) {
+        guard isCurrent() else { cancel(); return }
+        deliveredFrameCount += 1
+        guard deliveredFrameCount >= 2 else { return }
+        cancel()
+        completion()
+    }
+
+    func cancel() { link?.invalidate(); link = nil }
 }

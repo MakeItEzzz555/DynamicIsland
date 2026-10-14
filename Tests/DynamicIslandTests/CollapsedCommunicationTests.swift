@@ -5,6 +5,29 @@ import XCTest
 
 @MainActor
 final class CollapsedCommunicationTests: XCTestCase {
+    func testAutomaticExpansionIsOptInAndNeverStealsAnInteractiveHover() {
+        let defaults = SettingsPreviewDefaults()
+        let settings = AppSettings(defaults: defaults)
+        XCTAssertFalse(settings.expandOnHover)
+        XCTAssertFalse(CollapsedActivityHoverPolicy.none.allowsAutomaticExpansion(enabled: settings.expandOnHover))
+        settings.expandOnHover = true
+        XCTAssertTrue(AppSettings(defaults: defaults).expandOnHover)
+        XCTAssertTrue(CollapsedActivityHoverPolicy.none.allowsAutomaticExpansion(enabled: settings.expandOnHover))
+        for policy in [CollapsedActivityHoverPolicy.peek, .interactive(requiredHeight: 68), .interactive(requiredHeight: 128)] {
+            XCTAssertFalse(policy.allowsAutomaticExpansion(enabled: true))
+        }
+        let layout = IslandLayoutStore()
+        for blocked in 0..<4 {
+            XCTAssertFalse(layout.cameraExpansionAllowed(exactApproval: blocked == 0,
+                interactiveHUD: blocked == 1, nativeInteraction: blocked == 2, fileDrag: blocked == 3))
+        }
+        layout.setTextInputFocused(true)
+        XCTAssertFalse(layout.cameraExpansionAllowed(exactApproval: false, interactiveHUD: false,
+            nativeInteraction: false, fileDrag: false))
+        SettingsCategoryDefaults.restore(.island, settings: settings)
+        XCTAssertFalse(settings.expandOnHover)
+    }
+
     func testFocusAndSendingRetainOnlyAnOpenedHoverAndEscapeCanCloseIt() {
         let policy = CollapsedActivityHoverPolicy.resolve(kind: .message, exactMessageReply: true)
         XCTAssertFalse(policy.isActive(hoverVisible: false, interactionPinned: false, focused: false, sending: true))
