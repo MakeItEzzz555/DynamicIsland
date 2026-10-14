@@ -56,7 +56,6 @@ enum IslandPointerGesture: String, CaseIterable, Codable {
     case swipeUp
     case swipeDown
     case longPress
-    case doubleClick
 
     static func detected(from translation: CGSize, sensitivity: Double) -> IslandPointerGesture? {
         let threshold = swipeThreshold(sensitivity: sensitivity)
@@ -148,14 +147,7 @@ final class IslandGestureCoordinator: ObservableObject {
         settings: AppSettings,
         context: IslandGestureContext
     ) -> IslandGestureAction {
-        let configuredAction = action(for: gesture, settings: settings, context: context)
-        if context.presentationState == .collapsed,
-           gesture == .doubleClick,
-           configuredAction == .mediaPlayPause,
-           !context.mediaControlAvailable {
-            return .toggleExpanded
-        }
-        return configuredAction
+        action(for: gesture, settings: settings, context: context)
     }
 
     private func collapsedAction(
@@ -163,8 +155,6 @@ final class IslandGestureCoordinator: ObservableObject {
         settings: AppSettings
     ) -> IslandGestureAction {
         switch gesture {
-        case .doubleClick:
-            settings.collapsedDoubleClickAction
         case .swipeLeft:
             settings.collapsedSwipeLeftAction
         case .swipeRight:
@@ -183,8 +173,6 @@ final class IslandGestureCoordinator: ObservableObject {
         settings: AppSettings
     ) -> IslandGestureAction {
         switch gesture {
-        case .doubleClick:
-            settings.expandedDoubleClickAction
         case .swipeLeft:
             settings.expandedSwipeLeftAction
         case .swipeRight:

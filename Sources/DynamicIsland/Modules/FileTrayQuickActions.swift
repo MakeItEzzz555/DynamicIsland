@@ -8,16 +8,6 @@ struct FileTrayActionRequest: Identifiable, Equatable {
     var openShelfAfterDrop = false
 }
 
-/// Sizes for the quick-action circles attached below the expanded island.
-enum FileTrayQuickActionMetrics {
-    static let diameter: CGFloat = 36
-    static let spacing: CGFloat = 10
-    /// Gap between the shell's bottom edge and the circles.
-    static let gap: CGFloat = 8
-    /// Transparent panel space reserved below the shell while Tray is shown.
-    static let accessoryHeight: CGFloat = gap + diameter + 12
-}
-
 enum FileTrayQuickAction: String, CaseIterable, Identifiable {
     case removeBackground
     case convert

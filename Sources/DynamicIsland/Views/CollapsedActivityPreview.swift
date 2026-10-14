@@ -131,8 +131,7 @@ struct CollapsedActivityPreviewView: View {
             case let .agent(name, provider, status, activity):
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
-                        Image(systemName: AgentVisualStyle.providerSymbol(provider))
-                            .foregroundStyle(AgentVisualStyle.providerAccent(provider))
+                        AgentProviderIcon(provider: provider, size: 14)
                         Text(name).font(.system(size: 12.5, weight: .semibold)).lineLimit(1).truncationMode(.middle)
                         Spacer(minLength: 6)
                         Text(status).font(.system(size: 11.5, weight: .semibold))

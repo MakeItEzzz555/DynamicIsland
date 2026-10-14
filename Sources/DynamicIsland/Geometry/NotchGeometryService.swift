@@ -300,7 +300,6 @@ public struct IslandCanvasGeometry: Equatable {
 enum ExpandedPresentationKind: String, Equatable, Sendable {
     case standard
     case agentsWorkspace
-    case trayQuickActions
 }
 
 struct ExpandedPresentationProfile: Equatable, Sendable {
@@ -318,12 +317,6 @@ struct ExpandedPresentationProfile: Equatable, Sendable {
         additionalHeight: 0
     )
 
-    static let trayQuickActions = ExpandedPresentationProfile(
-        kind: .trayQuickActions,
-        widthScale: 1,
-        additionalHeight: 0,
-        accessoryHeight: FileTrayQuickActionMetrics.accessoryHeight
-    )
     // The managed console needs a fixed control/composer budget. Width keeps the
     // established breathing room while added height flows to the transcript.
     static let agentsWorkspace = ExpandedPresentationProfile(
@@ -335,7 +328,6 @@ struct ExpandedPresentationProfile: Equatable, Sendable {
     static func resolve(for page: ExpandedIslandPage) -> Self {
         switch page {
         case .agents: .agentsWorkspace
-        case .tray: .trayQuickActions
         default: .standard
         }
     }
@@ -347,7 +339,9 @@ struct ExpandedPresentationProfile: Equatable, Sendable {
     func panelFrame(forExpandedFrame expanded: CGRect, collapsedFrame collapsed: CGRect) -> CGRect {
         let panel = panelFrame(forExpandedFrame: expanded)
         guard collapsed.width > 0, collapsed.height > 0, collapsed.minX.isFinite, collapsed.maxX.isFinite else { return panel }
-        return panel.union(collapsed).integral
+        let union = panel.union(collapsed).integral
+        // Keep the reachable shell top inside the native window, not on its event boundary.
+        return CGRect(x: union.minX, y: union.minY, width: union.width, height: union.height + 2)
     }
 
     /// Panel frame: the expanded shell frame extended downward by the
@@ -407,7 +401,7 @@ struct ExpandedPresentationProfile: Equatable, Sendable {
                       header: ExpandedHeaderLayout = .winged,
                       showNavigationControls: Bool? = nil) -> CGSize {
         let showNavigationControls = header.mode != .hidden && (showNavigationControls ?? settings.showNavigationControls)
-        let surface: WorkspaceSurface? = page == .island ? .media : (page == .agents ? .agents : nil)
+        let surface: WorkspaceSurface? = (page == .island || page == .tray) ? .media : (page == .agents ? .agents : nil)
         guard let surface, let configuration,
               editing || !showNavigationControls || configuration.customizedSurfaces.contains(surface) else {
             let size = resolvedSize(from: base)

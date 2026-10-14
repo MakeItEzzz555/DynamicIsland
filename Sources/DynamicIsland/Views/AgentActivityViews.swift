@@ -80,16 +80,64 @@ enum AgentVisualStyle {
 struct AgentProviderVisualIdentity: Equatable, Sendable {
     let systemSymbolName: String
     let accessibilityName: String
+    /// User-supplied artwork in Assets.xcassets; nil draws the neutral fallback.
+    var assetName: String? = nil
 
     static func resolve(_ provider: AgentProvider) -> Self {
         switch provider {
         case .codex:
-            return Self(systemSymbolName: "sparkles", accessibilityName: "Codex")
+            return Self(systemSymbolName: "sparkles", accessibilityName: "Codex", assetName: "CodexProviderIcon")
         case .claude:
-            return Self(systemSymbolName: "brain.head.profile", accessibilityName: "Claude")
+            return Self(systemSymbolName: "brain.head.profile", accessibilityName: "Claude", assetName: "ClaudeProviderIcon")
         case .other:
             return Self(systemSymbolName: "cube", accessibilityName: "Agent provider")
         }
+    }
+}
+
+/// Loads provider artwork once. Command-line SwiftPM copies Assets.xcassets
+/// uncompiled, so the PNG is read from its imageset when no compiled catalog
+/// (Xcode builds) has it; the packaged copy wins over the build directory.
+@MainActor
+enum AgentProviderIconImages {
+    private static var cache: [String: NSImage?] = [:]
+    static let bundle: Bundle = {
+        if let url = Bundle.main.url(forResource: "DynamicIsland_DynamicIsland", withExtension: "bundle"),
+           let packaged = Bundle(url: url) {
+            return packaged
+        }
+        return Bundle.module
+    }()
+
+    static func image(named name: String) -> NSImage? {
+        if let cached = cache[name] { return cached }
+        let image = bundle.image(forResource: name)
+            ?? bundle.url(forResource: name, withExtension: "png", subdirectory: "Assets.xcassets/\(name).imageset")
+                .flatMap(NSImage.init(contentsOf:))
+        cache[name] = .some(image)
+        return image
+    }
+}
+
+/// The one provider-icon renderer: supplied artwork, else a neutral glyph
+/// (never a brain/head or sparkles stand-in for a supplied provider icon).
+struct AgentProviderIcon: View {
+    let provider: AgentProvider
+    var size: CGFloat = AgentCompactOrbMetrics.providerIcon
+
+    var body: some View {
+        let identity = AgentProviderVisualIdentity.resolve(provider)
+        Group {
+            if let name = identity.assetName, let image = AgentProviderIconImages.image(named: name) {
+                Image(nsImage: image).resizable().interpolation(.high).aspectRatio(contentMode: .fit)
+            } else {
+                Image(systemName: "cube").resizable().scaledToFit().foregroundStyle(.white.opacity(0.6))
+            }
+        }
+        .frame(width: size, height: size)
+        .accessibilityElement()
+        .accessibilityLabel(identity.accessibilityName)
+        .accessibilityAddTraits(.isImage)
     }
 }
 
@@ -2400,28 +2448,32 @@ struct AgentCompactRoutineLeadingView: View {
                 speed: visualPreferences.orbSpeed,
                 terminal: !AgentVisualMotion.animates(session.state)
             )
-            Image(systemName: AgentVisualStyle.providerSymbol(session.id.sessionID.provider))
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(AgentVisualStyle.providerAccent(session.id.sessionID.provider))
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(session.id.sessionID.provider.stableName.capitalized), \(AgentSessionPresentation.displayedStateLabel(for: session, at: Date()))")
     }
 }
 
-/// Other active sessions as mini orbs (+N), or the primary's state glyph.
+/// Other active sessions as mini orbs (+N), then the primary's provider icon
+/// rightmost. State text lives in the hover preview, not a glyph here.
 struct AgentCompactRoutineTrailingView: View {
     let presentation: AgentCompactPresentation
     @Environment(\.agentVisualPreferences) private var visualPreferences
 
     var body: some View {
-        HStack(spacing: AgentCompactOrbMetrics.spacing) {
-            let others = presentation.sessions.dropFirst()
-            if others.isEmpty, let primary = presentation.sessions.first {
-                Image(systemName: AgentSessionPresentation.displayedStateSymbol(for: primary, at: Date()))
-                    .font(.system(size: 10.5, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.78))
+        HStack(spacing: AgentCompactOrbMetrics.providerIconGap) {
+            HStack(spacing: AgentCompactOrbMetrics.spacing) { otherSessions }
+            if let primary = presentation.sessions.first {
+                AgentProviderIcon(provider: primary.id.sessionID.provider)
             }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel([presentation.sessions.first.map { AgentProviderVisualIdentity.resolve($0.id.sessionID.provider).accessibilityName },
+                             presentation.summary].compactMap { $0 }.joined(separator: ", "))
+    }
+
+    @ViewBuilder private var otherSessions: some View {
+            let others = presentation.sessions.dropFirst()
             ForEach(Array(others), id: \.id) { session in
                 AgentLiveOrbView(
                     session: session,
@@ -2435,9 +2487,6 @@ struct AgentCompactRoutineTrailingView: View {
                     .font(.system(size: 9.5, weight: .bold).monospacedDigit())
                     .foregroundStyle(.white.opacity(0.7))
             }
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(presentation.summary)
     }
 }
 

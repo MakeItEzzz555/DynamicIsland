@@ -97,6 +97,8 @@ enum SettingsAuditCatalog {
         + visual(["agentUsageMetricsEnabled"], .agents)
         + entries(["agentActivityEnabled", "agentCompletionAlertsEnabled", "agentApprovalAlertsEnabled",
                    "agentPeekDurationSeconds"], .behavioral, "Agent monitoring and alert behavior.")
+        + entries(["liveAudioVisualizerEnabled"], .behavioral,
+                  "Live Audio consent (contract revision 3): read by LiveAudioCoordinator; toggled from the island and menu-bar menus and the visualizer context menu.")
         + entries(["agentCompletionSoundEnabled"], .behavioral,
                   "Agent task completion sound: one system chime (Glass, referenced by name) per fresh completed task; deduplicated by exact event.")
         + entries(["agentActivityRecordingEnabled"], .behavioral,
@@ -166,12 +168,14 @@ enum SettingsAuditCatalog {
         // Gestures
         + entries(["gesturesEnabled", "gestureInputSource", "expandGestureEnabled", "collapseGestureEnabled",
                    "nextTabGestureEnabled", "previousTabGestureEnabled", "mediaPlayPauseGestureEnabled",
-                   "timerStartStopGestureEnabled", "collapsedDoubleClickAction", "collapsedSwipeDownAction",
+                   "timerStartStopGestureEnabled", "collapsedSwipeDownAction",
                    "collapsedSwipeUpAction", "collapsedSwipeLeftAction", "collapsedSwipeRightAction", "collapsedLongPressAction",
-                   "expandedDoubleClickAction", "expandedSwipeDownAction", "expandedSwipeUpAction", "expandedSwipeLeftAction",
+                   "expandedSwipeDownAction", "expandedSwipeUpAction", "expandedSwipeLeftAction",
                    "expandedSwipeRightAction", "expandedLongPressAction", "gestureSensitivity", "gestureCooldownSeconds",
                    "requireGestureConfirmation"], .behavioral,
-                  "Double Click and Long Press are configured for both island states through the existing persisted mappings; native controls retain a saved selection when the available action subset changes.")
+                  "Long Press is configured for both island states through the existing persisted mappings; native controls retain a saved selection when the available action subset changes.")
+        + entries(["collapsedDoubleClickAction", "expandedDoubleClickAction"], .deprecatedHidden,
+                  "Double-click input was removed; the island menu is right-click only. Stored value retained for compatibility.")
         + entries(["showGestureHints", "gesturePrivacyMode"], .deprecatedHidden, deprecatedNote)
         // Advanced
         + entries(["disableVisualizerDuringMorph"], .behavioral, "Performance behavior during shell morph.")
@@ -285,8 +289,8 @@ enum SettingsCategoryDefaults {
                 Field(\.showNavigationControls), Field(\.showAgentsTab), Field(\.showTrayTab),
                 Field(\.showTimerTab), Field(\.showStatsTab), Field(\.showToolsTab),
                 Field(\.threeFingerTabNavigationEnabled), Field(\.rememberLastSelectedTab), Field(\.defaultExpandedTab),
-                Field(\.gesturesEnabled), Field(\.gestureInputSource), Field(\.collapsedDoubleClickAction),
-                Field(\.collapsedLongPressAction), Field(\.expandedDoubleClickAction), Field(\.expandedLongPressAction),
+                Field(\.gesturesEnabled), Field(\.gestureInputSource),
+                Field(\.collapsedLongPressAction), Field(\.expandedLongPressAction),
                 Field(\.requireGestureConfirmation)
             ]
         case .media:
@@ -357,7 +361,7 @@ enum SettingsCategoryDefaults {
                 Field(\.collapsedSwipeRightAction), Field(\.collapsedSwipeDownAction), Field(\.collapsedSwipeUpAction),
                 Field(\.expandedSwipeDownAction), Field(\.expandedSwipeUpAction), Field(\.expandedSwipeLeftAction),
                 Field(\.expandedSwipeRightAction), Field(\.gesturesEnabled), Field(\.gestureInputSource),
-                Field(\.collapsedDoubleClickAction), Field(\.collapsedLongPressAction), Field(\.expandedDoubleClickAction),
+                Field(\.collapsedLongPressAction),
                 Field(\.expandedLongPressAction), Field(\.requireGestureConfirmation)
             ]
         case .advanced:

@@ -64,14 +64,22 @@ enum AgentCompactOrbMetrics {
     static let primaryOrb: CGFloat = 18
     static let secondaryOrb: CGFloat = 13
     static let spacing: CGFloat = 4
-    /// Primary orb + provider glyph.
-    static let leadingWidth: CGFloat = primaryOrb + spacing + 11
-    /// Mini orbs for the other visible sessions (+N badge), else one state glyph.
+    static let badge: CGFloat = 18
+    /// The provider icon takes the slot of the former 11 pt left glyph and its
+    /// gap (12 + 3 = 11 + 4), so multi-session widths never grow.
+    static let providerIcon: CGFloat = 12
+    static let providerIconGap: CGFloat = 3
+    /// Left of the notch: the primary session's orb only.
+    static let leadingWidth: CGFloat = primaryOrb
+    /// Right of the notch: other sessions' mini orbs, +N, then the primary's
+    /// provider icon as the rightmost element.
     static func trailingWidth(for presentation: AgentCompactPresentation) -> CGFloat {
-        let others = presentation.sessions.count - 1
-        let badge: CGFloat = presentation.overflowCount > 0 ? 18 : 0
-        guard others > 0 else { return max(16, badge) }
-        return CGFloat(others) * secondaryOrb + CGFloat(others - 1) * spacing + (badge > 0 ? spacing + badge : 0)
+        let others = max(presentation.sessions.count - 1, 0)
+        var items: [CGFloat] = []
+        if others > 0 { items.append(CGFloat(others) * secondaryOrb + CGFloat(others - 1) * spacing) }
+        if presentation.overflowCount > 0 { items.append(badge) }
+        guard !items.isEmpty else { return providerIcon }
+        return items.reduce(0, +) + CGFloat(items.count - 1) * spacing + providerIconGap + providerIcon
     }
 }
 

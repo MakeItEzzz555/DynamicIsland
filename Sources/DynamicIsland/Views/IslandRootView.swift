@@ -187,7 +187,6 @@ struct IslandPointerGestureModifier: ViewModifier {
     func body(content: Content) -> some View {
         if settings.gesturesEnabled, settings.gestureInputSource == .trackpad {
             let pointerGestures = content
-                .gesture(doubleClickGesture)
                 .simultaneousGesture(swipeGesture)
             if includesLongPress {
                 pointerGestures.simultaneousGesture(longPressGesture)
@@ -197,19 +196,6 @@ struct IslandPointerGestureModifier: ViewModifier {
         } else {
             content
         }
-    }
-
-    private var doubleClickGesture: some Gesture {
-        TapGesture(count: 2)
-            .onEnded {
-                guard !pointerOwnedByControl else { return }
-                coordinator.handle(
-                    .doubleClick,
-                    settings: settings,
-                    context: context,
-                    callbacks: callbacks
-                )
-            }
     }
 
     private var swipeGesture: some Gesture {
@@ -682,6 +668,7 @@ struct IslandRootView: View {
 
     var body: some View {
         animatedIslandCanvas
+            .onChange(of: layoutStore.collapsedPointerInside) { _, inside in handleCollapsedHover(inside) }
             .onChange(of: layoutStore.transientInteractionOwners.contains(.nativeMenu)) { _, tracking in
                 if tracking { collapsedPreviewGeneration += 1 }
                 else { handleCollapsedHover(isCollapsedHovering) }
@@ -694,6 +681,7 @@ struct IslandRootView: View {
                 layoutStore.setNativeControlRegion(frame, owner: owner)
             })
             .environment(\.liveSpectrum, modules.audioSpectrum)
+            .environment(\.liveAudioCoordinator, modules.liveAudio)
             .environment(\.basketShelfTransfer, BasketShelfTransfer(
                 moveToBasket: { [presenter = modules.basketPresenter] urls in presenter.moveShelfFilesToBasket(urls) },
                 showBasket: { [presenter = modules.basketPresenter] in presenter.showPrimaryBasket() }
@@ -735,7 +723,6 @@ struct IslandRootView: View {
                 .id(layoutStore.overlayPresentationGeneration)
 
                 collapsedSidecarOverlay
-                trayQuickActionOverlay
                 detachedNavigationOverlay
                 CameraPointerOverlay(store: layoutStore.cameraPointerStore, canvasSize: layoutStore.canvasSize)
                     .zIndex(100)
@@ -752,15 +739,21 @@ struct IslandRootView: View {
         .coordinateSpace(name: IslandCanvasCoordinateSpace.name)
     }
 
-    private var collapsedContextContentRects: [CGRect] {
-        guard !isExpanded, collapsedLayoutResolution.primary != nil || agentAttention.presentation != nil ||
-                !modules.agentEvents.sessions.isEmpty else { return [] }
-        // Reserve the existing 16pt compact row wings, including non-native SwiftUI controls.
-        let top = isCollapsedPreviewActive ? 2 : max(0, (surfaceSize.height - 16) / 2)
+    /// An open collapsed preview (message reply, activity details) keeps its
+    /// own pointer events, including right-click paste in the reply field.
+    private var collapsedPreviewContentRects: [CGRect] {
+        guard !isExpanded, isCollapsedPreviewActive else { return [] }
+        let base = layoutStore.collapsedSurfaceFrame.height
+        guard surfaceSize.height > base else { return [] }
+        return [CGRect(x: 0, y: base, width: surfaceSize.width, height: surfaceSize.height - base)]
+    }
+
+    private var collapsedCompactControlRects: [CGRect] {
+        guard !isExpanded, collapsedLayoutResolution.primary != nil else { return [] }
         let left = layoutStore.collapsedLeftRegionWidth > 0 ? layoutStore.collapsedLeftRegionWidth + 8 : min(96, surfaceSize.width / 3)
         let right = layoutStore.collapsedRightRegionWidth > 0 ? layoutStore.collapsedRightRegionWidth + 8 : min(96, surfaceSize.width / 3)
-        return [CGRect(x: 0, y: top, width: left, height: 16),
-                CGRect(x: surfaceSize.width - right, y: top, width: right, height: 16)]
+        return IslandBackgroundInteractionGeometry.compactControlRects(base: layoutStore.collapsedSurfaceFrame,
+            preview: isCollapsedPreviewActive ? collapsedPreviewSurfaceFrame : nil, leftWidth: left, rightWidth: right)
     }
 
     private var shellBackgroundInteraction: IslandShellBackgroundInteraction {
@@ -777,8 +770,8 @@ struct IslandRootView: View {
             contentTop: chrome.topPadding + chrome.tabSwitcherHeight + chrome.tabToPageSpacing,
             notchSize: notchIntegrated ? CGSize(width: layoutStore.hardwareNotchWidth, height: metrics.hardwareNotchHeight) : .zero,
             allowsBackground: isExpanded,
-            excludedRects: layoutStore.nativeControlRegions.values.map { $0.offsetBy(dx: -shellOrigin.x, dy: -shellOrigin.y) },
-            contextMenuExcludedRects: collapsedContextContentRects)
+            excludedRects: layoutStore.nativeControlRegions.values.map { $0.offsetBy(dx: -shellOrigin.x, dy: -shellOrigin.y) }
+                + collapsedPreviewContentRects + collapsedCompactControlRects)
         return IslandShellBackgroundInteraction(geometry: geometry,
             enabled: !layoutStore.isShellMorphing && !layoutStore.isExpandedContentExiting && !layoutStore.isCollapseShellOnly
                 && layoutStore.workspaceGeometryTransition.phase == .idle,
@@ -794,9 +787,6 @@ struct IslandRootView: View {
                     layoutStore.preservePageForNextExpansion(navigation.selectedPage)
                     onRequestExpand()
                 }
-            },
-            onDoubleClick: {
-                gestureCoordinator.handle(.doubleClick, settings: settings, context: gestureContext, callbacks: gestureCallbacks)
             },
             onClick: isExpanded ? nil : {
                 guard settings.expandOnClick else { return }
@@ -822,9 +812,12 @@ struct IslandRootView: View {
         baseIslandCanvas
             .onAppear {
                 modules.navigation.ensureValidSelection(using: settings)
+                layoutStore.setExpandedAccessoryFrames([], owner: .trayQuickActions)
+                layoutStore.setExpandedAccessoryFrames([], owner: .fileDragOrbit)
                 synchronizePresentationForCurrentState()
                 updateCollapsedPreviewLayout()
                 synchronizeCollapsedSidecarGeometry()
+                handleCollapsedHover(layoutStore.collapsedPointerInside)
             }
             .onChange(of: layoutStore.overlayPresentationGeneration) { _, _ in
                 sequenceGeneration += 1
@@ -1075,20 +1068,27 @@ struct IslandRootView: View {
                         layoutStore.setTextInputFocused(false)
                         deactivateCollapsedPreview()
                     })
-            } else if isCollapsedPreviewActive, let preview = collapsedActivityPreview {
-                VStack(spacing: 0) {
-                    collapsedCompactView
-                        .frame(height: layoutStore.collapsedSurfaceFrame.height)
-                    CollapsedActivityPreviewView(preview: preview, reduceMotion: reduceMotion || settings.reduceExtraMotion)
-                        .transition(.opacity.combined(with: .move(edge: .top)))
-                }
             } else {
-                collapsedCompactView
+                // One stable view for the compact island with or without the
+                // activity preview: swapping trees remounted the artwork and
+                // visualizer under the pointer, which fired hover exit/enter
+                // and made the preview collapse and reopen in a loop.
+                let preview = isCollapsedPreviewActive ? collapsedActivityPreview : nil
+                let base = layoutStore.collapsedSurfaceFrame
+                VStack(alignment: .leading, spacing: 0) {
+                    collapsedCompactView
+                        .frame(width: preview == nil ? nil : base.width, height: preview == nil ? nil : base.height)
+                        .padding(.leading, preview == nil ? 0 : max(0, base.minX - collapsedPreviewSurfaceFrame.minX))
+                    if let preview {
+                        CollapsedActivityPreviewView(preview: preview, reduceMotion: reduceMotion || settings.reduceExtraMotion)
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
         }
         .environment(\.agentVisualPreferences, settings.agentVisualPreferences)
         .contentShape(Rectangle())
-        .onHover(perform: handleCollapsedHover)
         .onTapGesture {
             guard settings.expandOnClick, compactPermission == nil, !isCollapsedPreviewActive else { return }
             deactivateCollapsedPreview()
@@ -1118,8 +1118,7 @@ struct IslandRootView: View {
         if settings.showNavigationControls, isExpanded, showsExpandedContent,
            !layoutStore.isCollapseShellOnly {
             let frame = DetachedIslandNavigationMetrics.frame(shell: layoutStore.expandedSurfaceFrame,
-                pageCount: navigation.availablePages(using: settings).count,
-                precedingAccessoryHeight: navigation.selectedPage == .tray ? FileTrayQuickActionMetrics.accessoryHeight : 0)
+                pageCount: navigation.availablePages(using: settings).count)
             DetachedIslandNavigationBar(settings: settings, navigation: navigation, pointerAnchor: layoutStore.tabPointerAnchor,
                 onEdit: { requestBackgroundWorkspaceAction(.toggleEdit) },
                 onEditTabs: { requestBackgroundWorkspaceAction(.editNavigation) },
@@ -1132,53 +1131,6 @@ struct IslandRootView: View {
             .onAppear { layoutStore.setExpandedAccessoryFrames([frame], owner: .navigation) }
             .onChange(of: frame) { _, next in layoutStore.setExpandedAccessoryFrames([next], owner: .navigation) }
             .onDisappear { layoutStore.setExpandedAccessoryFrames([], owner: .navigation) }
-        }
-    }
-
-    @ViewBuilder
-    private var trayQuickActionOverlay: some View {
-        if showsExpandedContent,
-           isExpanded,
-           !layoutStore.isExpandedContentExiting,
-           navigation.selectedPage == .tray,
-           settings.trayEnabled,
-           settings.fileShelfEnabled {
-            let shell = layoutStore.expandedSurfaceFrame
-            ZStack {
-                if fileDragSession.isActive {
-                    FileDragQuickActionOrbit(
-                        session: fileDragSession,
-                        layoutStore: layoutStore,
-                        reduceMotion: reduceMotion || settings.reduceExtraMotion
-                    )
-                    .position(
-                        x: shell.midX,
-                        y: layoutStore.canvasSize.height - shell.minY
-                            + FileDragQuickActionMetrics.gap
-                            + FileDragQuickActionMetrics.diameter / 2
-                    )
-                    .transition(.opacity.combined(with: .scale(scale: (reduceMotion || settings.reduceExtraMotion) ? 1 : 0.92)))
-                } else {
-                    FileTrayQuickActionBar(
-                        fileShelf: modules.fileShelf,
-                        backgroundOperations: modules.backgroundOperations,
-                        backgroundRemoval: modules.productivity.backgroundRemoval,
-                        layoutStore: layoutStore,
-                        reduceMotion: reduceMotion || settings.reduceExtraMotion
-                    )
-                    .position(
-                        x: shell.midX,
-                        y: layoutStore.canvasSize.height - shell.minY
-                            + FileTrayQuickActionMetrics.gap
-                            + FileTrayQuickActionMetrics.diameter / 2
-                    )
-                    .transition(.opacity.combined(with: .offset(y: reduceMotion ? 0 : -6)))
-                }
-            }
-            .animation(
-                (reduceMotion || settings.reduceExtraMotion) ? .easeOut(duration: 0.12) : .spring(response: 0.24, dampingFraction: 0.82),
-                value: fileDragSession.isActive
-            )
         }
     }
 
@@ -1339,8 +1291,8 @@ struct IslandRootView: View {
     }
 
     private var collapsedPreviewSurfaceFrame: CGRect {
-        let base = layoutStore.collapsedSurfaceFrame
-        return collapsedHoverPolicy.frame(from: base)
+        collapsedHoverPolicy.frame(from: layoutStore.collapsedSurfaceFrame,
+                                   including: layoutStore.collapsedCompositeInteractionFrame)
     }
 
     private var collapsedSourceToggles: CollapsedLiveActivitySourceToggles {
@@ -1985,7 +1937,6 @@ struct IslandShellBackgroundInteraction: NSViewRepresentable {
     let onClipboard: () -> Void
     let onSettings: () -> Void
     let onNavigate: (Bool) -> Void
-    var onDoubleClick: (() -> Void)? = nil
     var onClick: (() -> Void)? = nil
     var onLongPress: (() -> Void)? = nil
     var shellShape = IslandShellShape(topCornerRadius: 0, bottomCornerRadius: 0)
@@ -2058,7 +2009,7 @@ final class IslandShellBackgroundInputView: NSView {
     func acceptsNotchContextClick(at windowPoint: NSPoint) -> Bool {
         let point = convert(windowPoint, from: nil)
         return window != nil && !isHiddenOrHasHiddenAncestor && configuration?.enabled == true
-            && configuration?.geometry.acceptsCollapsedContextMenu(at: point) == true
+            && configuration?.geometry.acceptsContextMenu(at: point) == true
             && configuration?.shellShape.path(in: bounds).contains(point) == true
     }
 
@@ -2067,10 +2018,6 @@ final class IslandShellBackgroundInputView: NSView {
         let point = convert(event.locationInWindow, from: nil)
         guard let configuration, configuration.enabled,
               configuration.geometry.region(at: point) != nil else { return }
-        if event.clickCount == 2 {
-            configuration.onDoubleClick?()
-            return
-        }
         pressOrigin = point
         let generation = pressGeneration
         let work = DispatchWorkItem { [weak self] in
@@ -2106,18 +2053,9 @@ final class IslandShellBackgroundInputView: NSView {
         guard let origin, let configuration, configuration.enabled,
               configuration.geometry.region(at: origin) == .notch,
               configuration.geometry.region(at: point) == .notch else { return }
-        if let onClick = configuration.onClick {
-            onClick()
-        } else if configuration.geometry.allowsBackground {
-            // Wait for AppKit's double-click interval so the menu cannot swallow a shortcut's second press.
-            let generation = pressGeneration
-            let work = DispatchWorkItem { [weak self] in
-                guard let self, self.pressGeneration == generation,
-                      self.acceptsNotchClick(at: event.locationInWindow) else { return }
-                NSMenu.popUpContextMenu(self.actionsMenu(), with: event, for: self)
-            }
-            pressWork = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + NSEvent.doubleClickInterval, execute: work)
+        if let onClick = configuration.onClick { onClick() }
+        else if configuration.geometry.allowsBackground {
+            NSMenu.popUpContextMenu(actionsMenu(), with: event, for: self)
         }
     }
 
@@ -3304,6 +3242,13 @@ struct CollapsedSystemHUDCompactView: View {
         let now = ProcessInfo.processInfo.systemUptime
         guard force || now - lastWriteUptime >= (1.0 / 30.0) else { return }
         lastWriteUptime = now
+        if kind == .volume {
+            controller.requestInteractiveVolume(requested) { snapshot in
+                if let snapshot { confirmedProgress = min(max(snapshot.value, 0), 1) }
+                else { interactionSupported = false; synchronizeFromActivity() }
+            }
+            return
+        }
         guard let snapshot = controller.setInteractiveValue(kind: kind, value: requested) else {
             interactionSupported = false
             synchronizeFromActivity()
@@ -4660,26 +4605,15 @@ struct ExpandedIslandView: View {
                     claim, urls: urls, shelf: shelf,
                     allowed: settings.overlayEnabled && canAcceptExpandedFileDrop &&
                         layoutStore.overlayPresentationGeneration == presentationGeneration,
-                    requestActions: zone == .convert)
-                guard let accepted, !accepted.isEmpty else {
+                    requestActions: false)
+                guard let accepted else { return }
+                guard !accepted.isEmpty else {
                     shelf.setOperationStatus(.failed("The drop was not added to the Tray."), clearAfter: .seconds(4))
                     return
                 }
-                shelf.select(only: accepted)
-                switch zone {
-                case .keep:
-                    shelf.setOperationStatus(.succeeded(accepted.count == 1 ? "Added to the Tray." : "Added \(accepted.count) items to the Tray."), clearAfter: .seconds(3))
-                case .convert:
-                    break // The existing File Actions panel is the format selection flow.
-                case .share:
-                    switch FileDragActionExecutor.production.perform(.share, urls: accepted, anchor: trayShareAnchor.view) {
-                    case .handedOff: break
-                    case .unavailable(let message), .failed(let message):
-                        shelf.setOperationStatus(.failed(message), clearAfter: .seconds(4))
-                    }
-                case .zip:
-                    shelf.createZIP(accepted, using: modules.backgroundOperations)
-                }
+                shelf.performDropZone(zone, accepted: accepted, attemptedCount: Set(urls.map(\.standardizedFileURL)).count,
+                    operations: modules.backgroundOperations, executor: .production, anchor: trayShareAnchor.view, layoutStore: layoutStore)
+
             }
         }
         return true

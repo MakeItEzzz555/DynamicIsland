@@ -13,6 +13,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private let onOpenClipboard: () -> Void
     private let onNextPage: () -> Void
     private let onPreviousPage: () -> Void
+    private let onToggleLiveAudio: () -> Void
 
     init(
         settings: AppSettings,
@@ -24,8 +25,10 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         onEditWorkspace: @escaping () -> Void = {},
         onOpenClipboard: @escaping () -> Void = {},
         onNextPage: @escaping () -> Void = {},
-        onPreviousPage: @escaping () -> Void = {}
+        onPreviousPage: @escaping () -> Void = {},
+        onToggleLiveAudio: @escaping () -> Void = {}
     ) {
+        self.onToggleLiveAudio = onToggleLiveAudio
         self.settings = settings
         self.onOpenSettings = onOpenSettings
         self.onToggleOverlay = onToggleOverlay
@@ -54,6 +57,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             return item
         }
         menu.addItem(item("Settings…", #selector(openSettings)))
+        menu.addItem(item("Customize Workspace…", #selector(editWorkspace)))
         let clipboard = NSMenuItem(title: "Clipboard", action: nil, keyEquivalent: "")
         let submenu = NSMenu(title: "Clipboard")
         submenu.autoenablesItems = false
@@ -63,6 +67,10 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         clipboard.submenu = submenu
         clipboard.isEnabled = settings.clipboardHistoryEnabled
         menu.addItem(clipboard)
+        menu.addItem(liveAudioItem())
+        menu.addItem(.separator())
+        menu.addItem(item("Previous Page", #selector(previousPage)))
+        menu.addItem(item("Next Page", #selector(nextPage)))
         menu.addItem(.separator())
         menu.addItem(item("Quit Island", #selector(quit)))
         return menu
@@ -83,6 +91,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         }
         menu.addItem(NSMenuItem(title: "Next Page", action: #selector(nextPage), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Previous Page", action: #selector(previousPage), keyEquivalent: ""))
+        menu.addItem(liveAudioItem())
         if !settings.showNavigationControls {
             menu.addItem(NSMenuItem(title: "Show Navigation Controls", action: #selector(showNavigation), keyEquivalent: ""))
         }
@@ -112,6 +121,15 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     }
 
     @objc private func editWorkspace() { onEditWorkspace() }
+    @objc private func toggleLiveAudio() { onToggleLiveAudio() }
+
+    /// Checked from the saved preference (desired state), not capture status.
+    private func liveAudioItem() -> NSMenuItem {
+        let item = NSMenuItem(title: "Live Audio", action: #selector(toggleLiveAudio), keyEquivalent: "")
+        item.target = self
+        item.state = settings.liveAudioVisualizerEnabled ? .on : .off
+        return item
+    }
     @objc private func openClipboard() {
         if settings.clipboardHistoryEnabled { onOpenClipboard() }
     }

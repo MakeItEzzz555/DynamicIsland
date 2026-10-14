@@ -205,16 +205,10 @@ final class FileDragSessionTests: XCTestCase {
     }
 
 
-    func testOrbitMetricsMatchSourceBackedShelfGeometry() {
-        XCTAssertEqual(FileDragQuickActionMetrics.diameter, 32)
-        XCTAssertEqual(FileDragQuickActionMetrics.spacing, 12)
-        XCTAssertEqual(FileDragQuickActionMetrics.targetedScale, 1.18, accuracy: 0.0001)
-        XCTAssertEqual(FileDragQuickActionMetrics.hoverScale, 1.05, accuracy: 0.0001)
-        XCTAssertEqual(FileDragQuickActionMetrics.stagger, 0.03, accuracy: 0.0001)
-        XCTAssertEqual(FileDragQuickActionMetrics.orbitWidth, 180)
-        XCTAssertLessThanOrEqual(FileDragQuickActionMetrics.accessoryHeight, FileTrayQuickActionMetrics.accessoryHeight)
+    func testFourDestinationsNeedNoExternalOrbitReservation() {
+        XCTAssertEqual(FileDropZone.allCases.count, 4)
+        XCTAssertEqual(ExpandedPresentationProfile.resolve(for: .tray).accessoryHeight, 0)
     }
-
 
     func testMaterializationFailureResetsEvenAfterPointerLeavesTarget() throws {
         let controller = FileDragSessionController()

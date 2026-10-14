@@ -66,6 +66,19 @@ final class CollapsedActivityPreviewTests: XCTestCase {
         XCTAssertEqual(CollapsedActivityHoverPolicy.resolve(kind: .media), .none, "previews disabled keeps the old behavior")
     }
 
+    func testPreviewHitAreaCoversTheSidecarsSoHoveringThemCannotCloseIt() {
+        let policy = CollapsedActivityHoverPolicy.activityPreview(height: 48)
+        let base = CGRect(x: 400, y: 500, width: 200, height: 32)
+        let composite = CGRect(x: 300, y: 500, width: 420, height: 32)
+        let frame = policy.frame(from: base, including: composite)
+        XCTAssertEqual(frame.minX, 300); XCTAssertEqual(frame.maxX, 720)
+        XCTAssertEqual(frame.height, 80); XCTAssertEqual(frame.maxY, base.maxY)
+        XCTAssertTrue(frame.contains(CGPoint(x: 310, y: 520)), "a pointer on the leading sidecar stays inside")
+        XCTAssertEqual(policy.frame(from: base, including: .zero), policy.frame(from: base))
+        XCTAssertEqual(CollapsedActivityHoverPolicy.peek.frame(from: base, including: composite),
+                       CollapsedActivityHoverPolicy.peek.frame(from: base), "message peeks keep their geometry")
+    }
+
     func testPreviewsStaySmall() {
         for preview: CollapsedActivityPreview in [
             .media(title: "a", artist: "b", elapsed: nil, remaining: nil), .timer(title: "t", detail: nil),
@@ -78,7 +91,8 @@ final class CollapsedActivityPreviewTests: XCTestCase {
     func testRoutineAgentPillIsOrbsOnly() throws {
         let one = SettingsPreviewFixtures.agentSession(provider: .codex)
         let single = try XCTUnwrap(AgentCompactPresentation.make(sessions: [one]))
-        XCTAssertEqual(AgentCompactOrbMetrics.trailingWidth(for: single), 16, "one session: a single state glyph")
+        XCTAssertEqual(AgentCompactOrbMetrics.trailingWidth(for: single), AgentCompactOrbMetrics.providerIcon,
+                       "one session: the provider icon, no state glyph")
         let profile = try XCTUnwrap(AgentCollapsedShellPresentation.routine(sessions: [one], enabled: true)?.contentProfile)
         XCTAssertEqual(profile.leftContentWidth, AgentCompactOrbMetrics.leadingWidth)
         XCTAssertLessThan(profile.leftContentWidth, 62, "narrower than the old name-based minimum")

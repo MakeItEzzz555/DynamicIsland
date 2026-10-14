@@ -4,6 +4,21 @@ import XCTest
 @testable import DynamicIsland
 
 final class NotchGeometryServiceTests: XCTestCase {
+    @MainActor
+    func testPanelTopGuardPreservesAbsoluteCollapsedAndExpandedAnchors() {
+        let expanded = CGRect(x: 200, y: 500, width: 400, height: 260)
+        let collapsed = CGRect(x: 280, y: 726, width: 240, height: 34)
+        let panel = ExpandedPresentationProfile.standard.panelFrame(forExpandedFrame: expanded, collapsedFrame: collapsed)
+        XCTAssertEqual(panel.maxY, expanded.maxY + 2)
+        XCTAssertEqual(panel.minY, expanded.minY)
+        let layout = IslandLayoutStore()
+        layout.updateLocal(panelFrame: panel, collapsedScreenFrame: collapsed, expandedScreenFrame: expanded,
+            hasHardwareNotch: true, hardwareNotchWidth: 200, collapsedLeftRegionWidth: 16,
+            collapsedNotchCoreWidth: 200, collapsedRightRegionWidth: 16)
+        XCTAssertEqual(layout.collapsedSurfaceFrame.offsetBy(dx: panel.minX, dy: panel.minY), collapsed)
+        XCTAssertEqual(layout.expandedSurfaceFrame.offsetBy(dx: panel.minX, dy: panel.minY), expanded)
+    }
+
     func testInfersHardwareNotchFromAuxiliaryAreas() {
         let service = NotchGeometryService()
         let snapshot = ScreenSnapshot(
@@ -281,9 +296,9 @@ final class NotchGeometryServiceTests: XCTestCase {
         // Tray keeps the standard shell size; only transparent accessory
         // space below it is added for the quick-action circles.
         let tray = ExpandedPresentationProfile.resolve(for: .tray)
-        XCTAssertEqual(tray, .trayQuickActions)
+        XCTAssertEqual(tray, .standard)
         XCTAssertEqual(tray.resolvedSize(from: base), base)
-        XCTAssertGreaterThan(tray.accessoryHeight, 0)
+        XCTAssertEqual(tray.accessoryHeight, 0)
 
         for page in ExpandedIslandPage.allCases where page != .agents && page != .tray {
             let profile = ExpandedPresentationProfile.resolve(for: page)
@@ -295,11 +310,11 @@ final class NotchGeometryServiceTests: XCTestCase {
 
     func testTrayPanelFrameExtendsDownwardWithoutMovingShell() {
         let expanded = CGRect(x: 326, y: 696, width: 860, height: 286)
-        let panel = ExpandedPresentationProfile.trayQuickActions.panelFrame(forExpandedFrame: expanded)
+        let panel = ExpandedPresentationProfile.resolve(for: .tray).panelFrame(forExpandedFrame: expanded)
         XCTAssertEqual(panel.maxY, expanded.maxY)
         XCTAssertEqual(panel.minX, expanded.minX)
         XCTAssertEqual(panel.width, expanded.width)
-        XCTAssertEqual(panel.minY, expanded.minY - FileTrayQuickActionMetrics.accessoryHeight)
+        XCTAssertEqual(panel.minY, expanded.minY)
         XCTAssertEqual(ExpandedPresentationProfile.standard.panelFrame(forExpandedFrame: expanded), expanded)
     }
 
@@ -363,7 +378,7 @@ final class NotchGeometryServiceTests: XCTestCase {
 
         // Every tab pair, in both directions, interpolated exactly the way
         // AppKit animates a window frame (origin and size component-wise).
-        let tray = ExpandedPresentationProfile.trayQuickActions.panelFrame(forExpandedFrame: standard)
+        let tray = ExpandedPresentationProfile.resolve(for: .tray).panelFrame(forExpandedFrame: standard)
         let pairs: [(CGRect, CGRect)] = [(standard, agents), (agents, standard), (tray, agents), (agents, tray)]
         for (source, target) in pairs {
             XCTAssertEqual(source.maxY, target.maxY, accuracy: 0.001, "endpoints must share the top edge")

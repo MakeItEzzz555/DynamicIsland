@@ -12,7 +12,10 @@ final class AudioWidgetIntegrationTests: XCTestCase {
         let host = NSHostingView(rootView: AudioVisualizerView(isPlaying: true, variant: .expanded)
             .environment(\.liveSpectrum, controller))
         host.frame = CGRect(x: 0, y: 0, width: 76, height: 28)
-        let window = NSPanel(contentRect: CGRect(x: -5000, y: -5000, width: 76, height: 28),
+        // On screen: SwiftUI does not commit updates for a window placed off
+        // every display (headless CI), which froze both rasters.
+        let visible = NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 800, height: 600)
+        let window = NSPanel(contentRect: CGRect(x: visible.minX + 8, y: visible.minY + 8, width: 76, height: 28),
             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = host; window.orderFrontRegardless()

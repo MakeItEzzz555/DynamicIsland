@@ -227,6 +227,7 @@ final class OverlayWindowController {
     private var mouseContainmentTimer: Timer?
     private var normalCollapseDisplayBeat: NormalCollapseDisplayBeat?
     private var localMouseMovedMonitor: Any?
+    private var lastObservedMouseScreenPoint: NSPoint?
     private var globalMouseMovedMonitor: Any?
     private var localScrollWheelMonitor: Any?
     private var globalScrollWheelMonitor: Any?
@@ -312,7 +313,9 @@ final class OverlayWindowController {
         )
         Self.configure(islandPanel, showInFullscreen: settings.showOverlayInFullscreen)
         islandPanel.onNotchRightClick = { [weak self] event in
-            guard let self, self.canPresentOverlay, self.islandState.state == .collapsed,
+            // Both states: SwiftUI content covers the background view, so the
+            // panel routes right-clicks for the island menu before dispatch.
+            guard let self, self.canPresentOverlay,
                   !self.layoutStore.isShellMorphing, !self.layoutStore.isCollapseShellOnly,
                   let target = self.islandPanel.notchActionsTarget(for: event),
                   let menu = onNotchMenu?() else { return false }
@@ -1522,8 +1525,11 @@ final class OverlayWindowController {
         localMouseMovedMonitor = NSEvent.addLocalMonitorForEvents(
             matching: [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged]
         ) { [weak self] event in
-            self?.updateMousePassthrough()
-            self?.collapseIfExpandedMouseOutsideAfterGrace(source: "localMouseMonitor")
+            if let self {
+                self.lastObservedMouseScreenPoint = event.window?.convertPoint(toScreen: event.locationInWindow) ?? NSEvent.mouseLocation
+                self.updateMousePassthrough(at: self.lastObservedMouseScreenPoint)
+                self.collapseIfExpandedMouseOutsideAfterGrace(source: "localMouseMonitor")
+            }
             return event
         }
 
@@ -1533,7 +1539,8 @@ final class OverlayWindowController {
             let generation = self?.presentationSession.generation
             Task { @MainActor in
                 guard let self, self.allowsOverlayWork(generation: generation) else { return }
-                self.updateMousePassthrough()
+                self.lastObservedMouseScreenPoint = NSEvent.mouseLocation
+                self.updateMousePassthrough(at: self.lastObservedMouseScreenPoint)
                 self.collapseIfExpandedMouseOutsideAfterGrace(source: "globalMouseMonitor")
             }
         }
@@ -1736,7 +1743,14 @@ final class OverlayWindowController {
         canonicalPanelFrame.isEmpty ? islandPanel.frame : canonicalPanelFrame
     }
 
-    private func updateMousePassthrough(at screenPoint: NSPoint = NSEvent.mouseLocation) {
+    private func updateMousePassthrough(at observedPoint: NSPoint? = nil) {
+        if !canPresentOverlay { lastObservedMouseScreenPoint = nil }
+        let screenPoint = observedPoint ?? lastObservedMouseScreenPoint ?? NSEvent.mouseLocation
+        let reference = visualReferencePanelFrame
+        layoutStore.updateCollapsedPointer(at: CGPoint(x: screenPoint.x - reference.minX, y: screenPoint.y - reference.minY),
+            frames: [layoutStore.collapsedSurfaceFrame, layoutStore.collapsedLeadingSidecarFrame,
+                     layoutStore.collapsedTrailingSidecarFrame, layoutStore.collapsedPreviewSurfaceFrame],
+            enabled: canPresentOverlay && islandState.state == .collapsed && !layoutStore.isReturningToNormalCollapsedSize)
         guard canPresentOverlay else {
             islandPanel.ignoresMouseEvents = true
             return
@@ -2703,8 +2717,6 @@ final class OverlayWindowController {
             return settings.expandedSwipeDownAction
         case .swipeUp:
             return settings.expandedSwipeUpAction
-        case .doubleClick:
-            return settings.expandedDoubleClickAction
         case .longPress:
             return settings.expandedLongPressAction
         }
@@ -3191,8 +3203,6 @@ final class OverlayWindowController {
             return settings.collapsedSwipeDownAction
         case .swipeUp:
             return settings.collapsedSwipeUpAction
-        case .doubleClick:
-            return settings.collapsedDoubleClickAction
         case .longPress:
             return settings.collapsedLongPressAction
         }
@@ -3379,6 +3389,8 @@ enum IslandKeyboardFocusPolicy {
         if !NSApp.isActive { NSApp.activate(ignoringOtherApps: true) }
         guard window.makeFirstResponder(responder) else { return false }
         window.makeKeyAndOrderFront(nil)
+        // Reopened nonactivating panels may be ordered without reacquiring key status.
+        if !window.isKeyWindow { window.makeKey() }
         return window.isKeyWindow && window.firstResponder === responder
     }
 

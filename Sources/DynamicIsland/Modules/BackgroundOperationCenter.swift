@@ -347,7 +347,7 @@ final class BackgroundOperationController: ObservableObject {
     }
 
     @discardableResult
-    func startCompression(sources: [URL], onCompleted: (@MainActor (URL) -> Void)? = nil) -> UUID? {
+    func startCompression(sources: [URL], onCompleted: (@MainActor (URL) -> Void)? = nil, onFailed: (@MainActor (String) -> Void)? = nil) -> UUID? {
         let normalized = sources.map(\.standardizedFileURL)
         guard !normalized.isEmpty else { return nil }
 
@@ -387,6 +387,7 @@ final class BackgroundOperationController: ObservableObject {
                 let output = try await executor.compress(operationID: id, sources: normalized)
                 guard !Task.isCancelled else {
                     finishCancelled(id)
+                    onFailed?("Cancelled")
                     return
                 }
                 update(id) {
@@ -400,14 +401,18 @@ final class BackgroundOperationController: ObservableObject {
                 onCompleted?(output)
             } catch is CancellationError {
                 finishCancelled(id)
+                onFailed?("Cancelled")
             } catch let error as ZipCompressionError {
                 if error == .cancelled {
                     finishCancelled(id)
+                    onFailed?("Cancelled")
                 } else {
                     finishFailed(id, error: error)
+                    onFailed?(error.localizedDescription)
                 }
             } catch {
                 finishFailed(id, error: error)
+                onFailed?(error.localizedDescription)
             }
             tasks[id] = nil
         }

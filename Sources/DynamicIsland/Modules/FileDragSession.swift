@@ -8,7 +8,7 @@ enum FileDragSourceRegion: Hashable, Sendable {
     case collapsedIsland
     case trayShelf
     case trayAirDrop
-    /// One of the four Tray drop zones (Keep, Convert, Share, ZIP).
+    /// One of the four Tray drop zones (Keep, Messages, Share, ZIP).
     case trayDropZone
 }
 
@@ -60,7 +60,7 @@ enum FileDragActionOutcome: Equatable, Sendable {
 final class FileDragActionExecutor {
     typealias Handler = @MainActor (FileDragQuickAction, [URL], NSView?) -> FileDragActionOutcome
 
-    private let handler: Handler
+    private let handler: Handler?
 
     init(handler: @escaping Handler) {
         self.handler = handler
@@ -70,46 +70,18 @@ final class FileDragActionExecutor {
         self.init(handler: handler)
     }
 
-    func perform(_ action: FileDragQuickAction, urls: [URL], anchor: NSView?) -> FileDragActionOutcome {
+    private init() { handler = nil }
+
+    func perform(_ action: FileDragQuickAction, urls: [URL], anchor: NSView?, layoutStore: IslandLayoutStore? = nil) -> FileDragActionOutcome {
         guard !urls.isEmpty else { return .failed("No files were materialized") }
-        return handler(action, urls, anchor)
+        if let handler { return handler(action, urls, anchor) }
+        return NativeFileSharingSession.present(action, urls: urls, anchor: anchor, layoutStore: layoutStore)
     }
 
-    static let production = FileDragActionExecutor { action, urls, anchor in
-        let fileURLs = urls.map(\.standardizedFileURL)
-        guard fileURLs.allSatisfy({ $0.isFileURL && FileManager.default.fileExists(atPath: $0.path) }) else {
-            return .failed("One or more dragged files are no longer available")
-        }
+    static let production = FileDragActionExecutor()
 
-        switch action {
-        case .airDrop:
-            guard AirDropService.share(urls: fileURLs, fallbackRevealInFinder: false) else {
-                return .unavailable("AirDrop sharing is unavailable for these files")
-            }
-            return .handedOff
-        case .messages:
-            guard let service = NSSharingService(named: .composeMessage),
-                  service.canPerform(withItems: fileURLs) else {
-                return .unavailable("Messages sharing is unavailable for these files")
-            }
-            service.perform(withItems: fileURLs)
-            return .handedOff
-        case .mail:
-            guard let service = NSSharingService(named: .composeEmail),
-                  service.canPerform(withItems: fileURLs) else {
-                return .unavailable("Mail sharing is unavailable for these files")
-            }
-            service.perform(withItems: fileURLs)
-            return .handedOff
-        case .share:
-            guard let anchor else {
-                return .failed("Share picker anchor is unavailable")
-            }
-            let picker = NSSharingServicePicker(items: fileURLs)
-            picker.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
-            return .handedOff
-        }
-    }
+    func cancelPresentations() { NativeFileSharingSession.cancelAll() }
+
 }
 
 /// Generation-scoped state machine for the external drag orbit. Shelf

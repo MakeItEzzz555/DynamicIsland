@@ -718,13 +718,13 @@ struct CollapsedVoiceBeamCompactView: View {
             .padding(.horizontal, 5)
             .padding(.bottom, 4)
 
-            VoiceBeamView(
-                level: { controller.liveAudioLevel },
-                processing: processing,
-                configuration: preferences.voice,
-                height: 14
-            )
-            .frame(maxWidth: .infinity, alignment: .bottom)
+            AudioVisualizerView(isPlaying: !processing, isActive: !processing,
+                accentColor: .cyan, palette: .voice,
+                microphoneLevel: { controller.liveAudioLevel }, voiceConfiguration: preferences.voice,
+                cadence: .ambient)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .accessibilityHidden(true)
+
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(processing ? "Voice transcription processing" : "Voice recording listening")

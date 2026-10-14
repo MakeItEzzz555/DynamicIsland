@@ -12,7 +12,7 @@ struct CompactMediaView: View {
     }
 }
 
-enum AudioVisualizerPalette { case media, call }
+enum AudioVisualizerPalette { case media, call, voice }
 
 struct AudioVisualizerView: View {
     let isPlaying: Bool
@@ -23,6 +23,10 @@ struct AudioVisualizerView: View {
     var variant: AudioVisualizerVariant = .compact
     var palette: AudioVisualizerPalette = .media
     var barCount = 12
+    /// Authorized recorder envelope; this is a meter, never frequency data.
+    var microphoneLevel: (() -> Double)?
+    var voiceConfiguration = VoiceBeamConfiguration()
+    @State private var voiceEnvelope = VoiceBeamEnvelope()
     /// Collapsed (always-on) visualizers use the cheaper ambient cadence.
     var cadence: IslandFrameCadence.Surface = .expandedDecoration
     var pauseDuringShellMorph = true
@@ -31,6 +35,9 @@ struct AudioVisualizerView: View {
     @Environment(\.isShellMorphing) private var isShellMorphing
     @Environment(\.liveSpectrum) private var liveSpectrum
     @Environment(\.isSettingsPreview) private var isSettingsPreview
+    @Environment(\.liveAudioCoordinator) private var liveAudioCoordinator
+    /// Stable visibility lease for this mounted visualizer.
+    @State private var liveAudioLease = UUID()
 
     private var effectiveSpectrum: (any LiveSpectrumProviding)? {
         palette == .media && !isSettingsPreview ? liveSpectrum : nil
@@ -39,6 +46,7 @@ struct AudioVisualizerView: View {
     @State private var playbackHoldGeneration = 0
     @State private var livePresentation = AudioSpectrumPresentation()
     @State private var liveLevels: [CGFloat] = []
+    @State private var spectrumDynamics = SpectrumDynamics()
 
     private var mode: LiveVisualizerMode {
         .resolve(isMediaPalette: palette == .media, presentation: livePresentation,
@@ -47,8 +55,14 @@ struct AudioVisualizerView: View {
 
     var body: some View {
         Group {
-            if mode.isLive {
-                bars(levels: liveLevels.count == barCount ? liveLevels : SpectrumBarMapper.silent(barCount: barCount), opacity: 0.95)
+            if palette == .voice {
+                TimelineView(.animation(minimumInterval: IslandFrameCadence.interval(cadence), paused: !isPlaying || !isActive || isShellMorphing)) { timeline in
+                    let level = isPlaying && isActive ? voiceEnvelope.sample(rawLevel: microphoneLevel?() ?? 0,
+                        timestamp: timeline.date.timeIntervalSinceReferenceDate, configuration: voiceConfiguration) : 0
+                    bars(levels: MicrophoneBarMapper.levels(level: level, barCount: barCount), opacity: visualizerOpacity)
+                }
+            } else if mode.isLive {
+                bars(levels: liveLevels.count == barCount ? liveLevels : SpectrumBarMapper.silent(barCount: barCount), opacity: 1)
             } else {
                 TimelineView(.animation(minimumInterval: IslandFrameCadence.interval(cadence), paused: !shouldAnimateContinuously)) { timeline in
                     bars(
@@ -59,12 +73,15 @@ struct AudioVisualizerView: View {
             }
         }
         .frame(width: variant.size.width, height: variant.size.height)
-        .accessibilityLabel(isPlaying ? "Audio playing" : "Audio paused")
-        .accessibilityValue(mode.accessibilityDescription)
-        .help(mode.isLive ? "Live system audio spectrum" : "\(mode.accessibilityDescription) · Capture: \(LiveAudioStatus(livePresentation).detail)")
+        .accessibilityLabel(palette == .voice ? "Microphone level" : (isPlaying ? "Audio playing" : "Audio paused"))
+        .accessibilityValue(palette == .voice ? (isPlaying ? "Authorized recording meter; not a spectrum" : "Microphone inactive") : mode.accessibilityDescription)
+        .help(palette == .voice ? "Microphone recording envelope; no system audio capture" : mode.isLive ? "Live system audio spectrum" : "\(mode.accessibilityDescription) · Capture: \(LiveAudioStatus(livePresentation).detail)")
         .contextMenu {
             if let effectiveSpectrum {
-                LiveAudioMenuItems(provider: effectiveSpectrum, status: LiveAudioStatus(livePresentation))
+                LiveAudioMenuItems(provider: effectiveSpectrum,
+                                   status: liveAudioCoordinator.map { LiveAudioStatus(livePresentation, desired: $0.desiredEnabled) }
+                                       ?? LiveAudioStatus(livePresentation),
+                                   coordinator: liveAudioCoordinator)
             }
         }
         .onReceive(effectiveSpectrum?.presentationPublisher ?? Empty().eraseToAnyPublisher()) { presentation in
@@ -74,20 +91,23 @@ struct AudioVisualizerView: View {
             let next = LiveVisualizerMode.resolve(isMediaPalette: palette == .media, presentation: presentation,
                                                   mediaPlaying: isPlaying && isActive, reduceMotion: reduceMotion || previewReduceMotion)
             switch next {
-            case .live:
-                let target = SpectrumBarMapper.levels(bands: presentation.frame?.bands ?? .zero, barCount: barCount)
-                liveLevels = SpectrumBarSmoother.step(previous: liveLevels, target: target)
-            case .liveSilent:
-                liveLevels = SpectrumBarSmoother.step(previous: liveLevels, target: SpectrumBarMapper.silent(barCount: barCount))
+            case .live, .liveSilent:
+                // Silence feeds zeros, so bars fall with Droppy's release and snap.
+                let raw = next == .live ? (presentation.frame?.bands ?? .zero) : .zero
+                liveLevels = SpectrumBarMapper.levels(bands: spectrumDynamics.advance(raw: raw), barCount: barCount)
             case .decorative, .still:
+                spectrumDynamics = SpectrumDynamics()
                 liveLevels = []
             }
         }
         .onAppear {
             updatePlaybackHold()
+            if effectiveSpectrum != nil { liveAudioCoordinator?.acquire(liveAudioLease) }
         }
+        .onDisappear { liveAudioCoordinator?.release(liveAudioLease); voiceEnvelope.reset() }
         .onChange(of: isPlaying) { _, _ in
             updatePlaybackHold()
+            if !isPlaying { voiceEnvelope.reset() }
         }
         .onChange(of: isActive) { _, _ in
             updatePlaybackHold()
@@ -103,7 +123,7 @@ struct AudioVisualizerView: View {
 
     private var visualizerOpacity: Double {
         if isPlaybackVisuallyActive {
-            return 0.92
+            return 1
         }
         return isActive ? 0.48 : 0.28
     }
@@ -127,38 +147,15 @@ struct AudioVisualizerView: View {
         isPlaybackVisuallyActive = true
     }
 
-    private func barColor(_ index: Int) -> AnyShapeStyle {
-        if palette == .call {
-            return AnyShapeStyle(LinearGradient(colors: [.green, .yellow], startPoint: .bottom, endPoint: .top))
-        }
-        return AnyShapeStyle(VisualizerGradient.color(at: index, count: barCount, primary: accentColor, secondary: secondaryAccentColor))
-    }
-
-    /// Live bars: heights are smoothed band levels (fraction of max height).
     private func bars(levels: [CGFloat], opacity: Double) -> some View {
-        HStack(alignment: .center, spacing: variant.spacing) {
-            ForEach(0..<barCount, id: \.self) { index in
-                Capsule(style: .continuous)
-                    .fill(barColor(index))
-                    .opacity(opacity)
-                    .frame(width: variant.barWidth, height: variant.maximumBarHeight * (index < levels.count ? levels[index] : SpectrumBarMapper.floor))
-            }
-        }
-        // No SwiftUI animation: SpectrumBarSmoother already shapes motion per
-        // 30 Hz frame, and an animation clock that stalls (occluded/headless
-        // windows) would keep drawing stale heights.
+        AudioVisualizerBars(levels: levels, variant: variant, palette: palette, accent: accentColor,
+            secondary: secondaryAccentColor, opacity: opacity)
     }
 
     private func bars(tick: TimeInterval?, opacity: Double) -> some View {
-        HStack(alignment: .center, spacing: variant.spacing) {
-            ForEach(0..<barCount, id: \.self) { index in
-                Capsule(style: .continuous)
-                    .fill(barColor(index))
-                    .opacity(opacity)
-                    .frame(width: variant.barWidth, height: barHeight(index: index, tick: tick))
-                    .shadow(color: accentColor.opacity(tick == nil || reduceMotion ? 0 : 0.22), radius: 3)
-            }
-        }
+        AudioVisualizerBars(levels: (0..<barCount).map { barHeight(index: $0, tick: tick) / variant.maximumBarHeight },
+            variant: variant, palette: palette, accent: accentColor, secondary: secondaryAccentColor, opacity: opacity,
+            glow: tick != nil && !reduceMotion)
     }
 
     private func barHeight(index: Int, tick: TimeInterval?) -> CGFloat {

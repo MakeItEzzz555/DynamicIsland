@@ -27,6 +27,7 @@ enum TransientInteractionOwner: Hashable, Sendable {
     case agentsLauncher
     case calendarDatePicker
     case nativeMenu
+    case fileSharing(UUID)
     case unspecified
 }
 
@@ -178,6 +179,7 @@ final class IslandLayoutStore: ObservableObject {
     @Published var isCollapseShellOnly = false
     @Published var isExpandedContentExiting = false
     @Published var collapsedPreviewActive = false
+    @Published private(set) var collapsedPointerInside = false
     @Published var collapsedMessageInteractionProtected = false
     @Published var collapsedPreviewSurfaceFrame: CGRect = .zero
     @Published private(set) var collapsedLeadingSidecarFrame: CGRect = .zero
@@ -482,6 +484,12 @@ final class IslandLayoutStore: ObservableObject {
         if collapsedCompositeInteractionFrame != interaction {
             collapsedCompositeInteractionFrame = interaction
         }
+    }
+
+    /// Geometry owns hover; remounted SwiftUI children cannot emit a false exit.
+    func updateCollapsedPointer(at point: CGPoint, frames: [CGRect], enabled: Bool) {
+        let inside = enabled && frames.contains { !$0.isEmpty && !$0.isNull && !$0.isInfinite && $0.contains(point) }
+        if collapsedPointerInside != inside { collapsedPointerInside = inside }
     }
 
     func updateCollapsedPreview(active: Bool, frame: CGRect) {

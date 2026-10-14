@@ -22,9 +22,40 @@ final class NotchContextMenuTests: XCTestCase {
                 XCTAssertEqual(routes, 1)
             }
             XCTAssertNil(panel.notchActionsTarget(for: try event(panel, point: CGPoint(x: width / 2, y: 10))), "physical cutout is not an accessible menu target")
-            XCTAssertNil(panel.notchActionsTarget(for: try event(panel, point: CGPoint(x: width / 2, y: 39))))
+            XCTAssertTrue(panel.notchActionsTarget(for: try event(panel, point: CGPoint(x: width / 2, y: 39))) === background,
+                          "right-click opens the island menu anywhere on the collapsed shell")
             XCTAssertNil(panel.notchActionsTarget(for: try event(panel, point: CGPoint(x: -1, y: 10))))
             XCTAssertFalse(panel.isKeyWindow, "passive context routing never acquires the editor keyboard")
+        }
+    }
+
+    func testUppermostDeliverablePixelsUseTheProductionShoulderContour() throws {
+        for width: CGFloat in [240, 340, 600] {
+            for notched in [true, false] {
+                let (panel, background) = makePanel(width: width, notched: notched)
+                defer { panel.contentView = nil; panel.close() }
+                let geometry = IslandBackgroundInteractionGeometry(size: CGSize(width: width, height: 40),
+                    horizontalPadding: 20, bottomPadding: 4, contentTop: 38,
+                    notchSize: notched ? CGSize(width: 200, height: 32) : .zero, allowsBackground: false)
+                background.configure(IslandShellBackgroundInteraction(geometry: geometry, enabled: true,
+                    presentationGeneration: 1, clipboardEnabled: true, onEdit: {}, onClipboard: {},
+                    onSettings: {}, onNavigate: { _ in }).clipped(to: .init(topCornerRadius: notched ? 6 : 0, bottomCornerRadius: 14)))
+                let xs: [CGFloat] = notched ? [12, width - 12] : [12, width / 2, width - 12]
+                for x in xs {
+                    for y: CGFloat in [0, 0.25, 0.5, 1, 2] {
+                        let click = try event(panel, point: CGPoint(x: x, y: y))
+                        XCTAssertTrue(panel.notchActionsTarget(for: click) === background, "top edge x=\(x) y=\(y)")
+                        var routed = false
+                        panel.onNotchRightClick = { incoming in
+                            routed = panel.notchActionsTarget(for: incoming) === background; return routed
+                        }
+                        panel.sendEvent(click)
+                        XCTAssertTrue(routed)
+                    }
+                }
+                XCTAssertNil(panel.notchActionsTarget(for: try event(panel, point: CGPoint(x: 12, y: -0.25))))
+                if notched { XCTAssertNil(panel.notchActionsTarget(for: try event(panel, point: CGPoint(x: width / 2, y: 0)))) }
+            }
         }
     }
 
@@ -32,9 +63,11 @@ final class NotchContextMenuTests: XCTestCase {
         for expanded in [false, true] {
             let (panel, _) = makePanel(width: 360, notched: false, expanded: expanded)
             defer { panel.contentView = nil; panel.close() }
-            let target = panel.notchActionsTarget(for: try event(panel, point: CGPoint(x: 180, y: 10)))
-            XCTAssertEqual(target != nil, !expanded)
-            XCTAssertNil(panel.notchActionsTarget(for: try event(panel, point: CGPoint(x: 180, y: 25))))
+            // Top-center lane: island menu in both states (expanded header lane is empty chrome).
+            XCTAssertNotNil(panel.notchActionsTarget(for: try event(panel, point: CGPoint(x: 180, y: 10))))
+            // Below the lane: the whole collapsed shell, but never expanded content.
+            XCTAssertEqual(panel.notchActionsTarget(for: try event(panel, point: CGPoint(x: 180, y: 25))) != nil, !expanded)
+            XCTAssertNil(panel.notchActionsTarget(for: try event(panel, point: CGPoint(x: 400, y: 10))), "never the desktop")
         }
     }
 
@@ -49,7 +82,21 @@ final class NotchContextMenuTests: XCTestCase {
         XCTAssertTrue(panel.contentView?.hitTest(click.locationInWindow) === file)
         panel.sendEvent(click)
         XCTAssertEqual(file.rightClicks, 1, "AppKit forwards the file context event instead of invoking island actions")
-        XCTAssertNil(panel.notchActionsTarget(for: try event(panel, point: CGPoint(x: 320, y: 16))))
+        XCTAssertNotNil(panel.notchActionsTarget(for: try event(panel, point: CGPoint(x: 320, y: 16))),
+                        "compact wings are part of the right-click surface; only registered controls keep their events")
+    }
+
+    func testGrowingPreviewKeepsTheEntireCenteredCompactControlHitArea() throws {
+        let base = CGRect(x: 100, y: 0, width: 300, height: 32)
+        let preview = CGRect(x: 80, y: -48, width: 340, height: 80)
+        let rects = IslandBackgroundInteractionGeometry.compactControlRects(base: base, preview: preview, leftWidth: 28, rightWidth: 28)
+        XCTAssertEqual(rects, [CGRect(x: 20, y: 8, width: 28, height: 16), CGRect(x: 292, y: 8, width: 28, height: 16)])
+        let (panel, _) = makePanel(width: 340, notched: false, exclusions: rects)
+        defer { panel.contentView = nil; panel.close() }
+        for x: CGFloat in [30, 310] {
+            XCTAssertNil(panel.notchActionsTarget(for: try event(panel, point: CGPoint(x: x, y: 22))), "lower control pixels retain native right-click authority")
+        }
+        XCTAssertNotNil(panel.notchActionsTarget(for: try event(panel, point: CGPoint(x: 330, y: 22))))
     }
 
     func testSharedSettingsAndNormalQuitCallbacksAndRequiredMenuOrder() throws {
@@ -60,9 +107,12 @@ final class NotchContextMenuTests: XCTestCase {
         let controller = MenuBarController(settings: settings, onOpenSettings: { opened += 1 },
             onToggleOverlay: {}, onQuit: { quit += 1 })
         let menu = controller.makeNotchMenu()
-        XCTAssertEqual(menu.items.map(\.title), ["Settings…", "Clipboard", "", "Quit Island"])
-        XCTAssertTrue(menu.items[2].isSeparatorItem)
-        for index in [0, 3] {
+        XCTAssertEqual(menu.items.map(\.title), ["Settings…", "Customize Workspace…", "Clipboard", "Live Audio", "",
+                                                 "Previous Page", "Next Page", "", "Quit Island"])
+        XCTAssertTrue(menu.items[4].isSeparatorItem); XCTAssertTrue(menu.items[7].isSeparatorItem)
+        XCTAssertEqual(menu.items[3].state, .off, "Live Audio reflects the saved preference")
+        for index in [1, 3, 5, 6] { XCTAssertTrue(menu.items[index].target === controller) }
+        for index in [0, 8] {
             let item = menu.items[index]
             XCTAssertTrue(item.target === controller)
             XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(item.action), to: item.target, from: item))
@@ -77,7 +127,7 @@ final class NotchContextMenuTests: XCTestCase {
         var opened = 0
         let controller = MenuBarController(settings: settings, onOpenSettings: {}, onToggleOverlay: {},
             onQuit: {}, onOpenClipboard: { opened += 1 })
-        let item = try XCTUnwrap(controller.makeNotchMenu().items[1].submenu?.items.first)
+        let item = try XCTUnwrap(controller.makeNotchMenu().items.first { $0.title == "Clipboard" }?.submenu?.items.first)
         XCTAssertEqual(item.title, "Open Clipboard History")
         XCTAssertTrue(item.isEnabled)
         XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(item.action), to: item.target, from: item))
@@ -87,7 +137,7 @@ final class NotchContextMenuTests: XCTestCase {
         _ = NSApp.sendAction(try XCTUnwrap(item.action), to: item.target, from: item)
         try await Task.sleep(for: .milliseconds(10))
         XCTAssertEqual(opened, 1)
-        let disabled = controller.makeNotchMenu().items[1]
+        let disabled = try XCTUnwrap(controller.makeNotchMenu().items.first { $0.title == "Clipboard" })
         XCTAssertFalse(disabled.isEnabled)
         XCTAssertFalse(try XCTUnwrap(disabled.submenu?.items.first).isEnabled)
     }
@@ -195,7 +245,7 @@ final class NotchContextMenuTests: XCTestCase {
         let geometry = IslandBackgroundInteractionGeometry(size: size, horizontalPadding: 20,
             bottomPadding: 4, contentTop: 38, notchSize: notched ? CGSize(width: 200, height: 32) : .zero,
             allowsBackground: expanded, excludedRects: exclusions,
-            contextMenuExcludedRects: [CGRect(x: width - 48, y: 8, width: 48, height: 16)])
+            )
         background.configure(.init(geometry: geometry, enabled: true, presentationGeneration: 1,
             clipboardEnabled: true, onEdit: {}, onClipboard: {}, onSettings: {}, onNavigate: {_ in}))
         container.addSubview(background)

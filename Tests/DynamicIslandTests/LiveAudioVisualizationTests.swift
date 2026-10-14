@@ -27,8 +27,15 @@ final class LiveAudioVisualizationTests: XCTestCase {
         let bands = SIMD8<Float>(0, 0.1, 0.2, 0.4, 0.5, 0.7, 0.9, 1)
         let levels = SpectrumBarMapper.levels(bands: bands, barCount: 8)
         for index in 0..<8 {
-            XCTAssertEqual(levels[index], SpectrumBarMapper.floor + (1 - SpectrumBarMapper.floor) * CGFloat(bands[index]), accuracy: 1e-5)
+            XCTAssertEqual(levels[index], SpectrumBarMapper.floor + (SpectrumBarMapper.cap - SpectrumBarMapper.floor) * SpectrumBarMapper.shaped(CGFloat(bands[index])), accuracy: 1e-5)
         }
+    }
+
+    func testSustainedNearPeakLevelsNoLongerPinBarsHigh() {
+        XCTAssertEqual(SpectrumBarMapper.shaped(0.3), 0, "below the threshold a bar rests at the floor")
+        XCTAssertEqual(SpectrumBarMapper.shaped(1), 1, "a real peak still reaches the cap")
+        XCTAssertLessThan(SpectrumBarMapper.shaped(0.8), 0.5, "steady loud music sits mid-height, not at the top")
+        XCTAssertLessThan(SpectrumBarMapper.shaped(0.6), SpectrumBarMapper.shaped(0.8))
     }
 
     func testOtherBarCountsInterpolateAndNeverRepeatAPattern() {
@@ -44,19 +51,57 @@ final class LiveAudioVisualizationTests: XCTestCase {
         let levels = SpectrumBarMapper.levels(bands: SIMD8<Float>(.nan, -1, 4, .infinity, 0, 0, 0, 0), barCount: 8)
         XCTAssertEqual(levels[0], SpectrumBarMapper.floor)
         XCTAssertEqual(levels[1], SpectrumBarMapper.floor)
-        XCTAssertEqual(levels[2], 1)
+        XCTAssertEqual(levels[2], SpectrumBarMapper.cap)
         XCTAssertEqual(levels[3], SpectrumBarMapper.floor)
-        XCTAssertTrue(levels.allSatisfy { $0 >= SpectrumBarMapper.floor && $0 <= 1 })
+        XCTAssertTrue(levels.allSatisfy { $0 >= SpectrumBarMapper.floor && $0 <= SpectrumBarMapper.cap })
     }
 
-    func testFastAttackSlowRelease() {
-        let up = SpectrumBarSmoother.step(previous: [0.2], target: [1])[0]
-        let down = SpectrumBarSmoother.step(previous: [1], target: [0.2])[0]
-        XCTAssertGreaterThan(up - 0.2, 1 - down, "rising moves further per frame than falling")
-        var value: [CGFloat] = [1]
-        for _ in 0..<40 { value = SpectrumBarSmoother.step(previous: value, target: [0.2]) }
-        XCTAssertEqual(value[0], 0.2, accuracy: 0.001, "release still settles")
-        XCTAssertEqual(SpectrumBarSmoother.step(previous: [], target: [0.5, 0.6]), [0.5, 0.6], "bar count change adopts target")
+    // MARK: Droppy band dynamics
+
+    func testAutoGainLetsAQuietMixUseItsFullRangeLikeDroppy() {
+        var dynamics = SpectrumDynamics()
+        // A quiet, compressed mix whose bands never exceed 0.5 still reaches the top.
+        for _ in 0..<20 { _ = dynamics.advance(raw: SIMD8<Float>(repeating: 0.5)) }
+        XCTAssertEqual(Double(dynamics.advance(raw: SIMD8<Float>(repeating: 0.5))[0]), 1, accuracy: 0.01)
+        // The same band at half its recent peak sits near half height, so it moves with the music.
+        var dip = SIMD8<Float>.zero
+        for _ in 0..<12 { dip = dynamics.advance(raw: SIMD8<Float>(repeating: 0.25)) }
+        XCTAssertEqual(Double(dip[0]), 0.5, accuracy: 0.03)
+        // Below the 0.35 floor nothing is boosted to full scale.
+        var faint = SpectrumDynamics()
+        for _ in 0..<20 { _ = faint.advance(raw: SIMD8<Float>(repeating: 0.07)) }
+        XCTAssertEqual(Double(faint.advance(raw: SIMD8<Float>(repeating: 0.07))[0]), 0.2, accuracy: 0.02)
+    }
+
+    func testFastAttackSlowReleaseAndBeatsPunch() {
+        var dynamics = SpectrumDynamics()
+        dynamics.tick(raw: SIMD8<Float>(repeating: 0.3))
+        XCTAssertGreaterThan(dynamics.published[0], dynamics.smoothed[0], "a rising edge is boosted above the smoothed level")
+        dynamics = SpectrumDynamics()
+        _ = dynamics.advance(raw: SIMD8<Float>(repeating: 0.6))
+        let rise = dynamics.smoothed[0]
+        for _ in 0..<10 { _ = dynamics.advance(raw: SIMD8<Float>(repeating: 0.6)) }
+        _ = dynamics.advance(raw: SIMD8<Float>(repeating: 0.3))
+        let fall = 1 - dynamics.smoothed[0]
+        XCTAssertGreaterThan(rise, fall, "rising moves further per frame than falling")
+        XCTAssertEqual(dynamics.published[0], dynamics.smoothed[0], accuracy: 1e-9, "falling is never boosted")
+    }
+
+    func testSilenceSnapsToZeroAndInvalidBandsAreSilent() {
+        var dynamics = SpectrumDynamics()
+        _ = dynamics.advance(raw: SIMD8<Float>(repeating: 0.8))
+        var out = SIMD8<Float>(repeating: 1)
+        for _ in 0..<30 { out = dynamics.advance(raw: .zero) }
+        XCTAssertEqual(out, .zero, "silence settles exactly to zero")
+        var invalid = SpectrumDynamics()
+        XCTAssertEqual(invalid.advance(raw: SIMD8<Float>(.nan, .infinity, -1, 0, 0, 0, 0, 0)), .zero)
+    }
+
+    func testOneFrameRunsTwoDroppyTicks() {
+        var frame = SpectrumDynamics(), ticks = SpectrumDynamics()
+        _ = frame.advance(raw: SIMD8<Float>(repeating: 0.5))
+        ticks.tick(raw: SIMD8<Float>(repeating: 0.5)); ticks.tick(raw: SIMD8<Float>(repeating: 0.5))
+        XCTAssertEqual(frame, ticks)
     }
 
     // MARK: Drive mode: playback authority stays with MediaController

@@ -25,12 +25,11 @@ final class DetachedIslandNavigationTests: XCTestCase {
         }
     }
 
-    func testTrayActionsAndNavigationNeverOverlap() {
+    func testTrayNavigationIsImmediatelyBelowTheShell() {
         let shell = CGRect(x: 100, y: 300, width: 180, height: 400)
-        let footer = DetachedIslandNavigationMetrics.frame(shell: shell, pageCount: 7,
-            precedingAccessoryHeight: FileTrayQuickActionMetrics.accessoryHeight)
-        XCTAssertLessThanOrEqual(footer.maxY, shell.minY - FileTrayQuickActionMetrics.accessoryHeight)
-        var profile = ExpandedPresentationProfile.trayQuickActions
+        let footer = DetachedIslandNavigationMetrics.frame(shell: shell, pageCount: 7)
+        XCTAssertEqual(shell.minY - footer.maxY, 3)
+        var profile = ExpandedPresentationProfile.resolve(for: .tray)
         profile.accessoryHeight += DetachedIslandNavigationMetrics.accessoryHeight
         profile.accessoryWidth = footer.width
         XCTAssertTrue(profile.panelFrame(forExpandedFrame: shell).contains(footer))
