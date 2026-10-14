@@ -1,3 +1,4 @@
+import Combine
 import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
@@ -17,6 +18,8 @@ struct AudioVisualizerView: View {
     let isPlaying: Bool
     var isActive = true
     var accentColor: Color = ArtworkAccentColorExtractor.fallbackColor
+    /// Second artwork color; bars blend from `accentColor` to it. Nil = solid.
+    var secondaryAccentColor: Color? = nil
     var variant: AudioVisualizerVariant = .compact
     var palette: AudioVisualizerPalette = .media
     var barCount = 12
@@ -26,18 +29,53 @@ struct AudioVisualizerView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.settingsPreviewReduceMotion) private var previewReduceMotion
     @Environment(\.isShellMorphing) private var isShellMorphing
+    @Environment(\.liveSpectrum) private var liveSpectrum
     @State private var isPlaybackVisuallyActive = false
     @State private var playbackHoldGeneration = 0
+    @State private var livePresentation = AudioSpectrumPresentation()
+    @State private var liveLevels: [CGFloat] = []
+
+    private var mode: LiveVisualizerMode {
+        .resolve(isMediaPalette: palette == .media, presentation: livePresentation,
+                 mediaPlaying: isPlaying && isActive, reduceMotion: reduceMotion || previewReduceMotion)
+    }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: IslandFrameCadence.interval(cadence), paused: !shouldAnimateContinuously)) { timeline in
-            bars(
-                tick: shouldAnimateContinuously ? timeline.date.timeIntervalSinceReferenceDate : nil,
-                opacity: visualizerOpacity
-            )
+        Group {
+            if mode.isLive {
+                bars(levels: liveLevels.count == barCount ? liveLevels : SpectrumBarMapper.silent(barCount: barCount), opacity: 0.95)
+            } else {
+                TimelineView(.animation(minimumInterval: IslandFrameCadence.interval(cadence), paused: !shouldAnimateContinuously)) { timeline in
+                    bars(
+                        tick: shouldAnimateContinuously ? timeline.date.timeIntervalSinceReferenceDate : nil,
+                        opacity: visualizerOpacity
+                    )
+                }
+            }
         }
         .frame(width: variant.size.width, height: variant.size.height)
         .accessibilityLabel(isPlaying ? "Audio playing" : "Audio paused")
+        .accessibilityValue(mode.accessibilityDescription)
+        .help(mode.isLive ? "Live audio levels" : "Decorative animation · Live Audio is off")
+        .contextMenu {
+            if palette == .media, let liveSpectrum {
+                LiveAudioMenuItems(provider: liveSpectrum, status: LiveAudioStatus(livePresentation))
+            }
+        }
+        .onReceive(liveSpectrum?.presentationPublisher ?? Empty().eraseToAnyPublisher()) { presentation in
+            livePresentation = presentation
+            let next = LiveVisualizerMode.resolve(isMediaPalette: palette == .media, presentation: presentation,
+                                                  mediaPlaying: isPlaying && isActive, reduceMotion: reduceMotion || previewReduceMotion)
+            switch next {
+            case .live:
+                let target = SpectrumBarMapper.levels(bands: presentation.frame?.bands ?? .zero, barCount: barCount)
+                liveLevels = SpectrumBarSmoother.step(previous: liveLevels, target: target)
+            case .liveSilent:
+                liveLevels = SpectrumBarSmoother.step(previous: liveLevels, target: SpectrumBarMapper.silent(barCount: barCount))
+            case .decorative, .still:
+                liveLevels = []
+            }
+        }
         .onAppear {
             updatePlaybackHold()
         }
@@ -82,13 +120,31 @@ struct AudioVisualizerView: View {
         isPlaybackVisuallyActive = true
     }
 
+    private func barColor(_ index: Int) -> AnyShapeStyle {
+        if palette == .call {
+            return AnyShapeStyle(LinearGradient(colors: [.green, .yellow], startPoint: .bottom, endPoint: .top))
+        }
+        return AnyShapeStyle(VisualizerGradient.color(at: index, count: barCount, primary: accentColor, secondary: secondaryAccentColor))
+    }
+
+    /// Live bars: heights are smoothed band levels (fraction of max height).
+    private func bars(levels: [CGFloat], opacity: Double) -> some View {
+        HStack(alignment: .center, spacing: variant.spacing) {
+            ForEach(0..<barCount, id: \.self) { index in
+                Capsule(style: .continuous)
+                    .fill(barColor(index))
+                    .opacity(opacity)
+                    .frame(width: variant.barWidth, height: variant.maximumBarHeight * (index < levels.count ? levels[index] : SpectrumBarMapper.floor))
+            }
+        }
+        .animation(.linear(duration: 1.0 / 30), value: levels)
+    }
+
     private func bars(tick: TimeInterval?, opacity: Double) -> some View {
         HStack(alignment: .center, spacing: variant.spacing) {
             ForEach(0..<barCount, id: \.self) { index in
                 Capsule(style: .continuous)
-                    .fill(palette == .call
-                        ? AnyShapeStyle(LinearGradient(colors: [.green, .yellow], startPoint: .bottom, endPoint: .top))
-                        : AnyShapeStyle(accentColor))
+                    .fill(barColor(index))
                     .opacity(opacity)
                     .frame(width: variant.barWidth, height: barHeight(index: index, tick: tick))
                     .shadow(color: accentColor.opacity(tick == nil || reduceMotion ? 0 : 0.22), radius: 3)
@@ -374,6 +430,12 @@ struct MediaModuleView: View {
         settings.mediaEnabled && settings.showMediaWhenNoSource && settings.mediaLauncherEnabled
     }
 
+    private var visualizerSecondaryColor: Color? {
+        guard settings.visualizerAccentMode == .artwork, settings.useArtworkAccentColor else { return nil }
+        return accentCache.secondaryColor(for: artworkPresentation.displayedSnapshot?.fingerprint,
+                                          image: artworkPresentation.displayedSnapshot?.image)
+    }
+
     private var visualizerColor: Color {
         switch settings.visualizerAccentMode {
         case .artwork:
@@ -476,7 +538,7 @@ struct MediaModuleView: View {
                         AudioVisualizerView(
                             isPlaying: media.isPlaying,
                             isActive: media.hasActiveMediaSource,
-                            accentColor: visualizerColor,
+                            accentColor: visualizerColor, secondaryAccentColor: visualizerSecondaryColor,
                             variant: .expanded,
                             pauseDuringShellMorph: settings.disableVisualizerDuringMorph
                         )
@@ -648,7 +710,7 @@ struct MediaModuleView: View {
                             AudioVisualizerView(
                                 isPlaying: media.isPlaying,
                                 isActive: media.hasActiveMediaSource,
-                                accentColor: visualizerColor,
+                                accentColor: visualizerColor, secondaryAccentColor: visualizerSecondaryColor,
                                 variant: .compact,
                                 pauseDuringShellMorph: settings.disableVisualizerDuringMorph
                             )
@@ -1645,7 +1707,7 @@ extension MediaModuleView {
             }
             if visualizer && settings.showVisualizer && settings.showExpandedVisualizer {
                 AudioVisualizerView(isPlaying: media.isPlaying, isActive: media.hasActiveMediaSource,
-                                    accentColor: visualizerColor, variant: .compact,
+                                    accentColor: visualizerColor, secondaryAccentColor: visualizerSecondaryColor, variant: .compact,
                                     pauseDuringShellMorph: settings.disableVisualizerDuringMorph)
             }
         }
@@ -1869,7 +1931,7 @@ extension MediaModuleView {
             }
             if let frame = plan.frames[.visualizer] {
                 AudioVisualizerView(isPlaying: media.isPlaying, isActive: media.hasActiveMediaSource,
-                                    accentColor: visualizerColor, variant: .compact,
+                                    accentColor: visualizerColor, secondaryAccentColor: visualizerSecondaryColor, variant: .compact,
                                     pauseDuringShellMorph: settings.disableVisualizerDuringMorph)
                     .frame(width: frame.width, height: frame.height)
                     .position(x: frame.midX, y: frame.midY)

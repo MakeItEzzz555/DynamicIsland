@@ -156,6 +156,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.fileShelf.add(urls)
         }
     )
+    /// Inert until the user turns Live Audio on; creation starts nothing.
+    private lazy var audioSpectrum = AudioSpectrumController()
+    private var audioShutdownStarted = false
     private lazy var cameraPreview = CameraPreviewController(
         liveActivities: liveActivities,
         capabilities: capabilityRegistry
@@ -302,7 +305,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             agentWorkspaceFeed: agentWorkspaceFeed,
             agentWorkspacePresentation: agentWorkspacePresentation,
             customization: customization,
-            mediaAdvanced: mediaAdvanced
+            mediaAdvanced: mediaAdvanced,
+            audioSpectrum: audioSpectrum
         )
         navigation.applyConfiguration(customization.configuration, using: settings)
         customization.$configuration.dropFirst().removeDuplicates().sink { [weak self] configuration in
@@ -434,6 +438,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         openSettings()
         return true
+    }
+
+    /// Live Audio may own a Core Audio tap and aggregate device, or still be
+    /// tearing them down after Off/sleep. Quitting awaits that teardown (an
+    /// idle controller returns at once) instead of firing a Task that may
+    /// never finish; a stuck HAL call cannot block quitting beyond 3 s.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard !audioShutdownStarted else { return .terminateLater }
+        audioShutdownStarted = true
+        let spectrum = audioSpectrum
+        Task { @MainActor in
+            await withTaskGroup(of: Void.self) { group in
+                group.addTask { await spectrum.shutdown() }
+                group.addTask { try? await Task.sleep(for: .seconds(3)) }
+                await group.next()
+                group.cancelAll()
+            }
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 
     func applicationWillTerminate(_ notification: Notification) {

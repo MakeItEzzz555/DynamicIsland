@@ -212,3 +212,97 @@ Native acceptance not done:
   - `WorkspaceNativeEditorTests.testNativeAddCancelDoneAndResetOnlyPersistCommittedTransaction`: failed while the machine was loaded right after a Release build. Afterwards it passed 3/3 on this commit and 3/3 on the pre-F commit `1236f62` (temporary worktree). It is a synthetic-event timing test whose fixture hosts only `IslandWidgetEditor`, which F does not touch.
 - `swift build -c release`: passed (258 s).
 - Packaging and signing: not run in this checkpoint.
+
+## Milestone G — real audio visualizer integration
+
+Backend:
+- Codex's `feature/native-audio-foundation` @ `fedfc06` was cherry-picked unchanged: `a063866`→`cd88511`, `b401e2d`→`8f10ab1`, `fedfc06`→`cf4bd26`. Author metadata is preserved.
+- `git diff fedfc06 HEAD -- Sources/DynamicIsland/Audio Tests/DynamicIslandTests/NativeAudio*.swift Scripts/package_app.sh` is empty.
+- No DSP or capture code was changed, and no second capture engine was added. Codex's 19 `NativeAudio*` tests pass on this branch.
+- Codex's uncommitted worktree changes were not integrated.
+
+Implementation (contract revision 2):
+- **Ownership:**
+  - `AppDelegate` owns one lazy `AudioSpectrumController`. Creating it only subscribes to sleep and session-resign notifications.
+  - It is passed through `IslandModules.audioSpectrum` and injected as `\.liveSpectrum` (`(any LiveSpectrumProviding)?`).
+  - Settings previews and tests have no provider, so they always show the decorative fallback.
+- **Explicit start only:**
+  - The **Live Audio** toggle (`LiveAudioMenuItems`) lives in every media visualizer's context menu, collapsed and expanded. On calls `startFromUserAction()` and Off calls `stop()`.
+  - Nothing starts capture from `onAppear`, preview creation, subscriptions or launch.
+  - No second "enabled" value is persisted, so after a relaunch Live Audio is off until the user turns it on again.
+  - The menu header shows the real state:
+    - Off · decorative
+    - Starting…
+    - Live, or Live · no sound right now
+    - Stopped for sleep or lock (no automatic resume)
+    - System Audio Recording is off, with Open Privacy & Security… offered only after an explicit `.permissionDenied`
+    - Needs macOS 14.2 or later
+    - No audio frames arrived
+- **Drive** (`LiveVisualizerMode`): bars are live only while `availability == .capturing`, a frame exists, **and** `MediaController` reports the track playing.
+  - Silence gives `.liveSilent`: low bars, never "paused".
+  - Other apps' audio never animates a paused track.
+  - Call visualizers are never live.
+  - Off, starting, suspended or failed give the existing decorative animation, labelled in VoiceOver ("Decorative animation, not measuring audio") and in a tooltip.
+- **Binding:**
+  - `SpectrumBarMapper` maps the eight ascending bands onto the bar count by linear interpolation: 8 bars equal the bands exactly; 7 collapsed and 12 expanded interpolate, so every bar is independent.
+  - Values are clamped to 0…1 with NaN/∞ treated as 0, and a 0.12 floor.
+  - `SpectrumBarSmoother` is presentation-only, fast attack (0.72) and slow release (0.24) per 30 Hz frame.
+- **Color:**
+  - `ArtworkAccentColorExtractor.secondaryColor` picks the artwork half that differs most from the primary color.
+  - Grayscale art gets a tonal gray partner, never an invented hue. Halves that are too close get a hue-shifted partner.
+  - It is computed in the existing cache's background pass.
+  - `VisualizerGradient` interpolates sRGB components from the first bar to the last, passing smoothly through the centre. It is solid when there is no partner, or when the accent mode is not artwork.
+- **Reduce Motion** gives `.still`: no live or decorative motion, and a VoiceOver label.
+- **Milestone F preserved:**
+  - The collapsed hover Pause/Play wraps the visualizer unchanged, and its glyph is a tested function of the observed `isPlaying`.
+  - Media, agent and other previews, the orbs-only agent pill and the collapsed geometry are untouched (connected suites pass).
+- **Termination:**
+  - `applicationShouldTerminate` always returns `.terminateLater` and awaits `shutdown()`, which also awaits teardown still pending after Off or sleep. It then replies.
+  - An idle controller returns at once, and a 3 s race guarantees that a stuck HAL call never blocks quitting.
+- **Per-app volume:** no slider UI exists or was added. `ApplicationVolumeProviding` stays a contract only, with no implementation, so nothing claims per-app control.
+
+Tests: `LiveAudioVisualizationTests`, 12 cases:
+- Binding: 8 bars match the bands exactly; other counts interpolate without a repeating pattern; invalid values clamp.
+- Smoother: attack beats release and still settles; a bar-count change adopts the target.
+- Drive: live only while capturing and playing; silence gives `liveSilent`; never for calls; never without a frame.
+- Reduce Motion is still, with labels.
+- Status for every availability and permission. "No frames" never offers privacy settings.
+- Lifecycle with a counting fake backend:
+  - Creation, subscription and menu rendering start nothing.
+  - The switch starts exactly once, even on a double toggle.
+  - Off tears down, clears the frame, and late frames cannot relight it.
+- Gradient endpoints and midpoint.
+- Secondary color for grayscale, distinct and near-identical artwork.
+- The hover glyph follows the observed state.
+
+Results:
+- Focused audio, preview and media suites: 57 tests, 0 failures, 1 pre-existing skip.
+- Full `swift test` at the pre-commit source: **2,481 tests, 43 skipped, 5 failed cases (12 assertions)**, all native-input timing cases:
+  - `IslandKeyboardAcquisitionTests` (4 cases): all 9 keyboard tests passed in isolation twice afterwards.
+  - `SettingsWindowTests` pointer: failed twice in isolation, then passed 2/2 on this source and 2/2 on the pre-G commit `2de2824`.
+  - None of these touch audio or visualizer code.
+- `git diff --check`: clean. `swift build -c release`: passed (237.6 s). `Scripts/package_app.sh`: passed.
+- `codesign --verify --strict` passed for all three helpers; `codesign --verify --deep --strict` passed for the app.
+- The packaged `Info.plist` contains Codex's `NSAudioCaptureUsageDescription`.
+
+Not done, deliberately: no live audio permission was requested, the running app was not replaced, and no capture ran. Native acceptance remains:
+- the TCC prompt
+- bars following real music
+- silence handling
+- sleep stopping capture
+- the quit path with an active tap
+- the gradient on real artwork
+
+### Integration instructions
+
+1. This branch already contains Codex's `fedfc06` content as `cd88511..cf4bd26`. Do **not** also merge `feature/native-audio-foundation`'s uncommitted overlay files, which are Codex's local test baseline.
+2. If `feature/native-audio-foundation` gains new commits, cherry-pick only those commits onto this branch, then re-run `swift test --filter 'NativeAudio|LiveAudioVisualization'`.
+3. Files touched by G that the rescue checkout may also change:
+   - `App/DynamicIslandApp.swift` (new `audioSpectrum` lazy var, `IslandModules(... audioSpectrum:)`, `applicationShouldTerminate`)
+   - `Views/IslandRootView.swift` (`.environment(\.liveSpectrum, …)`, `visualizerSecondaryColor`)
+   - `Views/ModuleViews.swift` (`AudioVisualizerView`, `visualizerSecondaryColor`)
+   - `Modules/ArtworkAccentColorExtractor.swift`
+   - `Modules/IslandModule.swift`
+
+   Apply rescue deltas from `~/DynamicIsland-worktrees/rescue-snapshot-manifest/copied.sha256` as a diff on top; resolve conflicts by keeping both sides' additions.
+4. A Settings v3 "Live Audio" row (and optionally a menu-bar item) should bind to the same `LiveSpectrumProviding` start/stop, with no persisted flag, once Settings ownership (milestone H) is resolved.

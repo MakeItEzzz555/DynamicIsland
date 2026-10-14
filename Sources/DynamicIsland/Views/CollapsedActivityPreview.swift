@@ -236,6 +236,9 @@ struct CollapsedVisualizerPlaybackControl<Bars: View>: View {
 
     private var canControl: Bool { media.isTransportControlAvailable }
 
+    /// The control names the action it performs on the *observed* state.
+    nonisolated static func glyph(isPlaying: Bool) -> String { isPlaying ? "pause.fill" : "play.fill" }
+
     var body: some View {
         ZStack {
             bars()
@@ -243,7 +246,7 @@ struct CollapsedVisualizerPlaybackControl<Bars: View>: View {
                 .opacity(isHovering && canControl ? 0.3 : 1)
             if isHovering && canControl {
                 Button { media.playPause() } label: {
-                    Image(systemName: media.isPlaying ? "pause.fill" : "play.fill")
+                    Image(systemName: Self.glyph(isPlaying: media.isPlaying))
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(.white)
                         .contentTransition(.symbolEffect(.replace))

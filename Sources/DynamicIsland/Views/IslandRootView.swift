@@ -689,6 +689,7 @@ struct IslandRootView: View {
             .environment(\.timerRulerInteractionRegistration, TimerRulerInteractionRegistration { owner, frame in
                 layoutStore.setNativeControlRegion(frame, owner: owner)
             })
+            .environment(\.liveSpectrum, modules.audioSpectrum)
             .environment(\.basketShelfTransfer, BasketShelfTransfer(
                 moveToBasket: { [presenter = modules.basketPresenter] urls in presenter.moveShelfFilesToBasket(urls) },
                 showBasket: { [presenter = modules.basketPresenter] in presenter.showPrimaryBasket() }
@@ -2641,6 +2642,7 @@ struct CompactIslandView: View {
                             isPlaying: media.isPlaying,
                             isActive: media.hasActiveMediaSource,
                             accentColor: visualizerColor,
+                            secondaryAccentColor: visualizerSecondaryColor,
                             variant: .compact,
                             barCount: 7,
                             cadence: .ambient,
@@ -2789,6 +2791,12 @@ struct CompactIslandView: View {
         guard settings.mediaEnabled else { return false }
         guard media.hasActiveMediaSource else { return false }
         return settings.showMediaWhenPaused || media.isPlaying
+    }
+
+    private var visualizerSecondaryColor: Color? {
+        guard settings.visualizerAccentMode == .artwork, settings.useArtworkAccentColor else { return nil }
+        return accentCache.secondaryColor(for: artworkPresentation.displayedSnapshot?.fingerprint,
+                                          image: artworkPresentation.displayedSnapshot?.image)
     }
 
     private var visualizerAccentColor: Color {
