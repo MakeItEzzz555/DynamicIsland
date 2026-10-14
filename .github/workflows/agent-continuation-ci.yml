@@ -44,11 +44,21 @@ jobs:
       - name: Debug build
         run: swift build
 
+      # The macos-15 image enables Reduce Motion, under which visualizers
+      # correctly hold still; live-frame rendering tests need a default Mac.
+      - name: Allow motion
+        run: |
+          defaults write com.apple.universalaccess reduceMotion -bool false
+          test "$(defaults read com.apple.universalaccess reduceMotion)" = 0
+
+      # App activation is cooperative on macOS 14+; after thousands of window
+      # tests the runner declines it, so the strict Settings pointer fixture
+      # runs alone in a fresh XCTest process (next step), unchanged.
       - name: Tests
         shell: bash
         run: |
           set +e
-          swift test
+          swift test --skip 'SettingsWindowTests/testSettingsWindowAcceptsLocalPointerEventsThroughItsNativeHierarchy'
           status=$?
           if [ "$status" -ne 0 ]; then
             echo "::group::macOS XCTest crash diagnostics"
@@ -58,6 +68,14 @@ jobs:
             echo "::endgroup::"
           fi
           exit "$status"
+
+      - name: Settings native pointer (fresh process)
+        shell: bash
+        run: |
+          set -o pipefail
+          swift test --filter 'SettingsWindowTests/testSettingsWindowAcceptsLocalPointerEventsThroughItsNativeHierarchy' 2>&1 | tee settings-pointer.log
+          # A renamed test must not turn this required step into a silent no-op.
+          grep -q "Executed 1 test, with 0 failures" settings-pointer.log
 
       - name: Release build
         run: swift build -c release

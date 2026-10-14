@@ -9,6 +9,10 @@ final class AudioWidgetIntegrationTests: XCTestCase {
         _ = NSApplication.shared
         let backend = AudioWidgetFixtureBackend()
         let controller = AudioSpectrumController(backend: backend, observeSystemEvents: false)
+        // Under system Reduce Motion the visualizer correctly holds still bars, so
+        // live frames cannot be compared (the macos-15 runner image enables it; CI turns it off).
+        XCTAssertFalse(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+                       "live-frame rendering requires system Reduce Motion to be off")
         let host = NSHostingView(rootView: AudioVisualizerView(isPlaying: true, variant: .expanded)
             .environment(\.liveSpectrum, controller))
         host.frame = CGRect(x: 0, y: 0, width: 76, height: 28)

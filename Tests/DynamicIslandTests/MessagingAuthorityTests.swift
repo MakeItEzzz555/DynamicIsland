@@ -40,7 +40,8 @@ final class FixtureSQLite {
             default: sqlite3_bind_null(statement, position)
             }
         }
-        XCTAssertEqual(sqlite3_step(statement), SQLITE_DONE)
+        XCTAssertEqual(sqlite3_step(statement), SQLITE_DONE,
+                       "extended=\(sqlite3_extended_errcode(db)) \(String(cString: sqlite3_errmsg(db))) errno=\(sqlite3_system_errno(db))")
         sqlite3_finalize(statement)
     }
 }
