@@ -330,7 +330,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onOpenSettings: { [weak self] in
                 self?.openSettings()
             },
-            cameraNavigation: cameraNavigation
+            cameraNavigation: cameraNavigation,
+            onNotchMenu: { [weak self] in self?.menuController?.makeNotchMenu() }
         )
         self.overlayController = overlayController
         screenRecordingSetup.anchorProvider = { [weak overlayController] in

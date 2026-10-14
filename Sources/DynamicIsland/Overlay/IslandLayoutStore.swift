@@ -26,10 +26,11 @@ enum TransientInteractionOwner: Hashable, Sendable {
     case workspaceEditor
     case agentsLauncher
     case calendarDatePicker
+    case nativeMenu
     case unspecified
 }
 
-enum IslandWorkspaceAction: Equatable {
+enum IslandWorkspaceAction: Equatable, Sendable {
     case edit
     case editNavigation
     case toggleEdit

@@ -681,6 +681,10 @@ struct IslandRootView: View {
 
     var body: some View {
         animatedIslandCanvas
+            .onChange(of: layoutStore.transientInteractionOwners.contains(.nativeMenu)) { _, tracking in
+                if tracking { collapsedPreviewGeneration += 1 }
+                else { handleCollapsedHover(isCollapsedHovering) }
+            }
             .environment(\.islandDisplayMetrics, layoutStore.displayMetrics)
             .environment(\.mediaAdvancedControls, modules.mediaAdvanced)
             .environment(\.workspaceNotchLane, workspaceNotchLane)
@@ -745,6 +749,17 @@ struct IslandRootView: View {
         .coordinateSpace(name: IslandCanvasCoordinateSpace.name)
     }
 
+    private var collapsedContextContentRects: [CGRect] {
+        guard !isExpanded, collapsedLayoutResolution.primary != nil || agentAttention.presentation != nil ||
+                !modules.agentEvents.sessions.isEmpty else { return [] }
+        // Reserve the existing 16pt compact row wings, including non-native SwiftUI controls.
+        let top = isCollapsedPreviewActive ? 2 : max(0, (surfaceSize.height - 16) / 2)
+        let left = layoutStore.collapsedLeftRegionWidth > 0 ? layoutStore.collapsedLeftRegionWidth + 8 : min(96, surfaceSize.width / 3)
+        let right = layoutStore.collapsedRightRegionWidth > 0 ? layoutStore.collapsedRightRegionWidth + 8 : min(96, surfaceSize.width / 3)
+        return [CGRect(x: 0, y: top, width: left, height: 16),
+                CGRect(x: surfaceSize.width - right, y: top, width: right, height: 16)]
+    }
+
     private var shellBackgroundInteraction: IslandShellBackgroundInteraction {
         let metrics = layoutStore.displayMetrics
         let notchIntegrated = metrics.hasHardwareNotch && settings.respectHardwareNotch
@@ -759,7 +774,8 @@ struct IslandRootView: View {
             contentTop: chrome.topPadding + chrome.tabSwitcherHeight + chrome.tabToPageSpacing,
             notchSize: notchIntegrated ? CGSize(width: layoutStore.hardwareNotchWidth, height: metrics.hardwareNotchHeight) : .zero,
             allowsBackground: isExpanded,
-            excludedRects: layoutStore.nativeControlRegions.values.map { $0.offsetBy(dx: -shellOrigin.x, dy: -shellOrigin.y) })
+            excludedRects: layoutStore.nativeControlRegions.values.map { $0.offsetBy(dx: -shellOrigin.x, dy: -shellOrigin.y) },
+            contextMenuExcludedRects: collapsedContextContentRects)
         return IslandShellBackgroundInteraction(geometry: geometry,
             enabled: !layoutStore.isShellMorphing && !layoutStore.isExpandedContentExiting && !layoutStore.isCollapseShellOnly
                 && layoutStore.workspaceGeometryTransition.phase == .idle,
@@ -1667,6 +1683,11 @@ struct IslandRootView: View {
     }
 
     private func handleCollapsedHover(_ isHovering: Bool) {
+        if layoutStore.transientInteractionOwners.contains(.nativeMenu) {
+            isCollapsedHovering = isHovering
+            collapsedPreviewGeneration += 1
+            return
+        }
         guard settings.overlayEnabled, !layoutStore.isReturningToNormalCollapsedSize else { return }
         let sessionGeneration = layoutStore.overlayPresentationGeneration
         if compactPermission != nil {
@@ -1700,7 +1721,8 @@ struct IslandRootView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
             guard settings.overlayEnabled, sessionGeneration == layoutStore.overlayPresentationGeneration,
                   generation == collapsedPreviewGeneration else { return }
-            guard isCollapsedHovering, !isExpanded, !layoutStore.isShellMorphing else { return }
+            guard isCollapsedHovering, !isExpanded, !layoutStore.isShellMorphing,
+                  !layoutStore.transientInteractionOwners.contains(.nativeMenu) else { return }
             if collapsedHoverPolicy.allowsAutomaticExpansion(enabled: settings.expandOnHover) {
                 onRequestAutomaticExpand()
                 return
@@ -1983,6 +2005,13 @@ final class IslandShellBackgroundInputView: NSView {
             && configuration?.shellShape.path(in: bounds).contains(point) == true
     }
 
+    func acceptsNotchContextClick(at windowPoint: NSPoint) -> Bool {
+        let point = convert(windowPoint, from: nil)
+        return window != nil && !isHiddenOrHasHiddenAncestor && configuration?.enabled == true
+            && configuration?.geometry.acceptsCollapsedContextMenu(at: point) == true
+            && configuration?.shellShape.path(in: bounds).contains(point) == true
+    }
+
     override func mouseDown(with event: NSEvent) {
         cancelPress()
         let point = convert(event.locationInWindow, from: nil)
@@ -2056,7 +2085,9 @@ final class IslandShellBackgroundInputView: NSView {
 
     override func menu(for event: NSEvent) -> NSMenu? {
         cancelPress()
-        return configuration?.enabled == true ? actionsMenu() : nil
+        guard let configuration, configuration.enabled else { return nil }
+        if event.type == .rightMouseDown, !configuration.geometry.allowsBackground { return nil }
+        return actionsMenu()
     }
 
     override func accessibilityPerformPress() -> Bool {

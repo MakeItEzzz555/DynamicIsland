@@ -10,6 +10,7 @@ import CoreGraphics
 /// Nothing outside the shell is claimed, so mouse passthrough is unchanged.
 struct NativeMenuTrackingLifecycle: Equatable, Sendable {
     private(set) var depth = 0
+    private var pendingAction: IslandWorkspaceAction?
 
     var isTracking: Bool { depth > 0 }
 
@@ -17,8 +18,19 @@ struct NativeMenuTrackingLifecycle: Equatable, Sendable {
         depth &+= 1
     }
 
-    mutating func end() {
+    mutating func deferWorkspaceAction(_ action: IslandWorkspaceAction) -> Bool {
+        guard isTracking else { return false }
+        pendingAction = action
+        return true
+    }
+
+    @discardableResult
+    mutating func end() -> IslandWorkspaceAction? {
         depth = max(depth - 1, 0)
+        guard !isTracking else { return nil }
+        let action = pendingAction
+        pendingAction = nil
+        return action
     }
 }
 

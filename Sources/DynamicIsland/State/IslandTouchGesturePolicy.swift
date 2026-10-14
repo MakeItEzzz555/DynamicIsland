@@ -12,6 +12,7 @@ struct IslandBackgroundInteractionGeometry: Equatable {
     let notchSize: CGSize
     let allowsBackground: Bool
     var excludedRects: [CGRect] = []
+    var contextMenuExcludedRects: [CGRect] = []
 
     var notchRect: CGRect {
         guard notchSize.width > 0, notchSize.height > 0 else { return .zero }
@@ -27,6 +28,12 @@ struct IslandBackgroundInteractionGeometry: Equatable {
             ? max(notchSize.height, min(contentTop, notchSize.height + 6))
             : min(contentTop, 24))
         return CGRect(x: (size.width - width) / 2, y: 0, width: width, height: max(0, height))
+    }
+
+    func acceptsCollapsedContextMenu(at point: CGPoint) -> Bool {
+        let rect = CGRect(x: 0, y: 0, width: size.width, height: notchMenuRect.height)
+        return !allowsBackground && rect.contains(point) && !notchRect.contains(point)
+            && !(excludedRects + contextMenuExcludedRects).contains { $0.contains(point) }
     }
 
     func region(at point: CGPoint) -> Region? {

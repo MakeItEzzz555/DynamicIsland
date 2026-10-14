@@ -252,6 +252,7 @@ final class OverlayWindowController {
     private var committedExpandedPage: ExpandedIslandPage?
     private var expandedAt: CFTimeInterval = 0
     private var nativeMenuTracking = NativeMenuTrackingLifecycle()
+    private var deferredMenuGeometry = false
     private var collapsedScrollDelta: CGSize = .zero
     private var collapsedScrollGestureHandled = false
     private var collapsedScrollLastActionAt: CFTimeInterval?
@@ -289,7 +290,8 @@ final class OverlayWindowController {
         modules: IslandModules,
         geometryService: NotchGeometryService,
         onOpenSettings: @escaping () -> Void = {},
-        cameraNavigation: CameraNavigationController? = nil
+        cameraNavigation: CameraNavigationController? = nil,
+        onNotchMenu: (() -> NSMenu?)? = nil
     ) {
         self.settings = settings
         self.islandState = islandState
@@ -310,21 +312,12 @@ final class OverlayWindowController {
         )
         Self.configure(islandPanel, showInFullscreen: settings.showOverlayInFullscreen)
         islandPanel.onNotchRightClick = { [weak self] event in
-            guard let self, self.canPresentOverlay,
-                  let host = self.islandPanel.contentView,
-                  self.currentInteractiveRegion().contains(host.convert(event.locationInWindow, from: nil)) else { return false }
-            let protected = !self.layoutStore.cameraExpansionAllowed(
-                exactApproval: AgentCompactPermission.current(sessions: self.modules.agentEvents.sessions,
-                    approvals: self.modules.agentApprovalControl, managed: self.modules.agentManagedControl) != nil,
-                interactiveHUD: self.activeInteractiveSystemHUD(activities: self.modules.liveActivities.activities) != nil,
-                nativeInteraction: self.nativeMenuTracking.isTracking || self.hasVisibleTransientNativeWindow,
-                fileDrag: self.modules.fileDragSession.isActive || self.modules.navigation.isFileDropTargeted)
-            guard NotchRightClickAction.permitted(collapsed: self.islandState.state == .collapsed,
-                morphing: self.layoutStore.isShellMorphing, protected: protected) else { return false }
-            switch self.settings.notchRightClickAction {
-            case .openSettings: onOpenSettings()
-            case .hide: self.settings.overlayEnabled = false
-            }
+            guard let self, self.canPresentOverlay, self.islandState.state == .collapsed,
+                  !self.layoutStore.isShellMorphing, !self.layoutStore.isCollapseShellOnly,
+                  let target = self.islandPanel.notchActionsTarget(for: event),
+                  let menu = onNotchMenu?() else { return false }
+            target.cancelPress()
+            NSMenu.popUpContextMenu(menu, with: event, for: target)
             return true
         }
 
@@ -427,6 +420,7 @@ final class OverlayWindowController {
             .sink { [weak self] _ in
                 guard let self else { return }
                 self.nativeMenuTracking.begin()
+                self.layoutStore.setTransientInteraction(true, owner: .nativeMenu)
                 // NSMenu runs its own tracking loop/window. Keep the source
                 // island interactive and suspend pointer-leave polling while
                 // that native surface owns the interaction.
@@ -437,8 +431,9 @@ final class OverlayWindowController {
         NotificationCenter.default.publisher(for: NSMenu.didEndTrackingNotification)
             .sink { [weak self] _ in
                 guard let self else { return }
-                self.nativeMenuTracking.end()
+                let action = self.nativeMenuTracking.end()
                 guard !self.nativeMenuTracking.isTracking else { return }
+                self.layoutStore.setTransientInteraction(false, owner: .nativeMenu)
                 // Re-arm after the menu tracking loop fully unwinds so a
                 // stale mouse-exit event cannot collapse the island before
                 // AppKit has restored the pointer/window relationship.
@@ -447,6 +442,11 @@ final class OverlayWindowController {
                     guard let self,
                           self.allowsOverlayWork(generation: generation),
                           !self.nativeMenuTracking.isTracking else { return }
+                    if self.deferredMenuGeometry {
+                        self.deferredMenuGeometry = false
+                        self.reposition(animated: true, reason: "nativeMenuDismissed")
+                    }
+                    if let action { self.requestWorkspaceAction(action) }
                     self.updateMousePassthrough()
                     self.updateMouseContainmentTimer()
                 }
@@ -868,6 +868,10 @@ final class OverlayWindowController {
         force: Bool = false
     ) {
         guard canPresentOverlay else { return }
+        if nativeMenuTracking.isTracking, islandState.state == .collapsed, animated, !force {
+            deferredMenuGeometry = true
+            return
+        }
         let targetScreen = islandPanel.screen ?? NotchGeometryService.preferredScreen()
         layoutStore.setDisplayMetrics(IslandDisplayMetricsResolver.resolve(screen: targetScreen))
         let signature = currentGeometrySignature
@@ -1737,8 +1741,7 @@ final class OverlayWindowController {
             islandPanel.ignoresMouseEvents = true
             return
         }
-        if nativeMenuTracking.isTracking &&
-            (islandState.state == .expanded || layoutStore.isCollapseShellOnly) {
+        if nativeMenuTracking.isTracking {
             islandPanel.ignoresMouseEvents = false
             return
         }
@@ -2267,6 +2270,7 @@ final class OverlayWindowController {
 
     func requestWorkspaceAction(_ action: IslandWorkspaceAction) {
         guard canPresentOverlay, action != .clipboard || settings.clipboardHistoryEnabled else { return }
+        if nativeMenuTracking.deferWorkspaceAction(action) { return }
         if islandState.state == .collapsed {
             layoutStore.preservePageForNextExpansion(modules.navigation.selectedPage)
         }
@@ -3335,10 +3339,12 @@ final class IslandOverlayPanel: NSPanel, CameraLocalEventWindow {
 
     // SwiftUI's full-frame compact/expanded content can occlude the lower background sibling.
     func notchActionsTarget(for event: NSEvent) -> IslandShellBackgroundInputView? {
-        guard event.type == .leftMouseDown, event.windowNumber == windowNumber, let contentView else { return nil }
+        guard [.leftMouseDown, .rightMouseDown].contains(event.type), event.windowNumber == windowNumber, let contentView else { return nil }
         func find(in view: NSView) -> IslandShellBackgroundInputView? {
             if let notch = view as? IslandShellBackgroundInputView,
-               notch.acceptsNotchClick(at: event.locationInWindow) { return notch }
+               (event.type == .rightMouseDown
+                    ? notch.acceptsNotchContextClick(at: event.locationInWindow)
+                    : notch.acceptsNotchClick(at: event.locationInWindow)) { return notch }
             for child in view.subviews {
                 if let notch = find(in: child) { return notch }
             }

@@ -45,6 +45,29 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     func setVisible(_ visible: Bool) { statusItem.isVisible = visible }
 
+    func makeNotchMenu() -> NSMenu {
+        let menu = NSMenu(title: "Island")
+        menu.autoenablesItems = false
+        func item(_ title: String, _ action: Selector) -> NSMenuItem {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            item.target = self
+            return item
+        }
+        menu.addItem(item("Settings…", #selector(openSettings)))
+        let clipboard = NSMenuItem(title: "Clipboard", action: nil, keyEquivalent: "")
+        let submenu = NSMenu(title: "Clipboard")
+        submenu.autoenablesItems = false
+        let history = item("Open Clipboard History", #selector(openClipboard))
+        history.isEnabled = settings.clipboardHistoryEnabled
+        submenu.addItem(history)
+        clipboard.submenu = submenu
+        clipboard.isEnabled = settings.clipboardHistoryEnabled
+        menu.addItem(clipboard)
+        menu.addItem(.separator())
+        menu.addItem(item("Quit Island", #selector(quit)))
+        return menu
+    }
+
     private func rebuildMenu() {
         let menu = NSMenu()
         populate(menu)
@@ -89,7 +112,9 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     }
 
     @objc private func editWorkspace() { onEditWorkspace() }
-    @objc private func openClipboard() { onOpenClipboard() }
+    @objc private func openClipboard() {
+        if settings.clipboardHistoryEnabled { onOpenClipboard() }
+    }
     @objc private func nextPage() { onNextPage() }
     @objc private func previousPage() { onPreviousPage() }
     @objc private func showNavigation() { settings.showNavigationControls = true }
