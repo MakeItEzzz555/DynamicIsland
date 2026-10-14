@@ -44,11 +44,15 @@ jobs:
       - name: Debug build
         run: swift build
 
-      - name: Tests
+      # XCTest app activation is cooperative on macOS. After thousands of
+      # shared-process window tests, activation of an already-running runner
+      # may be rejected even when Settings event dispatch is correct. Run the
+      # same strict native pointer assertion in a fresh XCTest process.
+      - name: Tests (full suite except isolated foreground fixture)
         shell: bash
         run: |
           set +e
-          swift test
+          swift test --skip 'SettingsWindowTests.testSettingsWindowAcceptsLocalPointerEventsThroughItsNativeHierarchy'
           status=$?
           if [ "$status" -ne 0 ]; then
             echo "::group::macOS XCTest crash diagnostics"
@@ -58,6 +62,9 @@ jobs:
             echo "::endgroup::"
           fi
           exit "$status"
+
+      - name: Settings native pointer (fresh process, required)
+        run: swift test --filter 'SettingsWindowTests.testSettingsWindowAcceptsLocalPointerEventsThroughItsNativeHierarchy'
 
       - name: Release build
         run: swift build -c release
