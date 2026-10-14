@@ -1,33 +1,6 @@
 import SwiftUI
 import ServiceManagement
 
-struct SettingsNotchRightClickChoices: View {
-    @Binding var selection: NotchRightClickAction
-    let navigation: SettingsNavigationStore
-    var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Text("Right-click Notch").frame(maxWidth: .infinity, alignment: .leading)
-            ForEach(NotchRightClickAction.allCases) { action in
-                Button { selection = action } label: {
-                    VStack(spacing: 7) {
-                        ZStack(alignment: .top) {
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(LinearGradient(colors: [.indigo, .blue], startPoint: .topLeading, endPoint: .bottomTrailing))
-                            UnevenRoundedRectangle(bottomLeadingRadius: 10, bottomTrailingRadius: 10)
-                                .fill(.black).frame(width: 78, height: 35)
-                                .overlay(Image(systemName: action.symbol).font(.caption).foregroundStyle(.white))
-                        }.frame(width: 102, height: 58)
-                            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(selection == action ? Color.accentColor : .clear, lineWidth: 3))
-                        Text(action.displayName).font(.caption).foregroundStyle(selection == action ? .primary : .secondary)
-                    }.contentShape(Rectangle())
-                }.buttonStyle(.plain).accessibilityLabel(action.displayName)
-                    .accessibilityAddTraits(selection == action ? .isSelected : [])
-                    .background(SettingsNativeControlAnchor(identifier: "settings.notch." + action.rawValue, navigation: navigation))
-            }
-        }
-    }
-}
-
 /// Original, offline artwork and interaction; never controls the user's player.
 struct SettingsDemoPlayer: View {
     @State private var playing = false

@@ -29,8 +29,12 @@ final class IslandKeyboardAcquisitionTests: XCTestCase {
         let router = CameraInteractionRouter(window: panel, monitorsPhysicalInput: false)
         defer { router.shutdown() }
         for _ in 0..<3 {
+            NSApp.activate(ignoringOtherApps: true)
             other.makeKeyAndOrderFront(nil)
+            CameraNativeHostedFixture.pump()
             CameraNativeHostedFixture.click(router, at: CGPoint(x: 40, y: 35))
+            XCTAssertTrue(panel.isKeyWindow)
+            XCTAssertTrue(panel.firstResponder === editor)
             NSApp.sendEvent(key(36, characters: "\r", window: panel))
             NSApp.sendEvent(key(36, characters: "\r", flags: .shift, window: panel))
             XCTAssertTrue(editor.string.contains("\n"))
@@ -39,6 +43,7 @@ final class IslandKeyboardAcquisitionTests: XCTestCase {
             editor.releaseKeyboardOwnership()
             panel.orderOut(nil)
             panel.orderFront(nil)
+            CameraNativeHostedFixture.pump()
         }
         XCTAssertEqual(submits, 3)
     }
@@ -63,6 +68,60 @@ final class IslandKeyboardAcquisitionTests: XCTestCase {
         editor.isEditable = false
         XCTAssertFalse(editor.needsPanelToBecomeKey)
         XCTAssertFalse(editor.acceptsFirstResponder)
+    }
+
+    func testMainEligibilityFollowsExplicitEditableResponderWithoutPassiveActivation() throws {
+        let (panel, editor, other, _) = try fixture()
+        defer { panel.close(); other.close() }
+        XCTAssertFalse(panel.isMainWindow)
+        XCTAssertFalse(panel.isKeyWindow)
+        XCTAssertTrue(panel.makeFirstResponder(editor))
+        XCTAssertTrue(panel.canBecomeMain)
+        XCTAssertFalse(panel.isMainWindow)
+        XCTAssertTrue(other.isKeyWindow, "automatic responder selection does not acquire typing")
+        XCTAssertTrue(IslandKeyboardFocusPolicy.acquireKeyboard(for: editor, in: panel))
+        XCTAssertTrue(panel.isKeyWindow)
+        XCTAssertTrue(panel.isMainWindow)
+        editor.releaseKeyboardOwnership()
+        XCTAssertFalse(panel.canBecomeMain)
+        XCTAssertFalse(panel.isKeyWindow)
+    }
+
+    func testProductionComposerHierarchyReceivesImmediateTypingEditingPasteAndIME() throws {
+        let (panel, _, other, otherEditor) = try fixture()
+        defer { panel.close(); other.close() }
+        var draft = "", submissions = 0
+        let host = NSHostingView(rootView: AgentPromptEditor(text: Binding(get: { draft }, set: { draft = $0 }),
+            placeholder: "Fixture", isEnabled: true, onSubmit: { submissions += 1; return true }))
+        panel.contentView = host
+        CameraNativeHostedFixture.pump()
+        let editor = try XCTUnwrap(descendants(host).compactMap { $0 as? AgentPromptTextView }.first)
+        let router = CameraInteractionRouter(window: panel, monitorsPhysicalInput: false)
+        defer { router.shutdown() }
+        CameraNativeHostedFixture.click(router, at: CGPoint(x: 40, y: 35))
+        XCTAssertTrue(panel.isKeyWindow)
+        XCTAssertTrue(panel.firstResponder === editor)
+        NSApp.sendEvent(key(0, characters: "a", window: panel))
+        XCTAssertEqual(editor.string, "a")
+        XCTAssertEqual(draft, "a")
+        XCTAssertEqual(otherEditor.string, "")
+        NSApp.sendEvent(key(36, characters: "\r", window: panel))
+        XCTAssertEqual(submissions, 1)
+        NSApp.sendEvent(key(36, characters: "\r", flags: .shift, window: panel))
+        XCTAssertTrue(editor.string.contains("\n"))
+        NSApp.sendEvent(key(51, characters: "\u{7f}", window: panel))
+        let board = NSPasteboard(name: .init("DynamicIsland.KeyboardFixture.\(UUID().uuidString)"))
+        defer { board.clearContents() }
+        board.setString("paste", forType: .string)
+        XCTAssertTrue(editor.readSelection(from: board))
+        XCTAssertTrue(editor.string.contains("paste"))
+        editor.setMarkedText("composition", selectedRange: NSRange(location: 1, length: 0),
+            replacementRange: NSRange(location: NSNotFound, length: 0))
+        XCTAssertTrue(editor.hasMarkedText())
+        NSApp.sendEvent(key(36, characters: "\r", window: panel))
+        XCTAssertEqual(submissions, 1, "Return during IME composition does not submit")
+        editor.unmarkText()
+        XCTAssertTrue(panel.firstResponder === editor)
     }
 
     func testStreamingAllowsEditingWithoutSubmissionAuthority() {
@@ -110,7 +169,8 @@ final class IslandKeyboardAcquisitionTests: XCTestCase {
         CameraNativeHostedFixture.click(router, at: CGPoint(x: 40, y: 35))
         await fulfillment(of: [acquired], timeout: 1)
         editor.insertText("synthetic", replacementRange: NSRange(location: NSNotFound, length: 0))
-        panel.resignKey()
+        other.makeKeyAndOrderFront(nil)
+        CameraNativeHostedFixture.pump()
         XCTAssertFalse(panel.isKeyWindow)
         await fulfillment(of: [released], timeout: 1)
         XCTAssertEqual(editor.string, "synthetic")
@@ -161,7 +221,9 @@ final class IslandKeyboardAcquisitionTests: XCTestCase {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         CameraNativeHostedFixture.pump()
-        let other = NSWindow(contentRect: CGRect(x: -1800, y: -1800, width: 220, height: 100),
+        let screen = try XCTUnwrap(NSScreen.main)
+        let origin = CGPoint(x: screen.visibleFrame.minX + 40, y: screen.visibleFrame.midY - 50)
+        let other = NSWindow(contentRect: CGRect(x: origin.x, y: origin.y, width: 220, height: 100),
             styleMask: [.titled], backing: .buffered, defer: false)
         other.isReleasedWhenClosed = false
         let otherEditor = NSTextView(frame: CGRect(x: 0, y: 0, width: 220, height: 100))
@@ -169,7 +231,7 @@ final class IslandKeyboardAcquisitionTests: XCTestCase {
         other.makeKeyAndOrderFront(nil)
         other.makeFirstResponder(otherEditor)
         CameraNativeHostedFixture.pump()
-        let panel = IslandOverlayPanel(contentRect: CGRect(x: -1600, y: -1600, width: 220, height: 100),
+        let panel = IslandOverlayPanel(contentRect: CGRect(x: origin.x + 260, y: origin.y, width: 220, height: 100),
             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.isReleasedWhenClosed = false
         panel.becomesKeyOnlyIfNeeded = true
@@ -178,6 +240,9 @@ final class IslandKeyboardAcquisitionTests: XCTestCase {
         editor.isRichText = false
         panel.contentView = editor
         panel.orderFront(nil)
+        CameraNativeHostedFixture.pump()
+        XCTAssertTrue(panel.isVisible)
+        XCTAssertTrue(other.isKeyWindow, "showing a passive panel never steals the existing editor")
         return (panel, editor, other, otherEditor)
     }
 

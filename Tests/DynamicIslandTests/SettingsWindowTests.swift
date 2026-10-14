@@ -56,7 +56,12 @@ final class SettingsWindowTests: XCTestCase {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
-        CameraNativeHostedFixture.pump()
+        let readyDeadline = Date().addingTimeInterval(1)
+        repeat { CameraNativeHostedFixture.pump() }
+        while (!NSApp.isActive || !window.isKeyWindow) && Date() < readyDeadline
+        XCTAssertTrue(NSApp.isActive, "the native fixture must finish app activation before dispatch")
+        XCTAssertTrue(window.isKeyWindow)
+        window.contentView?.layoutSubtreeIfNeeded()
         let router = CameraInteractionRouter(window: window, monitorsPhysicalInput: false)
         defer {
             router.shutdown(); window.setFrameAutosaveName(""); window.close()

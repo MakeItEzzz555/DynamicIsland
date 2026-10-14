@@ -109,16 +109,8 @@ enum SettingsNativeAcceptance {
 
             }
             navigation.navigate(.page(.general)); await settle()
-            let hideChoice = click("settings.notch.hide", in: window, navigation: navigation)
-            _ = await waitUntil { settings.notchRightClickAction == .hide }
-            hideChoice?.shutdown()
-            report["nativeNotchHideChoice"] = hideChoice != nil && settings.notchRightClickAction == .hide
-            try render(window, name: "notch-hide-selected", directory: directory)
-            let openChoice = click("settings.notch.openSettings", in: window, navigation: navigation)
-            _ = await waitUntil { settings.notchRightClickAction == .openSettings }
-            openChoice?.shutdown()
-            report["nativeNotchChoicePersistence"] = openChoice != nil && settings.notchRightClickAction == .openSettings &&
-                AppSettings(defaults: defaults).notchRightClickAction == .openSettings
+            report["obsoleteNotchChoicesAbsent"] = navigation.nativeControls.object(forKey: "settings.notch.hide") == nil &&
+                navigation.nativeControls.object(forKey: "settings.notch.openSettings") == nil
             navigation.navigate(.page(.clipboard)); await settle()
             let back = click("settings.back", in: window, navigation: navigation)
             _ = await waitUntil { navigation.route == .page(.general) }

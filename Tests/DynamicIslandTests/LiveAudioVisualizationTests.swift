@@ -94,8 +94,10 @@ final class LiveAudioVisualizationTests: XCTestCase {
         XCTAssertEqual(LiveAudioStatus(.init()).isOn, false)
         XCTAssertTrue(LiveAudioStatus(.init()).detail.contains("decorative"))
         XCTAssertTrue(LiveAudioStatus(.init(availability: .starting)).isOn)
-        XCTAssertEqual(LiveAudioStatus(.init(availability: .capturing, playbackEvidence: .signalPresent, frame: frame(.one))).detail, "Live")
-        XCTAssertEqual(LiveAudioStatus(.init(availability: .capturing, playbackEvidence: .silent)).detail, "Live · no sound right now")
+        XCTAssertEqual(LiveAudioStatus(.init(availability: .capturing, permission: .accessEstablished, playbackEvidence: .signalPresent, frame: frame(.one))).detail, "Live · system audio")
+        XCTAssertEqual(LiveAudioStatus(.init(availability: .capturing, permission: .accessEstablished, playbackEvidence: .silent)).detail, "Live · system audio silent")
+        XCTAssertEqual(LiveAudioStatus(.init(availability: .capturing, playbackEvidence: .silent)).detail, "Audio buffers received · no signal verified",
+                       "silent buffers alone do not prove authorization or actual system silence")
         let denied = LiveAudioStatus(.init(availability: .failed(.permissionDenied), permission: .denied))
         XCTAssertFalse(denied.isOn); XCTAssertTrue(denied.offersPrivacySettings)
         XCTAssertFalse(LiveAudioStatus(.init(availability: .failed(.noFrames))).offersPrivacySettings,

@@ -3330,8 +3330,7 @@ final class IslandOverlayPanel: NSPanel, CameraLocalEventWindow {
         if event.type == .leftMouseDown, let contentView,
            let target = contentView.hitTest(contentView.convert(event.locationInWindow, from: nil)),
            IslandKeyboardFocusPolicy.claimsKeyboard(target) {
-            makeKey()
-            makeFirstResponder(target)
+            _ = IslandKeyboardFocusPolicy.acquireKeyboard(for: target, in: self)
             debugKeyboardOwnership(reason: "editorClick")
         }
         super.sendEvent(event)
@@ -3366,13 +3365,23 @@ final class IslandOverlayPanel: NSPanel, CameraLocalEventWindow {
     }
 
     override var canBecomeMain: Bool {
-        false
+        IslandKeyboardFocusPolicy.claimsKeyboard(firstResponder)
     }
 }
 
 
 /// Which first responders own typed input (and therefore need key status).
 enum IslandKeyboardFocusPolicy {
+    @MainActor
+    static func acquireKeyboard(for responder: NSResponder, in window: NSWindow) -> Bool {
+        guard claimsKeyboard(responder) else { return false }
+        // Explicit editor engagement must own app-level typing, not just the window's responder bookkeeping.
+        if !NSApp.isActive { NSApp.activate(ignoringOtherApps: true) }
+        guard window.makeFirstResponder(responder) else { return false }
+        window.makeKeyAndOrderFront(nil)
+        return window.isKeyWindow && window.firstResponder === responder
+    }
+
     @MainActor
     static func releaseComposerForEscape(_ responder: NSResponder?, hasPresentation: Bool) -> Bool {
         guard !hasPresentation, let editor = responder as? AgentPromptTextView,

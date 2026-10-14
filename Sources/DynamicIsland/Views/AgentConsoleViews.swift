@@ -1567,12 +1567,11 @@ final class AgentPromptTextView: NSTextView {
     }
 
     func releaseKeyboardOwnership() {
-        let ownedKeyboard = window?.firstResponder === self
+        let ownedResponder = window?.firstResponder === self
+        let ownedKeyboard = ownedResponder && window?.isKeyWindow == true
         releaseEngagement()
-        if ownedKeyboard {
-            window?.makeFirstResponder(nil)
-            window?.resignKey()
-        }
+        if ownedResponder { window?.makeFirstResponder(nil) }
+        if ownedKeyboard { NSApp.deactivate() }
     }
 
     override func resignFirstResponder() -> Bool {
@@ -1632,8 +1631,10 @@ final class AgentPromptTextView: NSTextView {
 
     override func mouseDown(with event: NSEvent) {
         guard isEditable else { return }
-        window?.makeKey()
-        guard window?.isKeyWindow == true, window?.makeFirstResponder(self) == true else { return }
+        guard let window else { return }
+        if !NSApp.isActive || !window.isKeyWindow || window.firstResponder !== self {
+            guard IslandKeyboardFocusPolicy.acquireKeyboard(for: self, in: window) else { return }
+        }
         publishEngagement()
         super.mouseDown(with: event)
     }

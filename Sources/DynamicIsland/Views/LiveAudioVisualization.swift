@@ -87,10 +87,12 @@ struct LiveAudioStatus: Equatable {
             isOn = true; detail = "Starting…"; offersPrivacySettings = false
         case .capturing:
             isOn = true
-            detail = presentation.playbackEvidence == .signalPresent ? "Live" : "Live · no sound right now"
+            detail = presentation.permission == .accessEstablished
+                ? (presentation.playbackEvidence == .signalPresent ? "Live · system audio" : "Live · system audio silent")
+                : "Audio buffers received · no signal verified"
             offersPrivacySettings = false
         case .suspended:
-            isOn = false; detail = "Stopped for sleep or lock · turn on again"; offersPrivacySettings = false
+            isOn = false; detail = "Paused after sleep, session or audio-output change · turn on again"; offersPrivacySettings = false
         case .failed(.permissionDenied):
             isOn = false; detail = "System Audio Recording is off for DynamicIsland"; offersPrivacySettings = true
         case .failed(.unsupportedPlatform):

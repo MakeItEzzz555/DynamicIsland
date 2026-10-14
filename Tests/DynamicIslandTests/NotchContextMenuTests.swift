@@ -155,6 +155,7 @@ final class NotchContextMenuTests: XCTestCase {
         RunLoop.main.add(keyTimer, forMode: .eventTracking)
         RunLoop.main.add(safetyTimer, forMode: .eventTracking)
         defer { keyTimer.invalidate(); safetyTimer.invalidate() }
+        CameraNativeHostedFixture.pump()
         let active = NSApp.isActive
         NSMenu.popUpContextMenu(menu, with: try event(panel, point: CGPoint(x: 170, y: 4)), for: background)
         XCTAssertGreaterThan(began, 0)
@@ -187,6 +188,8 @@ final class NotchContextMenuTests: XCTestCase {
         let panel = IslandOverlayPanel(contentRect: CGRect(origin: CGPoint(x: -5000, y: -5000), size: size),
             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.isReleasedWhenClosed = false
+        panel.becomesKeyOnlyIfNeeded = true
+        panel.hidesOnDeactivate = false
         let container = NSView(frame: CGRect(origin: .zero, size: size))
         let background = IslandShellBackgroundInputView(frame: container.bounds)
         let geometry = IslandBackgroundInteractionGeometry(size: size, horizontalPadding: 20,

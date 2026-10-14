@@ -30,6 +30,11 @@ struct AudioVisualizerView: View {
     @Environment(\.settingsPreviewReduceMotion) private var previewReduceMotion
     @Environment(\.isShellMorphing) private var isShellMorphing
     @Environment(\.liveSpectrum) private var liveSpectrum
+    @Environment(\.isSettingsPreview) private var isSettingsPreview
+
+    private var effectiveSpectrum: (any LiveSpectrumProviding)? {
+        palette == .media && !isSettingsPreview ? liveSpectrum : nil
+    }
     @State private var isPlaybackVisuallyActive = false
     @State private var playbackHoldGeneration = 0
     @State private var livePresentation = AudioSpectrumPresentation()
@@ -56,13 +61,15 @@ struct AudioVisualizerView: View {
         .frame(width: variant.size.width, height: variant.size.height)
         .accessibilityLabel(isPlaying ? "Audio playing" : "Audio paused")
         .accessibilityValue(mode.accessibilityDescription)
-        .help(mode.isLive ? "Live audio levels" : "Decorative animation · Live Audio is off")
+        .help(mode.isLive ? "Live system audio spectrum" : "\(mode.accessibilityDescription) · Capture: \(LiveAudioStatus(livePresentation).detail)")
         .contextMenu {
-            if palette == .media, let liveSpectrum {
-                LiveAudioMenuItems(provider: liveSpectrum, status: LiveAudioStatus(livePresentation))
+            if let effectiveSpectrum {
+                LiveAudioMenuItems(provider: effectiveSpectrum, status: LiveAudioStatus(livePresentation))
             }
         }
-        .onReceive(liveSpectrum?.presentationPublisher ?? Empty().eraseToAnyPublisher()) { presentation in
+        .onReceive(effectiveSpectrum?.presentationPublisher ?? Empty().eraseToAnyPublisher()) { presentation in
+            // Re-subscription can replay the same frame; smooth it once, not on every view update.
+            guard livePresentation != presentation else { return }
             livePresentation = presentation
             let next = LiveVisualizerMode.resolve(isMediaPalette: palette == .media, presentation: presentation,
                                                   mediaPlaying: isPlaying && isActive, reduceMotion: reduceMotion || previewReduceMotion)

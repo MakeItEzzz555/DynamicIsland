@@ -441,21 +441,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
-    /// Live Audio may own a Core Audio tap and aggregate device, or still be
-    /// tearing them down after Off/sleep. Quitting awaits that teardown (an
-    /// idle controller returns at once) instead of firing a Task that may
-    /// never finish; a stuck HAL call cannot block quitting beyond 3 s.
+    /// Await owned audio cleanup before normal AppKit termination; cancellation is not a HAL timeout.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard !audioShutdownStarted else { return .terminateLater }
         audioShutdownStarted = true
         let spectrum = audioSpectrum
         Task { @MainActor in
-            await withTaskGroup(of: Void.self) { group in
-                group.addTask { await spectrum.shutdown() }
-                group.addTask { try? await Task.sleep(for: .seconds(3)) }
-                await group.next()
-                group.cancelAll()
-            }
+            await spectrum.shutdown()
             sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater

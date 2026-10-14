@@ -49,8 +49,8 @@ extension SettingsView {
                 }
             }
             SettingsGroup("Notch interaction") {
-                SettingsNotchRightClickChoices(selection: $settings.notchRightClickAction, navigation: navigation)
-                Text("Right-click the collapsed background. Protected replies, approvals and HUD controls keep their own interaction. After Hide, use the menu bar or Dock to show the island again.")
+                LabeledContent("Right-click Notch", value: "Context menu")
+                Text("Right-click an accessible empty area at the top of the collapsed island for Settings, Clipboard History and Quit Island. Protected controls and files keep their own menus.")
                     .font(.caption).foregroundStyle(.secondary)
                 Toggle("Expand on click", isOn: $settings.expandOnClick)
                 Toggle("Collapse on mouse leave", isOn: $settings.collapseOnMouseLeave)

@@ -66,10 +66,10 @@ enum SettingsAuditCatalog {
                "Width values are read through AppSettings.collapsedSize/expandedSize.")
         + visual(["useAdaptiveNotchSizing"], .islandShell,
                  "The Island preview uses the production NotchGeometryService against a deterministic notched-screen sandbox.")
-        + entries(["overlayEnabled", "externalDisplayVisibility", "showOverlayInFullscreen", "hiddenInAppBundleIDs", "notchRightClickAction", "launchAtLoginEnabled", "menuBarIconEnabled", "dockIconEnabled", "expandOnClick", "collapseOnMouseLeave", "autoCollapseEnabled",
+        + entries(["overlayEnabled", "externalDisplayVisibility", "showOverlayInFullscreen", "hiddenInAppBundleIDs", "launchAtLoginEnabled", "menuBarIconEnabled", "dockIconEnabled", "expandOnClick", "collapseOnMouseLeave", "autoCollapseEnabled",
                    "autoCollapseDelayPreset", "autoCollapseGraceSeconds", "expandOnHover"], .behavioral,
                   "Pointer/launch behavior; auto-collapse values are read through AppSettings computed timing.")
-        + entries(["startCollapsedOnLaunch"], .deprecatedHidden, deprecatedNote)
+        + entries(["startCollapsedOnLaunch", "notchRightClickAction"], .deprecatedHidden, deprecatedNote)
         // Motion
         + visual(["animationPreset", "reduceExtraMotion", "shellAnimationSpeed"], .islandShell,
                  "Replay shows the shared IslandShellMotion animation.")
