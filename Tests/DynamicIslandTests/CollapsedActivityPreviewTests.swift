@@ -91,7 +91,8 @@ final class CollapsedActivityPreviewTests: XCTestCase {
     func testRoutineAgentPillIsOrbsOnly() throws {
         let one = SettingsPreviewFixtures.agentSession(provider: .codex)
         let single = try XCTUnwrap(AgentCompactPresentation.make(sessions: [one]))
-        XCTAssertEqual(AgentCompactOrbMetrics.trailingWidth(for: single), 16, "one session: a single state glyph")
+        XCTAssertEqual(AgentCompactOrbMetrics.trailingWidth(for: single), AgentCompactOrbMetrics.providerIcon,
+                       "one session: the provider icon, no state glyph")
         let profile = try XCTUnwrap(AgentCollapsedShellPresentation.routine(sessions: [one], enabled: true)?.contentProfile)
         XCTAssertEqual(profile.leftContentWidth, AgentCompactOrbMetrics.leadingWidth)
         XCTAssertLessThan(profile.leftContentWidth, 62, "narrower than the old name-based minimum")
