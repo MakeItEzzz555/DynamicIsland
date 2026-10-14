@@ -1075,15 +1075,23 @@ struct IslandRootView: View {
                         layoutStore.setTextInputFocused(false)
                         deactivateCollapsedPreview()
                     })
-            } else if isCollapsedPreviewActive, let preview = collapsedActivityPreview {
-                VStack(spacing: 0) {
-                    collapsedCompactView
-                        .frame(height: layoutStore.collapsedSurfaceFrame.height)
-                    CollapsedActivityPreviewView(preview: preview, reduceMotion: reduceMotion || settings.reduceExtraMotion)
-                        .transition(.opacity.combined(with: .move(edge: .top)))
-                }
             } else {
-                collapsedCompactView
+                // One stable view for the compact island with or without the
+                // activity preview: swapping trees remounted the artwork and
+                // visualizer under the pointer, which fired hover exit/enter
+                // and made the preview collapse and reopen in a loop.
+                let preview = isCollapsedPreviewActive ? collapsedActivityPreview : nil
+                let base = layoutStore.collapsedSurfaceFrame
+                VStack(alignment: .leading, spacing: 0) {
+                    collapsedCompactView
+                        .frame(width: preview == nil ? nil : base.width, height: preview == nil ? nil : base.height)
+                        .padding(.leading, preview == nil ? 0 : max(0, base.minX - collapsedPreviewSurfaceFrame.minX))
+                    if let preview {
+                        CollapsedActivityPreviewView(preview: preview, reduceMotion: reduceMotion || settings.reduceExtraMotion)
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
         }
         .environment(\.agentVisualPreferences, settings.agentVisualPreferences)
@@ -1339,8 +1347,8 @@ struct IslandRootView: View {
     }
 
     private var collapsedPreviewSurfaceFrame: CGRect {
-        let base = layoutStore.collapsedSurfaceFrame
-        return collapsedHoverPolicy.frame(from: base)
+        collapsedHoverPolicy.frame(from: layoutStore.collapsedSurfaceFrame,
+                                   including: layoutStore.collapsedCompositeInteractionFrame)
     }
 
     private var collapsedSourceToggles: CollapsedLiveActivitySourceToggles {

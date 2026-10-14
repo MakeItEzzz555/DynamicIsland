@@ -66,6 +66,19 @@ final class CollapsedActivityPreviewTests: XCTestCase {
         XCTAssertEqual(CollapsedActivityHoverPolicy.resolve(kind: .media), .none, "previews disabled keeps the old behavior")
     }
 
+    func testPreviewHitAreaCoversTheSidecarsSoHoveringThemCannotCloseIt() {
+        let policy = CollapsedActivityHoverPolicy.activityPreview(height: 48)
+        let base = CGRect(x: 400, y: 500, width: 200, height: 32)
+        let composite = CGRect(x: 300, y: 500, width: 420, height: 32)
+        let frame = policy.frame(from: base, including: composite)
+        XCTAssertEqual(frame.minX, 300); XCTAssertEqual(frame.maxX, 720)
+        XCTAssertEqual(frame.height, 80); XCTAssertEqual(frame.maxY, base.maxY)
+        XCTAssertTrue(frame.contains(CGPoint(x: 310, y: 520)), "a pointer on the leading sidecar stays inside")
+        XCTAssertEqual(policy.frame(from: base, including: .zero), policy.frame(from: base))
+        XCTAssertEqual(CollapsedActivityHoverPolicy.peek.frame(from: base, including: composite),
+                       CollapsedActivityHoverPolicy.peek.frame(from: base), "message peeks keep their geometry")
+    }
+
     func testPreviewsStaySmall() {
         for preview: CollapsedActivityPreview in [
             .media(title: "a", artist: "b", elapsed: nil, remaining: nil), .timer(title: "t", detail: nil),

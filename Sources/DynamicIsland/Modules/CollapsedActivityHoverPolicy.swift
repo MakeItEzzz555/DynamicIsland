@@ -30,6 +30,15 @@ enum CollapsedActivityHoverPolicy: Equatable {
         enabled && self == .none
     }
 
+    /// Activity previews also span the collapsed sidecars, so a pointer on a
+    /// sidecar stays inside the hover/hit region once the preview opens.
+    func frame(from base: CGRect, including composite: CGRect) -> CGRect {
+        let grown = frame(from: base)
+        guard case .activityPreview = self, !composite.isEmpty, !composite.isNull else { return grown }
+        let minX = min(grown.minX, composite.minX), maxX = max(grown.maxX, composite.maxX)
+        return CGRect(x: minX, y: grown.minY, width: maxX - minX, height: grown.height)
+    }
+
     func frame(from base: CGRect) -> CGRect {
         let height: CGFloat
         switch self {
