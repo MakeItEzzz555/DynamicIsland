@@ -1377,7 +1377,9 @@ struct LiveActivityLayoutSettingsPreview: View {
                 CompactCollapsedSideSlotLayout(geometry: layout) {
                     AgentCompactRoutineLeadingView(session: session)
                 } right: {
-                    AgentCompactRoutineTrailingView(session: session)
+                    if let presentation = AgentCompactPresentation.make(sessions: [session]) {
+                        AgentCompactRoutineTrailingView(presentation: presentation)
+                    }
                 }
             case .voiceRecording, .voiceTranscription:
                 if let dependencies {

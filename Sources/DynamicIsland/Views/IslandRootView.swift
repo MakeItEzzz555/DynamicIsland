@@ -617,6 +617,7 @@ struct IslandRootView: View {
             showNavigationControls: expandedHeaderLayout.mode != .hidden)
     }
     @State private var collapsedPreviewVisible = false
+    @State private var isCollapsedVisualizerHovered = false
     @State private var collapsedPreviewGeneration = 0
     @StateObject private var agentGlow = AgentActivityGlowCoordinator()
     @StateObject private var gestureCoordinator = IslandGestureCoordinator()
@@ -967,6 +968,57 @@ struct IslandRootView: View {
         }
     }
 
+    private var collapsedCompactView: some View {
+        CompactIslandView(
+            settings: settings,
+            modules: modules,
+            contentMode: collapsedContentMode,
+            layoutResolution: collapsedLayoutResolution,
+            previewContent: nil,
+            previewActive: false,
+            hardwareNotchWidth: layoutStore.hardwareNotchWidth,
+            collapsedLeftRegionWidth: layoutStore.collapsedLeftRegionWidth,
+            collapsedNotchCoreWidth: layoutStore.collapsedNotchCoreWidth,
+            collapsedRightRegionWidth: layoutStore.collapsedRightRegionWidth,
+            isNotchIntegratedShell: IslandShellNotchIntegration.resolve(
+                geometryHasHardwareNotch: layoutStore.hasHardwareNotch,
+                displayMetricsHaveHardwareNotch: layoutStore.displayMetrics.hasHardwareNotch
+            ),
+            onVisualizerHover: setCollapsedVisualizerHovered
+        )
+    }
+
+    /// The hovered activity's preview. Off when previews are disabled in
+    /// Settings, and for media while the pointer is on the visualizer
+    /// (that target is pause/play, not the preview).
+    private var collapsedActivityPreview: CollapsedActivityPreview? {
+        guard settings.collapsedHoverPreviewEnabled, let primary = collapsedLayoutResolution.primary?.activity else { return nil }
+        if primary.kind == .media, isCollapsedVisualizerHovered { return nil }
+        return CollapsedActivityPreview.make(
+            kind: primary.kind,
+            activity: primary,
+            media: primary.kind == .media ? .init(title: modules.media.title, artist: modules.media.artist,
+                position: modules.media.playbackPosition, duration: modules.media.duration,
+                hasProgress: modules.media.hasPlaybackProgress) : nil,
+            agent: primary.kind == .agent
+                ? AgentCompactPresentation.make(sessions: modules.agentEvents.sessions, enabled: settings.agentActivityEnabled)?.sessions.first
+                : nil,
+            deviceName: CollapsedActivityPreviewDevice.name
+        )
+    }
+
+    private func setCollapsedVisualizerHovered(_ hovered: Bool) {
+        guard isCollapsedVisualizerHovered != hovered else { return }
+        isCollapsedVisualizerHovered = hovered
+        if hovered {
+            collapsedPreviewGeneration += 1
+            collapsedPreviewVisible = false
+            updateCollapsedPreviewLayout()
+        } else if isCollapsedHovering {
+            handleCollapsedHover(true)
+        }
+    }
+
     private var compactPermission: AgentCompactPermission? {
         AgentCompactPermission.current(sessions: modules.agentEvents.sessions,
             approvals: modules.agentApprovalControl, managed: modules.agentManagedControl)
@@ -1006,23 +1058,15 @@ struct IslandRootView: View {
                         layoutStore.setTextInputFocused(false)
                         deactivateCollapsedPreview()
                     })
+            } else if isCollapsedPreviewActive, let preview = collapsedActivityPreview {
+                VStack(spacing: 0) {
+                    collapsedCompactView
+                        .frame(height: layoutStore.collapsedSurfaceFrame.height)
+                    CollapsedActivityPreviewView(preview: preview, reduceMotion: reduceMotion || settings.reduceExtraMotion)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
             } else {
-        CompactIslandView(
-            settings: settings,
-            modules: modules,
-            contentMode: collapsedContentMode,
-            layoutResolution: collapsedLayoutResolution,
-            previewContent: nil,
-            previewActive: false,
-            hardwareNotchWidth: layoutStore.hardwareNotchWidth,
-            collapsedLeftRegionWidth: layoutStore.collapsedLeftRegionWidth,
-            collapsedNotchCoreWidth: layoutStore.collapsedNotchCoreWidth,
-            collapsedRightRegionWidth: layoutStore.collapsedRightRegionWidth,
-            isNotchIntegratedShell: IslandShellNotchIntegration.resolve(
-                geometryHasHardwareNotch: layoutStore.hasHardwareNotch,
-                displayMetricsHaveHardwareNotch: layoutStore.displayMetrics.hasHardwareNotch
-            )
-        )
+                collapsedCompactView
             }
         }
         .environment(\.agentVisualPreferences, settings.agentVisualPreferences)
@@ -1262,7 +1306,8 @@ struct IslandRootView: View {
     private var collapsedHoverPolicy: CollapsedActivityHoverPolicy {
         CollapsedActivityHoverPolicy.resolve(kind: collapsedLayoutResolution.primary?.activity.kind,
             exactMessageReply: collapsedMessageEntry.map { modules.messaging.canReply(to: $0) } ?? false,
-            exactAgentApproval: compactPermission != nil)
+            exactAgentApproval: compactPermission != nil,
+            activityPreview: collapsedActivityPreview)
     }
 
     private var compactMessageSending: Bool {
@@ -1423,7 +1468,7 @@ struct IslandRootView: View {
             !layoutStore.isReturningToNormalCollapsedSize &&
             settings.collapsedHoverPreviewEnabled &&
             collapsedHoverPolicy != .none &&
-            collapsedMessageEntry != nil &&
+            (collapsedMessageEntry != nil || collapsedActivityPreview != nil) &&
             !navigation.isFileDropTargeted &&
             !layoutStore.isShellMorphing &&
             !layoutStore.isCollapseShellOnly &&
@@ -1682,6 +1727,7 @@ struct IslandRootView: View {
         let generation = collapsedPreviewGeneration
 
         guard isHovering else {
+            isCollapsedVisualizerHovered = false
             if compactMessageFocused || compactMessageSending { return }
             compactMessageKey = nil
             collapsedPreviewVisible = false
@@ -1702,6 +1748,8 @@ struct IslandRootView: View {
             guard settings.overlayEnabled, sessionGeneration == layoutStore.overlayPresentationGeneration,
                   generation == collapsedPreviewGeneration else { return }
             guard isCollapsedHovering, !isExpanded, !layoutStore.isShellMorphing else { return }
+            // The visualizer is a pause/play target: never preview or expand from it.
+            guard !isCollapsedVisualizerHovered else { return }
             if collapsedHoverPolicy.allowsAutomaticExpansion(enabled: settings.expandOnHover) {
                 onRequestAutomaticExpand()
                 return
@@ -2429,6 +2477,8 @@ struct CompactIslandView: View {
     let collapsedNotchCoreWidth: CGFloat
     let collapsedRightRegionWidth: CGFloat
     let isNotchIntegratedShell: Bool
+    /// Reports pointer hover over the collapsed visualizer (pause/play target).
+    var onVisualizerHover: ((Bool) -> Void)? = nil
     @ObservedObject private var media: MediaController
     @ObservedObject private var liveActivities: LiveActivityStore
     @ObservedObject private var agentAttention: AgentAttentionCoordinator
@@ -2448,8 +2498,10 @@ struct CompactIslandView: View {
         collapsedLeftRegionWidth: CGFloat = 0,
         collapsedNotchCoreWidth: CGFloat = 0,
         collapsedRightRegionWidth: CGFloat = 0,
-        isNotchIntegratedShell: Bool = false
+        isNotchIntegratedShell: Bool = false,
+        onVisualizerHover: ((Bool) -> Void)? = nil
     ) {
+        self.onVisualizerHover = onVisualizerHover
         self.settings = settings
         self.modules = modules
         self.contentMode = contentMode
@@ -2583,15 +2635,18 @@ struct CompactIslandView: View {
                 }
             } right: {
                 if settings.showVisualizer && settings.showCollapsedVisualizer {
-                    AudioVisualizerView(
-                        isPlaying: media.isPlaying,
-                        isActive: media.hasActiveMediaSource,
-                        accentColor: visualizerColor,
-                        variant: .compact,
-                        barCount: 7,
-                        cadence: .ambient,
-                        pauseDuringShellMorph: settings.disableVisualizerDuringMorph
-                    )
+                    CollapsedVisualizerPlaybackControl(media: media, reduceMotion: reduceMotion || settings.reduceExtraMotion,
+                                                       onHover: onVisualizerHover) {
+                        AudioVisualizerView(
+                            isPlaying: media.isPlaying,
+                            isActive: media.hasActiveMediaSource,
+                            accentColor: visualizerColor,
+                            variant: .compact,
+                            barCount: 7,
+                            cadence: .ambient,
+                            pauseDuringShellMorph: settings.disableVisualizerDuringMorph
+                        )
+                    }
                 }
             }
             .transition(.compactMediaContent)
@@ -2604,7 +2659,7 @@ struct CompactIslandView: View {
                 sideSlotLayout {
                     AgentCompactRoutineLeadingView(session: primary)
                 } right: {
-                    AgentCompactRoutineTrailingView(session: primary)
+                    AgentCompactRoutineTrailingView(presentation: presentation)
                 }
                 .transition(.compactMediaContent)
             } else {
@@ -2676,7 +2731,7 @@ struct CompactIslandView: View {
                 sideSlotLayout {
                     AgentCompactRoutineLeadingView(session: primary)
                 } right: {
-                    AgentCompactRoutineTrailingView(session: primary)
+                    AgentCompactRoutineTrailingView(presentation: presentation)
                 }
                 .transition(.opacity)
             } else {

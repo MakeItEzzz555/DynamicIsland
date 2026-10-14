@@ -59,17 +59,32 @@ struct AgentCompactPresentation: Equatable, Sendable {
     }
 }
 
+/// Fixed geometry of the orbs-only routine agent pill.
+enum AgentCompactOrbMetrics {
+    static let primaryOrb: CGFloat = 18
+    static let secondaryOrb: CGFloat = 13
+    static let spacing: CGFloat = 4
+    /// Primary orb + provider glyph.
+    static let leadingWidth: CGFloat = primaryOrb + spacing + 11
+    /// Mini orbs for the other visible sessions (+N badge), else one state glyph.
+    static func trailingWidth(for presentation: AgentCompactPresentation) -> CGFloat {
+        let others = presentation.sessions.count - 1
+        let badge: CGFloat = presentation.overflowCount > 0 ? 18 : 0
+        guard others > 0 else { return max(16, badge) }
+        return CGFloat(others) * secondaryOrb + CGFloat(others - 1) * spacing + (badge > 0 ? spacing + badge : 0)
+    }
+}
+
 enum AgentCollapsedShellPresentation {
     static func routine(sessions: [AgentSession], enabled: Bool) -> CollapsedPresentationProfile? {
         guard let compact = AgentCompactPresentation.make(sessions: sessions, enabled: enabled) else {
             return nil
         }
-        guard let primary = compact.sessions.first else { return nil }
-        let project = primary.project.displayName ?? primary.id.sessionID.provider.stableName.capitalized
-        let state = AgentSessionPresentation.displayedStateLabel(for: primary, at: Date())
+        guard !compact.sessions.isEmpty else { return nil }
+        // Orbs only: names, states and commands live in the hover preview.
         return .agentRoutine(
-            leftContentWidth: min(112, estimatedWidth(project, minimum: 62, maximum: 112) + 28),
-            rightContentWidth: estimatedWidth(state, minimum: 62, maximum: 112)
+            leftContentWidth: AgentCompactOrbMetrics.leadingWidth,
+            rightContentWidth: AgentCompactOrbMetrics.trailingWidth(for: compact)
         )
     }
 

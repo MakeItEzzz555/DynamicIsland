@@ -162,3 +162,44 @@ Every hold is released by its own lifecycle: menu end notification, owner `false
 Tests: `NativePopoverContainmentTests.testTransientNativeWindowClassifier` adds open/save panel cases, including that a closed panel releases the hold. Containment and reachability suites: 17 tests, 0 failures.
 
 Native acceptance not done: traversing menu gaps; leaving the island into an open panel and back; Escape order with a panel open.
+
+## Milestone F — contextual collapsed previews and orbs-only agents
+
+Implementation:
+- `CollapsedActivityHoverPolicy` gained `.activityPreview(height:)`, which grows the collapsed shell **downward only**, by the preview's content height (48–70 pt), at a minimum width of 300.
+  - Precedence: an exact agent approval comes first (unchanged), then message reply and peek, then call controls, then activity previews.
+  - With `collapsedHoverPreviewEnabled` off, no preview is built and the old hover behavior, including expand-on-hover, is unchanged.
+  - A preview replaces whole-island hover expansion for that activity only.
+- `CollapsedActivityPreview` is a pure model built only from existing state:
+  - **Media:** title and artist as readable 13 / 11.5 pt marquees (slow 24 pt/s with a 1.6 s rest; static and middle-truncated under Reduce Motion). Elapsed · remaining is centred, and shown only when the source reports progress.
+  - **Battery:** the Mac's name (`SCDynamicStoreCopyComputerName`, a local lookup), the percentage and the charging state. No time estimate, because none is reliable.
+  - **Timer:** the live activity's title and detail.
+  - **Agent:** project, provider glyph, the displayed state ("Thinking", "Running command", "Awaiting approval"…) and the running command's executable name, or the running tool's name, via `AgentPrivacyProjection`. Arguments, paths and secrets never appear.
+- The preview reuses the existing message-peek pipeline: the generation-guarded delayed hover, `layoutStore.updateCollapsedPreview` for the shell frame and hit region, and the existing animation. It no longer requires a message entry.
+- Collapsed visualizer (`CollapsedVisualizerPlaybackControl`):
+  - Hover dims and blurs the bars and reveals Pause or Play. Clicking calls `MediaController.playPause()`.
+  - The glyph follows the *observed* `isPlaying`, so a failed command never shows a false state.
+  - It is only enabled when transport control is available, and exposes a VoiceOver action.
+  - While the visualizer is hovered, the media preview and hover auto-expansion are suppressed. They resume when the pointer moves back onto the rest of the island.
+- Routine agent pill, **orbs only**:
+  - Leading: the primary orb plus the provider glyph, 33 pt.
+  - Trailing: mini orbs for the other visible sessions and a `+N` badge, or one state glyph, 16 pt.
+  - This replaces the 62–112 pt name and state-label wings. Names, states and commands are in the hover preview and in VoiceOver labels.
+  - Attention and approval pills are **unchanged**, so an urgent approval is never hidden.
+
+Tests: `CollapsedActivityPreviewTests`, 6 cases:
+- media times only with real progress
+- battery and timer read from the activity; non-preview kinds give nil
+- agent command sanitised (`curl` out of a full command line with a bearer token)
+- the policy's downward growth and precedence (approval and message still win)
+- previews stay at or under 70 pt
+- orbs-only agent widths
+
+Connected collapsed, agent, notch-geometry, layout and Settings preview suites: 193 tests, 0 failures, 3 pre-existing skips. A scratch render of all four previews was inspected and not committed.
+
+Native acceptance not done:
+- the pointer path between the island and a grown preview (flicker)
+- visualizer hover → pause → play on real players
+- whether a click on Pause inside the collapsed island ever falls through to click-to-expand
+- notchless and external displays
+- the multi-session orb row
