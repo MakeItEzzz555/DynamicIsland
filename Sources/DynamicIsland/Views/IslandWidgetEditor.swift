@@ -850,6 +850,7 @@ extension IslandWidget {
         case .terminal: Color(white: 0.32)
         case .feed: Color(red: 0.20, green: 0.75, blue: 0.45)
         case .workspace: Color(white: 0.4)
+        case .camera: Color(red: 0.20, green: 0.78, blue: 0.35)
         case .agentUsage: Color(red: 0.36, green: 0.62, blue: 1.0)
         case .codexUsage: Color(red: 0.22, green: 0.58, blue: 0.95)
         case .claudeUsage: Color(red: 0.86, green: 0.47, blue: 0.30)

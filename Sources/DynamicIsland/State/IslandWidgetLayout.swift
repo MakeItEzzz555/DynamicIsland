@@ -3,7 +3,7 @@ import Combine
 import CoreGraphics
 
 enum IslandWidget: String, CaseIterable, Codable, Identifiable {
-    case media, files, clipboard, timer, calendar, shortcuts, activities, chat, terminal, feed, workspace
+    case media, files, clipboard, timer, calendar, shortcuts, activities, chat, terminal, feed, workspace, camera
     case agentUsage, codexUsage, claudeUsage
     func isEligible(on surface: WorkspaceSurface) -> Bool {
         switch surface {
@@ -27,6 +27,7 @@ enum IslandWidget: String, CaseIterable, Codable, Identifiable {
         case .terminal: "Terminal"
         case .feed: "Feed"
         case .workspace: "Workspace"
+        case .camera: "Camera"
         case .agentUsage: "Agent Usage"
         case .codexUsage: "Codex Usage"
         case .claudeUsage: "Claude Usage"
@@ -45,6 +46,7 @@ enum IslandWidget: String, CaseIterable, Codable, Identifiable {
         case .terminal: "terminal.fill"
         case .feed: "list.bullet.rectangle"
         case .workspace: "rectangle.split.2x1"
+        case .camera: "video.fill"
         case .agentUsage: "gauge.with.dots.needle.50percent"
         case .codexUsage: "sparkle"
         case .claudeUsage: "brain"

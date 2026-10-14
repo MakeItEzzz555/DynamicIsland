@@ -487,6 +487,10 @@ struct SettingsPreviewWidgetGrid: View {
             CalendarSectionView(controller: samples.services.calendar, layoutStore: nil)
         case .clipboard:
             ClipboardHistoryView(store: dependencies.clipboardHistory, onClose: {})
+        case .camera:
+            // Sample state only: the Settings preview never touches capture.
+            CameraWidgetView(controller: dependencies.productivity.camera, reduceMotion: reduceMotion)
+                .environment(\.isSettingsPreview, true)
         case .activities:
             LiveActivitiesModuleView(liveActivities: activities, navigation: navigation, rightWorkspace: workspace,
                                      settings: settings, availableHeight: size.height)

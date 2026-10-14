@@ -4179,6 +4179,8 @@ struct ExpandedIslandView: View {
             ClipboardWidgetView(store: modules.clipboardHistory, enabled: settings.clipboardHistoryEnabled, onOpen: openClipboardHistory, onEnable: onOpenSettings)
         case .shortcuts:
             ShortcutsModuleView(shortcuts: modules.shortcuts, availableHeight: height, compactScale: 1, onShortcutLaunched: onShortcutLaunched)
+        case .camera:
+            CameraWidgetView(controller: modules.productivity.camera, reduceMotion: reduceMotion || settings.reduceExtraMotion)
         case .activities:
             LiveActivitiesModuleView(liveActivities: liveActivities, navigation: navigation, rightWorkspace: modules.rightWorkspace, settings: settings, availableHeight: height, compactScale: 1)
         }

@@ -476,7 +476,7 @@ enum WorkspaceWidgetAvailability {
             case .timer: return settings.timerEnabled
             case .shortcuts: return settings.shortcutsEnabled
             case .activities: return settings.liveActivitiesEnabled
-            case .calendar, .workspace, .chat, .terminal, .feed: return true
+            case .calendar, .workspace, .chat, .terminal, .feed, .camera: return true
             case .agentUsage, .codexUsage, .claudeUsage: return settings.agentActivityEnabled && settings.agentUsageMetricsEnabled
             }
         }
