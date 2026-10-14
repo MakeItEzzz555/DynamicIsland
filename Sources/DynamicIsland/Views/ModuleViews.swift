@@ -39,6 +39,7 @@ struct AudioVisualizerView: View {
     @State private var playbackHoldGeneration = 0
     @State private var livePresentation = AudioSpectrumPresentation()
     @State private var liveLevels: [CGFloat] = []
+    @State private var spectrumDynamics = SpectrumDynamics()
 
     private var mode: LiveVisualizerMode {
         .resolve(isMediaPalette: palette == .media, presentation: livePresentation,
@@ -74,12 +75,12 @@ struct AudioVisualizerView: View {
             let next = LiveVisualizerMode.resolve(isMediaPalette: palette == .media, presentation: presentation,
                                                   mediaPlaying: isPlaying && isActive, reduceMotion: reduceMotion || previewReduceMotion)
             switch next {
-            case .live:
-                let target = SpectrumBarMapper.levels(bands: presentation.frame?.bands ?? .zero, barCount: barCount)
-                liveLevels = SpectrumBarSmoother.step(previous: liveLevels, target: target)
-            case .liveSilent:
-                liveLevels = SpectrumBarSmoother.step(previous: liveLevels, target: SpectrumBarMapper.silent(barCount: barCount))
+            case .live, .liveSilent:
+                // Silence feeds zeros, so bars fall with Droppy's release and snap.
+                let raw = next == .live ? (presentation.frame?.bands ?? .zero) : .zero
+                liveLevels = SpectrumBarMapper.levels(bands: spectrumDynamics.advance(raw: raw), barCount: barCount)
             case .decorative, .still:
+                spectrumDynamics = SpectrumDynamics()
                 liveLevels = []
             }
         }
@@ -144,7 +145,7 @@ struct AudioVisualizerView: View {
                     .frame(width: variant.barWidth, height: variant.maximumBarHeight * (index < levels.count ? levels[index] : SpectrumBarMapper.floor))
             }
         }
-        // No SwiftUI animation: SpectrumBarSmoother already shapes motion per
+        // No SwiftUI animation: SpectrumDynamics already shapes motion per
         // 30 Hz frame, and an animation clock that stalls (occluded/headless
         // windows) would keep drawing stale heights.
     }

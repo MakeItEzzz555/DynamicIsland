@@ -41,6 +41,8 @@ enum LiveVisualizerMode: Equatable {
 /// interpolation, so every bar follows real frequency content (no repeats).
 enum SpectrumBarMapper {
     static let floor: CGFloat = 0.12
+    /// Droppy clamps live bar scale to at most 0.9 of the bar height.
+    static let cap: CGFloat = 0.9
 
     static func levels(bands: SIMD8<Float>, barCount: Int) -> [CGFloat] {
         guard barCount > 0 else { return [] }
@@ -51,24 +53,55 @@ enum SpectrumBarMapper {
             let upper = min(lower + 1, 7)
             let t = position - CGFloat(lower)
             let value = values[lower] + (values[upper] - values[lower]) * t
-            return floor + (1 - floor) * value
+            return floor + (cap - floor) * value
         }
     }
 
     static func silent(barCount: Int) -> [CGFloat] { Array(repeating: floor, count: max(barCount, 0)) }
 }
 
-/// Presentation smoothing per bar: fast attack, slow release. DSP stays in
-/// Codex's processor; this only shapes motion between 30 Hz frames.
-enum SpectrumBarSmoother {
-    static let attack: CGFloat = 0.72
-    static let release: CGFloat = 0.24
+/// Droppy 16.0.1's per-band analyzer tick, reverse-engineered constants
+/// (reports/DROPPY_16_VISUALIZER_RE_2026-10-14.md), applied as a
+/// presentation stage on Codex's bands (its DSP stays untouched):
+/// - peak-tracking auto-gain, so every band uses its full range for any
+///   loudness/mastering (the reason Droppy's bars follow the music);
+/// - asymmetric smoothing, fast attack and slow release;
+/// - silence snap to zero, and a rising-edge boost so beats punch.
+/// Droppy ticks at 60 Hz; our frames arrive at ~30 Hz, so each frame runs
+/// two ticks.
+struct SpectrumDynamics: Equatable {
+    static let peakDecay = 0.9985
+    static let agcFloor = 0.35
+    static let attack = 0.85
+    static let release = 0.28
+    static let silenceSnap = 0.004
+    static let transientBoost = 0.45
+    static let ticksPerFrame = 2
 
-    static func step(previous: [CGFloat], target: [CGFloat]) -> [CGFloat] {
-        guard previous.count == target.count else { return target }
-        return zip(previous, target).map { current, goal in
-            current + (goal - current) * (goal > current ? attack : release)
+    private(set) var peaks = [Double](repeating: 0, count: 8)
+    private(set) var smoothed = [Double](repeating: 0, count: 8)
+    private(set) var published = [Double](repeating: 0, count: 8)
+
+    /// One Droppy analyzer tick for every band.
+    mutating func tick(raw: SIMD8<Float>) {
+        for band in 0..<8 {
+            let value = raw[band].isFinite ? max(0, Double(raw[band])) : 0
+            peaks[band] = max(value, peaks[band] * Self.peakDecay)
+            let normalized = min(value / max(peaks[band], Self.agcFloor), 1)
+            var next = smoothed[band] + (normalized - smoothed[band]) * (normalized > smoothed[band] ? Self.attack : Self.release)
+            if next < Self.silenceSnap, normalized == 0 { next = 0 }
+            next = min(max(next, 0), 1)
+            published[band] = min(1, next + max(0, next - published[band]) * Self.transientBoost)
+            smoothed[band] = next
         }
+    }
+
+    /// Advances one ~30 Hz frame and returns the shaped bands.
+    mutating func advance(raw: SIMD8<Float>) -> SIMD8<Float> {
+        for _ in 0..<Self.ticksPerFrame { tick(raw: raw) }
+        var out = SIMD8<Float>.zero
+        for band in 0..<8 { out[band] = Float(published[band]) }
+        return out
     }
 }
 
