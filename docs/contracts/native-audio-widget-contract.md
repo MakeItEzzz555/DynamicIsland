@@ -1,4 +1,4 @@
-# Native audio widget contract — revision 1
+# Native audio widget contract — revision 2
 
 Baseline: PR #32 HEAD `1cd01b4d3a90b49f497176d0c9c19f91eda904a1` **plus the current uncommitted DynamicIsland-main rescue/Settings/camera work**. Development branch: `feature/native-audio-foundation`, separate worktree `/Users/makeiteasy3/DynamicIsland-worktrees/native-audio-foundation`. The original checkout, index, running app and permissions are not integration targets for this phase.
 
@@ -11,10 +11,10 @@ Claude owns views, semantic widget sizes, animation, interaction, artwork and na
 | Eight spectrum bands | `AudioSpectrumFrame.bands: SIMD8<Float>` | Ascending logarithmic 40 Hz–min(12 kHz, Nyquist-safe upper bound), finite 0…1. No callback Array allocation. `sequence` changes per analyzed frame; `hostTime` is monotonic mach host ticks, not wall-clock playback time. |
 | Energy | `rms`, `peak`, `hasSignal` | RMS/peak linear full-scale 0…1 from actual buffers. No microphone, call-level or participant claims. |
 | Capture | `LiveSpectrumProviding` / `AudioSpectrumPresentation` | Instantiation, previews and subscriptions are inert. Only `startFromUserAction()` can initiate permission-sensitive work. `.capturing` requires observed buffers, not merely successful tap creation. On disable/suspension/error clear frame; decorative fallback may continue but must be labelled non-live. |
-| Permission | `AudioCapturePermission` | `.notVerified` is deliberately not “not determined”: no public TCC query is claimed. `.denied` requires an explicit access error; silence/no frames never proves denial. `.accessEstablished` means this process successfully received capture buffers, not a durable TCC grant. |
+| Permission | `AudioCapturePermission` | `.notVerified` is deliberately not “not determined”: no public TCC query is claimed. `.denied` requires an explicit access error; silence/no frames never proves denial. `.accessEstablished` requires actual non-silent captured signal in this process, not merely callbacks or a durable TCC grant; silent buffers keep permission notVerified. |
 | Playback | `AudioPlaybackEvidence` | Signal/silence pertains to the captured system mix only. MediaController remains authority for playing/paused/source metadata; silence must never mark Spotify paused. |
 | System volume/mute | `SystemVolumeProviding` | Observation may have nil volume/mute for unreadable hardware. Use output identity including generation in every request; only read-back establishes `.verified`. Unsupported writes leave native media keys unconsumed. |
-| Output device | `AudioOutputDevice` | Stable UID plus transient device ID/generation, name, transport, separate volume/mute read/write capabilities. HDMI/AirPlay/Bluetooth are not assumed writable. |
+| Output device | `NativeAudioOutputDevice` | Stable UID plus transient device ID/generation, name, transport, separate volume/mute read/write capabilities. HDMI/AirPlay/Bluetooth are not assumed writable. |
 | Application output | `ApplicationVolumeProviding` | Only actual output-process activity may populate rows. PID/process object IDs/generation protect against PID reuse. Name, bundle ID and bundle URL support native app identity/icon; unresolved identities stay unresolved. |
 | Per-app gain | `requestGain` | Gain is nil and controlAvailable false until a real routed path exists. No visual-only slider is a genuine volume control. `.verified` requires actual gain application; failure leaves ordinary output intact. Natural/Linear curves remain unspecified until implemented and tested. |
 | Errors | `NativeAudioError` / `AudioVolumeWriteResult` | Finite input 0…1, generation-scoped requests, superseded coalesced writes, explicit unsupported/failure. OSStatus diagnostics contain operation/status only, never audio or other app content. |
@@ -23,7 +23,7 @@ All UI-facing state and Combine publication are MainActor-owned. Audio/DSP/captu
 
 ## Availability by slice
 
-At the initial contract checkpoint these protocols are **contracts, not claims of implemented services**. The spectrum backend is the first implementation slice. Existing SystemHUDController keeps its verified three-stage native volume write ladder and key pass-through; external-change/coalescing changes are a separate follow-up. Per-app gain remains unavailable until a safe replacement-output path is tested. No private lock-screen surface is enabled.
+The spectrum implementation is `AudioSpectrumController` + actor-owned `CoreAudioSpectrumBackend` + `RealtimeSpectrumProcessor`. Native capture acceptance is permission-gated and has not run; synthetic DSP/lifecycle evidence is separate. System-volume and per-app protocols remain **contracts, not claims of implemented services**. Existing SystemHUDController keeps its verified three-stage native volume write ladder and key pass-through; external-change/coalescing changes are a separate follow-up. Per-app gain remains unavailable until a safe replacement-output path is tested. No private lock-screen surface is enabled.
 
 ## Exact integration handoff (do not edit shared views concurrently)
 
@@ -41,3 +41,5 @@ No patch to IslandRootView, ModuleViews, camera, Tray or Agent views is part of 
 The supplied Droppy reports label 16.0.1 binary observations **O**, inference **I**, February-source-only **S**, and unknown **U**. Process tap/FFT imports are observed; inferred smoothing semantics, exact volume curves and private-lock behaviors are not API authority. No proprietary implementation/constants/assets are transplanted.
 
 Apple APIs: [system audio taps](https://developer.apple.com/documentation/coreaudio/capturing-system-audio-with-core-audio-taps), installed CoreAudio `AudioHardwareTapping.h` (macOS 14.2 availability), `CATapDescription.h` (mute/privacy), `AudioHardware.h` (aggregate/IOProc ownership). No new package dependency is required; use native Accelerate, CoreAudio, Combine and AppKit lifecycle signals.
+
+Revision 2 resolves the existing MediaAdvancedControls.AudioOutputDevice name collision without modifying that module; use NativeAudioOutputDevice for capability/generation-aware observations. The initial contract SHA a063866 is superseded for integration by the verified revision-2 commit.

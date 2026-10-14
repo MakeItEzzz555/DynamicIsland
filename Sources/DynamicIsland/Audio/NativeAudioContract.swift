@@ -75,7 +75,7 @@ struct AudioOutputCapabilities: Sendable, Equatable {
     let canSetMute: Bool
 }
 
-struct AudioOutputDevice: Sendable, Equatable, Identifiable {
+struct NativeAudioOutputDevice: Sendable, Equatable, Identifiable {
     var id: AudioOutputIdentity { identity }
     let identity: AudioOutputIdentity
     let name: String
@@ -88,7 +88,7 @@ enum AudioOutputTransport: Sendable, Equatable {
 }
 
 struct SystemAudioVolumeObservation: Sendable, Equatable {
-    let output: AudioOutputDevice
+    let output: NativeAudioOutputDevice
     let volume: Double?
     let muted: Bool?
     let observedAt: Date
