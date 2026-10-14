@@ -4166,7 +4166,8 @@ struct ExpandedIslandView: View {
         case .media:
             MediaModuleView(settings: settings, media: modules.media, availableHeight: height, onLauncherActivated: onShortcutLaunched, onMediaSourceOpened: onShortcutLaunched)
         case .files:
-            FileShelfModuleView(settings: settings, fileShelf: modules.fileShelf, backgroundOperations: modules.backgroundOperations)
+            FileShelfModuleView(settings: settings, fileShelf: modules.fileShelf, backgroundOperations: modules.backgroundOperations,
+                                backgroundRemoval: modules.productivity.backgroundRemoval, onOpenSettings: onOpenSettings)
                 .onDrop(of: FileDropProviderLoader.acceptedTypes, isTargeted: filesTargetBinding) { providers in
                     loadDroppedFiles(from: providers)
                 }
@@ -4370,7 +4371,9 @@ struct ExpandedIslandView: View {
                         fileShelf: modules.fileShelf,
                         backgroundOperations: modules.backgroundOperations,
                         dragExplanation: modules.fileDragSession.explanatoryAction?.explanation
-                            ?? modules.fileDragSession.outcomeMessage
+                            ?? modules.fileDragSession.outcomeMessage,
+                        backgroundRemoval: modules.productivity.backgroundRemoval,
+                        onOpenSettings: onOpenSettings
                     )
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .overlay {

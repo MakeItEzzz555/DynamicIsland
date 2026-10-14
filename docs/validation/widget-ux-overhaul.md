@@ -60,3 +60,49 @@ Native acceptance not done:
 - the context menu inside the panel
 - the device picker
 - interplay with active hand navigation on real hardware
+
+## Milestone C — File Tray context menu and multi-file operations
+
+Implementation:
+- `FileTrayItemMenu` (`Views/ModuleViews.swift`) is a SwiftUI `contextMenu`, rendered by AppKit as a native `NSMenu`, so submenus and keyboard navigation are native.
+- Targets: if the clicked item is part of the selection, the menu acts on the whole selection, otherwise on the clicked item. Right-click never changes the selection.
+- Sections:
+  1. Open (all targets) · Open With (single item; "No other applications" when empty) · Quick Look (all targets) · Show in Finder (selects all targets).
+  2. Copy · Share (a `ShareLink` submenu backed by the native sharing services).
+  3. **Create New Files** (originals never change):
+     - Convert To ▸: only formats every selected image supports; audio formats for one audio/video file. "More Options…" opens the existing File Actions panel. Inapplicable selections show an explanatory disabled line.
+     - Extract Text: images only; on-device Vision; the text goes to the clipboard.
+     - Remove Background: only when `FileTrayActionTargets` says it is available (one image).
+     - Create ZIP Archive.
+     - New Folder with Copies.
+  4. **Change Files on Disk**: Rename… (single item) · Save a Copy To… · Move To….
+  5. **Tray Only**: Copy Path(s) · Copy File Name · Move to Basket · Remove from Tray (Keeps File).
+  6. File Tray Settings….
+- Not added: a cloud provider entry (no working provider exists) and a separate "Compress". In this codebase Compress *is* the verified ZIP; there is no image or video size-reduction back end, and a fake one was not shipped.
+- Shared operations (`Modules/FileTrayOperations.swift`, an extension of `FileShelfStore`, reused by milestone D):
+  - Each operation writes new collision-safe outputs, adds them to the Tray and selects them.
+  - `operationStatus` (working / succeeded / failed) is shown as one row in the Tray.
+  - `succeeded` is published only once the output exists **and** the Tray accepted it. A full Tray, a partial batch failure or zero outputs are reported as failures with exact counts.
+- Folder creation **copies**: "New Folder" (collision-safe) is created beside the first item, the items are copied in (the existing `FileShelfDiskOperations.copy`, which rolls back its own copies), and the folder is added and selected. On failure only the folder this call created is removed.
+- ZIP: `BackgroundOperationController.startCompression` gained an optional `onCompleted` callback, and existing callers are unchanged. The archive joins the Tray only after the `ditto` + `unzip` verification completes, so progress and cancellation remain in the existing background-operation UI.
+
+Tests: `FileTrayOperationsTests`, 10 cases on real temporary files, none of the user's files.
+- Convert: original byte-identical, output added and selected.
+- Partial batch failure: "Added 1; 1 failed", corrupt input unchanged.
+- Duplicate name: never overwrites; `dup 2.jpg`.
+- Folder copies with a collision → `New Folder 2`.
+- Folder rollback on a missing source.
+- Unwritable destination (0555): no side effects.
+- ZIP: the status stays `working` until the archive exists; the source stays in the Tray.
+- A full Tray is reported, not claimed.
+- Unsupported conversion: refused without writing.
+- Vision OCR reads rendered text.
+
+Connected suites (BackgroundOperationCenter, FileShelf*, FileAudioConversion, FileActionPresenter, BasketManager): 56 tests, 0 failures.
+
+Native acceptance not done:
+- the physical right-click menu inside the island panel
+- submenu traversal while the island stays open (milestone E owns the collapse lease)
+- the Share sheet
+- Finder reveal
+- app restart and Tray restore with the new outputs

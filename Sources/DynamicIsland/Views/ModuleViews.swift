@@ -929,6 +929,8 @@ struct FileShelfModuleView: View {
     @ObservedObject var fileShelf: FileShelfStore
     @ObservedObject var backgroundOperations: BackgroundOperationController
     var dragExplanation: String? = nil
+    var backgroundRemoval: BackgroundRemovalController? = nil
+    var onOpenSettings: (() -> Void)? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @StateObject private var thumbnailCache = FileThumbnailCache()
 
@@ -976,6 +978,11 @@ struct FileShelfModuleView: View {
             }
             .foregroundStyle(.white)
 
+            if let status = fileShelf.operationStatus {
+                FileTrayOperationStatusRow(status: status)
+                    .transition(.opacity)
+            }
+
             if fileShelf.files.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "square.and.arrow.down.on.square")
@@ -1000,6 +1007,9 @@ struct FileShelfModuleView: View {
                                 url: url,
                                 thumbnailCache: thumbnailCache,
                                 isSelected: fileShelf.selection.contains(url.standardizedFileURL),
+                                backgroundOperations: backgroundOperations,
+                                backgroundRemoval: backgroundRemoval,
+                                onOpenSettings: onOpenSettings,
                                 onRemove: { fileShelf.remove(url) }
                             )
                         }
@@ -1034,6 +1044,7 @@ struct FileShelfModuleView: View {
             }
         }
         .animation(.easeOut(duration: 0.14), value: dragExplanation)
+        .animation(WorkspaceMotion.smoothContent(reduceMotion: reduceMotion || settings.reduceExtraMotion), value: fileShelf.operationStatus)
     }
 
     private var emptyShelfSubtitle: String {
@@ -1164,6 +1175,11 @@ enum FileShelfActions {
         debugLog("FileShelfActions.copyPath path=\(url.path)")
     }
 
+    /// One path per line, in Tray order.
+    static func copyPaths(_ urls: [URL]) {
+        copy(urls.map(\.path).joined(separator: "\n"))
+    }
+
     static func copyName(_ url: URL) {
         copy(url.lastPathComponent)
         debugLog("FileShelfActions.copyName name=\(url.lastPathComponent)")
@@ -1200,12 +1216,15 @@ struct ShelfFileTile: View {
     let url: URL
     @ObservedObject var thumbnailCache: FileThumbnailCache
     var isSelected = false
+    var backgroundOperations: BackgroundOperationController? = nil
+    var backgroundRemoval: BackgroundRemovalController? = nil
+    var onOpenSettings: (() -> Void)? = nil
     let onRemove: () -> Void
 
     @State private var isHovering = false
-    @State private var showsRename = false
-    @State private var renameText = ""
-    @State private var operationError: String?
+    @State fileprivate var showsRename = false
+    @State fileprivate var renameText = ""
+    @State fileprivate var operationError: String?
     @Environment(\.isShellMorphing) private var isShellMorphing
     @Environment(\.basketShelfTransfer) private var basketTransfer
 
@@ -1289,75 +1308,7 @@ struct ShelfFileTile: View {
                 loadThumbnailIfNeeded()
             }
         }
-        .contextMenu {
-            Button("File Actions…") { fileShelf.requestFileActions(for: contextTargets) }
-            Button("Quick Look") {
-                FileShelfActions.quickLook(url)
-            }
-
-            if settings.openFileActionEnabled {
-                Divider()
-                Button("Open") {
-                    FileShelfActions.open(url)
-                }
-                let applications = FileShelfActions.openWithApplications(for: url)
-                if !applications.isEmpty {
-                    Menu("Open With") {
-                        ForEach(applications, id: \.self) { appURL in
-                            Button(appURL.deletingPathExtension().lastPathComponent) {
-                                FileShelfActions.open(url, withApplication: appURL)
-                            }
-                        }
-                    }
-                }
-            }
-
-            Divider()
-            Button("Copy") {
-                _ = FileShelfActions.copyFiles(contextTargets)
-            }
-            Button("Rename…") {
-                renameText = url.lastPathComponent
-                showsRename = true
-            }
-            Button("Copy To…") {
-                copyToChosenFolder()
-            }
-            Button("Move To…") {
-                moveToChosenFolder()
-            }
-
-            if settings.revealInFinderActionEnabled {
-                Button("Reveal in Finder") {
-                    FileShelfActions.revealInFinder(url)
-                }
-            }
-
-            if settings.copyPathActionEnabled {
-                Divider()
-                Button("Copy Path") {
-                    FileShelfActions.copyPath(url)
-                }
-                Button("Copy File Name") {
-                    FileShelfActions.copyName(url)
-                }
-            }
-
-            if settings.floatingBasketEnabled, let basketTransfer {
-                Divider()
-                // App-surface transfer: the file itself is not moved on disk.
-                Button(contextTargets.count > 1 ? "Move \(contextTargets.count) to Basket" : "Move to Basket") {
-                    basketTransfer.moveToBasket(contextTargets)
-                }
-            }
-
-            if settings.removeFileActionEnabled {
-                Divider()
-                Button("Remove from Tray", role: .destructive) {
-                    onRemove()
-                }
-            }
-        }
+        .contextMenu { FileTrayItemMenu(tile: self) }
         .popover(isPresented: $showsRename, arrowEdge: .top) {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Rename")
@@ -1389,7 +1340,7 @@ struct ShelfFileTile: View {
         }
     }
 
-    private var contextTargets: [URL] {
+    fileprivate var contextTargets: [URL] {
         if isSelected, !fileShelf.selection.isEmpty {
             return fileShelf.files.filter { fileShelf.selection.contains($0) }
         }
@@ -1412,7 +1363,7 @@ struct ShelfFileTile: View {
         }
     }
 
-    private func copyToChosenFolder() {
+    fileprivate func copyToChosenFolder() {
         guard let destination = FileShelfActions.chooseDestination(title: "Copy Files", prompt: "Copy") else { return }
         do {
             _ = try FileShelfDiskOperations.copy(contextTargets, to: destination)
@@ -1421,7 +1372,7 @@ struct ShelfFileTile: View {
         }
     }
 
-    private func moveToChosenFolder() {
+    fileprivate func moveToChosenFolder() {
         let targets = contextTargets
         guard let destination = FileShelfActions.chooseDestination(title: "Move Files", prompt: "Move") else { return }
         do {
@@ -2184,5 +2135,166 @@ private struct MediaCompactAdvancedMenu: View {
                 }
             }
         }
+    }
+}
+
+/// Native File Tray context menu (SwiftUI `contextMenu` renders an NSMenu).
+/// Operations target the whole selection when the clicked item is part of
+/// it, otherwise just the clicked item; right-click never changes selection.
+/// Sections separate on-disk changes from Tray-only changes.
+private struct FileTrayItemMenu: View {
+    let tile: ShelfFileTile
+    @Environment(\.basketShelfTransfer) private var basketTransfer
+
+    private var targets: [URL] { tile.contextTargets }
+    private var settings: AppSettings { tile.settings }
+    private var shelf: FileShelfStore { tile.fileShelf }
+    private var plural: Bool { targets.count > 1 }
+    private var images: [URL] { targets.filter(FileTrayActionTargets.isImage) }
+    private var imageFormats: [FileConversionFormat] {
+        // Formats every selected image can be converted to.
+        guard images.count == targets.count, let first = images.first else { return [] }
+        return FileConversionController.targetFormats(for: first).filter { format in
+            images.allSatisfy { FileConversionController.targetFormats(for: $0).contains(format) }
+        }
+    }
+    private var audioSource: URL? {
+        guard targets.count == 1, let type = UTType(filenameExtension: targets[0].pathExtension),
+              type.conforms(to: .audio) || type.conforms(to: .movie) else { return nil }
+        return targets[0]
+    }
+
+    var body: some View {
+        Section {
+            if settings.openFileActionEnabled {
+                Button(plural ? "Open \(targets.count) Items" : "Open") { targets.forEach { FileShelfActions.open($0) } }
+                if !plural {
+                    let applications = FileShelfActions.openWithApplications(for: tile.url)
+                    Menu("Open With") {
+                        if applications.isEmpty {
+                            Text("No other applications")
+                        }
+                        ForEach(applications, id: \.self) { appURL in
+                            Button(appURL.deletingPathExtension().lastPathComponent) {
+                                FileShelfActions.open(tile.url, withApplication: appURL)
+                            }
+                        }
+                    }
+                }
+            }
+            Button("Quick Look") { FileShelfQuickLookController.shared.preview(targets) }
+            if settings.revealInFinderActionEnabled {
+                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting(targets) }
+            }
+        }
+
+        Section {
+            Button(plural ? "Copy \(targets.count) Items" : "Copy") { _ = FileShelfActions.copyFiles(targets) }
+            ShareLink(items: targets) { Label("Share", systemImage: "square.and.arrow.up") }
+        }
+
+        Section("Create New Files") {
+            Menu("Convert To") {
+                if imageFormats.isEmpty && audioSource == nil {
+                    Text(plural ? "No shared format for this selection" : "No conversions for this file type")
+                }
+                ForEach(imageFormats) { format in
+                    Button(format.displayName) { shelf.convertImages(targets, to: format) }
+                }
+                if let audioSource {
+                    ForEach(FileAudioFormat.allCases.filter(\.canEncode)) { format in
+                        Button(format.rawValue) { shelf.convertAudio(audioSource, to: format) }
+                    }
+                }
+                Divider()
+                Button("More Options…") { shelf.requestFileActions(for: targets) }
+            }
+            if !images.isEmpty {
+                Button("Extract Text") { shelf.extractText(from: images) }
+            }
+            if let removal = tile.backgroundRemoval,
+               FileTrayActionTargets(urls: targets).availability(of: .removeBackground).isAvailable {
+                Button("Remove Background") { removeBackground(with: removal) }
+                    .disabled(removal.isProcessing)
+            }
+            if let operations = tile.backgroundOperations {
+                Button("Create ZIP Archive") { shelf.createZIP(targets, using: operations) }
+            }
+            Button(plural ? "New Folder with \(targets.count) Copies" : "New Folder with a Copy") {
+                shelf.makeFolder(withCopiesOf: targets)
+            }
+        }
+
+        Section("Change Files on Disk") {
+            if !plural {
+                Button("Rename…") {
+                    tile.renameText = tile.url.lastPathComponent
+                    tile.showsRename = true
+                }
+            }
+            Button("Save a Copy To…") { tile.copyToChosenFolder() }
+            Button("Move To…") { tile.moveToChosenFolder() }
+        }
+
+        Section("Tray Only") {
+            if settings.copyPathActionEnabled {
+                Button(plural ? "Copy Paths" : "Copy Path") { FileShelfActions.copyPaths(targets) }
+                if !plural { Button("Copy File Name") { FileShelfActions.copyName(tile.url) } }
+            }
+            if settings.floatingBasketEnabled, let basketTransfer {
+                // App-surface transfer: the file itself is not moved on disk.
+                Button(plural ? "Move \(targets.count) to Basket" : "Move to Basket") { basketTransfer.moveToBasket(targets) }
+            }
+            if settings.removeFileActionEnabled {
+                Button(plural ? "Remove \(targets.count) from Tray (Keeps Files)" : "Remove from Tray (Keeps File)") {
+                    if plural { targets.forEach(shelf.remove) } else { tile.onRemove() }
+                }
+            }
+        }
+
+        if let onOpenSettings = tile.onOpenSettings {
+            Divider()
+            Button("File Tray Settings…", action: onOpenSettings)
+        }
+    }
+
+    private func removeBackground(with removal: BackgroundRemovalController) {
+        guard let image = targets.first else { return }
+        do {
+            // The removal controller reports its own progress and adds the result.
+            try removal.process(imageURL: image, addResultToShelfWhenFinished: true)
+        } catch {
+            shelf.setOperationStatus(.failed(error.localizedDescription), clearAfter: .seconds(4))
+        }
+    }
+}
+
+/// One line describing the current File Tray operation's real state.
+struct FileTrayOperationStatusRow: View {
+    let status: FileTrayOperationStatus
+
+    var body: some View {
+        HStack(spacing: 7) {
+            switch status {
+            case .working:
+                ProgressView().controlSize(.mini)
+            case .succeeded:
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+            case .failed:
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            }
+            Text(status.message)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.white.opacity(0.82))
+                .lineLimit(2)
+                .help(status.message)
+        }
+        .font(.system(size: 11, weight: .semibold))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(status.message)
     }
 }
