@@ -2391,39 +2391,53 @@ struct AgentCompactRoutineLeadingView: View {
     @Environment(\.agentVisualPreferences) private var visualPreferences
 
     var body: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: AgentCompactOrbMetrics.spacing) {
             // Compact active-agent presence follows the chat visual language:
             // semantic ThinkingOrb for activity; BotAvatar remains Feed identity.
             AgentLiveOrbView(
                 session: session,
-                size: 18,
+                size: AgentCompactOrbMetrics.primaryOrb,
                 speed: visualPreferences.orbSpeed,
                 terminal: !AgentVisualMotion.animates(session.state)
             )
             Image(systemName: AgentVisualStyle.providerSymbol(session.id.sessionID.provider))
                 .font(.system(size: 9, weight: .semibold))
                 .foregroundStyle(AgentVisualStyle.providerAccent(session.id.sessionID.provider))
-            Text(session.project.displayName ?? session.id.sessionID.provider.stableName.capitalized)
-                .font(.system(size: 9.5, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.88))
-                .lineLimit(1)
-                .truncationMode(.middle)
         }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(session.id.sessionID.provider.stableName.capitalized), \(AgentSessionPresentation.displayedStateLabel(for: session, at: Date()))")
     }
 }
 
+/// Other active sessions as mini orbs (+N), or the primary's state glyph.
 struct AgentCompactRoutineTrailingView: View {
-    let session: AgentSession
+    let presentation: AgentCompactPresentation
+    @Environment(\.agentVisualPreferences) private var visualPreferences
 
     var body: some View {
-        HStack(spacing: 5) {
-            Text(AgentSessionPresentation.displayedStateLabel(for: session, at: Date()))
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.88))
-                .lineLimit(1)
+        HStack(spacing: AgentCompactOrbMetrics.spacing) {
+            let others = presentation.sessions.dropFirst()
+            if others.isEmpty, let primary = presentation.sessions.first {
+                Image(systemName: AgentSessionPresentation.displayedStateSymbol(for: primary, at: Date()))
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.78))
+            }
+            ForEach(Array(others), id: \.id) { session in
+                AgentLiveOrbView(
+                    session: session,
+                    size: AgentCompactOrbMetrics.secondaryOrb,
+                    speed: visualPreferences.orbSpeed,
+                    terminal: !AgentVisualMotion.animates(session.state)
+                )
+            }
+            if presentation.overflowCount > 0 {
+                Text("+\(presentation.overflowCount)")
+                    .font(.system(size: 9.5, weight: .bold).monospacedDigit())
+                    .foregroundStyle(.white.opacity(0.7))
+            }
         }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(presentation.summary)
     }
 }
 

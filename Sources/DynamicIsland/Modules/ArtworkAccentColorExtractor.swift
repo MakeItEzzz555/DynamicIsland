@@ -47,6 +47,37 @@ enum ArtworkAccentColorExtractor {
         )
     }
 
+    static let sampleGridSize = 24
+
+    /// A second, visibly different color for the bar gradient: the dominant
+    /// color of whichever artwork half differs most from `primary`. Grayscale
+    /// art gets a tonal partner; colors that are too close are hue-shifted.
+    static func secondaryColor(from image: NSImage, primary: NSColor) -> NSColor? {
+        guard let samples = downsampledSamples(from: image, size: sampleGridSize), !samples.isEmpty else { return nil }
+        return secondaryColor(from: samples, gridSize: sampleGridSize, primary: primary)
+    }
+
+    static func secondaryColor(from samples: [ArtworkColorSample], gridSize: Int, primary: NSColor) -> NSColor? {
+        guard gridSize > 1, let base = primary.usingColorSpace(.sRGB) else { return nil }
+        let left = samples.enumerated().filter { $0.offset % gridSize < gridSize / 2 }.map(\.element)
+        let right = samples.enumerated().filter { $0.offset % gridSize >= gridSize / 2 }.map(\.element)
+        let candidates = [left, right].compactMap(dominantColor(from:)).compactMap { $0.usingColorSpace(.sRGB) }
+        func distance(_ c: NSColor) -> CGFloat {
+            let dr = c.redComponent - base.redComponent, dg = c.greenComponent - base.greenComponent, db = c.blueComponent - base.blueComponent
+            return (dr * dr + dg * dg + db * db).squareRoot()
+        }
+        if base.saturationComponent < 0.12 {
+            // Grayscale artwork: a darker tone of the same gray, never a fake hue.
+            return NSColor(hue: 0, saturation: 0, brightness: max(0.32, base.brightnessComponent * 0.6), alpha: 1)
+        }
+        if let best = candidates.max(by: { distance($0) < distance($1) }), distance(best) >= 0.18 {
+            return best
+        }
+        return NSColor(hue: (base.hueComponent + 0.11).truncatingRemainder(dividingBy: 1),
+                       saturation: min(1, max(0.35, base.saturationComponent * 1.15)),
+                       brightness: max(0.55, base.brightnessComponent), alpha: 1)
+    }
+
     private static func downsampledSamples(from image: NSImage, size: Int) -> [ArtworkColorSample]? {
         var proposedRect = CGRect(origin: .zero, size: image.size)
         guard let source = image.cgImage(forProposedRect: &proposedRect, context: nil, hints: nil) else {
@@ -115,6 +146,7 @@ final class ArtworkAccentColorCache: ObservableObject {
     static let shared = ArtworkAccentColorCache()
 
     @Published private var colorsByKey: [String: Color] = [:]
+    @Published private var secondaryByKey: [String: Color] = [:]
     private var inFlightKeys: Set<String> = []
 
     func color(for artworkKey: String?, image: NSImage?) -> Color {
@@ -130,6 +162,13 @@ final class ArtworkAccentColorCache: ObservableObject {
         return ArtworkAccentColorExtractor.fallbackColor
     }
 
+    /// Gradient partner for `color(for:image:)`; nil until computed or when
+    /// there is no artwork (bars stay a single color).
+    func secondaryColor(for artworkKey: String?, image: NSImage?) -> Color? {
+        guard let artworkKey, image != nil else { return nil }
+        return secondaryByKey[artworkKey]
+    }
+
     func containsColor(for artworkKey: String) -> Bool {
         colorsByKey[artworkKey] != nil
     }
@@ -143,12 +182,16 @@ final class ArtworkAccentColorCache: ObservableObject {
         inFlightKeys.insert(artworkKey)
 
         Task.detached(priority: .utility) { [artworkKey, imageData] in
-            let color = NSImage(data: imageData)
-                .flatMap(ArtworkAccentColorExtractor.dominantColor(from:))
-                .map(Color.init(nsColor:)) ?? ArtworkAccentColorExtractor.fallbackColor
+            let decoded = NSImage(data: imageData)
+            let primary = decoded.flatMap(ArtworkAccentColorExtractor.dominantColor(from:))
+            let color = primary.map(Color.init(nsColor:)) ?? ArtworkAccentColorExtractor.fallbackColor
+            let secondary = decoded.flatMap { image in
+                primary.flatMap { ArtworkAccentColorExtractor.secondaryColor(from: image, primary: $0) }
+            }.map(Color.init(nsColor:))
 
             await MainActor.run {
                 self.colorsByKey[artworkKey] = color
+                if let secondary { self.secondaryByKey[artworkKey] = secondary }
                 self.inFlightKeys.remove(artworkKey)
             }
         }

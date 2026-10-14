@@ -617,6 +617,7 @@ struct IslandRootView: View {
             showNavigationControls: expandedHeaderLayout.mode != .hidden)
     }
     @State private var collapsedPreviewVisible = false
+    @State private var isCollapsedVisualizerHovered = false
     @State private var collapsedPreviewGeneration = 0
     @StateObject private var agentGlow = AgentActivityGlowCoordinator()
     @StateObject private var gestureCoordinator = IslandGestureCoordinator()
@@ -692,9 +693,11 @@ struct IslandRootView: View {
             .environment(\.timerRulerInteractionRegistration, TimerRulerInteractionRegistration { owner, frame in
                 layoutStore.setNativeControlRegion(frame, owner: owner)
             })
-            .environment(\.basketShelfTransfer, BasketShelfTransfer { [presenter = modules.basketPresenter] urls in
-                presenter.moveShelfFilesToBasket(urls)
-            })
+            .environment(\.liveSpectrum, modules.audioSpectrum)
+            .environment(\.basketShelfTransfer, BasketShelfTransfer(
+                moveToBasket: { [presenter = modules.basketPresenter] urls in presenter.moveShelfFilesToBasket(urls) },
+                showBasket: { [presenter = modules.basketPresenter] in presenter.showPrimaryBasket() }
+            ))
     }
 
     private var baseIslandCanvas: some View {
@@ -982,6 +985,57 @@ struct IslandRootView: View {
         }
     }
 
+    private var collapsedCompactView: some View {
+        CompactIslandView(
+            settings: settings,
+            modules: modules,
+            contentMode: collapsedContentMode,
+            layoutResolution: collapsedLayoutResolution,
+            previewContent: nil,
+            previewActive: false,
+            hardwareNotchWidth: layoutStore.hardwareNotchWidth,
+            collapsedLeftRegionWidth: layoutStore.collapsedLeftRegionWidth,
+            collapsedNotchCoreWidth: layoutStore.collapsedNotchCoreWidth,
+            collapsedRightRegionWidth: layoutStore.collapsedRightRegionWidth,
+            isNotchIntegratedShell: IslandShellNotchIntegration.resolve(
+                geometryHasHardwareNotch: layoutStore.hasHardwareNotch,
+                displayMetricsHaveHardwareNotch: layoutStore.displayMetrics.hasHardwareNotch
+            ),
+            onVisualizerHover: setCollapsedVisualizerHovered
+        )
+    }
+
+    /// The hovered activity's preview. Off when previews are disabled in
+    /// Settings, and for media while the pointer is on the visualizer
+    /// (that target is pause/play, not the preview).
+    private var collapsedActivityPreview: CollapsedActivityPreview? {
+        guard settings.collapsedHoverPreviewEnabled, let primary = collapsedLayoutResolution.primary?.activity else { return nil }
+        if primary.kind == .media, isCollapsedVisualizerHovered { return nil }
+        return CollapsedActivityPreview.make(
+            kind: primary.kind,
+            activity: primary,
+            media: primary.kind == .media ? .init(title: modules.media.title, artist: modules.media.artist,
+                position: modules.media.playbackPosition, duration: modules.media.duration,
+                hasProgress: modules.media.hasPlaybackProgress) : nil,
+            agent: primary.kind == .agent
+                ? AgentCompactPresentation.make(sessions: modules.agentEvents.sessions, enabled: settings.agentActivityEnabled)?.sessions.first
+                : nil,
+            deviceName: CollapsedActivityPreviewDevice.name
+        )
+    }
+
+    private func setCollapsedVisualizerHovered(_ hovered: Bool) {
+        guard isCollapsedVisualizerHovered != hovered else { return }
+        isCollapsedVisualizerHovered = hovered
+        if hovered {
+            collapsedPreviewGeneration += 1
+            collapsedPreviewVisible = false
+            updateCollapsedPreviewLayout()
+        } else if isCollapsedHovering {
+            handleCollapsedHover(true)
+        }
+    }
+
     private var compactPermission: AgentCompactPermission? {
         AgentCompactPermission.current(sessions: modules.agentEvents.sessions,
             approvals: modules.agentApprovalControl, managed: modules.agentManagedControl)
@@ -1021,23 +1075,15 @@ struct IslandRootView: View {
                         layoutStore.setTextInputFocused(false)
                         deactivateCollapsedPreview()
                     })
+            } else if isCollapsedPreviewActive, let preview = collapsedActivityPreview {
+                VStack(spacing: 0) {
+                    collapsedCompactView
+                        .frame(height: layoutStore.collapsedSurfaceFrame.height)
+                    CollapsedActivityPreviewView(preview: preview, reduceMotion: reduceMotion || settings.reduceExtraMotion)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
             } else {
-        CompactIslandView(
-            settings: settings,
-            modules: modules,
-            contentMode: collapsedContentMode,
-            layoutResolution: collapsedLayoutResolution,
-            previewContent: nil,
-            previewActive: false,
-            hardwareNotchWidth: layoutStore.hardwareNotchWidth,
-            collapsedLeftRegionWidth: layoutStore.collapsedLeftRegionWidth,
-            collapsedNotchCoreWidth: layoutStore.collapsedNotchCoreWidth,
-            collapsedRightRegionWidth: layoutStore.collapsedRightRegionWidth,
-            isNotchIntegratedShell: IslandShellNotchIntegration.resolve(
-                geometryHasHardwareNotch: layoutStore.hasHardwareNotch,
-                displayMetricsHaveHardwareNotch: layoutStore.displayMetrics.hasHardwareNotch
-            )
-        )
+                collapsedCompactView
             }
         }
         .environment(\.agentVisualPreferences, settings.agentVisualPreferences)
@@ -1277,7 +1323,8 @@ struct IslandRootView: View {
     private var collapsedHoverPolicy: CollapsedActivityHoverPolicy {
         CollapsedActivityHoverPolicy.resolve(kind: collapsedLayoutResolution.primary?.activity.kind,
             exactMessageReply: collapsedMessageEntry.map { modules.messaging.canReply(to: $0) } ?? false,
-            exactAgentApproval: compactPermission != nil)
+            exactAgentApproval: compactPermission != nil,
+            activityPreview: collapsedActivityPreview)
     }
 
     private var compactMessageSending: Bool {
@@ -1438,7 +1485,7 @@ struct IslandRootView: View {
             !layoutStore.isReturningToNormalCollapsedSize &&
             settings.collapsedHoverPreviewEnabled &&
             collapsedHoverPolicy != .none &&
-            collapsedMessageEntry != nil &&
+            (collapsedMessageEntry != nil || collapsedActivityPreview != nil) &&
             !navigation.isFileDropTargeted &&
             !layoutStore.isShellMorphing &&
             !layoutStore.isCollapseShellOnly &&
@@ -1702,6 +1749,7 @@ struct IslandRootView: View {
         let generation = collapsedPreviewGeneration
 
         guard isHovering else {
+            isCollapsedVisualizerHovered = false
             if compactMessageFocused || compactMessageSending { return }
             compactMessageKey = nil
             collapsedPreviewVisible = false
@@ -1723,6 +1771,8 @@ struct IslandRootView: View {
                   generation == collapsedPreviewGeneration else { return }
             guard isCollapsedHovering, !isExpanded, !layoutStore.isShellMorphing,
                   !layoutStore.transientInteractionOwners.contains(.nativeMenu) else { return }
+            // The visualizer is a pause/play target: never preview or expand from it.
+            guard !isCollapsedVisualizerHovered else { return }
             if collapsedHoverPolicy.allowsAutomaticExpansion(enabled: settings.expandOnHover) {
                 onRequestAutomaticExpand()
                 return
@@ -2459,6 +2509,8 @@ struct CompactIslandView: View {
     let collapsedNotchCoreWidth: CGFloat
     let collapsedRightRegionWidth: CGFloat
     let isNotchIntegratedShell: Bool
+    /// Reports pointer hover over the collapsed visualizer (pause/play target).
+    var onVisualizerHover: ((Bool) -> Void)? = nil
     @ObservedObject private var media: MediaController
     @ObservedObject private var liveActivities: LiveActivityStore
     @ObservedObject private var agentAttention: AgentAttentionCoordinator
@@ -2478,8 +2530,10 @@ struct CompactIslandView: View {
         collapsedLeftRegionWidth: CGFloat = 0,
         collapsedNotchCoreWidth: CGFloat = 0,
         collapsedRightRegionWidth: CGFloat = 0,
-        isNotchIntegratedShell: Bool = false
+        isNotchIntegratedShell: Bool = false,
+        onVisualizerHover: ((Bool) -> Void)? = nil
     ) {
+        self.onVisualizerHover = onVisualizerHover
         self.settings = settings
         self.modules = modules
         self.contentMode = contentMode
@@ -2613,15 +2667,19 @@ struct CompactIslandView: View {
                 }
             } right: {
                 if settings.showVisualizer && settings.showCollapsedVisualizer {
-                    AudioVisualizerView(
-                        isPlaying: media.isPlaying,
-                        isActive: media.hasActiveMediaSource,
-                        accentColor: visualizerColor,
-                        variant: .compact,
-                        barCount: 7,
-                        cadence: .ambient,
-                        pauseDuringShellMorph: settings.disableVisualizerDuringMorph
-                    )
+                    CollapsedVisualizerPlaybackControl(media: media, reduceMotion: reduceMotion || settings.reduceExtraMotion,
+                                                       onHover: onVisualizerHover) {
+                        AudioVisualizerView(
+                            isPlaying: media.isPlaying,
+                            isActive: media.hasActiveMediaSource,
+                            accentColor: visualizerColor,
+                            secondaryAccentColor: visualizerSecondaryColor,
+                            variant: .compact,
+                            barCount: 7,
+                            cadence: .ambient,
+                            pauseDuringShellMorph: settings.disableVisualizerDuringMorph
+                        )
+                    }
                 }
             }
             .transition(.compactMediaContent)
@@ -2634,7 +2692,7 @@ struct CompactIslandView: View {
                 sideSlotLayout {
                     AgentCompactRoutineLeadingView(session: primary)
                 } right: {
-                    AgentCompactRoutineTrailingView(session: primary)
+                    AgentCompactRoutineTrailingView(presentation: presentation)
                 }
                 .transition(.compactMediaContent)
             } else {
@@ -2706,7 +2764,7 @@ struct CompactIslandView: View {
                 sideSlotLayout {
                     AgentCompactRoutineLeadingView(session: primary)
                 } right: {
-                    AgentCompactRoutineTrailingView(session: primary)
+                    AgentCompactRoutineTrailingView(presentation: presentation)
                 }
                 .transition(.opacity)
             } else {
@@ -2764,6 +2822,12 @@ struct CompactIslandView: View {
         guard settings.mediaEnabled else { return false }
         guard media.hasActiveMediaSource else { return false }
         return settings.showMediaWhenPaused || media.isPlaying
+    }
+
+    private var visualizerSecondaryColor: Color? {
+        guard settings.visualizerAccentMode == .artwork, settings.useArtworkAccentColor else { return nil }
+        return accentCache.secondaryColor(for: artworkPresentation.displayedSnapshot?.fingerprint,
+                                          image: artworkPresentation.displayedSnapshot?.image)
     }
 
     private var visualizerAccentColor: Color {
@@ -3652,6 +3716,8 @@ struct ExpandedIslandView: View {
 
     @State private var isAirDropTargeted = false
     @State private var isFilesTargeted = false
+    @State private var dropZoneTargeted: FileDropZone?
+    @State private var trayShareAnchor = SharingAnchorHolder()
     @State private var clipboardPresentation = ClipboardHistoryPresentationState()
     @State private var pagePresentation: ExpandedPageTransitionState
     @ObservedObject private var customization: WorkspaceCustomizationStore
@@ -4197,7 +4263,8 @@ struct ExpandedIslandView: View {
         case .media:
             MediaModuleView(settings: settings, media: modules.media, availableHeight: height, onLauncherActivated: onShortcutLaunched, onMediaSourceOpened: onShortcutLaunched)
         case .files:
-            FileShelfModuleView(settings: settings, fileShelf: modules.fileShelf, backgroundOperations: modules.backgroundOperations)
+            FileShelfModuleView(settings: settings, fileShelf: modules.fileShelf, backgroundOperations: modules.backgroundOperations,
+                                backgroundRemoval: modules.productivity.backgroundRemoval, onOpenSettings: onOpenSettings)
                 .onDrop(of: FileDropProviderLoader.acceptedTypes, isTargeted: filesTargetBinding) { providers in
                     loadDroppedFiles(from: providers)
                 }
@@ -4210,6 +4277,8 @@ struct ExpandedIslandView: View {
             ClipboardWidgetView(store: modules.clipboardHistory, enabled: settings.clipboardHistoryEnabled, onOpen: openClipboardHistory, onEnable: onOpenSettings)
         case .shortcuts:
             ShortcutsModuleView(shortcuts: modules.shortcuts, availableHeight: height, compactScale: 1, onShortcutLaunched: onShortcutLaunched)
+        case .camera:
+            CameraWidgetView(controller: modules.productivity.camera, reduceMotion: reduceMotion || settings.reduceExtraMotion)
         case .activities:
             LiveActivitiesModuleView(liveActivities: liveActivities, navigation: navigation, rightWorkspace: modules.rightWorkspace, settings: settings, availableHeight: height, compactScale: 1)
         }
@@ -4399,16 +4468,25 @@ struct ExpandedIslandView: View {
                         fileShelf: modules.fileShelf,
                         backgroundOperations: modules.backgroundOperations,
                         dragExplanation: modules.fileDragSession.explanatoryAction?.explanation
-                            ?? modules.fileDragSession.outcomeMessage
+                            ?? modules.fileDragSession.outcomeMessage,
+                        backgroundRemoval: modules.productivity.backgroundRemoval,
+                        onOpenSettings: onOpenSettings
                     )
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .overlay {
-                            if isFilesTargeted || (navigation.isFileDropTargeted && !isAirDropTargeted) {
-                                FileDropHighlightView(reduceMotion: reduceMotion)
-                            }
-                        }
+                        .background(SharingAnchorView(holder: trayShareAnchor))
                         .onDrop(of: FileDropProviderLoader.acceptedTypes, isTargeted: filesTargetBinding) { providers in
                             loadDroppedFiles(from: providers)
+                        }
+                        .overlay {
+                            if canAcceptExpandedFileDrop,
+                               isFilesTargeted || dropZoneTargeted != nil || (navigation.isFileDropTargeted && !isAirDropTargeted) {
+                                FileDropZonesOverlay(
+                                    reduceMotion: reduceMotion,
+                                    onTargetChange: setDropZoneTargeted,
+                                    onDrop: dropOnZone
+                                )
+                                .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.97)))
+                            }
                         }
                         .innerBlurScaleClean(
                             settings: settings,
@@ -4549,6 +4627,59 @@ struct ExpandedIslandView: View {
                 _ = modules.fileDragSession.completeShelfDrop(claim, urls: urls, shelf: modules.fileShelf,
                     allowed: settings.overlayEnabled && canAcceptExpandedFileDrop &&
                         layoutStore.overlayPresentationGeneration == presentationGeneration)
+            }
+        }
+        return true
+    }
+
+    private func setDropZoneTargeted(_ zone: FileDropZone?) {
+        dropZoneTargeted = zone
+        // The zones are their own drag region so moving between them (or off
+        // the shelf target underneath) never ends the session mid-drag.
+        modules.fileDragSession.setSourceTargeted(zone != nil, region: .trayDropZone)
+        if zone != nil { navigation.showTrayForFileDrag(using: settings) }
+    }
+
+    /// One transactional drop: the existing shelf claim adds the files, then
+    /// the zone's action runs on exactly the accepted files.
+    private func dropOnZone(_ zone: FileDropZone, providers: [NSItemProvider]) -> Bool {
+        let loader = FileDropProviderLoader()
+        dropZoneTargeted = nil
+        guard canAcceptExpandedFileDrop, loader.canLoad(providers), let claim = modules.fileDragSession.claimShelfDrop() else {
+            isFilesTargeted = false
+            navigation.endFileDropTargeting()
+            return false
+        }
+        isFilesTargeted = false
+        navigation.endFileDropTargeting()
+        let presentationGeneration = layoutStore.overlayPresentationGeneration
+        let shelf = modules.fileShelf
+        loader.loadURLs(from: providers) { urls in
+            Task { @MainActor in
+                let accepted = modules.fileDragSession.completeShelfDrop(
+                    claim, urls: urls, shelf: shelf,
+                    allowed: settings.overlayEnabled && canAcceptExpandedFileDrop &&
+                        layoutStore.overlayPresentationGeneration == presentationGeneration,
+                    requestActions: zone == .convert)
+                guard let accepted, !accepted.isEmpty else {
+                    shelf.setOperationStatus(.failed("The drop was not added to the Tray."), clearAfter: .seconds(4))
+                    return
+                }
+                shelf.select(only: accepted)
+                switch zone {
+                case .keep:
+                    shelf.setOperationStatus(.succeeded(accepted.count == 1 ? "Added to the Tray." : "Added \(accepted.count) items to the Tray."), clearAfter: .seconds(3))
+                case .convert:
+                    break // The existing File Actions panel is the format selection flow.
+                case .share:
+                    switch FileDragActionExecutor.production.perform(.share, urls: accepted, anchor: trayShareAnchor.view) {
+                    case .handedOff: break
+                    case .unavailable(let message), .failed(let message):
+                        shelf.setOperationStatus(.failed(message), clearAfter: .seconds(4))
+                    }
+                case .zip:
+                    shelf.createZIP(accepted, using: modules.backgroundOperations)
+                }
             }
         }
         return true
@@ -5434,28 +5565,6 @@ struct AirDropDropZoneView: View {
         settings.airDropFallbackRevealInFinder
             ? "Drop files here to share"
             : "Drop files here to share if available"
-    }
-}
-
-private struct FileDropHighlightView: View {
-    let reduceMotion: Bool
-
-    var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(.cyan.opacity(0.10))
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .stroke(.cyan.opacity(0.78), lineWidth: 2)
-                .shadow(color: .cyan.opacity(reduceMotion ? 0 : 0.35), radius: reduceMotion ? 0 : 10)
-            Text("Drop files here")
-                .font(.system(size: 15, weight: .bold, design: .rounded))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(.black.opacity(0.42), in: Capsule(style: .continuous))
-        }
-        .allowsHitTesting(false)
-        .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.98)))
     }
 }
 

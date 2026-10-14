@@ -48,6 +48,22 @@ final class FileShelfStore: ObservableObject {
     /// Explicit Tray selection used as the quick-action target.
     @Published private(set) var selection: Set<URL> = []
     @Published private(set) var fileActionRequest: FileTrayActionRequest?
+    /// The one visible result of a File Tray operation (menu or drop zone).
+    @Published private(set) var operationStatus: FileTrayOperationStatus?
+    private var operationStatusGeneration = 0
+
+    /// Publishes a status; finished states clear themselves after `clearAfter`.
+    func setOperationStatus(_ status: FileTrayOperationStatus?, clearAfter: Duration? = nil) {
+        operationStatusGeneration += 1
+        operationStatus = status
+        guard let clearAfter else { return }
+        let generation = operationStatusGeneration
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: clearAfter)
+            guard let self, self.operationStatusGeneration == generation else { return }
+            self.operationStatus = nil
+        }
+    }
 
     func requestFileActions(for urls: [URL], openShelfAfterDrop: Bool = false) {
         let accepted = files.filter { urls.map(\.standardizedFileURL).contains($0) }
@@ -87,6 +103,13 @@ final class FileShelfStore: ObservableObject {
             selection = selection == [url] ? [] : [url]
             selectionAnchor = url
         }
+    }
+
+    /// Selects exactly the given Tray items (e.g. new operation outputs).
+    func select(only urls: [URL]) {
+        let wanted = urls.map(\.standardizedFileURL).filter(files.contains)
+        selection = Set(wanted)
+        selectionAnchor = wanted.first
     }
 
     func selectAll() {

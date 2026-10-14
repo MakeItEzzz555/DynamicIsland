@@ -487,6 +487,10 @@ struct SettingsPreviewWidgetGrid: View {
             CalendarSectionView(controller: samples.services.calendar, layoutStore: nil)
         case .clipboard:
             ClipboardHistoryView(store: dependencies.clipboardHistory, onClose: {})
+        case .camera:
+            // Sample state only: the Settings preview never touches capture.
+            CameraWidgetView(controller: dependencies.productivity.camera, reduceMotion: reduceMotion)
+                .environment(\.isSettingsPreview, true)
         case .activities:
             LiveActivitiesModuleView(liveActivities: activities, navigation: navigation, rightWorkspace: workspace,
                                      settings: settings, availableHeight: size.height)
@@ -1373,7 +1377,9 @@ struct LiveActivityLayoutSettingsPreview: View {
                 CompactCollapsedSideSlotLayout(geometry: layout) {
                     AgentCompactRoutineLeadingView(session: session)
                 } right: {
-                    AgentCompactRoutineTrailingView(session: session)
+                    if let presentation = AgentCompactPresentation.make(sessions: [session]) {
+                        AgentCompactRoutineTrailingView(presentation: presentation)
+                    }
                 }
             case .voiceRecording, .voiceTranscription:
                 if let dependencies {

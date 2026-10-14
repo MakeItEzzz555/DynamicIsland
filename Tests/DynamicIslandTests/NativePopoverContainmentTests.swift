@@ -26,6 +26,10 @@ final class NativePopoverContainmentTests: XCTestCase {
         XCTAssertFalse(ExpandedHoverContainment.isTransientNativeWindow(className: "IslandOverlayPanel", isVisible: true, isIslandPanel: true))
         XCTAssertFalse(ExpandedHoverContainment.isTransientNativeWindow(className: "NSWindow", isVisible: true, isIslandPanel: false),
                        "Settings and other app windows are not transient island surfaces")
+        // File Tray destination pickers hold the island like other native transients.
+        XCTAssertTrue(ExpandedHoverContainment.isTransientNativeWindow(className: "NSOpenPanel", isVisible: true, isIslandPanel: false))
+        XCTAssertTrue(ExpandedHoverContainment.isTransientNativeWindow(className: "NSSavePanel", isVisible: true, isIslandPanel: false))
+        XCTAssertFalse(ExpandedHoverContainment.isTransientNativeWindow(className: "NSOpenPanel", isVisible: false, isIslandPanel: false))
     }
 
     func testTransientInteractionOwnersAreIndependentAndNeverStick() {

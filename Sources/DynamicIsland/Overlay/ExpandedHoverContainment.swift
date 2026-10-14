@@ -59,7 +59,10 @@ enum ExpandedHoverContainment {
     /// Same signal Droppy uses (`hasActivePopoverWindow`).
     static func isTransientNativeWindow(className: String, isVisible: Bool, isIslandPanel: Bool) -> Bool {
         guard isVisible, !isIslandPanel else { return false }
+        // Open/Save panels (Move To…, Save a Copy To…, conversion destination)
+        // own the interaction until dismissed, like popovers and menus.
         return className.contains("Popover") || className.contains("CalendarOverlay")
+            || className.contains("OpenPanel") || className.contains("SavePanel")
     }
 
     enum Decision: Equatable, Sendable {
