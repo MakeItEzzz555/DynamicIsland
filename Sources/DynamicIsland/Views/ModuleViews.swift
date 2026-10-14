@@ -52,7 +52,7 @@ struct AudioVisualizerView: View {
     var body: some View {
         Group {
             if mode.isLive {
-                bars(levels: liveLevels.count == barCount ? liveLevels : SpectrumBarMapper.silent(barCount: barCount), opacity: 0.95)
+                bars(levels: liveLevels.count == barCount ? liveLevels : SpectrumBarMapper.silent(barCount: barCount), opacity: 1)
             } else {
                 TimelineView(.animation(minimumInterval: IslandFrameCadence.interval(cadence), paused: !shouldAnimateContinuously)) { timeline in
                     bars(
@@ -112,7 +112,7 @@ struct AudioVisualizerView: View {
 
     private var visualizerOpacity: Double {
         if isPlaybackVisuallyActive {
-            return 0.92
+            return 1
         }
         return isActive ? 0.48 : 0.28
     }
@@ -136,6 +136,9 @@ struct AudioVisualizerView: View {
         isPlaybackVisuallyActive = true
     }
 
+    /// Artwork accents read a little washed out on black; media bars get a slight boost.
+    private var barSaturation: Double { palette == .media ? 1.2 : 1 }
+
     private func barColor(_ index: Int) -> AnyShapeStyle {
         if palette == .call {
             return AnyShapeStyle(LinearGradient(colors: [.green, .yellow], startPoint: .bottom, endPoint: .top))
@@ -153,6 +156,7 @@ struct AudioVisualizerView: View {
                     .frame(width: variant.barWidth, height: variant.maximumBarHeight * (index < levels.count ? levels[index] : SpectrumBarMapper.floor))
             }
         }
+        .saturation(barSaturation)
         // No SwiftUI animation: SpectrumDynamics already shapes motion per
         // 30 Hz frame, and an animation clock that stalls (occluded/headless
         // windows) would keep drawing stale heights.
@@ -168,6 +172,7 @@ struct AudioVisualizerView: View {
                     .shadow(color: accentColor.opacity(tick == nil || reduceMotion ? 0 : 0.22), radius: 3)
             }
         }
+        .saturation(barSaturation)
     }
 
     private func barHeight(index: Int, tick: TimeInterval?) -> CGFloat {
