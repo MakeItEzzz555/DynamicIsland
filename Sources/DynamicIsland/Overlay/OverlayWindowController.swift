@@ -227,6 +227,7 @@ final class OverlayWindowController {
     private var mouseContainmentTimer: Timer?
     private var normalCollapseDisplayBeat: NormalCollapseDisplayBeat?
     private var localMouseMovedMonitor: Any?
+    private var lastObservedMouseScreenPoint: NSPoint?
     private var globalMouseMovedMonitor: Any?
     private var localScrollWheelMonitor: Any?
     private var globalScrollWheelMonitor: Any?
@@ -1524,8 +1525,11 @@ final class OverlayWindowController {
         localMouseMovedMonitor = NSEvent.addLocalMonitorForEvents(
             matching: [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged]
         ) { [weak self] event in
-            self?.updateMousePassthrough()
-            self?.collapseIfExpandedMouseOutsideAfterGrace(source: "localMouseMonitor")
+            if let self {
+                self.lastObservedMouseScreenPoint = event.window?.convertPoint(toScreen: event.locationInWindow) ?? NSEvent.mouseLocation
+                self.updateMousePassthrough(at: self.lastObservedMouseScreenPoint)
+                self.collapseIfExpandedMouseOutsideAfterGrace(source: "localMouseMonitor")
+            }
             return event
         }
 
@@ -1535,7 +1539,8 @@ final class OverlayWindowController {
             let generation = self?.presentationSession.generation
             Task { @MainActor in
                 guard let self, self.allowsOverlayWork(generation: generation) else { return }
-                self.updateMousePassthrough()
+                self.lastObservedMouseScreenPoint = NSEvent.mouseLocation
+                self.updateMousePassthrough(at: self.lastObservedMouseScreenPoint)
                 self.collapseIfExpandedMouseOutsideAfterGrace(source: "globalMouseMonitor")
             }
         }
@@ -1738,7 +1743,14 @@ final class OverlayWindowController {
         canonicalPanelFrame.isEmpty ? islandPanel.frame : canonicalPanelFrame
     }
 
-    private func updateMousePassthrough(at screenPoint: NSPoint = NSEvent.mouseLocation) {
+    private func updateMousePassthrough(at observedPoint: NSPoint? = nil) {
+        if !canPresentOverlay { lastObservedMouseScreenPoint = nil }
+        let screenPoint = observedPoint ?? lastObservedMouseScreenPoint ?? NSEvent.mouseLocation
+        let reference = visualReferencePanelFrame
+        layoutStore.updateCollapsedPointer(at: CGPoint(x: screenPoint.x - reference.minX, y: screenPoint.y - reference.minY),
+            frames: [layoutStore.collapsedSurfaceFrame, layoutStore.collapsedLeadingSidecarFrame,
+                     layoutStore.collapsedTrailingSidecarFrame, layoutStore.collapsedPreviewSurfaceFrame],
+            enabled: canPresentOverlay && islandState.state == .collapsed && !layoutStore.isReturningToNormalCollapsedSize)
         guard canPresentOverlay else {
             islandPanel.ignoresMouseEvents = true
             return

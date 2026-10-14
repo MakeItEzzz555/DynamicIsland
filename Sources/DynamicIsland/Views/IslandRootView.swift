@@ -668,6 +668,7 @@ struct IslandRootView: View {
 
     var body: some View {
         animatedIslandCanvas
+            .onChange(of: layoutStore.collapsedPointerInside) { _, inside in handleCollapsedHover(inside) }
             .onChange(of: layoutStore.transientInteractionOwners.contains(.nativeMenu)) { _, tracking in
                 if tracking { collapsedPreviewGeneration += 1 }
                 else { handleCollapsedHover(isCollapsedHovering) }
@@ -807,6 +808,7 @@ struct IslandRootView: View {
                 synchronizePresentationForCurrentState()
                 updateCollapsedPreviewLayout()
                 synchronizeCollapsedSidecarGeometry()
+                handleCollapsedHover(layoutStore.collapsedPointerInside)
             }
             .onChange(of: layoutStore.overlayPresentationGeneration) { _, _ in
                 sequenceGeneration += 1
@@ -1078,7 +1080,6 @@ struct IslandRootView: View {
         }
         .environment(\.agentVisualPreferences, settings.agentVisualPreferences)
         .contentShape(Rectangle())
-        .onHover(perform: handleCollapsedHover)
         .onTapGesture {
             guard settings.expandOnClick, compactPermission == nil, !isCollapsedPreviewActive else { return }
             deactivateCollapsedPreview()
