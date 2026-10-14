@@ -31,6 +31,9 @@ struct AudioVisualizerView: View {
     @Environment(\.isShellMorphing) private var isShellMorphing
     @Environment(\.liveSpectrum) private var liveSpectrum
     @Environment(\.isSettingsPreview) private var isSettingsPreview
+    @Environment(\.liveAudioCoordinator) private var liveAudioCoordinator
+    /// Stable visibility lease for this mounted visualizer.
+    @State private var liveAudioLease = UUID()
 
     private var effectiveSpectrum: (any LiveSpectrumProviding)? {
         palette == .media && !isSettingsPreview ? liveSpectrum : nil
@@ -65,7 +68,10 @@ struct AudioVisualizerView: View {
         .help(mode.isLive ? "Live system audio spectrum" : "\(mode.accessibilityDescription) · Capture: \(LiveAudioStatus(livePresentation).detail)")
         .contextMenu {
             if let effectiveSpectrum {
-                LiveAudioMenuItems(provider: effectiveSpectrum, status: LiveAudioStatus(livePresentation))
+                LiveAudioMenuItems(provider: effectiveSpectrum,
+                                   status: liveAudioCoordinator.map { LiveAudioStatus(livePresentation, desired: $0.desiredEnabled) }
+                                       ?? LiveAudioStatus(livePresentation),
+                                   coordinator: liveAudioCoordinator)
             }
         }
         .onReceive(effectiveSpectrum?.presentationPublisher ?? Empty().eraseToAnyPublisher()) { presentation in
@@ -86,7 +92,9 @@ struct AudioVisualizerView: View {
         }
         .onAppear {
             updatePlaybackHold()
+            if effectiveSpectrum != nil { liveAudioCoordinator?.acquire(liveAudioLease) }
         }
+        .onDisappear { liveAudioCoordinator?.release(liveAudioLease) }
         .onChange(of: isPlaying) { _, _ in
             updatePlaybackHold()
         }

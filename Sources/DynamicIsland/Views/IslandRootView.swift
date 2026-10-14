@@ -680,6 +680,7 @@ struct IslandRootView: View {
                 layoutStore.setNativeControlRegion(frame, owner: owner)
             })
             .environment(\.liveSpectrum, modules.audioSpectrum)
+            .environment(\.liveAudioCoordinator, modules.liveAudio)
             .environment(\.basketShelfTransfer, BasketShelfTransfer(
                 moveToBasket: { [presenter = modules.basketPresenter] urls in presenter.moveShelfFilesToBasket(urls) },
                 showBasket: { [presenter = modules.basketPresenter] in presenter.showPrimaryBasket() }

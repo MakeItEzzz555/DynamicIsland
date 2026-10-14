@@ -64,11 +64,12 @@ final class NotchContextMenuTests: XCTestCase {
         let controller = MenuBarController(settings: settings, onOpenSettings: { opened += 1 },
             onToggleOverlay: {}, onQuit: { quit += 1 })
         let menu = controller.makeNotchMenu()
-        XCTAssertEqual(menu.items.map(\.title), ["Settings…", "Customize Workspace…", "Clipboard", "",
+        XCTAssertEqual(menu.items.map(\.title), ["Settings…", "Customize Workspace…", "Clipboard", "Live Audio", "",
                                                  "Previous Page", "Next Page", "", "Quit Island"])
-        XCTAssertTrue(menu.items[3].isSeparatorItem); XCTAssertTrue(menu.items[6].isSeparatorItem)
-        for index in [1, 4, 5] { XCTAssertTrue(menu.items[index].target === controller) }
-        for index in [0, 7] {
+        XCTAssertTrue(menu.items[4].isSeparatorItem); XCTAssertTrue(menu.items[7].isSeparatorItem)
+        XCTAssertEqual(menu.items[3].state, .off, "Live Audio reflects the saved preference")
+        for index in [1, 3, 5, 6] { XCTAssertTrue(menu.items[index].target === controller) }
+        for index in [0, 8] {
             let item = menu.items[index]
             XCTAssertTrue(item.target === controller)
             XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(item.action), to: item.target, from: item))

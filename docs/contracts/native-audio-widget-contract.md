@@ -1,4 +1,4 @@
-# Native audio widget contract — revision 2
+# Native audio widget contract — revision 3
 
 Baseline: PR #32 HEAD `1cd01b4d3a90b49f497176d0c9c19f91eda904a1` **plus the current uncommitted DynamicIsland-main rescue/Settings/camera work**. Development branch: `feature/native-audio-foundation`, separate worktree `/Users/makeiteasy3/DynamicIsland-worktrees/native-audio-foundation`. The original checkout, index, running app and permissions are not integration targets for this phase.
 
@@ -43,3 +43,50 @@ The supplied Droppy reports label 16.0.1 binary observations **O**, inference **
 Apple APIs: [system audio taps](https://developer.apple.com/documentation/coreaudio/capturing-system-audio-with-core-audio-taps), installed CoreAudio `AudioHardwareTapping.h` (macOS 14.2 availability), `CATapDescription.h` (mute/privacy), `AudioHardware.h` (aggregate/IOProc ownership). No new package dependency is required; use native Accelerate, CoreAudio, Combine and AppKit lifecycle signals.
 
 Revision 2 resolves the existing MediaAdvancedControls.AudioOutputDevice name collision without modifying that module; use NativeAudioOutputDevice for capability/generation-aware observations. The initial contract SHA a063866 is superseded for integration by the verified revision-2 commit.
+
+
+## Revision 3 — persisted Live Audio consent (2026-10-14, approved by the project owner)
+
+**Why it changed.** Revision 2 allowed capture only from a per-launch explicit action. Live Audio therefore turned off on every relaunch, and users saw only the labelled decorative fallback. The fallback is honest, but the feature never reached them. Droppy 16.0.1, the parity reference, keeps its setting and runs its analyzer whenever a visualizer is mounted. Revision 3 keeps explicit consent and makes it durable.
+
+**App consent versus macOS authorization.**
+- `AppSettings.liveAudioVisualizerEnabled` (default `false`) is the app-level preference: the user's consent to Live Audio. It is not macOS TCC state.
+- macOS System Audio Recording authorization is separate. The app never queries or claims it, and permission states keep revision 2's meaning (`.notVerified`, `.accessEstablished`, `.denied`).
+
+**Single owner.** `LiveAudioCoordinator` (app-owned, one instance) owns the preference and visibility leases and drives the one `AudioSpectrumController`. There is never a second controller or process tap for this feature. All three controls toggle the same preference through it:
+- the island right-click menu
+- the menu-bar menu
+- the visualizer context menu
+
+**Desired versus available.** The switch shows the saved desired state. Capture availability is shown as status text. Pause, sleep, suspension or silence never make an enabled switch look off.
+
+**First enable.** The first enable is always an explicit user action and starts capture immediately, so any macOS prompt appears in direct response to that action. Launch, previews and Settings initialization never start capture or prompt.
+
+**Automatic reconcile after consent.** Capture runs only while all of these hold:
+- the preference is enabled
+- at least one eligible media visualizer holds a visibility lease
+- `MediaController` reports playback
+- the session is awake and unlocked
+- no permission denial blocks activation
+
+When any of them stops holding, capture stops. Reconcile runs on these edges only, never per frame:
+- preference changes
+- lease changes
+- playback changes
+- sleep, wake, lock and unlock
+- one delayed check after a backend suspension, which covers output-device changes
+
+**Leases.** Leases are stable per mounted visualizer and idempotent. The last release waits a short grace so a compact↔expanded swap or a SwiftUI remount keeps one tap.
+
+**Failures.**
+- After `.failed(.permissionDenied)`, automatic retries stop until the user enables Live Audio again.
+- Other failures are not retried in a loop; the next eligibility edge may retry once.
+- Termination calls `prepareForShutdown()` before the controller's awaited `shutdown()`, so no restart can race teardown.
+
+**Unchanged from revision 2:**
+- DSP and the capture backend
+- public protocols
+- privacy guarantees: no recording, no persisted samples, and diagnostics that are DEBUG-only, rate-limited and limited to sequence, signal and rounded bands
+- generation-safe teardown
+- `MediaController` as the sole playback authority. Silence never proves denial or pause.
+- The captured signal is the **system mix**. It does not isolate the current Spotify or Music track.

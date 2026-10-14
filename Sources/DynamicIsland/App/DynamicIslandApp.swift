@@ -158,6 +158,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     )
     /// Inert until the user turns Live Audio on; creation starts nothing.
     private lazy var audioSpectrum = AudioSpectrumController()
+    private lazy var liveAudio = LiveAudioCoordinator(controller: audioSpectrum, settings: settings,
+        playback: media.$isPlaying.eraseToAnyPublisher(), initiallyPlaying: media.isPlaying)
     private var audioShutdownStarted = false
     private lazy var cameraPreview = CameraPreviewController(
         liveActivities: liveActivities,
@@ -306,7 +308,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             agentWorkspacePresentation: agentWorkspacePresentation,
             customization: customization,
             mediaAdvanced: mediaAdvanced,
-            audioSpectrum: audioSpectrum
+            audioSpectrum: audioSpectrum,
+            liveAudio: liveAudio
         )
         navigation.applyConfiguration(customization.configuration, using: settings)
         customization.$configuration.dropFirst().removeDuplicates().sink { [weak self] configuration in
@@ -394,7 +397,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onEditWorkspace: { [weak self] in self?.overlayController?.requestWorkspaceAction(.edit) },
             onOpenClipboard: { [weak self] in self?.overlayController?.requestWorkspaceAction(.clipboard) },
             onNextPage: { [weak self] in self?.overlayController?.navigatePage(forward: true) },
-            onPreviousPage: { [weak self] in self?.overlayController?.navigatePage(forward: false) }
+            onPreviousPage: { [weak self] in self?.overlayController?.navigatePage(forward: false) },
+            onToggleLiveAudio: { [weak self] in
+                guard let self else { return }
+                self.liveAudio.userSetEnabled(!self.liveAudio.desiredEnabled)
+            }
         )
 
         NotificationCenter.default.addObserver(
@@ -446,6 +453,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !audioShutdownStarted else { return .terminateLater }
         audioShutdownStarted = true
         let spectrum = audioSpectrum
+        liveAudio.prepareForShutdown()
         Task { @MainActor in
             await spectrum.shutdown()
             sender.reply(toApplicationShouldTerminate: true)

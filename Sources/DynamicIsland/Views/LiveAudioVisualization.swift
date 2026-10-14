@@ -107,10 +107,26 @@ struct SpectrumDynamics: Equatable {
 
 /// User-facing Live Audio state, derived only from the controller.
 struct LiveAudioStatus: Equatable {
-    let isOn: Bool
-    let detail: String
+    private(set) var isOn: Bool
+    private(set) var detail: String
     /// System Settings deep link offered only after an explicit access error.
-    let offersPrivacySettings: Bool
+    private(set) var offersPrivacySettings: Bool
+
+    /// Desired state (the saved consent) is shown separately from capture:
+    /// pausing, sleeping or silence never makes an enabled switch look off.
+    init(_ presentation: AudioSpectrumPresentation, desired: Bool) {
+        self.init(presentation)
+        isOn = desired
+        guard desired else {
+            if presentation.availability == .disabled || presentation.availability == .suspended { detail = "Off · bars are decorative" }
+            return
+        }
+        switch presentation.availability {
+        case .disabled: detail = "On · runs while music plays in the island"
+        case .suspended: detail = "On · resumes after sleep, lock or an output change"
+        default: break
+        }
+    }
 
     init(_ presentation: AudioSpectrumPresentation) {
         switch presentation.availability {
@@ -154,6 +170,10 @@ enum VisualizerGradient {
 
 // MARK: - Environment
 
+private struct LiveAudioCoordinatorKey: EnvironmentKey {
+    static var defaultValue: LiveAudioCoordinator? { nil }
+}
+
 private struct LiveSpectrumKey: EnvironmentKey {
     static var defaultValue: (any LiveSpectrumProviding)? { nil }
 }
@@ -165,18 +185,29 @@ extension EnvironmentValues {
         get { self[LiveSpectrumKey.self] }
         set { self[LiveSpectrumKey.self] = newValue }
     }
+
+    /// App-owned Live Audio coordinator; absent in previews and tests.
+    var liveAudioCoordinator: LiveAudioCoordinator? {
+        get { self[LiveAudioCoordinatorKey.self] }
+        set { self[LiveAudioCoordinatorKey.self] = newValue }
+    }
 }
 
 /// Context-menu content: the explicit Live Audio switch and its real state.
 struct LiveAudioMenuItems: View {
     let provider: any LiveSpectrumProviding
     let status: LiveAudioStatus
+    /// When present, the toggle changes the saved consent (all three controls share it).
+    var coordinator: LiveAudioCoordinator? = nil
 
     var body: some View {
         Section("Live Audio · \(status.detail)") {
             Toggle("Live Audio", isOn: Binding(
                 get: { status.isOn },
-                set: { on in on ? provider.startFromUserAction() : provider.stop() }
+                set: { on in
+                    if let coordinator { coordinator.userSetEnabled(on) }
+                    else if on { provider.startFromUserAction() } else { provider.stop() }
+                }
             ))
             if status.offersPrivacySettings {
                 Button("Open Privacy & Security…") {

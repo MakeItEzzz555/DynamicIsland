@@ -97,6 +97,8 @@ enum SettingsAuditCatalog {
         + visual(["agentUsageMetricsEnabled"], .agents)
         + entries(["agentActivityEnabled", "agentCompletionAlertsEnabled", "agentApprovalAlertsEnabled",
                    "agentPeekDurationSeconds"], .behavioral, "Agent monitoring and alert behavior.")
+        + entries(["liveAudioVisualizerEnabled"], .behavioral,
+                  "Live Audio consent (contract revision 3): read by LiveAudioCoordinator; toggled from the island and menu-bar menus and the visualizer context menu.")
         + entries(["agentCompletionSoundEnabled"], .behavioral,
                   "Agent task completion sound: one system chime (Glass, referenced by name) per fresh completed task; deduplicated by exact event.")
         + entries(["agentActivityRecordingEnabled"], .behavioral,
