@@ -932,6 +932,7 @@ struct FileShelfModuleView: View {
     var backgroundRemoval: BackgroundRemovalController? = nil
     var onOpenSettings: (() -> Void)? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.basketShelfTransfer) private var basketTransfer
     @StateObject private var thumbnailCache = FileThumbnailCache()
 
     private let columns = [
@@ -961,6 +962,19 @@ struct FileShelfModuleView: View {
                         .accessibilityLabel("\(fileShelf.files.count) files")
                 }
                 Spacer()
+                if settings.floatingBasketEnabled, !fileShelf.files.isEmpty, let basketTransfer {
+                    Button {
+                        _ = basketTransfer.showBasket()
+                    } label: {
+                        Label("Basket", systemImage: "basket")
+                            .labelStyle(.titleAndIcon)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.white.opacity(0.66))
+                    .help("Open the Basket")
+                    .accessibilityLabel("Open Basket")
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                }
                 if fileShelf.files.count > 1 {
                     Button("Select All") {
                         fileShelf.selectAll()
@@ -1045,6 +1059,7 @@ struct FileShelfModuleView: View {
         }
         .animation(.easeOut(duration: 0.14), value: dragExplanation)
         .animation(WorkspaceMotion.smoothContent(reduceMotion: reduceMotion || settings.reduceExtraMotion), value: fileShelf.operationStatus)
+        .animation(WorkspaceMotion.smoothContent(reduceMotion: reduceMotion || settings.reduceExtraMotion), value: fileShelf.files.isEmpty)
     }
 
     private var emptyShelfSubtitle: String {

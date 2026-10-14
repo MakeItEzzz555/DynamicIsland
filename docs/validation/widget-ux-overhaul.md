@@ -106,3 +106,37 @@ Native acceptance not done:
 - the Share sheet
 - Finder reveal
 - app restart and Tray restore with the new outputs
+
+## Milestone D — four-zone drag overlay and basket access
+
+Implementation:
+- `FileDropZonesOverlay`: a fixed 2×2 grid of **Keep in Tray**, **Convert**, **Share** and **Create ZIP**.
+  - Geometry never changes during a drag; only fill, stroke and label weight change.
+  - Labels are centred, each zone has its own `.onDrop`, and Reduce Motion falls back to opacity.
+  - It replaces the old single "Drop files here" highlight over the expanded Tray. The unused `FileDropHighlightView` was deleted.
+- Each zone is **one transaction on the existing drop model**: `claimShelfDrop` (one claim per drag generation; a second zone cannot claim) → `completeShelfDrop` adds the files to the Tray → the zone's action runs on exactly the accepted files.
+  - Keep: add only. `completeShelfDrop(requestActions: false)` keeps the File Actions panel closed.
+  - Convert: add, then the existing File Actions panel, which is the format-selection flow.
+  - Share: add, then the existing `FileDragActionExecutor` share picker, anchored to the persistent Tray view because the zone disappears on drop.
+  - ZIP: add, then the shared `createZIP` from milestone C.
+  - A stale or disallowed drop reports "The drop was not added to the Tray". Nothing claims success because an animation finished.
+- Zones register a dedicated drag region, `FileDragSourceRegion.trayDropZone`. Moving from the shelf target onto a zone, or between zones, therefore never ends the drag session. That avoids an overlay ↔ target flicker loop.
+- Basket access: a **Basket** button in the Tray header, shown only while the Tray has files and `floatingBasketEnabled` is on.
+  - It calls `BasketPresenter.showPrimaryBasket()` through the existing `BasketShelfTransfer` environment hook, which gained `showBasket`. There is no second basket store.
+  - It is keyboard focusable and has a VoiceOver label.
+
+Tests:
+- `FileDropZoneTests`, 4 cases:
+  - the zone region keeps the session while the shelf target leaves, and the session ends once the zone leaves
+  - Keep adds without opening File Actions; Convert opens them
+  - a second claim is refused and a stale claim adds nothing
+  - labels
+- Connected Basket / FileDrag / ShelfDropClaim / FileTray suites: 102 tests, 0 failures.
+
+Native acceptance not done:
+- real Finder drags over each zone (hover highlight, multi-file, file promises, cancel by dragging away)
+- the share picker anchoring
+- the basket opening from the header
+- interaction with the below-shell AirDrop/Messages/Mail/Share orbit while dragging
+
+`ImageRenderer` cannot draw `.onDrop`-backed views (it shows a placeholder), so the overlay's look needs a live check.

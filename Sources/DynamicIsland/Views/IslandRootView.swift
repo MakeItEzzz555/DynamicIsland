@@ -688,9 +688,10 @@ struct IslandRootView: View {
             .environment(\.timerRulerInteractionRegistration, TimerRulerInteractionRegistration { owner, frame in
                 layoutStore.setNativeControlRegion(frame, owner: owner)
             })
-            .environment(\.basketShelfTransfer, BasketShelfTransfer { [presenter = modules.basketPresenter] urls in
-                presenter.moveShelfFilesToBasket(urls)
-            })
+            .environment(\.basketShelfTransfer, BasketShelfTransfer(
+                moveToBasket: { [presenter = modules.basketPresenter] urls in presenter.moveShelfFilesToBasket(urls) },
+                showBasket: { [presenter = modules.basketPresenter] in presenter.showPrimaryBasket() }
+            ))
     }
 
     private var baseIslandCanvas: some View {
@@ -3621,6 +3622,8 @@ struct ExpandedIslandView: View {
 
     @State private var isAirDropTargeted = false
     @State private var isFilesTargeted = false
+    @State private var dropZoneTargeted: FileDropZone?
+    @State private var trayShareAnchor = SharingAnchorHolder()
     @State private var clipboardPresentation = ClipboardHistoryPresentationState()
     @State private var pagePresentation: ExpandedPageTransitionState
     @ObservedObject private var customization: WorkspaceCustomizationStore
@@ -4376,13 +4379,20 @@ struct ExpandedIslandView: View {
                         onOpenSettings: onOpenSettings
                     )
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .overlay {
-                            if isFilesTargeted || (navigation.isFileDropTargeted && !isAirDropTargeted) {
-                                FileDropHighlightView(reduceMotion: reduceMotion)
-                            }
-                        }
+                        .background(SharingAnchorView(holder: trayShareAnchor))
                         .onDrop(of: FileDropProviderLoader.acceptedTypes, isTargeted: filesTargetBinding) { providers in
                             loadDroppedFiles(from: providers)
+                        }
+                        .overlay {
+                            if canAcceptExpandedFileDrop,
+                               isFilesTargeted || dropZoneTargeted != nil || (navigation.isFileDropTargeted && !isAirDropTargeted) {
+                                FileDropZonesOverlay(
+                                    reduceMotion: reduceMotion,
+                                    onTargetChange: setDropZoneTargeted,
+                                    onDrop: dropOnZone
+                                )
+                                .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.97)))
+                            }
                         }
                         .innerBlurScaleClean(
                             settings: settings,
@@ -4523,6 +4533,59 @@ struct ExpandedIslandView: View {
                 _ = modules.fileDragSession.completeShelfDrop(claim, urls: urls, shelf: modules.fileShelf,
                     allowed: settings.overlayEnabled && canAcceptExpandedFileDrop &&
                         layoutStore.overlayPresentationGeneration == presentationGeneration)
+            }
+        }
+        return true
+    }
+
+    private func setDropZoneTargeted(_ zone: FileDropZone?) {
+        dropZoneTargeted = zone
+        // The zones are their own drag region so moving between them (or off
+        // the shelf target underneath) never ends the session mid-drag.
+        modules.fileDragSession.setSourceTargeted(zone != nil, region: .trayDropZone)
+        if zone != nil { navigation.showTrayForFileDrag(using: settings) }
+    }
+
+    /// One transactional drop: the existing shelf claim adds the files, then
+    /// the zone's action runs on exactly the accepted files.
+    private func dropOnZone(_ zone: FileDropZone, providers: [NSItemProvider]) -> Bool {
+        let loader = FileDropProviderLoader()
+        dropZoneTargeted = nil
+        guard canAcceptExpandedFileDrop, loader.canLoad(providers), let claim = modules.fileDragSession.claimShelfDrop() else {
+            isFilesTargeted = false
+            navigation.endFileDropTargeting()
+            return false
+        }
+        isFilesTargeted = false
+        navigation.endFileDropTargeting()
+        let presentationGeneration = layoutStore.overlayPresentationGeneration
+        let shelf = modules.fileShelf
+        loader.loadURLs(from: providers) { urls in
+            Task { @MainActor in
+                let accepted = modules.fileDragSession.completeShelfDrop(
+                    claim, urls: urls, shelf: shelf,
+                    allowed: settings.overlayEnabled && canAcceptExpandedFileDrop &&
+                        layoutStore.overlayPresentationGeneration == presentationGeneration,
+                    requestActions: zone == .convert)
+                guard let accepted, !accepted.isEmpty else {
+                    shelf.setOperationStatus(.failed("The drop was not added to the Tray."), clearAfter: .seconds(4))
+                    return
+                }
+                shelf.select(only: accepted)
+                switch zone {
+                case .keep:
+                    shelf.setOperationStatus(.succeeded(accepted.count == 1 ? "Added to the Tray." : "Added \(accepted.count) items to the Tray."), clearAfter: .seconds(3))
+                case .convert:
+                    break // The existing File Actions panel is the format selection flow.
+                case .share:
+                    switch FileDragActionExecutor.production.perform(.share, urls: accepted, anchor: trayShareAnchor.view) {
+                    case .handedOff: break
+                    case .unavailable(let message), .failed(let message):
+                        shelf.setOperationStatus(.failed(message), clearAfter: .seconds(4))
+                    }
+                case .zip:
+                    shelf.createZIP(accepted, using: modules.backgroundOperations)
+                }
             }
         }
         return true
@@ -5408,28 +5471,6 @@ struct AirDropDropZoneView: View {
         settings.airDropFallbackRevealInFinder
             ? "Drop files here to share"
             : "Drop files here to share if available"
-    }
-}
-
-private struct FileDropHighlightView: View {
-    let reduceMotion: Bool
-
-    var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(.cyan.opacity(0.10))
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .stroke(.cyan.opacity(0.78), lineWidth: 2)
-                .shadow(color: .cyan.opacity(reduceMotion ? 0 : 0.35), radius: reduceMotion ? 0 : 10)
-            Text("Drop files here")
-                .font(.system(size: 15, weight: .bold, design: .rounded))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(.black.opacity(0.42), in: Capsule(style: .continuous))
-        }
-        .allowsHitTesting(false)
-        .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.98)))
     }
 }
 

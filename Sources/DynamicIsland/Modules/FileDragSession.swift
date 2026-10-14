@@ -8,6 +8,8 @@ enum FileDragSourceRegion: Hashable, Sendable {
     case collapsedIsland
     case trayShelf
     case trayAirDrop
+    /// One of the four Tray drop zones (Keep, Convert, Share, ZIP).
+    case trayDropZone
 }
 
 enum FileDragQuickAction: String, CaseIterable, Identifiable, Sendable {
@@ -142,7 +144,7 @@ final class FileDragSessionController: ObservableObject {
 
     @discardableResult
     func completeShelfDrop(_ claim: ShelfDropClaim, urls: [URL], shelf: FileShelfStore,
-                           allowed: Bool, openAfterDrop: Bool = false) -> [URL]? {
+                           allowed: Bool, openAfterDrop: Bool = false, requestActions: Bool = true) -> [URL]? {
         guard claim.generation == generation, dropClaimed, phase == .materializingShelf else {
             shelf.discardUnacceptedDrop(urls)
             return nil
@@ -151,7 +153,7 @@ final class FileDragSessionController: ObservableObject {
         guard allowed else { shelf.discardUnacceptedDrop(urls); return [] }
         shelf.add(urls)
         let accepted = shelf.files.filter(Set(urls.map(\.standardizedFileURL)).contains)
-        shelf.requestFileActions(for: accepted, openShelfAfterDrop: openAfterDrop)
+        if requestActions { shelf.requestFileActions(for: accepted, openShelfAfterDrop: openAfterDrop) }
         return accepted
     }
 

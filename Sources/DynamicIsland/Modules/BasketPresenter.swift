@@ -604,6 +604,8 @@ extension NSMenu {
 /// knowing about windows.
 struct BasketShelfTransfer {
     let moveToBasket: ([URL]) -> Void
+    /// Opens the existing primary basket; false when baskets are disabled.
+    var showBasket: () -> Bool = { false }
 }
 
 private struct BasketShelfTransferKey: EnvironmentKey {
