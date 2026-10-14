@@ -127,7 +127,11 @@ struct ApplicationAudioOutput: Sendable, Equatable, Identifiable {
     let activity: Activity
     let gain: Double?
     let controlAvailable: Bool
-    enum Activity: Sendable { case outputActive, idle, unknown }
+    enum Activity: Sendable {
+        /// Verified non-silent routed samples (not established by HAL IO alone).
+        case outputActive
+        case outputIOActive, idle, unknown
+    }
 }
 
 @MainActor

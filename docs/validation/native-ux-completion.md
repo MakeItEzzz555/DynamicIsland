@@ -47,3 +47,13 @@ AudioVisualizerBars is the only capsule/color/size renderer for live media FFT, 
 70 focused tests pass, zero failures/skips (6.048s): real production media mailbox-to-raster, inert previews, consent persistence/lifecycle, fake recorder meter authority, renderer rasters for all three palettes, finite bounds, silence and envelope reset. No real audio or microphone capture was started.
 
 Follow-up: introduce a separate recording-oriented export/save workflow before renaming Voice Transcribe. Preserve its current recording retention and exact permission lifecycle; make transcription an explicit optional action after recording. This milestone does not perform that capability migration.
+
+## F — Honest per-app capability boundary
+
+Public Apple docs and installed SDK headers prove process taps and muting behavior. A capture/gain/replay mixer is plausible, but atomic cutover, fail-open teardown, device clocks, Bluetooth/AirPlay, permission/signing and crash recovery have not been proven. Read docs/research/per-application-volume-feasibility.md. No gain widget or risky routing is enabled. ApplicationAudioDiscovery is a manually invoked, background, read-only implementation of the existing contract: actual output-IO processes only, bounded allocation, PID reread and generation invalidation. Output IO is accurately distinct from audible measured samples. Gain=nil/controlAvailable=false and every gain request is rejected as unsupported/stale/invalid. Nothing discovers or captures audio at launch.
+
+7 focused discovery/contract/provider tests pass, zero failures/skips. Actual HAL discovery was not run; fixtures contain only synthetic process records. Hardware replacement/muting requires a separately authorized controlled acceptance before production routing.
+
+## G — Provider icons and preserved consent
+
+Claude source checkpoint da7be2a was reviewed and integrated as 41e875d. Supplied PNG bytes are retained in the SwiftPM asset resource catalog. One renderer resolves the packaged bundle first; compact Agents now show the primary Thinking Orb on the left and actual provider identity on the right, with mini-orbs/overflow before it. Provider width does not inflate multi-session layout. Hover preview statuses and approvals retain their authority. 79 connected tests pass, zero failures/skips (25.627s), including 2s hover stability with the integrated layout, provider identity/resource tests and persisted Live Audio consent/mailbox rendering. Package resource/signature checks are pending the final build.
