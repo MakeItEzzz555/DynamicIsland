@@ -56,6 +56,16 @@ final class FileActionPresenterTests: XCTestCase {
         XCTAssertFalse(fixture.layout.isTransientInteractionActive)
     }
 
+    func testFittedOriginKeepsTheCIOverflowOnA1024PointDisplay() {
+        // Exact frames from the failing CI run.
+        let visible = NSRect(x: 0, y: 62, width: 1024, height: 681)
+        let fitted = FileActionPresenter.fittedOrigin(of: NSRect(x: 678, y: 219, width: 596, height: 234), in: visible)
+        XCTAssertEqual(fitted, NSPoint(x: 420, y: 219))
+        XCTAssertTrue(visible.contains(NSRect(origin: fitted, size: NSSize(width: 596, height: 234))))
+        XCTAssertEqual(FileActionPresenter.fittedOrigin(of: NSRect(x: 100, y: 100, width: 300, height: 100), in: visible),
+                       NSPoint(x: 100, y: 100), "an already-visible popup is left where AppKit put it")
+    }
+
     func testUnacceptedSourceAndMissingAnchorCannotClaimInteraction() throws {
         let fixture = try Fixture(); defer { fixture.close() }
         let unknown = FileTrayActionRequest(id: UUID(), urls: [URL(fileURLWithPath: "/not-an-accepted-file")])

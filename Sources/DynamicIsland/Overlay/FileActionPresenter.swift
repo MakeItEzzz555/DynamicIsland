@@ -13,6 +13,7 @@ final class FileActionPresenter: NSObject, NSPopoverDelegate {
     private weak var presentingWindow: NSWindow?
     private weak var previousFirstResponder: NSResponder?
     private var restoreFocus = false
+    private var frameObservers: [NSObjectProtocol] = []
     var isShown: Bool { popover.isShown }
     var presentationWindow: NSWindow? { popover.contentViewController?.view.window }
 
@@ -39,6 +40,7 @@ final class FileActionPresenter: NSObject, NSPopoverDelegate {
             addOutput: { [weak shelf] output in shelf?.add([output]); shelf?.select(output) },
             dismiss: { [weak self] in self?.close() }).frame(width: width))
         popover.show(relativeTo: frame, of: view, preferredEdge: .minY)
+        observePresentationFrame()
         fitToPresentingDisplay()
         if !popover.isShown { release() }
         return popover.isShown
@@ -51,16 +53,43 @@ final class FileActionPresenter: NSObject, NSPopoverDelegate {
         release()
         popover.contentViewController = nil
     }
-    func popoverDidShow(_ notification: Notification) { fitToPresentingDisplay() }
+    func popoverDidShow(_ notification: Notification) {
+        // The popover window may only exist once shown; registration is idempotent.
+        observePresentationFrame()
+        fitToPresentingDisplay()
+    }
+    /// NSPopover repositions its own window during the show animation and on
+    /// content layout, so a one-time fit can be undone on slower machines.
+    /// Re-fit after every move/resize while shown.
+    private func observePresentationFrame() {
+        removeFrameObservers()
+        guard let window = presentationWindow else { return }
+        for name in [NSWindow.didMoveNotification, NSWindow.didResizeNotification] {
+            frameObservers.append(NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.fitToPresentingDisplay() }
+            })
+        }
+    }
+    private func removeFrameObservers() {
+        frameObservers.forEach(NotificationCenter.default.removeObserver)
+        frameObservers = []
+    }
     private func fitToPresentingDisplay() {
         guard let window = presentationWindow, let screen = presentingWindow?.screen else { return }
-        let bounds = screen.visibleFrame.insetBy(dx: 8, dy: 8)
         let frame = window.frame
-        window.setFrameOrigin(NSPoint(
+        let origin = Self.fittedOrigin(of: frame, in: screen.visibleFrame)
+        // Moving only when needed keeps the move notification from looping.
+        if origin != frame.origin { window.setFrameOrigin(origin) }
+    }
+    /// Keeps a popup inside the display's visible frame (8 pt margin).
+    nonisolated static func fittedOrigin(of frame: NSRect, in visible: NSRect) -> NSPoint {
+        let bounds = visible.insetBy(dx: 8, dy: 8)
+        return NSPoint(
             x: min(max(frame.minX, bounds.minX), max(bounds.minX, bounds.maxX - frame.width)),
-            y: min(max(frame.minY, bounds.minY), max(bounds.minY, bounds.maxY - frame.height))))
+            y: min(max(frame.minY, bounds.minY), max(bounds.minY, bounds.maxY - frame.height)))
     }
     private func release() {
+        removeFrameObservers()
         let id = requestID; requestID = nil
         layout.setTransientInteraction(false, owner: owner)
         if let id { shelf.dismissFileActions(id) }

@@ -56,9 +56,22 @@ final class SettingsWindowTests: XCTestCase {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
-        let readyDeadline = Date().addingTimeInterval(1)
+        // Activation is cooperative on macOS 14+ and can be slow or declined for
+        // a process that is no longer freshly launched (full suite, CI).
+        let readyDeadline = Date().addingTimeInterval(5)
         repeat { CameraNativeHostedFixture.pump() }
         while (!NSApp.isActive || !window.isKeyWindow) && Date() < readyDeadline
+        guard NSApp.isActive, window.isKeyWindow else {
+            // Hard failure, reported separately from the action assertions: the
+            // click cannot be evaluated against an inactive window, so this is
+            // an inconclusive acceptance run, never a pass and never a skip.
+            XCTFail("INCONCLUSIVE (environment): app/key-window activation not acquired within 5 s " +
+                    "(NSApp.isActive=\(NSApp.isActive), window.isKeyWindow=\(window.isKeyWindow)); " +
+                    "native Settings button dispatch was not evaluated")
+            window.setFrameAutosaveName(""); window.close(); NSWindow.removeFrame(usingName: name)
+            NSApp.setActivationPolicy(previousPolicy)
+            return
+        }
         XCTAssertTrue(NSApp.isActive, "the native fixture must finish app activation before dispatch")
         XCTAssertTrue(window.isKeyWindow)
         window.contentView?.layoutSubtreeIfNeeded()

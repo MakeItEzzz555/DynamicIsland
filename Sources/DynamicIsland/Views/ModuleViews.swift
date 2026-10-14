@@ -144,7 +144,9 @@ struct AudioVisualizerView: View {
                     .frame(width: variant.barWidth, height: variant.maximumBarHeight * (index < levels.count ? levels[index] : SpectrumBarMapper.floor))
             }
         }
-        .animation(.linear(duration: 1.0 / 30), value: levels)
+        // No SwiftUI animation: SpectrumBarSmoother already shapes motion per
+        // 30 Hz frame, and an animation clock that stalls (occluded/headless
+        // windows) would keep drawing stale heights.
     }
 
     private func bars(tick: TimeInterval?, opacity: Double) -> some View {
