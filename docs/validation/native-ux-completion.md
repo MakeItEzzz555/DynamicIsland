@@ -19,3 +19,11 @@ Connected focused result: 31 tests, zero failures/skips, 26.359s. Debug compilat
 ## Pending milestones
 
 B top-edge routing and preserved left click; C shared Media/Tray geometry and accessory removal; D accepted-file Messages/Share/ZIP operations; E common visualizer renderer with separate media/call/microphone authorities; F public per-app audio feasibility and safe non-routing work, with live output replacement gated; G supplied provider icons; H system-volume branch reconciliation/follow-up. No risky capture, output muting, private lock-screen helper or running-app replacement is authorized here.
+
+## B — Top-edge routing / left-click preservation
+
+A checkpoint: 70edb29. B focused tests: 55 passed, zero failures/skips (3.099s), including native top rows at y=0/.25/.5/1/2, multiple widths and notched/notchless fixtures; cutout and outside-shell rejection; exact menu dispatch/file priority; menu Escape; and unchanged absolute collapsed/expanded anchors. The expanded-notch left-click menu route is restored through its existing Settings callback; collapsed single click/hold behavior remains separate.
+
+Important evidence limit: the simple AppKit top-edge baseline already passed. The physical reported narrow-strip defect is therefore not proven to be a shape-path error. Source inspection shows the shell's reachable top formerly coincided with the native panel event boundary; the panel now has a 2pt guard ABOVE the shell without moving either shell in screen coordinates. This removes that boundary coincidence and introduces no desktop hit surface. WindowServer/physical top-edge delivery remains UNVERIFIED until the packaged build is authorized for a user exercise. OS boundary clipping is an INFERENCE, not a claimed observed internal mechanism.
+
+Compact row and preview exclusions preserve media/Agent/native control authority. Registered native controls still win. The physical camera cutout is excluded; no claim is made that clicks can be delivered inside it. No global hook or input injection was added.

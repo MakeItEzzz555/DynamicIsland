@@ -749,6 +749,15 @@ struct IslandRootView: View {
         return [CGRect(x: 0, y: base, width: surfaceSize.width, height: surfaceSize.height - base)]
     }
 
+    private var collapsedCompactControlRects: [CGRect] {
+        guard !isExpanded, collapsedLayoutResolution.primary != nil else { return [] }
+        let bandTop = isCollapsedPreviewActive ? 2 : max(0, (surfaceSize.height - 16) / 2)
+        let left = layoutStore.collapsedLeftRegionWidth > 0 ? layoutStore.collapsedLeftRegionWidth + 8 : min(96, surfaceSize.width / 3)
+        let right = layoutStore.collapsedRightRegionWidth > 0 ? layoutStore.collapsedRightRegionWidth + 8 : min(96, surfaceSize.width / 3)
+        return [CGRect(x: 0, y: bandTop, width: left, height: 16),
+                CGRect(x: surfaceSize.width - right, y: bandTop, width: right, height: 16)]
+    }
+
     private var shellBackgroundInteraction: IslandShellBackgroundInteraction {
         let metrics = layoutStore.displayMetrics
         let notchIntegrated = metrics.hasHardwareNotch && settings.respectHardwareNotch
@@ -764,7 +773,7 @@ struct IslandRootView: View {
             notchSize: notchIntegrated ? CGSize(width: layoutStore.hardwareNotchWidth, height: metrics.hardwareNotchHeight) : .zero,
             allowsBackground: isExpanded,
             excludedRects: layoutStore.nativeControlRegions.values.map { $0.offsetBy(dx: -shellOrigin.x, dy: -shellOrigin.y) }
-                + collapsedPreviewContentRects)
+                + collapsedPreviewContentRects + collapsedCompactControlRects)
         return IslandShellBackgroundInteraction(geometry: geometry,
             enabled: !layoutStore.isShellMorphing && !layoutStore.isExpandedContentExiting && !layoutStore.isCollapseShellOnly
                 && layoutStore.workspaceGeometryTransition.phase == .idle,
@@ -2092,8 +2101,10 @@ final class IslandShellBackgroundInputView: NSView {
         guard let origin, let configuration, configuration.enabled,
               configuration.geometry.region(at: origin) == .notch,
               configuration.geometry.region(at: point) == .notch else { return }
-        // Left click only expands the collapsed island; the menu is right-click only.
-        configuration.onClick?()
+        if let onClick = configuration.onClick { onClick() }
+        else if configuration.geometry.allowsBackground {
+            NSMenu.popUpContextMenu(actionsMenu(), with: event, for: self)
+        }
     }
 
     override func viewWillMove(toWindow newWindow: NSWindow?) {

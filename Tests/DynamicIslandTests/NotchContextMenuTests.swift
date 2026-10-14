@@ -29,6 +29,36 @@ final class NotchContextMenuTests: XCTestCase {
         }
     }
 
+    func testUppermostDeliverablePixelsUseTheProductionShoulderContour() throws {
+        for width: CGFloat in [240, 340, 600] {
+            for notched in [true, false] {
+                let (panel, background) = makePanel(width: width, notched: notched)
+                defer { panel.contentView = nil; panel.close() }
+                let geometry = IslandBackgroundInteractionGeometry(size: CGSize(width: width, height: 40),
+                    horizontalPadding: 20, bottomPadding: 4, contentTop: 38,
+                    notchSize: notched ? CGSize(width: 200, height: 32) : .zero, allowsBackground: false)
+                background.configure(IslandShellBackgroundInteraction(geometry: geometry, enabled: true,
+                    presentationGeneration: 1, clipboardEnabled: true, onEdit: {}, onClipboard: {},
+                    onSettings: {}, onNavigate: { _ in }).clipped(to: .init(topCornerRadius: notched ? 6 : 0, bottomCornerRadius: 14)))
+                let xs: [CGFloat] = notched ? [12, width - 12] : [12, width / 2, width - 12]
+                for x in xs {
+                    for y: CGFloat in [0, 0.25, 0.5, 1, 2] {
+                        let click = try event(panel, point: CGPoint(x: x, y: y))
+                        XCTAssertTrue(panel.notchActionsTarget(for: click) === background, "top edge x=\(x) y=\(y)")
+                        var routed = false
+                        panel.onNotchRightClick = { incoming in
+                            routed = panel.notchActionsTarget(for: incoming) === background; return routed
+                        }
+                        panel.sendEvent(click)
+                        XCTAssertTrue(routed)
+                    }
+                }
+                XCTAssertNil(panel.notchActionsTarget(for: try event(panel, point: CGPoint(x: 12, y: -0.25))))
+                if notched { XCTAssertNil(panel.notchActionsTarget(for: try event(panel, point: CGPoint(x: width / 2, y: 0)))) }
+            }
+        }
+    }
+
     func testNotchlessFallbackDoesNotClaimDesktopOrExpandedContent() throws {
         for expanded in [false, true] {
             let (panel, _) = makePanel(width: 360, notched: false, expanded: expanded)

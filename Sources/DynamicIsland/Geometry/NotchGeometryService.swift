@@ -347,7 +347,9 @@ struct ExpandedPresentationProfile: Equatable, Sendable {
     func panelFrame(forExpandedFrame expanded: CGRect, collapsedFrame collapsed: CGRect) -> CGRect {
         let panel = panelFrame(forExpandedFrame: expanded)
         guard collapsed.width > 0, collapsed.height > 0, collapsed.minX.isFinite, collapsed.maxX.isFinite else { return panel }
-        return panel.union(collapsed).integral
+        let union = panel.union(collapsed).integral
+        // Keep the reachable shell top inside the native window, not on its event boundary.
+        return CGRect(x: union.minX, y: union.minY, width: union.width, height: union.height + 2)
     }
 
     /// Panel frame: the expanded shell frame extended downward by the

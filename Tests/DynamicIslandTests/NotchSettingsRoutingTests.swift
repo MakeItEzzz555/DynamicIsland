@@ -22,7 +22,7 @@ final class NotchSettingsRoutingTests: XCTestCase {
         view.configure(IslandShellBackgroundInteraction(geometry: geometry, enabled: true,
             presentationGeneration: 1, clipboardEnabled: true, onEdit: {}, onClipboard: {}, onSettings: {},
             onNavigate: { _ in },
-            onClick: expanded ? nil : { expands += 1 }, onLongPress: { holds += 1 }))
+            onClick: expanded ? {} : { expands += 1 }, onLongPress: { holds += 1 }))
         let panel = IslandOverlayPanel(contentRect: view.frame, styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered, defer: false)
         panel.isReleasedWhenClosed = false
@@ -61,6 +61,46 @@ final class NotchSettingsRoutingTests: XCTestCase {
             XCTAssertEqual(expands, 3, "VoiceOver press follows collapsed click authority")
             XCTAssertEqual(holds, 1)
         }
+    }
+
+    func testExpandedNotchReleaseRetainsNativeSettingsMenu() throws {
+        _ = NSApplication.shared
+        let geometry = IslandBackgroundInteractionGeometry(size: CGSize(width: 300, height: 100),
+            horizontalPadding: 20, bottomPadding: 12, contentTop: 38,
+            notchSize: CGSize(width: 200, height: 32), allowsBackground: true)
+        let view = IslandShellBackgroundInputView(frame: CGRect(origin: .zero, size: geometry.size))
+        var settingsCalls = 0, fallbackUsed = false
+        let tracking = NotchMenuTestObserver()
+        view.configure(.init(geometry: geometry, enabled: true, presentationGeneration: 1, clipboardEnabled: true,
+            onEdit: {}, onClipboard: {}, onSettings: { settingsCalls += 1 }, onNavigate: { _ in }))
+        let panel = IslandOverlayPanel(contentRect: view.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        panel.isReleasedWhenClosed = false; panel.becomesKeyOnlyIfNeeded = true
+        panel.contentView = view; panel.orderFrontRegardless()
+        defer { panel.contentView = nil; panel.close() }
+        NotificationCenter.default.addObserver(tracking, selector: #selector(NotchMenuTestObserver.didBegin(_:)),
+            name: NSMenu.didBeginTrackingNotification, object: nil)
+        defer { NotificationCenter.default.removeObserver(tracking) }
+        let up = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseUp, location: CGPoint(x: 150, y: 65), modifierFlags: [],
+            timestamp: 0, windowNumber: panel.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 0))
+        let down = try click(panel, topPoint: CGPoint(x: 150, y: 35))
+        let timer = Timer(timeInterval: 0.05, repeats: false) { _ in
+            let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                windowNumber: panel.windowNumber, context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53)
+            if let escape { NSApp.postEvent(escape, atStart: true) }
+        }
+        let safety = Timer(timeInterval: 0.75, repeats: false) { _ in
+            MainActor.assumeIsolated { fallbackUsed = true; tracking.menu?.cancelTracking() }
+        }
+        RunLoop.main.add(timer, forMode: .eventTracking)
+        RunLoop.main.add(safety, forMode: .eventTracking)
+        defer { timer.invalidate(); safety.invalidate() }
+        panel.sendEvent(down); panel.sendEvent(up)
+        XCTAssertTrue(tracking.began)
+        XCTAssertFalse(fallbackUsed, "native Escape must dismiss the preserved left-click menu")
+        let item = try XCTUnwrap(view.menu(for: down)?.item(withTag: 4))
+        XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(item.action), to: item.target, from: item))
+        XCTAssertEqual(settingsCalls, 1)
+        XCTAssertFalse(panel.isKeyWindow)
     }
 
     func testPanelFindsProductionMenuBehindFullFrameContentInBothStates() throws {
@@ -130,4 +170,14 @@ final class NotchSettingsRoutingTests: XCTestCase {
 private struct NotchOccludingEditor: NSViewRepresentable {
     func makeNSView(context: Context) -> NSTextView { NSTextView(frame: .zero) }
     func updateNSView(_ view: NSTextView, context: Context) {}
+}
+
+@MainActor
+private final class NotchMenuTestObserver: NSObject {
+    var menu: NSMenu?
+    var began = false
+    @objc func didBegin(_ note: Notification) {
+        began = true
+        menu = note.object as? NSMenu
+    }
 }

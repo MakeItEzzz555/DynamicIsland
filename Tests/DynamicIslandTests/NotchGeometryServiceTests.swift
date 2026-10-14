@@ -4,6 +4,21 @@ import XCTest
 @testable import DynamicIsland
 
 final class NotchGeometryServiceTests: XCTestCase {
+    @MainActor
+    func testPanelTopGuardPreservesAbsoluteCollapsedAndExpandedAnchors() {
+        let expanded = CGRect(x: 200, y: 500, width: 400, height: 260)
+        let collapsed = CGRect(x: 280, y: 726, width: 240, height: 34)
+        let panel = ExpandedPresentationProfile.standard.panelFrame(forExpandedFrame: expanded, collapsedFrame: collapsed)
+        XCTAssertEqual(panel.maxY, expanded.maxY + 2)
+        XCTAssertEqual(panel.minY, expanded.minY)
+        let layout = IslandLayoutStore()
+        layout.updateLocal(panelFrame: panel, collapsedScreenFrame: collapsed, expandedScreenFrame: expanded,
+            hasHardwareNotch: true, hardwareNotchWidth: 200, collapsedLeftRegionWidth: 16,
+            collapsedNotchCoreWidth: 200, collapsedRightRegionWidth: 16)
+        XCTAssertEqual(layout.collapsedSurfaceFrame.offsetBy(dx: panel.minX, dy: panel.minY), collapsed)
+        XCTAssertEqual(layout.expandedSurfaceFrame.offsetBy(dx: panel.minX, dy: panel.minY), expanded)
+    }
+
     func testInfersHardwareNotchFromAuxiliaryAreas() {
         let service = NotchGeometryService()
         let snapshot = ScreenSnapshot(
