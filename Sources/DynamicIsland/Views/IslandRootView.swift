@@ -3243,6 +3243,13 @@ struct CollapsedSystemHUDCompactView: View {
         let now = ProcessInfo.processInfo.systemUptime
         guard force || now - lastWriteUptime >= (1.0 / 30.0) else { return }
         lastWriteUptime = now
+        if kind == .volume {
+            controller.requestInteractiveVolume(requested) { snapshot in
+                if let snapshot { confirmedProgress = min(max(snapshot.value, 0), 1) }
+                else { interactionSupported = false; synchronizeFromActivity() }
+            }
+            return
+        }
         guard let snapshot = controller.setInteractiveValue(kind: kind, value: requested) else {
             interactionSupported = false
             synchronizeFromActivity()

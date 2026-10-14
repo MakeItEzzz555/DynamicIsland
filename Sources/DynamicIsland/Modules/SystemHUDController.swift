@@ -445,7 +445,7 @@ private enum SystemMediaKey {
 private final class SystemMediaKeyInterceptor: @unchecked Sendable {
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
-    private var handler: ((UInt32) -> Bool)?
+    private var handler: ((UInt32, Bool) -> Bool)?
     private var suppressedKeyCodes: Set<UInt32> = []
 
     var isRunning: Bool {
@@ -453,7 +453,7 @@ private final class SystemMediaKeyInterceptor: @unchecked Sendable {
         return CFMachPortIsValid(eventTap)
     }
 
-    func start(handler: @escaping (UInt32) -> Bool) -> Bool {
+    func start(handler: @escaping (UInt32, Bool) -> Bool) -> Bool {
         if isRunning {
             self.handler = handler
             return true
@@ -526,7 +526,8 @@ private final class SystemMediaKeyInterceptor: @unchecked Sendable {
         }
         guard isKeyDown || isRepeat else { return false }
 
-        let didHandle = handler?(keyCode) ?? false
+        let fine = nsEvent.modifierFlags.contains([.option, .shift])
+        let didHandle = handler?(keyCode, fine) ?? false
         if didHandle {
             suppressedKeyCodes.insert(keyCode)
         }
@@ -567,12 +568,12 @@ private final class SystemMediaControlBackend {
         loadBrightnessFramework()
     }
 
-    func perform(keyCode: UInt32) -> SystemHUDSnapshot? {
+    func perform(keyCode: UInt32, fine: Bool = false) -> SystemHUDSnapshot? {
         switch keyCode {
         case SystemMediaKey.volumeUp:
-            return changeVolume(by: volumeStep)
+            return changeVolume(by: SystemVolumeKeyStep.value(fine: fine))
         case SystemMediaKey.volumeDown:
-            return changeVolume(by: -volumeStep)
+            return changeVolume(by: -SystemVolumeKeyStep.value(fine: fine))
         case SystemMediaKey.mute:
             return toggleMute()
         case SystemMediaKey.brightnessUp:
@@ -603,15 +604,16 @@ private final class SystemMediaControlBackend {
 
     func setVolume(_ value: Double) -> SystemHUDSnapshot? {
         let target = Float32(min(max(value, 0), 1))
-        guard writeVolumeScalar(target), let verified = readVolumeScalar() else { return nil }
+        guard value.isFinite, let deviceID = currentOutputDeviceID(),
+              writeVolumeScalar(target, deviceID: deviceID), let verified = readVolumeScalar(deviceID: deviceID) else { return nil }
         if verified > 0.001 {
-            _ = setMute(false)
+            _ = setMute(false, deviceID: deviceID)
             previousVolumeBeforeMute = verified
         }
         return SystemHUDSnapshot(
             kind: .volume,
             value: Double(verified),
-            isMuted: readMute() ?? (verified <= 0.001),
+            isMuted: readMute(deviceID: deviceID) ?? (verified <= 0.001),
             updatedAt: Date()
         )
     }
@@ -710,8 +712,8 @@ private final class SystemMediaControlBackend {
         )
     }
 
-    private func readVolumeScalar() -> Float32? {
-        guard let deviceID = currentOutputDeviceID() else { return nil }
+    private func readVolumeScalar(deviceID requestedDevice: AudioObjectID? = nil) -> Float32? {
+        guard let deviceID = requestedDevice ?? currentOutputDeviceID() else { return nil }
 
         var virtualAddress = AudioObjectPropertyAddress(
             mSelector: kAudioHardwareServiceDeviceProperty_VirtualMainVolume,
@@ -758,8 +760,8 @@ private final class SystemMediaControlBackend {
         return min(max(value, 0), 1)
     }
 
-    private func writeVolumeScalar(_ value: Float32) -> Bool {
-        guard let deviceID = currentOutputDeviceID() else { return false }
+    private func writeVolumeScalar(_ value: Float32, deviceID requestedDevice: AudioObjectID? = nil) -> Bool {
+        guard let deviceID = requestedDevice ?? currentOutputDeviceID() else { return false }
         let target = min(max(value, 0), 1)
 
         var virtualAddress = AudioObjectPropertyAddress(
@@ -797,7 +799,7 @@ private final class SystemMediaControlBackend {
                 value: target
             ) || wroteChannel
         }
-        guard wroteChannel, let readBack = readVolumeScalar() else { return false }
+        guard wroteChannel, let readBack = readVolumeScalar(deviceID: deviceID) else { return false }
         return abs(readBack - target) < 0.05
     }
 
@@ -818,8 +820,8 @@ private final class SystemMediaControlBackend {
             deviceID, &address, 0, nil, size, &value
         ) == noErr
     }
-    private func readMute() -> Bool? {
-        guard let deviceID = currentOutputDeviceID() else { return nil }
+    private func readMute(deviceID requestedDevice: AudioObjectID? = nil) -> Bool? {
+        guard let deviceID = requestedDevice ?? currentOutputDeviceID() else { return nil }
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyMute,
             mScope: kAudioDevicePropertyScopeOutput,
@@ -836,8 +838,8 @@ private final class SystemMediaControlBackend {
         return value != 0
     }
 
-    private func setMute(_ muted: Bool) -> Bool {
-        guard let deviceID = currentOutputDeviceID() else { return false }
+    private func setMute(_ muted: Bool, deviceID requestedDevice: AudioObjectID? = nil) -> Bool {
+        guard let deviceID = requestedDevice ?? currentOutputDeviceID() else { return false }
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyMute,
             mScope: kAudioDevicePropertyScopeOutput,
@@ -1053,53 +1055,53 @@ private final class SystemMediaControlBackend {
     }
 }
 
-private final class DefaultAudioOutputObserver: @unchecked Sendable {
-    private var listener: AudioObjectPropertyListenerBlock?
-    private var handler: (@Sendable () -> Void)?
+@MainActor
+private final class DefaultAudioOutputObserver {
+    private var listeners: [(AudioObjectID, AudioObjectPropertyAddress, AudioObjectPropertyListenerBlock)] = []
+    private var device: AudioObjectID?
+    private var handler: (@MainActor () -> Void)?
+    private var volumeHandler: (@MainActor () -> Void)?
 
-    func start(handler: @escaping @Sendable () -> Void) -> Bool {
-        stop()
-        self.handler = handler
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
-            self?.handler?()
+    func start(handler: @escaping @MainActor () -> Void, volumeHandler: @escaping @MainActor () -> Void) {
+        self.handler = handler; self.volumeHandler = volumeHandler
+        let current = SystemMediaControlBackend().currentOutputDeviceID()
+        guard listeners.isEmpty || device != current else { return }
+        stopListeners(); device = current
+        add(AudioObjectID(kAudioObjectSystemObject), selector: kAudioHardwarePropertyDefaultOutputDevice, element: 0, output: false) { [weak self] in
+            guard let self, let handler = self.handler, let volumeHandler = self.volumeHandler else { return }
+            self.start(handler: handler, volumeHandler: volumeHandler)
+            handler(); volumeHandler()
         }
-        let status = AudioObjectAddPropertyListenerBlock(
-            AudioObjectID(kAudioObjectSystemObject),
-            &address,
-            DispatchQueue.main,
-            block
-        )
-        guard status == noErr else {
-            self.handler = nil
-            return false
+        if let current {
+            for selector in [kAudioHardwareServiceDeviceProperty_VirtualMainVolume, kAudioDevicePropertyVolumeScalar, kAudioDevicePropertyMute] {
+                for element: UInt32 in [0, 1, 2] {
+                    add(current, selector: selector, element: element, output: true) { [weak self] in self?.volumeHandler?() }
+                }
+            }
         }
-        listener = block
-        return true
     }
 
-    func stop() {
-        guard let listener else {
-            handler = nil
-            return
-        }
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        AudioObjectRemovePropertyListenerBlock(
-            AudioObjectID(kAudioObjectSystemObject),
-            &address,
-            DispatchQueue.main,
-            listener
-        )
-        self.listener = nil
-        handler = nil
+    private func add(_ object: AudioObjectID, selector: AudioObjectPropertySelector, element: UInt32, output: Bool, callback: @escaping @MainActor @Sendable () -> Void) {
+        var address = AudioObjectPropertyAddress(mSelector: selector, mScope: output ? kAudioDevicePropertyScopeOutput : kAudioObjectPropertyScopeGlobal, mElement: element)
+        guard AudioObjectHasProperty(object, &address) else { return }
+        let block: AudioObjectPropertyListenerBlock = { _, _ in Task { @MainActor in callback() } }
+        if AudioObjectAddPropertyListenerBlock(object, &address, .main, block) == noErr { listeners.append((object, address, block)) }
+    }
+
+    private func stopListeners() {
+        for (object, var address, block) in listeners { AudioObjectRemovePropertyListenerBlock(object, &address, .main, block) }
+        listeners = []; device = nil
+    }
+    func stop() { stopListeners(); handler = nil; volumeHandler = nil }
+}
+
+private actor SystemVolumeWriteWorker {
+    private let backend = SystemMediaControlBackend()
+    func write(_ value: Double, device: UInt32) -> SystemHUDSnapshot? {
+        guard !Task.isCancelled, backend.currentOutputDeviceID() == device else { return nil }
+        let result = backend.setVolume(value)
+        guard backend.currentOutputDeviceID() == device else { return nil }
+        return result
     }
 }
 
@@ -1188,6 +1190,8 @@ final class SystemHUDController {
     private let batteryProvider = BatteryActivityProvider()
     private let interceptor = SystemMediaKeyInterceptor()
     private let audioOutputObserver = DefaultAudioOutputObserver()
+    private let volumeWrites: SystemVolumeWriteCoordinator
+    private var volumeChanges = SystemVolumeChangeTracker()
     private let powerSourceObserver = PowerSourceChangeObserver()
     private let focusObserver = FocusStatusObserver()
 
@@ -1209,6 +1213,10 @@ final class SystemHUDController {
     init(settings: AppSettings, liveActivities: LiveActivityStore) {
         self.settings = settings
         self.liveActivities = liveActivities
+        let worker = SystemVolumeWriteWorker()
+        self.volumeWrites = SystemVolumeWriteCoordinator(write: { value, device in
+            await worker.write(value, device: device)
+        })
     }
 
     func start() {
@@ -1237,6 +1245,7 @@ final class SystemHUDController {
         stopCapsLockMonitoring()
         interceptor.stop()
         audioOutputObserver.stop()
+        volumeWrites.cancel()
         powerSourceObserver.stop()
         focusObserver.stop()
         dismissTask?.cancel()
@@ -1254,6 +1263,7 @@ final class SystemHUDController {
             stopCapsLockMonitoring()
             interceptor.stop()
             audioOutputObserver.stop()
+            volumeWrites.cancel()
             powerSourceObserver.stop()
             focusObserver.stop()
             arbiter.clear()
@@ -1267,7 +1277,7 @@ final class SystemHUDController {
 
         if settings.replaceMacOSSystemHUDs,
            AXIsProcessTrusted(),
-           interceptor.start(handler: { [weak self] keyCode in
+           interceptor.start(handler: { [weak self] keyCode, fine in
                switch keyCode {
                case SystemMediaKey.volumeUp, SystemMediaKey.volumeDown, SystemMediaKey.mute:
                    guard volumeEnabled else { return false }
@@ -1276,8 +1286,10 @@ final class SystemHUDController {
                default:
                    return false
                }
-               guard let snapshot = backend.perform(keyCode: keyCode) else { return false }
+               self?.volumeWrites.cancel()
+               guard let snapshot = backend.perform(keyCode: keyCode, fine: fine) else { return false }
                Task { @MainActor [weak self] in
+                   self?.volumeChanges.verifiedWrite(snapshot)
                    self?.present(snapshot.descriptor)
                }
                return true
@@ -1290,13 +1302,16 @@ final class SystemHUDController {
 
         settings.capsLockHUDEnabled ? startCapsLockMonitoring() : stopCapsLockMonitoring()
 
-        if settings.audioDeviceHUDEnabled {
-            _ = audioOutputObserver.start { [weak self] in
-                Task { @MainActor in self?.handleAudioOutputChange() }
-            }
-            seedAudioOutputIdentity()
+        if settings.audioDeviceHUDEnabled || settings.volumeHUDEnabled {
+            audioOutputObserver.start(handler: { [weak self] in
+                guard let self else { return }
+                volumeWrites.cancel(); volumeChanges = SystemVolumeChangeTracker()
+                if self.settings?.audioDeviceHUDEnabled == true { handleAudioOutputChange() }
+            }, volumeHandler: { [weak self] in self?.observeVolumeChange() })
+            if settings.audioDeviceHUDEnabled { seedAudioOutputIdentity() }
+            observeVolumeChange()
         } else {
-            audioOutputObserver.stop()
+            audioOutputObserver.stop(); volumeWrites.cancel()
             audioTracker = AudioOutputHUDStateTracker()
         }
 
@@ -1478,6 +1493,22 @@ final class SystemHUDController {
         }
     }
 
+    private func observeVolumeChange() {
+        guard settings?.systemHUDsEnabled == true, settings?.volumeHUDEnabled == true,
+              let snapshot = backend.currentSnapshot(for: SystemMediaKey.volumeUp) else { return }
+        if volumeChanges.observed(snapshot) { present(snapshot.descriptor) }
+    }
+
+    func requestInteractiveVolume(_ value: Double, completion: @escaping @MainActor (SystemHUDSnapshot?) -> Void) {
+        guard settings?.systemHUDsEnabled == true, settings?.volumeHUDEnabled == true,
+              let device = backend.currentOutputDeviceID() else { completion(nil); return }
+        volumeWrites.request(value, device: device) { [weak self] snapshot in
+            guard let self else { return }
+            if let snapshot { volumeChanges.verifiedWrite(snapshot); present(snapshot.descriptor) }
+            completion(snapshot)
+        }
+    }
+
     /// Interactive HUD slider authority. A successful return always reflects
     /// system readback after the write; failures never publish optimistic state.
     @discardableResult
@@ -1495,6 +1526,7 @@ final class SystemHUDController {
             return nil
         }
         guard let snapshot else { return nil }
+        if snapshot.kind == .volume { volumeChanges.verifiedWrite(snapshot) }
         present(snapshot.descriptor)
         return snapshot
     }
