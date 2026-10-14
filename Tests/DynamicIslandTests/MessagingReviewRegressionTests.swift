@@ -3,7 +3,7 @@ import XCTest
 @testable import DynamicIsland
 
 @MainActor
-private final class GatedAdapter: MessagingProviderAdapter {
+final class GatedAdapter: MessagingProviderAdapter {
     let provider: MessagingProviderID = .messages
     var availability: MessagingProviderAvailability = .available
     let capabilities = MessagingProviderCapabilities(

@@ -874,6 +874,157 @@ final class ClipboardHistoryStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testUnlimitedCountRetentionAndClearPreservePinnedEntries() throws {
+        let settings = AppSettings(defaults: SettingsPreviewDefaults())
+        settings.clipboardHistoryEnabled = true
+        settings.clipboardHistoryMaximumItems = 10
+        settings.clipboardHistoryNoEntryLimit = true
+        let pasteboard = FakeClipboardPasteboardClient()
+        var clock = Date(timeIntervalSince1970: 1_000_000)
+        let store = makeStore(settings: settings, pasteboard: pasteboard, now: { clock })
+        for i in 0..<25 { capture(text("Synthetic \(i)"), with: pasteboard, store: store) }
+        XCTAssertEqual(store.entries.count, 25)
+        let pin = try XCTUnwrap(store.entries.first?.id)
+        store.toggleFavorite(id: pin)
+        settings.clipboardHistoryNoEntryLimit = false
+        XCTAssertEqual(store.entries.count, 11)
+        XCTAssertEqual(store.entries.first?.id, pin)
+        settings.clipboardHistoryRetentionDays = 1
+        clock = clock.addingTimeInterval(2 * 86_400)
+        store.pollNow() // Expiration must work even without a new clipboard change.
+        XCTAssertEqual(store.entries.map(\.id), [pin])
+        capture(text("Fresh"), with: pasteboard, store: store)
+        XCTAssertEqual(store.entries.count, 2)
+        store.clearHistoryExceptPinned()
+        XCTAssertEqual(store.entries.map(\.id), [pin])
+    }
+
+    @MainActor
+    func testClearOnQuitDeletesOnlyWhenExplicitlyConfigured() throws {
+        let settings = AppSettings(defaults: SettingsPreviewDefaults())
+        settings.clipboardHistoryEnabled = true
+        settings.clipboardHistoryPersistenceEnabled = true
+        let persistence = MemoryClipboardPersistence()
+        let pasteboard = FakeClipboardPasteboardClient()
+        let store = makeStore(settings: settings, pasteboard: pasteboard, persistence: persistence)
+        capture(text("Synthetic private fixture"), with: pasteboard, store: store)
+        store.waitForPendingPersistenceForTesting()
+        XCTAssertNotNil(persistence.data)
+        settings.clipboardHistoryClearOnQuit = true
+        XCTAssertEqual(store.finalizePersistenceForTermination(), .completed)
+        XCTAssertNil(persistence.data)
+        XCTAssertTrue(store.entries.isEmpty)
+    }
+
+    @MainActor
+    func testUserFacingPreferenceResetPreservesClipboardDataAndPrivacySettings() throws {
+        let defaults = SettingsPreviewDefaults()
+        let settings = AppSettings(defaults: defaults)
+        settings.clipboardHistoryEnabled = true
+        settings.clipboardHistoryPersistenceEnabled = true
+        settings.clipboardHistoryNoEntryLimit = true
+        settings.clipboardHistoryRetentionDays = 30
+        let persistence = MemoryClipboardPersistence()
+        let pasteboard = FakeClipboardPasteboardClient()
+        let store = makeStore(settings: settings, pasteboard: pasteboard, persistence: persistence)
+        capture(text("Synthetic preserved fixture"), with: pasteboard, store: store)
+        store.waitForPendingPersistenceForTesting()
+        let bytes = persistence.data
+        settings.resetAllSettings(preservePersonalData: true)
+        settings.resetModuleSettings(preservePersonalData: true)
+        SettingsCategoryDefaults.restore(.clipboard, settings: settings)
+        store.waitForPendingPersistenceForTesting()
+        XCTAssertEqual(persistence.data, bytes)
+        XCTAssertEqual(store.entries.count, 1)
+        let restored = AppSettings(defaults: defaults)
+        XCTAssertTrue(restored.clipboardHistoryPersistenceEnabled)
+        XCTAssertTrue(restored.clipboardHistoryNoEntryLimit)
+        XCTAssertEqual(restored.clipboardHistoryRetentionDays, 30)
+    }
+
+    @MainActor
+    func testPresentationChangesPublishImmediatelyPersistAndNeverAlterHistory() throws {
+        let defaults = SettingsPreviewDefaults()
+        let settings = AppSettings(defaults: defaults)
+        settings.clipboardHistoryEnabled = true
+        let pasteboard = FakeClipboardPasteboardClient()
+        let store = makeStore(settings: settings, pasteboard: pasteboard)
+        capture(text("Synthetic presentation fixture"), with: pasteboard, store: store)
+        let original = store.entries
+        var changes = 0
+        let observer = store.objectWillChange.sink { changes += 1 }
+        defer { observer.cancel() }
+        settings.clipboardHistoryCardsLayout = true
+        settings.clipboardHistoryShowTypeFilters = false
+        settings.clipboardHistoryShowTitles = false
+        settings.clipboardHistoryShowSourceIcons = false
+        XCTAssertEqual(changes, 4)
+        XCTAssertTrue(store.cardsLayout)
+        XCTAssertFalse(store.showsTypeFilters)
+        XCTAssertFalse(store.showsTitles)
+        XCTAssertFalse(store.showsSourceIcons)
+        XCTAssertEqual(store.entries, original)
+        let restored = AppSettings(defaults: defaults)
+        XCTAssertTrue(restored.clipboardHistoryCardsLayout)
+        XCTAssertFalse(restored.clipboardHistoryShowTitles)
+        SettingsCategoryDefaults.restore(.clipboard, settings: settings)
+        XCTAssertFalse(store.cardsLayout)
+        XCTAssertTrue(store.showsTitles)
+        XCTAssertEqual(store.entries, original)
+    }
+
+    @MainActor
+    func testCopyAndFavoriteOnlyChangesHistoryAfterSuccessfulWriteAndPersistsPreference() throws {
+        let settings = AppSettings(defaults: defaults)
+        settings.clipboardHistoryEnabled = true
+        settings.clipboardHistoryCopyAndFavorite = true
+        XCTAssertTrue(AppSettings(defaults: defaults).clipboardHistoryCopyAndFavorite)
+        let pasteboard = FakeClipboardPasteboardClient()
+        let persistence = MemoryClipboardPersistence()
+        settings.clipboardHistoryPersistenceEnabled = true
+        let store = makeStore(settings: settings, pasteboard: pasteboard, persistence: persistence)
+        capture(text("Synthetic favorite"), with: pasteboard, store: store)
+        let original = try XCTUnwrap(store.entries.first)
+        pasteboard.writeSucceeds = false
+        XCTAssertFalse(store.copyEntryToPasteboard(id: original.id))
+        XCTAssertEqual(store.entries, [original])
+        pasteboard.writeSucceeds = true
+        XCTAssertTrue(store.copyEntryToPasteboard(id: original.id))
+        XCTAssertEqual(store.entries.count, 1)
+        XCTAssertTrue(store.entries[0].isFavorite)
+        XCTAssertTrue(store.copyEntryToPasteboard(id: original.id))
+        XCTAssertTrue(store.entries[0].isFavorite)
+        XCTAssertEqual(store.finalizePersistenceForTermination(timeout: 1), .completed)
+        let restored = makeStore(settings: settings, pasteboard: FakeClipboardPasteboardClient(), persistence: persistence)
+        XCTAssertTrue(try XCTUnwrap(restored.entries.first).isFavorite)
+        settings.resetPreferencesPreservingAccess()
+        XCTAssertTrue(settings.clipboardHistoryCopyAndFavorite)
+    }
+
+    @MainActor
+    func testAutomaticFavoritesNeverEvictExistingFavoritesAtCapacityOrFavoriteIncomingCopies() throws {
+        let settings = AppSettings(defaults: defaults)
+        settings.clipboardHistoryEnabled = true
+        settings.clipboardHistoryCopyAndFavorite = true
+        let pasteboard = FakeClipboardPasteboardClient()
+        let store = makeStore(settings: settings, pasteboard: pasteboard)
+        for index in 0..<50 {
+            let payload = text("Synthetic item \(index)")
+            capture(payload, with: pasteboard, store: store)
+            let incoming = try XCTUnwrap(store.entries.first { $0.payload == payload })
+            let id = incoming.id
+            XCTAssertFalse(incoming.isFavorite)
+            XCTAssertTrue(store.copyEntryToPasteboard(id: id))
+        }
+        let protectedIDs = Set(store.entries.map(\.id))
+        capture(text("Synthetic overflow"), with: pasteboard, store: store)
+        let overflow = try XCTUnwrap(store.entries.first { !protectedIDs.contains($0.id) })
+        XCTAssertTrue(store.copyEntryToPasteboard(id: overflow.id))
+        XCTAssertFalse(try XCTUnwrap(store.entries.first { $0.id == overflow.id }).isFavorite)
+        XCTAssertEqual(Set(store.entries.filter(\.isFavorite).map(\.id)), protectedIDs)
+    }
+
+    @MainActor
     private func makeStore(
         settings: AppSettings,
         pasteboard: FakeClipboardPasteboardClient,

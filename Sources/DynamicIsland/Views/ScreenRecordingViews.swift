@@ -35,6 +35,20 @@ struct ScreenRecordingTile: View {
 struct CollapsedScreenRecordingActivityView: View {
     @ObservedObject var controller: ScreenRecordingController
     let layout: CompactCollapsedSideSlotGeometry
+    var body: some View {
+        ScreenRecordingCompactContent(phase: controller.phase, duration: controller.formattedDuration,
+            previewImage: controller.previewImage, layout: layout, togglePause: { controller.togglePause() },
+            stop: { Task { await controller.stopAndSave() } })
+    }
+}
+
+struct ScreenRecordingCompactContent: View {
+    let phase: ScreenRecordingPhase
+    let duration: String
+    let previewImage: NSImage?
+    let layout: CompactCollapsedSideSlotGeometry
+    var togglePause: () -> Void = {}
+    var stop: () -> Void = {}
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.islandDisplayMetrics) private var displayMetrics
     @State private var pulse = false
@@ -50,16 +64,16 @@ struct CollapsedScreenRecordingActivityView: View {
             VStack(alignment: .trailing, spacing: displayMetrics.spacing(4, minimum: 3, maximum: 5)) {
                 HStack(spacing: displayMetrics.spacing(5, minimum: 4, maximum: 6)) {
                     Circle()
-                        .fill(controller.phase == .paused ? Color.red.opacity(0.38) : .red)
+                        .fill(phase == .paused ? Color.red.opacity(0.38) : .red)
                         .frame(width: 7 * displayMetrics.compactControlScale, height: 7 * displayMetrics.compactControlScale)
-                        .opacity(controller.phase == .recording && !reduceMotion ? (pulse ? 0.38 : 1) : 0.82)
+                        .opacity(phase == .recording && !reduceMotion ? (pulse ? 0.38 : 1) : 0.82)
                         .animation(
-                            controller.phase == .recording && !reduceMotion
+                            phase == .recording && !reduceMotion
                                 ? .easeInOut(duration: 0.78).repeatForever(autoreverses: true)
                                 : .default,
                             value: pulse
                         )
-                    Text(controller.formattedDuration)
+                    Text(duration)
                         .font(.system(size: displayMetrics.font(9.5, minimum: 8.5, maximum: 11.5), weight: .bold, design: .monospaced))
                         .monospacedDigit()
                         .foregroundStyle(.white.opacity(0.94))
@@ -68,19 +82,19 @@ struct CollapsedScreenRecordingActivityView: View {
 
                 HStack(spacing: displayMetrics.spacing(5, minimum: 4, maximum: 6)) {
                     Button {
-                        controller.togglePause()
+                        togglePause()
                     } label: {
-                        Image(systemName: controller.phase == .paused ? "play.fill" : "pause.fill")
+                        Image(systemName: phase == .paused ? "play.fill" : "pause.fill")
                             .font(.system(size: displayMetrics.icon(8, minimum: 7, maximum: 10), weight: .bold))
                             .frame(width: 22 * displayMetrics.compactControlScale, height: 16 * displayMetrics.compactControlScale)
                     }
                     .buttonStyle(.plain)
                     .background(.white.opacity(0.10), in: Capsule())
-                    .accessibilityLabel(controller.phase == .paused ? "Resume screen recording" : "Pause screen recording")
-                    .disabled(controller.phase == .finalizing)
+                    .accessibilityLabel(phase == .paused ? "Resume screen recording" : "Pause screen recording")
+                    .disabled(phase == .finalizing)
 
                     Button {
-                        Task { await controller.stopAndSave() }
+                        stop()
                     } label: {
                         Image(systemName: "stop.fill")
                             .font(.system(size: displayMetrics.icon(7.5, minimum: 7, maximum: 9.5), weight: .bold))
@@ -89,7 +103,7 @@ struct CollapsedScreenRecordingActivityView: View {
                     .buttonStyle(.plain)
                     .background(.red.opacity(0.82), in: Capsule())
                     .accessibilityLabel("Stop and save screen recording")
-                    .disabled(controller.phase == .finalizing)
+                    .disabled(phase == .finalizing)
                 }
                 .foregroundStyle(.white)
             }
@@ -99,22 +113,22 @@ struct CollapsedScreenRecordingActivityView: View {
             )
         }
         .onAppear {
-            pulse = controller.phase == .recording
+            pulse = phase == .recording
         }
-        .onChange(of: controller.phase) { _, phase in
+        .onChange(of: phase) { _, phase in
             pulse = phase == .recording
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(
-            controller.phase == .paused
-                ? "Screen recording paused, \(controller.formattedDuration)"
-                : "Screen recording, \(controller.formattedDuration)"
+            phase == .paused
+                ? "Screen recording paused, \(duration)"
+                : "Screen recording, \(duration)"
         )
     }
 
     @ViewBuilder
     private var preview: some View {
-        if let image = controller.previewImage {
+        if let image = previewImage {
             Image(nsImage: image)
                 .resizable()
                 .aspectRatio(contentMode: .fill)
@@ -291,17 +305,17 @@ struct ScreenRecordingSetupView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("screenRecording.accessMessage")
                 HStack {
-                    if controller.accessState == .notActive, AppRelauncher.canRelaunch {
+                    if controller.accessState == .relaunchRequired, AppRelauncher.canRelaunch {
                         Button("Relaunch DynamicIsland") { AppRelauncher.relaunch() }
                             .buttonStyle(.borderedProminent)
                             .tint(.red)
-                    } else {
+                    } else if controller.accessState == .notGranted {
                         Button("Allow Screen Recording") { Task { await checkAccess() } }
                             .buttonStyle(.borderedProminent)
                     }
-                    Button("Open Settings") { controller.openScreenRecordingSettings() }
-                    if controller.accessState == .notActive {
-                        Button("Check Again") { Task { await checkAccess() } }
+                    Button("Open Screen Recording Settings") { controller.openScreenRecordingSettings() }
+                    if controller.accessState == .notActive || controller.accessState == .relaunchRequired {
+                        Button("Check Again") { Task { await controller.prepareTargets(requestPermission: false) } }
                     }
                 }
             }

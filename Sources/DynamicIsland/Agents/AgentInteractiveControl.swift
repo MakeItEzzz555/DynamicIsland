@@ -227,6 +227,13 @@ enum AgentManagedInteractionState: Equatable, Sendable {
     case stopping
     case failed(String)
 
+    var allowsDraftEditing: Bool {
+        switch self {
+        case .ready, .submitting, .working, .stopping: true
+        default: false
+        }
+    }
+
     var allowsPromptSubmission: Bool {
         if case .ready = self { return true }
         return false

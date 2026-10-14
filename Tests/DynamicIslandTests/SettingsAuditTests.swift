@@ -35,7 +35,7 @@ final class SettingsAuditTests: XCTestCase {
 
     func testEveryAppSettingIsAuditedExactlyOnce() throws {
         let published = try publishedSettings()
-        XCTAssertEqual(published.count, 202)
+        XCTAssertEqual(published.count, 218)
         let audited = SettingsAuditCatalog.appSettingsKeys
         XCTAssertEqual(audited.count, Set(audited).count, "duplicate audit entries")
         XCTAssertEqual(Set(audited), Set(published),
@@ -171,7 +171,7 @@ final class SettingsAuditTests: XCTestCase {
 
     /// Preview-only fixtures must never be referenced by production views.
     func testPreviewFixturesDoNotLeakIntoProductionCode() throws {
-        let allowed: Set<String> = ["SettingsPreviews.swift", "DynamicIslandApp.swift", "MediaController.swift"]
+        let allowed: Set<String> = ["SettingsPreviews.swift", "DynamicIslandApp.swift", "MediaController.swift", "SettingsNativeAcceptance.swift"]
         for file in try allSources() where !allowed.contains(file.name) {
             XCTAssertFalse(file.text.contains("SettingsPreviewFixtures"), "\(file.name) references SettingsPreviewFixtures")
             XCTAssertFalse(file.text.contains(".settingsPreview()"), "\(file.name) creates a preview media controller")

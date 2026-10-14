@@ -578,11 +578,12 @@ struct MetalSendFeedback: Equatable {
     var scale: CGFloat
     var brightness: Double
     var opacity: Double
+    var glowOpacity: Double = 0
 
     static func resolve(hovering: Bool, pressed: Bool, enabled: Bool, reduceMotion: Bool) -> Self {
         guard enabled else { return Self(scale: 1, brightness: 0, opacity: 1) }
         if pressed { return Self(scale: reduceMotion ? 1 : 0.95, brightness: -0.04, opacity: 0.86) }
-        if hovering { return Self(scale: reduceMotion ? 1 : 1.05, brightness: 0.10, opacity: 1) }
+        if hovering { return Self(scale: reduceMotion ? 1 : 1.05, brightness: 0.10, opacity: 1, glowOpacity: 0.65) }
         return Self(scale: 1, brightness: 0, opacity: 1)
     }
 }
@@ -599,6 +600,8 @@ private struct MetalSendPressStyle: ButtonStyle {
             .scaleEffect(feedback.scale)
             .brightness(feedback.brightness)
             .opacity(feedback.opacity)
+            .shadow(color: .cyan.opacity(feedback.glowOpacity), radius: 7)
+            .shadow(color: .white.opacity(feedback.glowOpacity * 0.5), radius: 2)
             // Press feedback must not shrink the mouse-up acceptance region.
             .frame(width: MetalSendButton.actionSide, height: MetalSendButton.actionSide)
             .contentShape(Rectangle())

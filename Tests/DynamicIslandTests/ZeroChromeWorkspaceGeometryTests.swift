@@ -52,9 +52,9 @@ final class ZeroChromeWorkspaceGeometryTests: XCTestCase {
                 XCTAssertEqual(frame.size, expected, "\(kind) \(presentation): semantic size unchanged")
                 XCTAssertEqual(chrome.tabSwitcherHeight + chrome.tabToPageSpacing, 0)
                 XCTAssertEqual(chrome.topPadding + frame.minY, metrics.hardwareNotchHeight + metrics.spacing(6), accuracy: 0.001)
-                XCTAssertEqual(size.height - chrome.topPadding - frame.maxY, metrics.spacing(6), accuracy: 0.001)
-                XCTAssertEqual(size.width - frame.width, 50, accuracy: 0.001, "19pt shoulder +6pt visible inset on each side")
-                XCTAssertLessThan(size.width, expected.width + 62, "previous hidden side-padding profile")
+                XCTAssertEqual(size.height - chrome.topPadding - frame.maxY, metrics.spacing(12), accuracy: 0.001)
+                XCTAssertEqual(size.width - frame.width, 80, accuracy: 0.001, "28pt shoulder +12pt rounded-corner clearance on each side")
+                XCTAssertEqual(size.width, expected.width + 80, accuracy: 0.001, "enlarged contour preserves intrinsic widget width")
                 XCTAssertLessThan(size.height, expected.height + metrics.hardwareNotchHeight + 22 * metrics.spacingScale,
                                   "previous hidden top/bottom-padding profile")
             }
@@ -63,7 +63,7 @@ final class ZeroChromeWorkspaceGeometryTests: XCTestCase {
         let floatingChrome = ExpandedIslandLayoutMetrics(containerSize: .zero, horizontalPadding: 6,
             displayMetrics: metrics, headerDrop: floating.contentTopInset, showHeader: false)
         XCTAssertEqual(floatingChrome.topPadding, metrics.spacing(6), accuracy: 0.001)
-        XCTAssertEqual(IslandShellLayout.expandedHorizontalPadding(isNotchIntegrated: false, showNavigationControls: false), 6)
+        XCTAssertEqual(IslandShellLayout.expandedHorizontalPadding(isNotchIntegrated: false, showNavigationControls: false), 12)
     }
 
     func testCompactWingsUseExistingWidthAndNeverIntersectTheNotchOrOtherWidgets() throws {

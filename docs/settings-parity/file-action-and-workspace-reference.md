@@ -1,0 +1,17 @@
+# File actions and workspace contracts
+
+The supplemental workspace video, its 34 frames and the contextual-file still are missing. The written addendum governs this milestone; no video-level fidelity claim is made.
+
+## Contextual file actions
+
+The production file shelf owns generation-scoped requests containing only accepted files. Selection or a sole file determines a toolbar action; multiple unknown targets are not guessed. One Overlay-owned FileActionPresenter now handles both accepted drops and toolbar requests, independent of page/widget mounting, anchored below the actual compact/expanded interaction region. Exact approvals, focused replies, HUDs, native controls, file dragging and shell morphs defer presentation; their release events retry the current request. A native application-defined popover preserves focus transfer to the folder chooser and holds only its own transient owner until closure. One popup mounts at a time; closing an old request cannot discard a newer accepted drop. Conversion cancels on view removal; original/collision cleanup remains controller-owned. Three native presenter tests pass. Real Finder drag through the complete production Overlay path still needs physical acceptance.
+
+Six audio targets retain the reference order. Native encoder authority on this Mac supports M4A, WAV, FLAC, AIFF and ALAC; MP3 is disabled truthfully. AVAssetReader decodes the first mono/stereo audio track, AVAudioFile encodes and reopens the output, and codec/channel/duration validation precedes publication. First-track extraction from a synthetic H.264 MOV with a one-second stereo track is decoded and duration/codec/channel-verified for all five available encoders; arbitrary user video acceptance is not claimed. Image conversion uses ImageIO with original metadata/orientation semantics. Both paths stage beside the destination and publish via an exclusive move; cancellation removes only owned output/staging. Original and pre-existing collision files are never overwritten. A native folder chooser selects a conversion destination; default remains the original folder. Selected access is held for the conversion only. Destination publication, invalid-folder failure and original/collision preservation are tested; physical popover-to-folder-picker interaction remains unchecked. ZIP uses the existing generation-scoped BackgroundOperationController; the new panel prevents repeated ZIP submissions from one presentation.
+
+The Settings sample rail is interactive, numeric/synthetic only and never opens or converts a real file. Documents, PDF optimization, video resizing, batch audio and an external MP3 encoder are not advertised as implemented.
+
+## Workspace dragging
+
+The production editor draws the committed draft during hover. No prospective insertion/stack configuration is published, and no hovered occupied card is scaled. Existing target glow remains. A drop applies one draft layout change; Done persists it, Cancel discards it. The existing directional resolver and vertical placement contract remain authoritative. The layout store holds the exact drag-start shell width and height until drop/cancel/external edit exit.
+
+Hosted acceptance calls the exact DropDelegate update/drop callbacks and measures native SwiftUI preferences for every occupied frame. It is stronger than a resolver-only test but is not a physical WindowServer drag. Native editor button routing is tested through the existing camera/local AppKit router. Real pointer drag and reference-video timing still require physical/reference evidence.

@@ -1,6 +1,7 @@
 import Foundation
 
 enum ExpandedAccessoryOwner: Hashable, Sendable {
+    case navigation
     case trayQuickActions
     case fileDragOrbit
 }
@@ -20,14 +21,20 @@ enum IslandCanvasCoordinateSpace {
 }
 
 enum TransientInteractionOwner: Hashable, Sendable {
+    case cameraNavigation(UUID)
+    case fileActionPanel(UUID)
     case workspaceEditor
     case agentsLauncher
     case calendarDatePicker
+    case nativeMenu
     case unspecified
 }
 
-enum IslandWorkspaceAction: Equatable {
+enum IslandWorkspaceAction: Equatable, Sendable {
     case edit
+    case editNavigation
+    case toggleEdit
+    case resetLayout
     case clipboard
 }
 
@@ -38,6 +45,29 @@ struct IslandWorkspaceActionRequest: Equatable {
 
 @MainActor
 final class IslandLayoutStore: ObservableObject {
+    @Published private(set) var isReturningToNormalCollapsedSize = false
+    private var normalCollapsedReturnGeneration = 0
+
+    func beginNormalCollapsedReturn() -> Int {
+        normalCollapsedReturnGeneration += 1
+        isReturningToNormalCollapsedSize = true
+        return normalCollapsedReturnGeneration
+    }
+    func isCurrentNormalCollapsedReturn(generation: Int) -> Bool {
+        generation == normalCollapsedReturnGeneration && isReturningToNormalCollapsedSize
+    }
+    @discardableResult
+    func finishNormalCollapsedReturn(generation: Int) -> Bool {
+        guard isCurrentNormalCollapsedReturn(generation: generation) else { return false }
+        isReturningToNormalCollapsedSize = false
+        return true
+    }
+    func cancelNormalCollapsedReturn() {
+        normalCollapsedReturnGeneration += 1
+        isReturningToNormalCollapsedSize = false
+    }
+
+    let cameraPointerStore = CameraPointerStore()
     let tabPointerAnchor = TabPointerAnchor()
     /// Transient delivery to the existing expanded view, which still owns
     /// Clipboard presentation and the editor transaction.
@@ -92,19 +122,15 @@ final class IslandLayoutStore: ObservableObject {
         let next = configuration.map { WorkspaceLayoutPreview(configuration: $0, surface: surface) }
         if workspaceLayoutPreview != next { workspaceLayoutPreview = next }
     }
-    /// While a widget drag is in flight the shell may grow for the prospective
-    /// layout but never shrinks below its drag-start size: shrinking would pull
-    /// the surface out from under the pointer (drop exit -> preview revert ->
-    /// regrow -> oscillation). Cleared on drop/cancel so the exact committed
-    /// geometry applies.
-    @Published private(set) var workspaceDragFloor: CGSize?
+    /// Hold both axes while dragging so prospective layouts cannot move the
+    /// drop surface under the pointer. Drop/cancel restores intrinsic sizing.
+    @Published private(set) var workspaceDragSize: CGSize?
     func setWorkspaceDragActive(_ active: Bool) {
-        let next: CGSize? = active ? (workspaceDragFloor ?? expandedSize) : nil
-        if next != workspaceDragFloor { workspaceDragFloor = next }
+        let next: CGSize? = active ? (workspaceDragSize ?? expandedSize) : nil
+        if next != workspaceDragSize { workspaceDragSize = next }
     }
-    static func dragFloored(_ size: CGSize, floor: CGSize?) -> CGSize {
-        guard let floor else { return size }
-        return CGSize(width: max(size.width, floor.width), height: max(size.height, floor.height))
+    func workspacePresentationSize(_ desired: CGSize) -> CGSize {
+        workspaceDragSize ?? desired
     }
     func requestWorkspaceGeometry(_ size: CGSize) { workspaceGeometryTransition.request(size) }
     func workspaceChildrenExited(generation: Int) {
@@ -152,6 +178,7 @@ final class IslandLayoutStore: ObservableObject {
     @Published var isCollapseShellOnly = false
     @Published var isExpandedContentExiting = false
     @Published var collapsedPreviewActive = false
+    @Published var collapsedMessageInteractionProtected = false
     @Published var collapsedPreviewSurfaceFrame: CGRect = .zero
     @Published private(set) var collapsedLeadingSidecarFrame: CGRect = .zero
     @Published private(set) var collapsedTrailingSidecarFrame: CGRect = .zero
@@ -209,11 +236,30 @@ final class IslandLayoutStore: ObservableObject {
             transientInteractionOwners.remove(owner)
         }
     }
+
+    var cameraGestureInteractionProtected: Bool {
+        isTextInputFocused || collapsedMessageInteractionProtected || transientInteractionOwners.contains {
+            if case .cameraNavigation = $0 { return false }
+            return true
+        }
+    }
+
+    func cameraExpansionAllowed(exactApproval: Bool, interactiveHUD: Bool, nativeInteraction: Bool, fileDrag: Bool) -> Bool {
+        !cameraGestureInteractionProtected && !exactApproval && !interactiveHUD && !nativeInteraction && !fileDrag
+    }
+
+    func productivityPresentationAllowed(exactApproval: Bool, interactiveHUD: Bool, nativeInteraction: Bool, fileDrag: Bool) -> Bool {
+        !isTransientInteractionActive && cameraExpansionAllowed(exactApproval: exactApproval,
+            interactiveHUD: interactiveHUD, nativeInteraction: nativeInteraction, fileDrag: fileDrag)
+    }
     /// Visible accessories attached below the expanded shell (panel-local,
     /// AppKit coordinates). They own hover, hit-testing and passthrough
     /// exactly like the shell, and only their own area.
     @Published private(set) var expandedAccessoryFrames: [CGRect] = []
     private var expandedAccessoryFramesByOwner: [ExpandedAccessoryOwner: [CGRect]] = [:]
+    var expandedPrecisionInteractionFrame: CGRect {
+        (expandedAccessoryFramesByOwner[.navigation] ?? []).reduce(expandedSurfaceFrame) { $0.union($1) }
+    }
     /// Panel-local region of the Island page's right workspace; horizontal
     /// swipes that start inside it page the workspace.
     @Published private(set) var rightWorkspaceRegion: CGRect = .zero
@@ -253,11 +299,13 @@ final class IslandLayoutStore: ObservableObject {
     }
 
     private enum ExpandedAccessoryOwnerOrder: Int, CaseIterable {
+        case navigation
         case trayQuickActions
         case fileDragOrbit
 
         var owner: ExpandedAccessoryOwner {
             switch self {
+            case .navigation: .navigation
             case .trayQuickActions: .trayQuickActions
             case .fileDragOrbit: .fileDragOrbit
             }
@@ -267,9 +315,15 @@ final class IslandLayoutStore: ObservableObject {
     /// An in-island text editor (Agents composer) is first responder.
     @Published private(set) var isTextInputFocused = false
 
-    func setTextInputFocused(_ focused: Bool) {
-        guard isTextInputFocused != focused else { return }
-        isTextInputFocused = focused
+    private let legacyTextInputOwner = UUID()
+    private var textInputOwners: Set<UUID> = []
+
+    func setTextInputFocused(_ focused: Bool, owner: UUID? = nil) {
+        let owner = owner ?? legacyTextInputOwner
+        if focused { textInputOwners.insert(owner) } else { textInputOwners.remove(owner) }
+        let next = !textInputOwners.isEmpty
+        guard isTextInputFocused != next else { return }
+        isTextInputFocused = next
     }
 
     func setExpandedScrollGestureSuppressed(_ suppressed: Bool) {

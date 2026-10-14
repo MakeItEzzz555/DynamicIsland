@@ -10,6 +10,7 @@ import CoreGraphics
 /// Nothing outside the shell is claimed, so mouse passthrough is unchanged.
 struct NativeMenuTrackingLifecycle: Equatable, Sendable {
     private(set) var depth = 0
+    private var pendingAction: IslandWorkspaceAction?
 
     var isTracking: Bool { depth > 0 }
 
@@ -17,8 +18,19 @@ struct NativeMenuTrackingLifecycle: Equatable, Sendable {
         depth &+= 1
     }
 
-    mutating func end() {
+    mutating func deferWorkspaceAction(_ action: IslandWorkspaceAction) -> Bool {
+        guard isTracking else { return false }
+        pendingAction = action
+        return true
+    }
+
+    @discardableResult
+    mutating func end() -> IslandWorkspaceAction? {
         depth = max(depth - 1, 0)
+        guard !isTracking else { return nil }
+        let action = pendingAction
+        pendingAction = nil
+        return action
     }
 }
 
@@ -47,7 +59,10 @@ enum ExpandedHoverContainment {
     /// Same signal Droppy uses (`hasActivePopoverWindow`).
     static func isTransientNativeWindow(className: String, isVisible: Bool, isIslandPanel: Bool) -> Bool {
         guard isVisible, !isIslandPanel else { return false }
+        // Open/Save panels (Move To…, Save a Copy To…, conversion destination)
+        // own the interaction until dismissed, like popovers and menus.
         return className.contains("Popover") || className.contains("CalendarOverlay")
+            || className.contains("OpenPanel") || className.contains("SavePanel")
     }
 
     enum Decision: Equatable, Sendable {
@@ -83,24 +98,27 @@ enum ExpandedHoverContainment {
         return .collapse
     }
 
-    /// Padded accessory frames plus a bridge spanning their horizontal
-    /// extent up to the shell's bottom edge.
+    static func interactiveRegions(frames: [CGRect], tolerance: CGFloat = 0) -> [CGRect] {
+        frames.filter { !$0.isEmpty && !$0.isNull && !$0.isInfinite }
+            .map { $0.insetBy(dx: -tolerance, dy: -tolerance) }
+    }
+
+    /// Connect adjacent rendered rows only where their horizontal extents overlap.
     static func accessoryRegions(
         shellFrame: CGRect,
         accessoryFrames: [CGRect],
         tolerance: CGFloat = tolerance
     ) -> [CGRect] {
-        let accessories = accessoryFrames.filter { !$0.isEmpty }
+        let accessories = interactiveRegions(frames: accessoryFrames)
         guard !accessories.isEmpty, !shellFrame.isEmpty else { return [] }
-        var regions = accessories.map { $0.insetBy(dx: -tolerance, dy: -tolerance) }
-        let union = accessories.dropFirst().reduce(accessories[0]) { $0.union($1) }
-        if union.maxY <= shellFrame.minY {
-            regions.append(CGRect(
-                x: union.minX - tolerance,
-                y: union.maxY,
-                width: union.width + tolerance * 2,
-                height: shellFrame.minY - union.maxY + tolerance
-            ))
+        var regions = interactiveRegions(frames: accessories, tolerance: tolerance)
+        let rows = ([shellFrame] + accessories).sorted { $0.minY > $1.minY }
+        for (upper, lower) in zip(rows, rows.dropFirst()) where lower.maxY <= upper.minY {
+            let left = max(upper.minX, lower.minX)
+            let right = min(upper.maxX, lower.maxX)
+            guard right > left else { continue }
+            regions.append(CGRect(x: left - tolerance, y: lower.maxY,
+                width: right - left + 2 * tolerance, height: upper.minY - lower.maxY))
         }
         return regions
     }

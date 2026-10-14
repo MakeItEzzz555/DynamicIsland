@@ -161,7 +161,7 @@ public struct CollapsedPresentationProfile: Equatable, Sendable {
             kind: .agentPermission,
             contentProfile: .init(leftContentWidth: 32 + (grows ? 10 : 0), rightContentWidth: 32 + (grows ? 10 : 0)),
             widthDelta: 120 + (grows ? AgentCompactPermissionMotion.hoverWidth : 0),
-            heightDelta: 68 + (grows ? AgentCompactPermissionMotion.hoverHeight : 0),
+            heightDelta: CollapsedActivityHoverPolicy.agentApprovalHeight + (grows ? AgentCompactPermissionMotion.hoverHeight : 0),
             bottomCornerRadius: 20, horizontalContentInset: 16, glowStrength: 0
         )
     }
@@ -310,6 +310,7 @@ struct ExpandedPresentationProfile: Equatable, Sendable {
     /// Transparent panel space below the shell for attached accessories
     /// (File Tray quick actions). The shell itself is unchanged.
     var accessoryHeight: CGFloat = 0
+    var accessoryWidth: CGFloat = 0
 
     static let standard = ExpandedPresentationProfile(
         kind: .standard,
@@ -352,13 +353,10 @@ struct ExpandedPresentationProfile: Equatable, Sendable {
     /// Panel frame: the expanded shell frame extended downward by the
     /// accessory height (screen coordinates, origin bottom-left).
     func panelFrame(forExpandedFrame expanded: CGRect) -> CGRect {
-        guard accessoryHeight > 0 else { return expanded }
-        return CGRect(
-            x: expanded.minX,
-            y: expanded.minY - accessoryHeight,
-            width: expanded.width,
-            height: expanded.height + accessoryHeight
-        )
+        guard accessoryHeight > 0 || accessoryWidth > expanded.width else { return expanded }
+        let width = max(expanded.width, accessoryWidth)
+        return CGRect(x: expanded.midX - width / 2, y: expanded.minY - accessoryHeight,
+                      width: width, height: expanded.height + accessoryHeight)
     }
 
     func resolvedSize(from base: CGSize) -> CGSize {
@@ -376,21 +374,8 @@ struct ExpandedPresentationProfile: Equatable, Sendable {
     static func headerLayout(page: ExpandedIslandPage, configuration: WorkspaceConfiguration?, editing: Bool,
                              settings: AppSettings, metrics: ResolvedIslandMetrics, pageCount: Int,
                              showNavigationControls: Bool? = nil) -> ExpandedHeaderLayout {
-        let showNavigationControls = showNavigationControls ?? settings.showNavigationControls
-        if !showNavigationControls {
-            return .hidden(metrics: metrics, isNotchIntegrated: metrics.hasHardwareNotch && settings.respectHardwareNotch)
-        }
-        let surface: WorkspaceSurface? = page == .island ? .media : (page == .agents ? .agents : nil)
-        guard let surface, let configuration, !editing, configuration.customizedSurfaces.contains(surface) else { return .winged }
-        let regions = eligibleRegions(configuration, surface: surface, settings: settings)
-        guard regions.count == 1 else { return .winged }
-        let maximum = workspaceMaximumContentSize(settings: settings, metrics: metrics,
-                                                  showNavigationControls: showNavigationControls)
-        let intrinsic = WorkspaceWidgetLayoutProjection.intrinsicContentSize(regions: regions, maximumWidth: maximum.width, metrics: metrics)
-        return ExpandedHeaderLayout.resolve(regionCount: regions.count, singleRegionWidth: intrinsic.width,
-            contentHeight: intrinsic.height, editing: editing, metrics: metrics,
-            isNotchIntegrated: metrics.hasHardwareNotch && settings.respectHardwareNotch,
-            pageCount: pageCount, clipboardEnabled: settings.clipboardHistoryEnabled)
+        // Navigation lives below the shell, so it never reserves an internal header row.
+        return .hidden(metrics: metrics, isNotchIntegrated: metrics.hasHardwareNotch && settings.respectHardwareNotch)
     }
 
     @MainActor
@@ -421,7 +406,7 @@ struct ExpandedPresentationProfile: Equatable, Sendable {
                       minimumHeaderWidth: CGFloat = 0, lane: WorkspaceNotchLane = .none,
                       header: ExpandedHeaderLayout = .winged,
                       showNavigationControls: Bool? = nil) -> CGSize {
-        let showNavigationControls = showNavigationControls ?? settings.showNavigationControls
+        let showNavigationControls = header.mode != .hidden && (showNavigationControls ?? settings.showNavigationControls)
         let surface: WorkspaceSurface? = page == .island ? .media : (page == .agents ? .agents : nil)
         guard let surface, let configuration,
               editing || !showNavigationControls || configuration.customizedSurfaces.contains(surface) else {
@@ -491,7 +476,7 @@ enum WorkspaceWidgetAvailability {
             case .timer: return settings.timerEnabled
             case .shortcuts: return settings.shortcutsEnabled
             case .activities: return settings.liveActivitiesEnabled
-            case .calendar, .workspace, .chat, .terminal, .feed: return true
+            case .calendar, .workspace, .chat, .terminal, .feed, .camera: return true
             case .agentUsage, .codexUsage, .claudeUsage: return settings.agentActivityEnabled && settings.agentUsageMetricsEnabled
             }
         }

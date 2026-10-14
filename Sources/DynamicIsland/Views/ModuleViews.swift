@@ -1,3 +1,4 @@
+import Combine
 import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
@@ -11,11 +12,16 @@ struct CompactMediaView: View {
     }
 }
 
+enum AudioVisualizerPalette { case media, call }
+
 struct AudioVisualizerView: View {
     let isPlaying: Bool
     var isActive = true
     var accentColor: Color = ArtworkAccentColorExtractor.fallbackColor
+    /// Second artwork color; bars blend from `accentColor` to it. Nil = solid.
+    var secondaryAccentColor: Color? = nil
     var variant: AudioVisualizerVariant = .compact
+    var palette: AudioVisualizerPalette = .media
     var barCount = 12
     /// Collapsed (always-on) visualizers use the cheaper ambient cadence.
     var cadence: IslandFrameCadence.Surface = .expandedDecoration
@@ -23,18 +29,60 @@ struct AudioVisualizerView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.settingsPreviewReduceMotion) private var previewReduceMotion
     @Environment(\.isShellMorphing) private var isShellMorphing
+    @Environment(\.liveSpectrum) private var liveSpectrum
+    @Environment(\.isSettingsPreview) private var isSettingsPreview
+
+    private var effectiveSpectrum: (any LiveSpectrumProviding)? {
+        palette == .media && !isSettingsPreview ? liveSpectrum : nil
+    }
     @State private var isPlaybackVisuallyActive = false
     @State private var playbackHoldGeneration = 0
+    @State private var livePresentation = AudioSpectrumPresentation()
+    @State private var liveLevels: [CGFloat] = []
+
+    private var mode: LiveVisualizerMode {
+        .resolve(isMediaPalette: palette == .media, presentation: livePresentation,
+                 mediaPlaying: isPlaying && isActive, reduceMotion: reduceMotion || previewReduceMotion)
+    }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: IslandFrameCadence.interval(cadence), paused: !shouldAnimateContinuously)) { timeline in
-            bars(
-                tick: shouldAnimateContinuously ? timeline.date.timeIntervalSinceReferenceDate : nil,
-                opacity: visualizerOpacity
-            )
+        Group {
+            if mode.isLive {
+                bars(levels: liveLevels.count == barCount ? liveLevels : SpectrumBarMapper.silent(barCount: barCount), opacity: 0.95)
+            } else {
+                TimelineView(.animation(minimumInterval: IslandFrameCadence.interval(cadence), paused: !shouldAnimateContinuously)) { timeline in
+                    bars(
+                        tick: shouldAnimateContinuously ? timeline.date.timeIntervalSinceReferenceDate : nil,
+                        opacity: visualizerOpacity
+                    )
+                }
+            }
         }
         .frame(width: variant.size.width, height: variant.size.height)
         .accessibilityLabel(isPlaying ? "Audio playing" : "Audio paused")
+        .accessibilityValue(mode.accessibilityDescription)
+        .help(mode.isLive ? "Live system audio spectrum" : "\(mode.accessibilityDescription) · Capture: \(LiveAudioStatus(livePresentation).detail)")
+        .contextMenu {
+            if let effectiveSpectrum {
+                LiveAudioMenuItems(provider: effectiveSpectrum, status: LiveAudioStatus(livePresentation))
+            }
+        }
+        .onReceive(effectiveSpectrum?.presentationPublisher ?? Empty().eraseToAnyPublisher()) { presentation in
+            // Re-subscription can replay the same frame; smooth it once, not on every view update.
+            guard livePresentation != presentation else { return }
+            livePresentation = presentation
+            let next = LiveVisualizerMode.resolve(isMediaPalette: palette == .media, presentation: presentation,
+                                                  mediaPlaying: isPlaying && isActive, reduceMotion: reduceMotion || previewReduceMotion)
+            switch next {
+            case .live:
+                let target = SpectrumBarMapper.levels(bands: presentation.frame?.bands ?? .zero, barCount: barCount)
+                liveLevels = SpectrumBarSmoother.step(previous: liveLevels, target: target)
+            case .liveSilent:
+                liveLevels = SpectrumBarSmoother.step(previous: liveLevels, target: SpectrumBarMapper.silent(barCount: barCount))
+            case .decorative, .still:
+                liveLevels = []
+            }
+        }
         .onAppear {
             updatePlaybackHold()
         }
@@ -79,11 +127,34 @@ struct AudioVisualizerView: View {
         isPlaybackVisuallyActive = true
     }
 
+    private func barColor(_ index: Int) -> AnyShapeStyle {
+        if palette == .call {
+            return AnyShapeStyle(LinearGradient(colors: [.green, .yellow], startPoint: .bottom, endPoint: .top))
+        }
+        return AnyShapeStyle(VisualizerGradient.color(at: index, count: barCount, primary: accentColor, secondary: secondaryAccentColor))
+    }
+
+    /// Live bars: heights are smoothed band levels (fraction of max height).
+    private func bars(levels: [CGFloat], opacity: Double) -> some View {
+        HStack(alignment: .center, spacing: variant.spacing) {
+            ForEach(0..<barCount, id: \.self) { index in
+                Capsule(style: .continuous)
+                    .fill(barColor(index))
+                    .opacity(opacity)
+                    .frame(width: variant.barWidth, height: variant.maximumBarHeight * (index < levels.count ? levels[index] : SpectrumBarMapper.floor))
+            }
+        }
+        // No SwiftUI animation: SpectrumBarSmoother already shapes motion per
+        // 30 Hz frame, and an animation clock that stalls (occluded/headless
+        // windows) would keep drawing stale heights.
+    }
+
     private func bars(tick: TimeInterval?, opacity: Double) -> some View {
         HStack(alignment: .center, spacing: variant.spacing) {
             ForEach(0..<barCount, id: \.self) { index in
                 Capsule(style: .continuous)
-                    .fill(accentColor.opacity(opacity))
+                    .fill(barColor(index))
+                    .opacity(opacity)
                     .frame(width: variant.barWidth, height: barHeight(index: index, tick: tick))
                     .shadow(color: accentColor.opacity(tick == nil || reduceMotion ? 0 : 0.22), radius: 3)
             }
@@ -368,6 +439,12 @@ struct MediaModuleView: View {
         settings.mediaEnabled && settings.showMediaWhenNoSource && settings.mediaLauncherEnabled
     }
 
+    private var visualizerSecondaryColor: Color? {
+        guard settings.visualizerAccentMode == .artwork, settings.useArtworkAccentColor else { return nil }
+        return accentCache.secondaryColor(for: artworkPresentation.displayedSnapshot?.fingerprint,
+                                          image: artworkPresentation.displayedSnapshot?.image)
+    }
+
     private var visualizerColor: Color {
         switch settings.visualizerAccentMode {
         case .artwork:
@@ -470,7 +547,7 @@ struct MediaModuleView: View {
                         AudioVisualizerView(
                             isPlaying: media.isPlaying,
                             isActive: media.hasActiveMediaSource,
-                            accentColor: visualizerColor,
+                            accentColor: visualizerColor, secondaryAccentColor: visualizerSecondaryColor,
                             variant: .expanded,
                             pauseDuringShellMorph: settings.disableVisualizerDuringMorph
                         )
@@ -515,6 +592,7 @@ struct MediaModuleView: View {
                         in: 0...media.playbackSliderDuration,
                         onEditingChanged: playbackEditingChanged
                     )
+                    .background(CameraSliderEditingBridge(onEditingChanged: playbackEditingChanged, onCancel: media.cancelScrubbing))
                     .tint(.white.opacity(0.70))
                     .opacity(media.isSeekControlAvailable ? 1 : 0.38)
                     .disabled(!media.isSeekControlAvailable || media.playbackSliderDuration == 0)
@@ -641,7 +719,7 @@ struct MediaModuleView: View {
                             AudioVisualizerView(
                                 isPlaying: media.isPlaying,
                                 isActive: media.hasActiveMediaSource,
-                                accentColor: visualizerColor,
+                                accentColor: visualizerColor, secondaryAccentColor: visualizerSecondaryColor,
                                 variant: .compact,
                                 pauseDuringShellMorph: settings.disableVisualizerDuringMorph
                             )
@@ -699,6 +777,7 @@ struct MediaModuleView: View {
                             in: 0...media.playbackSliderDuration,
                             onEditingChanged: playbackEditingChanged
                         )
+                    .background(CameraSliderEditingBridge(onEditingChanged: playbackEditingChanged, onCancel: media.cancelScrubbing))
                         .tint(.white.opacity(0.70))
                         .opacity(media.isSeekControlAvailable ? 1 : 0.38)
                         .disabled(!media.isSeekControlAvailable || media.playbackSliderDuration == 0)
@@ -797,7 +876,7 @@ private struct ClickableAlbumArtworkButton: View {
 
     var body: some View {
         Group {
-            if settings.openSourceOnArtworkClick {
+            if settings.openSourceOnArtworkClick && !media.isSettingsPreview {
                 Button(action: action) {
                     artwork
                 }
@@ -807,8 +886,8 @@ private struct ClickableAlbumArtworkButton: View {
             }
         }
         .onHover { isHovering = $0 }
-        .accessibilityLabel("Open media source")
-        .accessibilityHint("Opens the app currently playing this media")
+        .accessibilityLabel(media.isSettingsPreview ? "Sample album artwork" : "Open media source")
+        .accessibilityHint(media.isSettingsPreview ? "Source app launching is disabled in Settings previews" : "Opens the app currently playing this media")
     }
 
     private var artwork: some View {
@@ -921,7 +1000,10 @@ struct FileShelfModuleView: View {
     @ObservedObject var fileShelf: FileShelfStore
     @ObservedObject var backgroundOperations: BackgroundOperationController
     var dragExplanation: String? = nil
+    var backgroundRemoval: BackgroundRemovalController? = nil
+    var onOpenSettings: (() -> Void)? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.basketShelfTransfer) private var basketTransfer
     @StateObject private var thumbnailCache = FileThumbnailCache()
 
     private let columns = [
@@ -951,6 +1033,19 @@ struct FileShelfModuleView: View {
                         .accessibilityLabel("\(fileShelf.files.count) files")
                 }
                 Spacer()
+                if settings.floatingBasketEnabled, !fileShelf.files.isEmpty, let basketTransfer {
+                    Button {
+                        _ = basketTransfer.showBasket()
+                    } label: {
+                        Label("Basket", systemImage: "basket")
+                            .labelStyle(.titleAndIcon)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.white.opacity(0.66))
+                    .help("Open the Basket")
+                    .accessibilityLabel("Open Basket")
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                }
                 if fileShelf.files.count > 1 {
                     Button("Select All") {
                         fileShelf.selectAll()
@@ -967,6 +1062,11 @@ struct FileShelfModuleView: View {
                 .disabled(fileShelf.files.isEmpty)
             }
             .foregroundStyle(.white)
+
+            if let status = fileShelf.operationStatus {
+                FileTrayOperationStatusRow(status: status)
+                    .transition(.opacity)
+            }
 
             if fileShelf.files.isEmpty {
                 VStack(spacing: 8) {
@@ -992,6 +1092,9 @@ struct FileShelfModuleView: View {
                                 url: url,
                                 thumbnailCache: thumbnailCache,
                                 isSelected: fileShelf.selection.contains(url.standardizedFileURL),
+                                backgroundOperations: backgroundOperations,
+                                backgroundRemoval: backgroundRemoval,
+                                onOpenSettings: onOpenSettings,
                                 onRemove: { fileShelf.remove(url) }
                             )
                         }
@@ -1026,6 +1129,8 @@ struct FileShelfModuleView: View {
             }
         }
         .animation(.easeOut(duration: 0.14), value: dragExplanation)
+        .animation(WorkspaceMotion.smoothContent(reduceMotion: reduceMotion || settings.reduceExtraMotion), value: fileShelf.operationStatus)
+        .animation(WorkspaceMotion.smoothContent(reduceMotion: reduceMotion || settings.reduceExtraMotion), value: fileShelf.files.isEmpty)
     }
 
     private var emptyShelfSubtitle: String {
@@ -1156,6 +1261,11 @@ enum FileShelfActions {
         debugLog("FileShelfActions.copyPath path=\(url.path)")
     }
 
+    /// One path per line, in Tray order.
+    static func copyPaths(_ urls: [URL]) {
+        copy(urls.map(\.path).joined(separator: "\n"))
+    }
+
     static func copyName(_ url: URL) {
         copy(url.lastPathComponent)
         debugLog("FileShelfActions.copyName name=\(url.lastPathComponent)")
@@ -1192,12 +1302,15 @@ struct ShelfFileTile: View {
     let url: URL
     @ObservedObject var thumbnailCache: FileThumbnailCache
     var isSelected = false
+    var backgroundOperations: BackgroundOperationController? = nil
+    var backgroundRemoval: BackgroundRemovalController? = nil
+    var onOpenSettings: (() -> Void)? = nil
     let onRemove: () -> Void
 
     @State private var isHovering = false
-    @State private var showsRename = false
-    @State private var renameText = ""
-    @State private var operationError: String?
+    @State fileprivate var showsRename = false
+    @State fileprivate var renameText = ""
+    @State fileprivate var operationError: String?
     @Environment(\.isShellMorphing) private var isShellMorphing
     @Environment(\.basketShelfTransfer) private var basketTransfer
 
@@ -1281,74 +1394,7 @@ struct ShelfFileTile: View {
                 loadThumbnailIfNeeded()
             }
         }
-        .contextMenu {
-            Button("Quick Look") {
-                FileShelfActions.quickLook(url)
-            }
-
-            if settings.openFileActionEnabled {
-                Divider()
-                Button("Open") {
-                    FileShelfActions.open(url)
-                }
-                let applications = FileShelfActions.openWithApplications(for: url)
-                if !applications.isEmpty {
-                    Menu("Open With") {
-                        ForEach(applications, id: \.self) { appURL in
-                            Button(appURL.deletingPathExtension().lastPathComponent) {
-                                FileShelfActions.open(url, withApplication: appURL)
-                            }
-                        }
-                    }
-                }
-            }
-
-            Divider()
-            Button("Copy") {
-                _ = FileShelfActions.copyFiles(contextTargets)
-            }
-            Button("Rename…") {
-                renameText = url.lastPathComponent
-                showsRename = true
-            }
-            Button("Copy To…") {
-                copyToChosenFolder()
-            }
-            Button("Move To…") {
-                moveToChosenFolder()
-            }
-
-            if settings.revealInFinderActionEnabled {
-                Button("Reveal in Finder") {
-                    FileShelfActions.revealInFinder(url)
-                }
-            }
-
-            if settings.copyPathActionEnabled {
-                Divider()
-                Button("Copy Path") {
-                    FileShelfActions.copyPath(url)
-                }
-                Button("Copy File Name") {
-                    FileShelfActions.copyName(url)
-                }
-            }
-
-            if settings.floatingBasketEnabled, let basketTransfer {
-                Divider()
-                // App-surface transfer: the file itself is not moved on disk.
-                Button(contextTargets.count > 1 ? "Move \(contextTargets.count) to Basket" : "Move to Basket") {
-                    basketTransfer.moveToBasket(contextTargets)
-                }
-            }
-
-            if settings.removeFileActionEnabled {
-                Divider()
-                Button("Remove from Tray", role: .destructive) {
-                    onRemove()
-                }
-            }
-        }
+        .contextMenu { FileTrayItemMenu(tile: self) }
         .popover(isPresented: $showsRename, arrowEdge: .top) {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Rename")
@@ -1380,7 +1426,7 @@ struct ShelfFileTile: View {
         }
     }
 
-    private var contextTargets: [URL] {
+    fileprivate var contextTargets: [URL] {
         if isSelected, !fileShelf.selection.isEmpty {
             return fileShelf.files.filter { fileShelf.selection.contains($0) }
         }
@@ -1403,7 +1449,7 @@ struct ShelfFileTile: View {
         }
     }
 
-    private func copyToChosenFolder() {
+    fileprivate func copyToChosenFolder() {
         guard let destination = FileShelfActions.chooseDestination(title: "Copy Files", prompt: "Copy") else { return }
         do {
             _ = try FileShelfDiskOperations.copy(contextTargets, to: destination)
@@ -1412,7 +1458,7 @@ struct ShelfFileTile: View {
         }
     }
 
-    private func moveToChosenFolder() {
+    fileprivate func moveToChosenFolder() {
         let targets = contextTargets
         guard let destination = FileShelfActions.chooseDestination(title: "Move Files", prompt: "Move") else { return }
         do {
@@ -1670,7 +1716,7 @@ extension MediaModuleView {
             }
             if visualizer && settings.showVisualizer && settings.showExpandedVisualizer {
                 AudioVisualizerView(isPlaying: media.isPlaying, isActive: media.hasActiveMediaSource,
-                                    accentColor: visualizerColor, variant: .compact,
+                                    accentColor: visualizerColor, secondaryAccentColor: visualizerSecondaryColor, variant: .compact,
                                     pauseDuringShellMorph: settings.disableVisualizerDuringMorph)
             }
         }
@@ -1702,6 +1748,7 @@ extension MediaModuleView {
                     Slider(value: playbackBinding,
                            in: 0...media.playbackSliderDuration,
                            onEditingChanged: playbackEditingChanged)
+                    .background(CameraSliderEditingBridge(onEditingChanged: playbackEditingChanged, onCancel: media.cancelScrubbing))
                         .tint(.white.opacity(0.70))
                         .opacity(media.isSeekControlAvailable ? 1 : 0.38)
                         .disabled(!media.isSeekControlAvailable || media.playbackSliderDuration == 0)
@@ -1813,6 +1860,7 @@ extension MediaModuleView {
                 Slider(value: playbackBinding,
                        in: 0...media.playbackSliderDuration,
                        onEditingChanged: playbackEditingChanged)
+                    .background(CameraSliderEditingBridge(onEditingChanged: playbackEditingChanged, onCancel: media.cancelScrubbing))
                     .controlSize(.mini)
                     .tint(.white.opacity(0.70))
                     .opacity(media.isSeekControlAvailable ? 1 : 0.38)
@@ -1892,7 +1940,7 @@ extension MediaModuleView {
             }
             if let frame = plan.frames[.visualizer] {
                 AudioVisualizerView(isPlaying: media.isPlaying, isActive: media.hasActiveMediaSource,
-                                    accentColor: visualizerColor, variant: .compact,
+                                    accentColor: visualizerColor, secondaryAccentColor: visualizerSecondaryColor, variant: .compact,
                                     pauseDuringShellMorph: settings.disableVisualizerDuringMorph)
                     .frame(width: frame.width, height: frame.height)
                     .position(x: frame.midX, y: frame.midY)
@@ -1908,6 +1956,7 @@ extension MediaModuleView {
                         Slider(value: playbackBinding,
                                in: 0...media.playbackSliderDuration,
                                onEditingChanged: playbackEditingChanged)
+                    .background(CameraSliderEditingBridge(onEditingChanged: playbackEditingChanged, onCancel: media.cancelScrubbing))
                             .controlSize(.small)
                             .tint(.white.opacity(0.75))
                             .opacity(media.isSeekControlAvailable ? 1 : 0.38)
@@ -2172,5 +2221,166 @@ private struct MediaCompactAdvancedMenu: View {
                 }
             }
         }
+    }
+}
+
+/// Native File Tray context menu (SwiftUI `contextMenu` renders an NSMenu).
+/// Operations target the whole selection when the clicked item is part of
+/// it, otherwise just the clicked item; right-click never changes selection.
+/// Sections separate on-disk changes from Tray-only changes.
+private struct FileTrayItemMenu: View {
+    let tile: ShelfFileTile
+    @Environment(\.basketShelfTransfer) private var basketTransfer
+
+    private var targets: [URL] { tile.contextTargets }
+    private var settings: AppSettings { tile.settings }
+    private var shelf: FileShelfStore { tile.fileShelf }
+    private var plural: Bool { targets.count > 1 }
+    private var images: [URL] { targets.filter(FileTrayActionTargets.isImage) }
+    private var imageFormats: [FileConversionFormat] {
+        // Formats every selected image can be converted to.
+        guard images.count == targets.count, let first = images.first else { return [] }
+        return FileConversionController.targetFormats(for: first).filter { format in
+            images.allSatisfy { FileConversionController.targetFormats(for: $0).contains(format) }
+        }
+    }
+    private var audioSource: URL? {
+        guard targets.count == 1, let type = UTType(filenameExtension: targets[0].pathExtension),
+              type.conforms(to: .audio) || type.conforms(to: .movie) else { return nil }
+        return targets[0]
+    }
+
+    var body: some View {
+        Section {
+            if settings.openFileActionEnabled {
+                Button(plural ? "Open \(targets.count) Items" : "Open") { targets.forEach { FileShelfActions.open($0) } }
+                if !plural {
+                    let applications = FileShelfActions.openWithApplications(for: tile.url)
+                    Menu("Open With") {
+                        if applications.isEmpty {
+                            Text("No other applications")
+                        }
+                        ForEach(applications, id: \.self) { appURL in
+                            Button(appURL.deletingPathExtension().lastPathComponent) {
+                                FileShelfActions.open(tile.url, withApplication: appURL)
+                            }
+                        }
+                    }
+                }
+            }
+            Button("Quick Look") { FileShelfQuickLookController.shared.preview(targets) }
+            if settings.revealInFinderActionEnabled {
+                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting(targets) }
+            }
+        }
+
+        Section {
+            Button(plural ? "Copy \(targets.count) Items" : "Copy") { _ = FileShelfActions.copyFiles(targets) }
+            ShareLink(items: targets) { Label("Share", systemImage: "square.and.arrow.up") }
+        }
+
+        Section("Create New Files") {
+            Menu("Convert To") {
+                if imageFormats.isEmpty && audioSource == nil {
+                    Text(plural ? "No shared format for this selection" : "No conversions for this file type")
+                }
+                ForEach(imageFormats) { format in
+                    Button(format.displayName) { shelf.convertImages(targets, to: format) }
+                }
+                if let audioSource {
+                    ForEach(FileAudioFormat.allCases.filter(\.canEncode)) { format in
+                        Button(format.rawValue) { shelf.convertAudio(audioSource, to: format) }
+                    }
+                }
+                Divider()
+                Button("More Options…") { shelf.requestFileActions(for: targets) }
+            }
+            if !images.isEmpty {
+                Button("Extract Text") { shelf.extractText(from: images) }
+            }
+            if let removal = tile.backgroundRemoval,
+               FileTrayActionTargets(urls: targets).availability(of: .removeBackground).isAvailable {
+                Button("Remove Background") { removeBackground(with: removal) }
+                    .disabled(removal.isProcessing)
+            }
+            if let operations = tile.backgroundOperations {
+                Button("Create ZIP Archive") { shelf.createZIP(targets, using: operations) }
+            }
+            Button(plural ? "New Folder with \(targets.count) Copies" : "New Folder with a Copy") {
+                shelf.makeFolder(withCopiesOf: targets)
+            }
+        }
+
+        Section("Change Files on Disk") {
+            if !plural {
+                Button("Rename…") {
+                    tile.renameText = tile.url.lastPathComponent
+                    tile.showsRename = true
+                }
+            }
+            Button("Save a Copy To…") { tile.copyToChosenFolder() }
+            Button("Move To…") { tile.moveToChosenFolder() }
+        }
+
+        Section("Tray Only") {
+            if settings.copyPathActionEnabled {
+                Button(plural ? "Copy Paths" : "Copy Path") { FileShelfActions.copyPaths(targets) }
+                if !plural { Button("Copy File Name") { FileShelfActions.copyName(tile.url) } }
+            }
+            if settings.floatingBasketEnabled, let basketTransfer {
+                // App-surface transfer: the file itself is not moved on disk.
+                Button(plural ? "Move \(targets.count) to Basket" : "Move to Basket") { basketTransfer.moveToBasket(targets) }
+            }
+            if settings.removeFileActionEnabled {
+                Button(plural ? "Remove \(targets.count) from Tray (Keeps Files)" : "Remove from Tray (Keeps File)") {
+                    if plural { targets.forEach(shelf.remove) } else { tile.onRemove() }
+                }
+            }
+        }
+
+        if let onOpenSettings = tile.onOpenSettings {
+            Divider()
+            Button("File Tray Settings…", action: onOpenSettings)
+        }
+    }
+
+    private func removeBackground(with removal: BackgroundRemovalController) {
+        guard let image = targets.first else { return }
+        do {
+            // The removal controller reports its own progress and adds the result.
+            try removal.process(imageURL: image, addResultToShelfWhenFinished: true)
+        } catch {
+            shelf.setOperationStatus(.failed(error.localizedDescription), clearAfter: .seconds(4))
+        }
+    }
+}
+
+/// One line describing the current File Tray operation's real state.
+struct FileTrayOperationStatusRow: View {
+    let status: FileTrayOperationStatus
+
+    var body: some View {
+        HStack(spacing: 7) {
+            switch status {
+            case .working:
+                ProgressView().controlSize(.mini)
+            case .succeeded:
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+            case .failed:
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            }
+            Text(status.message)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.white.opacity(0.82))
+                .lineLimit(2)
+                .help(status.message)
+        }
+        .font(.system(size: 11, weight: .semibold))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(status.message)
     }
 }

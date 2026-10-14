@@ -21,6 +21,60 @@ private final class RecordingFileShelfDefaults: UserDefaults, @unchecked Sendabl
 }
 
 final class FileShelfStoreTests: XCTestCase {
+    @MainActor
+    func testRetentionRemovesOnlyExpiredReferencesAndProtectsSelectedAndActionFiles() throws {
+        let settings = AppSettings(defaults: defaults)
+        settings.shelfFileRetention = .oneHour
+        var clock = Date(timeIntervalSince1970: 10_000)
+        let store = FileShelfStore(settings: settings, defaults: defaults,
+            ownership: TemporaryFileOwnershipLedger(temporaryRoots: []), now: { clock })
+        let expired = makeFile(named: "expired.txt"), selected = makeFile(named: "selected.txt"), action = makeFile(named: "action.txt")
+        store.add([expired, selected, action]); store.select(selected)
+        store.requestFileActions(for: [action])
+        clock.addTimeInterval(3_601)
+        store.pruneExpiredReferences()
+        XCTAssertEqual(store.files, [selected, action])
+        for file in [expired, selected, action] { XCTAssertTrue(FileManager.default.fileExists(atPath: file.path)) }
+        store.clearSelection(); store.dismissFileActions(store.fileActionRequest?.id)
+        store.pruneExpiredReferences(); XCTAssertTrue(store.files.isEmpty)
+        for file in [expired, selected, action] { XCTAssertTrue(FileManager.default.fileExists(atPath: file.path)) }
+    }
+
+    @MainActor
+    func testRetentionAgeSurvivesRelaunchAndRenameWithoutResettingLifetime() throws {
+        let settings = AppSettings(defaults: defaults)
+        settings.persistFileShelfAcrossLaunches = true; settings.shelfFileRetention = .oneDay
+        var clock = Date(timeIntervalSince1970: 100_000)
+        let ownership = TemporaryFileOwnershipLedger(temporaryRoots: [])
+        let first = FileShelfStore(settings: settings, defaults: defaults, ownership: ownership, now: { clock })
+        let source = makeFile(named: "rename-before-expiry.txt")
+        first.add([source]); clock.addTimeInterval(86_399)
+        let renamed = try first.rename(source, to: "renamed.txt")
+        let restored = FileShelfStore(settings: settings, defaults: defaults, ownership: ownership, now: { clock })
+        XCTAssertEqual(restored.files, [renamed])
+        restored.pruneExpiredReferences(); XCTAssertEqual(restored.files, [renamed])
+        clock.addTimeInterval(2); restored.pruneExpiredReferences()
+        XCTAssertTrue(restored.files.isEmpty); XCTAssertTrue(FileManager.default.fileExists(atPath: renamed.path))
+        XCTAssertEqual(AppSettings(defaults: defaults).shelfFileRetention, .oneDay)
+    }
+
+    @MainActor
+    func testRetentionMonitorStartsOnlyForExplicitRuntimeOwnerAndStopsCleanly() {
+        let settings = AppSettings(defaults: defaults)
+        var clock = Date(timeIntervalSince1970: 100_000)
+        let store = FileShelfStore(settings: settings, defaults: defaults,
+            ownership: TemporaryFileOwnershipLedger(temporaryRoots: []), now: { clock })
+        let file = makeFile(named: "default-forever.txt")
+        store.add([file]); clock.addTimeInterval(700_000)
+        store.pruneExpiredReferences(); XCTAssertEqual(store.files, [file])
+        store.startRetentionMonitoring(); XCTAssertFalse(store.retentionMonitoringActive)
+        settings.shelfFileRetention = .oneWeek
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        XCTAssertTrue(store.retentionMonitoringActive); XCTAssertTrue(store.files.isEmpty)
+        store.startRetentionMonitoring(); XCTAssertTrue(store.retentionMonitoringActive)
+        store.stopRetentionMonitoring(); XCTAssertFalse(store.retentionMonitoringActive)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+    }
     private var defaults: RecordingFileShelfDefaults!
     private var defaultsSuiteName: String!
     private var temporaryDirectory: URL!

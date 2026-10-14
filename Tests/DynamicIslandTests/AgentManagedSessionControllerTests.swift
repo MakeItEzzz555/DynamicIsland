@@ -1,9 +1,45 @@
 import AgentBridgeShared
 import Foundation
+import AppKit
+import SwiftUI
 import XCTest
 @testable import DynamicIsland
 
 final class AgentManagedSessionControllerTests: XCTestCase {
+    @MainActor
+    func testCameraFixtureSendAndStopReachExactFakeTransportOnce() async throws {
+        let provider = PersistentSnapshotFakeProvider(sessions: [], usage: AgentUsage())
+        let store = AgentEventStore(), approvals = AgentApprovalController()
+        let controller = AgentManagedSessionController(providers: [provider], coordinator: AgentIngestionCoordinator(eventStore: store),
+            eventStore: store, approvals: approvals)
+        guard case .success(let started) = await controller.startManagedSession(provider: .codex, cwd: "/tmp") else {
+            return XCTFail("Fixture could not start")
+        }
+        let session = try XCTUnwrap(controller.session(for: started.instance))
+        var config = MetalSendConfiguration(); config.enabled = false
+        let window = CameraNativeHostedFixture.hosted(VStack(spacing: 8) {
+            MetalSendButton(configuration: config, isEnabled: true) { Task { await controller.submit("synthetic camera prompt", for: session) } }
+            Button("Stop") { controller.interrupt(session) }.frame(width: 34, height: 34)
+        })
+        let router = CameraInteractionRouter(window: window)
+        defer { router.shutdown(); CameraNativeHostedFixture.pump(); window.close(); controller.stop() }
+        router.press(at: CGPoint(x: 150, y: 71)); router.release(at: CGPoint(x: 150, y: 71)); CameraNativeHostedFixture.pump()
+        for _ in 0..<100 {
+            if await provider.submittedPrompts().count == 1 { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let submitted = await provider.submittedPrompts()
+        XCTAssertEqual(submitted, ["synthetic camera prompt"])
+        router.press(at: CGPoint(x: 150, y: 29)); router.release(at: CGPoint(x: 150, y: 29)); CameraNativeHostedFixture.pump()
+        for _ in 0..<100 {
+            if await provider.interruptCalls().count == 1 { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let interrupts = await provider.interruptCalls()
+        XCTAssertEqual(interrupts.count, 1)
+        XCTAssertEqual(controller.interactionState(for: session), .stopping)
+    }
+
     @MainActor
     func testReasoningOptionsFollowExactProviderAndAdvertisedPendingModel() async throws {
         let codex = PersistentSnapshotFakeProvider(

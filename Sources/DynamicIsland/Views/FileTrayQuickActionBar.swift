@@ -15,7 +15,6 @@ struct FileTrayQuickActionBar: View {
     @State private var status: String?
     @State private var statusIsError = false
     @State private var statusGeneration = 0
-    @State private var converting = false
     @State private var shareAnchor = SharingAnchorHolder()
 
     private var targets: FileTrayActionTargets { fileShelf.quickActionTargets }
@@ -82,23 +81,14 @@ struct FileTrayQuickActionBar: View {
     }
 
     private var convertCircle: some View {
-        let availability = targets.availability(of: .convert)
-        let formats = targets.urls.first.map(FileConversionController.targetFormats(for:)) ?? []
-        return Menu {
-            ForEach(formats) { format in
-                Button("Convert to \(format.displayName)") { convert(to: format) }
-            }
+        Button {
+            if !targets.urls.isEmpty { fileShelf.requestFileActions(for: targets.urls) }
         } label: {
-            circleLabel(.convert, enabled: availability.isAvailable, busy: converting)
+            circleLabel(.convert, enabled: !targets.urls.isEmpty, busy: false)
         }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .disabled(!availability.isAvailable || converting)
-        .onHover { hovered = $0 ? .convert : (hovered == .convert ? nil : hovered) }
-        .help(helpText(.convert, availability))
-        .accessibilityLabel(FileTrayQuickAction.convert.title)
+        .buttonStyle(.plain).disabled(targets.urls.isEmpty)
+        .help("Conversion, compression and contextual file actions")
+        .accessibilityLabel("File actions")
     }
 
     private func circleLabel(_ action: FileTrayQuickAction, enabled: Bool, busy: Bool) -> some View {
@@ -140,22 +130,6 @@ struct FileTrayQuickActionBar: View {
             show("Removing background…")
         } catch {
             show(error.localizedDescription, error: true)
-        }
-    }
-
-    private func convert(to format: FileConversionFormat) {
-        guard let url = targets.urls.first else { return }
-        converting = true
-        Task { @MainActor in
-            defer { converting = false }
-            do {
-                let output = try await FileConversionController.convert(url, to: format)
-                fileShelf.add([output])
-                fileShelf.select(output)
-                show("Converted to \(format.displayName)")
-            } catch {
-                show(error.localizedDescription, error: true)
-            }
         }
     }
 

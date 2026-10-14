@@ -2,6 +2,33 @@ import XCTest
 @testable import DynamicIsland
 
 final class WorkspaceGeometrySequencingTests: XCTestCase {
+    @MainActor func testWidgetDragHoldsBothAxesUntilDropOrCancel() {
+        let layout = IslandLayoutStore()
+        let initial = CGSize(width: 600, height: 320)
+        let larger = CGSize(width: 900, height: 500)
+        let smaller = CGSize(width: 400, height: 220)
+        layout.expandedSize = initial
+        layout.setWorkspaceLayoutPreview(.initial, surface: .media)
+        layout.setWorkspaceDragActive(true)
+
+        XCTAssertEqual(layout.workspacePresentationSize(larger), initial)
+        XCTAssertEqual(layout.workspacePresentationSize(smaller), initial)
+        layout.expandedSize = larger
+        layout.setWorkspaceDragActive(true)
+        XCTAssertEqual(layout.workspacePresentationSize(larger), initial, "Repeated drag updates cannot recapture a changed size")
+        layout.setWorkspaceLayoutPreview(nil, surface: .media)
+        XCTAssertEqual(layout.workspacePresentationSize(smaller), initial, "Preview exit must not move the drop surface")
+
+        layout.setWorkspaceDragActive(false)
+        XCTAssertEqual(layout.workspacePresentationSize(larger), larger)
+        XCTAssertEqual(layout.workspacePresentationSize(smaller), smaller)
+        layout.expandedSize = smaller
+        layout.setWorkspaceDragActive(true)
+        XCTAssertEqual(layout.workspacePresentationSize(larger), smaller, "The next drag captures its own footprint")
+        layout.setWorkspaceDragActive(false)
+        XCTAssertNil(layout.workspaceDragSize)
+    }
+
     func testChildrenExitBeforeGeometryCanCommitAndRevealRequiresSameGeneration() {
         var transition = WorkspaceGeometryTransition()
         transition.request(.init(width: 440, height: 260))

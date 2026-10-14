@@ -663,9 +663,9 @@ private struct AgentConsoleComposer: View {
             AgentPromptEditor(
                 text: $draft,
                 placeholder: composerPlaceholder,
-                isEnabled: interactionState.allowsPromptSubmission && !submissionInFlight,
+                isEnabled: interactionState.allowsDraftEditing,
                 onSubmit: submitDraft,
-                onFocusChange: { focused in layoutStore?.setTextInputFocused(focused) }
+                onFocusChange: { focused, owner in layoutStore?.setTextInputFocused(focused, owner: owner) }
             )
             .id(session.id)
             .frame(minWidth: 40, maxWidth: .infinity, minHeight: 30, maxHeight: 48)
@@ -1435,12 +1435,12 @@ private struct AgentConsoleScrollRegionPreferenceKey: PreferenceKey {
     }
 }
 
-private struct AgentPromptEditor: NSViewRepresentable {
+struct AgentPromptEditor: NSViewRepresentable {
     @Binding var text: String
     let placeholder: String
     let isEnabled: Bool
     let onSubmit: () -> Bool
-    var onFocusChange: (Bool) -> Void = { _ in }
+    var onFocusChange: (Bool, UUID) -> Void = { _, _ in }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text)
@@ -1472,7 +1472,8 @@ private struct AgentPromptEditor: NSViewRepresentable {
             .foregroundColor: NSColor.white
         ]
         editor.submitHandler = onSubmit
-        editor.focusHandler = onFocusChange
+        let focusOwner = editor.focusOwner
+        editor.focusHandler = { focused in onFocusChange(focused, focusOwner) }
         editor.placeholder = placeholder
         editor.isEditable = isEnabled
         editor.isSelectable = true
@@ -1487,14 +1488,15 @@ private struct AgentPromptEditor: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         guard let editor = scroll.documentView as? AgentPromptTextView else { return }
         editor.submitHandler = isEnabled ? onSubmit : nil
-        editor.focusHandler = onFocusChange
+        let focusOwner = editor.focusOwner
+        editor.focusHandler = { focused in onFocusChange(focused, focusOwner) }
         editor.placeholder = placeholder
         editor.isEditable = isEnabled
         if !isEnabled, editor.window?.firstResponder === editor {
-            editor.window?.makeFirstResponder(nil)
+            editor.releaseKeyboardOwnership()
         }
         let boundedText = AgentPromptDraftPolicy.bounded(text)
-        if editor.string != boundedText {
+        if !editor.hasMarkedText(), editor.string != boundedText {
             editor.string = boundedText
         }
         editor.needsDisplay = true
@@ -1502,13 +1504,10 @@ private struct AgentPromptEditor: NSViewRepresentable {
 
     static func dismantleNSView(_ scroll: NSScrollView, coordinator: Coordinator) {
         guard let editor = scroll.documentView as? AgentPromptTextView else { return }
-        let handler = editor.focusHandler
+        editor.releaseKeyboardOwnership()
+        editor.submitHandler = nil
         editor.focusHandler = nil
-        if let handler {
-            DispatchQueue.main.async { handler(false) }
-        }
-        guard editor.window?.firstResponder === editor else { return }
-        editor.window?.makeFirstResponder(nil)
+
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
@@ -1531,24 +1530,58 @@ private struct AgentPromptEditor: NSViewRepresentable {
     }
 }
 
-private final class AgentPromptTextView: NSTextView {
+final class AgentPromptTextView: NSTextView {
     var submitHandler: (() -> Bool)?
     var focusHandler: ((Bool) -> Void)?
     var placeholder = ""
+    let focusOwner = UUID()
 
     /// Text-input focus (which holds the expanded island open) is published
     /// only once the user engages - click or keystroke - never for automatic
     /// first-responder changes.
     private var publishedEngagement = false
+    private weak var observedWindow: NSWindow?
+
+    override var needsPanelToBecomeKey: Bool { isEditable }
+    override var acceptsFirstResponder: Bool { isEditable }
+
+    override func viewDidMoveToWindow() {
+        if let observedWindow {
+            NotificationCenter.default.removeObserver(self, name: NSWindow.didResignKeyNotification, object: observedWindow)
+        }
+        releaseEngagement()
+        super.viewDidMoveToWindow()
+        observedWindow = window
+        if let window {
+            NotificationCenter.default.addObserver(self, selector: #selector(windowResignedKey),
+                name: NSWindow.didResignKeyNotification, object: window)
+        }
+    }
+
+    @objc private func windowResignedKey(_ notification: Notification) { releaseEngagement() }
+
+    private func releaseEngagement() {
+        guard publishedEngagement else { return }
+        publishedEngagement = false
+        publishFocus(false)
+    }
+
+    func releaseKeyboardOwnership() {
+        let ownedResponder = window?.firstResponder === self
+        let ownedKeyboard = ownedResponder && window?.isKeyWindow == true
+        releaseEngagement()
+        if ownedResponder { window?.makeFirstResponder(nil) }
+        if ownedKeyboard { NSApp.deactivate() }
+    }
 
     override func resignFirstResponder() -> Bool {
         let resigned = super.resignFirstResponder()
-        if resigned, publishedEngagement { publishedEngagement = false; publishFocus(false) }
+        if resigned { releaseEngagement() }
         return resigned
     }
 
     private func publishEngagement() {
-        guard !publishedEngagement, window?.firstResponder === self else { return }
+        guard !publishedEngagement, window?.isKeyWindow == true, window?.firstResponder === self else { return }
         publishedEngagement = true
         publishFocus(true)
     }
@@ -1559,16 +1592,24 @@ private final class AgentPromptTextView: NSTextView {
     /// constraint update. Defer one main-run-loop turn instead.
     private func publishFocus(_ focused: Bool) {
         guard let handler = focusHandler else { return }
-        DispatchQueue.main.async { handler(focused) }
+        let owningWindow = window
+        DispatchQueue.main.async { [weak self, weak owningWindow] in
+            if focused {
+                guard let self, self.publishedEngagement, owningWindow?.isKeyWindow == true,
+                      owningWindow?.firstResponder === self else { return }
+            }
+            handler(focused)
+        }
     }
 
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53 {
-            window?.makeFirstResponder(nil)
+            if hasMarkedText() { super.keyDown(with: event); return }
+            releaseKeyboardOwnership()
             return
         }
         publishEngagement()
-        if event.keyCode == 36, AgentPromptDraftPolicy.submitsReturn(with: event.modifierFlags) {
+        if event.keyCode == 36, !hasMarkedText(), AgentPromptDraftPolicy.submitsReturn(with: event.modifierFlags) {
             _ = submitHandler?()
             return
         }
@@ -1589,11 +1630,12 @@ private final class AgentPromptTextView: NSTextView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        if isEditable {
-            window?.makeKey()
-            window?.makeFirstResponder(self)
-            publishEngagement()
+        guard isEditable else { return }
+        guard let window else { return }
+        if !NSApp.isActive || !window.isKeyWindow || window.firstResponder !== self {
+            guard IslandKeyboardFocusPolicy.acquireKeyboard(for: self, in: window) else { return }
         }
+        publishEngagement()
         super.mouseDown(with: event)
     }
 

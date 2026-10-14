@@ -3,6 +3,19 @@ import XCTest
 
 @MainActor
 final class IslandGestureCoordinatorTests: XCTestCase {
+    func testCameraAndNoneDoNotRunConfiguredTrackpadShortcuts() {
+        for source in [GestureInputSource.camera, .none] {
+            let settings = makeSettings()
+            settings.gesturesEnabled = true; settings.gestureInputSource = source
+            settings.requireGestureConfirmation = false
+            settings.collapsedDoubleClickAction = .openSettings
+            var invoked = 0
+            let coordinator = IslandGestureCoordinator(now: { 100 })
+            XCTAssertFalse(coordinator.handle(.doubleClick, settings: settings, context: makeContext(state: .collapsed),
+                callbacks: IslandGestureCallbacks(openSettings: { invoked += 1 })))
+            XCTAssertEqual(invoked, 0)
+        }
+    }
     func testSettingsClipboardAndEditorMappingsPerformExactlyOnceInEitherPresentation() {
         for state in [IslandPresentationState.collapsed, .expanded] {
             for gesture in [IslandPointerGesture.doubleClick, .longPress] {

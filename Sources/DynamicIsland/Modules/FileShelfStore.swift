@@ -26,9 +26,19 @@ final class FileShelfStore: ObservableObject {
     private let ownership: TemporaryFileOwnershipLedger
     private var cancellables: Set<AnyCancellable> = []
     private static let persistedBookmarksKey = "fileShelfPersistedBookmarks"
+    private static let persistedDatesKey = "fileShelfRetentionDates"
+    private let now: () -> Date
+    private var addedAt: [String: TimeInterval] = [:]
+    private var retentionTask: Task<Void, Never>?
+    private var monitorsRetention = false
+    var retentionMonitoringActive: Bool { retentionTask != nil }
+    deinit { retentionTask?.cancel() }
 
     @Published private(set) var files: [URL] = [] {
         didSet {
+            let paths = Set(files.map(\.path))
+            addedAt = addedAt.filter { paths.contains($0.key) }
+            for file in files where addedAt[file.path] == nil { addedAt[file.path] = now().timeIntervalSince1970 }
             selection.formIntersection(files)
             if let selectionAnchor, !files.contains(selectionAnchor) {
                 self.selectionAnchor = nil
@@ -37,6 +47,40 @@ final class FileShelfStore: ObservableObject {
     }
     /// Explicit Tray selection used as the quick-action target.
     @Published private(set) var selection: Set<URL> = []
+    @Published private(set) var fileActionRequest: FileTrayActionRequest?
+    /// The one visible result of a File Tray operation (menu or drop zone).
+    @Published private(set) var operationStatus: FileTrayOperationStatus?
+    private var operationStatusGeneration = 0
+
+    /// Publishes a status; finished states clear themselves after `clearAfter`.
+    func setOperationStatus(_ status: FileTrayOperationStatus?, clearAfter: Duration? = nil) {
+        operationStatusGeneration += 1
+        operationStatus = status
+        guard let clearAfter else { return }
+        let generation = operationStatusGeneration
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: clearAfter)
+            guard let self, self.operationStatusGeneration == generation else { return }
+            self.operationStatus = nil
+        }
+    }
+
+    func requestFileActions(for urls: [URL], openShelfAfterDrop: Bool = false) {
+        let accepted = files.filter { urls.map(\.standardizedFileURL).contains($0) }
+        guard !accepted.isEmpty else { return }
+        fileActionRequest = FileTrayActionRequest(id: UUID(), urls: accepted, openShelfAfterDrop: openShelfAfterDrop)
+    }
+
+    func consumeAutoOpenRequest(_ id: UUID) {
+        guard fileActionRequest?.id == id else { return }
+        fileActionRequest?.openShelfAfterDrop = false
+    }
+
+    func discardUnacceptedDrop(_ urls: [URL]) { ownership.discardIfUnowned(urls) }
+
+    func dismissFileActions(_ id: UUID?) {
+        if fileActionRequest?.id == id { fileActionRequest = nil }
+    }
     private var selectionAnchor: URL?
 
     /// Plain click selects one file; Command toggles; Shift selects a stable
@@ -61,6 +105,13 @@ final class FileShelfStore: ObservableObject {
         }
     }
 
+    /// Selects exactly the given Tray items (e.g. new operation outputs).
+    func select(only urls: [URL]) {
+        let wanted = urls.map(\.standardizedFileURL).filter(files.contains)
+        selection = Set(wanted)
+        selectionAnchor = wanted.first
+    }
+
     func selectAll() {
         selection = Set(files)
         selectionAnchor = files.first
@@ -78,13 +129,48 @@ final class FileShelfStore: ObservableObject {
     init(
         settings: AppSettings,
         defaults: UserDefaults = .standard,
-        ownership: TemporaryFileOwnershipLedger = .shared
+        ownership: TemporaryFileOwnershipLedger = .shared,
+        now: @escaping () -> Date = Date.init
     ) {
         self.settings = settings
         self.defaults = defaults
         self.ownership = ownership
+        self.now = now
         loadPersistedFiles()
         installSettingsObservers()
+    }
+
+    func startRetentionMonitoring() {
+        guard !monitorsRetention else { return }
+        monitorsRetention = true
+        updateRetentionMonitoring()
+    }
+    func stopRetentionMonitoring() {
+        monitorsRetention = false
+        retentionTask?.cancel(); retentionTask = nil
+    }
+    private func updateRetentionMonitoring() {
+        retentionTask?.cancel(); retentionTask = nil
+        guard monitorsRetention, settings.shelfFileRetention.seconds != nil else { return }
+        pruneExpiredReferences()
+        retentionTask = Task { [weak self] in
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(60)) } catch { break }
+                guard !Task.isCancelled else { break }
+                self?.pruneExpiredReferences()
+            }
+        }
+    }
+    func pruneExpiredReferences() {
+        guard let lifetime = settings.shelfFileRetention.seconds else { return }
+        let cutoff = now().timeIntervalSince1970 - lifetime
+        let protected = selection.union(fileActionRequest?.urls ?? [])
+        let expired = files.filter { !protected.contains($0) && (addedAt[$0.path] ?? .infinity) <= cutoff }
+        guard !expired.isEmpty else { return }
+        let targets = Set(expired)
+        files.removeAll(where: targets.contains)
+        ownership.release(expired, by: .shelf)
+        persistFilesIfNeeded()
     }
 
     func add(_ urls: [URL]) {
@@ -171,7 +257,9 @@ final class FileShelfStore: ObservableObject {
         }
         let wasSelected = selection.contains(source)
         let wasAnchor = selectionAnchor == source
+        let age = addedAt[source.path]
         files[index] = destination
+        if let age { addedAt[destination.path] = age }
         // The file already moved on disk, so releasing the old path deletes nothing.
         ownership.release([source], by: .shelf)
         ownership.retain([destination], by: .shelf)
@@ -189,7 +277,9 @@ final class FileShelfStore: ObservableObject {
         guard let index = files.firstIndex(of: old), FileManager.default.fileExists(atPath: new.path) else { return }
         let wasSelected = selection.contains(old)
         let wasAnchor = selectionAnchor == old
+        let age = addedAt[old.path]
         files[index] = new
+        if let age { addedAt[new.path] = age }
         ownership.release([old], by: .shelf)
         ownership.retain([new], by: .shelf)
         if wasSelected { selection.insert(new) }
@@ -249,6 +339,8 @@ final class FileShelfStore: ObservableObject {
             restoredFiles.append(standardizedURL)
         }
 
+        addedAt = (defaults.dictionary(forKey: Self.persistedDatesKey) as? [String: Double] ?? [:])
+            .filter { $0.value.isFinite && $0.value >= 0 && $0.value <= now().timeIntervalSince1970 }
         files = Array(restoredFiles.prefix(settings.maxShelfFiles))
         ownership.retain(files, by: .shelf)
         persistFilesIfNeeded()
@@ -270,13 +362,17 @@ final class FileShelfStore: ObservableObject {
             )
         }
         defaults.set(bookmarks, forKey: Self.persistedBookmarksKey)
+        defaults.set(addedAt, forKey: Self.persistedDatesKey)
     }
 
     func clearPersistedFiles() {
         defaults.removeObject(forKey: Self.persistedBookmarksKey)
+        defaults.removeObject(forKey: Self.persistedDatesKey)
     }
 
     private func installSettingsObservers() {
+        settings.$shelfFileRetention.dropFirst().removeDuplicates().receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.updateRetentionMonitoring() }.store(in: &cancellables)
         settings.$persistFileShelfAcrossLaunches
             .removeDuplicates()
             .sink { [weak self] shouldPersist in

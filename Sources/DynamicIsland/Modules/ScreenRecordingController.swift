@@ -40,6 +40,8 @@ struct ScreenRecordingWindowChoice: Identifiable, Equatable, Sendable {
 /// What ScreenCaptureKit will actually allow this process to do.
 enum ScreenCaptureAccessState: Equatable, Sendable {
     case unknown
+    case requesting
+    case relaunchRequired
     case granted
     /// Never allowed (or not yet asked): Allow / Open Settings.
     case notGranted
@@ -169,11 +171,14 @@ final class ScreenRecordingController: ObservableObject {
     private let capabilities: IslandCapabilityRegistry
     private let authorization: ScreenCaptureAuthorizing
     private var requestAttempted = false
+    private var requestGrantedInProcess = false
+    private var preparingTargets = false
     private let requestLedger: ScreenCaptureRequestLedger
     private var machine = ScreenRecordingStateMachine()
     private var shareableContent: SCShareableContent?
     private var displayObjects: [CGDirectDisplayID: SCDisplay] = [:]
     private var windowObjects: [CGWindowID: SCWindow] = [:]
+    private var pendingOutputURL: URL?
     private var stream: SCStream?
     private var streamOutput: ScreenRecordingStreamOutput?
     private var lifecycleGeneration = 0
@@ -220,10 +225,14 @@ final class ScreenRecordingController: ObservableObject {
         switch accessState {
         case .unknown, .granted:
             return statusText
+        case .requesting:
+            return "Waiting for Screen Recording permission…"
+        case .relaunchRequired:
+            return "Screen Recording access requires a new process. Relaunch DynamicIsland, then open Screen Record again."
         case .notGranted:
             return "Screen Recording permission is required. Click Allow, or turn on DynamicIsland in System Settings → Privacy & Security → Screen & System Audio Recording."
         case .notActive:
-            var text = "Screen Recording permission isn't active for this copy of DynamicIsland. If you just turned it on, Relaunch DynamicIsland to activate it."
+            var text = "Screen Recording permission isn't active for this copy of DynamicIsland. Open Screen Recording Settings and check this app's entry."
             if isAdHocSigned {
                 text += " This build is ad-hoc signed, so after a rebuild macOS keeps the old entry: remove DynamicIsland with −, add it again, then Relaunch."
             }
@@ -233,7 +242,7 @@ final class ScreenRecordingController: ObservableObject {
 
     private func applyAccess(_ state: ScreenCaptureAccessState) {
         accessState = state
-        if state == .notGranted || state == .notActive {
+        if state == .notGranted || state == .notActive || state == .relaunchRequired {
             shareableContent = nil
             displayObjects = [:]
             windowObjects = [:]
@@ -265,18 +274,23 @@ final class ScreenRecordingController: ObservableObject {
     }
 
     func prepareTargets(requestPermission: Bool = true) async {
-        guard !isActuallyCapturing, phase != .finalizing else { return }
+        guard !isActuallyCapturing, phase != .finalizing, !preparingTargets else { return }
+        preparingTargets = true
+        defer { preparingTargets = false }
         statusText = "Checking Screen Recording access…"
+        accessState = .unknown
 
         let preflight = authorization.preflight()
-        if !preflight, requestPermission {
+        if !preflight, requestPermission, !requestAttempted {
+            accessState = .requesting
             requestAttempted = true
             requestLedger.recordRequest()
-            _ = authorization.request()
+            requestGrantedInProcess = authorization.request()
         }
         guard preflight || requestPermission else {
             // Opening the setup panel never prompts.
-            applyAccess(Self.accessState(preflight: false, contentAvailable: nil, requestAttempted: requestAttempted))
+            applyAccess(requestGrantedInProcess ? .relaunchRequired : Self.accessState(
+                preflight: false, contentAvailable: nil, requestAttempted: requestAttempted))
             return
         }
 
@@ -330,7 +344,10 @@ final class ScreenRecordingController: ObservableObject {
             statusText = "Choose what to record"
             publishCapability(permission: .granted)
         } catch where Self.isAuthorizationRefusal(error) || !preflight {
-            applyAccess(Self.accessState(preflight: preflight, contentAvailable: false, requestAttempted: requestAttempted))
+            let needsRelaunch = requestGrantedInProcess || (preflight && !requestAttempted)
+            if needsRelaunch { requestLedger.recordRequest() }
+            applyAccess(needsRelaunch ? .relaunchRequired : Self.accessState(
+                preflight: preflight, contentAvailable: false, requestAttempted: requestAttempted))
         } catch {
             accessState = .granted
             statusText = error.localizedDescription
@@ -407,6 +424,7 @@ final class ScreenRecordingController: ObservableObject {
 
             recordedDuration = duration
             lastSavedURL = url
+            pendingOutputURL = nil
             _ = machine.didSave()
             phase = machine.phase
             statusText = "Saved \(url.lastPathComponent)"
@@ -457,7 +475,7 @@ final class ScreenRecordingController: ObservableObject {
     }
 
     private func start(_ target: Target) async {
-        guard machine.beginPreparing() else { return }
+        guard !preparingTargets, machine.beginPreparing() else { return }
         lifecycleGeneration &+= 1
         let generation = lifecycleGeneration
         phase = machine.phase
@@ -475,8 +493,8 @@ final class ScreenRecordingController: ObservableObject {
             guard generation == lifecycleGeneration else { return }
             switch accessState {
             case .notGranted: throw ScreenRecordingError.permissionDenied
-            case .notActive: throw ScreenRecordingError.permissionNotActive
-            case .unknown, .granted: break
+            case .notActive, .relaunchRequired: throw ScreenRecordingError.permissionNotActive
+            case .unknown, .requesting, .granted: break
             }
             guard let content = shareableContent else {
                 throw ScreenRecordingError.captureUnavailable(statusText)
@@ -504,6 +522,7 @@ final class ScreenRecordingController: ObservableObject {
 
             let resolved = try resolveTarget(target, content: content)
             let outputURL = try Self.makeOutputURL()
+            pendingOutputURL = outputURL
             let output = try ScreenRecordingStreamOutput(
                 outputURL: outputURL,
                 width: resolved.width,
@@ -512,6 +531,7 @@ final class ScreenRecordingController: ObservableObject {
                 capturesMicrophone: options.capturesMicrophone &&
                     microphoneCaptureAvailable
             )
+            streamOutput = output
             connect(output, generation: generation)
 
             let config = resolved.configuration
@@ -555,11 +575,19 @@ final class ScreenRecordingController: ObservableObject {
             }
 
             self.stream = stream
-            streamOutput = output
             try await stream.startCapture()
+            guard generation == lifecycleGeneration else { return }
 
             // Remain preparing until a real video sample arrives.
-            statusText = "Starting capture…"
+            if phase == .preparing {
+                statusText = "Starting capture…"
+                Task { [weak self] in
+                    do { try await Task.sleep(for: .seconds(5)) } catch { return }
+                    guard let self, generation == self.lifecycleGeneration,
+                          self.machine.failIfPreparing() else { return }
+                    await self.failAndCleanup(ScreenRecordingError.noVideoSamples, generation: generation)
+                }
+            }
             publishCapability(permission: .granted)
         } catch {
             guard generation == lifecycleGeneration else { return }
@@ -711,6 +739,9 @@ final class ScreenRecordingController: ObservableObject {
         guard generation == lifecycleGeneration else { return }
         let activeStream = stream
         let activeOutput = streamOutput
+        let unfinishedURL = pendingOutputURL
+        pendingOutputURL = nil
+        machine.fail()
         // An intentional cleanup stop can itself produce SCStream delegate
         // termination callbacks. Detach failure delivery before stopping.
         activeOutput?.onFailure = nil
@@ -721,6 +752,14 @@ final class ScreenRecordingController: ObservableObject {
             try? await activeStream.stopCapture()
         }
         await activeOutput?.cancel()
+        if let unfinishedURL, FileManager.default.fileExists(atPath: unfinishedURL.path) {
+            do { try FileManager.default.removeItem(at: unfinishedURL) }
+            catch {
+                guard generation == lifecycleGeneration else { return }
+                transitionToFailure(ScreenRecordingError.finalizationFailed("Failed to remove unfinished recording: \(error.localizedDescription)"))
+                return
+            }
+        }
         guard generation == lifecycleGeneration else { return }
         transitionToFailure(error)
     }
@@ -840,7 +879,7 @@ final class ScreenRecordingController: ObservableObject {
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd HH.mm.ss"
         return directory.appendingPathComponent(
-            "DynamicIsland Recording \(formatter.string(from: Date())).mp4"
+            "DynamicIsland Recording \(formatter.string(from: Date())) \(UUID().uuidString).mp4"
         )
     }
 

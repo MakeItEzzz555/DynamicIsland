@@ -23,7 +23,10 @@ final class ShortcutsStore: ObservableObject {
 
     private let defaultsKey = "launcherShortcuts"
 
-    init() {
+    private let defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
         load()
     }
 
@@ -55,7 +58,7 @@ final class ShortcutsStore: ObservableObject {
 
     private func load() {
         guard
-            let data = UserDefaults.standard.data(forKey: defaultsKey),
+            let data = defaults.data(forKey: defaultsKey),
             let decoded = try? JSONDecoder().decode([LauncherShortcut].self, from: data)
         else {
             return
@@ -65,6 +68,6 @@ final class ShortcutsStore: ObservableObject {
 
     private func save() {
         guard let data = try? JSONEncoder().encode(shortcuts) else { return }
-        UserDefaults.standard.set(data, forKey: defaultsKey)
+        defaults.set(data, forKey: defaultsKey)
     }
 }

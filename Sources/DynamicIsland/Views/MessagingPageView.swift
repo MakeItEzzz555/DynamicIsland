@@ -48,7 +48,6 @@ struct MessagingPageView: View {
     let layoutStore: IslandLayoutStore?
     let pageHeight: CGFloat
     @State private var selectedKey: String?
-    @FocusState private var composerFocused: Bool
 
     private var entries: [MessagingQueueEntry] { controller.visibleEntries }
 
@@ -68,9 +67,6 @@ struct MessagingPageView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: pageHeight, alignment: .topLeading)
-        .onChange(of: composerFocused) { _, focused in
-            layoutStore?.setTextInputFocused(focused)
-        }
         .onDisappear {
             layoutStore?.setTextInputFocused(false)
         }
@@ -179,73 +175,9 @@ struct MessagingPageView: View {
     }
 
     private func composer(for entry: MessagingQueueEntry, draft: MessagingDraft) -> some View {
-        let status = MessagingDraftStatusPresentation(draft.state)
-        let sending = status == .sending
-        return VStack(alignment: .trailing, spacing: 4) {
-            HStack(spacing: 6) {
-                TextField("Reply to \(entry.conversation.displayTitle)…", text: Binding(
-                    get: { controller.draft(for: entry).text },
-                    set: { controller.updateDraft($0, for: entry) }
-                ))
-                .textFieldStyle(.plain)
-                .font(.system(size: 12))
-                .focused($composerFocused)
-                .disabled(sending)
-                .id(entry.key)
-                .onSubmit { send(entry) }
-
-                Button {
-                    send(entry)
-                } label: {
-                    Group {
-                        if sending {
-                            ProgressView().controlSize(.small)
-                        } else {
-                            Image(systemName: "arrow.up.circle.fill")
-                                .font(.system(size: 18, weight: .semibold))
-                        }
-                    }
-                    .frame(width: 22, height: 22)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(canSubmit(draft) ? .white : .white.opacity(0.25))
-                .disabled(!canSubmit(draft))
-                .fixedSize()
-                .help("Send reply")
-                .accessibilityLabel("Send reply")
-            }
-            .padding(.leading, 10)
-            .padding(.trailing, 5)
-            .frame(height: 32)
-            .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .stroke(.white.opacity(0.09), lineWidth: 1)
-            }
-
-            HStack(spacing: 8) {
-                statusText(status)
-                Spacer(minLength: 0)
-                openAppButton(for: entry)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func statusText(_ status: MessagingDraftStatusPresentation) -> some View {
-        switch status {
-        case .none:
-            EmptyView()
-        case .sending:
-            Text("Sending…").font(.system(size: 9.5)).foregroundStyle(.white.opacity(0.5))
-        case .sent:
-            Label("Sent", systemImage: "checkmark").font(.system(size: 9.5, weight: .semibold)).foregroundStyle(.green)
-        case .failed(let reason, let retryable):
-            Text(retryable ? "\(reason) · draft kept, retry or open the app" : "\(reason) · draft kept")
-                .font(.system(size: 9.5)).foregroundStyle(.orange).lineLimit(1)
-        case .uncertain(let reason):
-            Text("\(reason) · draft kept").font(.system(size: 9.5)).foregroundStyle(.orange).lineLimit(1)
-        }
+        MessagingReplyComposer(controller: controller, entry: entry, onFocus: {
+            layoutStore?.setTextInputFocused($0)
+        })
     }
 
     private func readOnlyFooter(
@@ -280,15 +212,6 @@ struct MessagingPageView: View {
         .padding(.horizontal, 9)
         .frame(height: 22)
         .background(.white.opacity(0.07), in: Capsule())
-    }
-
-    private func canSubmit(_ draft: MessagingDraft) -> Bool {
-        !draft.state.isSending && !draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    private func send(_ entry: MessagingQueueEntry) {
-        guard canSubmit(controller.draft(for: entry)) else { return }
-        Task { await controller.send(for: entry) }
     }
 
     private func initials(_ title: String) -> String {

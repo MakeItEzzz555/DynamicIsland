@@ -94,12 +94,13 @@ final class BasketDragMonitorTests: XCTestCase {
         var now: TimeInterval = 0
     }
 
-    private func makeMonitor(_ probe: Probe, sensitivity: Int = 3) -> (BasketDragMonitor, () -> [Int], () -> [Int]) {
+    private func makeMonitor(_ probe: Probe, sensitivity: Int = 3, instantAppear: @escaping () -> Bool = { false }) -> (BasketDragMonitor, () -> [Int], () -> [Int]) {
         var jiggles: [Int] = []
         var ends: [Int] = []
         let monitor = BasketDragMonitor(
             probe: probe,
             sensitivity: { sensitivity },
+            instantAppear: instantAppear,
             onJiggle: { generation, _ in jiggles.append(generation) },
             onDragEnded: { ends.append($0) }
         )
@@ -174,6 +175,49 @@ final class BasketDragMonitorTests: XCTestCase {
         monitor.tick()
         shake(monitor, probe, samples: 30)
         XCTAssertEqual(jiggles(), [])
+    }
+
+    func testInstantAppearFiresOncePerDragAndShakeCannotSummonAgain() {
+        let defaults = SettingsPreviewDefaults()
+        let settings = AppSettings(defaults: defaults)
+        XCTAssertFalse(settings.basketInstantAppear)
+        settings.basketInstantAppear = true
+        XCTAssertTrue(AppSettings(defaults: defaults).basketInstantAppear)
+        let probe = Probe()
+        let (monitor, actions, ends) = makeMonitor(probe, instantAppear: { settings.basketInstantAppear })
+        probe.isPrimaryButtonDown = true
+        probe.dragPasteboardChangeCount = 1
+        monitor.tick()
+        XCTAssertEqual(actions(), [1])
+        shake(monitor, probe, samples: 30)
+        XCTAssertEqual(actions(), [1], "One physical drag must not create extra baskets")
+        settings.basketInstantAppear = false
+        shake(monitor, probe, samples: 20)
+        XCTAssertEqual(actions(), [1], "Changing the mode cannot rearm the current drag")
+        probe.isPrimaryButtonDown = false; monitor.tick()
+        XCTAssertEqual(ends(), [1])
+        settings.basketInstantAppear = true
+        probe.isPrimaryButtonDown = true; probe.dragPasteboardChangeCount = 2; monitor.tick()
+        XCTAssertEqual(actions(), [1, 2])
+        monitor.stop(); monitor.stop()
+        XCTAssertEqual(ends(), [1, 2])
+        settings.resetModuleSettings()
+        XCTAssertFalse(settings.basketInstantAppear)
+    }
+
+    func testInstantAppearRejectsUnsupportedAndSelfOwnedDrags() {
+        let probe = Probe()
+        let (monitor, actions, _) = makeMonitor(probe, instantAppear: { true })
+        probe.isPrimaryButtonDown = true; probe.dragPasteboardChangeCount = 1
+        probe.dragPasteboardHasFiles = false; monitor.tick()
+        XCTAssertTrue(actions().isEmpty)
+        XCTAssertFalse(monitor.isDragging)
+        probe.dragPasteboardHasFiles = true; probe.dragPasteboardChangeCount = 2
+        monitor.isSuppressed = { true }; monitor.tick()
+        XCTAssertTrue(actions().isEmpty)
+        XCTAssertFalse(monitor.isDragging)
+        monitor.isSuppressed = { false }; probe.dragPasteboardChangeCount = 3; monitor.tick()
+        XCTAssertEqual(actions(), [1])
     }
 
     func testStopTearsDownTimerAndEndsActiveDragExactlyOnce() {

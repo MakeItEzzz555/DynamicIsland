@@ -140,6 +140,7 @@ struct ClipboardHistoryView: View {
                 reconcileSelection()
             }
             .onChange(of: visibleEntries.map(\.id)) { _, _ in reconcileSelection() }
+            .onChange(of: store.showsTypeFilters) { _, visible in if !visible { query.filter = .all } }
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Clipboard History")
     }
@@ -149,6 +150,8 @@ struct ClipboardHistoryView: View {
             .focusable()
             .onKeyPress(.downArrow) { moveSelection(1); return .handled }
             .onKeyPress(.upArrow) { moveSelection(-1); return .handled }
+            .onKeyPress(.leftArrow) { guard store.cardsLayout else { return .ignored }; moveSelection(-1); return .handled }
+            .onKeyPress(.rightArrow) { guard store.cardsLayout else { return .ignored }; moveSelection(1); return .handled }
             .onKeyPress(.return) {
                 guard let selectedEntryID else { return .ignored }
                 copy(id: selectedEntryID)
@@ -277,6 +280,7 @@ struct ClipboardHistoryView: View {
             .frame(height: 28 * metrics.compactControlScale)
             .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
 
+            if store.showsTypeFilters {
             Menu {
                 ForEach(ClipboardHistoryFilter.allCases) { filter in
                     Button {
@@ -296,6 +300,8 @@ struct ClipboardHistoryView: View {
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
+
+            }
 
             if store.tagsEnabled, !store.tags.isEmpty {
                 Menu {
@@ -427,6 +433,20 @@ struct ClipboardHistoryView: View {
         } else if visibleEntries.isEmpty {
             emptyState(title: "No matches", detail: "Try another search or filter.")
         } else {
+            if store.cardsLayout {
+                GeometryReader { geometry in
+                    ScrollViewReader { reader in
+                    ScrollView(.horizontal) {
+                        LazyHStack(alignment: .top, spacing: metrics.spacing(8, minimum: 6, maximum: 10)) {
+                            ForEach(visibleEntries) { entry in
+                                card(for: entry).frame(width: max(110, (geometry.size.width - 36) / 3), height: 170, alignment: .top).id(entry.id)
+                            }
+                        }.padding(10)
+                    }.scrollIndicators(.visible)
+                    .onChange(of: selectedEntryID) { _, selected in if let selected { reader.scrollTo(selected, anchor: .center) } }
+                    }
+                }
+            } else {
             ScrollView(.vertical) {
                 LazyVStack(spacing: metrics.spacing(8, minimum: 6, maximum: 10)) {
                     ForEach(visibleEntries) { entry in
@@ -435,7 +455,8 @@ struct ClipboardHistoryView: View {
                 }
                 .padding(metrics.spacing(10, minimum: 8, maximum: 12))
             }
-            .scrollIndicators(.visible)
+            .scrollIndicators(.visible)            }
+
         }
     }
 
@@ -460,7 +481,9 @@ struct ClipboardHistoryView: View {
         let presentation = ClipboardHistoryRowPresentation.resolve(entry: entry)
         let isSelected = selectedEntryID == entry.id
 
-        return HStack(alignment: .top, spacing: metrics.spacing(9, minimum: 7, maximum: 11)) {
+        let layout = store.cardsLayout ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6))
+            : AnyLayout(HStackLayout(alignment: .top, spacing: metrics.spacing(9, minimum: 7, maximum: 11)))
+        return layout {
             thumbnail(for: entry, presentation: presentation)
 
             VStack(alignment: .leading, spacing: 5) {
@@ -470,7 +493,7 @@ struct ClipboardHistoryView: View {
                         .font(.system(size: metrics.font(11, minimum: 10, maximum: 13), weight: .semibold))
                         .focused($renameFocused)
                         .onSubmit { commitRename(entry) }
-                } else {
+                } else if store.showsTitles {
                     Text(presentation.title)
                         .font(.system(size: metrics.font(11, minimum: 10, maximum: 13), weight: .semibold))
                         .lineLimit(entry.payload.kind == .text ? 3 : 2)
@@ -498,9 +521,9 @@ struct ClipboardHistoryView: View {
                 }
             }
 
-            Spacer(minLength: 2)
-
-            VStack(spacing: 5) {
+            if !store.cardsLayout { Spacer(minLength: 2) }
+            let actions = store.cardsLayout ? AnyLayout(HStackLayout(spacing: 5)) : AnyLayout(VStackLayout(spacing: 5))
+            actions {
                 Button { store.toggleFavorite(id: entry.id) } label: {
                     Image(systemName: entry.isFavorite ? "star.fill" : "star")
                         .foregroundStyle(entry.isFavorite ? Color.yellow : Color.white.opacity(0.48))
@@ -541,7 +564,7 @@ struct ClipboardHistoryView: View {
     private func metadataRow(_ entry: ClipboardHistoryEntry, timestamp: String) -> some View {
         HStack(spacing: 5) {
             if let app = entry.sourceApplication {
-                if let icon = cache.appIcon(for: app.bundleIdentifier) {
+                if store.showsSourceIcons, let icon = cache.appIcon(for: app.bundleIdentifier) {
                     Image(nsImage: icon)
                         .resizable()
                         .scaledToFit()
@@ -549,8 +572,8 @@ struct ClipboardHistoryView: View {
                 }
                 Text(app.name)
                     .lineLimit(1)
-                    .task(id: app.bundleIdentifier) {
-                        cache.loadAppIconIfNeeded(bundleID: app.bundleIdentifier)
+                    .task(id: store.showsSourceIcons ? app.bundleIdentifier : nil) {
+                        if store.showsSourceIcons { cache.loadAppIconIfNeeded(bundleID: app.bundleIdentifier) }
                     }
                 Text("•")
             }
@@ -624,6 +647,7 @@ struct ClipboardHistoryView: View {
             }
         }
 
+        if !isSettingsPreview {
         switch entry.payload {
         case let .url(url):
             Divider()
@@ -649,6 +673,7 @@ struct ClipboardHistoryView: View {
             }
         case .imagePNG, .text:
             EmptyView()
+        }
         }
 
         Divider()

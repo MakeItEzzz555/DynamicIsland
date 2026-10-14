@@ -8,6 +8,8 @@ enum FileDragSourceRegion: Hashable, Sendable {
     case collapsedIsland
     case trayShelf
     case trayAirDrop
+    /// One of the four Tray drop zones (Keep, Convert, Share, ZIP).
+    case trayDropZone
 }
 
 enum FileDragQuickAction: String, CaseIterable, Identifiable, Sendable {
@@ -120,12 +122,39 @@ final class FileDragSessionController: ObservableObject {
         case dragging
         case targeting(FileDragQuickAction)
         case materializing(FileDragQuickAction)
+        case materializingShelf
         case performing(FileDragQuickAction)
     }
 
     struct DropClaim: Equatable, Sendable {
         let generation: Int
         let action: FileDragQuickAction
+    }
+
+    struct ShelfDropClaim: Equatable, Sendable { let generation: Int }
+
+    func claimShelfDrop() -> ShelfDropClaim? {
+        ensureSession()
+        guard !dropClaimed else { return nil }
+        dropClaimed = true
+        exitTask?.cancel(); exitTask = nil
+        phase = .materializingShelf
+        return ShelfDropClaim(generation: generation)
+    }
+
+    @discardableResult
+    func completeShelfDrop(_ claim: ShelfDropClaim, urls: [URL], shelf: FileShelfStore,
+                           allowed: Bool, openAfterDrop: Bool = false, requestActions: Bool = true) -> [URL]? {
+        guard claim.generation == generation, dropClaimed, phase == .materializingShelf else {
+            shelf.discardUnacceptedDrop(urls)
+            return nil
+        }
+        defer { reset(incrementGeneration: true) }
+        guard allowed else { shelf.discardUnacceptedDrop(urls); return [] }
+        shelf.add(urls)
+        let accepted = shelf.files.filter(Set(urls.map(\.standardizedFileURL)).contains)
+        if requestActions { shelf.requestFileActions(for: accepted, openShelfAfterDrop: openAfterDrop) }
+        return accepted
     }
 
     @Published private(set) var phase: Phase = .idle

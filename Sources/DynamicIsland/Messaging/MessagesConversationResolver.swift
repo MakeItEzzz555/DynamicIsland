@@ -142,8 +142,8 @@ enum MessagesConversationResolver {
         candidates: [MessagesDatabaseMessage]
     ) -> MessagesResolution {
         guard let body = normalize(notification.body), !body.isEmpty else { return .notFound }
-        let low = notification.deliveredAt.addingTimeInterval(-windowBefore)
-        let high = notification.deliveredAt.addingTimeInterval(windowAfter)
+        let low = (notification.deliveredAt ?? notification.observedAt).addingTimeInterval(-windowBefore)
+        let high = (notification.deliveredAt ?? notification.observedAt).addingTimeInterval(windowAfter)
         let matches = candidates.filter { candidate in
             guard !candidate.isFromMe,
                   candidate.date >= low, candidate.date <= high,

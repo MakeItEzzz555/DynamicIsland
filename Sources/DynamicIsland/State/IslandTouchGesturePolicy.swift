@@ -12,6 +12,7 @@ struct IslandBackgroundInteractionGeometry: Equatable {
     let notchSize: CGSize
     let allowsBackground: Bool
     var excludedRects: [CGRect] = []
+    var contextMenuExcludedRects: [CGRect] = []
 
     var notchRect: CGRect {
         guard notchSize.width > 0, notchSize.height > 0 else { return .zero }
@@ -20,10 +21,25 @@ struct IslandBackgroundInteractionGeometry: Equatable {
                       width: width, height: min(size.height, notchSize.height))
     }
 
+    /// Include only the empty clearance below the camera cutout; content keeps its own clicks.
+    var notchMenuRect: CGRect {
+        let width = min(size.width, notchSize.width > 0 ? notchSize.width : 120)
+        let height = min(size.height, notchSize.height > 0
+            ? max(notchSize.height, min(contentTop, notchSize.height + 6))
+            : min(contentTop, 24))
+        return CGRect(x: (size.width - width) / 2, y: 0, width: width, height: max(0, height))
+    }
+
+    func acceptsCollapsedContextMenu(at point: CGPoint) -> Bool {
+        let rect = CGRect(x: 0, y: 0, width: size.width, height: notchMenuRect.height)
+        return !allowsBackground && rect.contains(point) && !notchRect.contains(point)
+            && !(excludedRects + contextMenuExcludedRects).contains { $0.contains(point) }
+    }
+
     func region(at point: CGPoint) -> Region? {
         guard CGRect(origin: .zero, size: size).contains(point),
               !excludedRects.contains(where: { $0.contains(point) }) else { return nil }
-        if !notchRect.isEmpty, notchRect.contains(point) { return .notch }
+        if !notchMenuRect.isEmpty, notchMenuRect.contains(point) { return .notch }
         guard allowsBackground, point.y >= contentTop else { return nil }
         if point.y >= size.height - bottomPadding || point.x < horizontalPadding || point.x >= size.width - horizontalPadding {
             return .background

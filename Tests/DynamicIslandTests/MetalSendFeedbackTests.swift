@@ -8,6 +8,8 @@ final class MetalSendFeedbackTests: XCTestCase {
         let idle = MetalSendFeedback.resolve(hovering: false, pressed: false, enabled: true, reduceMotion: false)
         let hover = MetalSendFeedback.resolve(hovering: true, pressed: false, enabled: true, reduceMotion: false)
         let press = MetalSendFeedback.resolve(hovering: true, pressed: true, enabled: true, reduceMotion: false)
+        XCTAssertGreaterThan(hover.glowOpacity, idle.glowOpacity)
+        XCTAssertEqual(press.glowOpacity, 0)
         XCTAssertEqual(idle, MetalSendFeedback(scale: 1, brightness: 0, opacity: 1))
         XCTAssertNotEqual(hover, idle, "hover produces a visible change")
         XCTAssertTrue((1.03...1.06).contains(hover.scale))

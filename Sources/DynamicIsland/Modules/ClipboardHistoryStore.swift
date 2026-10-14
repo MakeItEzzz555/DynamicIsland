@@ -187,6 +187,11 @@ final class ClipboardHistoryStore: ObservableObject {
 
     var autoFocusSearchEnabled: Bool { settings.clipboardHistoryAutoFocusSearch }
     var tagsEnabled: Bool { settings.clipboardHistoryTagsEnabled }
+    var cardsLayout: Bool { settings.clipboardHistoryCardsLayout }
+    var showsTypeFilters: Bool { settings.clipboardHistoryShowTypeFilters }
+    var showsTitles: Bool { settings.clipboardHistoryShowTitles }
+    var showsSourceIcons: Bool { settings.clipboardHistoryShowSourceIcons }
+
 
     private let settings: AppSettings
     private let pasteboard: ClipboardPasteboardClient
@@ -290,6 +295,9 @@ final class ClipboardHistoryStore: ObservableObject {
         guard !isFinalizing,
               isMonitoring, settings.clipboardHistoryEnabled,
               imageCaptureTask == nil else { return }
+        let priorCount = entries.count
+        pruneExpiredEntries()
+        if entries.count != priorCount { persistHistoryIfNeeded() }
         let currentChangeCount = pasteboard.changeCount
         guard currentChangeCount != lastObservedChangeCount else { return }
         lastObservedChangeCount = currentChangeCount
@@ -339,6 +347,12 @@ final class ClipboardHistoryStore: ObservableObject {
         } else {
             persistenceWriter.deleteWithoutDisabling()
         }
+    }
+
+    func clearHistoryExceptPinned() {
+        imageCaptureGeneration += 1
+        entries.removeAll { !$0.isFavorite }
+        persistHistoryIfNeeded()
     }
 
     func removeEntry(id: UUID) {
@@ -458,8 +472,10 @@ final class ClipboardHistoryStore: ObservableObject {
         timeout: TimeInterval = ClipboardHistoryStore.terminationPersistenceWaitSeconds
     ) -> ClipboardHistoryPersistenceFinalizationResult {
         if !isFinalizing {
+            pruneExpiredEntries()
             isFinalizing = true
             stopMonitoring()
+            if settings.clipboardHistoryClearOnQuit { entries.removeAll(); tags.removeAll() }
             imageCaptureTask?.cancel()
             cancellables.removeAll()
         }
@@ -498,7 +514,7 @@ final class ClipboardHistoryStore: ObservableObject {
                 payload: entry.payload,
                 fingerprint: entry.fingerprint,
                 sourceApplication: entry.sourceApplication,
-                isFavorite: entry.isFavorite,
+                isFavorite: entry.isFavorite || (settings.clipboardHistoryCopyAndFavorite && entries.filter(\.isFavorite).count < 50),
                 customTitle: entry.customTitle,
                 tagIDs: entry.tagIDs
             ),
@@ -559,6 +575,14 @@ final class ClipboardHistoryStore: ObservableObject {
     }
 
     private func installSettingsObservers() {
+        Publishers.MergeMany([
+            settings.$clipboardHistoryCardsLayout.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            settings.$clipboardHistoryShowTypeFilters.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            settings.$clipboardHistoryShowTitles.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            settings.$clipboardHistoryShowSourceIcons.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            settings.$clipboardHistoryTagsEnabled.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher()
+        ]).sink { [weak self] in self?.objectWillChange.send() }.store(in: &cancellables)
+
         settings.$clipboardHistoryEnabled
             .removeDuplicates()
             .dropFirst()
@@ -588,6 +612,17 @@ final class ClipboardHistoryStore: ObservableObject {
             }
             .store(in: &cancellables)
 
+        settings.$clipboardHistoryNoEntryLimit.removeDuplicates().dropFirst().sink { [weak self] unlimited in
+            guard let self else { return }
+            self.pruneToCurrentLimits(noEntryLimit: unlimited)
+            self.persistHistoryIfNeeded()
+        }.store(in: &cancellables)
+        settings.$clipboardHistoryRetentionDays.removeDuplicates().dropFirst().sink { [weak self] days in
+            guard let self else { return }
+            self.pruneExpiredEntries(days: days)
+            self.persistHistoryIfNeeded()
+        }.store(in: &cancellables)
+
         settings.$clipboardHistoryPersistenceEnabled
             .removeDuplicates()
             .dropFirst()
@@ -612,8 +647,16 @@ final class ClipboardHistoryStore: ObservableObject {
         }
     }
 
-    private func pruneToCurrentLimits(maximumItems: Int? = nil) {
-        let maximumOrdinary = maximumItems ?? settings.clipboardHistoryMaximumItems
+    private func pruneExpiredEntries(days: Int? = nil) {
+        let days = days ?? settings.clipboardHistoryRetentionDays
+        guard days > 0 else { return }
+        let cutoff = now().addingTimeInterval(-Double(days) * 86_400)
+        entries.removeAll { !$0.isFavorite && $0.createdAt < cutoff }
+    }
+
+    private func pruneToCurrentLimits(maximumItems: Int? = nil, noEntryLimit: Bool? = nil) {
+        pruneExpiredEntries()
+        let maximumOrdinary = (noEntryLimit ?? settings.clipboardHistoryNoEntryLimit) ? Int.max : (maximumItems ?? settings.clipboardHistoryMaximumItems)
         let maximumFavorites = 50
         var ordinarySeen = 0
         var favoritesSeen = 0

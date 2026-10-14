@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import Combine
 import SwiftUI
 
@@ -63,6 +64,54 @@ extension AppSettings {
 struct DynamicIslandApp {
     static func main() {
         let application = NSApplication.shared
+        if CommandLine.arguments.count == 3, ["--validate-keyboard", "--validate-keyboard-peer"].contains(CommandLine.arguments[1]) {
+            application.setActivationPolicy(.accessory)
+            Task { @MainActor in
+                await IslandKeyboardNativeAcceptance.run(directory: URL(fileURLWithPath: CommandLine.arguments[2]),
+                    peerMode: CommandLine.arguments[1] == "--validate-keyboard-peer")
+                application.terminate(nil)
+            }
+            application.run()
+            return
+        }
+        if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--validate-camera-navigation" {
+            application.setActivationPolicy(.accessory)
+            Task { @MainActor in
+                await CameraNavigationNativeAcceptance.run(directory: URL(fileURLWithPath: CommandLine.arguments[2]))
+                application.terminate(nil)
+            }
+            application.run()
+            return
+        }
+        if CommandLine.arguments == [CommandLine.arguments[0], "--probe-facetime"] {
+            if !AXIsProcessTrusted() { print("Accessibility permission required"); return }
+            guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: FaceTimeAccessibilityProvider.bundleIdentifier).first else {
+                print("FaceTime not running"); return
+            }
+            let element = AXUIElementCreateApplication(app.processIdentifier)
+            AXUIElementSetMessagingTimeout(element, 0.05)
+            if let data = try? JSONEncoder().encode(FaceTimeAccessibilityProvider.inspect(element)),
+               let text = String(data: data, encoding: .utf8) { print(text) }
+            return
+        }
+        if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--validate-live-activities" {
+            application.setActivationPolicy(.accessory)
+            Task { @MainActor in
+                await LiveActivityNativeAcceptance.run(directory: URL(fileURLWithPath: CommandLine.arguments[2]))
+                application.terminate(nil)
+            }
+            application.run()
+            return
+        }
+        if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--validate-settings" {
+            application.setActivationPolicy(.regular)
+            Task { @MainActor in
+                await SettingsNativeAcceptance.run(directory: URL(fileURLWithPath: CommandLine.arguments[2]))
+                application.terminate(nil)
+            }
+            application.run()
+            return
+        }
         let delegate = AppDelegate()
         application.delegate = delegate
         application.setActivationPolicy(.accessory)
@@ -107,10 +156,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.fileShelf.add(urls)
         }
     )
+    /// Inert until the user turns Live Audio on; creation starts nothing.
+    private lazy var audioSpectrum = AudioSpectrumController()
+    private var audioShutdownStarted = false
     private lazy var cameraPreview = CameraPreviewController(
         liveActivities: liveActivities,
         capabilities: capabilityRegistry
     )
+    private lazy var cameraNavigation = CameraNavigationController(camera: cameraPreview, settings: settings)
     private let rightWorkspace = RightWorkspaceStore()
     private let customization = WorkspaceCustomizationStore()
     private lazy var mediaAdvanced = MediaAdvancedController(media: media, spotify: workspaceServices.spotify)
@@ -173,6 +226,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         preferences: messagingPreferences.load(),
         presentationEnabled: { [weak self] in self?.settings.liveActivitiesEnabled ?? true }
     )
+    private lazy var faceTime = FaceTimeAccessibilityProvider(liveActivities: liveActivities)
     private let agentAttention = AgentAttentionCoordinator()
     private let agentActivityRecorder = AgentActivityRecorder()
     private let agentWorkspaceFeed = AgentWorkspaceFeedStore()
@@ -251,7 +305,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             agentWorkspaceFeed: agentWorkspaceFeed,
             agentWorkspacePresentation: agentWorkspacePresentation,
             customization: customization,
-            mediaAdvanced: mediaAdvanced
+            mediaAdvanced: mediaAdvanced,
+            audioSpectrum: audioSpectrum
         )
         navigation.applyConfiguration(customization.configuration, using: settings)
         customization.$configuration.dropFirst().removeDuplicates().sink { [weak self] configuration in
@@ -259,8 +314,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.navigation.applyConfiguration(configuration, using: self.settings)
         }.store(in: &cancellables)
         basketPresenter.start()
+        fileShelf.startRetentionMonitoring()
         agentProjects.observe(agentEvents.$sessions)
         installMessagingObservers()
+        faceTime.onEnabledChanged = { UserDefaults.standard.set($0, forKey: FaceTimeAccessibilityProvider.enabledKey) }
+        faceTime.setEnabled(UserDefaults.standard.bool(forKey: FaceTimeAccessibilityProvider.enabledKey))
         #if DEBUG
         debugPrint(
             "DynamicIsland AppDelegate modules",
@@ -275,21 +333,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             geometryService: geometryService,
             onOpenSettings: { [weak self] in
                 self?.openSettings()
-            }
+            },
+            cameraNavigation: cameraNavigation,
+            onNotchMenu: { [weak self] in self?.menuController?.makeNotchMenu() }
         )
         self.overlayController = overlayController
         screenRecordingSetup.anchorProvider = { [weak overlayController] in
             overlayController?.screenRecordingSetupAnchor()
         }
         overlayController.setVisible(settings.overlayEnabled)
-        LaunchAtLoginController.setEnabled(settings.launchAtLoginEnabled)
-
         settings.$launchAtLoginEnabled
             .removeDuplicates()
             .sink { enabled in
                 LaunchAtLoginController.setEnabled(enabled)
             }
             .store(in: &cancellables)
+
+        settings.$menuBarIconEnabled.removeDuplicates().sink { [weak self] visible in
+            self?.menuController?.setVisible(visible)
+        }.store(in: &cancellables)
+        settings.$dockIconEnabled.removeDuplicates().sink { [weak self] visible in
+            let settingsOpen = self?.settingsController?.window.isVisible == true
+            NSApp.setActivationPolicy(visible || settingsOpen ? .regular : .accessory)
+        }.store(in: &cancellables)
 
         settings.$statsRefreshIntervalSeconds
             .removeDuplicates()
@@ -370,7 +436,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .store(in: &cancellables)
     }
 
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        openSettings()
+        return true
+    }
+
+    /// Await owned audio cleanup before normal AppKit termination; cancellation is not a HAL timeout.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard !audioShutdownStarted else { return .terminateLater }
+        audioShutdownStarted = true
+        let spectrum = audioSpectrum
+        Task { @MainActor in
+            await spectrum.shutdown()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
+        fileShelf.stopRetentionMonitoring()
         let clipboardFinalization = clipboardHistory.finalizePersistenceForTermination()
         #if DEBUG
         if clipboardFinalization != .completed {
@@ -381,9 +465,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         terminalController.terminate()
         voiceTranscription.cancel()
         cameraPreview.terminate()
+        cameraNavigation.terminate()
         backgroundRemoval.terminate()
         basketPresenter.stop()
         systemHUDController.stop()
+        faceTime.stop()
         agentBridge.stop()
         agentManagedControl.stop()
         agentActivityRecorder.flushForTermination()
@@ -435,6 +521,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 agentManagedControl: agentManagedControl,
                 agentProjects: agentProjects,
                 messaging: messaging,
+                faceTime: faceTime,
+                cameraNavigation: cameraNavigation,
                 previews: settingsPreviewDependencies()
             )
         }

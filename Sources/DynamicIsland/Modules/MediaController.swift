@@ -422,6 +422,7 @@ final class MediaController: ObservableObject {
     /// production media components with a labeled sample track. It never
     /// polls providers and never sends commands.
     private(set) var isSettingsPreview = false
+    private var settingsPreviewTrack = 1
 
     static func settingsPreview() -> MediaController {
         let controller = MediaController(startsAutomatically: false)
@@ -429,6 +430,9 @@ final class MediaController: ObservableObject {
         controller.title = "Preview Track"
         controller.artist = "Sample Artist"
         controller.sourceName = "Settings Preview"
+        controller.sourceKind = .music
+        controller.activePlayer = .music
+        controller.lastSelectedSourceIdentity = MediaSourceIdentity(sourceKind: .music, bundleIdentifier: nil, persistentID: "settings-sample")
         controller.isPlaying = true
         controller.hasActiveMediaSource = true
         controller.isTransportControlAvailable = true
@@ -599,6 +603,7 @@ final class MediaController: ObservableObject {
     }
 
     func playPause() {
+        if isSettingsPreview { isPlaying.toggle(); return }
         guard isTransportControlAvailable else { return }
         send(command: activePlayer.playPauseCommand, to: activePlayer)
         refresh()
@@ -623,6 +628,7 @@ final class MediaController: ObservableObject {
     }
 
     func nextTrack() {
+        if isSettingsPreview { advanceSettingsSample(1); return }
         guard isTransportControlAvailable else { return }
         requestArtworkFlip(direction: .next, reason: "nextTrack command")
         sendTransportCommand(
@@ -633,6 +639,7 @@ final class MediaController: ObservableObject {
     }
 
     func previousTrack() {
+        if isSettingsPreview { advanceSettingsSample(-1); return }
         guard isTransportControlAvailable else { return }
         requestArtworkFlip(direction: .previous, reason: "previousTrack command")
         sendTransportCommand(
@@ -640,6 +647,14 @@ final class MediaController: ObservableObject {
             to: activePlayer,
             artworkRequestID: artworkFlipRequest?.id
         )
+    }
+
+    private func advanceSettingsSample(_ offset: Int) {
+        cancelScrubbing()
+        settingsPreviewTrack = max(1, settingsPreviewTrack + offset)
+        title = settingsPreviewTrack == 1 ? "Preview Track" : "Preview Track \(settingsPreviewTrack)"
+        playbackPosition = 0
+        selectedPublishGeneration += 1
     }
 
     private func sendTransportCommand(
@@ -743,7 +758,8 @@ final class MediaController: ObservableObject {
     }
 
     private func performSeek(_ request: MediaSeekRequest, spotify: SpotifyLibraryController?) {
-        guard !isSettingsPreview, currentScrubContext == request.context else { return }
+        guard currentScrubContext == request.context else { return }
+        if isSettingsPreview { playbackPosition = request.position; return }
         seekError = nil
         if request.context.player == .spotify,
            let spotify, spotify.connectionState == .connected {
@@ -830,19 +846,23 @@ final class MediaController: ObservableObject {
     }
 
     func openMusicApp() {
+        guard !isSettingsPreview else { return }
         AppLaunchService.open(.music)
     }
 
     func openSpotifyApp() {
+        guard !isSettingsPreview else { return }
         AppLaunchService.open(.spotify)
     }
 
     func openYouTube() {
+        guard !isSettingsPreview else { return }
         AppLaunchService.openYouTube(preferredBrowserBundleIdentifier: sourceBundleIdentifier)
     }
 
     @discardableResult
     func openActiveMediaSource() -> Bool {
+        guard !isSettingsPreview else { return false }
         let target = MediaSourceOpenTarget.resolve(
             sourceKind: sourceKind,
             sourceName: sourceName,

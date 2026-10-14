@@ -1,6 +1,27 @@
 import Foundation
 import SwiftUI
 
+public enum NotchRightClickAction: String, CaseIterable, Identifiable {
+    case openSettings, hide
+    public var id: String { rawValue }
+    public var displayName: String { self == .openSettings ? "Open settings" : "Hide" }
+    public var symbol: String { self == .openSettings ? "gearshape.fill" : "eye.slash.fill" }
+    static func permitted(collapsed: Bool, morphing: Bool, protected: Bool) -> Bool {
+        collapsed && !morphing && !protected
+    }
+}
+
+public enum ShelfFileRetention: String, CaseIterable, Identifiable {
+    case forever, oneHour, oneDay, oneWeek
+    public var id: String { rawValue }
+    public var displayName: String {
+        switch self { case .forever: "Forever"; case .oneHour: "1 hour"; case .oneDay: "1 day"; case .oneWeek: "1 week" }
+    }
+    public var seconds: TimeInterval? {
+        switch self { case .forever: nil; case .oneHour: 3_600; case .oneDay: 86_400; case .oneWeek: 604_800 }
+    }
+}
+
 public enum AutoCollapseDelayPreset: String, CaseIterable, Identifiable {
     case fast
     case normal
@@ -126,7 +147,7 @@ public enum GestureInputSource: String, CaseIterable, Identifiable {
 
     public var displayName: String {
         switch self {
-        case .camera: "Camera (Coming Soon)"
+        case .camera: "Camera"
         case .trackpad: "Pointer / Trackpad"
         case .keyboardShortcut: "Keyboard Shortcut"
         case .none: "None"
@@ -137,6 +158,28 @@ public enum GestureInputSource: String, CaseIterable, Identifiable {
 @MainActor
 public final class AppSettings: ObservableObject {
     @Published public var overlayEnabled: Bool { didSet { save(overlayEnabled, for: Key.overlayEnabled) } }
+    @Published public var externalDisplayVisibility: ExternalDisplayVisibility { didSet { save(externalDisplayVisibility.rawValue, for: Key.externalDisplayVisibility) } }
+    @Published public var showOverlayInFullscreen: Bool { didSet { save(showOverlayInFullscreen, for: Key.showOverlayInFullscreen) } }
+    @Published public var hiddenInAppBundleIDs: [String] {
+        didSet {
+            let valid = OverlayDisplayPolicy.normalizedAppExclusions(hiddenInAppBundleIDs, ownBundleID: Bundle.main.bundleIdentifier)
+            if valid != hiddenInAppBundleIDs { hiddenInAppBundleIDs = valid }
+            save(valid, for: Key.hiddenInAppBundleIDs)
+        }
+    }
+    @Published public var notchRightClickAction: NotchRightClickAction { didSet { save(notchRightClickAction.rawValue, for: Key.notchRightClickAction) } }
+    @Published public var menuBarIconEnabled: Bool {
+        didSet {
+            if !menuBarIconEnabled && !dockIconEnabled { menuBarIconEnabled = true }
+            save(menuBarIconEnabled, for: Key.menuBarIconEnabled)
+        }
+    }
+    @Published public var dockIconEnabled: Bool {
+        didSet {
+            if !dockIconEnabled && !menuBarIconEnabled { menuBarIconEnabled = true }
+            save(dockIconEnabled, for: Key.dockIconEnabled)
+        }
+    }
     @Published public var launchAtLoginEnabled: Bool { didSet { save(launchAtLoginEnabled, for: Key.launchAtLoginEnabled) } }
     @Published public var startCollapsedOnLaunch: Bool { didSet { save(startCollapsedOnLaunch, for: Key.startCollapsedOnLaunch) } }
     @Published public var expandOnHover: Bool { didSet { save(expandOnHover, for: Key.expandOnHover) } }
@@ -279,11 +322,13 @@ public final class AppSettings: ObservableObject {
         didSet { normalizeMaxShelfFiles(oldValue: oldValue) }
     }
     @Published public var persistFileShelfAcrossLaunches: Bool { didSet { save(persistFileShelfAcrossLaunches, for: Key.persistFileShelfAcrossLaunches) } }
+    @Published public var shelfFileRetention: ShelfFileRetention { didSet { save(shelfFileRetention.rawValue, for: Key.shelfFileRetention) } }
     @Published public var showFileThumbnails: Bool { didSet { save(showFileThumbnails, for: Key.showFileThumbnails) } }
     @Published public var deferThumbnailsDuringMorph: Bool { didSet { save(deferThumbnailsDuringMorph, for: Key.deferThumbnailsDuringMorph) } }
     @Published public var showFileExtensions: Bool { didSet { save(showFileExtensions, for: Key.showFileExtensions) } }
     @Published public var showFileCountBadge: Bool { didSet { save(showFileCountBadge, for: Key.showFileCountBadge) } }
     /// Floating Basket (Droppy parity). Shake a real file drag to summon it.
+    @Published public var basketInstantAppear: Bool { didSet { save(basketInstantAppear, for: Key.basketInstantAppear) } }
     @Published public var floatingBasketEnabled: Bool { didSet { save(floatingBasketEnabled, for: Key.floatingBasketEnabled) } }
     /// 1...5, higher = fewer direction reversals needed (Droppy default 3).
     @Published public var basketJiggleSensitivity: Int {
@@ -347,10 +392,24 @@ public final class AppSettings: ObservableObject {
     @Published public var clipboardHistoryMaximumItems: Int {
         didSet { normalizeClipboardHistoryMaximumItems(oldValue: oldValue) }
     }
+    @Published public var clipboardHistoryCardsLayout: Bool { didSet { save(clipboardHistoryCardsLayout, for: Key.clipboardHistoryCardsLayout) } }
+    @Published public var clipboardHistoryShowTypeFilters: Bool { didSet { save(clipboardHistoryShowTypeFilters, for: Key.clipboardHistoryShowTypeFilters) } }
+    @Published public var clipboardHistoryShowTitles: Bool { didSet { save(clipboardHistoryShowTitles, for: Key.clipboardHistoryShowTitles) } }
+    @Published public var clipboardHistoryShowSourceIcons: Bool { didSet { save(clipboardHistoryShowSourceIcons, for: Key.clipboardHistoryShowSourceIcons) } }
+    @Published public var clipboardHistoryNoEntryLimit: Bool { didSet { save(clipboardHistoryNoEntryLimit, for: Key.clipboardHistoryNoEntryLimit) } }
+    @Published public var clipboardHistoryRetentionDays: Int {
+        didSet {
+            let clamped = max(0, min(365, clipboardHistoryRetentionDays))
+            if clamped != clipboardHistoryRetentionDays { clipboardHistoryRetentionDays = clamped }
+            save(clipboardHistoryRetentionDays, for: Key.clipboardHistoryRetentionDays)
+        }
+    }
+    @Published public var clipboardHistoryClearOnQuit: Bool { didSet { save(clipboardHistoryClearOnQuit, for: Key.clipboardHistoryClearOnQuit) } }
     @Published public var clipboardHistoryPersistenceEnabled: Bool { didSet { save(clipboardHistoryPersistenceEnabled, for: Key.clipboardHistoryPersistenceEnabled) } }
     @Published public var clipboardHistoryCaptureImagesEnabled: Bool { didSet { save(clipboardHistoryCaptureImagesEnabled, for: Key.clipboardHistoryCaptureImagesEnabled) } }
     @Published public var clipboardHistoryExcludedAppBundleIDs: [String] { didSet { save(clipboardHistoryExcludedAppBundleIDs, for: Key.clipboardHistoryExcludedAppBundleIDs) } }
     @Published public var clipboardHistoryAutoFocusSearch: Bool { didSet { save(clipboardHistoryAutoFocusSearch, for: Key.clipboardHistoryAutoFocusSearch) } }
+    @Published public var clipboardHistoryCopyAndFavorite: Bool { didSet { save(clipboardHistoryCopyAndFavorite, for: Key.clipboardHistoryCopyAndFavorite) } }
     @Published public var clipboardHistoryTagsEnabled: Bool { didSet { save(clipboardHistoryTagsEnabled, for: Key.clipboardHistoryTagsEnabled) } }
 
     @Published public var liveActivitiesEnabled: Bool { didSet { save(liveActivitiesEnabled, for: Key.liveActivitiesEnabled) } }
@@ -447,8 +506,15 @@ public final class AppSettings: ObservableObject {
 
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        hiddenInAppBundleIDs = OverlayDisplayPolicy.normalizedAppExclusions(defaults.stringArray(forKey: Key.hiddenInAppBundleIDs) ?? [], ownBundleID: Bundle.main.bundleIdentifier)
+        externalDisplayVisibility = Self.enumValue(defaults, Key.externalDisplayVisibility, .always)
+        showOverlayInFullscreen = Self.bool(defaults, Key.showOverlayInFullscreen, true)
+        let initialDockIcon = Self.bool(defaults, Key.dockIconEnabled, false)
+        dockIconEnabled = initialDockIcon
+        menuBarIconEnabled = Self.bool(defaults, Key.menuBarIconEnabled, true) || !initialDockIcon
 
         overlayEnabled = Self.bool(defaults, Key.overlayEnabled, true)
+        notchRightClickAction = Self.enumValue(defaults, Key.notchRightClickAction, .openSettings)
         launchAtLoginEnabled = Self.bool(defaults, Key.launchAtLoginEnabled, false)
         startCollapsedOnLaunch = Self.bool(defaults, Key.startCollapsedOnLaunch, true)
         expandOnHover = Self.bool(defaults, Key.expandOnHover, false)
@@ -545,11 +611,13 @@ public final class AppSettings: ObservableObject {
         allowFileDropsOnExpandedTray = Self.bool(defaults, Key.allowFileDropsOnExpandedTray, true)
         maxShelfFiles = Self.int(defaults, Key.maxShelfFiles, 12)
         persistFileShelfAcrossLaunches = Self.bool(defaults, Key.persistFileShelfAcrossLaunches, false)
+        shelfFileRetention = Self.enumValue(defaults, Key.shelfFileRetention, .forever)
         showFileThumbnails = Self.bool(defaults, Key.showFileThumbnails, true)
         deferThumbnailsDuringMorph = Self.bool(defaults, Key.deferThumbnailsDuringMorph, true)
         showFileExtensions = Self.bool(defaults, Key.showFileExtensions, true)
         showFileCountBadge = Self.bool(defaults, Key.showFileCountBadge, true)
         floatingBasketEnabled = Self.bool(defaults, Key.floatingBasketEnabled, true)
+        basketInstantAppear = Self.bool(defaults, Key.basketInstantAppear, false)
         basketJiggleSensitivity = Self.int(defaults, Key.basketJiggleSensitivity, 3)
         basketMultipleEnabled = Self.bool(defaults, Key.basketMultipleEnabled, true)
         basketAutoHideEnabled = Self.bool(defaults, Key.basketAutoHideEnabled, false)
@@ -594,10 +662,18 @@ public final class AppSettings: ObservableObject {
         showNowPlayingActivity = Self.bool(defaults, Key.showNowPlayingActivity, false)
         clipboardHistoryEnabled = Self.bool(defaults, Key.clipboardHistoryEnabled, false)
         clipboardHistoryMaximumItems = Self.int(defaults, Key.clipboardHistoryMaximumItems, 50)
+        clipboardHistoryCardsLayout = Self.bool(defaults, Key.clipboardHistoryCardsLayout, false)
+        clipboardHistoryShowTypeFilters = Self.bool(defaults, Key.clipboardHistoryShowTypeFilters, true)
+        clipboardHistoryShowTitles = Self.bool(defaults, Key.clipboardHistoryShowTitles, true)
+        clipboardHistoryShowSourceIcons = Self.bool(defaults, Key.clipboardHistoryShowSourceIcons, true)
+        clipboardHistoryNoEntryLimit = Self.bool(defaults, Key.clipboardHistoryNoEntryLimit, false)
+        clipboardHistoryRetentionDays = max(0, min(365, Self.int(defaults, Key.clipboardHistoryRetentionDays, 0)))
+        clipboardHistoryClearOnQuit = Self.bool(defaults, Key.clipboardHistoryClearOnQuit, false)
         clipboardHistoryPersistenceEnabled = Self.bool(defaults, Key.clipboardHistoryPersistenceEnabled, false)
         clipboardHistoryCaptureImagesEnabled = Self.bool(defaults, Key.clipboardHistoryCaptureImagesEnabled, true)
         clipboardHistoryExcludedAppBundleIDs = defaults.stringArray(forKey: Key.clipboardHistoryExcludedAppBundleIDs) ?? []
         clipboardHistoryAutoFocusSearch = Self.bool(defaults, Key.clipboardHistoryAutoFocusSearch, false)
+        clipboardHistoryCopyAndFavorite = Self.bool(defaults, Key.clipboardHistoryCopyAndFavorite, false)
         clipboardHistoryTagsEnabled = Self.bool(defaults, Key.clipboardHistoryTagsEnabled, true)
 
         liveActivitiesEnabled = Self.bool(defaults, Key.liveActivitiesEnabled, true)
@@ -713,10 +789,16 @@ public final class AppSettings: ObservableObject {
         }
     }
 
-    public func resetAllSettings() {
-        reset(keys: Key.allCases)
+    public func resetAllSettings(preservePersonalData: Bool = false) {
+        reset(keys: Key.allCases.filter { !preservePersonalData || !Key.clipboardHistoryKeys.contains($0) })
         reload()
-        reset(keys: Key.clipboardHistoryKeys)
+        if !preservePersonalData { reset(keys: Key.clipboardHistoryKeys) }
+    }
+
+    func resetPreferencesPreservingAccess() {
+        let preserved = Set(Key.clipboardHistoryKeys + [Key.hiddenInAppBundleIDs, Key.launchAtLoginEnabled, Key.menuBarIconEnabled, Key.dockIconEnabled])
+        reset(keys: Key.allCases.filter { !preserved.contains($0) })
+        reload()
     }
 
     public func resetLayoutSettings() {
@@ -732,8 +814,8 @@ public final class AppSettings: ObservableObject {
         reload()
     }
 
-    public func resetModuleSettings() {
-        reset(keys: [
+    public func resetModuleSettings(preservePersonalData: Bool = false) {
+        let keys = [
             Key.showNavigationControls, Key.threeFingerTabNavigationEnabled, Key.showTrayTab, Key.showTimerTab, Key.showStatsTab, Key.showToolsTab, Key.showAgentsTab,
             Key.agentActivityEnabled, Key.agentCompletionAlertsEnabled, Key.agentApprovalAlertsEnabled,
             Key.agentSoundsEnabled, Key.agentCompletionSoundEnabled, Key.agentUsageMetricsEnabled, Key.agentActivityRecordingEnabled,
@@ -745,18 +827,21 @@ public final class AppSettings: ObservableObject {
             Key.collapsedHoverPreviewMediaEnabled, Key.collapsedHoverPreviewShowTitle,
             Key.collapsedHoverPreviewShowsArtist, Key.collapsedHoverPreviewShowsSource,
             Key.trayEnabled, Key.fileShelfEnabled, Key.airDropZoneEnabled,
-            Key.floatingBasketEnabled, Key.basketJiggleSensitivity, Key.basketMultipleEnabled,
+            Key.shelfFileRetention,
+            Key.floatingBasketEnabled, Key.basketInstantAppear, Key.basketJiggleSensitivity, Key.basketMultipleEnabled,
             Key.basketAutoHideEnabled, Key.basketAutoHideDelay,
             Key.timerEnabled, Key.timerPresetsEnabled, Key.timerPreset1Minutes, Key.timerPreset2Minutes, Key.timerPreset3Minutes,
             Key.statsEnabled, Key.showCPU, Key.showMemory, Key.showGPU, Key.showNetwork, Key.showDisk, Key.showBattery, Key.showUptime,
             Key.clipboardHistoryEnabled, Key.clipboardHistoryMaximumItems,
+            Key.clipboardHistoryNoEntryLimit, Key.clipboardHistoryRetentionDays, Key.clipboardHistoryClearOnQuit,
             Key.clipboardHistoryPersistenceEnabled, Key.clipboardHistoryCaptureImagesEnabled,
             Key.showExpandedLiveActivitiesSection, Key.allowSimultaneousLiveActivitySidecars,
             Key.timerSidecarPreference, Key.systemHUDsEnabled, Key.replaceMacOSSystemHUDs,
             Key.volumeHUDEnabled, Key.brightnessHUDEnabled, Key.capsLockHUDEnabled,
             Key.batteryStatusHUDEnabled, Key.lowBatteryHUDEnabled, Key.audioDeviceHUDEnabled,
             Key.focusHUDEnabled, Key.systemHUDDurationSeconds
-        ])
+        ]
+        reset(keys: keys.filter { !preservePersonalData || !Key.clipboardHistoryKeys.contains($0) })
         reload()
     }
 
@@ -782,7 +867,13 @@ public final class AppSettings: ObservableObject {
     }
 
     private func reload() {
+        hiddenInAppBundleIDs = OverlayDisplayPolicy.normalizedAppExclusions(defaults.stringArray(forKey: Key.hiddenInAppBundleIDs) ?? [], ownBundleID: Bundle.main.bundleIdentifier)
+        externalDisplayVisibility = Self.enumValue(defaults, Key.externalDisplayVisibility, .always)
+        showOverlayInFullscreen = Self.bool(defaults, Key.showOverlayInFullscreen, true)
+        dockIconEnabled = Self.bool(defaults, Key.dockIconEnabled, false)
+        menuBarIconEnabled = Self.bool(defaults, Key.menuBarIconEnabled, true) || !dockIconEnabled
         overlayEnabled = Self.bool(defaults, Key.overlayEnabled, true)
+        notchRightClickAction = Self.enumValue(defaults, Key.notchRightClickAction, .openSettings)
         launchAtLoginEnabled = Self.bool(defaults, Key.launchAtLoginEnabled, false)
         startCollapsedOnLaunch = Self.bool(defaults, Key.startCollapsedOnLaunch, true)
         expandOnHover = Self.bool(defaults, Key.expandOnHover, false)
@@ -872,11 +963,13 @@ public final class AppSettings: ObservableObject {
         allowFileDropsOnExpandedTray = Self.bool(defaults, Key.allowFileDropsOnExpandedTray, true)
         maxShelfFiles = Self.int(defaults, Key.maxShelfFiles, 12)
         persistFileShelfAcrossLaunches = Self.bool(defaults, Key.persistFileShelfAcrossLaunches, false)
+        shelfFileRetention = Self.enumValue(defaults, Key.shelfFileRetention, .forever)
         showFileThumbnails = Self.bool(defaults, Key.showFileThumbnails, true)
         deferThumbnailsDuringMorph = Self.bool(defaults, Key.deferThumbnailsDuringMorph, true)
         showFileExtensions = Self.bool(defaults, Key.showFileExtensions, true)
         showFileCountBadge = Self.bool(defaults, Key.showFileCountBadge, true)
         floatingBasketEnabled = Self.bool(defaults, Key.floatingBasketEnabled, true)
+        basketInstantAppear = Self.bool(defaults, Key.basketInstantAppear, false)
         basketJiggleSensitivity = Self.int(defaults, Key.basketJiggleSensitivity, 3)
         basketMultipleEnabled = Self.bool(defaults, Key.basketMultipleEnabled, true)
         basketAutoHideEnabled = Self.bool(defaults, Key.basketAutoHideEnabled, false)
@@ -919,10 +1012,18 @@ public final class AppSettings: ObservableObject {
         showNowPlayingActivity = Self.bool(defaults, Key.showNowPlayingActivity, false)
         clipboardHistoryEnabled = Self.bool(defaults, Key.clipboardHistoryEnabled, false)
         clipboardHistoryMaximumItems = Self.int(defaults, Key.clipboardHistoryMaximumItems, 50)
+        clipboardHistoryCardsLayout = Self.bool(defaults, Key.clipboardHistoryCardsLayout, false)
+        clipboardHistoryShowTypeFilters = Self.bool(defaults, Key.clipboardHistoryShowTypeFilters, true)
+        clipboardHistoryShowTitles = Self.bool(defaults, Key.clipboardHistoryShowTitles, true)
+        clipboardHistoryShowSourceIcons = Self.bool(defaults, Key.clipboardHistoryShowSourceIcons, true)
+        clipboardHistoryNoEntryLimit = Self.bool(defaults, Key.clipboardHistoryNoEntryLimit, false)
+        clipboardHistoryRetentionDays = max(0, min(365, Self.int(defaults, Key.clipboardHistoryRetentionDays, 0)))
+        clipboardHistoryClearOnQuit = Self.bool(defaults, Key.clipboardHistoryClearOnQuit, false)
         clipboardHistoryPersistenceEnabled = Self.bool(defaults, Key.clipboardHistoryPersistenceEnabled, false)
         clipboardHistoryCaptureImagesEnabled = Self.bool(defaults, Key.clipboardHistoryCaptureImagesEnabled, true)
         clipboardHistoryExcludedAppBundleIDs = defaults.stringArray(forKey: Key.clipboardHistoryExcludedAppBundleIDs) ?? []
         clipboardHistoryAutoFocusSearch = Self.bool(defaults, Key.clipboardHistoryAutoFocusSearch, false)
+        clipboardHistoryCopyAndFavorite = Self.bool(defaults, Key.clipboardHistoryCopyAndFavorite, false)
         clipboardHistoryTagsEnabled = Self.bool(defaults, Key.clipboardHistoryTagsEnabled, true)
         liveActivitiesEnabled = Self.bool(defaults, Key.liveActivitiesEnabled, true)
         showExpandedLiveActivitiesSection = Self.bool(defaults, Key.showExpandedLiveActivitiesSection, true)
@@ -1377,6 +1478,12 @@ public final class AppSettings: ObservableObject {
 
 private enum Key {
     static let overlayEnabled = "overlayEnabled"
+    static let externalDisplayVisibility = "externalDisplayVisibility"
+    static let showOverlayInFullscreen = "showOverlayInFullscreen"
+    static let hiddenInAppBundleIDs = "hiddenInAppBundleIDs"
+    static let notchRightClickAction = "notchRightClickAction"
+    static let menuBarIconEnabled = "menuBarIconEnabled"
+    static let dockIconEnabled = "dockIconEnabled"
     static let launchAtLoginEnabled = "launchAtLoginEnabled"
     static let startCollapsedOnLaunch = "startCollapsedOnLaunch"
     static let expandOnHover = "expandOnHover"
@@ -1467,10 +1574,12 @@ private enum Key {
     static let allowFileDropsOnExpandedTray = "allowFileDropsOnExpandedTray"
     static let maxShelfFiles = "maxShelfFiles"
     static let persistFileShelfAcrossLaunches = "persistFileShelfAcrossLaunches"
+    static let shelfFileRetention = "shelfFileRetention"
     static let showFileThumbnails = "showFileThumbnails"
     static let deferThumbnailsDuringMorph = "deferThumbnailsDuringMorph"
     static let showFileExtensions = "showFileExtensions"
     static let showFileCountBadge = "showFileCountBadge"
+    static let basketInstantAppear = "basketInstantAppear"
     static let floatingBasketEnabled = "floatingBasketEnabled"
     static let basketJiggleSensitivity = "basketJiggleSensitivity"
     static let basketMultipleEnabled = "basketMultipleEnabled"
@@ -1514,10 +1623,18 @@ private enum Key {
     static let showNowPlayingActivity = "showNowPlayingActivity"
     static let clipboardHistoryEnabled = "clipboardHistoryEnabled"
     static let clipboardHistoryMaximumItems = "clipboardHistoryMaximumItems"
+    static let clipboardHistoryCardsLayout = "clipboardHistoryCardsLayout"
+    static let clipboardHistoryShowTypeFilters = "clipboardHistoryShowTypeFilters"
+    static let clipboardHistoryShowTitles = "clipboardHistoryShowTitles"
+    static let clipboardHistoryShowSourceIcons = "clipboardHistoryShowSourceIcons"
+    static let clipboardHistoryNoEntryLimit = "clipboardHistoryNoEntryLimit"
+    static let clipboardHistoryRetentionDays = "clipboardHistoryRetentionDays"
+    static let clipboardHistoryClearOnQuit = "clipboardHistoryClearOnQuit"
     static let clipboardHistoryPersistenceEnabled = "clipboardHistoryPersistenceEnabled"
     static let clipboardHistoryCaptureImagesEnabled = "clipboardHistoryCaptureImagesEnabled"
     static let clipboardHistoryExcludedAppBundleIDs = "clipboardHistoryExcludedAppBundleIDs"
     static let clipboardHistoryAutoFocusSearch = "clipboardHistoryAutoFocusSearch"
+    static let clipboardHistoryCopyAndFavorite = "clipboardHistoryCopyAndFavorite"
     static let clipboardHistoryTagsEnabled = "clipboardHistoryTagsEnabled"
     static let liveActivitiesEnabled = "liveActivitiesEnabled"
     static let showExpandedLiveActivitiesSection = "showExpandedLiveActivitiesSection"
@@ -1581,7 +1698,7 @@ private enum Key {
     static let disableThumbnailsDuringMorph = "disableThumbnailsDuringMorph"
 
     static let allCases: [String] = [
-        overlayEnabled, launchAtLoginEnabled, startCollapsedOnLaunch, expandOnHover, expandOnClick,
+        overlayEnabled, externalDisplayVisibility, showOverlayInFullscreen, hiddenInAppBundleIDs, notchRightClickAction, launchAtLoginEnabled, menuBarIconEnabled, dockIconEnabled, startCollapsedOnLaunch, expandOnHover, expandOnClick,
         collapseOnMouseLeave, autoCollapseEnabled, autoCollapseDelayPreset, autoCollapseGraceSeconds,
         collapsedWidth, collapsedHeight, expandedWidth, expandedHeight, useAdaptiveNotchSizing,
         respectHardwareNotch, islandThemeStyle, shellOpacity, shellStrokeEnabled,
@@ -1604,8 +1721,8 @@ private enum Key {
         preferSystemNowPlaying, preferSpotifyAppleScript, preferBrowserMedia,
         browserMediaDetectionEnabled, youtubeMetadataEnrichmentEnabled, trayEnabled, fileShelfEnabled,
         airDropZoneEnabled, allowFileDropsOnCollapsedIsland, allowFileDropsOnExpandedTray, maxShelfFiles,
-        persistFileShelfAcrossLaunches, showFileThumbnails, deferThumbnailsDuringMorph,
-        showFileExtensions, showFileCountBadge, floatingBasketEnabled, basketJiggleSensitivity,
+        persistFileShelfAcrossLaunches, shelfFileRetention, showFileThumbnails, deferThumbnailsDuringMorph,
+        showFileExtensions, showFileCountBadge, floatingBasketEnabled, basketInstantAppear, basketJiggleSensitivity,
         basketMultipleEnabled, basketAutoHideEnabled, basketAutoHideDelay,
         confirmBeforeClearShelf, revealInFinderActionEnabled,
         copyPathActionEnabled, removeFileActionEnabled, openFileActionEnabled,
@@ -1617,9 +1734,10 @@ private enum Key {
         animateStatsCharts, pauseStatsDuringShellMorph, showActivityIndicator, activitiesEnabled,
         activitiesRefreshIntervalSeconds, showRunningAppsActivity, showDownloadsActivity,
         showCalendarActivity, showNowPlayingActivity, clipboardHistoryEnabled,
-        clipboardHistoryMaximumItems, clipboardHistoryPersistenceEnabled,
+        clipboardHistoryCardsLayout, clipboardHistoryShowTypeFilters, clipboardHistoryShowTitles, clipboardHistoryShowSourceIcons,
+        clipboardHistoryMaximumItems, clipboardHistoryNoEntryLimit, clipboardHistoryRetentionDays, clipboardHistoryClearOnQuit, clipboardHistoryPersistenceEnabled,
         clipboardHistoryCaptureImagesEnabled, clipboardHistoryExcludedAppBundleIDs,
-        clipboardHistoryAutoFocusSearch, clipboardHistoryTagsEnabled, liveActivitiesEnabled,
+        clipboardHistoryAutoFocusSearch, clipboardHistoryCopyAndFavorite, clipboardHistoryTagsEnabled, liveActivitiesEnabled,
         showExpandedLiveActivitiesSection, liveActivityStyle,
         showMusicLiveActivity, showTimerLiveActivity, showFileDropLiveActivity,
         showBatteryLiveActivity, showCalendarLiveActivity, showDownloadsLiveActivity,
@@ -1643,11 +1761,113 @@ private enum Key {
 
     static let clipboardHistoryKeys = [
         clipboardHistoryEnabled,
+        clipboardHistoryCardsLayout, clipboardHistoryShowTypeFilters, clipboardHistoryShowTitles, clipboardHistoryShowSourceIcons,
         clipboardHistoryMaximumItems,
+        clipboardHistoryNoEntryLimit, clipboardHistoryRetentionDays, clipboardHistoryClearOnQuit,
         clipboardHistoryPersistenceEnabled,
         clipboardHistoryCaptureImagesEnabled,
         clipboardHistoryExcludedAppBundleIDs,
         clipboardHistoryAutoFocusSearch,
+        clipboardHistoryCopyAndFavorite,
         clipboardHistoryTagsEnabled
     ]
+}
+
+@MainActor
+extension AppSettings {
+    private static var appearanceTransferKeys: Set<String> {
+        Set(SettingsAuditCatalog.entries.filter { $0.classification == .visual }.map(\.key)).intersection(Key.allCases)
+    }
+    private static var appearanceTransferTextValues: [String: Set<String>] {
+        ["islandThemeStyle": Set(IslandThemeStyle.allCases.map(\.rawValue)),
+         "visualizerAccentMode": Set(VisualizerAccentMode.allCases.map(\.rawValue)),
+         "animationPreset": Set(AnimationPreset.allCases.map(\.rawValue)),
+         "timerSidecarPreference": Set(LiveActivitySidePreference.allCases.map(\.rawValue))]
+    }
+    func exportAppearanceTransfer(workspace: WorkspaceConfiguration? = nil) throws -> Data {
+        let values = Self.appearanceTransferKeys.reduce(into: [String: SettingsTransferValue]()) { result, key in
+            guard let object = defaults.object(forKey: key), let value = SettingsTransferValue(object: object) else { return }
+            if case .text(let string) = value, Self.appearanceTransferTextValues[key]?.contains(string) != true { return }
+            result[key] = value
+        }
+        let workspaceData = try workspace.map { try JSONEncoder().encode($0.normalized()) }
+        let document = SettingsTransferDocument(version: workspaceData == nil ? 1 : 2,
+            scope: workspaceData == nil ? "appearance" : "appearance-workspace", values: values,
+            sha256: try workspaceData.map { try SettingsTransferDocument.checksum(values, workspace: $0) }
+                ?? SettingsTransferDocument.checksum(values), workspace: workspaceData)
+        _ = try document.inspectedWorkspace()
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(document)
+        guard data.count <= 65_536 else { throw SettingsTransferError.invalid }
+        return data
+    }
+    func inspectAppearanceTransfer(_ data: Data) throws -> SettingsTransferDocument {
+        guard data.count <= 65_536 else { throw SettingsTransferError.invalid }
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              Set(object.keys) == Set(["version", "scope", "values", "sha256"] + (object["workspace"] == nil ? [] : ["workspace"])) else {
+            throw SettingsTransferError.invalid
+        }
+        let document = try JSONDecoder().decode(SettingsTransferDocument.self, from: data)
+        try validateAppearanceTransfer(document)
+        return document
+    }
+    private func validateAppearanceTransfer(_ document: SettingsTransferDocument) throws {
+        let checksum: String
+        if let workspace = document.workspace {
+            guard document.version == 2, document.scope == "appearance-workspace" else { throw SettingsTransferError.invalid }
+            _ = try document.inspectedWorkspace()
+            checksum = try SettingsTransferDocument.checksum(document.values, workspace: workspace)
+        } else {
+            guard document.version == 1, document.scope == "appearance" else { throw SettingsTransferError.invalid }
+            checksum = try SettingsTransferDocument.checksum(document.values)
+        }
+        guard document.values.count <= 204,
+              Set(document.values.keys).isSubset(of: Self.appearanceTransferKeys),
+              document.sha256 == checksum else { throw SettingsTransferError.invalid }
+        let scratch = SettingsPreviewDefaults()
+        for (key, value) in document.values {
+            if case .text(let text) = value, Self.appearanceTransferTextValues[key]?.contains(text) != true { throw SettingsTransferError.invalid }
+            scratch.set(value.object, forKey: key)
+        }
+        let normalized = AppSettings(defaults: scratch)
+        normalized.normalizeAll()
+        let fields = Dictionary(uniqueKeysWithValues: Mirror(reflecting: normalized).children.compactMap { child in
+            child.label.map { (String($0.dropFirst()), child.value) }
+        })
+        for (key, value) in document.values {
+            // The production initializer checks enum, numeric range and invariant normalization.
+            guard let object = scratch.object(forKey: key), SettingsTransferValue(object: object) == value else { throw SettingsTransferError.invalid }
+            switch value {
+            case .boolean(let bool):
+                guard fields[key] is Published<Bool>, key != "showIslandTab" || bool else { throw SettingsTransferError.invalid }
+            case .number(let number):
+                guard fields[key] is Published<Double> || (fields[key] is Published<Int> && number.rounded() == number) else { throw SettingsTransferError.invalid }
+            case .text: break
+            }
+        }
+    }
+    func appearanceTransferChanges(_ document: SettingsTransferDocument) -> [String] {
+        document.values.filter { key, value in defaults.object(forKey: key).flatMap(SettingsTransferValue.init(object:)) != value }.keys.sorted()
+    }
+    func applyAppearanceTransfer(_ document: SettingsTransferDocument) throws {
+        guard document.workspace == nil else { throw SettingsTransferError.invalid }
+        try applySettingsTransfer(document, workspace: nil)
+    }
+    func applySettingsTransfer(_ document: SettingsTransferDocument, workspace: WorkspaceCustomizationStore?) throws {
+        try validateAppearanceTransfer(document) // No writes happen until the whole document passes.
+        let configuration = try document.inspectedWorkspace()
+        guard configuration == nil || workspace != nil else { throw SettingsTransferError.invalid }
+        let previous = Key.allCases.reduce(into: [String: Any]()) { result, key in result[key] = defaults.object(forKey: key) }
+        let previousWorkspace = workspace?.configuration
+        for (key, value) in document.values { defaults.set(value.object, forKey: key) }
+        reload()
+        if let configuration { workspace?.commit(configuration) }
+        guard document.values.allSatisfy({ defaults.object(forKey: $0.key).flatMap(SettingsTransferValue.init(object:)) == $0.value }),
+              configuration == nil || workspace?.persistedConfigurationMatches(configuration!) == true else {
+            for key in Key.allCases { defaults.set(previous[key], forKey: key) }
+            reload()
+            if let previousWorkspace { workspace?.commit(previousWorkspace) }
+            throw SettingsTransferError.invalid
+        }
+    }
 }

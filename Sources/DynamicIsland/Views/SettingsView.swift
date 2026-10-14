@@ -110,10 +110,17 @@ struct SettingsView: View {
     let agentManagedControl: AgentManagedSessionController?
     let agentProjects: AgentProjectProjectionStore?
     let messaging: MessagingController?
+    let faceTime: FaceTimeAccessibilityProvider?
+    let cameraNavigation: CameraNavigationController?
     let previews: SettingsPreviewDependencies?
+    let resetPanelSize: (() -> Bool)?
     @StateObject private var agentSetup = AgentIntegrationSetupController()
     @StateObject private var agentDiagnostics: AgentIntegrationDiagnosticsController
-    @State private var selectedSection: SettingsSection = .island
+    @StateObject var navigation: SettingsNavigationStore
+    @State private var settingsSearch = ""
+    @FocusState private var searchFocused: Bool
+    @State var resetConfirmation = false
+    @State private var pendingReset: SettingsResetScope?
     @State private var selectedAgentTab: AgentSettingsTab = .workspace
     @State private var selectedMediaTab: MediaDeviceSettingsTab = .media
     @State private var systemHUDAccessibilityGranted = SystemHUDAccessibilityPermission.isGranted
@@ -127,10 +134,18 @@ struct SettingsView: View {
         agentManagedControl: AgentManagedSessionController? = nil,
         agentProjects: AgentProjectProjectionStore? = nil,
         messaging: MessagingController? = nil,
-        previews: SettingsPreviewDependencies? = nil
+        faceTime: FaceTimeAccessibilityProvider? = nil,
+        cameraNavigation: CameraNavigationController? = nil,
+        previews: SettingsPreviewDependencies? = nil,
+        navigation: SettingsNavigationStore? = nil,
+        resetPanelSize: (() -> Bool)? = nil
     ) {
+        _navigation = StateObject(wrappedValue: navigation ?? SettingsNavigationStore())
         self.messaging = messaging
+        self.faceTime = faceTime
+        self.cameraNavigation = cameraNavigation
         self.previews = previews
+        self.resetPanelSize = resetPanelSize
         self.settings = settings
         self.shortcuts = shortcuts
         self.productivity = productivity
@@ -145,43 +160,149 @@ struct SettingsView: View {
         )
     }
 
+    private var selectedSection: SettingsSection {
+        switch navigation.route {
+        case .section(let section): section
+        case .page(.basket): .basket
+        case .page(.clipboard): .clipboard
+        case .page(.liveActivities): .liveActivities
+        case .page(.shelf): .rightWorkspace
+        default: .island
+        }
+    }
+
     var body: some View {
-        NavigationSplitView {
-            List(SettingsCategory.allCases, selection: Binding(
-                get: { SettingsCategory.containing(selectedSection) },
-                set: { selectedSection = $0.sections[0] })) { category in
-                Label(category.rawValue, systemImage: category.symbol)
-                    .tag(category)
-            }
-            .navigationSplitViewColumnWidth(min: 180, ideal: 210)
-        } detail: {
-            if SettingsCategory.containing(selectedSection).sections.count == 1 {
-                ScrollView {
-                    sectionContent(selectedSection)
-                        .padding(20)
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
-                }
-            } else {
-                TabView(selection: $selectedSection) {
-                    ForEach(SettingsCategory.containing(selectedSection).sections) { section in
-                        ScrollView {
-                            VStack(alignment: .leading, spacing: 18) {
-                                sectionContent(section)
+        NavigationSplitView(columnVisibility: Binding(
+            get: { navigation.sidebarVisible ? .all : .detailOnly },
+            set: { navigation.sidebarVisible = $0 != .detailOnly }
+        )) {
+            VStack(spacing: 8) {
+                TextField("Search settings", text: $settingsSearch)
+                    .textFieldStyle(.roundedBorder).focused($searchFocused)
+                    .padding(.horizontal, 10).padding(.top, 2)
+                    .accessibilityIdentifier("settings.search")
+                List(selection: Binding<SettingsRoute?>(get: { navigation.route }, set: {
+                    if let route = $0 { navigation.navigate(route) }
+                })) {
+                    ForEach(SettingsPage.sidebarGroups.indices, id: \.self) { group in
+                        let pages = SettingsPage.sidebarGroups[group].filter { matches($0.rawValue) }
+                        if !pages.isEmpty {
+                            Section {
+                                ForEach(pages) { page in
+                                    sidebarLabel(page)
+                                        .tag(SettingsRoute.page(page))
+                                        .accessibilityIdentifier("settings.route.\(page.id)")
+                                }
                             }
-                            .padding(20)
-                            .frame(maxWidth: .infinity, alignment: .topLeading)
                         }
-                        .tabItem { Text(SettingsCategory.tabTitle(section)) }
-                        .tag(section)
                     }
+                    if !settingsSearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Section("Matching controls") {
+                            ForEach(SettingsSearchResult.matching(settingsSearch)) { result in
+                                Button { navigation.open(result); searchFocused = false } label: {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(result.title)
+                                        Text(result.route.title).font(.caption).foregroundStyle(.secondary)
+                                    }
+                                }.buttonStyle(.plain).accessibilityHint("Open \(result.route.title), \(result.anchor)")
+                            }
+                        }
+                    }
+                    Section("Modules") {
+                        ForEach(SettingsSection.allCases.filter { matches($0.rawValue) }) { section in
+                            HStack(spacing: 8) {
+                                Image(systemName: section.symbol).foregroundStyle(.secondary).frame(width: 20)
+                                Text(section.rawValue).foregroundStyle(.primary)
+                            }
+                                .tag(SettingsRoute.section(section))
+                        }
+                    }
+                }.listStyle(.sidebar)
+            }
+            .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 260)
+        } detail: {
+            VStack(spacing: 0) {
+                ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 22) {
+                        routeContent
+                    }
+                    .frame(maxWidth: 760, alignment: .leading)
+                    .padding(20).frame(maxWidth: .infinity, alignment: .top)
+                    .background(SettingsScrollRestoration(route: navigation.route, navigation: navigation))
+                }.id(navigation.route.id)
+                .task(id: navigation.requestedAnchor) {
+                    guard let anchor = navigation.requestedAnchor else { return }
+                    await Task.yield()
+                    proxy.scrollTo(anchor, anchor: .top)
                 }
-                .padding(.top, 8)
+                }
+            }
+            .background(Color(nsColor: .windowBackgroundColor))
+            .toolbar {
+                ToolbarItemGroup(placement: .automatic) {
+                    Button(action: navigation.back) { Image(systemName: "chevron.left").frame(width: 28, height: 28) }
+                        .disabled(navigation.backHistory.isEmpty).accessibilityLabel("Back")
+                        .keyboardShortcut("[", modifiers: .command).background(SettingsNativeControlAnchor(identifier: "settings.back", navigation: navigation))
+                    Button(action: navigation.forward) { Image(systemName: "chevron.right").frame(width: 28, height: 28) }
+                        .disabled(navigation.forwardHistory.isEmpty).accessibilityLabel("Forward")
+                        .keyboardShortcut("]", modifiers: .command).background(SettingsNativeControlAnchor(identifier: "settings.forward", navigation: navigation))
+                    Text(navigation.route.title).font(.headline).accessibilityAddTraits(.isHeader)
+                }
             }
         }
-        .toggleStyle(.switch)
-        .frame(width: 920, height: 700)
+        .environment(\.settingsSearchHighlight, navigation.requestedAnchor)
+        .toggleStyle(SettingsTrailingSwitchStyle())
+        .frame(minWidth: SettingsWindowController.minimumContentSize.width, maxWidth: .infinity,
+               minHeight: SettingsWindowController.minimumContentSize.height, maxHeight: .infinity)
+        .background(Button("Search settings") { navigation.sidebarVisible = true; searchFocused = true }
+            .keyboardShortcut("f", modifiers: .command).hidden())
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             systemHUDAccessibilityGranted = SystemHUDAccessibilityPermission.isGranted
+        }
+    }
+
+    private func matches(_ title: String) -> Bool {
+        settingsSearch.isEmpty || title.localizedCaseInsensitiveContains(settingsSearch)
+    }
+
+    @ViewBuilder private func sidebarLabel(_ page: SettingsPage) -> some View {
+        if page == .account {
+            HStack(spacing: 10) {
+                Image(systemName: "person.crop.circle.fill").font(.system(size: 44)).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("DynamicIsland").font(.headline).foregroundStyle(.primary)
+                    Text("Local installation").font(.caption).foregroundStyle(.secondary)
+                }
+            }.padding(.vertical, 4).accessibilityLabel("Account, local installation")
+        } else {
+            HStack(spacing: 8) {
+                Image(systemName: page.symbol).font(.system(size: 10)).foregroundStyle(.white)
+                    .frame(width: 20, height: 20)
+                    .background(page.tint, in: RoundedRectangle(cornerRadius: 5))
+                Text(page.rawValue).foregroundStyle(.primary)
+            }
+        }
+    }
+
+    @ViewBuilder private var routeContent: some View {
+        switch navigation.route {
+        case .section(let section): sectionContent(section)
+        case .permissions: permissionsPage
+        case .page(let page):
+            switch page {
+            case .account: accountPage
+            case .general: generalPage
+            case .moduleStore: SettingsModuleCatalogView(settings: settings, defaults: navigation.defaults, navigate: navigation.navigate)
+            case .shelf: shelfPage
+            case .basket: basketSection
+            case .clipboard: clipboardSection
+            case .lockScreen: lockScreenPage
+            case .sharing: sharingPage
+            case .shortcuts: shortcutsPage
+            case .liveActivities: liveActivitiesSection
+            case .about: aboutPage
+            }
         }
     }
 
@@ -308,7 +429,7 @@ struct SettingsView: View {
             IslandShellSettingsPreview(settings: settings, dependencies: previews)
             if let previews {
                 CollapsedMediaSettingsPreview(settings: settings, media: previews.previewMedia)
-                CollapsedHoverSettingsPreview(settings: settings, media: previews.previewMedia)
+                LiveActivityLayoutSettingsPreview(settings: settings, scenario: .messageReply)
             }
             SettingsGroup("Shell") {
                 Picker("Island Theme", selection: $settings.islandThemeStyle) {
@@ -332,31 +453,11 @@ struct SettingsView: View {
                 Toggle("Show expanded visualizer", isOn: $settings.showExpandedVisualizer)
             }
 
-            SettingsGroup("Collapsed Preview") {
-                Toggle("Enable hover preview", isOn: $settings.collapsedHoverPreviewEnabled)
-                Toggle("Use media preview", isOn: $settings.collapsedHoverPreviewMediaEnabled)
-                    .disabled(!settings.collapsedHoverPreviewEnabled)
-                SliderRow(
-                    title: "Preview height",
-                    value: $settings.collapsedHoverPreviewHeight,
-                    range: 44...96,
-                    format: "%.0f pt",
-                    disabled: !settings.collapsedHoverPreviewEnabled
-                )
-                SliderRow(
-                    title: "Preview delay",
-                    value: $settings.collapsedHoverPreviewDelay,
-                    range: 0...0.4,
-                    format: "%.2fs",
-                    disabled: !settings.collapsedHoverPreviewEnabled
-                )
-                Toggle("Show song name", isOn: $settings.collapsedHoverPreviewShowTitle)
-                    .disabled(!settings.collapsedHoverPreviewEnabled || !settings.collapsedHoverPreviewMediaEnabled)
-                Toggle("Show artist", isOn: $settings.collapsedHoverPreviewShowsArtist)
-                    .disabled(!settings.collapsedHoverPreviewEnabled || !settings.collapsedHoverPreviewMediaEnabled)
-                Toggle("Use source name if artist missing", isOn: $settings.collapsedHoverPreviewShowsSource)
-                    .disabled(!settings.collapsedHoverPreviewEnabled || !settings.collapsedHoverPreviewMediaEnabled || !settings.collapsedHoverPreviewShowsArtist)
-                HelpText("Hover preview expands the collapsed pill visually without resizing the overlay panel.")
+            SettingsGroup("Collapsed message interaction") {
+                Toggle("Enable message hover", isOn: $settings.collapsedHoverPreviewEnabled)
+                SliderRow(title: "Message hover delay", value: $settings.collapsedHoverPreviewDelay,
+                    range: 0...0.4, format: "%.2fs", disabled: !settings.collapsedHoverPreviewEnabled)
+                HelpText("Messages grow only enough for an exact-target reply. Informational activities keep their height; exact Agent permissions use bounded controls.")
             }
         }
     }
@@ -492,9 +593,11 @@ struct SettingsView: View {
             FloatingBasketSettingsPreview(settings: settings)
             SettingsGroup("Floating Basket") {
                 Toggle("Enable Floating Basket", isOn: $settings.floatingBasketEnabled)
-                HelpText("Shake while dragging files to summon a Basket near the pointer. Works without Accessibility.")
-                Stepper("Shake sensitivity: \(settings.basketJiggleSensitivity)", value: $settings.basketJiggleSensitivity, in: 1...5)
+                Toggle("Instant appear", isOn: $settings.basketInstantAppear)
                     .disabled(!settings.floatingBasketEnabled)
+                HelpText("Instant appear summons one Basket when a new external file drag starts. Otherwise, shake to summon it. DynamicIsland's own Basket drag-outs are ignored; originals stay untouched.")
+                Stepper("Shake sensitivity: \(settings.basketJiggleSensitivity)", value: $settings.basketJiggleSensitivity, in: 1...5)
+                    .disabled(!settings.floatingBasketEnabled || settings.basketInstantAppear)
                 HelpText("Higher sensitivity needs fewer direction changes within half a second.")
                 Toggle("Allow multiple Baskets", isOn: $settings.basketMultipleEnabled)
                     .disabled(!settings.floatingBasketEnabled)
@@ -522,6 +625,7 @@ struct SettingsView: View {
                     backgroundRemoval: previews.previewBackgroundRemoval
                 )
             }
+            FileActionPanel(urls: [], operations: nil, sample: true, addOutput: { _ in }, dismiss: {})
             SettingsGroup("Tray") {
                 Toggle("Enable tray", isOn: $settings.trayEnabled)
                 Toggle("Enable file shelf", isOn: $settings.fileShelfEnabled)
@@ -543,6 +647,9 @@ struct SettingsView: View {
                 Toggle("Show file count badge", isOn: $settings.showFileCountBadge)
                 Toggle("Confirm before clearing shelf", isOn: $settings.confirmBeforeClearShelf)
                 Toggle("Persist shelf across launches", isOn: $settings.persistFileShelfAcrossLaunches)
+                Picker("File retention", selection: $settings.shelfFileRetention) {
+                    ForEach(ShelfFileRetention.allCases) { Text($0.displayName).tag($0) }
+                }
                 HelpText("Persistence restores existing files on launch and silently drops missing files.")
             }
             .disabled(!settings.trayEnabled || !settings.fileShelfEnabled)
@@ -901,6 +1008,9 @@ struct SettingsView: View {
                 Toggle("Battery live activity", isOn: $settings.showBatteryLiveActivity)
                     .disabled(!settings.liveActivitiesEnabled)
             }
+            if let faceTime, let messaging {
+                CommunicationsIntegrationView(faceTime: faceTime, messaging: messaging)
+            }
             SettingsGroup("Multi-Activity Layout") {
                 Toggle(
                     "Allow simultaneous sidecars",
@@ -913,10 +1023,17 @@ struct SettingsView: View {
                     }
                 }
                 .disabled(!settings.liveActivitiesEnabled || !settings.allowSimultaneousLiveActivitySidecars)
-                LiveActivityLayoutSettingsPreview(settings: settings, dependencies: previews)
+                SettingsActivityScenarioPreview(settings: settings, dependencies: previews)
+                HelpText(NativeCallAuthority.limitation)
                 HelpText(
                     "Automatic placement keeps the strongest activity in the center and moves compatible compact activities into leading or trailing sidecars. Transient HUDs overlay the composition without destroying it."
                 )
+            }
+
+            SettingsGroup("Displays") {
+                SettingsExternalDisplayChoices(selection: $settings.externalDisplayVisibility, navigation: navigation)
+                Toggle("Show island over fullscreen apps", isOn: $settings.showOverlayInFullscreen)
+                HelpText("Applies to the existing island window when it is on an external display. Protected approvals, focused replies and active interactions finish before hiding. This does not create additional islands; Settings fullscreen remains independent.")
             }
 
             DisclosureGroup("Advanced activity priority") {
@@ -1043,22 +1160,29 @@ struct SettingsView: View {
 
     private var clipboardSection: some View {
         settingsForm("Clipboard") {
-            if let previews {
-                ClipboardSettingsPreview(store: previews.clipboardHistory)
+            ClipboardSettingsPreview(settings: settings)
+            SettingsGroup("Clipboard appearance") {
+                Picker("Clipboard layout", selection: $settings.clipboardHistoryCardsLayout) {
+                    Text("List").tag(false)
+                    Text("Cards").tag(true)
+                }
+                Toggle("Type filters", isOn: $settings.clipboardHistoryShowTypeFilters)
+                Toggle("Titles", isOn: $settings.clipboardHistoryShowTitles)
+                Toggle("Source app icons", isOn: $settings.clipboardHistoryShowSourceIcons)
             }
+            SettingsGroup("Behavior") {
+                Toggle("Tags", isOn: $settings.clipboardHistoryTagsEnabled)
+                Toggle("Copy + favorite", isOn: $settings.clipboardHistoryCopyAndFavorite)
+                Text("Successfully copied history items become favorites, up to 50. Existing favorites are preserved when the limit is reached.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Toggle("Auto-focus", isOn: $settings.clipboardHistoryAutoFocusSearch)
+            }.disabled(!settings.clipboardHistoryEnabled)
             SettingsGroup("Clipboard History") {
                 Toggle("Enable clipboard history", isOn: $settings.clipboardHistoryEnabled)
-                Stepper(
-                    "Maximum items: \(settings.clipboardHistoryMaximumItems)",
-                    value: $settings.clipboardHistoryMaximumItems,
-                    in: 10...200
-                )
-                .disabled(!settings.clipboardHistoryEnabled)
+                if let history = previews?.clipboardHistory {
+                    SettingsClipboardHistoryControls(settings: settings, history: history)
+                }
                 Toggle("Capture images", isOn: $settings.clipboardHistoryCaptureImagesEnabled)
-                    .disabled(!settings.clipboardHistoryEnabled)
-                Toggle("Auto-focus search when opened", isOn: $settings.clipboardHistoryAutoFocusSearch)
-                    .disabled(!settings.clipboardHistoryEnabled)
-                Toggle("Enable tags", isOn: $settings.clipboardHistoryTagsEnabled)
                     .disabled(!settings.clipboardHistoryEnabled)
                 Toggle(
                     "Persist history across launches",
@@ -1072,6 +1196,8 @@ struct SettingsView: View {
             }
 
             SettingsGroup("Privacy") {
+                Toggle("Clear history on quit", isOn: $settings.clipboardHistoryClearOnQuit)
+                Text("Passwords and concealed clipboard content are always skipped.").font(.caption).foregroundStyle(.secondary)
                 ClipboardExcludedAppsPicker(settings: settings)
                     .disabled(!settings.clipboardHistoryEnabled)
                 HelpText(
@@ -1085,11 +1211,11 @@ struct SettingsView: View {
 
     private var pointerShortcutSettings: some View {
         SettingsGroup("Gesture Shortcuts") {
-                Toggle("Enable pointer shortcuts", isOn: $settings.gesturesEnabled)
+                Toggle("Enable gesture navigation", isOn: $settings.gesturesEnabled)
                 Picker("Input source", selection: $settings.gestureInputSource) {
                     ForEach(GestureInputSource.allCases) { source in
                         Text(source == .keyboardShortcut ? "Keyboard Shortcut (Unavailable)" : source.displayName).tag(source)
-                            .disabled(source == .camera || source == .keyboardShortcut)
+                            .disabled(source == .keyboardShortcut)
                     }
                 }
                 .disabled(!settings.gesturesEnabled)
@@ -1103,13 +1229,16 @@ struct SettingsView: View {
                 gestureActionPicker("Long Press", selection: $settings.expandedLongPressAction)
                 Toggle("Require confirmation", isOn: $settings.requireGestureConfirmation)
                     .disabled(!settings.gesturesEnabled || settings.gestureInputSource != .trackpad)
-                HelpText("Shortcuts act on the island background. Content controls keep their own clicks. Choose Pointer / Trackpad to use these mappings; camera and global keyboard input are unavailable.")
+                HelpText("Select Camera to use hand navigation. Pointer / Trackpad shortcuts act on the island background; content controls keep their own clicks.")
         }
     }
 
     private var gesturesSection: some View {
         settingsForm("Gesture Shortcuts") {
             pointerShortcutSettings
+            if settings.gestureInputSource == .camera, let cameraNavigation {
+                CameraNavigationSettingsView(navigation: cameraNavigation, camera: cameraNavigation.camera)
+            }
             DisclosureGroup("Advanced recognition") {
               SettingsGroup("Pointer / Trackpad") {
                 Toggle("Expand gesture", isOn: $settings.expandGestureEnabled)
@@ -1138,7 +1267,7 @@ struct SettingsView: View {
                     format: "%.2fs",
                     disabled: !settings.gesturesEnabled
                 )
-                HelpText("Pointer gestures use the mappings below. Camera gestures remain unavailable.")
+                HelpText("Pointer gestures use the mappings below. Camera Navigation uses pinch, open-palm swipe and optional two-finger scroll.")
               }
             }
 
@@ -1191,28 +1320,33 @@ struct SettingsView: View {
 
             SettingsGroup("Reset") {
                 HStack(spacing: 10) {
-                    Button("Reset All Settings") {
-                        settings.resetAllSettings()
-                    }
-                    Button("Reset Shell & Motion") {
-                        settings.resetLayoutSettings()
-                    }
-                    Button("Reset Modules") {
-                        settings.resetModuleSettings()
-                    }
+                    Button("Reset Preferences…") { pendingReset = .all }
+                    Button("Reset Shell & Motion…") { pendingReset = .shell }
+                    Button("Reset Modules…") { pendingReset = .modules }
                 }
-                HelpText("These resets affect preferences. Use Customize Workspace to reset saved widget placement.")
+                HelpText("These resets preserve clipboard history, its privacy preferences and saved widgets. Use Customize Workspace to reset placement.")
             }
+        }
+        .confirmationDialog(pendingReset?.title ?? "Reset preferences?", isPresented: Binding(
+            get: { pendingReset != nil }, set: { if !$0 { pendingReset = nil } }
+        )) {
+            Button("Reset", role: .destructive) {
+                switch pendingReset {
+                case .all: settings.resetAllSettings(preservePersonalData: true)
+                case .shell: settings.resetLayoutSettings()
+                case .modules: settings.resetModuleSettings(preservePersonalData: true)
+                case nil: break
+                }
+                pendingReset = nil
+            }
+        } message: {
+            Text("Clipboard content, clipboard privacy preferences, saved widgets and active sessions are preserved.")
         }
     }
 
     private func settingsForm<Content: View>(_ title: String, defaultsSection: SettingsSection? = nil, @ViewBuilder content: () -> Content) -> some View {
         let defaultsSection = defaultsSection ?? selectedSection
         return VStack(alignment: .leading, spacing: 16) {
-            Text(title)
-                .font(.title2.weight(.semibold))
-                .foregroundStyle(.primary)
-                .accessibilityAddTraits(.isHeader)
             content()
             if SettingsCategoryDefaults.supports(defaultsSection) {
                 Button("Restore \(defaultsSection.rawValue) Defaults") {
@@ -1319,6 +1453,7 @@ struct AgentSourceHealthRow: View {
 struct SettingsGroup<Content: View>: View {
     let title: String
     @ViewBuilder let content: Content
+    @Environment(\.settingsSearchHighlight) private var searchHighlight
 
     init(_ title: String, @ViewBuilder content: () -> Content) {
         self.title = title
@@ -1327,20 +1462,21 @@ struct SettingsGroup<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(title)
-                .font(.headline)
-                .accessibilityAddTraits(.isHeader)
+            if !title.isEmpty {
+                Text(title).font(.headline).accessibilityAddTraits(.isHeader)
+            }
             VStack(alignment: .leading, spacing: 10) {
                 content
             }
-            .padding(.vertical, 4)
+            .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            Divider()
-        }
+            .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(searchHighlight == title ? Color.accentColor : Color.secondary.opacity(0.15), lineWidth: searchHighlight == title ? 2 : 1))
+        }.id(title)
     }
 }
 
-private struct SliderRow: View {
+struct SliderRow: View {
     let title: String
     @Binding var value: Double
     let range: ClosedRange<Double>

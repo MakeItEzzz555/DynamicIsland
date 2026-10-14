@@ -12,6 +12,7 @@ protocol MessagingProviderAdapter: AnyObject {
     var capabilities: MessagingProviderCapabilities { get }
     /// Set by the controller; adapters deliver normalized incoming messages.
     var onIncoming: ((MessagingMessage) -> Void)? { get set }
+    var onStateChange: (() -> Void)? { get set }
     /// Only called when `capabilities.supportsInlineReply` and the
     /// conversation has an exact target.
     func send(_ text: String, to conversation: MessagingConversationID) async -> MessagingSendOutcome
@@ -25,6 +26,7 @@ protocol MessagingProviderAdapter: AnyObject {
 }
 
 extension MessagingProviderAdapter {
+    var onStateChange: (() -> Void)? { get { nil } set {} }
     func setObservationEnabled(_ enabled: Bool) {}
 }
 
@@ -259,6 +261,7 @@ final class MessagingController: ObservableObject {
         self.preferences = preferences
         self.now = now
         for adapter in adapters {
+            adapter.onStateChange = { [weak self] in self?.objectWillChange.send() }
             adapter.onIncoming = { [weak self] message in
                 self?.receive(message)
             }
@@ -283,6 +286,11 @@ final class MessagingController: ObservableObject {
     /// The conversation shown in the expanded surface.
     var current: MessagingQueueEntry? {
         visibleEntries.first
+    }
+
+    var collapsedEntry: MessagingQueueEntry? {
+        let focused = focus.isFocused == true
+        return visibleEntries.first { !($0.heldByFocus && focused) }
     }
 
     var visibleEntries: [MessagingQueueEntry] {
@@ -470,16 +478,14 @@ final class MessagingController: ObservableObject {
             objectWillChange.send()
             return
         }
-        let focused = focus.isFocused == true
-        let presentable = visibleEntries.filter { !($0.heldByFocus && focused) }
-        guard let entry = presentable.first else {
+        guard let entry = collapsedEntry else {
             liveActivities.remove(id: Self.activityID)
             objectWillChange.send()
             return
         }
         liveActivities.update(Self.makeActivity(
             for: entry,
-            queuedCount: presentable.count,
+            queuedCount: visibleEntries.filter { !($0.heldByFocus && focus.isFocused == true) }.count,
             showBody: preferences.showPreviewOnCompact,
             updatedAt: entry.latest.receivedAt
         ))

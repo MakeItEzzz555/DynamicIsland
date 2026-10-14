@@ -207,6 +207,7 @@ final class LiveActivitySidecarSnapshotTests: XCTestCase {
         case .backgroundRemoval: "person.crop.rectangle"
         case .screenRecording: "record.circle.fill"
         case .message: "message.fill"
+        case .call: "phone.fill"
         }
         let priority: Int = switch kind {
         case .system: 200
@@ -227,6 +228,7 @@ final class LiveActivitySidecarSnapshotTests: XCTestCase {
         case .backgroundRemoval: 84
         case .screenRecording: 146
         case .message: MessagingController.freshPriority
+        case .call: 145
         }
         return DynamicIslandLiveActivity(
             id: id,

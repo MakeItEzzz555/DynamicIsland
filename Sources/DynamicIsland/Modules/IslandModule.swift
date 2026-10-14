@@ -43,6 +43,9 @@ struct IslandModules {
     var customization: WorkspaceCustomizationStore? = nil
     /// Advanced Now Playing controls (queue, favorite, mode, output).
     var mediaAdvanced: MediaAdvancedController? = nil
+    /// App-owned live spectrum (Codex backend). Never started by views:
+    /// only the explicit Live Audio switch calls `startFromUserAction()`.
+    var audioSpectrum: AudioSpectrumController? = nil
 }
 
 /// Real data sources for the right workspace's Apps & Media page.

@@ -154,7 +154,11 @@ final class SettingsPreviewGeometryTests: XCTestCase {
         let settings = AppSettings(defaults: SettingsPreviewDefaults())
         for scenario in LiveActivityLayoutPreviewScenario.allCases {
             let preview = LiveActivityLayoutSettingsPreview.presentation(settings: settings, scenario: scenario)
-            XCTAssertEqual(preview.composite.primaryFrame.size, preview.geometry.collapsedFrame.size)
+            let expected = scenario == .messageReply
+                ? CollapsedActivityHoverPolicy.resolve(kind: .message, exactMessageReply: true)
+                    .frame(from: preview.geometry.collapsedFrame).size
+                : preview.geometry.collapsedFrame.size
+            XCTAssertEqual(preview.composite.primaryFrame.size, expected)
             let bounds = CGRect(origin: .zero, size: preview.canvasSize)
             XCTAssertTrue(bounds.contains(preview.composite.primaryFrame), scenario.rawValue)
             if preview.resolution.leadingSidecar != nil {

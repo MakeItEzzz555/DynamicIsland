@@ -164,7 +164,7 @@ final class SettingsPreviewSnapshotTests: XCTestCase {
         )
         let settings = harness.settings
         let views: [(String, AnyView)] = [
-            ("50-settings-island", AnyView(IslandShellSettingsPreview(settings: settings))),
+            ("50-settings-island", AnyView(IslandShellSettingsPreview(settings: settings, dependencies: deps))),
             ("51-settings-media", AnyView(MediaSettingsPreview(settings: settings, media: deps.previewMedia))),
             ("52-settings-right-workspace", AnyView(RightWorkspaceSettingsView(settings: settings, workspace: deps.rightWorkspace, dependencies: deps))),
             ("53-settings-agents", AnyView(AgentsSettingsPreview(managedControl: agents))),
@@ -175,7 +175,7 @@ final class SettingsPreviewSnapshotTests: XCTestCase {
             ("57-settings-productivity", AnyView(ProductivityDeckSettingsPreview(workspace: deps.rightWorkspace, productivity: deps.productivity, shelf: deps.previewShelf))),
             ("58-settings-content-motion", AnyView(ContentMotionSettingsPreview(settings: settings))),
             ("59-settings-collapsed-media", AnyView(CollapsedMediaSettingsPreview(settings: settings, media: deps.previewMedia))),
-            ("60-settings-collapsed-hover", AnyView(CollapsedHoverSettingsPreview(settings: settings, media: deps.previewMedia))),
+            ("60-settings-collapsed-hover", AnyView(LiveActivityLayoutSettingsPreview(settings: settings, scenario: .messageReply))),
             ("61-settings-media-launcher", AnyView(MediaLauncherSettingsPreview(settings: settings, media: deps.previewMedia)))
         ]
         for (name, view) in views {
