@@ -20,7 +20,7 @@ final class ShellMorphSnapshotTests: XCTestCase {
         let settings = AppSettings(defaults: UserDefaults(suiteName: "MorphStrip-\(UUID().uuidString)")!)
         let standard = CGSize(width: 860, height: 286)
         let agents = ExpandedPresentationProfile.agentsWorkspace.resolvedSize(from: standard)
-        let trayAccessory = ExpandedPresentationProfile.trayQuickActions.accessoryHeight
+        let trayAccessory = ExpandedPresentationProfile.resolve(for: .tray).accessoryHeight
         let cases: [(String, CGSize, CGFloat, CGSize, CGFloat)] = [
             ("island-to-agents", standard, 0, agents, 0),
             ("agents-to-island", agents, 0, standard, 0),

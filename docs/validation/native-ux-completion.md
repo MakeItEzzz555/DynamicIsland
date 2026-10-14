@@ -2,7 +2,7 @@
 
 Baseline origin/main: 320825dea9858ae7369d89222d4a554cfca79bc4; PRs #32/#33 are already merged. Work is isolated at ~/DynamicIsland-worktrees/native-ux-completion, branch codex/native-ux-completion. The former integration checkout had independently advanced to bb278f2; it is untouched. Source/index/HEAD preservation manifest for five existing worktrees: /tmp/dynamicisland-ux-completion-preservation.json.
 
-Claude's completed post-merge checkpoint a15a9fa was carried forward as seven distinct commits after patch/ancestry inspection proved those changes were absent from main. This preserves its Live Audio rev-3 consent/lifecycle and rendering changes. The latest instruction to preserve left-click notch Settings access takes precedence over the older right-click-only patch; that route is reconciled in B. No focused provider-icon commit has arrived yet. No local/remote codex/native-stability-system-volume-v2 branch was found in either relevant repository at initial inspection.
+Claude's completed post-merge checkpoint a15a9fa was carried forward as seven distinct commits after patch/ancestry inspection proved those changes were absent from main. This preserves its Live Audio rev-3 consent/lifecycle and rendering changes. The latest instruction to preserve left-click notch Settings access takes precedence over the older right-click-only patch; that route is reconciled in B. Claude’s focused provider-icon checkpoint da7be2a is now available and will be reviewed after the interaction changes. No local/remote codex/native-stability-system-volume-v2 branch was found in either relevant repository at initial inspection.
 
 ## A — Collapsed hover ownership
 
@@ -27,3 +27,9 @@ A checkpoint: 70edb29. B focused tests: 55 passed, zero failures/skips (3.099s),
 Important evidence limit: the simple AppKit top-edge baseline already passed. The physical reported narrow-strip defect is therefore not proven to be a shape-path error. Source inspection shows the shell's reachable top formerly coincided with the native panel event boundary; the panel now has a 2pt guard ABOVE the shell without moving either shell in screen coordinates. This removes that boundary coincidence and introduces no desktop hit surface. WindowServer/physical top-edge delivery remains UNVERIFIED until the packaged build is authorized for a user exercise. OS boundary clipping is an INFERENCE, not a claimed observed internal mechanism.
 
 Compact row and preview exclusions preserve media/Agent/native control authority. Registered native controls still win. The physical camera cutout is excluded; no claim is made that clicks can be delivered inside it. No global hook or input injection was added.
+
+## C — Shared Tray footprint and retired accessories
+
+Tray uses the same Media semantic footprint for Compact/Standard/Large and display scaling, without rewriting saved widget placements. File collections scroll inside this footprint. The obsolete four-circle row and external drag orbit are removed, including their height reservations and Settings preview. Shared native sharing-anchor helpers remain for Basket/Tray. Root clears retired accessory registrations and mounts navigation at the existing 3pt gap. Conversion, background operations, Basket and drag transactions remain intact.
+
+Hosted production Tray mounts only navigation and verifies its reachable corridor; saved size/display projection tests verify Media equality. Focused native/unit result and commit are recorded in the delivery checkpoint. Synthetic/hosted tests do not establish physical Finder drag or display pacing. The shared layout projection measured 0.0823ms average over 300 projections (CPU calculation, not animation smoothness).

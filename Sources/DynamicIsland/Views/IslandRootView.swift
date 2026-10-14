@@ -723,7 +723,6 @@ struct IslandRootView: View {
                 .id(layoutStore.overlayPresentationGeneration)
 
                 collapsedSidecarOverlay
-                trayQuickActionOverlay
                 detachedNavigationOverlay
                 CameraPointerOverlay(store: layoutStore.cameraPointerStore, canvasSize: layoutStore.canvasSize)
                     .zIndex(100)
@@ -814,6 +813,8 @@ struct IslandRootView: View {
         baseIslandCanvas
             .onAppear {
                 modules.navigation.ensureValidSelection(using: settings)
+                layoutStore.setExpandedAccessoryFrames([], owner: .trayQuickActions)
+                layoutStore.setExpandedAccessoryFrames([], owner: .fileDragOrbit)
                 synchronizePresentationForCurrentState()
                 updateCollapsedPreviewLayout()
                 synchronizeCollapsedSidecarGeometry()
@@ -1118,8 +1119,7 @@ struct IslandRootView: View {
         if settings.showNavigationControls, isExpanded, showsExpandedContent,
            !layoutStore.isCollapseShellOnly {
             let frame = DetachedIslandNavigationMetrics.frame(shell: layoutStore.expandedSurfaceFrame,
-                pageCount: navigation.availablePages(using: settings).count,
-                precedingAccessoryHeight: navigation.selectedPage == .tray ? FileTrayQuickActionMetrics.accessoryHeight : 0)
+                pageCount: navigation.availablePages(using: settings).count)
             DetachedIslandNavigationBar(settings: settings, navigation: navigation, pointerAnchor: layoutStore.tabPointerAnchor,
                 onEdit: { requestBackgroundWorkspaceAction(.toggleEdit) },
                 onEditTabs: { requestBackgroundWorkspaceAction(.editNavigation) },
@@ -1132,53 +1132,6 @@ struct IslandRootView: View {
             .onAppear { layoutStore.setExpandedAccessoryFrames([frame], owner: .navigation) }
             .onChange(of: frame) { _, next in layoutStore.setExpandedAccessoryFrames([next], owner: .navigation) }
             .onDisappear { layoutStore.setExpandedAccessoryFrames([], owner: .navigation) }
-        }
-    }
-
-    @ViewBuilder
-    private var trayQuickActionOverlay: some View {
-        if showsExpandedContent,
-           isExpanded,
-           !layoutStore.isExpandedContentExiting,
-           navigation.selectedPage == .tray,
-           settings.trayEnabled,
-           settings.fileShelfEnabled {
-            let shell = layoutStore.expandedSurfaceFrame
-            ZStack {
-                if fileDragSession.isActive {
-                    FileDragQuickActionOrbit(
-                        session: fileDragSession,
-                        layoutStore: layoutStore,
-                        reduceMotion: reduceMotion || settings.reduceExtraMotion
-                    )
-                    .position(
-                        x: shell.midX,
-                        y: layoutStore.canvasSize.height - shell.minY
-                            + FileDragQuickActionMetrics.gap
-                            + FileDragQuickActionMetrics.diameter / 2
-                    )
-                    .transition(.opacity.combined(with: .scale(scale: (reduceMotion || settings.reduceExtraMotion) ? 1 : 0.92)))
-                } else {
-                    FileTrayQuickActionBar(
-                        fileShelf: modules.fileShelf,
-                        backgroundOperations: modules.backgroundOperations,
-                        backgroundRemoval: modules.productivity.backgroundRemoval,
-                        layoutStore: layoutStore,
-                        reduceMotion: reduceMotion || settings.reduceExtraMotion
-                    )
-                    .position(
-                        x: shell.midX,
-                        y: layoutStore.canvasSize.height - shell.minY
-                            + FileTrayQuickActionMetrics.gap
-                            + FileTrayQuickActionMetrics.diameter / 2
-                    )
-                    .transition(.opacity.combined(with: .offset(y: reduceMotion ? 0 : -6)))
-                }
-            }
-            .animation(
-                (reduceMotion || settings.reduceExtraMotion) ? .easeOut(duration: 0.12) : .spring(response: 0.24, dampingFraction: 0.82),
-                value: fileDragSession.isActive
-            )
         }
     }
 
