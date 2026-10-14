@@ -187,7 +187,6 @@ struct IslandPointerGestureModifier: ViewModifier {
     func body(content: Content) -> some View {
         if settings.gesturesEnabled, settings.gestureInputSource == .trackpad {
             let pointerGestures = content
-                .gesture(doubleClickGesture)
                 .simultaneousGesture(swipeGesture)
             if includesLongPress {
                 pointerGestures.simultaneousGesture(longPressGesture)
@@ -197,19 +196,6 @@ struct IslandPointerGestureModifier: ViewModifier {
         } else {
             content
         }
-    }
-
-    private var doubleClickGesture: some Gesture {
-        TapGesture(count: 2)
-            .onEnded {
-                guard !pointerOwnedByControl else { return }
-                coordinator.handle(
-                    .doubleClick,
-                    settings: settings,
-                    context: context,
-                    callbacks: callbacks
-                )
-            }
     }
 
     private var swipeGesture: some Gesture {
@@ -752,15 +738,13 @@ struct IslandRootView: View {
         .coordinateSpace(name: IslandCanvasCoordinateSpace.name)
     }
 
-    private var collapsedContextContentRects: [CGRect] {
-        guard !isExpanded, collapsedLayoutResolution.primary != nil || agentAttention.presentation != nil ||
-                !modules.agentEvents.sessions.isEmpty else { return [] }
-        // Reserve the existing 16pt compact row wings, including non-native SwiftUI controls.
-        let top = isCollapsedPreviewActive ? 2 : max(0, (surfaceSize.height - 16) / 2)
-        let left = layoutStore.collapsedLeftRegionWidth > 0 ? layoutStore.collapsedLeftRegionWidth + 8 : min(96, surfaceSize.width / 3)
-        let right = layoutStore.collapsedRightRegionWidth > 0 ? layoutStore.collapsedRightRegionWidth + 8 : min(96, surfaceSize.width / 3)
-        return [CGRect(x: 0, y: top, width: left, height: 16),
-                CGRect(x: surfaceSize.width - right, y: top, width: right, height: 16)]
+    /// An open collapsed preview (message reply, activity details) keeps its
+    /// own pointer events, including right-click paste in the reply field.
+    private var collapsedPreviewContentRects: [CGRect] {
+        guard !isExpanded, isCollapsedPreviewActive else { return [] }
+        let base = layoutStore.collapsedSurfaceFrame.height
+        guard surfaceSize.height > base else { return [] }
+        return [CGRect(x: 0, y: base, width: surfaceSize.width, height: surfaceSize.height - base)]
     }
 
     private var shellBackgroundInteraction: IslandShellBackgroundInteraction {
@@ -777,8 +761,8 @@ struct IslandRootView: View {
             contentTop: chrome.topPadding + chrome.tabSwitcherHeight + chrome.tabToPageSpacing,
             notchSize: notchIntegrated ? CGSize(width: layoutStore.hardwareNotchWidth, height: metrics.hardwareNotchHeight) : .zero,
             allowsBackground: isExpanded,
-            excludedRects: layoutStore.nativeControlRegions.values.map { $0.offsetBy(dx: -shellOrigin.x, dy: -shellOrigin.y) },
-            contextMenuExcludedRects: collapsedContextContentRects)
+            excludedRects: layoutStore.nativeControlRegions.values.map { $0.offsetBy(dx: -shellOrigin.x, dy: -shellOrigin.y) }
+                + collapsedPreviewContentRects)
         return IslandShellBackgroundInteraction(geometry: geometry,
             enabled: !layoutStore.isShellMorphing && !layoutStore.isExpandedContentExiting && !layoutStore.isCollapseShellOnly
                 && layoutStore.workspaceGeometryTransition.phase == .idle,
@@ -794,9 +778,6 @@ struct IslandRootView: View {
                     layoutStore.preservePageForNextExpansion(navigation.selectedPage)
                     onRequestExpand()
                 }
-            },
-            onDoubleClick: {
-                gestureCoordinator.handle(.doubleClick, settings: settings, context: gestureContext, callbacks: gestureCallbacks)
             },
             onClick: isExpanded ? nil : {
                 guard settings.expandOnClick else { return }
@@ -1993,7 +1974,6 @@ struct IslandShellBackgroundInteraction: NSViewRepresentable {
     let onClipboard: () -> Void
     let onSettings: () -> Void
     let onNavigate: (Bool) -> Void
-    var onDoubleClick: (() -> Void)? = nil
     var onClick: (() -> Void)? = nil
     var onLongPress: (() -> Void)? = nil
     var shellShape = IslandShellShape(topCornerRadius: 0, bottomCornerRadius: 0)
@@ -2066,7 +2046,7 @@ final class IslandShellBackgroundInputView: NSView {
     func acceptsNotchContextClick(at windowPoint: NSPoint) -> Bool {
         let point = convert(windowPoint, from: nil)
         return window != nil && !isHiddenOrHasHiddenAncestor && configuration?.enabled == true
-            && configuration?.geometry.acceptsCollapsedContextMenu(at: point) == true
+            && configuration?.geometry.acceptsContextMenu(at: point) == true
             && configuration?.shellShape.path(in: bounds).contains(point) == true
     }
 
@@ -2075,10 +2055,6 @@ final class IslandShellBackgroundInputView: NSView {
         let point = convert(event.locationInWindow, from: nil)
         guard let configuration, configuration.enabled,
               configuration.geometry.region(at: point) != nil else { return }
-        if event.clickCount == 2 {
-            configuration.onDoubleClick?()
-            return
-        }
         pressOrigin = point
         let generation = pressGeneration
         let work = DispatchWorkItem { [weak self] in
@@ -2114,19 +2090,8 @@ final class IslandShellBackgroundInputView: NSView {
         guard let origin, let configuration, configuration.enabled,
               configuration.geometry.region(at: origin) == .notch,
               configuration.geometry.region(at: point) == .notch else { return }
-        if let onClick = configuration.onClick {
-            onClick()
-        } else if configuration.geometry.allowsBackground {
-            // Wait for AppKit's double-click interval so the menu cannot swallow a shortcut's second press.
-            let generation = pressGeneration
-            let work = DispatchWorkItem { [weak self] in
-                guard let self, self.pressGeneration == generation,
-                      self.acceptsNotchClick(at: event.locationInWindow) else { return }
-                NSMenu.popUpContextMenu(self.actionsMenu(), with: event, for: self)
-            }
-            pressWork = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + NSEvent.doubleClickInterval, execute: work)
-        }
+        // Left click only expands the collapsed island; the menu is right-click only.
+        configuration.onClick?()
     }
 
     override func viewWillMove(toWindow newWindow: NSWindow?) {

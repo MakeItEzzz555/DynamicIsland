@@ -17,7 +17,7 @@ final class SettingsUXPolishTests: XCTestCase {
 
         settings.showNavigationControls = false
         settings.gestureInputSource = .none
-        settings.collapsedDoubleClickAction = .openSettings
+        settings.collapsedLongPressAction = .openClipboard
         settings.expandedLongPressAction = .none
         settings.showTimerTab = false
         settings.mediaEnabled = false
@@ -30,7 +30,7 @@ final class SettingsUXPolishTests: XCTestCase {
         XCTAssertTrue(restored.showNavigationControls)
         XCTAssertTrue(restored.threeFingerTabNavigationEnabled)
         XCTAssertEqual(restored.gestureInputSource, expected.gestureInputSource)
-        XCTAssertEqual(restored.collapsedDoubleClickAction, expected.collapsedDoubleClickAction)
+        XCTAssertEqual(restored.collapsedLongPressAction, expected.collapsedLongPressAction)
         XCTAssertEqual(restored.expandedLongPressAction, expected.expandedLongPressAction)
         XCTAssertTrue(restored.showTimerTab)
         XCTAssertFalse(restored.mediaEnabled, "navigation defaults never re-enable an unrelated module")

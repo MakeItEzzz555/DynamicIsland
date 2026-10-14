@@ -17,11 +17,11 @@ final class NotchSettingsRoutingTests: XCTestCase {
         let geometry = IslandBackgroundInteractionGeometry(size: CGSize(width: 300, height: 100),
             horizontalPadding: 20, bottomPadding: 12, contentTop: 38,
             notchSize: CGSize(width: 200, height: 32), allowsBackground: expanded)
-        var expands = 0, holds = 0, doubles = 0
+        var expands = 0, holds = 0
         let view = IslandShellBackgroundInputView(frame: CGRect(origin: .zero, size: geometry.size))
         view.configure(IslandShellBackgroundInteraction(geometry: geometry, enabled: true,
             presentationGeneration: 1, clipboardEnabled: true, onEdit: {}, onClipboard: {}, onSettings: {},
-            onNavigate: { _ in }, onDoubleClick: { doubles += 1 },
+            onNavigate: { _ in },
             onClick: expanded ? nil : { expands += 1 }, onLongPress: { holds += 1 }))
         let panel = IslandOverlayPanel(contentRect: view.frame, styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered, defer: false)
@@ -45,19 +45,20 @@ final class NotchSettingsRoutingTests: XCTestCase {
             XCTAssertEqual(expands, 1)
             XCTAssertEqual(holds, 1)
         }
+        // Double-click was removed: a second click is just another click.
         panel.sendEvent(try event(.leftMouseDown, count: 2))
         panel.sendEvent(try event(.leftMouseUp, count: 2))
-        XCTAssertEqual(doubles, 1)
+        XCTAssertEqual(expands, expanded ? 0 : 2)
         XCTAssertEqual(holds, 1)
         panel.sendEvent(try event(.leftMouseDown))
         panel.sendEvent(try event(.leftMouseDragged, x: 180))
         view.completeLongPress()
         panel.sendEvent(try event(.leftMouseUp, x: 180))
         XCTAssertEqual(holds, 1, "moving outside press slop cancels the hold")
-        XCTAssertEqual(expands, expanded ? 0 : 1)
+        XCTAssertEqual(expands, expanded ? 0 : 2)
         if !expanded {
             XCTAssertTrue(view.accessibilityPerformPress())
-            XCTAssertEqual(expands, 2, "VoiceOver press follows collapsed click authority")
+            XCTAssertEqual(expands, 3, "VoiceOver press follows collapsed click authority")
             XCTAssertEqual(holds, 1)
         }
     }

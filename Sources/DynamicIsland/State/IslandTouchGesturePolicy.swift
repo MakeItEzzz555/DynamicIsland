@@ -12,7 +12,6 @@ struct IslandBackgroundInteractionGeometry: Equatable {
     let notchSize: CGSize
     let allowsBackground: Bool
     var excludedRects: [CGRect] = []
-    var contextMenuExcludedRects: [CGRect] = []
 
     var notchRect: CGRect {
         guard notchSize.width > 0, notchSize.height > 0 else { return .zero }
@@ -30,10 +29,13 @@ struct IslandBackgroundInteractionGeometry: Equatable {
         return CGRect(x: (size.width - width) / 2, y: 0, width: width, height: max(0, height))
     }
 
-    func acceptsCollapsedContextMenu(at point: CGPoint) -> Bool {
-        let rect = CGRect(x: 0, y: 0, width: size.width, height: notchMenuRect.height)
-        return !allowsBackground && rect.contains(point) && !notchRect.contains(point)
-            && !(excludedRects + contextMenuExcludedRects).contains { $0.contains(point) }
+    /// Right-click opens the island menu anywhere on the collapsed shell, and
+    /// on the expanded notch lane and background margins. Registered native
+    /// controls (and the physical camera cutout) keep their own events.
+    func acceptsContextMenu(at point: CGPoint) -> Bool {
+        guard CGRect(origin: .zero, size: size).contains(point), !notchRect.contains(point),
+              !excludedRects.contains(where: { $0.contains(point) }) else { return false }
+        return allowsBackground ? region(at: point) != nil : true
     }
 
     func region(at point: CGPoint) -> Region? {

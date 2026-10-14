@@ -8,17 +8,17 @@ final class IslandGestureCoordinatorTests: XCTestCase {
             let settings = makeSettings()
             settings.gesturesEnabled = true; settings.gestureInputSource = source
             settings.requireGestureConfirmation = false
-            settings.collapsedDoubleClickAction = .openSettings
+            settings.collapsedLongPressAction = .openSettings
             var invoked = 0
             let coordinator = IslandGestureCoordinator(now: { 100 })
-            XCTAssertFalse(coordinator.handle(.doubleClick, settings: settings, context: makeContext(state: .collapsed),
+            XCTAssertFalse(coordinator.handle(.longPress, settings: settings, context: makeContext(state: .collapsed),
                 callbacks: IslandGestureCallbacks(openSettings: { invoked += 1 })))
             XCTAssertEqual(invoked, 0)
         }
     }
     func testSettingsClipboardAndEditorMappingsPerformExactlyOnceInEitherPresentation() {
         for state in [IslandPresentationState.collapsed, .expanded] {
-            for gesture in [IslandPointerGesture.doubleClick, .longPress] {
+            for gesture in [IslandPointerGesture.longPress] {
                 for action in [IslandGestureAction.openClipboard, .openSettings, .editWorkspace] {
                     let settings = makeSettings()
                     settings.gesturesEnabled = true
@@ -26,10 +26,8 @@ final class IslandGestureCoordinatorTests: XCTestCase {
                     settings.clipboardHistoryEnabled = true
                     settings.requireGestureConfirmation = false
                     if state == .collapsed {
-                        settings.collapsedDoubleClickAction = action
                         settings.collapsedLongPressAction = action
                     } else {
-                        settings.expandedDoubleClickAction = action
                         settings.expandedLongPressAction = action
                     }
                     var clipboardCount = 0
@@ -51,10 +49,10 @@ final class IslandGestureCoordinatorTests: XCTestCase {
     func testNewGestureActionsPersistWithoutChangingExistingMappings() {
         let defaults = UserDefaults(suiteName: "GestureActionPersistence-\(UUID().uuidString)")!
         let settings = AppSettings(defaults: defaults)
-        settings.collapsedDoubleClickAction = .openClipboard
+        settings.collapsedLongPressAction = .openClipboard
         settings.expandedLongPressAction = .editWorkspace
         let restored = AppSettings(defaults: defaults)
-        XCTAssertEqual(restored.collapsedDoubleClickAction, .openClipboard)
+        XCTAssertEqual(restored.collapsedLongPressAction, .openClipboard)
         XCTAssertEqual(restored.expandedLongPressAction, .editWorkspace)
         XCTAssertEqual(restored.collapsedSwipeLeftAction, .mediaNextTrack)
         XCTAssertEqual(restored.collapsedSwipeRightAction, .mediaPreviousTrack)
@@ -68,9 +66,9 @@ final class IslandGestureCoordinatorTests: XCTestCase {
         settings.gestureInputSource = .trackpad
         settings.requireGestureConfirmation = false
         settings.clipboardHistoryEnabled = false
-        settings.expandedDoubleClickAction = .openClipboard
+        settings.expandedLongPressAction = .openClipboard
         var count = 0
-        XCTAssertFalse(IslandGestureCoordinator().handle(.doubleClick, settings: settings,
+        XCTAssertFalse(IslandGestureCoordinator().handle(.longPress, settings: settings,
             context: makeContext(state: .expanded), callbacks: IslandGestureCallbacks(openClipboard: { count += 1 })))
         XCTAssertEqual(count, 0)
     }
@@ -85,7 +83,7 @@ final class IslandGestureCoordinatorTests: XCTestCase {
         let coordinator = IslandGestureCoordinator()
 
         let handled = coordinator.handle(
-            .doubleClick,
+            .longPress,
             settings: settings,
             context: makeContext(state: .collapsed),
             callbacks: IslandGestureCallbacks(expand: { expandCount += 1 })
@@ -100,7 +98,7 @@ final class IslandGestureCoordinatorTests: XCTestCase {
         settings.gesturesEnabled = true
         settings.gestureInputSource = .trackpad
         settings.expandGestureEnabled = true
-        settings.collapsedDoubleClickAction = .expand
+        settings.collapsedLongPressAction = .expand
         settings.gestureCooldownSeconds = 0.75
 
         var currentTime: TimeInterval = 100
@@ -110,7 +108,7 @@ final class IslandGestureCoordinatorTests: XCTestCase {
 
         XCTAssertTrue(
             coordinator.handle(
-                .doubleClick,
+                .longPress,
                 settings: settings,
                 context: makeContext(state: .collapsed),
                 callbacks: callbacks
@@ -120,7 +118,7 @@ final class IslandGestureCoordinatorTests: XCTestCase {
         currentTime += 0.3
         XCTAssertFalse(
             coordinator.handle(
-                .doubleClick,
+                .longPress,
                 settings: settings,
                 context: makeContext(state: .collapsed),
                 callbacks: callbacks
@@ -131,7 +129,7 @@ final class IslandGestureCoordinatorTests: XCTestCase {
         currentTime += 0.5
         XCTAssertTrue(
             coordinator.handle(
-                .doubleClick,
+                .longPress,
                 settings: settings,
                 context: makeContext(state: .collapsed),
                 callbacks: callbacks
@@ -159,7 +157,7 @@ final class IslandGestureCoordinatorTests: XCTestCase {
     func testConfiguredCollapsedGestureReturnsConfiguredAction() {
         let settings = makeSettings()
         settings.collapsedSwipeDownAction = .expand
-        settings.collapsedDoubleClickAction = .mediaPlayPause
+        settings.collapsedLongPressAction = .mediaPlayPause
         let coordinator = IslandGestureCoordinator()
 
         XCTAssertEqual(
@@ -172,7 +170,7 @@ final class IslandGestureCoordinatorTests: XCTestCase {
         )
         XCTAssertEqual(
             coordinator.action(
-                for: .doubleClick,
+                for: .longPress,
                 settings: settings,
                 context: makeContext(state: .collapsed)
             ),
@@ -278,26 +276,6 @@ final class IslandGestureCoordinatorTests: XCTestCase {
         )
     }
 
-    func testCollapsedDoubleClickFallsBackToToggleWhenMediaUnavailable() {
-        let settings = makeSettings()
-        settings.gesturesEnabled = true
-        settings.gestureInputSource = .trackpad
-        settings.expandGestureEnabled = true
-        settings.collapsedDoubleClickAction = .mediaPlayPause
-
-        var expandCount = 0
-        let coordinator = IslandGestureCoordinator()
-
-        let handled = coordinator.handle(
-            .doubleClick,
-            settings: settings,
-            context: makeContext(state: .collapsed, mediaControlAvailable: false),
-            callbacks: IslandGestureCallbacks(expand: { expandCount += 1 })
-        )
-
-        XCTAssertTrue(handled)
-        XCTAssertEqual(expandCount, 1)
-    }
 
     func testInvalidStoredGestureActionFallsBackSafely() {
         let suiteName = "IslandGestureCoordinatorTests-\(UUID().uuidString)"

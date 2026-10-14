@@ -312,7 +312,9 @@ final class OverlayWindowController {
         )
         Self.configure(islandPanel, showInFullscreen: settings.showOverlayInFullscreen)
         islandPanel.onNotchRightClick = { [weak self] event in
-            guard let self, self.canPresentOverlay, self.islandState.state == .collapsed,
+            // Both states: SwiftUI content covers the background view, so the
+            // panel routes right-clicks for the island menu before dispatch.
+            guard let self, self.canPresentOverlay,
                   !self.layoutStore.isShellMorphing, !self.layoutStore.isCollapseShellOnly,
                   let target = self.islandPanel.notchActionsTarget(for: event),
                   let menu = onNotchMenu?() else { return false }
@@ -2703,8 +2705,6 @@ final class OverlayWindowController {
             return settings.expandedSwipeDownAction
         case .swipeUp:
             return settings.expandedSwipeUpAction
-        case .doubleClick:
-            return settings.expandedDoubleClickAction
         case .longPress:
             return settings.expandedLongPressAction
         }
@@ -3191,8 +3191,6 @@ final class OverlayWindowController {
             return settings.collapsedSwipeDownAction
         case .swipeUp:
             return settings.collapsedSwipeUpAction
-        case .doubleClick:
-            return settings.collapsedDoubleClickAction
         case .longPress:
             return settings.collapsedLongPressAction
         }

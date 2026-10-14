@@ -54,6 +54,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             return item
         }
         menu.addItem(item("Settings…", #selector(openSettings)))
+        menu.addItem(item("Customize Workspace…", #selector(editWorkspace)))
         let clipboard = NSMenuItem(title: "Clipboard", action: nil, keyEquivalent: "")
         let submenu = NSMenu(title: "Clipboard")
         submenu.autoenablesItems = false
@@ -63,6 +64,9 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         clipboard.submenu = submenu
         clipboard.isEnabled = settings.clipboardHistoryEnabled
         menu.addItem(clipboard)
+        menu.addItem(.separator())
+        menu.addItem(item("Previous Page", #selector(previousPage)))
+        menu.addItem(item("Next Page", #selector(nextPage)))
         menu.addItem(.separator())
         menu.addItem(item("Quit Island", #selector(quit)))
         return menu
