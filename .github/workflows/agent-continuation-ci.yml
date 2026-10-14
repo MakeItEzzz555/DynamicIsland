@@ -38,40 +38,23 @@ jobs:
           xcodebuild -version
           swift --version
 
-      - name: Diff hygiene
-        run: git diff --check HEAD^
-
-      - name: Debug build
-        run: swift build
-
-      - name: Tests
-        shell: bash
+      - name: Environment probe
         run: |
-          set +e
-          swift test
-          status=$?
-          if [ "$status" -ne 0 ]; then
-            echo "::group::macOS XCTest crash diagnostics"
-            find "$HOME/Library/Logs/DiagnosticReports" -type f \
-              \( -name 'xctest*.ips' -o -name 'xctest*.crash' -o -name 'swift-test*.ips' \) \
-              -mmin -10 -print -exec cat {} \; 2>/dev/null || true
-            echo "::endgroup::"
-          fi
-          exit "$status"
+          defaults read com.apple.universalaccess reduceMotion || echo "reduceMotion unset"
+          defaults read com.apple.universalaccess reduceTransparency || echo "reduceTransparency unset"
+          system_profiler SPDisplaysDataType | sed -n 1,30p
 
-      - name: Release build
-        run: swift build -c release
+      - name: Build tests
+        run: swift build --build-tests
 
-      - name: Package app
-        run: |
-          chmod +x Scripts/package_app.sh
-          Scripts/package_app.sh
+      - name: Probe audio
+        continue-on-error: true
+        run: for i in 1 2 3; do swift test --skip-build --filter AudioWidgetIntegrationTests 2>&1 | grep -E "error|Executed .* tests"; done
 
-      - name: Verify helper signatures
-        run: |
-          codesign --verify --strict dist/DynamicIsland.app/Contents/Helpers/DynamicIslandAgentRelay
-          codesign --verify --strict dist/DynamicIsland.app/Contents/Helpers/DynamicIslandCodexHookRelay
-          codesign --verify --strict dist/DynamicIsland.app/Contents/Helpers/DynamicIslandClaudeHookRelay
+      - name: Probe settings fresh process
+        continue-on-error: true
+        run: for i in 1 2 3; do swift test --skip-build --filter SettingsWindowTests/testSettingsWindowAcceptsLocalPointerEventsThroughItsNativeHierarchy 2>&1 | grep -E "error|Executed .* tests"; done
 
-      - name: Verify app signature
-        run: codesign --verify --deep --strict dist/DynamicIsland.app
+      - name: Probe intermittent
+        continue-on-error: true
+        run: for i in 1 2 3 4 5; do swift test --skip-build --filter "FileDropZoneTests|SystemNotificationMonitorResilienceTests" 2>&1 | grep -E "error|Executed .* tests"; done

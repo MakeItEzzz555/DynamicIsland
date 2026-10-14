@@ -9,8 +9,10 @@ final class AudioWidgetIntegrationTests: XCTestCase {
         _ = NSApplication.shared
         let backend = AudioWidgetFixtureBackend()
         let controller = AudioSpectrumController(backend: backend, observeSystemEvents: false)
+        var reduceMotion: Bool?
         let host = NSHostingView(rootView: AudioVisualizerView(isPlaying: true, variant: .expanded)
-            .environment(\.liveSpectrum, controller))
+            .environment(\.liveSpectrum, controller)
+            .background { ReduceMotionProbe { reduceMotion = $0 } })
         host.frame = CGRect(x: 0, y: 0, width: 76, height: 28)
         // On screen: SwiftUI does not commit updates for a window placed off
         // every display (headless CI), which froze both rasters.
@@ -31,7 +33,9 @@ final class AudioWidgetIntegrationTests: XCTestCase {
         controller.refreshPresentation()
         await settleRender()
         let high = try raster(host)
-        XCTAssertNotEqual(low, high, "one backend's measured spectrum drives Claude's existing renderer")
+        XCTAssertNotEqual(low, high, "one backend's measured spectrum drives Claude's existing renderer: " +
+            "swiftUIReduceMotion=\(String(describing: reduceMotion)) systemReduceMotion=\(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion) " +
+            "availability=\(controller.presentation.availability) occlusionVisible=\(window.occlusionState.contains(.visible)) appActive=\(NSApp.isActive)")
         controller.stop()
         XCTAssertNil(controller.presentation.frame)
         await controller.shutdown()
@@ -78,6 +82,12 @@ final class AudioWidgetIntegrationTests: XCTestCase {
         }
         XCTFail("spectrum fixture did not settle")
     }
+}
+
+private struct ReduceMotionProbe: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let changed: (Bool) -> Void
+    var body: some View { Color.clear.onAppear { changed(reduceMotion) } }
 }
 
 private actor AudioWidgetFixtureBackend: AudioSpectrumCaptureBackend {
