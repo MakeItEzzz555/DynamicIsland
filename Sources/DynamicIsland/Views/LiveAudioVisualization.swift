@@ -43,6 +43,15 @@ enum SpectrumBarMapper {
     static let floor: CGFloat = 0.12
     /// Droppy clamps live bar scale to at most 0.9 of the bar height.
     static let cap: CGFloat = 0.9
+    /// Sensitivity: the auto-gain keeps loud music near each band's peak, so
+    /// a linear map pinned every bar high. Below this share of the peak a bar
+    /// stays at the floor, and the curve keeps only near-peak hits tall.
+    static let threshold: CGFloat = 0.35
+    static let curve: CGFloat = 2
+
+    static func shaped(_ value: CGFloat) -> CGFloat {
+        pow(min(max((value - threshold) / (1 - threshold), 0), 1), curve)
+    }
 
     static func levels(bands: SIMD8<Float>, barCount: Int) -> [CGFloat] {
         guard barCount > 0 else { return [] }
@@ -53,7 +62,7 @@ enum SpectrumBarMapper {
             let upper = min(lower + 1, 7)
             let t = position - CGFloat(lower)
             let value = values[lower] + (values[upper] - values[lower]) * t
-            return floor + (cap - floor) * value
+            return floor + (cap - floor) * shaped(value)
         }
     }
 

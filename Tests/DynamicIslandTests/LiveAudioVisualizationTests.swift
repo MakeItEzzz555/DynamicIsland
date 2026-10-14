@@ -27,8 +27,15 @@ final class LiveAudioVisualizationTests: XCTestCase {
         let bands = SIMD8<Float>(0, 0.1, 0.2, 0.4, 0.5, 0.7, 0.9, 1)
         let levels = SpectrumBarMapper.levels(bands: bands, barCount: 8)
         for index in 0..<8 {
-            XCTAssertEqual(levels[index], SpectrumBarMapper.floor + (SpectrumBarMapper.cap - SpectrumBarMapper.floor) * CGFloat(bands[index]), accuracy: 1e-5)
+            XCTAssertEqual(levels[index], SpectrumBarMapper.floor + (SpectrumBarMapper.cap - SpectrumBarMapper.floor) * SpectrumBarMapper.shaped(CGFloat(bands[index])), accuracy: 1e-5)
         }
+    }
+
+    func testSustainedNearPeakLevelsNoLongerPinBarsHigh() {
+        XCTAssertEqual(SpectrumBarMapper.shaped(0.3), 0, "below the threshold a bar rests at the floor")
+        XCTAssertEqual(SpectrumBarMapper.shaped(1), 1, "a real peak still reaches the cap")
+        XCTAssertLessThan(SpectrumBarMapper.shaped(0.8), 0.5, "steady loud music sits mid-height, not at the top")
+        XCTAssertLessThan(SpectrumBarMapper.shaped(0.6), SpectrumBarMapper.shaped(0.8))
     }
 
     func testOtherBarCountsInterpolateAndNeverRepeatAPattern() {
