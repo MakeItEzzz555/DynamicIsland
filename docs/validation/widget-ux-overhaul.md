@@ -140,3 +140,25 @@ Native acceptance not done:
 - interaction with the below-shell AirDrop/Messages/Mail/Share orbit while dragging
 
 `ImageRenderer` cannot draw `.onDrop`-backed views (it shows a placeholder), so the overlay's look needs a live check.
+
+## Milestone E — collapse ownership
+
+Finding: the central, reason-scoped hold already exists, so no parallel system was added. Hover-exit collapse is decided only by `ExpandedHoverContainment.decide` over `currentExpandedHoverHolds` (`OverlayWindowController`). Each requested case maps to an existing hold:
+
+| Interaction | Hold |
+|---|---|
+| Native context menus and submenus, including File Tray, camera device and share pickers | `menuTracking` (`NSMenu` begin/end tracking) |
+| Drop zones and active file drop | `fileDrag` (`FileDragSessionController.isActive`, including the new `trayDropZone` region) |
+| File Actions / conversion panel | `transientInteraction` owner `.fileActionPanel(UUID)` |
+| Rename popover, calendar overlay, other `NSPopover`s | `nativePopover` |
+| **Move To… / Save a Copy To… / conversion destination (`NSOpenPanel`/`NSSavePanel`)** | `nativePopover`. **This was a gap and is fixed here** |
+| Keyboard editing, agent composer | `textInput` (key panel + engaged editor; native UX rescue rules unchanged) |
+| Workspace editor, Agents launcher, calendar picker, camera navigation | existing `TransientInteractionOwner` cases |
+| ZIP progress | No hold: a running ZIP continues after collapse in the background-operation center. Holding the island open for its duration would leave it stuck open. |
+| Audio slider drags | Deferred to milestone G, as a `TransientInteractionOwner` case added with the slider itself |
+
+Every hold is released by its own lifecycle: menu end notification, owner `false`, window close, focus loss or drag-session reset, so ordinary auto-collapse resumes after the last one ends. Escape priority is the native UX rescue's ordering, unchanged.
+
+Tests: `NativePopoverContainmentTests.testTransientNativeWindowClassifier` adds open/save panel cases, including that a closed panel releases the hold. Containment and reachability suites: 17 tests, 0 failures.
+
+Native acceptance not done: traversing menu gaps; leaving the island into an open panel and back; Escape order with a panel open.
