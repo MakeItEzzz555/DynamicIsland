@@ -3389,6 +3389,8 @@ enum IslandKeyboardFocusPolicy {
         if !NSApp.isActive { NSApp.activate(ignoringOtherApps: true) }
         guard window.makeFirstResponder(responder) else { return false }
         window.makeKeyAndOrderFront(nil)
+        // Reopened nonactivating panels may be ordered without reacquiring key status.
+        if !window.isKeyWindow { window.makeKey() }
         return window.isKeyWindow && window.firstResponder === responder
     }
 

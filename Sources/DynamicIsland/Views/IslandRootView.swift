@@ -750,11 +750,10 @@ struct IslandRootView: View {
 
     private var collapsedCompactControlRects: [CGRect] {
         guard !isExpanded, collapsedLayoutResolution.primary != nil else { return [] }
-        let bandTop = isCollapsedPreviewActive ? 2 : max(0, (surfaceSize.height - 16) / 2)
         let left = layoutStore.collapsedLeftRegionWidth > 0 ? layoutStore.collapsedLeftRegionWidth + 8 : min(96, surfaceSize.width / 3)
         let right = layoutStore.collapsedRightRegionWidth > 0 ? layoutStore.collapsedRightRegionWidth + 8 : min(96, surfaceSize.width / 3)
-        return [CGRect(x: 0, y: bandTop, width: left, height: 16),
-                CGRect(x: surfaceSize.width - right, y: bandTop, width: right, height: 16)]
+        return IslandBackgroundInteractionGeometry.compactControlRects(base: layoutStore.collapsedSurfaceFrame,
+            preview: isCollapsedPreviewActive ? collapsedPreviewSurfaceFrame : nil, leftWidth: left, rightWidth: right)
     }
 
     private var shellBackgroundInteraction: IslandShellBackgroundInteraction {

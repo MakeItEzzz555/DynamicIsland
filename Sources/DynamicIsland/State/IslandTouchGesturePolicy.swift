@@ -13,6 +13,14 @@ struct IslandBackgroundInteractionGeometry: Equatable {
     let allowsBackground: Bool
     var excludedRects: [CGRect] = []
 
+    /// The compact row stays centered in its base shell when the preview grows.
+    static func compactControlRects(base: CGRect, preview: CGRect?, leftWidth: CGFloat, rightWidth: CGFloat) -> [CGRect] {
+        let x = preview.map { max(0, base.minX - $0.minX) } ?? 0
+        let y = max(0, (base.height - 16) / 2)
+        return [CGRect(x: x, y: y, width: leftWidth, height: 16),
+                CGRect(x: x + base.width - rightWidth, y: y, width: rightWidth, height: 16)]
+    }
+
     var notchRect: CGRect {
         guard notchSize.width > 0, notchSize.height > 0 else { return .zero }
         let width = min(size.width, notchSize.width)

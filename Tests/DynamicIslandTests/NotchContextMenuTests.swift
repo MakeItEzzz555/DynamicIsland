@@ -86,6 +86,19 @@ final class NotchContextMenuTests: XCTestCase {
                         "compact wings are part of the right-click surface; only registered controls keep their events")
     }
 
+    func testGrowingPreviewKeepsTheEntireCenteredCompactControlHitArea() throws {
+        let base = CGRect(x: 100, y: 0, width: 300, height: 32)
+        let preview = CGRect(x: 80, y: -48, width: 340, height: 80)
+        let rects = IslandBackgroundInteractionGeometry.compactControlRects(base: base, preview: preview, leftWidth: 28, rightWidth: 28)
+        XCTAssertEqual(rects, [CGRect(x: 20, y: 8, width: 28, height: 16), CGRect(x: 292, y: 8, width: 28, height: 16)])
+        let (panel, _) = makePanel(width: 340, notched: false, exclusions: rects)
+        defer { panel.contentView = nil; panel.close() }
+        for x: CGFloat in [30, 310] {
+            XCTAssertNil(panel.notchActionsTarget(for: try event(panel, point: CGPoint(x: x, y: 22))), "lower control pixels retain native right-click authority")
+        }
+        XCTAssertNotNil(panel.notchActionsTarget(for: try event(panel, point: CGPoint(x: 330, y: 22))))
+    }
+
     func testSharedSettingsAndNormalQuitCallbacksAndRequiredMenuOrder() throws {
         _ = NSApplication.shared
         let settings = AppSettings(defaults: SettingsPreviewDefaults())
