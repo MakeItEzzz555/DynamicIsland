@@ -132,6 +132,16 @@ final class FileTrayOperationsTests: XCTestCase {
         XCTAssertEqual(shelf.selection, [zip])
     }
 
+    func testZIPFailureLeavesNoWorkingStatusOrFabricatedOutput() async throws {
+        let missing = directory.appendingPathComponent("missing.txt")
+        let operations = BackgroundOperationController(liveActivities: LiveActivityStore())
+        shelf.createZIP([missing], using: operations)
+        guard case .failed(let message) = try await settled() else { return XCTFail("must report the failed archive") }
+        XCTAssertTrue(message.contains("ZIP not created"))
+        XCTAssertTrue(shelf.files.isEmpty)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: directory.path), [])
+    }
+
     func testFullTrayIsReportedInsteadOfClaimingTheOutputWasAdded() async throws {
         settings.maxShelfFiles = 1
         let png = try makePNG("full.png")

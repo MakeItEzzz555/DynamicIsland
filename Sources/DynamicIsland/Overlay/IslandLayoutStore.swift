@@ -27,6 +27,7 @@ enum TransientInteractionOwner: Hashable, Sendable {
     case agentsLauncher
     case calendarDatePicker
     case nativeMenu
+    case fileSharing(UUID)
     case unspecified
 }
 

@@ -475,6 +475,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         cameraPreview.terminate()
         cameraNavigation.terminate()
         backgroundRemoval.terminate()
+        FileDragActionExecutor.production.cancelPresentations()
         basketPresenter.stop()
         systemHUDController.stop()
         faceTime.stop()

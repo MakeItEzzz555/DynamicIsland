@@ -5,14 +5,14 @@ import SwiftUI
 /// Every zone first adds the files to the Tray through the existing drop
 /// claim, so a drop is never lost; the zone then decides what happens next.
 enum FileDropZone: String, CaseIterable, Identifiable {
-    case keep, convert, share, zip
+    case keep, messages, share, zip
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .keep: "Keep in Tray"
-        case .convert: "Convert"
+        case .messages: "Messages"
         case .share: "Share"
         case .zip: "Create ZIP"
         }
@@ -21,7 +21,7 @@ enum FileDropZone: String, CaseIterable, Identifiable {
     var detail: String {
         switch self {
         case .keep: "Add to the Tray"
-        case .convert: "Choose a format · originals kept"
+        case .messages: "Open a message · you choose Send"
         case .share: "Open the Share menu"
         case .zip: "New archive · originals kept"
         }
@@ -30,7 +30,7 @@ enum FileDropZone: String, CaseIterable, Identifiable {
     var symbolName: String {
         switch self {
         case .keep: "tray.and.arrow.down.fill"
-        case .convert: "arrow.triangle.2.circlepath"
+        case .messages: "message.fill"
         case .share: "square.and.arrow.up"
         case .zip: "doc.zipper"
         }
@@ -53,7 +53,7 @@ struct FileDropZonesOverlay: View {
 
     var body: some View {
         Grid(horizontalSpacing: spacing, verticalSpacing: spacing) {
-            GridRow { zone(.keep); zone(.convert) }
+            GridRow { zone(.keep); zone(.messages) }
             GridRow { zone(.share); zone(.zip) }
         }
         .padding(spacing)

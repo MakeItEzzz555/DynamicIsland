@@ -20,6 +20,35 @@ enum FileTrayOperationStatus: Equatable {
 /// collision-safe outputs, which are added to the Tray and selected.
 @MainActor
 extension FileShelfStore {
+    func performDropZone(_ zone: FileDropZone, accepted: [URL], attemptedCount: Int,
+                         operations: BackgroundOperationController, executor: FileDragActionExecutor,
+                         anchor: NSView?, layoutStore: IslandLayoutStore) {
+        let files = accepted.filter { self.files.contains($0.standardizedFileURL) }
+        guard !files.isEmpty else {
+            setOperationStatus(.failed("No files were accepted by the Tray."), clearAfter: .seconds(4))
+            return
+        }
+        select(only: files)
+        let prefix = files.count < attemptedCount ? "Added \(files.count) of \(attemptedCount). " : ""
+        switch zone {
+        case .keep:
+            setOperationStatus(files.count < attemptedCount
+                ? .failed(prefix + "Remaining files were not accepted.")
+                : .succeeded("Added \(files.count) item\(files.count == 1 ? "" : "s") to the Tray."), clearAfter: .seconds(4))
+        case .messages, .share:
+            let outcome = executor.perform(zone == .messages ? .messages : .share, urls: files, anchor: anchor, layoutStore: layoutStore)
+            switch outcome {
+            case .handedOff:
+                setOperationStatus(.succeeded(prefix + (zone == .messages ? "Opened Messages composition; nothing has been sent." : "Opened sharing options.")), clearAfter: .seconds(4))
+            case .unavailable(let reason), .failed(let reason):
+                setOperationStatus(.failed(prefix + reason + " Accepted files remain in the Tray."), clearAfter: .seconds(5))
+            }
+        case .zip:
+            createZIP(files, using: operations)
+            if !prefix.isEmpty { setOperationStatus(.working(prefix + "Creating ZIP of accepted files…")) }
+        }
+    }
+
     // MARK: Convert
 
     func convertImages(_ urls: [URL], to format: FileConversionFormat) {
@@ -56,6 +85,8 @@ extension FileShelfStore {
         guard !urls.isEmpty else { return }
         let started = operations.startCompression(sources: urls) { [weak self] archive in
             self?.finish(outputs: [archive], failures: 0, noun: "archive")
+        } onFailed: { [weak self] reason in
+            self?.setOperationStatus(.failed("ZIP not created: \(reason). Originals preserved."), clearAfter: .seconds(5))
         }
         if started == nil {
             setOperationStatus(.failed("The archive could not be started."), clearAfter: .seconds(4))

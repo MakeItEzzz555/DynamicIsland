@@ -4599,26 +4599,15 @@ struct ExpandedIslandView: View {
                     claim, urls: urls, shelf: shelf,
                     allowed: settings.overlayEnabled && canAcceptExpandedFileDrop &&
                         layoutStore.overlayPresentationGeneration == presentationGeneration,
-                    requestActions: zone == .convert)
-                guard let accepted, !accepted.isEmpty else {
+                    requestActions: false)
+                guard let accepted else { return }
+                guard !accepted.isEmpty else {
                     shelf.setOperationStatus(.failed("The drop was not added to the Tray."), clearAfter: .seconds(4))
                     return
                 }
-                shelf.select(only: accepted)
-                switch zone {
-                case .keep:
-                    shelf.setOperationStatus(.succeeded(accepted.count == 1 ? "Added to the Tray." : "Added \(accepted.count) items to the Tray."), clearAfter: .seconds(3))
-                case .convert:
-                    break // The existing File Actions panel is the format selection flow.
-                case .share:
-                    switch FileDragActionExecutor.production.perform(.share, urls: accepted, anchor: trayShareAnchor.view) {
-                    case .handedOff: break
-                    case .unavailable(let message), .failed(let message):
-                        shelf.setOperationStatus(.failed(message), clearAfter: .seconds(4))
-                    }
-                case .zip:
-                    shelf.createZIP(accepted, using: modules.backgroundOperations)
-                }
+                shelf.performDropZone(zone, accepted: accepted, attemptedCount: Set(urls.map(\.standardizedFileURL)).count,
+                    operations: modules.backgroundOperations, executor: .production, anchor: trayShareAnchor.view, layoutStore: layoutStore)
+
             }
         }
         return true
