@@ -23,7 +23,9 @@ struct AgentCompactPresentation: Equatable, Sendable {
 
     static func make(sessions: [AgentSession], enabled: Bool = true) -> AgentCompactPresentation? {
         guard enabled, !sessions.isEmpty else { return nil }
-        let ordered = sessions
+        // History keeps old generations; only the current incarnation owns live presence.
+        let ordered = Dictionary(grouping: sessions, by: { $0.id.sessionID }).values
+            .compactMap { $0.max { $0.id.generation < $1.id.generation } }
             .filter {
                 $0.isActive && AgentSessionPresentation.priority(for: $0) != .idle
             }

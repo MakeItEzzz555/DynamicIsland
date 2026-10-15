@@ -121,7 +121,7 @@ enum NativeIslandFixtureModules {
         func store(accessToken: String, expiresAt: Date, refreshToken: String?, authorizationDate: Date?) {}
         func clear() {}
     }
-    static func make(settings: AppSettings) -> IslandModules {
+    static func make(settings: AppSettings, providers: [any AgentInteractiveProvider] = []) -> IslandModules {
         let defaults = SettingsPreviewDefaults(), activities = LiveActivityStore(), capabilities = IslandCapabilityRegistry()
         let shelf = FileShelfStore(settings: settings, defaults: defaults, ownership: TemporaryFileOwnershipLedger(temporaryRoots: []))
         let operations = BackgroundOperationController(liveActivities: activities)
@@ -142,7 +142,7 @@ enum NativeIslandFixtureModules {
             stats: SystemStatsController(), liveActivities: activities,
             clipboardHistory: ClipboardHistoryStore(settings: settings, persistence: EmptyHistory(), automaticallySchedulesTimer: false),
             navigation: IslandNavigationStore(), agentEvents: events, agentAttention: AgentAttentionCoordinator(),
-            agentApprovalControl: approvals, agentManagedControl: AgentManagedSessionController(providers: [],
+            agentApprovalControl: approvals, agentManagedControl: AgentManagedSessionController(providers: providers,
                 coordinator: AgentIngestionCoordinator(eventStore: events), eventStore: events, approvals: approvals),
             agentProjects: AgentProjectProjectionStore(), agentActivityRecorder: AgentActivityRecorder(), productivity: productivity,
             systemHUD: SystemHUDController(settings: settings, liveActivities: activities),

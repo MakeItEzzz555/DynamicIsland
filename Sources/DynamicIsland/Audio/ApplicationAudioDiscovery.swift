@@ -42,6 +42,8 @@ final class ApplicationAudioDiscovery: ObservableObject, ApplicationVolumeProvid
     var outputsPublisher: AnyPublisher<[ApplicationAudioOutput], Never> { $outputs.eraseToAnyPublisher() }
     private(set) var isGainEnabled = false
     private var generation: UInt64 = 0
+    /// Slider loops survive discovery refreshes, but never an off/on routing transition.
+    private var routingGeneration: UInt64 = 0
     private var processes: [ApplicationAudioProcess] = []
     private var groups: [ApplicationAudioGroup] = []
     private let engine: ApplicationGainEngine
@@ -56,7 +58,7 @@ final class ApplicationAudioDiscovery: ObservableObject, ApplicationVolumeProvid
     /// Latest slider level per process; one in-flight loop applies it, so the
     /// last value wins however many drag requests overlap.
     private var desiredLevels: [String: Double] = [:]
-    private var applying: Set<String> = []
+    private var applying: [String: UInt64] = [:]
     static let levelsKey = "applicationVolumeLevels"
 
     private final class StallRelay: @unchecked Sendable { weak var owner: ApplicationAudioDiscovery? }
@@ -127,24 +129,31 @@ final class ApplicationAudioDiscovery: ObservableObject, ApplicationVolumeProvid
         else { return .failed(.staleIdentity) }
         guard isGainEnabled else { return .unsupported }
         let key = group.key
+        let routingToken = routingGeneration
         desiredLevels[key] = gain
         publishOutputs()
-        guard applying.insert(key).inserted else { return .superseded }
-        defer { applying.remove(key); desiredLevels[key] = nil }
+        guard applying[key] == nil else { return .superseded }
+        applying[key] = routingToken
+        defer {
+            if applying[key] == routingToken { applying[key] = nil; desiredLevels[key] = nil }
+        }
         let token = generation
         var applied: Double
         repeat {
+            guard isGainEnabled, routingToken == routingGeneration else { return .superseded }
             applied = desiredLevels[key] ?? gain
             // Re-read the members each pass: helper processes come and go while a slider is dragged.
             let members = (groups.first { $0.key == key } ?? group).processIDs
             do {
                 try await engine.setGain(Self.amplitude(forLevel: applied), application: key, processes: members)
             } catch {
+                guard isGainEnabled, routingToken == routingGeneration else { return .superseded }
                 routingIssue = Self.describe(error)
                 desiredLevels[key] = nil
                 publishOutputs() // the row returns to the level that is really playing
                 return .failed(Self.map(error))
             }
+            guard isGainEnabled, routingToken == routingGeneration else { return .superseded }
         } while desiredLevels[key] != applied
         // The engine already plays this level, so keep it even if a refresh superseded the request.
         store(applied, for: group)
@@ -157,6 +166,11 @@ final class ApplicationAudioDiscovery: ObservableObject, ApplicationVolumeProvid
     /// Per-App Volume switch. Off releases every app to its own output.
     func setGainEnabled(_ enabled: Bool) async {
         guard enabled != isGainEnabled else { return }
+        routingGeneration &+= 1
+        generation &+= 1
+        let routingToken = routingGeneration
+        desiredLevels.removeAll()
+        applying.removeAll()
         isGainEnabled = enabled
         if enabled {
             observeSystemChanges()
@@ -164,6 +178,7 @@ final class ApplicationAudioDiscovery: ObservableObject, ApplicationVolumeProvid
         } else {
             stopObserving()
             try? await engine.releaseAll()
+            guard routingToken == routingGeneration else { return }
             routingIssue = nil
             apply(processes, generation: generation)
         }
@@ -171,9 +186,14 @@ final class ApplicationAudioDiscovery: ObservableObject, ApplicationVolumeProvid
 
     func disableRouting() async {
         generation &+= 1
+        routingGeneration &+= 1
+        let routingToken = routingGeneration
+        desiredLevels.removeAll()
+        applying.removeAll()
         stopObserving()
         isGainEnabled = false
         try? await engine.releaseAll()
+        guard routingToken == routingGeneration else { return }
         processes = []
         groups = []
         outputs = []
@@ -223,14 +243,19 @@ final class ApplicationAudioDiscovery: ObservableObject, ApplicationVolumeProvid
     /// releases sessions for applications that exited.
     private func reconcileRouting() async {
         guard isGainEnabled else { return }
+        let routingToken = routingGeneration
+        let token = generation
         let live = Set(groups.map(\.key))
         for key in await engine.activeApplications where !live.contains(key) {
+            guard isGainEnabled, routingToken == routingGeneration, token == generation else { return }
             try? await engine.release(key)
         }
         for group in groups {
+            guard isGainEnabled, routingToken == routingGeneration, token == generation else { return }
             do {
                 try await engine.setGain(Self.amplitude(forLevel: level(for: group)), application: group.key, processes: group.processIDs)
             } catch {
+                guard isGainEnabled, routingToken == routingGeneration, token == generation else { return }
                 routingIssue = Self.describe(error)
             }
         }

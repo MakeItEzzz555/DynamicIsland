@@ -15,6 +15,7 @@ private final class FakeGainHardware: ApplicationGainHardware, @unchecked Sendab
     var tapError: Error?
     var startError: Error?
     var destroyTapStatus: OSStatus = noErr
+    var onCreateTap: (@Sendable ([AudioObjectID]) -> Void)?
     private var nextID: AudioObjectID = 100
 
     var calls: [String] { lock.withLock { _calls } }
@@ -25,6 +26,7 @@ private final class FakeGainHardware: ApplicationGainHardware, @unchecked Sendab
 
     func defaultOutputRoute() throws -> ApplicationGainRoute { route }
     func createTap(processes: [AudioObjectID], route: ApplicationGainRoute) throws -> AudioObjectID {
+        onCreateTap?(processes)
         if let tapError { throw tapError }
         let tap = id(); log("tap \(processes)→\(route.uid)"); return tap
     }
@@ -392,6 +394,115 @@ final class ApplicationVolumeProviderTests: XCTestCase {
         XCTAssertEqual(discovery.outputs.first?.gain ?? 0, 0.235, accuracy: 1e-9)
         XCTAssertEqual(try level(of: hardware.lastRenderer), Float(0.235 * 0.235), accuracy: 1e-5, "the audio follows the last slider value")
         XCTAssertEqual(hardware.calls.filter { $0.hasPrefix("tap") }.count, 1)
+        await discovery.disableRouting()
+    }
+
+    func testDisablingDuringReconciliationDoesNotTapTheRemainingApps() async throws {
+        let hardware = FakeGainHardware()
+        let engine = ApplicationGainEngine(hardware: hardware, watchdogInterval: .seconds(60))
+        let processes = [ApplicationAudioProcess(objectID: 11, pid: 4001, bundleIdentifier: "com.spotify.client", outputIORunning: true),
+                         ApplicationAudioProcess(objectID: 12, pid: 4002, bundleIdentifier: "com.apple.Music", outputIORunning: true)]
+        let discovery = ApplicationAudioDiscovery(engine: engine, defaults: defaults, readProcesses: { processes }, resolveOwners: { _ in [:] })
+        await discovery.setGainEnabled(true)
+        defaults.set(["com.spotify.client": 0.5, "com.apple.Music": 0.5], forKey: ApplicationAudioDiscovery.levelsKey)
+        let entered = expectation(description: "first app routing suspended")
+        let resume = DispatchSemaphore(value: 0)
+        hardware.onCreateTap = { members in
+            guard members == [11] else { return }
+            entered.fulfill()
+            _ = resume.wait(timeout: .now() + 3)
+        }
+        defer { resume.signal() }
+        let refresh = Task { try await discovery.refresh() }
+        await fulfillment(of: [entered], timeout: 3)
+        let disable = Task { await discovery.setGainEnabled(false) }
+        let deadline = ContinuousClock.now + .seconds(3)
+        while discovery.isGainEnabled, ContinuousClock.now < deadline { await Task.yield() }
+        XCTAssertFalse(discovery.isGainEnabled)
+        resume.signal()
+        await disable.value
+        try await refresh.value
+        let active = await engine.activeApplications
+        XCTAssertTrue(active.isEmpty, "a stale refresh must not restore taps after disable")
+        XCTAssertEqual(hardware.calls.filter { $0.hasPrefix("tap") }, ["tap [11]→speakers"], "the remaining app must never be tapped")
+        XCTAssertTrue(discovery.outputs.allSatisfy { $0.gain == nil && !$0.controlAvailable })
+        await discovery.disableRouting()
+    }
+
+    func testDisablingDuringSliderWriteCancelsTheQueuedLevel() async throws {
+        let hardware = FakeGainHardware()
+        let engine = ApplicationGainEngine(hardware: hardware, watchdogInterval: .seconds(60))
+        let process = ApplicationAudioProcess(objectID: 11, pid: 4001, bundleIdentifier: "com.spotify.client", outputIORunning: true)
+        let discovery = ApplicationAudioDiscovery(engine: engine, defaults: defaults, readProcesses: { [process] }, resolveOwners: { _ in [:] })
+        await discovery.setGainEnabled(true)
+        let identity = try XCTUnwrap(discovery.outputs.first).identity
+        let entered = expectation(description: "slider routing suspended")
+        let resume = DispatchSemaphore(value: 0)
+        hardware.onCreateTap = { _ in
+            entered.fulfill()
+            _ = resume.wait(timeout: .now() + 3)
+        }
+        defer { resume.signal() }
+        let first = Task { await discovery.requestGain(0.5, application: identity) }
+        await fulfillment(of: [entered], timeout: 3)
+        let queued = await discovery.requestGain(0.2, application: identity)
+        XCTAssertEqual(queued, .superseded)
+        let disable = Task { await discovery.setGainEnabled(false) }
+        let deadline = ContinuousClock.now + .seconds(3)
+        while discovery.isGainEnabled, ContinuousClock.now < deadline { await Task.yield() }
+        XCTAssertFalse(discovery.isGainEnabled)
+        resume.signal()
+        await disable.value
+        let result = await first.value
+        XCTAssertEqual(result, .superseded, "the old slider loop must stop instead of applying its queued value")
+        let active = await engine.activeApplications
+        XCTAssertTrue(active.isEmpty)
+        XCTAssertNil(defaults.dictionary(forKey: ApplicationAudioDiscovery.levelsKey)?["com.spotify.client"], "stale completion must not persist a cancelled level")
+        await discovery.disableRouting()
+    }
+
+    func testOffOnWhileAnOldSliderWriteIsSuspendedKeepsTheNewLevelOwner() async throws {
+        let hardware = FakeGainHardware()
+        let engine = ApplicationGainEngine(hardware: hardware, watchdogInterval: .seconds(60))
+        let process = ApplicationAudioProcess(objectID: 11, pid: 4001, bundleIdentifier: "com.spotify.client", outputIORunning: true)
+        let discovery = ApplicationAudioDiscovery(engine: engine, defaults: defaults, readProcesses: { [process] }, resolveOwners: { _ in [:] })
+        await discovery.setGainEnabled(true)
+        let identity = try XCTUnwrap(discovery.outputs.first).identity
+        let entered = expectation(description: "old routing lifetime suspended")
+        let resume = DispatchSemaphore(value: 0), blocked = LockedBox(false)
+        hardware.onCreateTap = { _ in
+            guard !blocked.value else { return }
+            blocked.mutate { $0 = true }
+            entered.fulfill()
+            _ = resume.wait(timeout: .now() + 5)
+        }
+        defer { resume.signal() }
+        let oldWrite = Task { await discovery.requestGain(0.5, application: identity) }
+        await fulfillment(of: [entered], timeout: 3)
+        let disable = Task { await discovery.setGainEnabled(false) }
+        var deadline = ContinuousClock.now + .seconds(1)
+        while discovery.isGainEnabled, ContinuousClock.now < deadline { await Task.yield() }
+        XCTAssertFalse(discovery.isGainEnabled)
+        let enable = Task { await discovery.setGainEnabled(true) }
+        deadline = ContinuousClock.now + .seconds(1)
+        while discovery.outputs.first?.identity == identity, ContinuousClock.now < deadline { await Task.yield() }
+        let replacement = try XCTUnwrap(discovery.outputs.first).identity
+        XCTAssertNotEqual(replacement, identity)
+        let newWrite = Task { await discovery.requestGain(0.3, application: replacement) }
+        deadline = ContinuousClock.now + .seconds(1)
+        while discovery.outputs.first?.gain != 0.3, ContinuousClock.now < deadline { await Task.yield() }
+        XCTAssertEqual(discovery.outputs.first?.gain, 0.3, "the new routing lifetime owns its own pending level")
+        resume.signal()
+        await disable.value
+        await enable.value
+        let oldResult = await oldWrite.value, newResult = await newWrite.value
+        XCTAssertEqual(oldResult, .superseded)
+        XCTAssertEqual(newResult, .verified(volume: 0.3, muted: false))
+        XCTAssertTrue(discovery.isGainEnabled)
+        XCTAssertEqual(discovery.outputs.first?.gain, 0.3)
+        XCTAssertEqual(try level(of: hardware.lastRenderer), 0.09, accuracy: 1e-6)
+        let active = await engine.activeApplications
+        XCTAssertEqual(active, ["com.spotify.client"])
         await discovery.disableRouting()
     }
 
