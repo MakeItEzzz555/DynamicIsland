@@ -8,8 +8,8 @@ final class MetalSendFeedbackTests: XCTestCase {
         let idle = MetalSendFeedback.resolve(hovering: false, pressed: false, enabled: true, reduceMotion: false)
         let hover = MetalSendFeedback.resolve(hovering: true, pressed: false, enabled: true, reduceMotion: false)
         let press = MetalSendFeedback.resolve(hovering: true, pressed: true, enabled: true, reduceMotion: false)
-        XCTAssertGreaterThan(hover.glowOpacity, idle.glowOpacity)
-        XCTAssertEqual(press.glowOpacity, 0)
+        // The native Metal ring owns its only glow. SwiftUI hover feedback
+        // changes lift/brightness, never stacks extra halo shadows.
         XCTAssertEqual(idle, MetalSendFeedback(scale: 1, brightness: 0, opacity: 1))
         XCTAssertNotEqual(hover, idle, "hover produces a visible change")
         XCTAssertTrue((1.03...1.06).contains(hover.scale))
@@ -26,6 +26,20 @@ final class MetalSendFeedbackTests: XCTestCase {
         } }
         XCTAssertGreaterThan(MetalSendFeedback.resolve(hovering: true, pressed: false, enabled: true, reduceMotion: true).brightness, 0,
                              "Reduce Motion keeps a brightness response")
+    }
+
+    func testSendKeepsSingleMetalGlowAndUsesHitTestedContinuousPointer() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: root.appendingPathComponent(
+            "Sources/DynamicIsland/Views/AgentVisualEffects.swift"), encoding: .utf8)
+        let send = try XCTUnwrap(source.components(separatedBy: "struct MetalSendButton: View {").last?
+            .components(separatedBy: "extension Color {").first)
+        XCTAssertTrue(send.contains(".onContinuousHover { phase in"))
+        XCTAssertTrue(send.contains("metal.setPointer("))
+        XCTAssertFalse(send.contains(".background { NativeMetalPointer("))
+        XCTAssertFalse(send.contains(".shadow(color: .cyan"))
+        XCTAssertFalse(send.contains(".shadow(color: .white"))
     }
 
     /// Source guard: every chat size uses the single MetalSendButton.
