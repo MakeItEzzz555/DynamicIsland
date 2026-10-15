@@ -557,9 +557,11 @@ struct MetalSendButton: View {
             switch phase {
             case .active(let location):
                 hovering = true
+                // SwiftUI reports y-down; the shared AppKit mapping expects y-up,
+                // otherwise hovering the top edge bends the bottom one.
                 metal.setPointer(pointerEnabled(config)
                     ? NativeMetalPointer.TrackingView.vector(
-                        point: location,
+                        point: CGPoint(x: location.x, y: Self.actionSide - location.y),
                         bounds: CGRect(x: 0, y: 0, width: Self.actionSide, height: Self.actionSide))
                     : .zero)
             case .ended:
