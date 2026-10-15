@@ -86,6 +86,9 @@ final class LockScreenSurfaceController {
         let target = state.isConfirmedLocked && space.availability == .available ? requested : []
         for kind in visible.subtracting(target) { hide(kind) }
         for kind in target.subtracting(visible) { show(kind) }
+        // The lock shield can come up over windows ordered just before it, so
+        // re-order visible surfaces on every pass (Droppy re-shows on lock/wake).
+        for kind in visible.intersection(target) { windows[kind]?.orderFrontRegardless() }
     }
 
     /// Display configuration changed: move visible surfaces to their new frames.

@@ -98,7 +98,7 @@ final class LockScreenCoordinator: ObservableObject {
             guard surfaces == nil else { return }
             let space = makeSpace()
             availability = space.availability
-            lockScreenLog.info("enabled; space \(String(describing: space.availability), privacy: .public)")
+            lockScreenLog.notice("enabled; space \(String(describing: space.availability), privacy: .public)")
             surfaces = LockScreenSurfaceController(space: space, frame: { [weak self] in self?.frame(for: $0) },
                                                    content: { [weak self] in self?.view(for: $0) ?? AnyView(EmptyView()) })
             screenObserver = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
@@ -125,7 +125,7 @@ final class LockScreenCoordinator: ObservableObject {
         guard surfaces != nil else { return }
         let previous = lastState
         lastState = state
-        lockScreenLog.info("state \(String(describing: previous), privacy: .public) -> \(String(describing: state), privacy: .public)")
+        lockScreenLog.notice("state \(String(describing: previous), privacy: .public) -> \(String(describing: state), privacy: .public)")
         let locked = state.isConfirmedLocked
         if locked && !wasLocked {
             transitionGeneration &+= 1
@@ -181,7 +181,7 @@ final class LockScreenCoordinator: ObservableObject {
         let before = surfaces.visible
         surfaces.update(state: effective, requested: requestedSurfaces())
         if surfaces.visible != before {
-            lockScreenLog.info("surfaces \(surfaces.visible.map(\.rawValue).sorted().joined(separator: ","), privacy: .public) space=\(String(describing: surfaces.availability), privacy: .public)")
+            lockScreenLog.notice("surfaces \(surfaces.visible.map(\.rawValue).sorted().joined(separator: ","), privacy: .public) space=\(String(describing: surfaces.availability), privacy: .public)")
         }
     }
 
