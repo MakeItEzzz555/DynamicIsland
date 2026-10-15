@@ -1,6 +1,9 @@
 import AppKit
 import Combine
+import os
 import SwiftUI
+
+private let lockScreenLog = Logger(subsystem: "com.local.dynamicisland", category: "LockScreen")
 
 /// HUD lifecycle: appears on a confirmed lock, plays the unlock morph, then hides.
 enum LockScreenHUDPhase: Equatable, Sendable { case hidden, locked, unlocking }
@@ -95,6 +98,7 @@ final class LockScreenCoordinator: ObservableObject {
             guard surfaces == nil else { return }
             let space = makeSpace()
             availability = space.availability
+            lockScreenLog.info("enabled; space \(String(describing: space.availability), privacy: .public)")
             surfaces = LockScreenSurfaceController(space: space, frame: { [weak self] in self?.frame(for: $0) },
                                                    content: { [weak self] in self?.view(for: $0) ?? AnyView(EmptyView()) })
             screenObserver = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
@@ -120,6 +124,7 @@ final class LockScreenCoordinator: ObservableObject {
         guard surfaces != nil else { return }
         let previous = lastState
         lastState = state
+        lockScreenLog.info("state \(String(describing: previous), privacy: .public) -> \(String(describing: state), privacy: .public)")
         let locked = state.isConfirmedLocked
         if locked && !wasLocked {
             transitionGeneration &+= 1
@@ -172,7 +177,11 @@ final class LockScreenCoordinator: ObservableObject {
         let showOnScreensaver = preferences.keepVisibleDuringScreensaver
         let effective: LockState = state == .screensaver(locked: true) && !showOnScreensaver ? .unknown : state
         content = LockScreenPrivacyProjector.project(sources(), disclosure: preferences.disclosure, state: effective)
+        let before = surfaces.visible
         surfaces.update(state: effective, requested: requestedSurfaces())
+        if surfaces.visible != before {
+            lockScreenLog.info("surfaces \(surfaces.visible.map(\.rawValue).sorted().joined(separator: ","), privacy: .public) space=\(String(describing: surfaces.availability), privacy: .public)")
+        }
     }
 
     private func requestedSurfaces() -> Set<LockScreenSurfaceKind> {

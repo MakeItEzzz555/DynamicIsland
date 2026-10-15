@@ -10,18 +10,18 @@ private enum FakeSLS {
     nonisolated(unsafe) static var space: UInt64 = 0x1_0000_0005 // > 32 bits: proves 64-bit plumbing
     nonisolated(unsafe) static var levelResult: Int32 = 0
     nonisolated(unsafe) static var levels: [UInt64] = []
-    nonisolated(unsafe) static var addResult: Int32 = 0
-    static func reset() { calls = []; connection = 7; space = 0x1_0000_0005; levelResult = 0; levels = []; addResult = 0 }
+    static func reset() { calls = []; connection = 7; space = 0x1_0000_0005; levelResult = 0; levels = [] }
 }
 private let fakeMain: @convention(c) () -> Int32 = { FakeSLS.calls.append("main"); return FakeSLS.connection }
 private let fakeCreate: @convention(c) (Int32, Int32, UnsafeRawPointer?) -> UInt64 = { _, flag, options in
     FakeSLS.calls.append("create flag=\(flag) options=\(options == nil ? "nil" : "set")"); return FakeSLS.space }
 private let fakeLevel: @convention(c) (Int32, UInt64, Int32) -> Int32 = { _, space, level in
     FakeSLS.levels.append(space); FakeSLS.calls.append("level \(level)"); return FakeSLS.levelResult }
-private let fakeShow: @convention(c) (Int32, CFArray) -> Int32 = { _, _ in FakeSLS.calls.append("show"); return 0 }
-private let fakeHide: @convention(c) (Int32, CFArray) -> Int32 = { _, _ in FakeSLS.calls.append("hide"); return 0 }
-private let fakeAdd: @convention(c) (Int32, UInt64, CFArray, Int32) -> Int32 = { _, _, windows, mode in
-    FakeSLS.calls.append("add \((windows as NSArray).count) mode=\(mode)"); return FakeSLS.addResult }
+// Void like the real calls: SLSShowSpaces returns 1 and Add returns nothing on 15.7.4.
+private let fakeShow: @convention(c) (Int32, CFArray) -> Void = { _, _ in FakeSLS.calls.append("show") }
+private let fakeHide: @convention(c) (Int32, CFArray) -> Void = { _, _ in FakeSLS.calls.append("hide") }
+private let fakeAdd: @convention(c) (Int32, UInt64, CFArray, Int32) -> Void = { _, _, windows, mode in
+    FakeSLS.calls.append("add \((windows as NSArray).count) mode=\(mode)") }
 private let fakeDestroy: @convention(c) (Int32, UInt64) -> Int32 = { _, _ in FakeSLS.calls.append("destroy"); return 0 }
 
 private func fakeSymbols(missing: Set<String> = []) -> (String) -> UnsafeMutableRawPointer? {
@@ -97,10 +97,6 @@ final class SkyLightLockScreenSpaceTests: XCTestCase {
         XCTAssertFalse(noLevel.adopt(windowNumber: 42))
         XCTAssertTrue(FakeSLS.calls.contains("destroy"), "a space that could not be raised is destroyed")
         XCTAssertFalse(FakeSLS.calls.contains { $0.hasPrefix("add") })
-
-        FakeSLS.reset(); FakeSLS.addResult = 1000
-        let noAdd = SkyLightLockScreenSpace(isTestedOS: true, loadSymbol: fakeSymbols())
-        XCTAssertFalse(noAdd.adopt(windowNumber: 42), "a refused window is never shown")
     }
 }
 

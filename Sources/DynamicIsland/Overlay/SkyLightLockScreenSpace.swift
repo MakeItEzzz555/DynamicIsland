@@ -6,6 +6,10 @@ import Darwin
 /// (Droppy 16.0.1 + MIT SkyLightWindow) and the CGSInternal declarations:
 /// CGSSpaceID is 64-bit and `SLSSpaceCreate` takes (cid, flag, options).
 /// Every symbol is resolved before use; any failure leaves it unavailable.
+/// Measured on macOS 15.7.4: `SLSSpaceSetAbsoluteLevel` returns 0 (CGError),
+/// while `SLSShowSpaces` returns 1 on success and
+/// `SLSSpaceAddWindowsAndRemoveFromSpaces` returns no value at all, so those
+/// two are declared `Void` and never read as status codes.
 @MainActor
 final class SkyLightLockScreenSpace: LockScreenSpaceProviding {
     /// Above `kCGSSpaceAbsoluteLevelScreenLock` (300); Notification Center's
@@ -19,8 +23,8 @@ final class SkyLightLockScreenSpace: LockScreenSpaceProviding {
     private typealias MainConnectionID = @convention(c) () -> Int32
     private typealias SpaceCreate = @convention(c) (Int32, Int32, UnsafeRawPointer?) -> UInt64
     private typealias SpaceSetAbsoluteLevel = @convention(c) (Int32, UInt64, Int32) -> Int32
-    private typealias ShowHideSpaces = @convention(c) (Int32, CFArray) -> Int32
-    private typealias SpaceAddWindows = @convention(c) (Int32, UInt64, CFArray, Int32) -> Int32
+    private typealias ShowHideSpaces = @convention(c) (Int32, CFArray) -> Void
+    private typealias SpaceAddWindows = @convention(c) (Int32, UInt64, CFArray, Int32) -> Void
     private typealias SpaceDestroy = @convention(c) (Int32, UInt64) -> Int32
 
     private struct Functions {
@@ -73,22 +77,22 @@ final class SkyLightLockScreenSpace: LockScreenSpaceProviding {
             guard connection != 0 else { return fail("No window-server connection.") }
             let space = functions.spaceCreate(connection, 1, nil)
             guard space != 0 else { return fail("The lock-screen space could not be created.") }
-            guard functions.setAbsoluteLevel(connection, space, Self.absoluteLevel) == 0,
-                  functions.showSpaces(connection, [NSNumber(value: space)] as CFArray) == 0 else {
+            guard functions.setAbsoluteLevel(connection, space, Self.absoluteLevel) == 0 else {
                 _ = functions.destroy?(connection, space)
                 return fail("The lock-screen space could not be raised.")
             }
+            functions.showSpaces(connection, [NSNumber(value: space)] as CFArray)
             self.connection = connection
             self.space = space
         }
-        guard functions.addWindows(connection, space, [NSNumber(value: windowNumber)] as CFArray, 7) == 0 else { return false }
+        functions.addWindows(connection, space, [NSNumber(value: windowNumber)] as CFArray, 7)
         adoptedWindows.insert(windowNumber)
         return true
     }
 
     func teardown() {
         guard space != 0, let functions else { adoptedWindows.removeAll(); return }
-        _ = functions.hideSpaces?(connection, [NSNumber(value: space)] as CFArray)
+        functions.hideSpaces?(connection, [NSNumber(value: space)] as CFArray)
         _ = functions.destroy?(connection, space)
         space = 0
         adoptedWindows.removeAll()
