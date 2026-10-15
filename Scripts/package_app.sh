@@ -95,11 +95,11 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <key>NSFocusStatusUsageDescription</key>
   <string>DynamicIsland can show a brief notch HUD when your Focus status changes.</string>
   <key>NSMicrophoneUsageDescription</key>
-  <string>DynamicIsland uses your microphone only when you explicitly start Voice Transcribe or enable microphone audio for a screen recording.</string>
+  <string>DynamicIsland uses your microphone only when you explicitly start Voice Recording or enable microphone audio for a screen recording.</string>
   <key>NSScreenCaptureUsageDescription</key>
   <string>DynamicIsland records the display, window, or area you explicitly choose when you start Screen Record. Recordings stay on this Mac unless you share them.</string>
   <key>NSSpeechRecognitionUsageDescription</key>
-  <string>DynamicIsland transcribes your Voice Transcribe recordings on this Mac when on-device recognition is available. Apple's speech service is used only if you explicitly allow it.</string>
+  <string>DynamicIsland transcribes a Voice Recording only when you choose Transcribe. It runs on this Mac when on-device recognition is available. Apple's speech service is used only if you explicitly allow it.</string>
   <key>NSRemindersUsageDescription</key>
   <string>After you grant access, DynamicIsland reads your reminder lists and upcoming reminders to show them in the island, and creates or completes reminders only when you ask it to.</string>
   <!-- Native widget-editor drags carry this private pasteboard type. It must

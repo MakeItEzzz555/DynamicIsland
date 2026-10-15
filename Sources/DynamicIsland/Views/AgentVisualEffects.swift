@@ -389,7 +389,7 @@ enum AgentOrbStateMapper {
         case .recording: .listening
         case .requestingPermission, .preparing, .stopping: .connecting
         case .transcribing: .composing
-        case .idle, .completed, .failed: .breathing
+        case .idle, .ready, .failed: .breathing
         }
     }
 }
@@ -550,9 +550,37 @@ struct MetalSendButton: View {
         }
         .buttonStyle(MetalSendPressStyle(reduceMotion: reduceMotion, hovering: hovering && isEnabled))
         .disabled(!isEnabled)
-        .onHover { hovering = $0 }
+        // Track the hit-tested Send control itself. The former background
+        // NSView's tracking area could miss movement while SwiftUI owned the
+        // button's hit testing, leaving the Metal bend frozen.
+        .onContinuousHover { phase in
+            switch phase {
+            case .active(let location):
+                hovering = true
+                metal.setPointer(pointerEnabled(config)
+                    ? NativeMetalPointer.TrackingView.vector(
+                        point: location,
+                        bounds: CGRect(x: 0, y: 0, width: Self.actionSide, height: Self.actionSide))
+                    : .zero)
+            case .ended:
+                hovering = false
+                metal.setPointer(.zero)
+            }
+        }
+        .onChange(of: pointerEnabled(config)) { _, active in
+            if !active { metal.setPointer(.zero) }
+        }
+        .onDisappear {
+            hovering = false
+            metal.setPointer(.zero)
+        }
         .accessibilityLabel("Send prompt")
         .accessibilityValue(isEnabled ? "Ready" : "Unavailable")
+    }
+
+    private func pointerEnabled(_ config: MetalSendConfiguration) -> Bool {
+        config.enabled && config.animationEnabled && isEnabled &&
+            visible && contentIsActive && !reduceMotion
     }
 
     @ViewBuilder
@@ -563,8 +591,6 @@ struct MetalSendButton: View {
             glowGain: config.glowGain,
             paused: reduceMotion || !config.animationEnabled || !isEnabled || !visible || !contentIsActive)
         .background { NativeVisualVisibility { visible = $0 } }
-        .background { NativeMetalPointer(model: metal, enabled: visible && contentIsActive && isEnabled && !reduceMotion) }
-
         .allowsHitTesting(false)
     }
 }
@@ -578,12 +604,11 @@ struct MetalSendFeedback: Equatable {
     var scale: CGFloat
     var brightness: Double
     var opacity: Double
-    var glowOpacity: Double = 0
 
     static func resolve(hovering: Bool, pressed: Bool, enabled: Bool, reduceMotion: Bool) -> Self {
         guard enabled else { return Self(scale: 1, brightness: 0, opacity: 1) }
         if pressed { return Self(scale: reduceMotion ? 1 : 0.95, brightness: -0.04, opacity: 0.86) }
-        if hovering { return Self(scale: reduceMotion ? 1 : 1.05, brightness: 0.10, opacity: 1, glowOpacity: 0.65) }
+        if hovering { return Self(scale: reduceMotion ? 1 : 1.05, brightness: 0.10, opacity: 1) }
         return Self(scale: 1, brightness: 0, opacity: 1)
     }
 }
@@ -600,8 +625,6 @@ private struct MetalSendPressStyle: ButtonStyle {
             .scaleEffect(feedback.scale)
             .brightness(feedback.brightness)
             .opacity(feedback.opacity)
-            .shadow(color: .cyan.opacity(feedback.glowOpacity), radius: 7)
-            .shadow(color: .white.opacity(feedback.glowOpacity * 0.5), radius: 2)
             // Press feedback must not shrink the mouse-up acceptance region.
             .frame(width: MetalSendButton.actionSide, height: MetalSendButton.actionSide)
             .contentShape(Rectangle())
@@ -704,7 +727,7 @@ struct CollapsedVoiceBeamCompactView: View {
                 Image(systemName: processing ? "waveform" : "mic.fill")
                     .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(processing ? Color.cyan : Color.white.opacity(0.92))
-                Text(processing ? "Transcribing" : "Listening")
+                Text(processing ? "Transcribing" : "Recording")
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.86))
                     .lineLimit(1)
@@ -727,6 +750,6 @@ struct CollapsedVoiceBeamCompactView: View {
 
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(processing ? "Voice transcription processing" : "Voice recording listening")
+        .accessibilityLabel(processing ? "Voice Recording transcribing" : "Voice Recording in progress")
     }
 }

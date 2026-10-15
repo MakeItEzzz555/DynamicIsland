@@ -4991,6 +4991,15 @@ Focused UI/regression run: 188 passed; final connected callers: 61 passed; notif
 
 Final review also eliminated a no-op second morph when no activity waits (55 affected checks passed). Final production-source full suite: 2,405 cases / 2,362 passed / 42 skipped / 1 native Settings input failure. Metal Send native visibility passed. The final rebuilt isolated package and strict signatures pass; the display remains asleep, so visible packaged inspection is blocked.
 
+### 2026-10-15 — Voice Recording v1 (recording first, transcription optional)
+
+- Voice Transcribe is now **Voice Recording**. The capability ID `.voiceTranscribe`, `VoiceTranscriptionController` and the Live Activity kinds keep their names so saved layouts and settings stay valid; only user-facing text changed.
+- Recording needs only the microphone. Speech Recognition is requested only by the explicit Transcribe action (`transcribe()`), never by Record, Settings' "Allow Microphone" or launch.
+- Lifecycle: idle → requestingPermission → preparing → recording → stopping → ready; transcribing is an explicit follow-up from ready. Every async step is generation-checked, so a late permission reply or recognition result after Cancel cannot resurrect work.
+- Ownership: captures are written to `~/Library/Application Support/DynamicIsland/Voice Recordings/.incomplete/`, validated with `AVAudioFile` on Stop and moved (never overwriting: `moveItem` fails, the name gets " 2", " 3"…) into `Voice Recordings/`. An unreadable capture is left in `.incomplete` and only removed by launch recovery (`restoreRecordings()`, called once from `applicationDidFinishLaunching`), which also finishes readable captures a crash left behind and shows the newest recording.
+- Cancel discards only the unfinished capture. Transcription failure, denial or cancellation never touches the finished file. Delete (confirmed) removes only the shown recording; Save As and Add to File Tray copy, so the source is always preserved.
+- Quit and disabling the capability **finish and keep** a running capture (`terminate()`), they never discard it. Closing the island or switching tabs does not affect capture: the controller, not the view, owns the recorder.
+- The panel reuses `AudioVisualizerView(palette: .voice)` fed by `AVAudioRecorder` metering through `VoiceBeamEnvelope`; no second recorder or visualizer. Playback is one `AVAudioPlayer` per shown recording, released when a new capture starts.
 ### 2026-10-15 — Per-app volume (experimental, gated)
 
 - `ApplicationGainEngine` (actor) owns one private `.mutedWhenTapped` process tap + private aggregate (current output as the main sub-device) + IOProc per app **below 100%**; 100% releases it so the app plays directly. `ApplicationGainRenderer` is the only real-time code: no allocation, logging or blocking, and it reads the target through a try-lock. See `docs/research/per-application-volume-feasibility.md`.

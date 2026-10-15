@@ -24,17 +24,27 @@ struct VoiceTranscript: Equatable, Sendable {
     let wasOnDevice: Bool
 }
 
-/// idle -> requestingPermission -> preparing -> recording -> stopping ->
-/// transcribing -> completed, plus failed. `recording` is entered only after
-/// the recorder confirms capture actually started.
+/// A finished, validated recording in the app-managed recordings folder.
+struct VoiceRecording: Equatable, Sendable {
+    let url: URL
+    let createdAt: Date
+    let duration: TimeInterval
+    /// Last Save As destination this session (enables Reveal in Finder).
+    var savedURL: URL?
+}
+
+/// idle -> requestingPermission -> preparing -> recording -> stopping -> ready,
+/// plus transcribing (an explicit follow-up from ready) and failed.
+/// `recording` is entered only after the recorder confirms capture started.
+/// Transcription and its failures never remove the finished recording.
 enum VoiceTranscriptionPhase: Equatable, Sendable {
     case idle
     case requestingPermission
     case preparing
     case recording(startedAt: Date)
     case stopping
+    case ready
     case transcribing
-    case completed(VoiceTranscript)
     case failed(String)
 }
 
@@ -50,13 +60,15 @@ enum VoiceTranscriptionError: LocalizedError, Equatable {
     case transcriptionFailed(String)
     case emptyTranscript
     case noTranscript
+    case noRecording
+    case playbackFailed
     case notRecording
     case unsupportedAction(IslandCapabilityAction)
 
     var errorDescription: String? {
         switch self {
         case .disabled:
-            "Voice Transcribe is disabled."
+            "Voice Recording is disabled."
         case .busy:
             "A recording or transcription is already in progress."
         case .microphonePermissionRequired:
@@ -77,10 +89,14 @@ enum VoiceTranscriptionError: LocalizedError, Equatable {
             "No speech was recognized."
         case .noTranscript:
             "There is no transcript yet."
+        case .noRecording:
+            "There is no recording yet."
+        case .playbackFailed:
+            "The recording could not be played."
         case .notRecording:
-            "Voice Transcribe is not recording."
+            "Voice Recording is not recording."
         case .unsupportedAction(let action):
-            "Voice Transcribe does not support \(action.rawValue)."
+            "Voice Recording does not support \(action.rawValue)."
         }
     }
 }
@@ -111,6 +127,16 @@ protocol VoiceAudioRecording: AnyObject {
 
 extension VoiceAudioRecording {
     var normalizedLevel: Double { 0 }
+}
+
+@MainActor
+protocol VoiceAudioPlaying: AnyObject {
+    var isPlaying: Bool { get }
+    var currentTime: TimeInterval { get set }
+    /// Called on the main actor when playback reaches the end.
+    var onFinish: (() -> Void)? { get set }
+    func play() -> Bool
+    func pause()
 }
 
 @MainActor
@@ -231,6 +257,32 @@ final class AVFoundationVoiceRecorder: VoiceAudioRecording {
     }
 }
 
+@MainActor
+final class AVFoundationVoicePlayer: NSObject, VoiceAudioPlaying, AVAudioPlayerDelegate {
+    private let player: AVAudioPlayer
+    var onFinish: (() -> Void)?
+
+    init(url: URL) throws {
+        player = try AVAudioPlayer(contentsOf: url)
+        super.init()
+        player.delegate = self
+        player.prepareToPlay()
+    }
+
+    var isPlaying: Bool { player.isPlaying }
+    var currentTime: TimeInterval {
+        get { player.currentTime }
+        set { player.currentTime = newValue }
+    }
+
+    func play() -> Bool { player.play() }
+    func pause() { player.pause() }
+
+    nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        Task { @MainActor in self.onFinish?() }
+    }
+}
+
 /// File-based recognition through `SFSpeechRecognizer`. When
 /// `requiresOnDevice` is true the request sets
 /// `requiresOnDeviceRecognition`, so audio never leaves the Mac.
@@ -321,6 +373,12 @@ private final class RecognitionContinuation: @unchecked Sendable {
 
 // MARK: - Controller
 
+/// Voice Recording. Recording needs only the microphone; a stopped capture is
+/// validated and moved into `recordingsDirectory`, where it stays until the
+/// user deletes it. Transcription (Speech permission included) is a separate,
+/// explicit follow-up that never deletes audio. The user-facing name changed
+/// from Voice Transcribe; the type and capability ID keep their names so saved
+/// layouts and settings stay valid.
 @MainActor
 final class VoiceTranscriptionController: ObservableObject, IslandCapabilityAdapter {
     static let recordingActivityID = "voice.recording"
@@ -334,7 +392,11 @@ final class VoiceTranscriptionController: ObservableObject, IslandCapabilityAdap
     @Published private(set) var speechState: VoicePermissionState
     @Published private(set) var recognizerAvailability: VoiceRecognizerAvailability
     @Published private(set) var isEnabled = true
-    @Published private(set) var lastSavedURL: URL?
+    /// The newest finished recording; survives relaunch via `restoreRecordings()`.
+    @Published private(set) var recentRecording: VoiceRecording?
+    /// Transcript of `recentRecording`, only after the user asked for one.
+    @Published private(set) var transcript: VoiceTranscript?
+    @Published private(set) var isPlaying = false
     /// Explicit opt-in. When false, transcription runs only with
     /// `requiresOnDeviceRecognition`, and fails if that is unavailable.
     @Published var allowsServerRecognition = false
@@ -342,15 +404,18 @@ final class VoiceTranscriptionController: ObservableObject, IslandCapabilityAdap
     private let permissions: VoicePermissionProviding
     private let recorder: VoiceAudioRecording
     private let transcriber: VoiceSpeechTranscribing
+    private let makePlayer: (URL) throws -> VoiceAudioPlaying
     private let liveActivities: LiveActivityStore
     private let capabilities: IslandCapabilityRegistry
     private let shelfStorage: FileShelfTemporaryStorage
     private let addToShelf: ([URL]) -> Void
     private let writeToPasteboard: (String) -> Void
-    private let workingDirectory: URL
+    private let recordingsDirectory: URL
     private let now: () -> Date
     private var generation = 0
+    /// The unfinished capture; the only file Cancel may discard.
     private var recordingURL: URL?
+    private var player: VoiceAudioPlaying?
     private let recoveryDisplayDuration: Duration
     private var recoveryDismissTask: Task<Void, Never>?
 
@@ -360,12 +425,11 @@ final class VoiceTranscriptionController: ObservableObject, IslandCapabilityAdap
         permissions: VoicePermissionProviding = SystemVoicePermissionProvider(),
         recorder: VoiceAudioRecording = AVFoundationVoiceRecorder(),
         transcriber: VoiceSpeechTranscribing = SpeechFrameworkTranscriber(),
+        makePlayer: @escaping (URL) throws -> VoiceAudioPlaying = { try AVFoundationVoicePlayer(url: $0) },
         shelfStorage: FileShelfTemporaryStorage = .shared,
         addToShelf: @escaping ([URL]) -> Void,
         writeToPasteboard: @escaping (String) -> Void = VoiceTranscriptionController.systemPasteboardWriter,
-        workingDirectory: URL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("DynamicIsland", isDirectory: true)
-            .appendingPathComponent("VoiceTranscribe", isDirectory: true),
+        recordingsDirectory: URL = VoiceTranscriptionController.defaultRecordingsDirectory,
         now: @escaping () -> Date = Date.init,
         recoveryDisplayDuration: Duration = .seconds(8)
     ) {
@@ -374,10 +438,11 @@ final class VoiceTranscriptionController: ObservableObject, IslandCapabilityAdap
         self.permissions = permissions
         self.recorder = recorder
         self.transcriber = transcriber
+        self.makePlayer = makePlayer
         self.shelfStorage = shelfStorage
         self.addToShelf = addToShelf
         self.writeToPasteboard = writeToPasteboard
-        self.workingDirectory = workingDirectory
+        self.recordingsDirectory = recordingsDirectory
         self.now = now
         self.recoveryDisplayDuration = recoveryDisplayDuration
         self.microphoneState = permissions.microphoneState
@@ -388,14 +453,19 @@ final class VoiceTranscriptionController: ObservableObject, IslandCapabilityAdap
 
     deinit { recoveryDismissTask?.cancel() }
 
+    nonisolated static let defaultRecordingsDirectory: URL = FileManager.default
+        .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("DynamicIsland", isDirectory: true)
+        .appendingPathComponent("Voice Recordings", isDirectory: true)
+
     static let systemPasteboardWriter: (String) -> Void = { text in
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
     }
 
-    var transcript: VoiceTranscript? {
-        if case .completed(let transcript) = phase { return transcript }
-        return nil
+    /// Captures in progress live here (hidden) and move out atomically once valid.
+    private var workingDirectory: URL {
+        recordingsDirectory.appendingPathComponent(".incomplete", isDirectory: true)
     }
 
     var liveAudioLevel: Double {
@@ -406,7 +476,7 @@ final class VoiceTranscriptionController: ObservableObject, IslandCapabilityAdap
     var isBusy: Bool {
         switch phase {
         case .requestingPermission, .preparing, .recording, .stopping, .transcribing: true
-        case .idle, .completed, .failed: false
+        case .idle, .ready, .failed: false
         }
     }
 
@@ -415,13 +485,10 @@ final class VoiceTranscriptionController: ObservableObject, IslandCapabilityAdap
         recognizerAvailability.supportsOnDeviceRecognition
     }
 
+    var playbackTime: TimeInterval { player?.currentTime ?? 0 }
+
     var snapshot: IslandCapabilitySnapshot {
-        let mapping = Self.capabilityMapping(
-            microphone: microphoneState,
-            speech: speechState,
-            recognizer: recognizerAvailability,
-            allowsServerRecognition: allowsServerRecognition
-        )
+        let mapping = Self.capabilityMapping(microphone: microphoneState)
         let health: IslandCapabilityHealth
         if case .failed(let message) = phase {
             health = .failed(message: message)
@@ -450,75 +517,60 @@ final class VoiceTranscriptionController: ObservableObject, IslandCapabilityAdap
     var statusText: String {
         guard isEnabled else { return "Disabled" }
         switch phase {
-        case .idle: return willTranscribeOnDevice ? "Ready · on-device" : "Ready"
+        case .idle: return "Ready"
         case .requestingPermission: return "Waiting for permission"
         case .preparing: return "Preparing microphone"
         case .recording: return "Recording"
-        case .stopping: return "Stopping"
+        case .stopping: return "Saving recording"
+        case .ready: return "Recording ready"
         case .transcribing: return "Transcribing"
-        case .completed: return "Transcript ready"
         case .failed(let message): return message
         }
     }
 
+    /// Recording needs only the microphone; Speech is asked for at Transcribe.
     static func capabilityMapping(
-        microphone: VoicePermissionState,
-        speech: VoicePermissionState,
-        recognizer: VoiceRecognizerAvailability,
-        allowsServerRecognition: Bool
+        microphone: VoicePermissionState
     ) -> (permission: IslandCapabilityPermissionState, availability: IslandCapabilityAvailability) {
-        let permission: IslandCapabilityPermissionState
-        if microphone == .denied || microphone == .restricted || speech == .denied || speech == .restricted {
-            permission = .denied
-        } else if microphone == .authorized && speech == .authorized {
-            permission = .granted
-        } else {
-            permission = .notDetermined
+        switch microphone {
+        case .authorized: (.granted, .available)
+        case .notDetermined: (.notDetermined, .available)
+        case .denied: (.denied, .available)
+        case .restricted: (.denied, .unsupported(reason: "Microphone access is restricted on this Mac."))
         }
-
-        let availability: IslandCapabilityAvailability
-        if microphone == .restricted || speech == .restricted {
-            availability = .unsupported(reason: "Microphone or Speech Recognition is restricted on this Mac.")
-        } else if !recognizer.isAvailable {
-            availability = .temporarilyUnavailable(reason: "Speech recognition is unavailable for \(recognizer.localeIdentifier).")
-        } else if !recognizer.supportsOnDeviceRecognition && !allowsServerRecognition {
-            availability = .temporarilyUnavailable(reason: "On-device recognition is unavailable for \(recognizer.localeIdentifier).")
-        } else {
-            availability = .available
-        }
-        return (permission, availability)
     }
 
-    // MARK: Lifecycle
+    // MARK: Recording
 
-    /// Explicit user action. May present the microphone and Speech prompts.
-    func requestPermissions() async {
+    /// Explicit user action (Settings). May present only the microphone prompt.
+    func requestMicrophoneAccess() async {
         if permissions.microphoneState == .notDetermined {
             microphoneState = await permissions.requestMicrophone()
-        }
-        if permissions.speechState == .notDetermined {
-            speechState = await permissions.requestSpeech()
         }
         await refresh()
     }
 
-    /// Explicit user action (Record). Requests any undetermined permission,
-    /// then fails closed on denial before touching the microphone.
+    /// Explicit user action (Record). Requests an undetermined microphone
+    /// permission, then fails closed on denial before touching the microphone.
     func startRecording() async throws {
         guard isEnabled else { throw VoiceTranscriptionError.disabled }
         guard !isBusy else { throw VoiceTranscriptionError.busy }
 
         generation += 1
         let token = generation
+        stopPlayback()
         clearStatusActivity()
         let needsPrompt = permissions.microphoneState == .notDetermined
-            || permissions.speechState == .notDetermined
         phase = needsPrompt ? .requestingPermission : .preparing
         publishStatusActivity(title: needsPrompt ? "Mic permission" : "Preparing mic", subtitle: statusText)
         publishState()
 
-        await requestPermissions()
-        guard token == generation else { return }
+        if needsPrompt {
+            microphoneState = await permissions.requestMicrophone()
+            guard token == generation else { return }
+        } else {
+            microphoneState = permissions.microphoneState
+        }
         phase = .preparing
         publishStatusActivity(title: "Preparing mic", subtitle: statusText)
         publishState()
@@ -530,16 +582,6 @@ final class VoiceTranscriptionController: ObservableObject, IslandCapabilityAdap
             guard recorder.hasInputDevice else {
                 throw VoiceTranscriptionError.noMicrophone
             }
-            guard speechState == .authorized else {
-                throw VoiceTranscriptionError.speechPermissionRequired
-            }
-            guard recognizerAvailability.isAvailable else {
-                throw VoiceTranscriptionError.recognizerUnavailable
-            }
-            guard recognizerAvailability.supportsOnDeviceRecognition || allowsServerRecognition else {
-                throw VoiceTranscriptionError.onDeviceRecognitionUnavailable
-            }
-
             try FileManager.default.createDirectory(at: workingDirectory, withIntermediateDirectories: true)
             let url = workingDirectory.appendingPathComponent("recording-\(UUID().uuidString).m4a")
             do {
@@ -561,78 +603,211 @@ final class VoiceTranscriptionController: ObservableObject, IslandCapabilityAdap
         }
     }
 
-    /// Stops the microphone, then transcribes the captured audio.
-    func stopAndTranscribe() async throws {
-        guard case .recording = phase, let url = recordingURL else {
+    /// Releases the microphone immediately, then keeps the capture as a
+    /// validated `.m4a`. An unreadable capture stays in the working folder
+    /// for launch recovery instead of being deleted here.
+    func stopRecording() throws {
+        guard case .recording(let startedAt) = phase, let url = recordingURL else {
             throw VoiceTranscriptionError.notRecording
         }
-        let token = generation
+        generation += 1
         phase = .stopping
+        publishState()
         recorder.stopRecording()
+        recordingURL = nil
         liveActivities.remove(id: Self.recordingActivityID)
-        publishState()
-
-        let onDevice = recognizerAvailability.supportsOnDeviceRecognition
-        phase = .transcribing
-        publishTranscriptionActivity()
-        publishState()
-
         do {
-            let text = try await transcriber.transcribe(fileURL: url, requiresOnDevice: onDevice)
-            guard token == generation else { return }
-            // Speech owns its task and URL request until explicitly released.
-            // A final result must not keep the last recognition resources alive.
-            transcriber.cancel()
-            discardRecordingFile()
-            liveActivities.remove(id: Self.transcriptionActivityID)
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { throw VoiceTranscriptionError.emptyTranscript }
-            phase = .completed(VoiceTranscript(text: trimmed, createdAt: now(), wasOnDevice: onDevice))
+            setRecent(try finalize(url, createdAt: startedAt))
+            phase = .ready
             publishState()
         } catch {
-            guard token == generation else { return }
-            let mapped: Error
-            if error is VoiceTranscriptionError {
-                mapped = error
-            } else if error is CancellationError {
-                mapped = VoiceTranscriptionError.transcriptionFailed("Transcription cancelled")
-            } else {
-                mapped = VoiceTranscriptionError.transcriptionFailed(error.localizedDescription)
-            }
-            fail(mapped)
-            throw mapped
+            fail(error)
+            throw error
         }
     }
 
-    /// Safe from any phase; repeated calls are no-ops.
+    /// Launch-time only, before any capture: finishes captures that a crash
+    /// left behind (readable audio is kept, unreadable fragments removed) and
+    /// shows the newest recording.
+    func restoreRecordings() {
+        guard !isBusy else { return }
+        let fileManager = FileManager.default
+        let leftovers = (try? fileManager.contentsOfDirectory(
+            at: workingDirectory, includingPropertiesForKeys: [.creationDateKey])) ?? []
+        for url in leftovers where url.lastPathComponent.hasPrefix("recording-") {
+            guard Self.audioDuration(of: url) != nil else {
+                try? fileManager.removeItem(at: url)
+                continue
+            }
+            // Readable audio is never deleted; a failed move is retried next launch.
+            let created = (try? url.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? now()
+            _ = try? finalize(url, createdAt: created)
+        }
+        showNewestRecording()
+    }
+
+    // MARK: Recording output
+
+    func togglePlayback() throws {
+        let player = try loadedPlayer()
+        if player.isPlaying {
+            player.pause()
+            isPlaying = false
+        } else if player.play() {
+            isPlaying = true
+        } else {
+            stopPlayback()
+            throw VoiceTranscriptionError.playbackFailed
+        }
+    }
+
+    func seek(to time: TimeInterval) throws {
+        guard let recording = recentRecording else { throw VoiceTranscriptionError.noRecording }
+        try loadedPlayer().currentTime = min(max(time, 0), recording.duration)
+        objectWillChange.send()
+    }
+
+    func stopPlayback() {
+        player?.pause()
+        player = nil
+        isPlaying = false
+    }
+
+    /// Save As: copies, so the app-managed recording is kept whatever happens.
+    func exportRecording(to destination: URL) throws {
+        guard let recording = recentRecording else { throw VoiceTranscriptionError.noRecording }
+        let fileManager = FileManager.default
+        if fileManager.fileExists(atPath: destination.path) {
+            // NSSavePanel already confirmed the replacement; swap atomically.
+            let staging = try fileManager.url(for: .itemReplacementDirectory, in: .userDomainMask,
+                                              appropriateFor: destination, create: true)
+            defer { try? fileManager.removeItem(at: staging) }
+            let copy = staging.appendingPathComponent(destination.lastPathComponent)
+            try fileManager.copyItem(at: recording.url, to: copy)
+            _ = try fileManager.replaceItemAt(destination, withItemAt: copy)
+        } else {
+            try fileManager.copyItem(at: recording.url, to: destination)
+        }
+        recentRecording?.savedURL = destination
+    }
+
+    /// Copies into Shelf-owned storage; the recording itself stays put.
+    @discardableResult
+    func addRecordingToShelf() throws -> URL {
+        guard let recording = recentRecording else { throw VoiceTranscriptionError.noRecording }
+        let shelfURL = try shelfStorage.copyIntoShelf(recording.url, suggestedName: recording.url.lastPathComponent)
+        addToShelf([shelfURL])
+        return shelfURL
+    }
+
+    /// Deletes the shown recording (the UI confirms first); exported copies
+    /// are untouched. The next newest recording, if any, is shown.
+    func deleteRecording() throws {
+        guard !isBusy else { throw VoiceTranscriptionError.busy }
+        guard let recording = recentRecording else { throw VoiceTranscriptionError.noRecording }
+        generation += 1
+        stopPlayback()
+        try FileManager.default.removeItem(at: recording.url)
+        showNewestRecording()
+    }
+
+    // MARK: Transcription (explicit follow-up)
+
+    /// The only path that may present the Speech Recognition prompt.
+    func transcribe() async throws {
+        guard isEnabled else { throw VoiceTranscriptionError.disabled }
+        guard !isBusy else { throw VoiceTranscriptionError.busy }
+        guard let recording = recentRecording else { throw VoiceTranscriptionError.noRecording }
+
+        generation += 1
+        let token = generation
+        clearStatusActivity()
+        if permissions.speechState == .notDetermined {
+            phase = .requestingPermission
+            publishStatusActivity(title: "Speech permission", subtitle: statusText)
+            publishState()
+            speechState = await permissions.requestSpeech()
+            guard token == generation else { return }
+        } else {
+            speechState = permissions.speechState
+        }
+        recognizerAvailability = transcriber.availability
+
+        do {
+            guard speechState == .authorized else {
+                throw VoiceTranscriptionError.speechPermissionRequired
+            }
+            guard recognizerAvailability.isAvailable else {
+                throw VoiceTranscriptionError.recognizerUnavailable
+            }
+            let onDevice = recognizerAvailability.supportsOnDeviceRecognition
+            guard onDevice || allowsServerRecognition else {
+                throw VoiceTranscriptionError.onDeviceRecognitionUnavailable
+            }
+            clearStatusActivity()
+            phase = .transcribing
+            liveActivities.update(Self.makeTranscriptionActivity(onDevice: onDevice, updatedAt: now()))
+            publishState()
+
+            let text: String
+            do {
+                text = try await transcriber.transcribe(fileURL: recording.url, requiresOnDevice: onDevice)
+            } catch {
+                guard token == generation else { return }
+                if error is VoiceTranscriptionError { throw error }
+                throw VoiceTranscriptionError.transcriptionFailed(
+                    error is CancellationError ? "Transcription cancelled" : error.localizedDescription)
+            }
+            guard token == generation else { return }
+            // Speech owns its task and URL request until explicitly released.
+            transcriber.cancel()
+            liveActivities.remove(id: Self.transcriptionActivityID)
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { throw VoiceTranscriptionError.emptyTranscript }
+            transcript = VoiceTranscript(text: trimmed, createdAt: now(), wasOnDevice: onDevice)
+            phase = .ready
+            publishState()
+        } catch {
+            fail(error)
+            throw error
+        }
+    }
+
+    // MARK: Lifecycle
+
+    /// Safe from any phase; repeated calls are no-ops. Discards only an
+    /// unfinished capture; a finished recording is never touched.
     func cancel() {
         generation += 1
         recorder.cancelRecording()
         transcriber.cancel()
-        discardRecordingFile()
+        discardUnfinishedCapture()
         removeActivities()
         if isBusy {
-            phase = .idle
+            phase = recentRecording == nil ? .idle : .ready
         }
         publishState()
     }
 
-    func reset() {
+    /// Quit or disable: a running capture is finished and kept, never discarded.
+    func terminate() {
+        if case .recording = phase {
+            try? stopRecording()
+        }
         cancel()
-        phase = .idle
-        publishState()
+        stopPlayback()
     }
 
     func setEnabled(_ enabled: Bool) {
         if !enabled {
-            cancel()
-            phase = .idle
+            terminate()
+            phase = recentRecording == nil ? .idle : .ready
         }
         isEnabled = enabled
         publishState()
     }
 
-    // MARK: Output
+    // MARK: Transcript output
 
     func copyTranscript() throws {
         guard let transcript else { throw VoiceTranscriptionError.noTranscript }
@@ -642,7 +817,6 @@ final class VoiceTranscriptionController: ObservableObject, IslandCapabilityAdap
     func saveTranscript(to url: URL) throws {
         guard let transcript else { throw VoiceTranscriptionError.noTranscript }
         try Data(transcript.text.utf8).write(to: url, options: .atomic)
-        lastSavedURL = url
     }
 
     /// Writes the transcript as a text file into Shelf-owned storage and adds
@@ -650,8 +824,8 @@ final class VoiceTranscriptionController: ObservableObject, IslandCapabilityAdap
     @discardableResult
     func addTranscriptToShelf() throws -> URL {
         guard let transcript else { throw VoiceTranscriptionError.noTranscript }
-        try FileManager.default.createDirectory(at: workingDirectory, withIntermediateDirectories: true)
-        let staging = workingDirectory.appendingPathComponent("transcript-\(UUID().uuidString).txt")
+        let staging = FileManager.default.temporaryDirectory
+            .appendingPathComponent("transcript-\(UUID().uuidString).txt")
         try Data(transcript.text.utf8).write(to: staging, options: .atomic)
         defer { try? FileManager.default.removeItem(at: staging) }
         let shelfURL = try shelfStorage.copyIntoShelf(
@@ -664,6 +838,13 @@ final class VoiceTranscriptionController: ObservableObject, IslandCapabilityAdap
 
     static func transcriptFilename(for date: Date) -> String {
         "Transcript \(filenameFormatter.string(from: date)).txt"
+    }
+
+    /// Duration of a readable, non-empty audio file; nil for anything else.
+    nonisolated static func audioDuration(of url: URL) -> TimeInterval? {
+        guard let file = try? AVAudioFile(forReading: url), file.length > 0,
+              file.fileFormat.sampleRate > 0 else { return nil }
+        return Double(file.length) / file.fileFormat.sampleRate
     }
 
     // MARK: IslandCapabilityAdapter
@@ -680,7 +861,7 @@ final class VoiceTranscriptionController: ObservableObject, IslandCapabilityAdap
         case .start:
             try await startRecording()
         case .stop:
-            try await stopAndTranscribe()
+            try stopRecording()
         case .test:
             await refresh()
         case .openSettings:
@@ -694,13 +875,73 @@ final class VoiceTranscriptionController: ObservableObject, IslandCapabilityAdap
 
     // MARK: Private
 
+    /// Validates, then moves into the recordings folder under a fresh name.
+    /// `moveItem` fails instead of overwriting, so no recording is replaced.
+    private func finalize(_ workingURL: URL, createdAt: Date) throws -> VoiceRecording {
+        guard let duration = Self.audioDuration(of: workingURL) else {
+            throw VoiceTranscriptionError.recordingFailed("The capture is not readable audio.")
+        }
+        let fileManager = FileManager.default
+        try fileManager.createDirectory(at: recordingsDirectory, withIntermediateDirectories: true)
+        let base = "Voice Recording \(Self.filenameFormatter.string(from: createdAt))"
+        for attempt in 1...999 {
+            let name = attempt == 1 ? base : "\(base) \(attempt)"
+            let destination = recordingsDirectory.appendingPathComponent(name).appendingPathExtension("m4a")
+            do {
+                try fileManager.moveItem(at: workingURL, to: destination)
+                return VoiceRecording(url: destination, createdAt: createdAt, duration: duration)
+            } catch CocoaError.fileWriteFileExists {
+                continue
+            }
+        }
+        throw VoiceTranscriptionError.recordingFailed("No free recording filename.")
+    }
+
+    private func showNewestRecording() {
+        let keys: Set<URLResourceKey> = [.creationDateKey]
+        let files = (try? FileManager.default.contentsOfDirectory(
+            at: recordingsDirectory, includingPropertiesForKeys: Array(keys), options: .skipsHiddenFiles)) ?? []
+        let newestFirst = files
+            .filter { $0.pathExtension.lowercased() == "m4a" }
+            .map { ($0, (try? $0.resourceValues(forKeys: keys).creationDate) ?? .distantPast) }
+            .sorted { $0.1 > $1.1 }
+        let newest = newestFirst.lazy.compactMap { url, created in
+            Self.audioDuration(of: url).map { VoiceRecording(url: url, createdAt: created, duration: $0) }
+        }.first
+        setRecent(newest)
+        if !isBusy {
+            phase = newest == nil ? .idle : .ready
+        }
+        publishState()
+    }
+
+    private func setRecent(_ recording: VoiceRecording?) {
+        stopPlayback()
+        transcript = nil
+        recentRecording = recording
+    }
+
+    private func loadedPlayer() throws -> VoiceAudioPlaying {
+        if let player { return player }
+        guard let recording = recentRecording else { throw VoiceTranscriptionError.noRecording }
+        let player: VoiceAudioPlaying
+        do { player = try makePlayer(recording.url) } catch { throw VoiceTranscriptionError.playbackFailed }
+        player.onFinish = { [weak self, weak player] in
+            guard let self, let player, self.player === player else { return }
+            self.isPlaying = false
+            player.currentTime = 0
+        }
+        self.player = player
+        return player
+    }
+
     private func fail(_ error: Error) {
         recorder.cancelRecording()
         transcriber.cancel()
-        discardRecordingFile()
+        discardUnfinishedCapture()
         removeActivities()
         phase = .failed(error.localizedDescription)
-        publishStatusActivity(title: "Voice needs attention", subtitle: error.localizedDescription)
+        publishStatusActivity(title: "Voice Recording", subtitle: error.localizedDescription)
         let token = generation
         let delay = recoveryDisplayDuration
         recoveryDismissTask = Task { [weak self] in
@@ -712,7 +953,7 @@ final class VoiceTranscriptionController: ObservableObject, IslandCapabilityAdap
         publishState()
     }
 
-    private func discardRecordingFile() {
+    private func discardUnfinishedCapture() {
         if let recordingURL {
             try? FileManager.default.removeItem(at: recordingURL)
         }
@@ -753,22 +994,13 @@ final class VoiceTranscriptionController: ObservableObject, IslandCapabilityAdap
         liveActivities.update(Self.makeRecordingActivity(startedAt: startedAt))
     }
 
-    private func publishTranscriptionActivity() {
-        liveActivities.update(
-            Self.makeTranscriptionActivity(
-                onDevice: recognizerAvailability.supportsOnDeviceRecognition,
-                updatedAt: now()
-            )
-        )
-    }
-
     /// Production activity shape; also used by Settings previews.
     static func makeRecordingActivity(startedAt: Date) -> DynamicIslandLiveActivity {
         DynamicIslandLiveActivity(
             id: recordingActivityID,
             kind: .voiceRecording,
             title: "Recording",
-            subtitle: "Voice Transcribe",
+            subtitle: "Voice Recording",
             symbolName: "mic.fill",
             priority: 92,
             isActive: true,

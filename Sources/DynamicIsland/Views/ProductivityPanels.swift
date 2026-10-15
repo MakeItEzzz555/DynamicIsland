@@ -267,84 +267,225 @@ struct RemindersPanel: View {
     }
 }
 
-// MARK: - Voice Transcribe
+// MARK: - Voice Recording
 
-struct VoiceTranscribePanel: View {
+struct VoiceRecordingPanel: View {
     @ObservedObject var controller: VoiceTranscriptionController
-    /// Compact mode avoids nested scroll views inside the island.
+    /// Compact mode avoids nested scroll views inside the island and shows
+    /// recording actions as icons (titles stay as accessibility labels/help).
     var compact = false
+    @Environment(\.agentVisualPreferences) private var preferences
     @State private var errorText: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                switch controller.phase {
-                case .recording:
-                    Button {
-                        run { try await controller.stopAndTranscribe() }
-                    } label: {
-                        Label("Stop", systemImage: "stop.circle.fill")
-                    }
+            switch controller.phase {
+            case .recording(let startedAt):
+                recordingRow(startedAt: startedAt)
+            case .requestingPermission, .preparing, .stopping:
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text(controller.statusText)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                    Spacer()
                     Button("Cancel", role: .cancel) { controller.cancel() }
-                case .requestingPermission, .preparing, .stopping, .transcribing:
-                    ProgressView()
-                        .controlSize(.small)
-                    Button("Cancel", role: .cancel) { controller.cancel() }
-                case .idle, .completed, .failed:
+                }
+            case .idle, .ready, .transcribing, .failed:
+                HStack(spacing: 6) {
                     Button {
                         run { try await controller.startRecording() }
                     } label: {
-                        Label("Record", systemImage: "mic.circle.fill")
+                        Label(controller.recentRecording == nil ? "Record" : "New Recording", systemImage: "record.circle")
                     }
-                    .disabled(!controller.isEnabled)
+                    .disabled(!controller.isEnabled || controller.isBusy)
+                    Spacer()
                 }
-                Spacer()
-                Text(controller.willTranscribeOnDevice ? "On-device" : "On-device unavailable")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(controller.willTranscribeOnDevice ? .green : .orange)
+                if let recording = controller.recentRecording {
+                    playbackRow(recording)
+                    actionsRow(recording)
+                }
             }
-            .controlSize(.small)
 
             if let transcript = controller.transcript {
-                Group {
-                    if compact {
-                        Text(transcript.text)
-                            .font(.system(size: 12))
-                            .lineLimit(3)
-                            .frame(maxWidth: .infinity, alignment: .topLeading)
-                    } else {
-                        ScrollView {
-                            Text(transcript.text)
-                                .font(.system(size: 12))
-                                .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .topLeading)
-                        }
-                        .frame(maxHeight: 90)
-                    }
-                }
-                .padding(6)
-                .background(.black.opacity(0.18), in: RoundedRectangle(cornerRadius: 6))
-
-                HStack(spacing: 6) {
-                    Button("Copy") { run { try controller.copyTranscript() } }
-                    Button("Save…", action: save)
-                    ShareLink(item: transcript.text) {
-                        Label("Share", systemImage: "square.and.arrow.up")
-                    }
-                    Button("Add to Shelf") { run { try controller.addTranscriptToShelf() } }
-                }
-                .controlSize(.small)
+                transcriptSection(transcript)
             }
 
             if let errorText {
                 Text(errorText)
                     .font(.system(size: 11))
                     .foregroundStyle(.red)
+                    .lineLimit(compact ? 2 : nil)
+            }
+        }
+        .controlSize(.small)
+    }
+
+    private func recordingRow(startedAt: Date) -> some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(.red)
+                .frame(width: 8, height: 8)
+                .accessibilityHidden(true)
+            Text(startedAt, style: .timer)
+                .font(.system(size: 12, weight: .semibold).monospacedDigit())
+                .accessibilityLabel("Recording, elapsed time")
+            AudioVisualizerView(isPlaying: true, accentColor: .cyan, palette: .voice,
+                                microphoneLevel: { controller.liveAudioLevel },
+                                voiceConfiguration: preferences.voice)
+            Spacer(minLength: 4)
+            Button {
+                run { try controller.stopRecording() }
+            } label: {
+                Label("Stop", systemImage: "stop.fill")
+            }
+            Button("Cancel", role: .cancel, action: confirmCancel)
+        }
+    }
+
+    private func playbackRow(_ recording: VoiceRecording) -> some View {
+        HStack(spacing: 8) {
+            Button {
+                run { try controller.togglePlayback() }
+            } label: {
+                Image(systemName: controller.isPlaying ? "pause.fill" : "play.fill")
+                    .frame(width: 12)
+            }
+            .accessibilityLabel(controller.isPlaying ? "Pause" : "Play")
+            TimelineView(.animation(minimumInterval: 0.25, paused: !controller.isPlaying)) { _ in
+                let position = controller.playbackTime
+                HStack(spacing: 6) {
+                    Slider(value: Binding(get: { position }, set: { try? controller.seek(to: $0) }),
+                           in: 0...max(recording.duration, 0.1))
+                        .accessibilityLabel("Playback position")
+                        .accessibilityValue("\(Self.clock(position)) of \(Self.clock(recording.duration))")
+                    Text("\(Self.clock(position)) / \(Self.clock(recording.duration))")
+                        .font(.system(size: 10, weight: .medium).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                }
             }
         }
     }
 
-    private func save() {
+    private func actionsRow(_ recording: VoiceRecording) -> some View {
+        HStack(spacing: 6) {
+            Group {
+                Button(action: saveRecording) {
+                    Label("Save As…", systemImage: "square.and.arrow.down")
+                }
+                .help("Save a copy of this recording")
+                Button {
+                    run { try controller.addRecordingToShelf() }
+                } label: {
+                    Label("Add to File Tray", systemImage: "tray.and.arrow.down")
+                }
+                .help("Add a copy to the File Tray")
+                if let saved = recording.savedURL {
+                    Button {
+                        NSWorkspace.shared.activateFileViewerSelecting([saved])
+                    } label: {
+                        Label("Reveal in Finder", systemImage: "folder")
+                    }
+                    .help("Show the saved copy in Finder")
+                }
+                Button(role: .destructive, action: confirmDelete) {
+                    Label("Delete", systemImage: "trash")
+                }
+                .help("Delete this recording")
+            }
+            .labelStyle(VoiceRecordingActionLabelStyle(compact: compact))
+            .disabled(controller.isBusy)
+            Spacer(minLength: 4)
+            if controller.phase == .transcribing {
+                ProgressView().controlSize(.small)
+                Button("Cancel", role: .cancel) { controller.cancel() }
+                    .accessibilityLabel("Cancel transcription")
+            } else if controller.transcript == nil {
+                Button {
+                    run { try await controller.transcribe() }
+                } label: {
+                    Label("Transcribe", systemImage: "text.quote")
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
+                .disabled(!controller.isEnabled || controller.isBusy)
+                .help(controller.willTranscribeOnDevice ? "Transcribe on this Mac" : "On-device transcription is unavailable")
+            }
+        }
+    }
+
+    private func transcriptSection(_ transcript: VoiceTranscript) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Group {
+                if compact {
+                    Text(transcript.text)
+                        .font(.system(size: 12))
+                        .lineLimit(2)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                } else {
+                    ScrollView {
+                        Text(transcript.text)
+                            .font(.system(size: 12))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                    }
+                    .frame(maxHeight: 90)
+                }
+            }
+            .padding(6)
+            .background(.black.opacity(0.18), in: RoundedRectangle(cornerRadius: 6))
+
+            HStack(spacing: 6) {
+                Button("Copy") { run { try controller.copyTranscript() } }
+                Button("Save…", action: saveTranscript)
+                ShareLink(item: transcript.text) {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                }
+                Button("Add to File Tray") { run { try controller.addTranscriptToShelf() } }
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Transcript actions")
+        }
+    }
+
+    private func confirmCancel() {
+        guard confirm("Discard this recording?", detail: "The recording in progress will be deleted.", action: "Discard")
+        else { return }
+        controller.cancel()
+    }
+
+    private func confirmDelete() {
+        guard let recording = controller.recentRecording,
+              confirm("Delete “\(recording.url.deletingPathExtension().lastPathComponent)”?",
+                      detail: "This deletes the recording from DynamicIsland. Copies you saved elsewhere are kept.",
+                      action: "Delete")
+        else { return }
+        run { try controller.deleteRecording() }
+    }
+
+    private func confirm(_ message: String, detail: String, action: String) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.informativeText = detail
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: action).hasDestructiveAction = true
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    private func saveRecording() {
+        guard let recording = controller.recentRecording else { return }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.mpeg4Audio]
+        panel.nameFieldStringValue = recording.url.lastPathComponent
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        run { try controller.exportRecording(to: url) }
+    }
+
+    private func saveTranscript() {
         guard let transcript = controller.transcript else { return }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.plainText]
@@ -352,6 +493,10 @@ struct VoiceTranscribePanel: View {
         NSApp.activate(ignoringOtherApps: true)
         guard panel.runModal() == .OK, let url = panel.url else { return }
         run { try controller.saveTranscript(to: url) }
+    }
+
+    static func clock(_ seconds: TimeInterval) -> String {
+        Duration.seconds(max(seconds.isFinite ? seconds : 0, 0)).formatted(.time(pattern: .minuteSecond))
     }
 
     private func run(_ action: @escaping () async throws -> Void) {
@@ -362,6 +507,19 @@ struct VoiceTranscribePanel: View {
             } catch {
                 errorText = error.localizedDescription
             }
+        }
+    }
+}
+
+/// Icon-only in the compact island; the title stays the accessibility label.
+private struct VoiceRecordingActionLabelStyle: LabelStyle {
+    let compact: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        if compact {
+            Label(configuration).labelStyle(.iconOnly)
+        } else {
+            Label(configuration).labelStyle(.titleAndIcon)
         }
     }
 }
