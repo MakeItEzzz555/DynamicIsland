@@ -528,7 +528,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 capabilities: previewCapabilities,
                 addToShelf: { _ in }
             ),
-            customization: customization
+            customization: customization,
+            liveMedia: media
         )
     }
 

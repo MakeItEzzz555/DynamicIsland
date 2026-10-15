@@ -33,10 +33,12 @@ final class UnavailableLockScreenSpace: LockScreenSpaceProviding {
 }
 
 enum LockScreenSurfaceKind: String, CaseIterable, Sendable {
-    case hud, nowPlaying, timer, alert, sideHUD, status
+    /// `status` is the radial secondary row (battery, timer, Keep Awake).
+    case hud, nowPlaying, alert, sideHUD, status
 
-    /// Only controls take the pointer; everything else is click-through.
-    var isInteractive: Bool { self == .nowPlaying || self == .timer || self == .sideHUD }
+    /// Only controls take the pointer (the radial timer toggles); the island
+    /// HUD and alerts are click-through.
+    var isInteractive: Bool { self == .nowPlaying || self == .status || self == .sideHUD }
 }
 
 /// Owns one separate window per lock-screen surface. Never touches the island's
@@ -95,7 +97,7 @@ final class LockScreenSurfaceController {
     func relayout() {
         for kind in visible {
             guard let rect = frame(kind) else { hide(kind); continue }
-            windows[kind]?.setFrame(rect, display: true)
+            if windows[kind]?.frame != rect { windows[kind]?.setFrame(rect, display: true) }
         }
     }
 

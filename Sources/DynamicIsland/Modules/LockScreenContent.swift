@@ -19,6 +19,8 @@ struct LockScreenContent: Equatable, Sendable {
     }
     struct KeepAwake: Equatable, Sendable {
         var expiresAt: Date?
+        /// Remaining share of a timed session; nil for an indefinite one.
+        var progress: Double?
     }
     struct Battery: Equatable, Sendable {
         var percent: Int
@@ -62,6 +64,7 @@ struct LockScreenSources: Sendable {
     var timerTotalSeconds: Int?
     var timerIsRunning = false
     var keepAwakeExpiresAt: Date?
+    var keepAwakeTotalSeconds: Double?
     var keepAwakeActive = false
     var batteryPercent: Int?
     var batteryCharging = false
@@ -73,7 +76,8 @@ struct LockScreenSources: Sendable {
 }
 
 enum LockScreenPrivacyProjector {
-    static func project(_ sources: LockScreenSources, disclosure: LockScreenDisclosure, state: LockState) -> LockScreenContent {
+    static func project(_ sources: LockScreenSources, disclosure: LockScreenDisclosure, state: LockState,
+                        now: Date = Date()) -> LockScreenContent {
         guard state.isConfirmedLocked else { return .empty }
         var content = LockScreenContent()
         if disclosure.media, let title = sources.mediaTitle?.trimmed, !title.isEmpty {
@@ -89,7 +93,11 @@ enum LockScreenPrivacyProjector {
                                   isRunning: sources.timerIsRunning)
         }
         if disclosure.keepAwake, sources.keepAwakeActive {
-            content.keepAwake = .init(expiresAt: sources.keepAwakeExpiresAt)
+            var progress: Double?
+            if let expires = sources.keepAwakeExpiresAt, let total = sources.keepAwakeTotalSeconds, total > 0 {
+                progress = min(max(expires.timeIntervalSince(now) / total, 0), 1)
+            }
+            content.keepAwake = .init(expiresAt: sources.keepAwakeExpiresAt, progress: progress)
         }
         if disclosure.battery, let percent = sources.batteryPercent {
             content.battery = .init(percent: min(max(percent, 0), 100), isCharging: sources.batteryCharging)
@@ -127,6 +135,9 @@ struct LockScreenPreferences: Codable, Equatable, Sendable {
     var sideVolume = false
     var sideBrightness = false
     var mediaVerticalOffset = 0.0
+    var secondaryPlacement = LockScreenSecondaryPlacement.below
+    var secondaryGap = 14.0
+    var radialOrder = LockScreenRadialKind.allCases
 
     static let defaults = LockScreenPreferences()
 
@@ -139,6 +150,10 @@ struct LockScreenPreferences: Codable, Equatable, Sendable {
         var copy = self
         copy.soundVolume = soundVolume.isFinite ? min(max(soundVolume, 0), 1) : 0.5
         copy.mediaVerticalOffset = mediaVerticalOffset.isFinite ? min(max(mediaVerticalOffset, -200), 200) : 0
+        copy.secondaryGap = secondaryGap.isFinite ? min(max(secondaryGap, 0), 60) : 14
+        var seen = Set<LockScreenRadialKind>()
+        copy.radialOrder = radialOrder.filter { seen.insert($0).inserted }
+            + LockScreenRadialKind.allCases.filter { !seen.contains($0) }
         return copy
     }
 
@@ -164,5 +179,8 @@ struct LockScreenPreferences: Codable, Equatable, Sendable {
         battery = value(.battery, base.battery); alerts = value(.alerts, base.alerts)
         sideVolume = value(.sideVolume, base.sideVolume); sideBrightness = value(.sideBrightness, base.sideBrightness)
         mediaVerticalOffset = value(.mediaVerticalOffset, base.mediaVerticalOffset)
+        secondaryPlacement = value(.secondaryPlacement, base.secondaryPlacement)
+        secondaryGap = value(.secondaryGap, base.secondaryGap)
+        radialOrder = value(.radialOrder, base.radialOrder)
     }
 }

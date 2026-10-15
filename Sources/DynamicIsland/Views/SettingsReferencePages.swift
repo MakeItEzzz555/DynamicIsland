@@ -164,16 +164,17 @@ extension SettingsView {
                     Slider(value: prefs.soundVolume, in: 0...1).frame(maxWidth: 220)
                 }
             }
+            SettingsGroup("Layout") {
+                LockScreenSettingsPreview(settings: settings, liveMedia: previews?.liveMedia,
+                                          timer: previews?.timer, keepAwake: productivity.keepAwake)
+            }
             SettingsGroup("Widgets") {
                 Toggle("Now Playing controls", isOn: prefs.nowPlaying)
                 Toggle("Show song title, artist and artwork", isOn: prefs.showTrackDetails)
                     .disabled(!settings.lockScreenPreferences.nowPlaying)
-                LabeledContent("Now Playing position") {
-                    Slider(value: prefs.mediaVerticalOffset, in: -200...200).frame(maxWidth: 220)
-                }
-                Toggle("Timer", isOn: prefs.timer)
-                Toggle("Keep Awake status", isOn: prefs.keepAwake)
-                Toggle("Battery", isOn: prefs.battery)
+                Toggle("Battery ring", isOn: prefs.battery)
+                Toggle("Timer ring", isOn: prefs.timer)
+                Toggle("Keep Awake ring", isOn: prefs.keepAwake)
                 Toggle("Generic alerts (low battery, Keep Awake ending)", isOn: prefs.alerts)
             }
             SettingsGroup("Side controls") {

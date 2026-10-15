@@ -149,7 +149,7 @@ final class LockScreenCoordinatorTests: XCTestCase {
             readBattery: { BatteryActivitySnapshot(percentage: 80, powerSourceStateDescription: nil, isPluggedIn: false,
                                                    isCharging: false, isCharged: false, isOnBattery: true) },
             playSound: { [unowned self] name, _ in self.sounds.append(name) },
-            unlockDuration: .milliseconds(30))
+            unlockDuration: .milliseconds(400))
         coordinator.start()
     }
 
@@ -194,7 +194,8 @@ final class LockScreenCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.hudPhase, .unlocking)
         XCTAssertEqual(coordinator.visibleSurfaces, [.hud], "widgets leave at once; only the HUD morphs")
         XCTAssertEqual(coordinator.content, .empty)
-        try await Task.sleep(for: .milliseconds(120))
+        let deadline = ContinuousClock.now + .seconds(3)
+        while coordinator.hudPhase != .hidden, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
         XCTAssertEqual(coordinator.hudPhase, .hidden)
         XCTAssertTrue(coordinator.visibleSurfaces.isEmpty)
     }

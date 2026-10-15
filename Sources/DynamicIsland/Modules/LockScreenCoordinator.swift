@@ -180,6 +180,7 @@ final class LockScreenCoordinator: ObservableObject {
         content = LockScreenPrivacyProjector.project(sources(), disclosure: preferences.disclosure, state: effective)
         let before = surfaces.visible
         surfaces.update(state: effective, requested: requestedSurfaces())
+        surfaces.relayout() // frames depend on content (row attaches to media)
         if surfaces.visible != before {
             lockScreenLog.notice("surfaces \(surfaces.visible.map(\.rawValue).sorted().joined(separator: ","), privacy: .public) space=\(String(describing: surfaces.availability), privacy: .public)")
         }
@@ -189,11 +190,15 @@ final class LockScreenCoordinator: ObservableObject {
         var kinds: Set<LockScreenSurfaceKind> = []
         if preferences.hud && hudPhase != .hidden { kinds.insert(.hud) }
         if content.media != nil { kinds.insert(.nowPlaying) }
-        if content.timer != nil { kinds.insert(.timer) }
         if content.alert != nil { kinds.insert(.alert) }
-        if content.battery != nil || content.keepAwake != nil { kinds.insert(.status) }
+        if !radialItems.isEmpty { kinds.insert(.status) }
         if preferences.sideVolume || preferences.sideBrightness { kinds.insert(.sideHUD) }
         return kinds
+    }
+
+    /// Radial widgets for the current content, in the user's order.
+    var radialItems: [LockScreenRadialItem] {
+        LockScreenRadialItem.items(for: content, order: preferences.radialOrder)
     }
 
     private func sources() -> LockScreenSources {
@@ -207,7 +212,8 @@ final class LockScreenCoordinator: ObservableObject {
             mediaCanSeek: media.isSeekControlAvailable && media.hasPlaybackProgress,
             timerRemainingSeconds: timer.totalSeconds > 0 ? timer.remainingSeconds : nil,
             timerTotalSeconds: timer.totalSeconds, timerIsRunning: timer.isRunning,
-            keepAwakeExpiresAt: keepAwake.expiresAt, keepAwakeActive: keepAwake.isActive,
+            keepAwakeExpiresAt: keepAwake.expiresAt, keepAwakeTotalSeconds: keepAwake.configuredDuration,
+            keepAwakeActive: keepAwake.isActive,
             batteryPercent: battery?.percentage, batteryCharging: battery?.isCharging ?? false,
             alertCategory: lowBattery ? .lowBattery : keepAwakeEnding ? .keepAwakeEnding : nil)
     }
@@ -228,21 +234,31 @@ final class LockScreenCoordinator: ObservableObject {
         NSScreen.screens.first { $0.safeAreaInsets.top > 0 } ?? NSScreen.main ?? NSScreen.screens.first
     }
 
-    func frame(for kind: LockScreenSurfaceKind) -> CGRect? {
+    var notchRect: CGRect? {
+        guard let screen = lockScreen, let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea,
+              left.maxX < right.minX else { return nil }
+        return CGRect(x: left.maxX, y: screen.frame.maxY - screen.safeAreaInsets.top,
+                      width: right.minX - left.maxX, height: screen.safeAreaInsets.top)
+    }
+
+    var layout: LockScreenLayout? {
         guard let screen = lockScreen else { return nil }
-        let full = screen.frame
-        let notch = max(screen.safeAreaInsets.top, 32)
-        let columnTop = full.maxY - 292 - CGFloat(preferences.mediaVerticalOffset)
-        let width: CGFloat = 380
-        let x = full.midX - width / 2
+        return LockScreenLayout.resolve(screen: screen.frame, notch: notchRect, preferences: preferences,
+                                        hasMedia: content.media != nil, radialCount: radialItems.count,
+                                        hasAlert: content.alert != nil)
+    }
+
+    func frame(for kind: LockScreenSurfaceKind) -> CGRect? {
+        guard let layout else { return nil }
+        // Prepared windows need a real frame before any content exists.
+        let media = layout.media ?? CGRect(origin: .zero, size: LockScreenLayout.mediaSize)
         switch kind {
-        case .hud: return CGRect(x: full.midX - 160, y: full.maxY - notch - 8, width: 320, height: notch + 8)
-        // Below the system clock (which ends ~230 pt from the top on 15.7).
-        case .status: return CGRect(x: full.midX - 160, y: full.maxY - 276, width: 320, height: 34)
-        case .nowPlaying: return CGRect(x: x, y: columnTop - 150, width: width, height: 150)
-        case .timer: return CGRect(x: x, y: columnTop - 150 - 12 - 64, width: width, height: 64)
-        case .alert: return CGRect(x: x, y: columnTop - 150 - 12 - 64 - 12 - 44, width: width, height: 44)
-        case .sideHUD: return CGRect(x: full.minX + 20, y: full.midY - 110, width: 52, height: 220)
+        case .hud: return layout.island
+        case .nowPlaying: return layout.media ?? media
+        case .status: return layout.secondary ?? CGRect(x: media.minX, y: media.minY, width: LockScreenLayout.secondaryWidth(count: 3),
+                                                        height: LockScreenLayout.radialDiameter)
+        case .alert: return layout.alert ?? CGRect(origin: .zero, size: LockScreenLayout.alertSize)
+        case .sideHUD: return layout.side
         }
     }
 

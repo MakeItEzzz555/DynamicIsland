@@ -1,9 +1,10 @@
 import AppKit
 import SwiftUI
 
-/// One view per lock-screen surface. Everything rendered comes from the
-/// coordinator's privacy-projected `content`; actions are transport, timer and
-/// output volume/brightness only.
+// MARK: - Live adapter
+
+/// Maps the coordinator's privacy-projected state onto the data-driven views.
+/// The Settings preview renders the same views with labeled sample data.
 struct LockScreenSurfaceView: View {
     let kind: LockScreenSurfaceKind
     @ObservedObject var coordinator: LockScreenCoordinator
@@ -11,12 +12,25 @@ struct LockScreenSurfaceView: View {
     var body: some View {
         Group {
             switch kind {
-            case .hud: LockScreenHUD(phase: coordinator.hudPhase)
-            case .nowPlaying: if let media = coordinator.content.media { LockScreenNowPlayingCard(media: media, coordinator: coordinator) }
-            case .timer: if let timer = coordinator.content.timer { LockScreenTimerCard(timer: timer, toggle: coordinator.toggleTimer) }
-            case .alert: if let alert = coordinator.content.alert { LockScreenAlertCard(alert: alert) }
-            case .status: LockScreenStatusRow(battery: coordinator.content.battery, keepAwake: coordinator.content.keepAwake)
-            case .sideHUD: LockScreenSideSliders(coordinator: coordinator)
+            case .hud:
+                LockScreenIslandHUD(phase: coordinator.hudPhase, notchWidth: coordinator.notchRect?.width,
+                                    showsActivity: coordinator.content.media?.isPlaying == true)
+            case .nowPlaying:
+                if let media = coordinator.content.media {
+                    LockScreenNowPlayingCard(media: media, artwork: coordinator.artwork, progress: { coordinator.mediaProgress },
+                                             onPrevious: coordinator.previousTrack, onPlayPause: coordinator.playPause,
+                                             onNext: coordinator.nextTrack, onSeek: coordinator.seek(to:))
+                }
+            case .status:
+                LockScreenRadialRow(items: coordinator.radialItems, onTimerToggle: coordinator.toggleTimer)
+            case .alert:
+                if let alert = coordinator.content.alert { LockScreenAlertCard(alert: alert) }
+            case .sideHUD:
+                LockScreenSideSliders(volume: coordinator.settings.lockScreenPreferences.sideVolume ? coordinator.outputVolume : nil,
+                                      brightness: coordinator.settings.lockScreenPreferences.sideBrightness ? coordinator.displayBrightness : nil,
+                                      showsVolume: coordinator.settings.lockScreenPreferences.sideVolume,
+                                      showsBrightness: coordinator.settings.lockScreenPreferences.sideBrightness,
+                                      setVolume: coordinator.setVolume, setBrightness: coordinator.setBrightness)
             }
         }
         .environment(\.colorScheme, .dark)
@@ -24,7 +38,61 @@ struct LockScreenSurfaceView: View {
     }
 }
 
-/// Shared card material: the system's own translucent material, one hairline.
+// MARK: - Island
+
+/// The island on the lock screen: the same notch-shell silhouette as the
+/// desktop island, widened by two wings so content is not hidden behind the
+/// camera housing. Unlock opens the lock and narrows back to the notch.
+struct LockScreenIslandHUD: View {
+    let phase: LockScreenHUDPhase
+    /// Hardware notch width in points; nil on notchless displays (floating pill).
+    let notchWidth: CGFloat?
+    let showsActivity: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        let unlocking = phase == .unlocking
+        GeometryReader { proxy in
+            let full = proxy.size.width
+            let width = unlocking ? (notchWidth ?? full * 0.6) : full
+            let wing = max((full - (notchWidth ?? 0)) / 2, 0)
+            ZStack(alignment: .top) {
+                Group {
+                    if notchWidth != nil {
+                        IslandShellShape(topCornerRadius: 6, bottomCornerRadius: 12).fill(.black)
+                    } else {
+                        Capsule(style: .continuous).fill(.black)
+                    }
+                }
+                .frame(width: width, height: proxy.size.height)
+                HStack(spacing: 0) {
+                    Image(systemName: unlocking ? "lock.open.fill" : "lock.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                        .contentTransition(.symbolEffect(.replace))
+                        .frame(width: notchWidth == nil ? full : wing)
+                    if let notchWidth {
+                        Spacer().frame(width: notchWidth)
+                        Image(systemName: "waveform")
+                            .font(.system(size: 13, weight: .semibold))
+                            .symbolEffect(.variableColor.iterative, isActive: showsActivity && !reduceMotion)
+                            .opacity(showsActivity && !unlocking ? 1 : 0)
+                            .frame(width: wing)
+                    }
+                }
+                .frame(height: proxy.size.height)
+                .opacity(unlocking ? 0 : 1)
+                .foregroundStyle(.white)
+            }
+            .frame(maxWidth: .infinity)
+            .animation(reduceMotion ? nil : .spring(response: 0.42, dampingFraction: 0.86), value: phase)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(unlocking ? "Unlocked" : "Locked")
+    }
+}
+
+// MARK: - Shared material
+
 private struct LockScreenCard<Content: View>: View {
     var cornerRadius: CGFloat = 22
     @ViewBuilder let content: Content
@@ -38,40 +106,23 @@ private struct LockScreenCard<Content: View>: View {
     }
 }
 
-/// Notch-anchored pill: a lock on lock; on unlock it opens and narrows back
-/// toward the island's collapsed width before the window is released.
-struct LockScreenHUD: View {
-    let phase: LockScreenHUDPhase
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        let unlocking = phase == .unlocking
-        HStack(spacing: 8) {
-            Image(systemName: unlocking ? "lock.open.fill" : "lock.fill")
-                .font(.system(size: 13, weight: .semibold))
-                .contentTransition(.symbolEffect(.replace))
-        }
-        .foregroundStyle(.white)
-        .frame(width: unlocking ? 200 : 300, height: 32)
-        .background(.black, in: Capsule(style: .continuous))
-        .scaleEffect(unlocking && !reduceMotion ? 0.92 : 1)
-        .opacity(unlocking ? 0.85 : 1)
-        .animation(reduceMotion ? nil : .spring(response: 0.42, dampingFraction: 0.82), value: phase)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .accessibilityLabel(unlocking ? "Unlocked" : "Locked")
-    }
-}
+// MARK: - Now Playing
 
 struct LockScreenNowPlayingCard: View {
     let media: LockScreenContent.Media
-    @ObservedObject var coordinator: LockScreenCoordinator
+    let artwork: NSImage?
+    let progress: () -> Double
+    let onPrevious: () -> Void
+    let onPlayPause: () -> Void
+    let onNext: () -> Void
+    let onSeek: (Double) -> Void
 
     var body: some View {
         LockScreenCard {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 12) {
                     Group {
-                        if let artwork = coordinator.artwork {
+                        if let artwork {
                             Image(nsImage: artwork).resizable().scaledToFill()
                         } else {
                             Image(systemName: "music.note").font(.system(size: 22)).frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -91,24 +142,22 @@ struct LockScreenNowPlayingCard: View {
                 }
                 if media.canSeek {
                     TimelineView(.periodic(from: .now, by: 1)) { _ in
-                        Slider(value: Binding(get: { coordinator.mediaProgress }, set: { coordinator.seek(to: $0) }))
-                            .controlSize(.mini).tint(.white)
+                        Slider(value: Binding(get: progress, set: onSeek)).controlSize(.mini).tint(.white)
                             .accessibilityLabel("Playback position")
                     }
                 }
                 HStack(spacing: 34) {
                     Spacer()
-                    button("backward.fill", "Previous track", enabled: media.canSkip, coordinator.previousTrack)
-                    button(media.isPlaying ? "pause.fill" : "play.fill", media.isPlaying ? "Pause" : "Play", enabled: true,
-                           coordinator.playPause, size: 22)
-                    button("forward.fill", "Next track", enabled: media.canSkip, coordinator.nextTrack)
+                    transport("backward.fill", "Previous track", enabled: media.canSkip, onPrevious)
+                    transport(media.isPlaying ? "pause.fill" : "play.fill", media.isPlaying ? "Pause" : "Play", enabled: true, onPlayPause, size: 22)
+                    transport("forward.fill", "Next track", enabled: media.canSkip, onNext)
                     Spacer()
                 }
             }
         }
     }
 
-    private func button(_ symbol: String, _ label: String, enabled: Bool, _ action: @escaping () -> Void, size: CGFloat = 16) -> some View {
+    private func transport(_ symbol: String, _ label: String, enabled: Bool, _ action: @escaping () -> Void, size: CGFloat = 16) -> some View {
         Button(action: action) {
             Image(systemName: symbol).font(.system(size: size, weight: .semibold)).frame(width: 36, height: 30).contentShape(Rectangle())
         }
@@ -119,72 +168,118 @@ struct LockScreenNowPlayingCard: View {
     }
 }
 
-struct LockScreenTimerCard: View {
-    let timer: LockScreenContent.Timer
-    let toggle: () -> Void
+// MARK: - Radial secondary widgets
 
-    var body: some View {
-        LockScreenCard(cornerRadius: 18) {
-            HStack(spacing: 12) {
-                Image(systemName: "timer").font(.system(size: 16, weight: .semibold)).accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(Duration.seconds(timer.remainingSeconds).formatted(.time(pattern: .minuteSecond)))
-                        .font(.system(size: 17, weight: .semibold).monospacedDigit())
-                    ProgressView(value: timer.progress).progressViewStyle(.linear).tint(.white)
-                }
-                Button(action: toggle) {
-                    Image(systemName: timer.isRunning ? "pause.fill" : "play.fill").frame(width: 30, height: 30).contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(timer.isRunning ? "Pause timer" : "Resume timer")
+/// One radial widget. `progress` is nil when the activity has no real
+/// fraction (indefinite Keep Awake): the ring is then drawn plain, unfilled.
+struct LockScreenRadialItem: Identifiable, Equatable {
+    var id: LockScreenRadialKind { kind }
+    let kind: LockScreenRadialKind
+    let symbol: String
+    let value: String
+    let progress: Double?
+    let tint: Color
+    let accessibilityLabel: String
+
+    static func items(for content: LockScreenContent, order: [LockScreenRadialKind]) -> [LockScreenRadialItem] {
+        order.compactMap { kind in
+            switch kind {
+            case .battery:
+                guard let battery = content.battery else { return nil }
+                let tint: Color = battery.isCharging ? .green : battery.percent <= 10 ? .red : battery.percent <= 20 ? .orange : .white
+                return .init(kind: kind, symbol: battery.isCharging ? "bolt.fill" : "battery.75", value: "\(battery.percent)",
+                             progress: Double(battery.percent) / 100, tint: tint,
+                             accessibilityLabel: "Battery \(battery.percent) percent\(battery.isCharging ? ", charging" : "")")
+            case .timer:
+                guard let timer = content.timer else { return nil }
+                return .init(kind: kind, symbol: timer.isRunning ? "timer" : "pause.fill",
+                             value: Duration.seconds(timer.remainingSeconds).formatted(.time(pattern: .minuteSecond)),
+                             progress: timer.progress, tint: .orange,
+                             accessibilityLabel: "Timer \(timer.remainingSeconds) seconds remaining\(timer.isRunning ? "" : ", paused")")
+            case .keepAwake:
+                guard let keepAwake = content.keepAwake else { return nil }
+                let minutes = keepAwake.expiresAt.map { max(Int(($0.timeIntervalSinceNow / 60).rounded(.up)), 0) }
+                return .init(kind: kind, symbol: "cup.and.saucer.fill", value: minutes.map { "\($0)m" } ?? "On",
+                             progress: keepAwake.progress, tint: .cyan,
+                             accessibilityLabel: minutes.map { "Keep Awake, \($0) minutes left" } ?? "Keep Awake on")
             }
         }
     }
 }
+
+struct LockScreenRadialGauge: View {
+    let item: LockScreenRadialItem
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        ZStack {
+            Circle().fill(.ultraThinMaterial)
+            Circle().strokeBorder(.white.opacity(0.18), lineWidth: 4)
+            if let progress = item.progress {
+                Circle()
+                    .inset(by: 2)
+                    .trim(from: 0, to: min(max(progress, 0), 1))
+                    .stroke(item.tint, style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                    .animation(reduceMotion ? nil : .smooth(duration: 0.4), value: progress)
+            }
+            VStack(spacing: 1) {
+                Image(systemName: item.symbol).font(.system(size: 13, weight: .semibold))
+                Text(item.value).font(.system(size: 10, weight: .semibold).monospacedDigit()).lineLimit(1).minimumScaleFactor(0.7)
+            }
+            .foregroundStyle(.white)
+            .padding(6)
+        }
+        .frame(width: LockScreenLayout.radialDiameter, height: LockScreenLayout.radialDiameter)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(item.accessibilityLabel)
+    }
+}
+
+struct LockScreenRadialRow: View {
+    let items: [LockScreenRadialItem]
+    let onTimerToggle: () -> Void
+
+    var body: some View {
+        HStack(spacing: LockScreenLayout.radialSpacing) {
+            ForEach(items) { item in
+                if item.kind == .timer {
+                    Button(action: onTimerToggle) { LockScreenRadialGauge(item: item) }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("Pauses or resumes the timer")
+                } else {
+                    LockScreenRadialGauge(item: item)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - Alert and side controls
 
 struct LockScreenAlertCard: View {
     let alert: LockScreenContent.Alert
     var body: some View {
         LockScreenCard(cornerRadius: 16) {
             Label(alert.label, systemImage: alert.symbolName).font(.system(size: 13, weight: .semibold))
+                .frame(maxWidth: .infinity)
         }
-    }
-}
-
-struct LockScreenStatusRow: View {
-    let battery: LockScreenContent.Battery?
-    let keepAwake: LockScreenContent.KeepAwake?
-
-    var body: some View {
-        HStack(spacing: 10) {
-            if let battery {
-                chip(battery.isCharging ? "battery.100.bolt" : "battery.75", "\(battery.percent)%")
-                    .accessibilityLabel("Battery \(battery.percent) percent\(battery.isCharging ? ", charging" : "")")
-            }
-            if let keepAwake {
-                chip("cup.and.saucer.fill", keepAwake.expiresAt.map { "Awake until \($0.formatted(date: .omitted, time: .shortened))" } ?? "Awake")
-            }
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    private func chip(_ symbol: String, _ text: String) -> some View {
-        Label(text, systemImage: symbol)
-            .font(.system(size: 12, weight: .semibold).monospacedDigit())
-            .padding(.horizontal, 10).frame(height: 26)
-            .background(.ultraThinMaterial, in: Capsule())
-            .foregroundStyle(.white)
     }
 }
 
 struct LockScreenSideSliders: View {
-    @ObservedObject var coordinator: LockScreenCoordinator
+    let volume: Double?
+    let brightness: Double?
+    let showsVolume: Bool
+    let showsBrightness: Bool
+    let setVolume: (Double) -> Void
+    let setBrightness: (Double) -> Void
 
     var body: some View {
-        let prefs = coordinator.settings.lockScreenPreferences
         VStack(spacing: 10) {
-            if prefs.sideVolume { slider("speaker.wave.2.fill", "Volume", coordinator.outputVolume, coordinator.setVolume) }
-            if prefs.sideBrightness { slider("sun.max.fill", "Brightness", coordinator.displayBrightness, coordinator.setBrightness) }
+            if showsVolume { slider("speaker.wave.2.fill", "Volume", volume, setVolume) }
+            if showsBrightness { slider("sun.max.fill", "Brightness", brightness, setBrightness) }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

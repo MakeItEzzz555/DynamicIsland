@@ -50,6 +50,8 @@ struct SettingsPreviewDependencies {
     let previewBackgroundRemoval: BackgroundRemovalController
     /// Rendering is read-only; the explicit workspace editor commits only on Done.
     var customization: WorkspaceCustomizationStore? = nil
+    /// The app's real media controller, read-only, for the Lock Screen preview.
+    var liveMedia: MediaController? = nil
 }
 
 /// Preview preferences stay in memory, including production AppStorage and
