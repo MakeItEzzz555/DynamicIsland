@@ -185,6 +185,9 @@ struct AppVolumePill: View {
     @State private var hovering = false
     @FocusState private var focused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.timerRulerInteractionRegistration) private var interactionRegistration
+    @State private var interactionOwner = UUID()
+    @State private var measuredFrame = CGRect.zero
 
     /// Presses inside this leading zone (the icon) toggle mute unless they turn into a drag.
     private var iconZone: CGFloat { height + 2 }
@@ -208,6 +211,13 @@ struct AppVolumePill: View {
                 .onEnded { _ in endDrag() })
         }
         .frame(height: height)
+        // Own horizontal drags: the island's swipe/scroll navigation skips registered control frames.
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(IslandCanvasCoordinateSpace.name)) } action: { frame in
+            measuredFrame = frame
+            DispatchQueue.main.async { interactionRegistration.report(interactionOwner, interactionRegistration.enabled ? frame : nil) }
+        }
+        .onChange(of: interactionRegistration.enabled) { _, on in interactionRegistration.report(interactionOwner, on ? measuredFrame : nil) }
+        .onDisappear { interactionRegistration.report(interactionOwner, nil) }
         .opacity(enabled ? 1 : 0.55)
         .onHover { hovering = enabled && $0 }
         .focusable(enabled)

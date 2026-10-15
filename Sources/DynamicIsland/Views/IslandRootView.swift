@@ -201,14 +201,8 @@ struct IslandPointerGestureModifier: ViewModifier {
     private var swipeGesture: some Gesture {
         DragGesture(minimumDistance: 12, coordinateSpace: .named(IslandCanvasCoordinateSpace.name))
             .onEnded { value in
-                guard layoutStore?.containsNativeControlPoint(value.startLocation) != true,
-                      layoutStore?.transientInteractionOwners.contains(.workspaceEditor) != true else { return }
-                guard let gesture = IslandPointerGesture.detected(
-                    from: value.translation,
-                    sensitivity: swipeSensitivity
-                ) else {
-                    return
-                }
+                guard let gesture = Self.swipe(translation: value.translation, start: value.startLocation,
+                                               layoutStore: layoutStore, sensitivity: swipeSensitivity) else { return }
                 coordinator.handle(
                     gesture,
                     settings: settings,
@@ -216,6 +210,14 @@ struct IslandPointerGestureModifier: ViewModifier {
                     callbacks: callbacks
                 )
             }
+    }
+
+    /// A drag that starts inside a registered native control (slider, ruler) or while editing never navigates.
+    static func swipe(translation: CGSize, start: CGPoint, layoutStore: IslandLayoutStore?,
+                      sensitivity: Double) -> IslandPointerGesture? {
+        guard layoutStore?.containsNativeControlPoint(start) != true,
+              layoutStore?.transientInteractionOwners.contains(.workspaceEditor) != true else { return nil }
+        return IslandPointerGesture.detected(from: translation, sensitivity: sensitivity)
     }
 
     private var longPressGesture: some Gesture {
