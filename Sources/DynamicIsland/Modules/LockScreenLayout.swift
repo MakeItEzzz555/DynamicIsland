@@ -6,6 +6,13 @@ enum LockScreenSecondaryPlacement: String, Codable, CaseIterable, Sendable {
     var title: String { self == .below ? "Below media" : "Above media" }
 }
 
+/// Lock-screen player size; independent of the desktop media widget sizes.
+enum LockScreenMediaSize: String, Codable, CaseIterable, Sendable {
+    case standard, large
+    var title: String { self == .standard ? "Standard" : "Large" }
+    var cardSize: CGSize { self == .standard ? CGSize(width: 400, height: 178) : CGSize(width: 340, height: 372) }
+}
+
 /// Radial secondary widgets, in the user's order.
 enum LockScreenRadialKind: String, Codable, CaseIterable, Sendable {
     case battery, timer, keepAwake
@@ -15,7 +22,6 @@ enum LockScreenRadialKind: String, Codable, CaseIterable, Sendable {
 /// by the Settings preview (which scales the same frames). Frames are in
 /// AppKit screen coordinates (origin bottom-left).
 struct LockScreenLayout: Equatable {
-    static let mediaSize = CGSize(width: 380, height: 150)
     static let radialDiameter: CGFloat = 56
     static let radialSpacing: CGFloat = 14
     static let alertSize = CGSize(width: 260, height: 40)
@@ -50,6 +56,7 @@ struct LockScreenLayout: Equatable {
         let rowWidth = secondaryWidth(count: radialCount)
         let rowHeight = radialDiameter
 
+        let mediaSize = preferences.mediaSize.cardSize
         func takeMedia() -> CGRect {
             let rect = CGRect(x: screen.midX - mediaSize.width / 2, y: top - mediaSize.height,
                               width: mediaSize.width, height: mediaSize.height)

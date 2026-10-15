@@ -11,6 +11,8 @@ struct LockScreenContent: Equatable, Sendable {
         var isPlaying: Bool
         var canSkip: Bool
         var canSeek: Bool
+        /// Player app name (e.g. "Spotify"); only with the track-details opt-in.
+        var source: String? = nil
     }
     struct Timer: Equatable, Sendable {
         var remainingSeconds: Int
@@ -60,6 +62,7 @@ struct LockScreenSources: Sendable {
     var mediaIsPlaying = false
     var mediaCanSkip = false
     var mediaCanSeek = false
+    var mediaSource: String?
     var timerRemainingSeconds: Int?
     var timerTotalSeconds: Int?
     var timerIsRunning = false
@@ -85,7 +88,8 @@ enum LockScreenPrivacyProjector {
                 title: disclosure.mediaMetadata ? String(title.prefix(80)) : "Now Playing",
                 artist: disclosure.mediaMetadata ? String((sources.mediaArtist?.trimmed ?? "").prefix(80)) : "",
                 artworkRevision: disclosure.mediaMetadata ? sources.mediaArtworkRevision : nil,
-                isPlaying: sources.mediaIsPlaying, canSkip: sources.mediaCanSkip, canSeek: sources.mediaCanSeek)
+                isPlaying: sources.mediaIsPlaying, canSkip: sources.mediaCanSkip, canSeek: sources.mediaCanSeek,
+                source: disclosure.mediaMetadata ? sources.mediaSource : nil)
         }
         if disclosure.timer, let remaining = sources.timerRemainingSeconds, remaining >= 0 {
             let total = max(sources.timerTotalSeconds ?? remaining, 1)
@@ -138,6 +142,7 @@ struct LockScreenPreferences: Codable, Equatable, Sendable {
     var secondaryPlacement = LockScreenSecondaryPlacement.below
     var secondaryGap = 14.0
     var radialOrder = LockScreenRadialKind.allCases
+    var mediaSize = LockScreenMediaSize.standard
 
     static let defaults = LockScreenPreferences()
 
@@ -182,5 +187,6 @@ struct LockScreenPreferences: Codable, Equatable, Sendable {
         secondaryPlacement = value(.secondaryPlacement, base.secondaryPlacement)
         secondaryGap = value(.secondaryGap, base.secondaryGap)
         radialOrder = value(.radialOrder, base.radialOrder)
+        mediaSize = value(.mediaSize, base.mediaSize)
     }
 }

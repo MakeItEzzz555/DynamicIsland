@@ -173,7 +173,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var mediaAdvanced = MediaAdvancedController(media: media, spotify: workspaceServices.spotify)
     /// Experimental lock-screen surfaces; idle (no observers, no space) until enabled.
     private lazy var lockScreen = LockScreenCoordinator(settings: settings, media: media, timer: timer,
-                                                        keepAwake: keepAwakeController, systemHUD: systemHUDController)
+                                                        keepAwake: keepAwakeController, systemHUD: systemHUDController,
+                                                        mediaAdvanced: mediaAdvanced)
     private lazy var workspaceServices = WorkspaceServices(
         appLibrary: AppLibraryStore(),
         calendar: CalendarEventsController(),

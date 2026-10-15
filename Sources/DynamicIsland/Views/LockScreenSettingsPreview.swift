@@ -45,8 +45,8 @@ struct LockScreenSettingsPreview: View {
                     }
                     if let media = sample.content.media, let rect = layout.media {
                         place(rect, scale) {
-                            LockScreenNowPlayingCard(media: media, artwork: sample.artwork, progress: { 0.35 },
-                                                     onPrevious: {}, onPlayPause: {}, onNext: {}, onSeek: { _ in })
+                            LockScreenNowPlayingCard(media: media, artwork: sample.artwork, size: preferences.mediaSize,
+                                                     actions: .preview)
                                 .allowsHitTesting(false)
                         }
                         .gesture(mediaDrag(scale: scale))
@@ -74,6 +74,11 @@ struct LockScreenSettingsPreview: View {
             .accessibilityLabel("Lock Screen preview")
 
             Text(sample.caption).font(.caption).foregroundStyle(.secondary)
+            Picker("Player size", selection: binding(\.mediaSize)) {
+                ForEach(LockScreenMediaSize.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 220)
             Picker("Secondary widgets", selection: binding(\.secondaryPlacement)) {
                 ForEach(LockScreenSecondaryPlacement.allCases, id: \.self) { Text($0.title).tag($0) }
             }
@@ -143,11 +148,12 @@ struct LockScreenSettingsPreview: View {
                 let details = preferences.showTrackDetails
                 content.media = .init(title: details ? media.title : "Now Playing", artist: details ? media.artist : "",
                                       artworkRevision: nil, isPlaying: media.isPlaying,
-                                      canSkip: media.isTransportControlAvailable, canSeek: false)
+                                      canSkip: media.isTransportControlAvailable, canSeek: false,
+                                      source: details ? media.sourceName : nil)
                 artwork = details ? media.artworkImage : nil
             } else {
                 content.media = .init(title: "Sample Song", artist: "Sample Artist", artworkRevision: nil,
-                                      isPlaying: true, canSkip: true, canSeek: false)
+                                      isPlaying: true, canSkip: true, canSeek: true, source: "Spotify")
                 samples.append("Now Playing")
             }
         }

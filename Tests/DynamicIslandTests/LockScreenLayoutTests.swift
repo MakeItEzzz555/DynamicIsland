@@ -104,3 +104,82 @@ final class LockScreenLayoutTests: XCTestCase {
         XCTAssertGreaterThan(rep.colorAt(x: Int(10 * scale), y: Int(16 * scale))?.alphaComponent ?? 0, 0.9)
     }
 }
+
+@MainActor
+final class LockScreenPlayerTests: XCTestCase {
+    private final class Signals: LockSignalSource {
+        var handler: (@MainActor (LockSignal) -> Void)?
+        func start(_ handler: @escaping @MainActor (LockSignal) -> Void) { self.handler = handler }
+        func stop() { handler = nil }
+    }
+    private final class Space: LockScreenSpaceProviding {
+        var availability = LockScreenSpaceAvailability.available
+        func prepare() -> Bool { true }
+        func adopt(windowNumber: Int) -> Bool { windowNumber > 0 }
+        func teardown() {}
+    }
+
+    func testPlayerSizeOnlyChangesTheLockScreenCard() throws {
+        let screen = CGRect(x: 0, y: 0, width: 1512, height: 982)
+        var prefs = LockScreenPreferences()
+        let standard = try XCTUnwrap(LockScreenLayout.resolve(screen: screen, notch: nil, preferences: prefs,
+                                                              hasMedia: true, radialCount: 2, hasAlert: false).media)
+        prefs.mediaSize = .large
+        let large = try XCTUnwrap(LockScreenLayout.resolve(screen: screen, notch: nil, preferences: prefs,
+                                                           hasMedia: true, radialCount: 2, hasAlert: false).media)
+        XCTAssertEqual(standard.size, LockScreenMediaSize.standard.cardSize)
+        XCTAssertEqual(large.size, LockScreenMediaSize.large.cardSize)
+        XCTAssertEqual(standard.maxY, large.maxY, "both sizes start under the clock")
+        let decoded = try JSONDecoder().decode(LockScreenPreferences.self, from: Data(#"{"enabled":true}"#.utf8))
+        XCTAssertEqual(decoded.mediaSize, .standard)
+    }
+
+    func testArtworkClickWhileLockedOpensOnlyAfterAConfirmedUnlock() async throws {
+        _ = NSApplication.shared
+        let defaults = UserDefaults(suiteName: "LockScreenPlayerTests.\(UUID())")!
+        let settings = AppSettings(defaults: defaults)
+        settings.openSourceOnArtworkClick = true
+        let signals = Signals(), activities = LiveActivityStore()
+        var opened = 0
+        let coordinator = LockScreenCoordinator(
+            settings: settings, media: MediaController.settingsPreview(), timer: TimerController(),
+            keepAwake: KeepAwakeController(liveActivities: activities, capabilities: IslandCapabilityRegistry()),
+            systemHUD: SystemHUDController(settings: settings, liveActivities: activities),
+            monitor: LockStateMonitor(source: signals), makeSpace: { Space() }, readBattery: { nil },
+            playSound: { _, _ in }, unlockDuration: .milliseconds(10), openMediaSource: { _ in opened += 1; return true })
+        coordinator.start()
+        defer { coordinator.terminate() }
+        var prefs = settings.lockScreenPreferences; prefs.enabled = true; settings.lockScreenPreferences = prefs
+        func send(_ signal: LockSignal) async {
+            signals.handler?(signal)
+            for _ in 0..<10 { await Task.yield() }
+            try? await Task.sleep(for: .milliseconds(80))
+        }
+        try await Task.sleep(for: .milliseconds(80))
+
+        coordinator.requestSourceOpenAfterUnlock()
+        XCTAssertFalse(coordinator.sourceOpenPending, "nothing is queued unless the screen is confirmed locked")
+
+        await send(.screenLocked)
+        XCTAssertNotNil(coordinator.content.media)
+        coordinator.requestSourceOpenAfterUnlock()
+        XCTAssertTrue(coordinator.sourceOpenPending)
+        XCTAssertEqual(opened, 0, "nothing opens over the secure screen")
+        await send(.screenUnlocked)
+        XCTAssertEqual(opened, 1, "opens exactly once after a confirmed unlock")
+        XCTAssertFalse(coordinator.sourceOpenPending)
+
+        await send(.screenLocked)
+        coordinator.requestSourceOpenAfterUnlock()
+        await send(.sessionResigned)
+        await send(.sessionBecameActive)
+        await send(.screenUnlocked)
+        XCTAssertEqual(opened, 1, "user switching cancels the request")
+
+        await send(.screenLocked)
+        coordinator.requestSourceOpenAfterUnlock()
+        coordinator.ageSourceOpenRequest(by: LockScreenCoordinator.sourceOpenTimeout + 1)
+        await send(.screenUnlocked)
+        XCTAssertEqual(opened, 1, "a stale request expires")
+    }
+}

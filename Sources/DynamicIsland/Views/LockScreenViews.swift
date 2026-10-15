@@ -17,9 +17,9 @@ struct LockScreenSurfaceView: View {
                                     showsActivity: coordinator.content.media?.isPlaying == true)
             case .nowPlaying:
                 if let media = coordinator.content.media {
-                    LockScreenNowPlayingCard(media: media, artwork: coordinator.artwork, progress: { coordinator.mediaProgress },
-                                             onPrevious: coordinator.previousTrack, onPlayPause: coordinator.playPause,
-                                             onNext: coordinator.nextTrack, onSeek: coordinator.seek(to:))
+                    LockScreenNowPlayingCard(media: media, artwork: coordinator.artwork,
+                                             size: coordinator.settings.lockScreenPreferences.mediaSize,
+                                             actions: coordinator.mediaActions)
                 }
             case .status:
                 LockScreenRadialRow(items: coordinator.radialItems, onTimerToggle: coordinator.toggleTimer)
@@ -108,63 +108,190 @@ private struct LockScreenCard<Content: View>: View {
 
 // MARK: - Now Playing
 
+/// One control's lock-screen state: enabled only when the backend really
+/// supports it; `help` explains a disabled control.
+struct LockScreenControlState: Equatable {
+    var enabled: Bool
+    var isOn = false
+    var help = ""
+    static let unavailable = LockScreenControlState(enabled: false)
+}
+
+/// Everything the player can do while locked. Pickers (queue, output) are
+/// deliberately absent: they need the unlocked desktop.
+struct LockScreenMediaActions {
+    var previous: () -> Void
+    var playPause: () -> Void
+    var next: () -> Void
+    var seek: (Double) -> Void
+    /// (position, duration) in seconds when the source reports real progress.
+    var timing: () -> (Double, Double)?
+    var favorite: LockScreenControlState
+    var toggleFavorite: () -> Void
+    var mode: LockScreenControlState
+    var modeSymbol: String
+    var cycleMode: () -> Void
+    var volume: () -> Double?
+    var setVolume: (Double) -> Void
+    /// Artwork click; nil when "Open source on artwork click" is off.
+    var openSource: (() -> Void)?
+    var openPending: Bool
+
+    /// Inert actions for the Settings preview: nothing runs, nothing opens.
+    static var preview: LockScreenMediaActions {
+        LockScreenMediaActions(
+            previous: {}, playPause: {}, next: {}, seek: { _ in }, timing: { (64, 214) },
+            favorite: .init(enabled: true, isOn: true), toggleFavorite: {},
+            mode: .init(enabled: true), modeSymbol: "shuffle", cycleMode: {},
+            volume: { 0.6 }, setVolume: { _ in }, openSource: nil, openPending: false)
+    }
+}
+
 struct LockScreenNowPlayingCard: View {
     let media: LockScreenContent.Media
     let artwork: NSImage?
-    let progress: () -> Double
-    let onPrevious: () -> Void
-    let onPlayPause: () -> Void
-    let onNext: () -> Void
-    let onSeek: (Double) -> Void
+    let size: LockScreenMediaSize
+    let actions: LockScreenMediaActions
 
     var body: some View {
-        LockScreenCard {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 12) {
-                    Group {
-                        if let artwork {
-                            Image(nsImage: artwork).resizable().scaledToFill()
-                        } else {
-                            Image(systemName: "music.note").font(.system(size: 22)).frame(maxWidth: .infinity, maxHeight: .infinity)
-                                .background(.white.opacity(0.08))
-                        }
-                    }
-                    .frame(width: 56, height: 56)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(media.title).font(.system(size: 15, weight: .semibold)).lineLimit(1)
-                        if !media.artist.isEmpty {
-                            Text(media.artist).font(.system(size: 13)).foregroundStyle(.white.opacity(0.7)).lineLimit(1)
-                        }
-                    }
-                    Spacer(minLength: 0)
-                }
-                if media.canSeek {
-                    TimelineView(.periodic(from: .now, by: 1)) { _ in
-                        Slider(value: Binding(get: progress, set: onSeek)).controlSize(.mini).tint(.white)
-                            .accessibilityLabel("Playback position")
-                    }
-                }
-                HStack(spacing: 34) {
-                    Spacer()
-                    transport("backward.fill", "Previous track", enabled: media.canSkip, onPrevious)
-                    transport(media.isPlaying ? "pause.fill" : "play.fill", media.isPlaying ? "Pause" : "Play", enabled: true, onPlayPause, size: 22)
-                    transport("forward.fill", "Next track", enabled: media.canSkip, onNext)
-                    Spacer()
-                }
+        LockScreenCard(cornerRadius: size == .large ? 26 : 22) {
+            switch size {
+            case .standard: standard
+            case .large: large
             }
         }
     }
 
-    private func transport(_ symbol: String, _ label: String, enabled: Bool, _ action: @escaping () -> Void, size: CGFloat = 16) -> some View {
+    /// Clone of the desktop Standard player: artwork + text + visualizer,
+    /// scrubber, then the seven-slot control row.
+    private var standard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 12) {
+                artworkButton(side: 56, radius: 12)
+                VStack(alignment: .leading, spacing: 2) {
+                    title(15); artist(13)
+                    if let source = media.source { Text(source).font(.system(size: 11, weight: .medium)).foregroundStyle(.white.opacity(0.55)) }
+                }
+                Spacer(minLength: 4)
+                visualizer
+            }
+            scrubber
+            HStack(spacing: 0) {
+                control("list.bullet", "Queue", .init(enabled: false, help: "Unlock to view the queue"), {})
+                control(actions.favorite.isOn ? "heart.fill" : "heart", "Favorite", actions.favorite, actions.toggleFavorite)
+                control("backward.fill", "Previous track", .init(enabled: media.canSkip), actions.previous)
+                control(media.isPlaying ? "pause.fill" : "play.fill", media.isPlaying ? "Pause" : "Play", .init(enabled: true), actions.playPause, size: 22)
+                control("forward.fill", "Next track", .init(enabled: media.canSkip), actions.next)
+                control(actions.modeSymbol, "Shuffle and repeat", actions.mode, actions.cycleMode)
+                control("airplayaudio", "Output", .init(enabled: false, help: "Unlock to change the output"), {})
+            }
+        }
+    }
+
+    /// Large: artwork-first, centered text, provider row, transport, scrubber, volume.
+    private var large: some View {
+        VStack(spacing: 8) {
+            artworkButton(side: 150, radius: 18)
+            VStack(spacing: 2) {
+                title(17); artist(14)
+            }
+            .multilineTextAlignment(.center)
+            HStack(spacing: 8) {
+                if let source = media.source { Text(source).font(.system(size: 12, weight: .semibold)).foregroundStyle(.white.opacity(0.6)) }
+                visualizer
+            }
+            HStack(spacing: 0) {
+                control(actions.favorite.isOn ? "heart.fill" : "heart", "Favorite", actions.favorite, actions.toggleFavorite)
+                control("backward.fill", "Previous track", .init(enabled: media.canSkip), actions.previous, size: 18)
+                control(media.isPlaying ? "pause.fill" : "play.fill", media.isPlaying ? "Pause" : "Play", .init(enabled: true), actions.playPause, size: 26)
+                control("forward.fill", "Next track", .init(enabled: media.canSkip), actions.next, size: 18)
+                control("airplayaudio", "Output", .init(enabled: false, help: "Unlock to change the output"), {})
+            }
+            scrubber
+            if let volume = actions.volume() {
+                HStack(spacing: 8) {
+                    Image(systemName: "speaker.fill").font(.system(size: 10)).foregroundStyle(.white.opacity(0.6))
+                    Slider(value: Binding(get: { actions.volume() ?? volume }, set: actions.setVolume)).controlSize(.mini).tint(.white)
+                        .accessibilityLabel("Volume")
+                    Image(systemName: "speaker.wave.3.fill").font(.system(size: 10)).foregroundStyle(.white.opacity(0.6))
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func title(_ size: CGFloat) -> some View {
+        Text(media.title).font(.system(size: size, weight: .semibold)).lineLimit(1)
+    }
+
+    @ViewBuilder private func artist(_ size: CGFloat) -> some View {
+        if !media.artist.isEmpty { Text(media.artist).font(.system(size: size)).foregroundStyle(.white.opacity(0.7)).lineLimit(1) }
+    }
+
+    private var visualizer: some View {
+        AudioVisualizerView(isPlaying: media.isPlaying, accentColor: .white, variant: .compact)
+            .accessibilityHidden(true)
+    }
+
+    /// Elapsed - scrubber - remaining; seek only where the source supports it.
+    private var scrubber: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { _ in
+            if let (position, duration) = actions.timing() {
+                HStack(spacing: 8) {
+                    Text(Self.clock(position)).frame(width: 34, alignment: .leading)
+                    Slider(value: Binding(get: { duration > 0 ? position / duration : 0 }, set: actions.seek))
+                        .controlSize(.mini).tint(.white).disabled(!media.canSeek)
+                        .accessibilityLabel("Playback position")
+                    Text("-" + Self.clock(max(duration - position, 0))).frame(width: 38, alignment: .trailing)
+                }
+                .font(.system(size: 10, weight: .medium).monospacedDigit())
+                .foregroundStyle(.white.opacity(0.65))
+            }
+        }
+    }
+
+    private func artworkButton(side: CGFloat, radius: CGFloat) -> some View {
+        let image = Group {
+            if let artwork {
+                Image(nsImage: artwork).resizable().scaledToFill()
+            } else {
+                Image(systemName: "music.note").font(.system(size: side * 0.36)).frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(.white.opacity(0.08))
+            }
+        }
+        .frame(width: side, height: side)
+        .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+        .overlay(alignment: .bottom) {
+            if actions.openPending {
+                Text("Opens after unlock").font(.system(size: 9, weight: .semibold)).padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(.black.opacity(0.6), in: Capsule()).padding(4)
+            }
+        }
+        return Group {
+            if let open = actions.openSource {
+                Button(action: open) { image }.buttonStyle(.plain)
+                    .accessibilityLabel("Open the player after unlocking")
+            } else {
+                image.accessibilityHidden(true)
+            }
+        }
+    }
+
+    private func control(_ symbol: String, _ label: String, _ state: LockScreenControlState,
+                         _ action: @escaping () -> Void, size: CGFloat = 15) -> some View {
         Button(action: action) {
-            Image(systemName: symbol).font(.system(size: size, weight: .semibold)).frame(width: 36, height: 30).contentShape(Rectangle())
+            Image(systemName: symbol).font(.system(size: size, weight: .semibold)).frame(maxWidth: .infinity, minHeight: 30).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(!enabled)
-        .opacity(enabled ? 1 : 0.4)
+        .disabled(!state.enabled)
+        .opacity(state.enabled ? 1 : 0.35)
+        .help(state.help)
         .accessibilityLabel(label)
+        .accessibilityHint(state.enabled ? "" : state.help)
+    }
+
+    static func clock(_ seconds: Double) -> String {
+        Duration.seconds(max(seconds.isFinite ? seconds : 0, 0)).formatted(.time(pattern: .minuteSecond))
     }
 }
 
