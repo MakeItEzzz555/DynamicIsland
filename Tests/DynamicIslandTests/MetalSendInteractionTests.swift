@@ -95,6 +95,103 @@ final class MetalSendInteractionTests: XCTestCase {
         XCTAssertFalse(advancing(), "Detached Send must stop its decorative clock")
     }
 
+    /// Real hosted Send: pointer moves at each edge bend the rim toward that
+    /// edge (y-down SwiftUI hover mapped onto the y-up bend), the silhouette
+    /// visibly changes, and leaving springs the rim back to rest.
+    func testHoverBendsTheRimTowardEachEdgeAndReturnsToRest() async throws {
+        NSApplication.shared.finishLaunching()
+        let id = AgentSessionInstanceID(sessionID: .init(provider: .codex, nativeID: "metal-bend-\(UUID())"), generation: .init(rawValue: 1))
+        let model = AgentMetalModelStore.model(for: id)
+        var config = MetalSendConfiguration()
+        config.glowEnabled = false // measure the outline itself, not the halo
+        let screen = NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 300, height: 300)
+        let window = NSWindow(contentRect: CGRect(x: screen.midX - 50, y: screen.midY - 50, width: 100, height: 100),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.level = .floating
+        defer { window.contentView = nil; window.close() }
+        let host = NSHostingView(rootView: MetalSendButton(configuration: config, isEnabled: true, sessionID: id) {}
+            .frame(width: 100, height: 100)
+            .environment(\.rightWorkspacePageIsActive, true))
+        window.contentView = host
+        window.orderFrontRegardless()
+        host.layoutSubtreeIfNeeded()
+        func advancing() -> Bool {
+            let now = Date().timeIntervalSinceReferenceDate
+            return model.time(now: now + 1) - model.time(now: now) > 0.9
+        }
+        let deadline = ContinuousClock.now + .seconds(3)
+        while !advancing(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
+        guard advancing() else {
+            // Reduce Motion or an invisible host keeps Send still and pointer-free.
+            XCTAssertEqual(model.pointer, .zero)
+            return
+        }
+
+        func move(_ point: CGPoint) {
+            // XCTest windows do not route synthetic moves through tracking areas;
+            // deliver them to the hosting view the way AppKit's tracking area does.
+            host.mouseMoved(with: NSEvent.mouseEvent(with: .mouseMoved, location: point, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                context: nil, eventNumber: 0, clickCount: 0, pressure: 0)!)
+        }
+        func silhouette(rows: Range<Int>) throws -> Int {
+            let rep = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: rep)
+            let scale = CGFloat(rep.pixelsWide) / host.bounds.width // rows/columns are given in points
+            var count = 0
+            for y in Int(CGFloat(rows.lowerBound) * scale)..<Int(CGFloat(rows.upperBound) * scale) {
+                for x in Int(30 * scale)..<Int(70 * scale) where (rep.colorAt(x: x, y: y)?.alphaComponent ?? 0) > 0.5 { count += 1 }
+            }
+            return count
+        }
+        func settle(_ condition: () -> Bool) async throws {
+            let deadline = ContinuousClock.now + .seconds(2)
+            while !condition(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        }
+
+        // Rows just above the 30 pt surface (y-down bitmap rows 30..<35).
+        let restAbove = try silhouette(rows: 30..<35)
+        // AppKit always sends entered before moved.
+        host.mouseEntered(with: NSEvent.mouseEvent(with: .mouseMoved, location: CGPoint(x: 50, y: 50), modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+            context: nil, eventNumber: 0, clickCount: 0, pressure: 0)!)
+        // Window coordinates are y-up; the 34 pt target spans 33...67.
+        let edges: [(name: String, point: CGPoint, outward: CGVector)] = [
+            ("top", CGPoint(x: 50, y: 65.5), CGVector(dx: 0, dy: -1)),
+            ("right", CGPoint(x: 65.5, y: 50), CGVector(dx: 1, dy: 0)),
+            ("bottom", CGPoint(x: 50, y: 34.5), CGVector(dx: 0, dy: 1)),
+            ("left", CGPoint(x: 34.5, y: 50), CGVector(dx: -1, dy: 0))
+        ]
+        for edge in edges {
+            for step in 0..<5 {
+                move(CGPoint(x: edge.point.x + CGFloat(step) * 0.1, y: edge.point.y))
+                try await Task.sleep(for: .milliseconds(30))
+            }
+            try await settle {
+                guard let field = model.bend.field else { return false }
+                return field.dirX * edge.outward.dx + field.dirY * edge.outward.dy > 2.5
+            }
+            let field = try XCTUnwrap(model.bend.field, edge.name)
+            XCTAssertGreaterThan(field.dirX * edge.outward.dx + field.dirY * edge.outward.dy, 2.5,
+                                 "\(edge.name): the rim bulges toward the pointer by more than 2.5 pt")
+            XCTAssertEqual(field.cx + edge.outward.dx * -15, 15, accuracy: 4, "\(edge.name) contact x")
+            XCTAssertEqual(field.cy + edge.outward.dy * -15, 15, accuracy: 4, "\(edge.name) contact y")
+            if edge.name == "top" {
+                XCTAssertGreaterThan(try silhouette(rows: 30..<35), restAbove + 4, "the bent outline is visible above the button")
+            }
+        }
+
+        host.mouseExited(with: NSEvent.mouseEvent(with: .mouseMoved, location: CGPoint(x: 98, y: 98), modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+            context: nil, eventNumber: 0, clickCount: 0, pressure: 0)!)
+        move(CGPoint(x: 98, y: 98))
+        try await settle { model.bend.field == nil }
+        XCTAssertEqual(model.pointer, .zero)
+        XCTAssertNil(model.bend.field, "the rim springs back to rest after the pointer leaves")
+        XCTAssertLessThanOrEqual(try silhouette(rows: 30..<35), restAbove + 1)
+    }
+
     func testVisibleSendTargetClicksIncludingPaddingAndDisabledFallback() async throws {
         var sent = 0
         let window = NSWindow(contentRect: CGRect(x: 40, y: 40, width: 100, height: 100), styleMask: [.borderless], backing: .buffered, defer: false)

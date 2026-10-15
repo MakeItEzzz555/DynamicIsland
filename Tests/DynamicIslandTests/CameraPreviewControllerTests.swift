@@ -451,7 +451,9 @@ final class CameraPreviewControllerTests: XCTestCase {
         let f = makeFixture(authorized: true)
         let nav = navigation(f.controller, timeout: .milliseconds(15))
         nav.reconcile(gesturesEnabled: true, inputSource: .camera); await settle(nav)
-        try await Task.sleep(for: .milliseconds(40))
+        // Wait for the 15 ms watchdog itself; a fixed sleep raced slow CI runners.
+        let deadline = ContinuousClock.now + .seconds(2)
+        while nav.runtimeState != .noFrames, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
         XCTAssertEqual(nav.runtimeState, .noFrames)
         nav.reconcile(gesturesEnabled: true, inputSource: .camera); await settle(nav)
         XCTAssertEqual(f.session.startedDeviceIDs.count, 1)

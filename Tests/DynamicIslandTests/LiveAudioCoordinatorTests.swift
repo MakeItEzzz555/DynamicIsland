@@ -134,7 +134,10 @@ final class LiveAudioCoordinatorTests: XCTestCase {
         settings.liveAudioVisualizerEnabled = true; makeCoordinator()
         coordinator.acquire(UUID()); playing.send(true); await capture()
         controller.suspend() // what the backend reports after an output change
-        await settle(150)
+        // `.starting` already counts as running before the backend's async start
+        // runs, so wait for that start instead of a fixed sleep (slow CI raced it).
+        let deadline = ContinuousClock.now + .seconds(2)
+        while backend.starts < 2, ContinuousClock.now < deadline { await settle(5) }
         XCTAssertTrue(running, "capture resumes on the new output")
         XCTAssertEqual(backend.starts, 2)
         coordinator.setSessionActive(false)

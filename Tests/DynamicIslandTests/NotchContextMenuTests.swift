@@ -196,18 +196,26 @@ final class NotchContextMenuTests: XCTestCase {
             modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: panel.windowNumber,
             context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53))
         var escapePosted = false, fallbackUsed = false
-        let keyTimer = Timer(timeInterval: 0.05, repeats: false) { _ in
+        CameraNativeHostedFixture.pump()
+        let active = NSApp.isActive
+        // Timers count from creation, so create them right before the popup, and
+        // repeat Escape while the menu tracks: a single early Escape could arrive
+        // before the menu accepts keys. AppKit itself takes ~0.3 s to dismiss
+        // (measured locally), so the safety bound only has to stop a hang; it
+        // never satisfies the assertion below.
+        let keyTimer = Timer(timeInterval: 0.05, repeats: true) { _ in
             MainActor.assumeIsolated { escapePosted = true; NSApp.postEvent(escape, atStart: true) }
         }
-        let safetyTimer = Timer(timeInterval: 0.5, repeats: false) { _ in
+        let safetyTimer = Timer(timeInterval: 2, repeats: false) { _ in
             MainActor.assumeIsolated { fallbackUsed = true; menu.cancelTracking() }
         }
         RunLoop.main.add(keyTimer, forMode: .eventTracking)
         RunLoop.main.add(safetyTimer, forMode: .eventTracking)
         defer { keyTimer.invalidate(); safetyTimer.invalidate() }
-        CameraNativeHostedFixture.pump()
-        let active = NSApp.isActive
         NSMenu.popUpContextMenu(menu, with: try event(panel, point: CGPoint(x: 170, y: 4)), for: background)
+        keyTimer.invalidate()
+        // Drop any Escape posted in the menu's last tracking tick.
+        while NSApp.nextEvent(matching: .keyDown, until: .distantPast, inMode: .default, dequeue: true) != nil {}
         XCTAssertGreaterThan(began, 0)
         XCTAssertEqual(began, ended)
         XCTAssertTrue(escapePosted)
