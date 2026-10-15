@@ -24,9 +24,9 @@ private final class FakeGainHardware: ApplicationGainHardware, @unchecked Sendab
     private func id() -> AudioObjectID { lock.withLock { nextID += 1; return nextID } }
 
     func defaultOutputRoute() throws -> ApplicationGainRoute { route }
-    func createTap(process: AudioObjectID) throws -> AudioObjectID {
+    func createTap(processes: [AudioObjectID], route: ApplicationGainRoute) throws -> AudioObjectID {
         if let tapError { throw tapError }
-        let tap = id(); log("tap \(process)→\(route.uid)"); return tap
+        let tap = id(); log("tap \(processes)→\(route.uid)"); return tap
     }
     func format(tap: AudioObjectID) throws -> AudioStreamBasicDescription { format }
     func createAggregate(tap: AudioObjectID, route: ApplicationGainRoute) throws -> AudioObjectID {
@@ -124,6 +124,34 @@ final class ApplicationGainRendererTests: XCTestCase {
         XCTAssertEqual(quad.sample(buffer: 0, frame: 3, channel: 3), 0)
     }
 
+    func testASixChannelStreamTapIsCopiedChannelForChannelAtItsTrueLevel() {
+        let tap = Buffers(frames: 8, channelsPerBuffer: [6]) { _, _, channel in Float(channel + 1) / 10 }
+        let renderer = ApplicationGainRenderer(gain: 1, tapChannels: 6, tapInterleaved: true)
+        let output = Buffers(frames: 8, channelsPerBuffer: [6]) { _, _, _ in 9 }
+        renderer.render(input: tap.list.unsafePointer, output: output.list.unsafeMutablePointer)
+        for channel in 0..<6 { XCTAssertEqual(output.sample(buffer: 0, frame: 2, channel: channel), Float(channel + 1) / 10, accuracy: 1e-6) }
+        renderer.setTarget(0.5)
+        renderer.render(input: tap.list.unsafePointer, output: output.list.unsafeMutablePointer)
+        renderer.render(input: tap.list.unsafePointer, output: output.list.unsafeMutablePointer)
+        XCTAssertEqual(output.sample(buffer: 0, frame: 2, channel: 5), 0.3, accuracy: 1e-6)
+    }
+
+    func testTheTapIsTheTrailingInputWhenTheRouteHasItsOwnInput() {
+        let loopback = Buffers(frames: 16, channelsPerBuffer: [6, 2]) { buffer, _, channel in buffer == 0 ? 0.9 : (channel == 0 ? 0.4 : -0.2) }
+        let renderer = ApplicationGainRenderer(gain: 1, tapChannels: 2, tapInterleaved: true)
+        let output = Buffers(frames: 16, channelsPerBuffer: [6]) { _, _, _ in 7 }
+        renderer.render(input: loopback.list.unsafePointer, output: output.list.unsafeMutablePointer)
+        XCTAssertEqual(output.sample(buffer: 0, frame: 3, channel: 0), 0.4, "the device's own input is not mistaken for the app")
+        XCTAssertEqual(output.sample(buffer: 0, frame: 3, channel: 1), -0.2)
+        XCTAssertEqual(output.sample(buffer: 0, frame: 3, channel: 2), 0)
+
+        let planar = Buffers(frames: 16, channelsPerBuffer: [6, 1, 1]) { buffer, _, _ in buffer == 0 ? 0.9 : (buffer == 1 ? 0.4 : 0.2) }
+        let planarRenderer = ApplicationGainRenderer(gain: 1, tapChannels: 2, tapInterleaved: false)
+        planarRenderer.render(input: planar.list.unsafePointer, output: output.list.unsafeMutablePointer)
+        XCTAssertEqual(output.sample(buffer: 0, frame: 3, channel: 0), 0.4)
+        XCTAssertEqual(output.sample(buffer: 0, frame: 3, channel: 1), 0.2)
+    }
+
     func testShortTapIsZeroFilledInsteadOfReadingPastItsEnd() {
         let renderer = ApplicationGainRenderer(gain: 1, tapChannels: 2, tapInterleaved: true)
         let input = stereoTap(frames: 8), output = Buffers(frames: 16, channelsPerBuffer: [2]) { _, _, _ in 9 }
@@ -138,73 +166,127 @@ final class ApplicationGainEngineTests: XCTestCase {
     func testOnlyAttenuatedAppsAreTappedAndUnityReleasesInSafeOrder() async throws {
         let hardware = FakeGainHardware()
         let engine = ApplicationGainEngine(hardware: hardware, watchdogInterval: .seconds(60))
-        try await engine.setGain(1, process: 7)
+        try await engine.setGain(1, application: "app", processes: [7])
         XCTAssertTrue(hardware.calls.isEmpty, "unity never taps an app")
 
-        try await engine.setGain(0.3, process: 7)
-        XCTAssertEqual(hardware.calls, ["tap 7→speakers", "aggregate", "ioproc", "start"])
-        try await engine.setGain(0.5, process: 7)
+        try await engine.setGain(0.3, application: "app", processes: [7])
+        XCTAssertEqual(hardware.calls, ["tap [7]→speakers", "aggregate", "ioproc", "start"])
+        try await engine.setGain(0.5, application: "app", processes: [7])
         XCTAssertEqual(hardware.calls.count, 4, "a level change reuses the session")
-        let activeAfterChange = await engine.activeProcesses
-        XCTAssertEqual(activeAfterChange, [7])
+        let activeAfterChange = await engine.activeApplications
+        XCTAssertEqual(activeAfterChange, ["app"])
 
-        try await engine.setGain(1, process: 7)
+        try await engine.setGain(1, application: "app", processes: [7])
         XCTAssertEqual(Array(hardware.calls.suffix(4)), ["stop", "destroyIOProc", "destroyAggregate", "destroyTap"])
-        let active = await engine.activeProcesses
+        let active = await engine.activeApplications
         XCTAssertTrue(active.isEmpty)
     }
 
     func testAppsAreIndependent() async throws {
         let hardware = FakeGainHardware()
         let engine = ApplicationGainEngine(hardware: hardware, watchdogInterval: .seconds(60))
-        try await engine.setGain(0.3, process: 1)
-        try await engine.setGain(0, process: 2)
-        try await engine.setGain(1, process: 1)
-        let active = await engine.activeProcesses
-        XCTAssertEqual(active, [2], "releasing one app leaves the other routed")
+        try await engine.setGain(0.3, application: "one", processes: [1])
+        try await engine.setGain(0, application: "two", processes: [2])
+        try await engine.setGain(1, application: "one", processes: [1])
+        let active = await engine.activeApplications
+        XCTAssertEqual(active, ["two"], "releasing one app leaves the other routed")
     }
 
-    func testRoutesWithAMicrophoneAreDeclinedBeforeAnyTap() async {
+    func testAllOfAnAppsProcessesShareOneTapAndOneGain() async throws {
+        let hardware = FakeGainHardware()
+        let engine = ApplicationGainEngine(hardware: hardware, watchdogInterval: .seconds(60))
+        try await engine.setGain(0.3, application: "discord", processes: [9, 7, 8])
+        XCTAssertEqual(hardware.calls, ["tap [7, 8, 9]→speakers", "aggregate", "ioproc", "start"], "one session taps the main app and its helpers")
+        let tapped = await engine.tappedProcesses(of: "discord")
+        XCTAssertEqual(tapped, [7, 8, 9])
+        try await engine.setGain(0.4, application: "discord", processes: [7, 8, 9])
+        XCTAssertEqual(hardware.calls.count, 4, "the same process set, in any order, keeps the session")
+        try await engine.setGain(0.4, application: "discord", processes: [])
+        let active = await engine.activeApplications
+        XCTAssertTrue(active.isEmpty, "an app with no audio processes left is released")
+    }
+
+    func testAHelperJoiningRebuildsTheSessionMakeBeforeBreak() async throws {
+        let hardware = FakeGainHardware()
+        let engine = ApplicationGainEngine(hardware: hardware, watchdogInterval: .seconds(60))
+        try await engine.setGain(0.3, application: "app", processes: [7])
+        let old = try XCTUnwrap(hardware.lastRenderer)
+        try await engine.setGain(0.3, application: "app", processes: [7, 8])
+        XCTAssertEqual(hardware.calls, [
+            "tap [7]→speakers", "aggregate", "ioproc", "start",
+            "tap [7, 8]→speakers", "aggregate", "ioproc", "start",   // the new tap mutes the same app before the old one stops
+            "stop", "destroyIOProc", "destroyAggregate", "destroyTap"])
+        let tapped = await engine.tappedProcesses(of: "app")
+        XCTAssertEqual(tapped, [7, 8])
+        let input = Buffers(frames: 8, channelsPerBuffer: [2]) { _, _, _ in 1 }, output = Buffers(frames: 8, channelsPerBuffer: [2])
+        old.render(input: input.list.unsafePointer, output: output.list.unsafeMutablePointer)
+        old.render(input: input.list.unsafePointer, output: output.list.unsafeMutablePointer)
+        XCTAssertEqual(output.sample(buffer: 0, frame: 0, channel: 0), 0, "the replaced replay is silenced, so nothing is doubled")
+        let active = await engine.activeApplications
+        XCTAssertEqual(active, ["app"])
+    }
+
+    func testAFailedRebuildKeepsTheWorkingSessionAtItsLevel() async throws {
+        let hardware = FakeGainHardware()
+        let engine = ApplicationGainEngine(hardware: hardware, watchdogInterval: .seconds(60))
+        try await engine.setGain(0.3, application: "app", processes: [7])
+        let old = try XCTUnwrap(hardware.lastRenderer)
+        hardware.startError = NativeAudioError.operationFailed(.startDevice, -1)
+        await XCTAssertThrowsAsync(try await engine.setGain(0.3, application: "app", processes: [7, 8]))
+        let tapped = await engine.tappedProcesses(of: "app")
+        XCTAssertEqual(tapped, [7], "the old session still owns the app")
+        let input = Buffers(frames: 8, channelsPerBuffer: [2]) { _, _, _ in 1 }, output = Buffers(frames: 8, channelsPerBuffer: [2])
+        old.render(input: input.list.unsafePointer, output: output.list.unsafeMutablePointer)
+        old.render(input: input.list.unsafePointer, output: output.list.unsafeMutablePointer)
+        XCTAssertEqual(output.sample(buffer: 0, frame: 0, channel: 0), 0.3, accuracy: 1e-6, "its replay was restored")
+    }
+
+    func testRoutesWithAMicrophoneAreDeclinedButLoopbackDevicesAreNot() async throws {
         let hardware = FakeGainHardware()
         hardware.route = .init(uid: "airpods", hasInputStreams: true)
         let engine = ApplicationGainEngine(hardware: hardware, watchdogInterval: .seconds(60))
-        await XCTAssertThrowsAsync(try await engine.setGain(0.3, process: 7)) {
+        await XCTAssertThrowsAsync(try await engine.setGain(0.3, application: "app", processes: [7])) {
             XCTAssertEqual($0 as? ApplicationGainError, .routeHasInput)
         }
         XCTAssertTrue(hardware.calls.isEmpty)
+
+        hardware.route = .init(uid: "BoomAudio", hasInputStreams: true, isVirtual: true)
+        try await engine.setGain(0.3, application: "app", processes: [7])
+        XCTAssertEqual(hardware.calls.first, "tap [7]→BoomAudio", "a virtual output with a loopback input is routable")
+        try await engine.releaseAll()
     }
 
     func testFailuresTearDownEverythingTheyCreated() async {
         let hardware = FakeGainHardware()
         hardware.startError = NativeAudioError.operationFailed(.startDevice, -1)
         let engine = ApplicationGainEngine(hardware: hardware, watchdogInterval: .seconds(60))
-        await XCTAssertThrowsAsync(try await engine.setGain(0.3, process: 7))
-        XCTAssertEqual(hardware.calls, ["tap 7→speakers", "aggregate", "ioproc", "destroyIOProc", "destroyAggregate", "destroyTap"])
+        await XCTAssertThrowsAsync(try await engine.setGain(0.3, application: "app", processes: [7]))
+        XCTAssertEqual(hardware.calls, ["tap [7]→speakers", "aggregate", "ioproc", "destroyIOProc", "destroyAggregate", "destroyTap"])
 
         let unsupported = FakeGainHardware()
-        unsupported.format.mChannelsPerFrame = 6
+        unsupported.format.mChannelsPerFrame = 40
         let other = ApplicationGainEngine(hardware: unsupported, watchdogInterval: .seconds(60))
-        await XCTAssertThrowsAsync(try await other.setGain(0.3, process: 7)) {
+        await XCTAssertThrowsAsync(try await other.setGain(0.3, application: "app", processes: [7])) {
             XCTAssertEqual($0 as? ApplicationGainError, .unsupportedFormat)
         }
-        XCTAssertEqual(unsupported.calls, ["tap 7→speakers", "destroyTap"])
+        XCTAssertEqual(unsupported.calls, ["tap [7]→speakers", "destroyTap"])
 
         let denied = FakeGainHardware()
         denied.tapError = NativeAudioError.permissionDenied
         let third = ApplicationGainEngine(hardware: denied, watchdogInterval: .seconds(60))
-        await XCTAssertThrowsAsync(try await third.setGain(0.3, process: 7)) {
+        await XCTAssertThrowsAsync(try await third.setGain(0.3, application: "app", processes: [7])) {
             XCTAssertEqual($0 as? NativeAudioError, .permissionDenied)
         }
-        let active = await third.activeProcesses
+        let active = await third.activeApplications
         XCTAssertTrue(active.isEmpty)
     }
 
     func testFailedTapDestroyIsRetainedAndRetriedByReleaseAll() async throws {
         let hardware = FakeGainHardware()
         let engine = ApplicationGainEngine(hardware: hardware, watchdogInterval: .seconds(60))
-        try await engine.setGain(0.3, process: 7)
+        try await engine.setGain(0.3, application: "app", processes: [7])
         hardware.destroyTapStatus = -50
-        await XCTAssertThrowsAsync(try await engine.setGain(1, process: 7))
+        await XCTAssertThrowsAsync(try await engine.setGain(1, application: "app", processes: [7]))
         await XCTAssertThrowsAsync(try await engine.releaseAll())
         hardware.destroyTapStatus = noErr
         try await engine.releaseAll()
@@ -214,31 +296,31 @@ final class ApplicationGainEngineTests: XCTestCase {
 
     func testStalledRenderingReturnsTheAppToDirectOutput() async throws {
         let hardware = FakeGainHardware()
-        let stalled = LockedBox<[AudioObjectID]>([])
-        let engine = ApplicationGainEngine(hardware: hardware, watchdogInterval: .seconds(60)) { process in stalled.mutate { $0.append(process) } }
-        try await engine.setGain(0.3, process: 7)
+        let stalled = LockedBox<[String]>([])
+        let engine = ApplicationGainEngine(hardware: hardware, watchdogInterval: .seconds(60)) { key in stalled.mutate { $0.append(key) } }
+        try await engine.setGain(0.3, application: "app", processes: [7])
         let renderer = try XCTUnwrap(hardware.lastRenderer)
         let input = Buffers(frames: 8, channelsPerBuffer: [2]), output = Buffers(frames: 8, channelsPerBuffer: [2])
         renderer.render(input: input.list.unsafePointer, output: output.list.unsafeMutablePointer)
         await engine.checkStalls()
-        let stillActive = await engine.activeProcesses
-        XCTAssertEqual(stillActive, [7], "an advancing IOProc is healthy")
+        let stillActive = await engine.activeApplications
+        XCTAssertEqual(stillActive, ["app"], "an advancing IOProc is healthy")
         await engine.checkStalls()
-        let active = await engine.activeProcesses
+        let active = await engine.activeApplications
         XCTAssertTrue(active.isEmpty, "no render cycles since the last check releases the app")
-        XCTAssertEqual(stalled.value, [7])
+        XCTAssertEqual(stalled.value, ["app"])
         XCTAssertEqual(hardware.calls.last, "destroyTap")
     }
 
     func testASlowStartingOutputGetsAGracePeriodBeforeItCountsAsStalled() async throws {
         let hardware = FakeGainHardware()
         let engine = ApplicationGainEngine(hardware: hardware, watchdogInterval: .seconds(60))
-        try await engine.setGain(0.3, process: 7)
+        try await engine.setGain(0.3, application: "app", processes: [7])
         for _ in 0..<3 { await engine.checkStalls() }
-        let waiting = await engine.activeProcesses
-        XCTAssertEqual(waiting, [7], "no render yet: still within the start grace")
+        let waiting = await engine.activeApplications
+        XCTAssertEqual(waiting, ["app"], "no render yet: still within the start grace")
         await engine.checkStalls()
-        let released = await engine.activeProcesses
+        let released = await engine.activeApplications
         XCTAssertTrue(released.isEmpty, "IO that never starts is released")
     }
 }
@@ -251,9 +333,15 @@ final class ApplicationVolumeProviderTests: XCTestCase {
         defaults = UserDefaults(suiteName: "ApplicationVolumeProviderTests.\(UUID().uuidString)")
     }
 
-    private func provider(_ hardware: FakeGainHardware, processes: LockedBox<[ApplicationAudioProcess]>) -> ApplicationAudioDiscovery {
+    private func provider(_ hardware: FakeGainHardware, processes: LockedBox<[ApplicationAudioProcess]>,
+                          owners: @escaping @MainActor ([ApplicationAudioProcess]) -> [UInt32: ApplicationAudioOwner] = { _ in [:] }) -> ApplicationAudioDiscovery {
         ApplicationAudioDiscovery(engine: ApplicationGainEngine(hardware: hardware, watchdogInterval: .seconds(60)),
-                                  defaults: defaults, readProcesses: { processes.value })
+                                  defaults: defaults, readProcesses: { processes.value }, resolveOwners: owners)
+    }
+
+    private static let discord = ApplicationAudioOwner(bundleIdentifier: "com.hnc.Discord", name: "Discord", url: nil)
+    private static func discordOwners(_ processes: [ApplicationAudioProcess]) -> [UInt32: ApplicationAudioOwner] {
+        Dictionary(uniqueKeysWithValues: processes.filter { $0.bundleIdentifier?.hasPrefix("com.hnc.Discord") == true }.map { ($0.objectID, discord) })
     }
 
     private func level(of renderer: ApplicationGainRenderer?) throws -> Float {
@@ -277,7 +365,7 @@ final class ApplicationVolumeProviderTests: XCTestCase {
 
         let result = await discovery.requestGain(0.3, application: spotify.identity)
         XCTAssertEqual(result, .verified(volume: 0.3, muted: false))
-        XCTAssertEqual(hardware.calls.first, "tap 11→speakers", "only Spotify is tapped")
+        XCTAssertEqual(hardware.calls.first, "tap [11]→speakers", "only Spotify is tapped")
         XCTAssertEqual(try level(of: hardware.lastRenderer), 0.09, accuracy: 1e-6, "30% → 0.09 amplitude reaches the output buffer")
         XCTAssertEqual(discovery.outputs.first { $0.bundleIdentifier == "com.spotify.client" }?.gain, 0.3)
         XCTAssertEqual(discovery.outputs.first { $0.bundleIdentifier == "com.apple.Music" }?.gain, 1)
@@ -320,7 +408,7 @@ final class ApplicationVolumeProviderTests: XCTestCase {
         processes.mutate { $0 = [ApplicationAudioProcess(objectID: 21, pid: 4100, bundleIdentifier: "com.spotify.client", outputIORunning: false)] }
         let relaunched = provider(hardware, processes: processes)
         await relaunched.setGainEnabled(true)
-        XCTAssertEqual(hardware.calls.filter { $0 == "tap 21→speakers" }.count, 1, "the saved level is applied before it plays")
+        XCTAssertEqual(hardware.calls.filter { $0 == "tap [21]→speakers" }.count, 1, "the saved level is applied before it plays")
         XCTAssertEqual(relaunched.outputs.first?.gain, 0.5, "an attenuated paused app keeps its row")
         XCTAssertEqual(try level(of: hardware.lastRenderer), 0.25, accuracy: 1e-6)
 
@@ -328,6 +416,58 @@ final class ApplicationVolumeProviderTests: XCTestCase {
         try await relaunched.refresh()
         XCTAssertEqual(hardware.calls.last, "destroyTap", "an exited app's session is released")
         await relaunched.disableRouting()
+    }
+
+    func testHelperProcessesAreOneRowTappedTogetherAndTheTapFollowsThem() async throws {
+        let hardware = FakeGainHardware()
+        let main = ApplicationAudioProcess(objectID: 31, pid: 5001, bundleIdentifier: "com.hnc.Discord", outputIORunning: false)
+        let renderer = ApplicationAudioProcess(objectID: 32, pid: 5002, bundleIdentifier: "com.hnc.Discord.helper.Renderer", outputIORunning: true)
+        let helper = ApplicationAudioProcess(objectID: 33, pid: 5003, bundleIdentifier: "com.hnc.Discord.helper", outputIORunning: false)
+        let other = ApplicationAudioProcess(objectID: 40, pid: 5100, bundleIdentifier: "com.spotify.client", outputIORunning: true)
+        let processes = LockedBox([main, renderer, helper, other])
+        let discovery = provider(hardware, processes: processes, owners: Self.discordOwners)
+        await discovery.setGainEnabled(true)
+
+        XCTAssertEqual(discovery.outputs.map(\.name).sorted(), ["Discord", "com.spotify.client"], "one row per application, not per process")
+        let discord = try XCTUnwrap(discovery.outputs.first { $0.bundleIdentifier == "com.hnc.Discord" })
+        XCTAssertEqual(discord.identity.processObjectIDs, [31, 32, 33])
+        XCTAssertEqual(discord.identity.pid, 5002, "the process that actually plays leads the group")
+
+        let result = await discovery.requestGain(0.5, application: discord.identity)
+        XCTAssertEqual(result, .verified(volume: 0.5, muted: false))
+        XCTAssertEqual(hardware.calls.first, "tap [31, 32, 33]→speakers", "the idle main process and helpers are tapped with the playing renderer")
+        XCTAssertEqual(try level(of: hardware.lastRenderer), 0.25, accuracy: 1e-6)
+        XCTAssertEqual(defaults.dictionary(forKey: ApplicationAudioDiscovery.levelsKey)?["com.hnc.Discord"] as? Double, 0.5, "saved per application, not per helper")
+        XCTAssertEqual(discovery.outputs.first { $0.bundleIdentifier == "com.spotify.client" }?.gain, 1)
+
+        // A new helper process appears: the session is rebuilt to include it.
+        processes.mutate { $0.append(ApplicationAudioProcess(objectID: 34, pid: 5004, bundleIdentifier: "com.hnc.Discord.helper", outputIORunning: true)) }
+        try await discovery.refresh()
+        XCTAssertEqual(hardware.calls.filter { $0.hasPrefix("tap") }, ["tap [31, 32, 33]→speakers", "tap [31, 32, 33, 34]→speakers"])
+        XCTAssertEqual(try level(of: hardware.lastRenderer), 0.25, accuracy: 1e-6, "the saved level carries over")
+
+        // A helper exits.
+        processes.mutate { $0.removeAll { $0.objectID == 33 } }
+        try await discovery.refresh()
+        XCTAssertEqual(hardware.calls.filter { $0.hasPrefix("tap") }.last, "tap [31, 32, 34]→speakers")
+
+        // Back to 100% releases the whole application.
+        let current = try XCTUnwrap(discovery.outputs.first { $0.bundleIdentifier == "com.hnc.Discord" })
+        _ = await discovery.requestGain(1, application: current.identity)
+        XCTAssertEqual(hardware.calls.last, "destroyTap")
+        XCTAssertNil(defaults.dictionary(forKey: ApplicationAudioDiscovery.levelsKey)?["com.hnc.Discord"])
+        await discovery.disableRouting()
+    }
+
+    func testStandaloneProcessesSharingABundleIDStaySeparateRows() async throws {
+        let hardware = FakeGainHardware()
+        let processes = LockedBox([ApplicationAudioProcess(objectID: 51, pid: 6001, bundleIdentifier: "com.apple.WebKit.GPU", outputIORunning: true),
+                                   ApplicationAudioProcess(objectID: 52, pid: 6002, bundleIdentifier: "com.apple.WebKit.GPU", outputIORunning: true),
+                                   ApplicationAudioProcess(objectID: 53, pid: 6003, bundleIdentifier: nil, outputIORunning: true)])
+        let discovery = provider(hardware, processes: processes)
+        await discovery.setGainEnabled(true)
+        XCTAssertEqual(discovery.outputs.count, 3, "two WebKit services of different client apps are never merged")
+        await discovery.disableRouting()
     }
 
     func testDisabledOrUnsupportedRoutesNeverClaimControl() async throws {
@@ -349,6 +489,98 @@ final class ApplicationVolumeProviderTests: XCTestCase {
         await discovery.disableRouting()
     }
 
+    /// Renders the real widget (and a pill gallery) to PNGs for visual inspection when
+    /// `DYNAMIC_ISLAND_SNAPSHOT_DIR` is set; always asserts the pills draw something.
+    func testPillWidgetRendersAtEverySizeWithSeveralRows() async throws {
+        let hardware = FakeGainHardware()
+        func owner(_ id: String, _ name: String, _ path: String) -> ApplicationAudioOwner {
+            ApplicationAudioOwner(bundleIdentifier: id, name: name, url: URL(fileURLWithPath: path))
+        }
+        let owners: [UInt32: ApplicationAudioOwner] = [
+            1: owner("com.spotify.client", "Spotify", "/Applications/Spotify.app"),
+            2: owner("com.hnc.Discord", "Discord", "/Applications/Discord.app"),
+            3: owner("com.brave.Browser", "Brave Browser", "/Applications/Brave Browser.app"),
+            4: owner("com.apple.Safari", "Safari", "/Applications/Safari.app"),
+            5: owner("x.long", "An Application With A Remarkably Long Name", "/Applications/Xcode.app")]
+        let saved: [String: Double] = ["com.spotify.client": 0.7, "com.hnc.Discord": 0.3, "com.apple.Safari": 0.0, "x.long": 0.45]
+        defaults.set(saved, forKey: ApplicationAudioDiscovery.levelsKey)
+        var list: [ApplicationAudioProcess] = []
+        for id in 1...5 {
+            let process = ApplicationAudioProcess(objectID: UInt32(id), pid: Int32(7000 + id), bundleIdentifier: owners[UInt32(id)]?.bundleIdentifier, outputIORunning: id != 4)
+            list.append(process)
+        }
+        let processes = LockedBox(list)
+        let discovery = provider(hardware, processes: processes, owners: { _ in owners })
+        await discovery.setGainEnabled(true)
+        let settings = AppSettings(defaults: defaults)
+        settings.perAppVolumeEnabled = true
+        let directory = ProcessInfo.processInfo.environment["DYNAMIC_ISLAND_SNAPSHOT_DIR"].map { URL(fileURLWithPath: $0) }
+        let canvases: [(WidgetPresentationSize, CGSize)] = [(.standard, CGSize(width: 332, height: 162)), (.large, CGSize(width: 332, height: 332)), (.compact, CGSize(width: 162, height: 162))]
+        for (size, canvas) in canvases {
+            let view = AppVolumeWidgetView(discovery: discovery, settings: settings, systemHUD: nil)
+                .environment(\.workspaceWidgetPlacement, WorkspaceWidgetPlacementContext(isSole: true, size: canvas, fillsRow: true, presentationSize: size))
+            let data = try await Self.png(view, size: canvas)
+            XCTAssertGreaterThan(data.count, 2000)
+            try directory.map { try data.write(to: $0.appendingPathComponent("app-volume-\(size.rawValue).png")) }
+        }
+        struct Row: Identifiable { let id: String; let level: Double; let style: AppVolumePill.Style; let enabled: Bool }
+        // Footer states in the tightest size: a declined route (issue text) and the feature switched off.
+        let declined = FakeGainHardware()
+        declined.route = .init(uid: "airpods", hasInputStreams: true)
+        let issueDiscovery = provider(declined, processes: processes, owners: { _ in owners })
+        await issueDiscovery.setGainEnabled(true)
+        _ = await issueDiscovery.requestGain(0.5, application: try XCTUnwrap(issueDiscovery.outputs.first { $0.bundleIdentifier == "com.spotify.client" }).identity)
+        XCTAssertNotNil(issueDiscovery.routingIssue)
+        let offSettings = AppSettings(defaults: UserDefaults(suiteName: "ApplicationVolumeProviderTests.off.\(UUID().uuidString)")!)
+        let standardCanvas = CGSize(width: 332, height: 162)
+        for (name, view) in [("issue", AnyView(AppVolumeWidgetView(discovery: issueDiscovery, settings: settings, systemHUD: nil))),
+                             ("off", AnyView(AppVolumeWidgetView(discovery: ApplicationAudioDiscovery(engine: ApplicationGainEngine(hardware: FakeGainHardware()), defaults: defaults, readProcesses: { processes.value }, resolveOwners: { _ in owners }), settings: offSettings, systemHUD: nil)))] {
+            let placed = view.environment(\.workspaceWidgetPlacement, WorkspaceWidgetPlacementContext(isSole: true, size: standardCanvas, fillsRow: true, presentationSize: .standard))
+            let data = try await Self.png(placed, size: standardCanvas)
+            try directory.map { try data.write(to: $0.appendingPathComponent("app-volume-standard-\(name).png")) }
+        }
+        await issueDiscovery.disableRouting()
+        let galleryRows: [Row] = [Row(id: "Spotify", level: 0, style: .app, enabled: true), Row(id: "Discord", level: 0.3, style: .app, enabled: true),
+            Row(id: "Brave Browser", level: 0.7, style: .app, enabled: true), Row(id: "Safari", level: 1, style: .app, enabled: true),
+            Row(id: "An Application With A Remarkably Long Name", level: 0.45, style: .app, enabled: true),
+            Row(id: "System", level: 0.6, style: .system, enabled: true), Row(id: "Disabled", level: 0.5, style: .app, enabled: false)]
+        let gallery = VStack(spacing: 6) {
+            ForEach(galleryRows) { row in
+                AppVolumePill(name: row.id, icon: AnyView(Image(systemName: "app.fill").frame(width: 22, height: 22)), level: row.level,
+                              enabled: row.enabled, style: row.style, height: 30, onChange: { _ in }, onMute: {})
+            }
+        }.padding(12).foregroundStyle(.white)
+        let galleryData = try await Self.png(gallery, size: CGSize(width: 332, height: 300))
+        try directory.map { try galleryData.write(to: $0.appendingPathComponent("app-volume-pill-gallery.png")) }
+        await discovery.disableRouting()
+    }
+
+    func testPillPointerMappingSnapsToTheEnds() {
+        XCTAssertEqual(AppVolumePill.level(atX: -20, width: 200), 0)
+        XCTAssertEqual(AppVolumePill.level(atX: 2, width: 200), 0, "the first 1.5% is 0%")
+        XCTAssertEqual(AppVolumePill.level(atX: 100, width: 200), 0.5)
+        XCTAssertEqual(AppVolumePill.level(atX: 199, width: 200), 1)
+        XCTAssertEqual(AppVolumePill.level(atX: 500, width: 200), 1)
+    }
+
+    private static func png<Content: View>(_ content: Content, size: CGSize) async throws -> Data {
+        _ = NSApplication.shared
+        let host = NSHostingView(rootView: content.frame(width: size.width, height: size.height).background(Color.black).environment(\.colorScheme, .dark))
+        host.frame = CGRect(origin: .zero, size: size)
+        let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        defer { window.contentView = nil; window.close() }
+        for _ in 0..<12 {
+            await Task.yield()
+            try await Task.sleep(for: .milliseconds(3))
+            host.layoutSubtreeIfNeeded()
+        }
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        return try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+    }
+
     func testWidgetMountReadsButNeverRoutes() async throws {
         let hardware = FakeGainHardware()
         let processes = LockedBox([ApplicationAudioProcess(objectID: 11, pid: 4001, bundleIdentifier: "com.spotify.client", outputIORunning: true)])
@@ -363,6 +595,45 @@ final class ApplicationVolumeProviderTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(100))
         XCTAssertTrue(hardware.calls.isEmpty)
         XCTAssertFalse(settings.perAppVolumeEnabled)
+    }
+}
+
+final class ApplicationAudioOwnershipTests: XCTestCase {
+    private typealias Ownership = ApplicationAudioOwnership
+    private let discord = Ownership.RunningApp(bundleIdentifier: "com.hnc.Discord", name: "Discord", url: URL(fileURLWithPath: "/Applications/Discord.app"), isRegular: true)
+    private let safari = Ownership.RunningApp(bundleIdentifier: "com.apple.Safari", name: "Safari", url: URL(fileURLWithPath: "/Applications/Safari.app"), isRegular: true)
+    private func process(_ bundle: String?, path: String? = nil) -> ApplicationAudioProcess {
+        .init(objectID: 1, pid: 1, bundleIdentifier: bundle, outputIORunning: true, executablePath: path)
+    }
+
+    func testHelperExecutablePathsResolveToTheOutermostApp() {
+        XCTAssertEqual(Ownership.outerApplicationURL(executablePath: "/Applications/Discord.app/Contents/Frameworks/Discord Helper (Renderer).app/Contents/MacOS/Discord Helper (Renderer)")?.path,
+                       "/Applications/Discord.app")
+        XCTAssertEqual(Ownership.outerApplicationURL(executablePath: "/Applications/Brave Browser.app/Contents/Frameworks/Brave Browser Framework.framework/Versions/155/Helpers/Brave Browser Helper.app/Contents/MacOS/Brave Browser Helper")?.path,
+                       "/Applications/Brave Browser.app")
+        XCTAssertNil(Ownership.outerApplicationURL(executablePath: "/usr/bin/afplay"))
+        XCTAssertNil(Ownership.outerApplicationURL(executablePath: "/System/Library/Frameworks/WebKit.framework/Versions/A/XPCServices/com.apple.WebKit.GPU.xpc/Contents/MacOS/com.apple.WebKit.GPU"))
+    }
+
+    func testBundleIDPrefixAndWebKitServiceNamesFindTheOwner() {
+        XCTAssertEqual(Ownership.parentApplication(ofHelper: "com.hnc.Discord.helper.Renderer", among: [safari, discord]), discord)
+        XCTAssertNil(Ownership.parentApplication(ofHelper: "com.hnc.DiscordX", among: [discord]), "only whole dotted components match")
+        XCTAssertEqual(Ownership.webKitOwnerName(fromServiceName: "Safari Graphics and Media"), "Safari")
+        XCTAssertNil(Ownership.webKitOwnerName(fromServiceName: "Safari"))
+    }
+
+    func testOwnerPrecedence() {
+        let info: (URL) -> (bundleIdentifier: String, name: String)? = { $0.lastPathComponent == "Discord.app" ? ("com.hnc.Discord", "Discord") : nil }
+        let renderer = process("com.hnc.Discord.helper.Renderer", path: "/Applications/Discord.app/Contents/Frameworks/Discord Helper (Renderer).app/Contents/MacOS/x")
+        XCTAssertEqual(Ownership.owner(of: renderer, itself: nil, regularApps: [], bundleInfo: info)?.bundleIdentifier, "com.hnc.Discord")
+        let byPrefix = process("com.hnc.Discord.helper", path: "/opt/x/helper")
+        XCTAssertEqual(Ownership.owner(of: byPrefix, itself: nil, regularApps: [discord], bundleInfo: info)?.name, "Discord")
+        let gpu = process("com.apple.WebKit.GPU", path: "/System/Library/Frameworks/WebKit.framework/x.xpc/Contents/MacOS/x")
+        let service = Ownership.RunningApp(bundleIdentifier: "com.apple.WebKit.GPU", name: "Safari Graphics and Media", url: nil, isRegular: false)
+        XCTAssertEqual(Ownership.owner(of: gpu, itself: service, regularApps: [safari, discord], bundleInfo: info)?.bundleIdentifier, "com.apple.Safari")
+        XCTAssertNil(Ownership.owner(of: gpu, itself: service, regularApps: [discord], bundleInfo: info), "an unknown owner leaves the service its own row")
+        XCTAssertEqual(Ownership.owner(of: process("com.hnc.Discord"), itself: discord, regularApps: [], bundleInfo: info)?.bundleIdentifier, "com.hnc.Discord")
+        XCTAssertNil(Ownership.owner(of: process(nil, path: "/usr/bin/afplay"), itself: nil, regularApps: [discord], bundleInfo: info))
     }
 }
 

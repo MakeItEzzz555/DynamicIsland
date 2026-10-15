@@ -5,9 +5,15 @@ import os
 /// The output route a gain session replays into.
 struct ApplicationGainRoute: Sendable, Equatable {
     let uid: String
-    /// A route that also captures (headset, AirPods) would put its microphone
-    /// into the aggregate; v1 declines it instead of touching an input.
     let hasInputStreams: Bool
+    /// Software loopback devices (Boom, BlackHole, Loopback) expose input streams
+    /// that carry no microphone.
+    var isVirtual = false
+    /// Index of the first output stream in the device's stream list (a tap addresses a stream).
+    var outputStream = 0
+    /// A real route that also captures (headset, AirPods) would put its microphone
+    /// into the aggregate, so those are declined instead of touching an input.
+    var capturesMicrophone: Bool { hasInputStreams && !isVirtual }
 }
 
 /// Real-time half of one gain session. The IOProc only reads this object:
@@ -62,10 +68,17 @@ final class ApplicationGainRenderer: @unchecked Sendable {
         current = target
     }
 
+    /// An aggregate lists its sub-device inputs first and the tap last, so the
+    /// tap's buffers are the trailing ones (a virtual route has its own input).
+    private func firstTapBuffer(_ inputs: UnsafeMutableAudioBufferListPointer) -> Int {
+        inputs.count - (tapInterleaved ? 1 : tapChannels)
+    }
+
     private func availableTapFrames(_ inputs: UnsafeMutableAudioBufferListPointer) -> Int {
-        guard let first = inputs.first, first.mData != nil else { return 0 }
+        let base = firstTapBuffer(inputs)
+        guard base >= 0, inputs[base].mData != nil else { return 0 }
         let perFrame = tapInterleaved ? tapChannels : 1
-        return Int(first.mDataByteSize) / (4 * max(1, perFrame))
+        return Int(inputs[base].mDataByteSize) / (4 * max(1, perFrame))
     }
 
     /// Stereo tap → device channels: L→1, R→2, silence above; a mono device
@@ -81,11 +94,13 @@ final class ApplicationGainRenderer: @unchecked Sendable {
     }
 
     private func tapChannelSample(_ inputs: UnsafeMutableAudioBufferListPointer, frame: Int, channel: Int) -> Float {
+        let base = firstTapBuffer(inputs)
+        guard base >= 0 else { return 0 }
         if tapInterleaved {
-            guard let data = inputs[0].mData?.assumingMemoryBound(to: Float.self) else { return 0 }
+            guard let data = inputs[base].mData?.assumingMemoryBound(to: Float.self) else { return 0 }
             return data[frame * tapChannels + channel]
         }
-        guard channel < inputs.count, let data = inputs[channel].mData?.assumingMemoryBound(to: Float.self) else { return 0 }
+        guard let data = inputs[base + channel].mData?.assumingMemoryBound(to: Float.self) else { return 0 }
         return data[frame]
     }
 
@@ -94,9 +109,10 @@ final class ApplicationGainRenderer: @unchecked Sendable {
 
 protocol ApplicationGainHardware: Sendable {
     func defaultOutputRoute() throws -> ApplicationGainRoute
-    /// A private, process-specific stereo tap that mutes the process's direct
-    /// output only while a client reads it (`.mutedWhenTapped`).
-    func createTap(process: AudioObjectID) throws -> AudioObjectID
+    /// A private tap of every listed process (an app's main and helper processes)
+    /// on the route's output stream, in the stream's own channel layout, that mutes
+    /// their direct output only while a client reads it (`.mutedWhenTapped`).
+    func createTap(processes: [AudioObjectID], route: ApplicationGainRoute) throws -> AudioObjectID
     func format(tap: AudioObjectID) throws -> AudioStreamBasicDescription
     func createAggregate(tap: AudioObjectID, route: ApplicationGainRoute) throws -> AudioObjectID
     func createIOProc(device: AudioObjectID, renderer: ApplicationGainRenderer) throws -> AudioDeviceIOProcID
@@ -113,12 +129,15 @@ enum ApplicationGainError: Error, Sendable, Equatable {
     case teardownIncomplete
 }
 
-/// Owns every per-app tap, aggregate and IOProc. An app at unity gain is never
-/// tapped: it plays directly. Failure always prefers releasing the tap, which
-/// returns the app to its own unmodified output.
+/// Owns every per-application tap, aggregate and IOProc. One session serves one
+/// application (all of its audio processes, since real apps play from helper
+/// processes). An app at unity gain is never tapped: it plays directly.
+/// Failure always prefers releasing the tap, which returns the app to its own
+/// unmodified output.
 actor ApplicationGainEngine {
     private final class Session {
-        let process: AudioObjectID
+        let key: String
+        let processes: Set<AudioObjectID>
         let renderer: ApplicationGainRenderer
         var tap: AudioObjectID?
         var device: AudioObjectID?
@@ -126,56 +145,64 @@ actor ApplicationGainEngine {
         var started = false
         var lastCycles: UInt64 = 0
         var idleChecks = 0
-        init(process: AudioObjectID, renderer: ApplicationGainRenderer) { self.process = process; self.renderer = renderer }
+        init(key: String, processes: Set<AudioObjectID>, renderer: ApplicationGainRenderer) {
+            self.key = key; self.processes = processes; self.renderer = renderer
+        }
         var isClosed: Bool { tap == nil && device == nil && io == nil }
     }
 
     static let unity = 0.999
     private let hardware: any ApplicationGainHardware
-    private var sessions: [AudioObjectID: Session] = [:]
+    private var sessions: [String: Session] = [:]
     /// Sessions whose teardown failed keep their HAL objects here for a later retry.
     private var orphaned: [Session] = []
     private var watchdog: Task<Void, Never>?
     private let watchdogInterval: Duration
-    private let onStall: @Sendable (AudioObjectID) -> Void
+    private let onStall: @Sendable (String) -> Void
 
     init(hardware: any ApplicationGainHardware = CoreAudioApplicationGainHardware(),
          watchdogInterval: Duration = .milliseconds(750),
-         onStall: @escaping @Sendable (AudioObjectID) -> Void = { _ in }) {
+         onStall: @escaping @Sendable (String) -> Void = { _ in }) {
         self.hardware = hardware
         self.watchdogInterval = watchdogInterval
         self.onStall = onStall
     }
 
-    var activeProcesses: Set<AudioObjectID> { Set(sessions.keys) }
+    var activeApplications: Set<String> { Set(sessions.keys) }
+    /// The processes a live session currently taps.
+    func tappedProcesses(of application: String) -> Set<AudioObjectID>? { sessions[application]?.processes }
 
-    /// `gain` is a linear amplitude in 0...1. Unity releases the app.
-    func setGain(_ gain: Double, process: AudioObjectID) throws {
+    /// `gain` is a linear amplitude in 0...1. Unity (or no processes) releases the app.
+    /// A changed process set rebuilds the session make-before-break: the new
+    /// tap mutes the same app before the old one stops, so nothing leaks through.
+    func setGain(_ gain: Double, application key: String, processes: [AudioObjectID]) throws {
         guard gain.isFinite, (0...1).contains(gain) else { throw NativeAudioError.invalidValue }
-        if gain >= Self.unity {
-            try release(process)
+        let members = Set(processes)
+        if gain >= Self.unity || members.isEmpty {
+            try release(key)
             return
         }
-        if let session = sessions[process] {
-            session.renderer.setTarget(Float(gain))
+        let existing = sessions[key]
+        if let existing, existing.processes == members {
+            existing.renderer.setTarget(Float(gain))
             return
         }
         let route = try hardware.defaultOutputRoute()
-        guard !route.hasInputStreams else { throw ApplicationGainError.routeHasInput }
-        try open(process: process, gain: Float(gain), route: route)
+        guard !route.capturesMicrophone else { throw ApplicationGainError.routeHasInput }
+        try open(key: key, processes: members, gain: Float(gain), route: route, replacing: existing)
         startWatchdogIfNeeded()
     }
 
-    func release(_ process: AudioObjectID) throws {
-        guard let session = sessions.removeValue(forKey: process) else { return }
+    func release(_ key: String) throws {
+        guard let session = sessions.removeValue(forKey: key) else { return }
         try close(session)
     }
 
     /// Device change, sleep, quit or disable: every app returns to direct output.
     func releaseAll() throws {
         var failed = false
-        for process in Array(sessions.keys) {
-            do { try release(process) } catch { failed = true }
+        for key in Array(sessions.keys) {
+            do { try release(key) } catch { failed = true }
         }
         for session in orphaned { if (try? close(session)) == nil { failed = true } }
         orphaned.removeAll { $0.isClosed }
@@ -188,13 +215,13 @@ actor ApplicationGainEngine {
     /// A session that has not rendered yet gets four passes: Bluetooth outputs
     /// can take over a second to start IO.
     func checkStalls() {
-        for (process, session) in sessions where session.started {
+        for (key, session) in sessions where session.started {
             let cycles = session.renderer.cycles
             if cycles == session.lastCycles {
                 session.idleChecks += 1
                 if cycles > 0 || session.idleChecks >= 4 {
-                    try? release(process)
-                    onStall(process)
+                    try? release(key)
+                    onStall(key)
                 }
             } else {
                 session.lastCycles = cycles
@@ -204,34 +231,40 @@ actor ApplicationGainEngine {
         if sessions.isEmpty { watchdog?.cancel(); watchdog = nil }
     }
 
-    private func open(process: AudioObjectID, gain: Float, route: ApplicationGainRoute) throws {
-        let tap = try hardware.createTap(process: process)
+    private func open(key: String, processes: Set<AudioObjectID>, gain: Float, route: ApplicationGainRoute,
+                      replacing old: Session?) throws {
+        let tap = try hardware.createTap(processes: processes.sorted(), route: route)
         var session: Session?
         do {
             let format = try hardware.format(tap: tap)
             let interleaved = format.mFormatFlags & kAudioFormatFlagIsNonInterleaved == 0
             guard format.mFormatID == kAudioFormatLinearPCM,
                   format.mFormatFlags & kAudioFormatFlagIsFloat != 0,
-                  format.mBitsPerChannel == 32, (1...2).contains(format.mChannelsPerFrame),
+                  format.mBitsPerChannel == 32, (1...32).contains(format.mChannelsPerFrame),
                   format.mSampleRate.isFinite, format.mSampleRate >= 8_000 else {
                 throw ApplicationGainError.unsupportedFormat
             }
-            let created = Session(process: process, renderer: ApplicationGainRenderer(
+            let created = Session(key: key, processes: processes, renderer: ApplicationGainRenderer(
                 gain: gain, tapChannels: Int(format.mChannelsPerFrame), tapInterleaved: interleaved))
             created.tap = tap
             session = created
             created.device = try hardware.createAggregate(tap: tap, route: route)
             created.io = try hardware.createIOProc(device: created.device!, renderer: created.renderer)
+            // The old replay ramps to silence just before the new one starts, so
+            // the two never add up to an echo; the tap keeps the app muted throughout.
+            old?.renderer.setTarget(0)
             // Reading starts here: the tap mutes direct output only once this
             // IOProc is replaying it, so there is no double playback window.
             try hardware.start(device: created.device!, io: created.io!)
             created.started = true
-            sessions[process] = created
+            sessions[key] = created
+            if let old { try? close(old) }
         } catch {
+            old?.renderer.setTarget(gain)
             if let session {
                 if (try? close(session)) == nil { orphaned.append(session) }
             } else if hardware.destroyTap(tap) != noErr {
-                let leftover = Session(process: process, renderer: ApplicationGainRenderer(gain: 1, tapChannels: 2, tapInterleaved: true))
+                let leftover = Session(key: key, processes: processes, renderer: ApplicationGainRenderer(gain: 1, tapChannels: 2, tapInterleaved: true))
                 leftover.tap = tap
                 orphaned.append(leftover)
             }
@@ -301,23 +334,46 @@ final class CoreAudioApplicationGainHardware: ApplicationGainHardware, @unchecke
             mScope: kAudioObjectPropertyScopeInput, mElement: kAudioObjectPropertyElementMain)
         var inputBytes: UInt32 = 0
         try Self.check(AudioObjectGetPropertyDataSize(device, &inputAddress, 0, nil, &inputBytes), .readFormat)
-        return ApplicationGainRoute(uid: uid, hasInputStreams: inputBytes > 0)
+        var transport: UInt32 = 0
+        var transportSize = UInt32(MemoryLayout<UInt32>.size)
+        var transportAddress = Self.address(kAudioDevicePropertyTransportType)
+        _ = AudioObjectGetPropertyData(device, &transportAddress, 0, nil, &transportSize, &transport)
+        return ApplicationGainRoute(uid: uid, hasInputStreams: inputBytes > 0, isVirtual: transport == kAudioDeviceTransportTypeVirtual,
+                                    outputStream: try firstOutputStreamIndex(of: device))
     }
 
-    func createTap(process: AudioObjectID) throws -> AudioObjectID {
+    func createTap(processes: [AudioObjectID], route: ApplicationGainRoute) throws -> AudioObjectID {
         guard #available(macOS 14.2, *) else { throw NativeAudioError.unsupportedPlatform }
-        let description = Self.makeTapDescription(process: process)
+        let description = Self.makeTapDescription(processes: processes, route: route)
         var id = AudioObjectID(kAudioObjectUnknown)
         try Self.check(AudioHardwareCreateProcessTap(description, &id), .createTap)
         guard id != kAudioObjectUnknown else { throw NativeAudioError.operationFailed(.createTap, kAudioHardwareBadObjectError) }
         return id
     }
 
+    private func firstOutputStreamIndex(of device: AudioObjectID) throws -> Int {
+        var address = Self.address(kAudioDevicePropertyStreams)
+        var bytes: UInt32 = 0
+        try Self.check(AudioObjectGetPropertyDataSize(device, &address, 0, nil, &bytes), .readFormat)
+        var streams = [AudioObjectID](repeating: 0, count: Int(bytes) / MemoryLayout<AudioObjectID>.size)
+        try Self.check(AudioObjectGetPropertyData(device, &address, 0, nil, &bytes, &streams), .readFormat)
+        for (index, stream) in streams.enumerated() {
+            var direction: UInt32 = 1
+            var size = UInt32(MemoryLayout<UInt32>.size)
+            var directionAddress = Self.address(kAudioStreamPropertyDirection)
+            if AudioObjectGetPropertyData(stream, &directionAddress, 0, nil, &size, &direction) == noErr, direction == 0 { return index }
+        }
+        throw NativeAudioError.perApplicationRoutingUnavailable
+    }
+
     @available(macOS 14.2, *)
-    static func makeTapDescription(process: AudioObjectID) -> CATapDescription {
-        // No deviceUID: on macOS 15.7 a process mixdown with deviceUID set returns
-        // noErr with object 0 (measured); the mixdown already follows the app's output.
-        let description = CATapDescription(stereoMixdownOfProcesses: [process])
+    static func makeTapDescription(processes: [AudioObjectID], route: ApplicationGainRoute) -> CATapDescription {
+        // The route's own stream, not a stereo mixdown: on a 6-channel output the
+        // mixdown measured exactly 1/3 of the app's true level, so the slider would
+        // have dropped the volume by 9.5 dB the moment it left 100%. The stream tap
+        // keeps the device's channel layout and level, and ignores audio the app
+        // plays to other devices (it is never moved onto this one).
+        let description = CATapDescription(__processes: processes.map { NSNumber(value: $0) }, andDeviceUID: route.uid, withStream: route.outputStream)
         description.name = "DynamicIsland App Volume"
         description.isPrivate = true
         description.muteBehavior = .mutedWhenTapped
