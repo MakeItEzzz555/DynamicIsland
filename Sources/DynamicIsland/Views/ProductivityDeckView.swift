@@ -426,7 +426,7 @@ private struct VoiceTile: View {
             Task { @MainActor in
                 do {
                     if isRecording {
-                        try await controller.stopAndTranscribe()
+                        try controller.stopRecording()
                     } else {
                         try await controller.startRecording()
                     }
@@ -438,7 +438,7 @@ private struct VoiceTile: View {
         } label: {
             WorkspaceTileLabel(
                 symbol: isRecording ? "stop.fill" : RightWorkspaceTool.voice.symbolName,
-                title: isRecording ? "Stop & Transcribe" : "Voice",
+                title: isRecording ? "Stop" : "Voice",
                 status: error ?? status,
                 isOn: isRecording,
                 accent: .red,
@@ -447,7 +447,7 @@ private struct VoiceTile: View {
         }
         .buttonStyle(WorkspaceTileButtonStyle(isOn: isRecording, accent: .red))
         .disabled(isBusy)
-        .accessibilityLabel(isRecording ? "Stop recording and transcribe" : "Start voice recording")
+        .accessibilityLabel(isRecording ? "Stop Voice Recording" : "Start Voice Recording")
     }
 }
 

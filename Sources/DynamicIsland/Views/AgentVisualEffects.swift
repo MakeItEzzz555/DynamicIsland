@@ -389,7 +389,7 @@ enum AgentOrbStateMapper {
         case .recording: .listening
         case .requestingPermission, .preparing, .stopping: .connecting
         case .transcribing: .composing
-        case .idle, .completed, .failed: .breathing
+        case .idle, .ready, .failed: .breathing
         }
     }
 }
@@ -704,7 +704,7 @@ struct CollapsedVoiceBeamCompactView: View {
                 Image(systemName: processing ? "waveform" : "mic.fill")
                     .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(processing ? Color.cyan : Color.white.opacity(0.92))
-                Text(processing ? "Transcribing" : "Listening")
+                Text(processing ? "Transcribing" : "Recording")
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.86))
                     .lineLimit(1)
@@ -727,6 +727,6 @@ struct CollapsedVoiceBeamCompactView: View {
 
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(processing ? "Voice transcription processing" : "Voice recording listening")
+        .accessibilityLabel(processing ? "Voice Recording transcribing" : "Voice Recording in progress")
     }
 }

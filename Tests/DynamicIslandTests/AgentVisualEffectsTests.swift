@@ -76,7 +76,7 @@ final class AgentVisualEffectsTests: XCTestCase {
         XCTAssertEqual(AgentOrbStateMapper.state(for: VoiceTranscriptionPhase.requestingPermission), .connecting)
         XCTAssertEqual(AgentOrbStateMapper.state(for: VoiceTranscriptionPhase.stopping), .connecting)
         XCTAssertEqual(AgentOrbStateMapper.state(for: VoiceTranscriptionPhase.failed("denied")), .breathing)
-        XCTAssertEqual(AgentOrbStateMapper.state(for: VoiceTranscriptionPhase.completed(VoiceTranscript(text: "done", createdAt: Date(), wasOnDevice: true))), .breathing)
+        XCTAssertEqual(AgentOrbStateMapper.state(for: VoiceTranscriptionPhase.ready), .breathing)
         XCTAssertFalse(AgentVisualMotion.paused(reduceMotion: false, visible: true, active: true))
         XCTAssertTrue(AgentVisualMotion.paused(reduceMotion: true, visible: true, active: true))
         XCTAssertTrue(AgentVisualMotion.paused(reduceMotion: false, visible: false, active: true))
