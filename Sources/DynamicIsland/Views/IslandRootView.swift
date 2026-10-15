@@ -980,6 +980,24 @@ struct IslandRootView: View {
         }
     }
 
+    /// A hover preview can be wider than the compact shell. Agents' wing
+    /// icons must follow the hover surface's OUTER edges, not remain pinned to
+    /// the narrow, centered collapsed row beside the physical camera notch.
+    private var agentHoverWingLayout: AgentHoverWingLayout? {
+        guard isCollapsedPreviewActive, case .agent = collapsedContentMode else { return nil }
+        let original = CompactCollapsedSideSlotGeometry(
+            isNotchIntegrated: IslandShellNotchIntegration.resolve(
+                geometryHasHardwareNotch: layoutStore.hasHardwareNotch,
+                displayMetricsHaveHardwareNotch: layoutStore.displayMetrics.hasHardwareNotch),
+            leftRegionWidth: layoutStore.collapsedLeftRegionWidth,
+            notchCoreWidth: layoutStore.collapsedNotchCoreWidth,
+            rightRegionWidth: layoutStore.collapsedRightRegionWidth)
+        return AgentHoverWingLayout.resolve(
+            original: original,
+            collapsedFrame: layoutStore.collapsedSurfaceFrame,
+            hoverFrame: collapsedPreviewSurfaceFrame)
+    }
+
     private var collapsedCompactView: some View {
         CompactIslandView(
             settings: settings,
@@ -992,6 +1010,7 @@ struct IslandRootView: View {
             collapsedLeftRegionWidth: layoutStore.collapsedLeftRegionWidth,
             collapsedNotchCoreWidth: layoutStore.collapsedNotchCoreWidth,
             collapsedRightRegionWidth: layoutStore.collapsedRightRegionWidth,
+            agentHoverSlots: agentHoverWingLayout?.slots,
             isNotchIntegratedShell: IslandShellNotchIntegration.resolve(
                 geometryHasHardwareNotch: layoutStore.hasHardwareNotch,
                 displayMetricsHaveHardwareNotch: layoutStore.displayMetrics.hasHardwareNotch
@@ -1077,10 +1096,13 @@ struct IslandRootView: View {
                 // and made the preview collapse and reopen in a loop.
                 let preview = isCollapsedPreviewActive ? collapsedActivityPreview : nil
                 let base = layoutStore.collapsedSurfaceFrame
+                let hoverWings = preview == nil ? nil : agentHoverWingLayout
                 VStack(alignment: .leading, spacing: 0) {
                     collapsedCompactView
-                        .frame(width: preview == nil ? nil : base.width, height: preview == nil ? nil : base.height)
-                        .padding(.leading, preview == nil ? 0 : max(0, base.minX - collapsedPreviewSurfaceFrame.minX))
+                        .frame(width: hoverWings?.contentWidth ?? (preview == nil ? nil : base.width),
+                               height: preview == nil ? nil : base.height)
+                        .padding(.leading, hoverWings == nil && preview != nil
+                            ? max(0, base.minX - collapsedPreviewSurfaceFrame.minX) : 0)
                     if let preview {
                         CollapsedActivityPreviewView(preview: preview, reduceMotion: reduceMotion || settings.reduceExtraMotion)
                             .transition(.opacity.combined(with: .move(edge: .top)))
@@ -2448,6 +2470,7 @@ struct CompactIslandView: View {
     let collapsedLeftRegionWidth: CGFloat
     let collapsedNotchCoreWidth: CGFloat
     let collapsedRightRegionWidth: CGFloat
+    var agentHoverSlots: CompactCollapsedSideSlotGeometry? = nil
     let isNotchIntegratedShell: Bool
     /// Reports pointer hover over the collapsed visualizer (pause/play target).
     var onVisualizerHover: ((Bool) -> Void)? = nil
@@ -2470,6 +2493,7 @@ struct CompactIslandView: View {
         collapsedLeftRegionWidth: CGFloat = 0,
         collapsedNotchCoreWidth: CGFloat = 0,
         collapsedRightRegionWidth: CGFloat = 0,
+        agentHoverSlots: CompactCollapsedSideSlotGeometry? = nil,
         isNotchIntegratedShell: Bool = false,
         onVisualizerHover: ((Bool) -> Void)? = nil
     ) {
@@ -2484,6 +2508,7 @@ struct CompactIslandView: View {
         self.collapsedLeftRegionWidth = collapsedLeftRegionWidth
         self.collapsedNotchCoreWidth = collapsedNotchCoreWidth
         self.collapsedRightRegionWidth = collapsedRightRegionWidth
+        self.agentHoverSlots = agentHoverSlots
         self.isNotchIntegratedShell = isNotchIntegratedShell
         media = modules.media
         liveActivities = modules.liveActivities
@@ -2719,7 +2744,8 @@ struct CompactIslandView: View {
     }
 
     private var sideSlotGeometry: CompactCollapsedSideSlotGeometry {
-        CompactCollapsedSideSlotGeometry(
+        if case .agent = contentMode, let agentHoverSlots { return agentHoverSlots }
+        return CompactCollapsedSideSlotGeometry(
             isNotchIntegrated: isNotchIntegratedShell,
             leftRegionWidth: collapsedLeftRegionWidth,
             notchCoreWidth: hardwareNotchWidth > 0 ? collapsedNotchCoreWidth : 0,
@@ -2816,6 +2842,34 @@ struct CompactCollapsedSideSlotGeometry {
 
     var usesPhysicalNotchRegions: Bool {
         isNotchIntegrated && notchCoreWidth > 0
+    }
+}
+
+/// In the hover state, keep the physical-notch gap fixed in screen coordinates
+/// while expanding BOTH wings out to the hover shell's real outer edges.
+/// Widths exclude the shell's unchanged 8pt horizontal content padding.
+struct AgentHoverWingLayout {
+    let slots: CompactCollapsedSideSlotGeometry
+    let contentWidth: CGFloat
+
+    static func resolve(
+        original: CompactCollapsedSideSlotGeometry,
+        collapsedFrame: CGRect,
+        hoverFrame: CGRect
+    ) -> Self {
+        let contentWidth = max(hoverFrame.width - 2 * IslandShellLayout.collapsedHorizontalPadding, 0)
+        guard original.usesPhysicalNotchRegions else {
+            return Self(slots: original, contentWidth: contentWidth)
+        }
+        let leading = max(original.leftRegionWidth + collapsedFrame.minX - hoverFrame.minX, 0)
+        let trailing = max(original.rightRegionWidth + hoverFrame.maxX - collapsedFrame.maxX, 0)
+        return Self(
+            slots: CompactCollapsedSideSlotGeometry(
+                isNotchIntegrated: true,
+                leftRegionWidth: leading,
+                notchCoreWidth: original.notchCoreWidth,
+                rightRegionWidth: trailing),
+            contentWidth: contentWidth)
     }
 }
 
