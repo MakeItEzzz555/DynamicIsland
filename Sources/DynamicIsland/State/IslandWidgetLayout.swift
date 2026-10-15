@@ -5,6 +5,7 @@ import CoreGraphics
 enum IslandWidget: String, CaseIterable, Codable, Identifiable {
     case media, files, clipboard, timer, calendar, shortcuts, activities, chat, terminal, feed, workspace, camera
     case agentUsage, codexUsage, claudeUsage
+    case appVolume
     func isEligible(on surface: WorkspaceSurface) -> Bool {
         switch surface {
         case .media: return ![.chat, .terminal, .feed].contains(self)
@@ -31,6 +32,7 @@ enum IslandWidget: String, CaseIterable, Codable, Identifiable {
         case .agentUsage: "Agent Usage"
         case .codexUsage: "Codex Usage"
         case .claudeUsage: "Claude Usage"
+        case .appVolume: "App Volume"
         }
     }
     var symbol: String {
@@ -50,6 +52,7 @@ enum IslandWidget: String, CaseIterable, Codable, Identifiable {
         case .agentUsage: "gauge.with.dots.needle.50percent"
         case .codexUsage: "sparkle"
         case .claudeUsage: "brain"
+        case .appVolume: "speaker.wave.2.fill"
         }
     }
 }

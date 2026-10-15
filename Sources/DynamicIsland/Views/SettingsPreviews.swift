@@ -487,6 +487,9 @@ struct SettingsPreviewWidgetGrid: View {
             CalendarSectionView(controller: samples.services.calendar, layoutStore: nil)
         case .clipboard:
             ClipboardHistoryView(store: dependencies.clipboardHistory, onClose: {})
+        case .appVolume:
+            // Sample state only: no processes are read and no app is routed.
+            AppVolumeWidgetView(discovery: ApplicationAudioDiscovery(readProcesses: { [] }), settings: settings, systemHUD: nil)
         case .camera:
             // Sample state only: the Settings preview never touches capture.
             CameraWidgetView(controller: dependencies.productivity.camera, reduceMotion: reduceMotion)

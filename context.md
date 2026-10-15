@@ -5000,3 +5000,9 @@ Final review also eliminated a no-op second morph when no activity waits (55 aff
 - Cancel discards only the unfinished capture. Transcription failure, denial or cancellation never touches the finished file. Delete (confirmed) removes only the shown recording; Save As and Add to File Tray copy, so the source is always preserved.
 - Quit and disabling the capability **finish and keep** a running capture (`terminate()`), they never discard it. Closing the island or switching tabs does not affect capture: the controller, not the view, owns the recorder.
 - The panel reuses `AudioVisualizerView(palette: .voice)` fed by `AVAudioRecorder` metering through `VoiceBeamEnvelope`; no second recorder or visualizer. Playback is one `AVAudioPlayer` per shown recording, released when a new capture starts.
+### 2026-10-15 — Per-app volume (experimental, gated)
+
+- `ApplicationGainEngine` (actor) owns one private `.mutedWhenTapped` process tap + private aggregate (current output as the main sub-device) + IOProc per app **below 100%**; 100% releases it so the app plays directly. `ApplicationGainRenderer` is the only real-time code: no allocation, logging or blocking, and it reads the target through a try-lock. See `docs/research/per-application-volume-feasibility.md`.
+- `ApplicationAudioDiscovery` stays read-only unless `AppSettings.perAppVolumeEnabled` (default off, turned on from the App Volume widget). When enabled: HAL listeners (process list, default output) plus sleep/wake drive refresh and rerouting; levels persist per bundle ID; slider *p* → amplitude *p²*.
+- Outputs with input streams are declined (no microphone in the aggregate). DynamicIsland never lists or taps itself.
+- The App Volume widget (`IslandWidget.appVolume`, Media surface) has a System row (verified output-volume write without a HUD, `SystemHUDController.setOutputVolume`) and per-app rows. App sliders are disabled, with the reason, unless writing them changes real output.

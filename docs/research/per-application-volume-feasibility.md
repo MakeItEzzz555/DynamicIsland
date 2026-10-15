@@ -1,24 +1,66 @@
-# Per-application volume — public API decision (2026-10-14)
+# Per-application volume — architecture decision (updated 2026-10-15)
 
-## Evidence and decision
+## Decision
 
-Apple documents process-specific output capture and process muting in [Capturing system audio with Core Audio taps](https://developer.apple.com/documentation/CoreAudio/capturing-system-audio-with-core-audio-taps). The installed Xcode SDK's `CATapDescription.h` explains that `.mutedWhenTapped` leaves direct playback enabled until a client reads the tap, then suppresses direct hardware output for that reading period. [CATapMuteBehavior](https://developer.apple.com/documentation/coreaudio/catapmutebehavior) is capture/playback routing behavior, not a per-process scalar volume setter.
+Per-app gain uses supported Core Audio process taps (macOS 14.2+) with **minimal intervention**. An app at 100% is never touched. When the user moves an app's slider below 100%, `ApplicationGainEngine` creates three objects for that one process:
 
-A supported capture → gain → replay path is technically possible; this is an architecture inference from those APIs, not a proven DynamicIsland mixer. The current spectrum aggregate is input-only and its unmuted tap cannot attenuate another app. Rendering independent sliders or multiplying analyzer samples would not alter speaker output. No genuine per-app gain widget is enabled.
+1. A private `CATapDescription(stereoMixdownOfProcesses: [process])` tap, with `muteBehavior = .mutedWhenTapped` (the mixdown follows the app to whatever output it uses).
+2. A private aggregate device. Its main and only sub-device is that output device (the clock). It holds the tap with drift compensation and has no tap auto-start.
+3. An IOProc that copies the tap's samples × a ramped gain into the device's output buffers.
 
-`ApplicationAudioDiscovery` supplies manual, background, read-only HAL process discovery through the existing contract. It filters running output IO, bounds allocation, checks PID identity across reads, invalidates generations and leaves gain unavailable. HAL output IO can contain silence; `outputIOActive` is explicitly distinct from measured `outputActive`. It does not run at launch, poll, create devices/taps, request permissions, mute output or store samples. Tests use synthetic process records only. No microphone activity or personal audio is inspected.
+Moving the slider back to 100% stops the IOProc and destroys the IOProc, aggregate and tap, in that order. The app then plays directly again.
 
-## Safe routing acceptance gate
+## Alternatives considered
 
-Before enabling gain, separately authorize process-specific tap reading with mutedWhenTapped and output replay on controlled hardware. Implementation must first prepare an unmuted tap plus replacement renderer (gain zero), validate channel/sample-rate format and actual renderer callbacks, then enable replacement/muting together. Whether changing tap descriptions can establish a truly atomic cutover remains UNVERIFIED and must be measured. Fail-open teardown must unmute/destroy the tap before removing output and retain ownership if destroy fails. Self-output must be excluded to prevent feedback.
+| Approach | Verdict |
+|---|---|
+| Virtual audio driver (BlackHole / HAL plug-in) | Rejected: it needs an installed driver, replaces the system default device, and needs admin rights and system-wide changes. |
+| Changing a per-process volume property | Not available: no public per-process volume setter exists. `kAudioDevicePropertyProcessMute` mutes only the *calling* process. |
+| One aggregate holding every tapped app | Rejected for v1: adding or removing an app would reconfigure a running device, which glitches every routed app. |
+| Scaling analyzer samples or UI-only sliders | Rejected: they don't change speaker output. |
+| **Per-app tap + private aggregate + IOProc (chosen)** | Uses only public APIs and no driver. One app's failure is isolated from the others, and failure returns that app to its own output. |
 
-Use a private aggregate sharing the selected hardware clock where supported; bounded buffers and sample-rate conversion may be necessary across clocks. Bluetooth/AirPlay latency, channel layouts, disconnects and drift are UNKNOWN until tested; initially decline incompatible devices rather than claim support. Verify multiple simultaneous apps, PID/object replacement, gain ramps, silence/transients, device changes, sleep/wake, crash recovery, repeated teardown, permissions and ad-hoc/Developer ID packaging. Persist no audio. Avoid a virtual driver, private API or unsupported macOS volume setter.
+## Evidence
 
-## Reference grades
+- **Proven from the SDK headers:**
+  - `CATapMutedWhenTapped` sends audio to hardware "until the tap is read by another audio client", and only "for the duration of the read activity" is no audio sent (`CATapDescription.h`).
+  - `stereoMixdownOfProcesses`, `isPrivate` and `deviceUID` are public.
+  - The aggregate keys `master`, `subdevices` and `taps` with `drift` are public (`AudioHardware.h`).
+- **Observed, behavioral only:** the earlier clean-room black-box report shows Droppy 16 builds the same pipeline (tap `stereoMixdownOfProcesses`, mixer cells with target/current gain and ramp). No Droppy code, assets or strings were used.
+- **Proven in tests here:**
+  - The real-time renderer, against synthetic buffer lists: gain, ramp, mute, channel mapping and zero-fill.
+  - Engine call order, failure cleanup, retained objects when a destroy fails, the stall watchdog and app isolation, all with a fake HAL.
+  - Provider persistence, relaunch re-apply and exited-app release.
+- **Unverified (needs the gated live test and listening):**
+  - Cutover glitch length.
+  - Latency on Bluetooth and AirPlay.
+  - Drift over long sessions.
+  - Multichannel interfaces.
+  - Behavior across sleep/wake on real devices.
 
-- OBSERVED reference: user's desired independent app sliders; shipped Droppy report observations are behavioral comparisons only.
-- PROVEN Apple/SDK: process-specific taps, mutable playback behavior, output-IO process properties.
-- INFERRED: independent gain could use process capture with verified replacement replay.
-- UNKNOWN: real cutover safety, crash fail-open behavior, latency/drift and supported-device matrix in this application.
+## Safety properties
 
-Approval is needed for hardware mute/replacement acceptance. This gate does not block completed hover/menu/Tray/visualizer work. No restricted source, proprietary binary logic or assets were transplanted.
+- **Fail-open by API design.** If our IOProc stops reading, through a stall or a crash, `.mutedWhenTapped` returns the app to the hardware. Private taps and aggregates belong to our process and are destroyed by the system when the process exits.
+- **Watchdog.** The renderer counts render cycles. A session that doesn't advance between two checks (750 ms apart) is released, and the widget explains why.
+- **Releases.** Default-output changes, sleep, disabling the feature and an app exiting all release the affected sessions. Saved levels are re-applied when the route or app returns.
+- **No microphone.** Outputs that also expose input streams (headsets, AirPods) are declined before any tap, because the aggregate would include their input. DynamicIsland's own process is never listed or tapped, so there is no feedback.
+- **Real-time code.**
+  - The IOProc does no allocation, logging, I/O or blocking. It reads the target through a non-blocking try-lock, the same pattern as the spectrum mailbox.
+  - Formats are validated as Float32 linear PCM with 1–2 tap channels.
+- **Permissions.** No permission is requested at launch. The first slider move below 100%, after the user turned the feature on, may show macOS's System Audio Recording prompt. No audio is stored.
+
+## Scope of v1
+
+- Supported outputs have no input streams: built-in speakers, HDMI/DisplayPort, most DACs and AirPlay outputs that expose no input. Outputs with a microphone show an explicit unsupported message.
+- Levels persist per bundle ID. Processes without a bundle ID always start at 100% and their levels aren't saved. Slider position *p* maps to amplitude *p²*: mid-slider is about −12 dB, closer to perceived half-loudness.
+- The feature is **off by default** ("Turn On Per-App Volume (Experimental)" in the App Volume widget) until the live acceptance test below has run on real hardware.
+
+## Live acceptance gate
+
+Running `DYNAMIC_ISLAND_LIVE_APP_VOLUME=1 swift test --filter ApplicationGainLiveTests` routes a quiet `afplay` tone through the real engine on the current output. It checks that the real IOProc keeps rendering and that 100% releases the tap. It needs explicit approval, because it plays audio and may prompt for System Audio Recording.
+
+The listening checks are in the PR description:
+- only the chosen app gets quieter;
+- 0% silences only that app;
+- 100% is unchanged;
+- the master volume stays independent.

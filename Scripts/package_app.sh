@@ -87,7 +87,7 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <key>NSCalendarsUsageDescription</key>
   <string>After you allow access, DynamicIsland reads your calendar events for the days you view in the island. It does not create, change or share events.</string>
   <key>NSAudioCaptureUsageDescription</key>
-  <string>When you enable Live Audio, DynamicIsland measures system audio to animate spectrum bars. Audio is processed only on this Mac and is never saved, recorded to disk, or uploaded.</string>
+  <string>When you enable Live Audio, DynamicIsland measures system audio to animate spectrum bars. When you turn on Per-App Volume and lower an app, DynamicIsland plays that app's audio back at the level you chose. Audio is processed only on this Mac and is never saved, recorded to disk, or uploaded.</string>
   <key>NSCameraUsageDescription</key>
   <string>When you enable Camera Mirror or Camera Navigation, DynamicIsland processes camera frames on this Mac. Frames are never recorded, saved, or uploaded.</string>
   <key>NSCameraUseContinuityCameraDeviceType</key>
