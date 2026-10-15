@@ -318,6 +318,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }.store(in: &cancellables)
         basketPresenter.start()
         fileShelf.startRetentionMonitoring()
+        voiceTranscription.restoreRecordings()
         agentProjects.observe(agentEvents.$sessions)
         installMessagingObservers()
         faceTime.onEnabledChanged = { UserDefaults.standard.set($0, forKey: FaceTimeAccessibilityProvider.enabledKey) }
@@ -471,7 +472,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #endif
         keepAwakeController.stop()
         terminalController.terminate()
-        voiceTranscription.cancel()
+        voiceTranscription.terminate()
         cameraPreview.terminate()
         cameraNavigation.terminate()
         backgroundRemoval.terminate()

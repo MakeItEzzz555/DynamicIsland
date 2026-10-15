@@ -54,12 +54,12 @@ struct ProductivitySettingsView: View {
                 RemindersPanel(controller: productivity.reminders)
             }
 
-            SettingsGroup("Voice Transcribe") {
+            SettingsGroup("Voice Recording") {
                 enabledToggle(.voiceTranscribe) { productivity.voice.setEnabled($0) }
                 CapabilityStatusLine(capabilities: capabilities, id: .voiceTranscribe)
                 VoicePermissionRows(controller: productivity.voice)
-                VoiceTranscribePanel(controller: productivity.voice)
-                HelpText("Speech models are managed by macOS. DynamicIsland cannot install or remove recognition models from here.")
+                VoiceRecordingPanel(controller: productivity.voice)
+                HelpText("Recordings are kept on this Mac in Application Support › DynamicIsland › Voice Recordings until you delete them. Transcription is optional and asks for Speech Recognition only when you choose Transcribe; speech models are managed by macOS.")
             }
 
             SettingsGroup("Camera") {
@@ -112,20 +112,20 @@ private struct VoicePermissionRows: View {
     var body: some View {
         HStack(spacing: 12) {
             permissionLabel("Microphone", controller.microphoneState)
-            permissionLabel("Speech", controller.speechState)
+            permissionLabel("Speech (Transcribe only)", controller.speechState)
             Spacer()
-            if controller.microphoneState == .notDetermined || controller.speechState == .notDetermined {
-                Button("Request Access") {
-                    Task { await controller.requestPermissions() }
+            if controller.microphoneState == .notDetermined {
+                Button("Allow Microphone") {
+                    Task { await controller.requestMicrophoneAccess() }
                 }
-            } else if controller.microphoneState != .authorized || controller.speechState != .authorized {
+            } else if controller.microphoneState != .authorized {
                 Button("Open Privacy Settings") {
                     Task { try? await controller.perform(.openSettings) }
                 }
             }
         }
         .controlSize(.small)
-        Toggle("Allow Apple server recognition when on-device is unavailable", isOn: $controller.allowsServerRecognition)
+        Toggle("Transcribe with Apple's server when on-device recognition is unavailable", isOn: $controller.allowsServerRecognition)
         Text(controller.recognizerAvailability.supportsOnDeviceRecognition
              ? "On-device recognition is available for \(controller.recognizerAvailability.localeIdentifier)."
              : "On-device recognition is not available for \(controller.recognizerAvailability.localeIdentifier).")
