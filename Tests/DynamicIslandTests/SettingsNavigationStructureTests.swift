@@ -43,7 +43,7 @@ final class SettingsNavigationStructureTests: XCTestCase {
     func testDetachedNavigationPreviewPreservesProductionWidgetFrames() throws {
         let settings = AppSettings(defaults: SettingsPreviewDefaults())
         settings.clipboardHistoryEnabled = true
-        for size in [WidgetPresentationSize.standard, .compact] {
+        for size in WidgetPresentationSize.supported(for: .media) {
             var configuration = WorkspaceConfiguration.initial
             for widget in configuration.widgets(on: .media) { configuration.remove(widget.id) }
             configuration.add(.media, on: .media)

@@ -76,7 +76,7 @@ final class WorkspaceSemanticSizeTests: XCTestCase {
     // MARK: Grid matrix
 
     func testFourCompactFormOneRowAndWrapToTwoOnNarrowHosts() {
-        let specs: [Spec] = [(.media, .compact), (.timer, .compact), (.files, .compact), (.clipboard, .compact)]
+        let specs: [Spec] = [(.calendar, .compact), (.timer, .compact), (.files, .compact), (.clipboard, .compact)]
         let wide = layout(specs, columns: 4)
         XCTAssertEqual(wide.rows, 1)
         XCTAssertEqual(Set(wide.frames.map { $0.frame.minY.rounded() }).count, 1)
@@ -163,9 +163,9 @@ final class WorkspaceSemanticSizeTests: XCTestCase {
     }
 
     func testStackBelowDoesNotStrandCellsBesideItsAnchor() throws {
-        // The stored user layout: Compact Media, Standard Timer stacked below
+        // The stored user layout (Media has no Compact size, so Calendar stands in): Compact anchor, Standard Timer stacked below
         // it, then Standard Workspace. Workspace fills the space beside Media.
-        let projection = layout([(.media, .compact), (.timer, .standard), (.workspace, .standard)], columns: 6, below: [1])
+        let projection = layout([(.calendar, .compact), (.timer, .standard), (.workspace, .standard)], columns: 6, below: [1])
         let media = projection.frames[0].frame, timer = projection.frames[1].frame, workspace = projection.frames[2].frame
         XCTAssertGreaterThanOrEqual(timer.minY, media.maxY - 0.5)
         XCTAssertEqual(workspace.minY, media.minY, accuracy: 0.5)
@@ -177,7 +177,7 @@ final class WorkspaceSemanticSizeTests: XCTestCase {
     func testAWiderShellCentersIntrinsicWidgetsAndNeverEnlargesThem() throws {
         let grid = WidgetGridMetrics.make(surface: .media, metrics: metrics)
         let header: CGFloat = 441
-        for size in WidgetPresentationSize.allCases {
+        for size in WidgetPresentationSize.supported(for: .media) {
             let regions = config([(.media, size)], surface: .media).regions(on: .media)
             let frame = try XCTUnwrap(WorkspaceWidgetLayoutProjection.make(regions: regions,
                 availableSize: .init(width: header, height: 800), metrics: metrics).frames.first?.frame)
@@ -214,7 +214,7 @@ final class WorkspaceSemanticSizeTests: XCTestCase {
 
     func testSingletonCentersAcrossCompactAndLargeMixes() throws {
         // Three Compacts at two columns: [A][B] / [C]
-        let three = layout([(.media, .compact), (.timer, .compact), (.files, .compact)], columns: 2)
+        let three = layout([(.calendar, .compact), (.timer, .compact), (.files, .compact)], columns: 2)
         centered(try XCTUnwrap(three.frames.last?.frame), in: three)
         // Standard + Compact + Compact at three columns: [S S][C] / [C]
         let mixed = layout([(.media, .standard), (.timer, .compact), (.files, .compact)], columns: 3)
@@ -240,7 +240,7 @@ final class WorkspaceSemanticSizeTests: XCTestCase {
     func testTimerAloneAfterWrapIsCenteredButStackBelowKeepsItsColumn() throws {
         let wrapped = layout([(.media, .standard), (.files, .compact), (.timer, .standard)], columns: 3)
         centered(try XCTUnwrap(wrapped.frames.last?.frame), in: wrapped)
-        let stacked = layout([(.media, .compact), (.timer, .standard), (.workspace, .standard)], columns: 6, below: [1])
+        let stacked = layout([(.calendar, .compact), (.timer, .standard), (.workspace, .standard)], columns: 6, below: [1])
         XCTAssertEqual(stacked.frames[1].frame.minX, stacked.frames[0].frame.minX, accuracy: 0.5, "column relation preserved")
     }
 
@@ -259,7 +259,7 @@ final class WorkspaceSemanticSizeTests: XCTestCase {
     }
 
     func testPackingIsDeterministicAndNeverReshufflesOrder() {
-        let specs: [Spec] = [(.media, .compact), (.calendar, .large), (.timer, .standard), (.files, .compact),
+        let specs: [Spec] = [(.workspace, .compact), (.calendar, .large), (.timer, .standard), (.files, .compact),
                              (.clipboard, .compact), (.shortcuts, .standard), (.activities, .compact)]
         for columns in 2...5 {
             let a = layout(specs, columns: columns), b = layout(specs, columns: columns)
@@ -275,10 +275,11 @@ final class WorkspaceSemanticSizeTests: XCTestCase {
     }
 
     func testSizeChangeMovesNeighboursWithoutChangingIdentityOrOrder() {
-        var value = config([(.media, .standard), (.timer, .compact), (.files, .compact)], surface: .media)
+        // Media has no Compact size, so the first widget here is the Timer.
+        var value = config([(.timer, .standard), (.workspace, .compact), (.files, .compact)], surface: .media)
         let before = WorkspaceWidgetLayoutProjection.make(regions: value.regions(on: .media),
             availableSize: .init(width: 1_200, height: 900), metrics: metrics, editing: true)
-        value.setSize(.compact, for: value.placement(kind: .media, on: .media)!.id)
+        value.setSize(.compact, for: value.placement(kind: .timer, on: .media)!.id)
         let after = WorkspaceWidgetLayoutProjection.make(regions: value.regions(on: .media),
             availableSize: .init(width: 1_200, height: 900), metrics: metrics, editing: true)
         XCTAssertEqual(before.frames.map(\.id), after.frames.map(\.id))
@@ -387,24 +388,6 @@ final class WorkspaceSemanticSizeTests: XCTestCase {
 
     // MARK: Media
 
-    func testMediaSlidersAreSeventyPercentOfTheCellAndClamped() {
-        XCTAssertEqual(MediaWidgetMetrics.sliderWidth(cellWidth: 300), 210, accuracy: 0.001)
-        XCTAssertEqual(MediaWidgetMetrics.sliderWidth(cellWidth: 1_000), MediaWidgetMetrics.sliderMaximumWidth)
-        XCTAssertEqual(MediaWidgetMetrics.sliderWidth(cellWidth: 100), 84, accuracy: 0.001, "never wider than the cell minus insets")
-        XCTAssertEqual(MediaWidgetMetrics.sliderWidth(cellWidth: .nan), MediaWidgetMetrics.sliderMinimumWidth)
-        // Previously the volume track spanned the cell (313 pt in a 330 pt cell).
-        let grid = WidgetGridMetrics.make(surface: .media, metrics: metrics)
-        XCTAssertLessThanOrEqual(MediaWidgetMetrics.sliderWidth(cellWidth: grid.size(for: .standard).width), 313 * 0.75)
-    }
-
-    func testMediaArtworkIsNotShrunkWithTheSliders() {
-        let grid = WidgetGridMetrics.make(surface: .media, metrics: metrics)
-        XCTAssertGreaterThanOrEqual(MediaWidgetMetrics.artworkSide(.standard, cellHeight: grid.side), 40, "Standard keeps the 44 pt baseline art")
-        XCTAssertGreaterThan(MediaWidgetMetrics.artworkSide(.compact, cellHeight: grid.side), 44, "Compact leads with artwork")
-        XCTAssertGreaterThan(MediaWidgetMetrics.artworkSide(.large, cellHeight: grid.length(2)),
-                             MediaWidgetMetrics.artworkSide(.compact, cellHeight: grid.side))
-    }
-
     func testMediaStandardFootprintShrinksAtLeastThirtyPercent() {
         let grid = WidgetGridMetrics.make(surface: .media, metrics: metrics)
         let old = 360 * 220 * metrics.expandedCardScale * metrics.expandedCardScale
@@ -436,7 +419,7 @@ final class WorkspaceSemanticSizeTests: XCTestCase {
     // MARK: Performance
 
     func testProjectionIsCheapEnoughForLivePreview() {
-        let specs: [Spec] = [(.media, .compact), (.calendar, .large), (.timer, .standard), (.files, .compact),
+        let specs: [Spec] = [(.workspace, .compact), (.calendar, .large), (.timer, .standard), (.files, .compact),
                              (.clipboard, .compact), (.shortcuts, .standard), (.activities, .compact), (.workspace, .standard)]
         let regions = config(specs, surface: .media).regions(on: .media)
         let start = Date()

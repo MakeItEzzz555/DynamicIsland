@@ -120,7 +120,9 @@ final class IslandNavigationControlsTests: XCTestCase {
     }
 
     func testCompactCellKeepsItsDisplayUnitInsideTinyAndWideHosts() throws {
-        let config = configuration(surface: .media, widget: .media, size: .compact)
+        var config = configuration(surface: .media, widget: .timer, size: .compact)
+        // Media has no Compact size; the Timer stands in (configuration() re-adds Now Playing when a surface is empty).
+        if let media = config.placement(kind: .media, on: .media) { config.remove(media.id) }
         let unit = WidgetGridMetrics.make(surface: .media, metrics: notched).side
         for width in [unit * 0.4, unit, unit * 2, unit * 4] {
             let projection = WorkspaceWidgetLayoutProjection.make(regions: config.regions(on: .media),

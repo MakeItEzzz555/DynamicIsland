@@ -6,6 +6,9 @@ enum MediaControlSlot: CaseIterable, Equatable {
     case queue, favorite, previous, playPause, next, mode, output
 
     static let standardOrder: [MediaControlSlot] = [.queue, .favorite, .previous, .playPause, .next, .mode, .output]
+    /// Expanded widget: symmetric around Play/Pause. Queue and shuffle/repeat
+    /// live in the widget's context menu (`MediaModuleView.advancedMenu`).
+    static let expandedOrder: [MediaControlSlot] = [.favorite, .previous, .playPause, .next, .output]
 }
 
 /// Control sizes per presentation: Play/Pause is the strongest element,
@@ -15,8 +18,9 @@ struct MediaControlRowMetrics: Equatable {
     var transport: CGFloat
     var play: CGFloat
 
-    static let standard = Self(secondary: 22, transport: 28, play: 36)
-    static let large = Self(secondary: 26, transport: 32, play: 42)
+    func scaled(by factor: CGFloat) -> Self {
+        Self(secondary: secondary * factor, transport: transport * factor, play: play * factor)
+    }
 
     func size(of slot: MediaControlSlot) -> CGFloat {
         switch slot {
@@ -46,12 +50,13 @@ struct MediaControlRow: View {
     @ObservedObject var media: MediaController
     let advanced: MediaAdvancedController?
     let metrics: MediaControlRowMetrics
+    var slots = MediaControlSlot.standardOrder
 
     var body: some View {
         GeometryReader { proxy in
-            let centers = metrics.centers(width: proxy.size.width)
+            let centers = metrics.centers(width: proxy.size.width, slots: slots)
             ZStack(alignment: .topLeading) {
-                ForEach(Array(MediaControlSlot.standardOrder.enumerated()), id: \.offset) { index, slot in
+                ForEach(Array(slots.enumerated()), id: \.offset) { index, slot in
                     control(slot)
                         .frame(width: metrics.size(of: slot), height: metrics.size(of: slot))
                         .position(x: centers[index], y: proxy.size.height / 2)

@@ -45,8 +45,8 @@ final class SettingsPreviewGeometryTests: XCTestCase {
 
     func testCustomizedPreviewUsesPersistedSemanticSizesAndStableWidgetGeometry() throws {
         let settings = AppSettings(defaults: SettingsPreviewDefaults())
-        let solo = configuration([(.media, .compact)])
-        let withSibling = configuration([(.media, .compact), (.timer, .large)])
+        let solo = configuration([(.calendar, .compact)])
+        let withSibling = configuration([(.calendar, .compact), (.timer, .large)])
         let a = SettingsPreviewPresentation(settings: settings, configuration: solo)
         let b = SettingsPreviewPresentation(settings: settings, configuration: withSibling)
         let mediaID = try XCTUnwrap(solo.widgets(on: .media).first?.id)

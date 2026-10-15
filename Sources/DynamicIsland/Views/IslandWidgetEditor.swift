@@ -123,9 +123,11 @@ struct IslandWidgetEditor: View {
             .accessibilityAction(named: Text("Move left")) { shift(region, by: -1) }
             .accessibilityAction(named: Text("Move right")) { shift(region, by: 1) }
             .accessibilityAction(named: Text(removeName)) { remove(region) }
-            .accessibilityAction(named: Text("Use compact size")) { resize(region, to: .compact) }
-            .accessibilityAction(named: Text("Use standard size")) { resize(region, to: .standard) }
-            .accessibilityAction(named: Text("Use large size")) { resize(region, to: .large) }
+            .accessibilityActions {
+                ForEach(region.supportedSizes, id: \.self) { size in
+                    Button("Use \(size.title.lowercased()) size") { resize(region, to: size) }
+                }
+            }
     }
 
     private func cardVisual(_ region: WorkspaceWidgetRegion, title: String, width: CGFloat, height: CGFloat) -> some View {
@@ -285,7 +287,7 @@ struct IslandWidgetEditor: View {
     private func sizeControlOverlay(_ region: WorkspaceWidgetRegion, title: String, placeholder: Bool) -> some View {
         if editing && !placeholder && drag == nil {
             WorkspaceWidgetSizeControl(selection: WorkspaceWidgetLayoutProjection.presentationSize(of: region),
-                                       widgetTitle: title) { resize(region, to: $0) }
+                                       widgetTitle: title, options: region.supportedSizes) { resize(region, to: $0) }
                 .padding(.bottom, 6)
                 .transition(.opacity)
         }
@@ -333,7 +335,7 @@ struct IslandWidgetEditor: View {
         Button("Move Left") { shift(region, by: -1) }
         Button("Move Right") { shift(region, by: 1) }
         Menu("Widget Size") {
-            ForEach(WidgetPresentationSize.allCases, id: \.self) { size in
+            ForEach(region.supportedSizes, id: \.self) { size in
                 Button {
                     resize(region, to: size)
                 } label: {
@@ -489,7 +491,8 @@ struct IslandWidgetEditor: View {
     /// Draft-only: neighbours and the shell preview the new grid at once;
     /// Apply persists, Cancel restores the saved size.
     private func resize(_ region: WorkspaceWidgetRegion, to size: WidgetPresentationSize) {
-        guard editing, WorkspaceWidgetLayoutProjection.presentationSize(of: region) != size
+        guard editing, region.supportedSizes.contains(size),
+              WorkspaceWidgetLayoutProjection.presentationSize(of: region) != size
                 || !region.widgets.allSatisfy({ $0.size == size }) else { return }
         let message = "\(region.widgets.map { $0.kind.title }.joined(separator: " and ")) size \(size.title)"
         withAnimation(WorkspaceEditorMotion.resize(reduceMotion: reduceMotion || !extraMotion)) {
@@ -897,16 +900,17 @@ extension EnvironmentValues {
     }
 }
 
-/// Edit-mode size picker: three glyphs drawn at their grid aspect
-/// (1x1, 2x1, 2x2). The current size is filled; labels are spoken.
+/// Edit-mode size picker: the widget's offered sizes drawn at their grid
+/// aspect (1x1, 2x1, 2x2). The current size is filled; labels are spoken.
 struct WorkspaceWidgetSizeControl: View {
     let selection: WidgetPresentationSize
     let widgetTitle: String
+    var options = WidgetPresentationSize.allCases
     let onSelect: (WidgetPresentationSize) -> Void
 
     var body: some View {
         HStack(spacing: 2) {
-            ForEach(WidgetPresentationSize.allCases, id: \.self) { size in
+            ForEach(options, id: \.self) { size in
                 let selected = size == selection
                 Button { onSelect(size) } label: {
                     glyph(size, selected: selected)
