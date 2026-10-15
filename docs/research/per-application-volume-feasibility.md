@@ -4,7 +4,7 @@
 
 Per-app gain uses supported Core Audio process taps (macOS 14.2+) with **minimal intervention**. An app at 100% is never touched. When the user moves an app's slider below 100%, `ApplicationGainEngine` creates three objects for that one process:
 
-1. A private `CATapDescription(stereoMixdownOfProcesses: [process])` tap, with `muteBehavior = .mutedWhenTapped` and `deviceUID` set to the current output.
+1. A private `CATapDescription(stereoMixdownOfProcesses: [process])` tap, with `muteBehavior = .mutedWhenTapped` (the mixdown follows the app to whatever output it uses).
 2. A private aggregate device. Its main and only sub-device is that output device (the clock). It holds the tap with drift compensation and has no tap auto-start.
 3. An IOProc that copies the tap's samples × a ramped gain into the device's output buffers.
 

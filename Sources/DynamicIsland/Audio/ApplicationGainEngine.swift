@@ -96,7 +96,7 @@ protocol ApplicationGainHardware: Sendable {
     func defaultOutputRoute() throws -> ApplicationGainRoute
     /// A private, process-specific stereo tap that mutes the process's direct
     /// output only while a client reads it (`.mutedWhenTapped`).
-    func createTap(process: AudioObjectID, route: ApplicationGainRoute) throws -> AudioObjectID
+    func createTap(process: AudioObjectID) throws -> AudioObjectID
     func format(tap: AudioObjectID) throws -> AudioStreamBasicDescription
     func createAggregate(tap: AudioObjectID, route: ApplicationGainRoute) throws -> AudioObjectID
     func createIOProc(device: AudioObjectID, renderer: ApplicationGainRenderer) throws -> AudioDeviceIOProcID
@@ -205,7 +205,7 @@ actor ApplicationGainEngine {
     }
 
     private func open(process: AudioObjectID, gain: Float, route: ApplicationGainRoute) throws {
-        let tap = try hardware.createTap(process: process, route: route)
+        let tap = try hardware.createTap(process: process)
         var session: Session?
         do {
             let format = try hardware.format(tap: tap)
@@ -304,9 +304,9 @@ final class CoreAudioApplicationGainHardware: ApplicationGainHardware, @unchecke
         return ApplicationGainRoute(uid: uid, hasInputStreams: inputBytes > 0)
     }
 
-    func createTap(process: AudioObjectID, route: ApplicationGainRoute) throws -> AudioObjectID {
+    func createTap(process: AudioObjectID) throws -> AudioObjectID {
         guard #available(macOS 14.2, *) else { throw NativeAudioError.unsupportedPlatform }
-        let description = Self.makeTapDescription(process: process, deviceUID: route.uid)
+        let description = Self.makeTapDescription(process: process)
         var id = AudioObjectID(kAudioObjectUnknown)
         try Self.check(AudioHardwareCreateProcessTap(description, &id), .createTap)
         guard id != kAudioObjectUnknown else { throw NativeAudioError.operationFailed(.createTap, kAudioHardwareBadObjectError) }
@@ -314,12 +314,13 @@ final class CoreAudioApplicationGainHardware: ApplicationGainHardware, @unchecke
     }
 
     @available(macOS 14.2, *)
-    static func makeTapDescription(process: AudioObjectID, deviceUID: String) -> CATapDescription {
+    static func makeTapDescription(process: AudioObjectID) -> CATapDescription {
+        // No deviceUID: on macOS 15.7 a process mixdown with deviceUID set returns
+        // noErr with object 0 (measured); the mixdown already follows the app's output.
         let description = CATapDescription(stereoMixdownOfProcesses: [process])
         description.name = "DynamicIsland App Volume"
         description.isPrivate = true
         description.muteBehavior = .mutedWhenTapped
-        description.deviceUID = deviceUID
         return description
     }
 

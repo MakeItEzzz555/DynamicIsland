@@ -24,7 +24,7 @@ private final class FakeGainHardware: ApplicationGainHardware, @unchecked Sendab
     private func id() -> AudioObjectID { lock.withLock { nextID += 1; return nextID } }
 
     func defaultOutputRoute() throws -> ApplicationGainRoute { route }
-    func createTap(process: AudioObjectID, route: ApplicationGainRoute) throws -> AudioObjectID {
+    func createTap(process: AudioObjectID) throws -> AudioObjectID {
         if let tapError { throw tapError }
         let tap = id(); log("tap \(process)→\(route.uid)"); return tap
     }
