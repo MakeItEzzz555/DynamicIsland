@@ -18,6 +18,8 @@ private final class FakeLockSpace: LockScreenSpaceProviding {
     var accepts = true
     var adopted: [Int] = []
     var teardowns = 0
+    var prepares = 0
+    func prepare() -> Bool { prepares += 1; return accepts }
     func adopt(windowNumber: Int) -> Bool { guard accepts, windowNumber > 0 else { return false }; adopted.append(windowNumber); return true }
     func teardown() { teardowns += 1 }
 }

@@ -105,6 +105,7 @@ final class LockScreenCoordinator: ObservableObject {
                                                                     object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.surfaces?.relayout() }
             }
+            surfaces?.prepare(Set(LockScreenSurfaceKind.allCases))
             monitor.start()
         } else {
             monitor.stop()
@@ -231,12 +232,13 @@ final class LockScreenCoordinator: ObservableObject {
         guard let screen = lockScreen else { return nil }
         let full = screen.frame
         let notch = max(screen.safeAreaInsets.top, 32)
-        let columnTop = full.maxY - 280 - CGFloat(preferences.mediaVerticalOffset)
+        let columnTop = full.maxY - 292 - CGFloat(preferences.mediaVerticalOffset)
         let width: CGFloat = 380
         let x = full.midX - width / 2
         switch kind {
         case .hud: return CGRect(x: full.midX - 160, y: full.maxY - notch - 8, width: 320, height: notch + 8)
-        case .status: return CGRect(x: full.midX - 160, y: full.maxY - 228, width: 320, height: 34)
+        // Below the system clock (which ends ~230 pt from the top on 15.7).
+        case .status: return CGRect(x: full.midX - 160, y: full.maxY - 276, width: 320, height: 34)
         case .nowPlaying: return CGRect(x: x, y: columnTop - 150, width: width, height: 150)
         case .timer: return CGRect(x: x, y: columnTop - 150 - 12 - 64, width: width, height: 64)
         case .alert: return CGRect(x: x, y: columnTop - 150 - 12 - 64 - 12 - 44, width: width, height: 44)

@@ -12,6 +12,9 @@ enum LockScreenSpaceAvailability: Equatable, Sendable {
 @MainActor
 protocol LockScreenSpaceProviding: AnyObject {
     var availability: LockScreenSpaceAvailability { get }
+    /// Creates the space ahead of time. A space created while the lock screen
+    /// is already up only appears from the next lock on (measured live).
+    func prepare() -> Bool
     /// Moves one window onto the lock-screen space. False means it was not
     /// adopted and must not be shown.
     func adopt(windowNumber: Int) -> Bool
@@ -24,6 +27,7 @@ protocol LockScreenSpaceProviding: AnyObject {
 final class UnavailableLockScreenSpace: LockScreenSpaceProviding {
     let availability = LockScreenSpaceAvailability.unavailable(
         reason: "macOS has no public API for widgets above the Lock Screen.")
+    func prepare() -> Bool { false }
     func adopt(windowNumber: Int) -> Bool { false }
     func teardown() {}
 }
@@ -56,6 +60,17 @@ final class LockScreenSurfaceController {
     }
 
     var availability: LockScreenSpaceAvailability { space.availability }
+
+    /// While unlocked: create the space and adopt every surface window, hidden,
+    /// so a lock only has to order them front.
+    func prepare(_ kinds: Set<LockScreenSurfaceKind>) {
+        guard space.availability == .available, space.prepare() else { return }
+        for kind in kinds where !adopted.contains(kind) {
+            let window = windows[kind] ?? makeWindow(kind)
+            windows[kind] = window
+            if space.adopt(windowNumber: window.windowNumber) { adopted.insert(kind) }
+        }
+    }
 
     /// Shows exactly `requested` when the screen is confirmed locked; hides the rest.
     func update(state: LockState, requested: Set<LockScreenSurfaceKind>) {

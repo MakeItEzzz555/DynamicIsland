@@ -81,6 +81,15 @@ final class SkyLightLockScreenSpaceTests: XCTestCase {
         XCTAssertEqual(FakeSLS.calls.filter { $0 == "destroy" }.count, 1, "teardown is idempotent")
     }
 
+    func testPrepareCreatesTheSpaceOnceBeforeAnyWindow() {
+        let space = SkyLightLockScreenSpace(isTestedOS: true, loadSymbol: fakeSymbols())
+        XCTAssertTrue(space.prepare()); XCTAssertTrue(space.prepare())
+        XCTAssertEqual(FakeSLS.calls, ["main", "create flag=1 options=nil", "level 400", "show"])
+        XCTAssertTrue(space.adopt(windowNumber: 42))
+        XCTAssertEqual(FakeSLS.calls.last, "add 1 mode=7")
+        XCTAssertFalse(SkyLightLockScreenSpace(isTestedOS: false, loadSymbol: fakeSymbols()).prepare())
+    }
+
     func testFailuresFailClosed() {
         FakeSLS.connection = 0
         let noConnection = SkyLightLockScreenSpace(isTestedOS: true, loadSymbol: fakeSymbols())
@@ -111,7 +120,9 @@ private final class Signals: LockSignalSource {
 private final class AdoptingSpace: LockScreenSpaceProviding {
     var availability = LockScreenSpaceAvailability.available
     var teardowns = 0
-    func adopt(windowNumber: Int) -> Bool { windowNumber > 0 }
+    var adopted: Set<Int> = []
+    func prepare() -> Bool { true }
+    func adopt(windowNumber: Int) -> Bool { guard windowNumber > 0 else { return false }; adopted.insert(windowNumber); return true }
     func teardown() { teardowns += 1 }
 }
 
@@ -186,6 +197,17 @@ final class LockScreenCoordinatorTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(120))
         XCTAssertEqual(coordinator.hudPhase, .hidden)
         XCTAssertTrue(coordinator.visibleSurfaces.isEmpty)
+    }
+
+    func testEnablingPreparesTheSpaceAndEveryWindowBeforeAnyLock() async {
+        await enable()
+        XCTAssertEqual(space.adopted.count, LockScreenSurfaceKind.allCases.count,
+                       "windows join the space while unlocked; a space made mid-lock only appears next time")
+        XCTAssertTrue(coordinator.visibleSurfaces.isEmpty, "prepared windows stay hidden until a confirmed lock")
+        XCTAssertFalse(NSApp.windows.contains { $0 is LockScreenPanel && $0.isVisible })
+        await send(.screenLocked)
+        XCTAssertFalse(coordinator.visibleSurfaces.isEmpty, "the very first lock shows surfaces")
+        XCTAssertEqual(space.adopted.count, LockScreenSurfaceKind.allCases.count, "no adoption happens during the lock")
     }
 
     func testTheFirstLockAfterEnablingPlaysItsSound() async {

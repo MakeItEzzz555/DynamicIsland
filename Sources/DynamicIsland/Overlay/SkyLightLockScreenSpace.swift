@@ -68,10 +68,10 @@ final class SkyLightLockScreenSpace: LockScreenSpaceProviding {
         availability = .available
     }
 
-    /// The space is created lazily on the first adoption, never at launch.
-    func adopt(windowNumber: Int) -> Bool {
-        guard availability == .available, let functions, windowNumber > 0 else { return false }
-        if adoptedWindows.contains(windowNumber) { return true }
+    /// Creates and raises the space once, never at launch: only when the user
+    /// enabled the feature, while the desktop is unlocked.
+    func prepare() -> Bool {
+        guard availability == .available, let functions else { return false }
         if space == 0 {
             let connection = functions.mainConnectionID()
             guard connection != 0 else { return fail("No window-server connection.") }
@@ -85,6 +85,12 @@ final class SkyLightLockScreenSpace: LockScreenSpaceProviding {
             self.connection = connection
             self.space = space
         }
+        return true
+    }
+
+    func adopt(windowNumber: Int) -> Bool {
+        guard windowNumber > 0, prepare(), let functions else { return false }
+        if adoptedWindows.contains(windowNumber) { return true }
         functions.addWindows(connection, space, [NSNumber(value: windowNumber)] as CFArray, 7)
         adoptedWindows.insert(windowNumber)
         return true
