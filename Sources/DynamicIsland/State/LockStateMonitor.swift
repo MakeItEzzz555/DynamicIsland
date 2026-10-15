@@ -1,5 +1,8 @@
 import AppKit
 import Combine
+import os
+
+private let lockSignalLog = Logger(subsystem: "com.local.dynamicisland", category: "LockScreen")
 
 /// Raw session/display signals. None of them is a documented security
 /// contract; the reducer treats them as hints and fails closed.
@@ -110,6 +113,7 @@ final class LockStateMonitor: ObservableObject {
     }
 
     func receive(_ signal: LockSignal) {
+        lockSignalLog.notice("signal \(String(describing: signal), privacy: .public)")
         let next = LockStateReducer.reduce(state, signal)
         guard next != state else { return }
         state = next
