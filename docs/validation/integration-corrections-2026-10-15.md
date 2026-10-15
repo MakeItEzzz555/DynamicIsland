@@ -17,6 +17,9 @@ Local integration branch `fix/complete-integration-acceptance-20261015`, based o
 - Full Swift test suite: **2,617 tests, 45 skipped, 1 failed**. The only failed test was `SettingsWindowTests.testSettingsWindowAcceptsLocalPointerEventsThroughItsNativeHierarchy`, due to XCTest app/key-window activation not acquired after the entire suite, clearly reported as **INCONCLUSIVE (environment)**. Assertion was not weakened or skipped.
 - The same native Settings test, run in its own fresh XCTest process: **1 passed**, the click was dispatched and asserted, **0 failures** (`/private/tmp/dynamicisland-settings-pointer-isolated-20261015.log`).
 - Full run log: `/private/tmp/dynamicisland-takeover-full-suite.log`.
+- **Release packaging: passed** (240.43 seconds). The packaged app and every helper passed `codesign --verify --strict`; `codesign --verify --deep --strict` passed on the application. Identity: `com.local.dynamicisland`, **ad-hoc signed** (Developer ID / notarization not claimed).
+- Isolated package path: `/private/tmp/dynamicisland-final-integration-20261015/DynamicIsland.app`.
+- Release log: `/private/tmp/dynamicisland-final-package-20261015.log`. The user's active DynamicIsland installation has not been replaced.
 
 ## Mandatory physical acceptance (not yet executed on the new package)
 
