@@ -283,6 +283,8 @@ public final class AppSettings: ObservableObject {
     @Published public var agentCompletionSoundEnabled: Bool { didSet { save(agentCompletionSoundEnabled, for: Key.agentCompletionSoundEnabled) } }
     /// The user's Live Audio consent (contract revision 3); not macOS TCC state.
     @Published public var liveAudioVisualizerEnabled: Bool { didSet { save(liveAudioVisualizerEnabled, for: Key.liveAudioVisualizerEnabled) } }
+    /// Experimental per-app gain routing; off until the user turns it on in the App Volume widget.
+    @Published public var perAppVolumeEnabled: Bool { didSet { save(perAppVolumeEnabled, for: Key.perAppVolumeEnabled) } }
     @Published public var agentUsageMetricsEnabled: Bool { didSet { save(agentUsageMetricsEnabled, for: Key.agentUsageMetricsEnabled) } }
     /// Record Activities: explicit opt-in, local normalized events only.
     @Published public var agentActivityRecordingEnabled: Bool { didSet { save(agentActivityRecordingEnabled, for: Key.agentActivityRecordingEnabled) } }
@@ -573,6 +575,7 @@ public final class AppSettings: ObservableObject {
         agentSoundsEnabled = Self.bool(defaults, Key.agentSoundsEnabled, true)
         agentCompletionSoundEnabled = Self.bool(defaults, Key.agentCompletionSoundEnabled, true)
         liveAudioVisualizerEnabled = Self.bool(defaults, Key.liveAudioVisualizerEnabled, false)
+        perAppVolumeEnabled = Self.bool(defaults, Key.perAppVolumeEnabled, false)
         agentUsageMetricsEnabled = Self.bool(defaults, Key.agentUsageMetricsEnabled, true)
         agentActivityRecordingEnabled = Self.bool(defaults, Key.agentActivityRecordingEnabled, false)
         agentPeekDurationSeconds = Self.double(defaults, Key.agentPeekDurationSeconds, 5.0)
@@ -929,6 +932,7 @@ public final class AppSettings: ObservableObject {
         agentSoundsEnabled = Self.bool(defaults, Key.agentSoundsEnabled, true)
         agentCompletionSoundEnabled = Self.bool(defaults, Key.agentCompletionSoundEnabled, true)
         liveAudioVisualizerEnabled = Self.bool(defaults, Key.liveAudioVisualizerEnabled, false)
+        perAppVolumeEnabled = Self.bool(defaults, Key.perAppVolumeEnabled, false)
         agentUsageMetricsEnabled = Self.bool(defaults, Key.agentUsageMetricsEnabled, true)
         agentActivityRecordingEnabled = Self.bool(defaults, Key.agentActivityRecordingEnabled, false)
         agentPeekDurationSeconds = Self.double(defaults, Key.agentPeekDurationSeconds, 5.0)
@@ -1540,6 +1544,7 @@ private enum Key {
     static let agentSoundsEnabled = "agentSoundsEnabled"
     static let agentCompletionSoundEnabled = "agentCompletionSoundEnabled"
     static let liveAudioVisualizerEnabled = "liveAudioVisualizerEnabled"
+    static let perAppVolumeEnabled = "perAppVolumeEnabled"
     static let agentUsageMetricsEnabled = "agentUsageMetricsEnabled"
     static let agentActivityRecordingEnabled = "agentActivityRecordingEnabled"
     static let agentPeekDurationSeconds = "agentPeekDurationSeconds"
@@ -1716,7 +1721,7 @@ private enum Key {
         useBlurTransitions, useScaleTransitions, showNavigationControls, threeFingerTabNavigationEnabled, showIslandTab, showTrayTab,
         showTimerTab, showStatsTab, showToolsTab, showAgentsTab, agentActivityEnabled,
         agentCompletionAlertsEnabled, agentApprovalAlertsEnabled, agentSoundsEnabled, agentCompletionSoundEnabled,
-        liveAudioVisualizerEnabled, agentUsageMetricsEnabled, agentActivityRecordingEnabled, agentPeekDurationSeconds,
+        liveAudioVisualizerEnabled, perAppVolumeEnabled, agentUsageMetricsEnabled, agentActivityRecordingEnabled, agentPeekDurationSeconds,
         agentVisualPreferences, showActivitiesTab, showLiveActivitiesTab, showGesturesTab,
         rememberLastSelectedTab, defaultExpandedTab, mediaEnabled, showMediaWhenPaused,
         showMediaWhenNoSource, showAlbumArtwork, showMediaTitle, showMediaArtist, showMediaSourceName,

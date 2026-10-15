@@ -4224,6 +4224,10 @@ struct ExpandedIslandView: View {
             ShortcutsModuleView(shortcuts: modules.shortcuts, availableHeight: height, compactScale: 1, onShortcutLaunched: onShortcutLaunched)
         case .camera:
             CameraWidgetView(controller: modules.productivity.camera, reduceMotion: reduceMotion || settings.reduceExtraMotion)
+        case .appVolume:
+            if let appVolume = modules.appVolume {
+                AppVolumeWidgetView(discovery: appVolume, settings: settings, systemHUD: modules.systemHUD)
+            }
         case .activities:
             LiveActivitiesModuleView(liveActivities: liveActivities, navigation: navigation, rightWorkspace: modules.rightWorkspace, settings: settings, availableHeight: height, compactScale: 1)
         }

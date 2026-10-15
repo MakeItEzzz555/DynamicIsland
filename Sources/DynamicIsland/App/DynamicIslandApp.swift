@@ -158,6 +158,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     )
     /// Inert until the user turns Live Audio on; creation starts nothing.
     private lazy var audioSpectrum = AudioSpectrumController()
+    /// Read-only until the user turns Per-App Volume on; creation reads nothing.
+    private let appVolume = ApplicationAudioDiscovery()
     private lazy var liveAudio = LiveAudioCoordinator(controller: audioSpectrum, settings: settings,
         playback: media.$isPlaying.eraseToAnyPublisher(), initiallyPlaying: media.isPlaying)
     private var audioShutdownStarted = false
@@ -309,8 +311,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             customization: customization,
             mediaAdvanced: mediaAdvanced,
             audioSpectrum: audioSpectrum,
-            liveAudio: liveAudio
+            liveAudio: liveAudio,
+            appVolume: appVolume
         )
+        settings.$perAppVolumeEnabled.removeDuplicates().sink { [weak self] enabled in
+            guard let self else { return }
+            Task { await self.appVolume.setGainEnabled(enabled) }
+        }.store(in: &cancellables)
         navigation.applyConfiguration(customization.configuration, using: settings)
         customization.$configuration.dropFirst().removeDuplicates().sink { [weak self] configuration in
             guard let self else { return }

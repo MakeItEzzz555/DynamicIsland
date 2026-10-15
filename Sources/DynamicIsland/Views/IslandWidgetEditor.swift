@@ -854,6 +854,7 @@ extension IslandWidget {
         case .agentUsage: Color(red: 0.36, green: 0.62, blue: 1.0)
         case .codexUsage: Color(red: 0.22, green: 0.58, blue: 0.95)
         case .claudeUsage: Color(red: 0.86, green: 0.47, blue: 0.30)
+        case .appVolume: Color(red: 0.98, green: 0.36, blue: 0.62)
         }
     }
 }

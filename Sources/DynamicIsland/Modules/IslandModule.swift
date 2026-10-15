@@ -48,6 +48,8 @@ struct IslandModules {
     var audioSpectrum: AudioSpectrumController? = nil
     /// Owns Live Audio consent, visibility leases and capture reconciliation.
     var liveAudio: LiveAudioCoordinator? = nil
+    /// Per-app volume (discovery + experimental gain routing).
+    var appVolume: ApplicationAudioDiscovery? = nil
 }
 
 /// Real data sources for the right workspace's Apps & Media page.

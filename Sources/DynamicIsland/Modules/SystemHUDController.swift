@@ -1531,6 +1531,15 @@ final class SystemHUDController {
         return snapshot
     }
 
+    /// App Volume's System row: the same verified write as the HUD slider,
+    /// without presenting a HUD over the widget that already shows the level.
+    @discardableResult
+    func setOutputVolume(_ value: Double) -> SystemHUDSnapshot? {
+        guard let snapshot = backend.setVolume(value) else { return nil }
+        volumeChanges.verifiedWrite(snapshot)
+        return snapshot
+    }
+
     func currentInteractiveSnapshot(kind: SystemHUDKind) -> SystemHUDSnapshot? {
         switch kind {
         case .volume:
