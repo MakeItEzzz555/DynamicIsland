@@ -20,6 +20,9 @@ final class LockScreenCoordinator: ObservableObject {
     /// An artwork click while locked; the source opens only after a confirmed unlock.
     @Published private(set) var sourceOpenPending = false
     private var sourceOpenRequestedAt: Date?
+    /// Resolve once on the secure screen: another app starting playback while
+    /// the user unlocks must not redirect the user's original click.
+    private var sourceOpenTarget: MediaSourceOpenTarget?
     static let sourceOpenTimeout: TimeInterval = 120
 
     let settings: AppSettings
@@ -33,7 +36,7 @@ final class LockScreenCoordinator: ObservableObject {
     private let readBattery: () -> BatteryActivitySnapshot?
     private let playSound: @MainActor (String, Double) -> Void
     private let unlockDuration: Duration
-    private let openMediaSource: @MainActor (MediaController) -> Bool
+    private let openMediaSource: @MainActor (MediaSourceOpenTarget) -> Bool
     private var surfaces: LockScreenSurfaceController?
     private var cancellables: Set<AnyCancellable> = []
     private var refreshTimer: Timer?
@@ -50,7 +53,7 @@ final class LockScreenCoordinator: ObservableObject {
          readBattery: @escaping () -> BatteryActivitySnapshot? = { BatteryActivityProvider().snapshot() },
          playSound: @escaping @MainActor (String, Double) -> Void = { LockScreenCoordinator.playSystemSound($0, volume: $1) },
          unlockDuration: Duration = .milliseconds(650),
-         openMediaSource: @escaping @MainActor (MediaController) -> Bool = { $0.openActiveMediaSource() }) {
+         openMediaSource: @escaping @MainActor (MediaSourceOpenTarget) -> Bool = { LockScreenCoordinator.openTarget($0) }) {
         self.settings = settings; self.media = media; self.timer = timer; self.keepAwake = keepAwake
         self.systemHUD = systemHUD; self.mediaAdvanced = mediaAdvanced; self.monitor = monitor; self.makeSpace = makeSpace
         self.readBattery = readBattery; self.playSound = playSound; self.unlockDuration = unlockDuration
@@ -101,12 +104,30 @@ final class LockScreenCoordinator: ObservableObject {
     /// Artwork click while locked: never opens anything over the secure screen;
     /// it remembers one request and fulfils it after a confirmed unlock.
     func requestSourceOpenAfterUnlock() {
-        guard settings.openSourceOnArtworkClick, monitor.state.isConfirmedLocked, content.media != nil else { return }
+        guard settings.openSourceOnArtworkClick, monitor.state.isConfirmedLocked, content.media != nil,
+              let target = MediaSourceOpenTarget.resolve(
+                sourceKind: media.sourceKind, sourceName: media.sourceName,
+                bundleIdentifier: media.sourceBundleIdentifier) else { return }
+        sourceOpenTarget = target
         sourceOpenRequestedAt = Date()
         sourceOpenPending = true
     }
 
-    private func cancelSourceOpen() { sourceOpenRequestedAt = nil; sourceOpenPending = false }
+    private func cancelSourceOpen() {
+        sourceOpenRequestedAt = nil
+        sourceOpenTarget = nil
+        sourceOpenPending = false
+    }
+
+    /// Uses only an explicitly captured source identity after macOS confirms unlock.
+    /// Never call this while the session is locked or from a Settings preview.
+    private static func openTarget(_ target: MediaSourceOpenTarget) -> Bool {
+        switch target {
+        case .app(let app): AppLaunchService.open(app)
+        case .bundleIdentifier(let bundleID): AppLaunchService.openApp(bundleIdentifier: bundleID)
+        case .youtube: AppLaunchService.openYouTube()
+        }
+    }
 
     /// Test hook: age the pending request to exercise the timeout.
     func ageSourceOpenRequest(by seconds: TimeInterval) { sourceOpenRequestedAt?.addTimeInterval(-seconds) }
@@ -131,7 +152,10 @@ final class LockScreenCoordinator: ObservableObject {
             mode: state(caps.playbackMode), modeSymbol: mediaAdvanced?.mode.symbol ?? "shuffle",
             cycleMode: { [weak self] in Task { await self?.mediaAdvanced?.cycleMode() } },
             volume: { [weak self] in self?.outputVolume }, setVolume: { [weak self] in self?.setVolume($0) },
-            openSource: settings.openSourceOnArtworkClick ? { [weak self] in self?.requestSourceOpenAfterUnlock() } : nil,
+            openSource: settings.openSourceOnArtworkClick &&
+                MediaSourceOpenTarget.resolve(sourceKind: media.sourceKind, sourceName: media.sourceName,
+                                              bundleIdentifier: media.sourceBundleIdentifier) != nil
+                ? { [weak self] in self?.requestSourceOpenAfterUnlock() } : nil,
             openPending: sourceOpenPending)
     }
     var artwork: NSImage? { content.media?.artworkRevision == nil ? nil : media.artworkImage }
@@ -189,9 +213,10 @@ final class LockScreenCoordinator: ObservableObject {
         } else if !locked && wasLocked {
             wasLocked = false
             stopRefreshTimer()
-            if state == .unlocked && previous.isConfirmedLocked, let requested = sourceOpenRequestedAt,
+            if state == .unlocked && previous.isConfirmedLocked,
+               let requested = sourceOpenRequestedAt, let target = sourceOpenTarget,
                Date().timeIntervalSince(requested) < Self.sourceOpenTimeout {
-                _ = openMediaSource(media)
+                _ = openMediaSource(target)
             }
             cancelSourceOpen()
             if state == .unlocked && previous.isConfirmedLocked && preferences.hud {

@@ -140,13 +140,14 @@ final class LockScreenPlayerTests: XCTestCase {
         let settings = AppSettings(defaults: defaults)
         settings.openSourceOnArtworkClick = true
         let signals = Signals(), activities = LiveActivityStore()
-        var opened = 0
+        var openedTargets: [MediaSourceOpenTarget] = []
         let coordinator = LockScreenCoordinator(
             settings: settings, media: MediaController.settingsPreview(), timer: TimerController(),
             keepAwake: KeepAwakeController(liveActivities: activities, capabilities: IslandCapabilityRegistry()),
             systemHUD: SystemHUDController(settings: settings, liveActivities: activities),
             monitor: LockStateMonitor(source: signals), makeSpace: { Space() }, readBattery: { nil },
-            playSound: { _, _ in }, unlockDuration: .milliseconds(10), openMediaSource: { _ in opened += 1; return true })
+            playSound: { _, _ in }, unlockDuration: .milliseconds(10),
+            openMediaSource: { target in openedTargets.append(target); return true })
         coordinator.start()
         defer { coordinator.terminate() }
         var prefs = settings.lockScreenPreferences; prefs.enabled = true; settings.lockScreenPreferences = prefs
@@ -164,9 +165,9 @@ final class LockScreenPlayerTests: XCTestCase {
         XCTAssertNotNil(coordinator.content.media)
         coordinator.requestSourceOpenAfterUnlock()
         XCTAssertTrue(coordinator.sourceOpenPending)
-        XCTAssertEqual(opened, 0, "nothing opens over the secure screen")
+        XCTAssertTrue(openedTargets.isEmpty, "nothing opens over the secure screen")
         await send(.screenUnlocked)
-        XCTAssertEqual(opened, 1, "opens exactly once after a confirmed unlock")
+        XCTAssertEqual(openedTargets, [.app(.music)], "opens the exact source captured by the artwork tap once after unlock")
         XCTAssertFalse(coordinator.sourceOpenPending)
 
         await send(.screenLocked)
@@ -174,12 +175,12 @@ final class LockScreenPlayerTests: XCTestCase {
         await send(.sessionResigned)
         await send(.sessionBecameActive)
         await send(.screenUnlocked)
-        XCTAssertEqual(opened, 1, "user switching cancels the request")
+        XCTAssertEqual(openedTargets, [.app(.music)], "user switching cancels the request")
 
         await send(.screenLocked)
         coordinator.requestSourceOpenAfterUnlock()
         coordinator.ageSourceOpenRequest(by: LockScreenCoordinator.sourceOpenTimeout + 1)
         await send(.screenUnlocked)
-        XCTAssertEqual(opened, 1, "a stale request expires")
+        XCTAssertEqual(openedTargets, [.app(.music)], "a stale request expires")
     }
 }
