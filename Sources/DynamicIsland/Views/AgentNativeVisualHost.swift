@@ -45,6 +45,11 @@ struct NativeVisualVisibility: NSViewRepresentable {
             }
         }
         func refresh() {
+            // SwiftUI also hosts window-less copies of a view (a Button keeps one for its
+            // `.keyboardShortcut`, created when the button becomes enabled). A copy that never
+            // reached a window must not publish "hidden" into the state it shares with the real
+            // probe, whose own deduplication would never correct it.
+            guard window != nil || reported != nil else { return }
             let value = window?.isVisible == true && window?.occlusionState.contains(.visible) == true && !isHiddenOrHasHiddenAncestor && !visibleRect.isEmpty
             guard reported != value else { return }
             reported = value
