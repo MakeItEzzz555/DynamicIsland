@@ -55,7 +55,7 @@ final class MediaSizeRenderTests: XCTestCase {
         let media = try await seededMedia(title: "9PM (Till I Come)", playing: true)
         let settings = AppSettings(defaults: SettingsPreviewDefaults())
         settings.showNavigationControls = false
-        for semanticSize in WidgetPresentationSize.supported(for: .media) {
+        for semanticSize in WidgetPresentationSize.allCases {
             var configuration = WorkspaceConfiguration.initial
             for widget in configuration.widgets(on: .media) { configuration.remove(widget.id) }
             configuration.add(.media, on: .media)
@@ -119,15 +119,35 @@ final class MediaSizeRenderTests: XCTestCase {
         }
     }
 
+    func testTopAttachmentChangesOnlyVerticalOriginsInCompactAndStandardPlans() {
+        for surface in [WorkspaceSurface.media, .agents] {
+            let grid = WidgetGridMetrics.make(surface: surface, metrics: .fallback)
+            let compactCell = grid.size(for: .compact)
+            let before = MediaCompactLayout.make(cell: compactCell, content: .init())
+            let after = MediaCompactLayout.make(cell: compactCell, content: .init(), topAttached: true)
+            XCTAssertEqual(before.artworkSide, after.artworkSide)
+            XCTAssertEqual(before.frames.mapValues(\.size), after.frames.mapValues(\.size))
+            XCTAssertEqual(after.frames.values.map(\.minY).min(), 0)
+            XCTAssertTrue(after.frames.values.allSatisfy { CGRect(origin: .zero, size: compactCell).contains($0) })
+            let standardCell = grid.size(for: .standard)
+            let old = MediaStandardLayout.make(cell: standardCell, content: .init())
+            let new = MediaStandardLayout.make(cell: standardCell, content: .init(), topAttached: true)
+            XCTAssertEqual(old.artworkSide, new.artworkSide)
+            XCTAssertEqual(old.frames.mapValues(\.size), new.frames.mapValues(\.size))
+            XCTAssertEqual(new.frames.values.map(\.minY).min(), 0)
+            XCTAssertTrue(new.frames.values.allSatisfy { CGRect(origin: .zero, size: standardCell).contains($0) })
+        }
+    }
+
     func testEverySizeRendersAtItsExactCellPlayingAndPaused() async throws {
         let playing = try await seededMedia(title: "9PM (Till I Come)", playing: true)
-        for size in WidgetPresentationSize.supported(for: .media) {
+        for size in WidgetPresentationSize.allCases {
             for surface in [WorkspaceSurface.media, .agents] {
                 _ = try render(playing, size: size, surface: surface, name: "media-\(size.rawValue)-\(surface.rawValue)-playing")
             }
         }
         let paused = try await seededMedia(title: "An Extraordinarily Long Track Title That Must Truncate Cleanly", playing: false)
-        for size in WidgetPresentationSize.supported(for: .media) {
+        for size in WidgetPresentationSize.allCases {
             _ = try render(paused, size: size, surface: .media, name: "media-\(size.rawValue)-media-paused-long")
         }
     }

@@ -14,7 +14,7 @@ final class TraySharedGeometryTests: XCTestCase {
                 auxiliaryTopLeftArea: CGRect(x: 0, y: 950, width: 663, height: 32),
                 auxiliaryTopRightArea: CGRect(x: 849, y: 950, width: 663, height: 32),
                 backingScaleFactor: scale, displayID: nil, isBuiltIn: true, pixelSize: CGSize(width: 1512 * scale, height: 982 * scale)))
-            for size in WidgetPresentationSize.supported(for: .media) {
+            for size in [WidgetPresentationSize.compact, .standard, .large] {
                 let configuration = WorkspaceConfiguration(placements: [WidgetPlacement(kind: .media, surface: .media, order: 0, size: size)],
                     customizedSurfaces: [.media]).normalized()
                 func footprint(_ page: ExpandedIslandPage) -> CGSize {

@@ -130,16 +130,6 @@ enum WidgetPresentationSize: String, CaseIterable, Codable {
     /// Grid span (Compact 1x1, Standard 2x1, Large 2x2). Size is a layout
     /// class with its own content hierarchy, never a scale factor.
     var span: (columns: Int, rows: Int) { WidgetGridMetrics.span(self) }
-
-    /// Sizes a widget kind offers. Now Playing has one composition scaled
-    /// between Standard and Large; there is no Compact Media.
-    static func supported(for kind: IslandWidget) -> [WidgetPresentationSize] {
-        kind == .media ? [.standard, .large] : allCases
-    }
-    /// A size the kind does not offer (a saved Compact Media) becomes Standard.
-    func resolved(for kind: IslandWidget) -> WidgetPresentationSize {
-        Self.supported(for: kind).contains(self) ? self : .standard
-    }
 }
 
 struct WidgetPlacement: Codable, Equatable, Identifiable {
@@ -184,12 +174,6 @@ struct WorkspaceWidgetRegion: Equatable, Identifiable {
     var id: WidgetID
     var widgets: [WidgetPlacement]
     var isStack: Bool { widgets.count > 1 }
-    /// Sizes every widget in the region offers (Media: Standard and Large).
-    var supportedSizes: [WidgetPresentationSize] {
-        WidgetPresentationSize.allCases.filter { size in
-            widgets.allSatisfy { WidgetPresentationSize.supported(for: $0.kind).contains(size) }
-        }
-    }
     /// Column membership with the preceding region (vertical composition).
     var stacksBelowPrevious: Bool { widgets.first?.stacksBelowPrevious ?? false }
 }
@@ -311,9 +295,6 @@ struct WorkspaceConfiguration: Codable, Equatable {
             } else {
                 result.placements.append(.init(id: result.uniqueID("media.media"), kind: .media, surface: .media, order: 0))
             }
-        }
-        for index in result.placements.indices {
-            result.placements[index].size = result.placements[index].size.resolved(for: result.placements[index].kind)
         }
         var groupIDs = Set<WidgetID>()
         var groupedMembers = Set<WidgetID>()
@@ -461,9 +442,7 @@ struct WorkspaceConfiguration: Codable, Equatable {
     }
     mutating func setSize(_ size: WidgetPresentationSize, for id: WidgetID) {
         let members = groups.first(where: { $0.id == id })?.members ?? [id]
-        for index in placements.indices where members.contains(placements[index].id) {
-            placements[index].size = size.resolved(for: placements[index].kind)
-        }
+        for index in placements.indices where members.contains(placements[index].id) { placements[index].size = size }
     }
 
     mutating func combineTerminalWithChat(on surface: WorkspaceSurface = .agents) {

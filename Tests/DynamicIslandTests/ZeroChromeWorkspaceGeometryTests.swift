@@ -36,7 +36,7 @@ final class ZeroChromeWorkspaceGeometryTests: XCTestCase {
         settings.respectHardwareNotch = true
         settings.showNavigationControls = false
         for kind in [IslandWidget.media, .timer, .calendar] {
-            for presentation in [WidgetPresentationSize.standard, .compact] where WidgetPresentationSize.supported(for: kind).contains(presentation) {
+            for presentation in [WidgetPresentationSize.standard, .compact] {
                 let config = configuration([(kind, presentation)])
                 let header = ExpandedPresentationProfile.headerLayout(page: .island, configuration: config,
                     editing: false, settings: settings, metrics: metrics, pageCount: 4)
@@ -165,7 +165,7 @@ final class ZeroChromeWorkspaceGeometryTests: XCTestCase {
     }
 
     func testWingsNeverWidenASoleWidgetOrBreakAStackOrRiseWhileScrolling() throws {
-        let media = configuration([(.calendar, .compact)]).regions(on: .media)
+        let media = configuration([(.media, .compact)]).regions(on: .media)
         let size = WorkspaceWidgetLayoutProjection.preferredContentSize(regions: media,
             maximumSize: CGSize(width: 700, height: 900), metrics: metrics, minimumWidth: 0)
         XCTAssertEqual(WorkspaceWidgetLayoutProjection.make(regions: media, availableSize: size, metrics: metrics, lane: zeroChromeLane),

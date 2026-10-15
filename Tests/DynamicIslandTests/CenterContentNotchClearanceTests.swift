@@ -19,7 +19,7 @@ final class CenterContentNotchClearanceTests: XCTestCase {
     func testSpareHostHeightNeverAddsCenterLaneClearance() throws {
         // Reproduces the native failure: a +96pt host proposal used to move
         // the widget down 48pt even though the physical notch was unchanged.
-        for (kind, size) in [(IslandWidget.media, WidgetPresentationSize.standard), (.calendar, .compact),
+        for (kind, size) in [(IslandWidget.media, WidgetPresentationSize.standard), (.media, .compact),
                              (.timer, .standard), (.calendar, .standard), (.chat, .standard)] {
             let content = regions(kind, size)
             let natural = WorkspaceWidgetLayoutProjection.preferredContentSize(regions: content,
