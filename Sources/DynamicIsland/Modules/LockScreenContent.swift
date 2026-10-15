@@ -108,3 +108,61 @@ enum LockScreenPrivacyProjector {
 private extension String {
     var trimmed: String { trimmingCharacters(in: .whitespacesAndNewlines) }
 }
+
+/// Lock-screen preferences, persisted as one Codable value. Everything is off
+/// until the user turns the experimental master switch on.
+struct LockScreenPreferences: Codable, Equatable, Sendable {
+    var enabled = false
+    var hud = true
+    var lockSound = "None"
+    var unlockSound = "Default"
+    var soundVolume = 0.5
+    var keepVisibleDuringScreensaver = false
+    var nowPlaying = true
+    var showTrackDetails = false
+    var timer = true
+    var keepAwake = true
+    var battery = true
+    var alerts = true
+    var sideVolume = false
+    var sideBrightness = false
+    var mediaVerticalOffset = 0.0
+
+    static let defaults = LockScreenPreferences()
+
+    var disclosure: LockScreenDisclosure {
+        .init(media: nowPlaying, mediaMetadata: showTrackDetails, timer: timer, keepAwake: keepAwake,
+              battery: battery, alerts: alerts)
+    }
+
+    func normalized() -> Self {
+        var copy = self
+        copy.soundVolume = soundVolume.isFinite ? min(max(soundVolume, 0), 1) : 0.5
+        copy.mediaVerticalOffset = mediaVerticalOffset.isFinite ? min(max(mediaVerticalOffset, -200), 200) : 0
+        return copy
+    }
+
+    static func decode(from defaults: UserDefaults, key: String) -> Self {
+        guard let data = defaults.data(forKey: key),
+              let decoded = try? JSONDecoder().decode(Self.self, from: data) else { return .defaults }
+        return decoded.normalized()
+    }
+
+    init() {}
+
+    /// Missing keys keep their defaults, so adding a preference never resets the rest.
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        let base = Self.defaults
+        func value<T: Decodable>(_ key: CodingKeys, _ fallback: T) -> T { (try? values.decodeIfPresent(T.self, forKey: key)) ?? fallback }
+        enabled = value(.enabled, base.enabled); hud = value(.hud, base.hud)
+        lockSound = value(.lockSound, base.lockSound); unlockSound = value(.unlockSound, base.unlockSound)
+        soundVolume = value(.soundVolume, base.soundVolume)
+        keepVisibleDuringScreensaver = value(.keepVisibleDuringScreensaver, base.keepVisibleDuringScreensaver)
+        nowPlaying = value(.nowPlaying, base.nowPlaying); showTrackDetails = value(.showTrackDetails, base.showTrackDetails)
+        timer = value(.timer, base.timer); keepAwake = value(.keepAwake, base.keepAwake)
+        battery = value(.battery, base.battery); alerts = value(.alerts, base.alerts)
+        sideVolume = value(.sideVolume, base.sideVolume); sideBrightness = value(.sideBrightness, base.sideBrightness)
+        mediaVerticalOffset = value(.mediaVerticalOffset, base.mediaVerticalOffset)
+    }
+}

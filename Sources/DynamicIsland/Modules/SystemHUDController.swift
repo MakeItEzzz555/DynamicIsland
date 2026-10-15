@@ -1540,6 +1540,10 @@ final class SystemHUDController {
         return snapshot
     }
 
+    /// Lock-screen side slider: verified display-brightness write without a HUD.
+    @discardableResult
+    func setDisplayBrightness(_ value: Double) -> SystemHUDSnapshot? { backend.setBrightness(value) }
+
     func currentInteractiveSnapshot(kind: SystemHUDKind) -> SystemHUDSnapshot? {
         switch kind {
         case .volume:

@@ -64,6 +64,14 @@ final class LockScreenSurfaceController {
         for kind in target.subtracting(visible) { show(kind) }
     }
 
+    /// Display configuration changed: move visible surfaces to their new frames.
+    func relayout() {
+        for kind in visible {
+            guard let rect = frame(kind) else { hide(kind); continue }
+            windows[kind]?.setFrame(rect, display: true)
+        }
+    }
+
     /// Termination, disable or uncertain ownership. Idempotent.
     func stop() {
         for kind in visible { hide(kind) }
@@ -78,7 +86,10 @@ final class LockScreenSurfaceController {
         let window = windows[kind] ?? makeWindow(kind)
         windows[kind] = window
         window.setFrame(rect, display: false)
-        if window.contentView == nil { window.contentView = NSHostingView(rootView: content(kind)) }
+        if window.contentView == nil {
+            window.contentView = kind.isInteractive
+                ? LockScreenHostingView(rootView: content(kind)) : NSHostingView(rootView: content(kind))
+        }
         if !adopted.contains(kind) {
             guard space.adopt(windowNumber: window.windowNumber) else { return }
             adopted.insert(kind)
@@ -111,6 +122,12 @@ final class LockScreenSurfaceController {
     }
 
     private func makeWindow(_ kind: LockScreenSurfaceKind) -> NSPanel { Self.makeWindow(kind) }
+}
+
+/// The panel never becomes key, so a control must act on the first click
+/// instead of spending it on activation.
+final class LockScreenHostingView<Content: View>: NSHostingView<Content> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 
 /// Never key or main: a lock-screen control must not take keyboard focus away
