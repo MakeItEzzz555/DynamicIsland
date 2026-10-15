@@ -19,8 +19,20 @@ private final class FakeLockSpace: LockScreenSpaceProviding {
     var adopted: [Int] = []
     var teardowns = 0
     var prepares = 0
+    var adoptionSnapshots: [(windowNumber: Int, hasHost: Bool, hasSize: Bool, hidden: Bool)] = []
     func prepare() -> Bool { prepares += 1; return accepts }
-    func adopt(windowNumber: Int) -> Bool { guard accepts, windowNumber > 0 else { return false }; adopted.append(windowNumber); return true }
+    func adopt(windowNumber: Int) -> Bool {
+        guard accepts, windowNumber > 0 else { return false }
+        let window = NSApp.windows.first { $0.windowNumber == windowNumber }
+        adoptionSnapshots.append((
+            windowNumber: windowNumber,
+            hasHost: window?.contentView is NSHostingView<AnyView>,
+            hasSize: window?.frame.size == CGSize(width: 120, height: 40),
+            hidden: window?.isVisible == false
+        ))
+        adopted.append(windowNumber)
+        return true
+    }
     func teardown() { teardowns += 1 }
 }
 
@@ -122,6 +134,23 @@ final class LockScreenSurfaceControllerTests: XCTestCase {
         XCTAssertTrue(surfaces.visible.isEmpty)
         guard case .unavailable = surfaces.availability else { return XCTFail("must be unavailable without approval") }
         XCTAssertFalse(NSApp.windows.contains { $0 is LockScreenPanel && $0.isVisible })
+        surfaces.stop()
+    }
+
+    func testUnlockedPreparationCreatesSizedHostedInvisibleWindowsBeforeSkyLightAdoption() {
+        let space = FakeLockSpace()
+        let surfaces = controller(space)
+        surfaces.prepare([.hud, .nowPlaying, .status])
+        XCTAssertEqual(space.adoptionSnapshots.count, 3)
+        for snapshot in space.adoptionSnapshots {
+            XCTAssertTrue(snapshot.hasHost, "Window \(snapshot.windowNumber) was adopted without a SwiftUI host")
+            XCTAssertTrue(snapshot.hasSize, "Window \(snapshot.windowNumber) was adopted at zero or wrong size")
+            XCTAssertTrue(snapshot.hidden, "Prewarming must never show lock content on the desktop")
+        }
+        XCTAssertTrue(surfaces.visible.isEmpty)
+        surfaces.update(state: .locked, requested: [.hud, .nowPlaying, .status])
+        XCTAssertEqual(surfaces.visible, [.hud, .nowPlaying, .status])
+        XCTAssertEqual(space.adopted.count, 3, "No reassignment may be required while locked")
         surfaces.stop()
     }
 

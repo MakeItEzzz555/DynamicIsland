@@ -49,6 +49,7 @@ final class LockScreenSurfaceController {
     private let content: (LockScreenSurfaceKind) -> AnyView
     private var windows: [LockScreenSurfaceKind: NSPanel] = [:]
     private var adopted: Set<LockScreenSurfaceKind> = []
+    private var hosted: Set<LockScreenSurfaceKind> = []
     private(set) var visible: Set<LockScreenSurfaceKind> = []
 
     init(space: LockScreenSpaceProviding,
@@ -66,8 +67,16 @@ final class LockScreenSurfaceController {
     func prepare(_ kinds: Set<LockScreenSurfaceKind>) {
         guard space.availability == .available, space.prepare() else { return }
         for kind in kinds where !adopted.contains(kind) {
+            guard let rect = frame(kind), rect.width > 0, rect.height > 0 else { continue }
             let window = windows[kind] ?? makeWindow(kind)
             windows[kind] = window
+            // Make AppKit/SwiftUI construct the backing host on the unlocked
+            // desktop, before SkyLight moves the window into the secure space.
+            // An empty zero-sized panel adopted ahead of time can appear in
+            // WindowServer listings without ever submitting rendered content
+            // once loginwindow owns the display.
+            window.setFrame(rect, display: false)
+            installContent(kind, in: window)
             if space.adopt(windowNumber: window.windowNumber) { adopted.insert(kind) }
         }
     }
@@ -93,6 +102,7 @@ final class LockScreenSurfaceController {
         for window in windows.values { window.contentView = nil; window.close() }
         windows.removeAll()
         adopted.removeAll()
+        hosted.removeAll()
         space.teardown()
     }
 
@@ -101,16 +111,31 @@ final class LockScreenSurfaceController {
         let window = windows[kind] ?? makeWindow(kind)
         windows[kind] = window
         window.setFrame(rect, display: false)
-        if window.contentView == nil {
-            window.contentView = kind.isInteractive
-                ? LockScreenHostingView(rootView: content(kind)) : NSHostingView(rootView: content(kind))
-        }
+        installContent(kind, in: window)
         if !adopted.contains(kind) {
             guard space.adopt(windowNumber: window.windowNumber) else { return }
             adopted.insert(kind)
         }
         window.orderFrontRegardless()
         visible.insert(kind)
+    }
+
+    private func installContent(_ kind: LockScreenSurfaceKind, in window: NSPanel) {
+        // NSPanel starts with a default empty contentView, not nil.
+        // Remember our installed host instead of checking that property.
+        guard !hosted.contains(kind) else { return }
+        let host: NSView = kind.isInteractive
+            ? LockScreenHostingView(rootView: content(kind))
+            : NSHostingView(rootView: content(kind))
+        host.frame = NSRect(origin: .zero, size: window.contentRect(forFrameRect: window.frame).size)
+        host.autoresizingMask = [.width, .height]
+        host.wantsLayer = true
+        host.layer?.backgroundColor = NSColor.clear.cgColor
+        window.contentView = host
+        hosted.insert(kind)
+        // Establish the view hierarchy while still on the unlocked desktop;
+        // actual pixels stay hidden until a confirmed lock.
+        host.layoutSubtreeIfNeeded()
     }
 
     private func hide(_ kind: LockScreenSurfaceKind) {
