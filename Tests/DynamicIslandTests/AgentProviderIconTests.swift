@@ -15,14 +15,6 @@ final class AgentProviderIconTests: XCTestCase {
         AgentCompactPresentation(sessions: sessions, overflowCount: overflow, summary: "Working")
     }
 
-    /// The pre-icon footprint: orb + 11 pt glyph left, mini orbs or a 16 pt state glyph right.
-    private func legacyTotal(_ presentation: AgentCompactPresentation) -> CGFloat {
-        let others = presentation.sessions.count - 1
-        let badge: CGFloat = presentation.overflowCount > 0 ? 18 : 0
-        let trailing = others > 0 ? CGFloat(others) * 13 + CGFloat(others - 1) * 4 + (badge > 0 ? 4 + badge : 0) : max(16, badge)
-        return 18 + 4 + 11 + trailing
-    }
-
     func testSuppliedArtworkResolvesFromTheResourceBundle() throws {
         for provider in [AgentProvider.claude, .codex] {
             let name = try XCTUnwrap(AgentProviderVisualIdentity.resolve(provider).assetName)
@@ -46,20 +38,49 @@ final class AgentProviderIconTests: XCTestCase {
         let single = compact([claude])
         XCTAssertEqual(AgentCompactOrbMetrics.leadingWidth, AgentCompactOrbMetrics.primaryOrb, "orb only, no provider glyph")
         XCTAssertEqual(AgentCompactOrbMetrics.trailingWidth(for: single), AgentCompactOrbMetrics.providerIcon, "icon only, no state glyph")
-        XCTAssertLessThan(AgentCompactOrbMetrics.leadingWidth + AgentCompactOrbMetrics.trailingWidth(for: single), legacyTotal(single))
     }
 
-    func testMultipleAndMixedSessionsNeverWidenTheIsland() {
-        for presentation in [compact([claude, codex]), compact([codex, claude]), compact([claude, codex, other]),
-                             compact([claude, codex, other], overflow: 2), compact([codex], overflow: 1)] {
-            let total = AgentCompactOrbMetrics.leadingWidth + AgentCompactOrbMetrics.trailingWidth(for: presentation)
-            XCTAssertLessThanOrEqual(total, legacyTotal(presentation), "\(presentation.sessions.count) sessions, overflow \(presentation.overflowCount)")
-            let profile = CollapsedPresentationProfile.agentRoutine(
-                leftContentWidth: AgentCompactOrbMetrics.leadingWidth,
-                rightContentWidth: AgentCompactOrbMetrics.trailingWidth(for: presentation))
-            let legacy = CollapsedPresentationProfile.agentRoutine(leftContentWidth: 33, rightContentWidth: legacyTotal(presentation) - 33)
-            XCTAssertLessThanOrEqual(profile.minimumFloatingWidth, legacy.minimumFloatingWidth, "no regression on narrow/notchless hosts")
+    /// Wing icon frames in shell coordinates, mirroring CompactCollapsedSideSlotLayout.
+    func testWingIconsStayInsideWingsClearOfNotchNearOuterEdgeAndLegible() {
+        let sets = [[claude], [claude, codex], [codex, claude, other], [claude, codex, other, claude]]
+        for notchWidth in [184.0, 200.0, 210.0] {
+            for sessions in sets {
+                for overflow in [0, 3] {
+                    let presentation = compact(sessions, overflow: overflow)
+                    let left = AgentCompactOrbMetrics.leadingWidth
+                    let right = AgentCompactOrbMetrics.trailingWidth(for: presentation)
+                    let notch = CGRect(x: 500 - notchWidth / 2, y: 0, width: notchWidth, height: 32)
+                    let profile = CollapsedActivityLayoutProfile(leftContentWidth: left, rightContentWidth: right)
+                    // existingWidth deliberately wider than required to exercise extra per-side width.
+                    for existing in [notchWidth + 40, notchWidth + 200] {
+                        let g = CollapsedActivityResolvedGeometry.resolve(
+                            notchRect: notch, existingWidth: existing, collapsedHeight: 34, topY: 34, profile: profile)
+                        let leftRegion = CGRect(x: g.frame.minX + CollapsedActivityResolvedGeometry.outerHorizontalPadding, y: 0,
+                                                width: g.leftRegionWidth, height: 34)
+                        let rightRegion = CGRect(x: notch.maxX, y: 0, width: g.rightRegionWidth, height: 34)
+                        let leftIcon = CGRect(x: leftRegion.minX + CollapsedActivityLayoutProfile.leadingContentPadding, y: 0,
+                                              width: left, height: AgentCompactOrbMetrics.primaryOrb)
+                        let rightIcon = CGRect(x: rightRegion.maxX - AgentCompactOrbMetrics.providerIcon, y: 0,
+                                               width: AgentCompactOrbMetrics.providerIcon, height: AgentCompactOrbMetrics.providerIcon)
+                        let rightContent = CGRect(x: rightRegion.maxX - right, y: 0, width: right, height: 20)
+                        let label = "notch \(notchWidth) sessions \(sessions.count) overflow \(overflow) existing \(existing)"
+                        XCTAssertTrue(leftRegion.contains(leftIcon), label)
+                        XCTAssertTrue(rightRegion.contains(rightContent), label)
+                        XCTAssertGreaterThanOrEqual(notch.minX - leftIcon.maxX, CollapsedActivityResolvedGeometry.notchSideSafetyClearance, label)
+                        XCTAssertGreaterThanOrEqual(rightContent.minX - notch.maxX, CollapsedActivityResolvedGeometry.notchSideSafetyClearance, label)
+                        // Anchored to the outer edges of the island (outer padding + leading padding / trailing flush).
+                        XCTAssertEqual(leftIcon.minX - g.frame.minX, 13, accuracy: 0.5, label)
+                        XCTAssertEqual(g.frame.maxX - rightIcon.maxX, 8, accuracy: 0.5, label)
+                        XCTAssertGreaterThanOrEqual(leftIcon.minX, g.frame.minX)
+                        XCTAssertLessThanOrEqual(rightIcon.maxX, g.frame.maxX)
+                    }
+                }
+            }
         }
+        XCTAssertGreaterThanOrEqual(AgentCompactOrbMetrics.primaryOrb, 22)
+        XCTAssertGreaterThanOrEqual(AgentCompactOrbMetrics.providerIcon, 22)
+        XCTAssertEqual(AgentCompactOrbMetrics.providerIcon, AgentCompactOrbMetrics.primaryOrb, "both wings equally legible")
+        XCTAssertGreaterThanOrEqual(AgentCompactOrbMetrics.secondaryOrb, 16)
     }
 
     func testPrimaryProviderIconIsTheRightmostElement() throws {
