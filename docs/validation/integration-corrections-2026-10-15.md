@@ -30,6 +30,6 @@ Local integration branch `fix/complete-integration-acceptance-20261015`, based o
 5. **Notch wings:** Thinking Orbs/avatars and Claude/Codex icons remain equally legible at the outer left/right edges, clear of the physical notch, across hover, multiple agents, collapsed/expanded states and Reduce Motion.
 6. **Privacy/cleanup:** no sensitive private data on the secure screen; password input focus remains; unlock morph and teardown clean; no stale secure windows after quit.
 
-Known limitations retained: private SkyLight is experimental and OS-gated; application volume on Boom virtual output may display a macOS recording indicator; newly discovered audio-helper processes can play at unity for about 150 ms before attenuation. These are not silently advertised as fully production-verified.
+Known limitations retained: private SkyLight is experimental and OS-gated; application volume on Boom virtual output may display a macOS recording indicator; newly discovered audio-helper processes can play at unity briefly before attenuation (process-list debounce reduced from 150 ms to 20 ms on 2026-10-15; tap rebuild time remains). These are not silently advertised as fully production-verified.
 
 Do **not** merge into `main` until GitHub CI and the relevant manual acceptance items are completed.

@@ -245,7 +245,9 @@ final class ApplicationAudioDiscovery: ObservableObject, ApplicationVolumeProvid
         guard !refreshScheduled else { return }
         refreshScheduled = true
         Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(150))
+            // Short: a new helper of an attenuated app plays at unity until the
+            // refresh re-taps it. The flag above already coalesces bursts.
+            try? await Task.sleep(for: .milliseconds(20))
             refreshScheduled = false
             try? await refresh()
         }
