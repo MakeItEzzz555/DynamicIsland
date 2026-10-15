@@ -114,7 +114,7 @@ struct ProductivityToolsPageView: View {
         case .windowSnap:
             WindowSnapPanel(controller: productivity.windowSnap)
         case .voice:
-            VoiceTranscribePanel(controller: productivity.voice, compact: true)
+            VoiceRecordingPanel(controller: productivity.voice, compact: true)
         case .camera:
             CameraPanel(controller: productivity.camera, previewHeight: max(pageHeight - 70, 60))
         case .backgroundRemoval:
