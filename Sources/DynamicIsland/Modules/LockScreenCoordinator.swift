@@ -132,13 +132,18 @@ final class LockScreenCoordinator: ObservableObject {
     /// Test hook: age the pending request to exercise the timeout.
     func ageSourceOpenRequest(by seconds: TimeInterval) { sourceOpenRequestedAt?.addTimeInterval(-seconds) }
 
-    /// Real, supported controls only; pickers (queue, output) need the desktop.
+    /// Real, supported controls only. Transport, seek and volume work while
+    /// locked (as macOS's own lock-screen player allows); actions that change
+    /// persistent account or player state (favorite, shuffle/repeat) and the
+    /// pickers (queue, output) wait for an unlock.
     var mediaActions: LockScreenMediaActions {
         let caps = mediaAdvanced?.capabilities ?? MediaControlCapabilities()
-        let source = media.sourceName
+        // The player name is track metadata: only shown with the details opt-in.
+        let source = preferences.showTrackDetails ? media.sourceName : "this player"
         func state(_ availability: MediaCapabilityAvailability, isOn: Bool = false) -> LockScreenControlState {
-            .init(enabled: availability == .supported && mediaAdvanced != nil, isOn: isOn,
-                  help: MediaControlCapabilities.reason(availability, source: source) ?? "")
+            let supported = availability == .supported && mediaAdvanced != nil
+            return .init(enabled: false, isOn: supported && isOn,
+                         help: supported ? "Unlock to change" : MediaControlCapabilities.reason(availability, source: source) ?? "")
         }
         return LockScreenMediaActions(
             previous: { [weak self] in self?.previousTrack() }, playPause: { [weak self] in self?.playPause() },

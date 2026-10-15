@@ -184,3 +184,25 @@ final class LockScreenPlayerTests: XCTestCase {
         XCTAssertEqual(openedTargets, [.app(.music)], "a stale request expires")
     }
 }
+
+@MainActor
+final class LockScreenPlayerSecurityTests: XCTestCase {
+    func testLockedPlayerNeverChangesAccountStateOrNamesThePlayerWithoutOptIn() {
+        _ = NSApplication.shared
+        let defaults = UserDefaults(suiteName: "LockScreenPlayerSecurityTests.\(UUID())")!
+        let settings = AppSettings(defaults: defaults)
+        let activities = LiveActivityStore()
+        let media = MediaController.settingsPreview()
+        let coordinator = LockScreenCoordinator(
+            settings: settings, media: media, timer: TimerController(),
+            keepAwake: KeepAwakeController(liveActivities: activities, capabilities: IslandCapabilityRegistry()),
+            systemHUD: SystemHUDController(settings: settings, liveActivities: activities),
+            mediaAdvanced: MediaAdvancedController(media: media, spotify: SpotifyLibraryController()))
+        let actions = coordinator.mediaActions
+        XCTAssertFalse(actions.favorite.enabled, "liking a song changes the account: unlock first")
+        XCTAssertFalse(actions.mode.enabled, "shuffle/repeat change player state: unlock first")
+        XCTAssertFalse(actions.favorite.help.contains(media.sourceName) && media.sourceName != "this player",
+                       "the player's name is metadata and needs the details opt-in")
+        XCTAssertFalse(actions.mode.help.contains(media.sourceName) && media.sourceName != "this player")
+    }
+}
