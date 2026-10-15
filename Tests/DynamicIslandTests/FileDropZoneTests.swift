@@ -14,7 +14,10 @@ final class FileDropZoneTests: XCTestCase {
         try await Task.sleep(nanoseconds: 50_000_000)
         XCTAssertTrue(session.isActive, "moving onto a zone must not end the drag")
         session.setSourceTargeted(false, region: .trayDropZone)
-        try await Task.sleep(nanoseconds: 80_000_000)
+        // The grace Task needs the main actor after its sleep; a loaded CI host
+        // can delay that hop past any fixed sleep, so wait for the outcome.
+        let deadline = ContinuousClock.now + .seconds(2)
+        while session.isActive, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
         XCTAssertFalse(session.isActive)
     }
 
