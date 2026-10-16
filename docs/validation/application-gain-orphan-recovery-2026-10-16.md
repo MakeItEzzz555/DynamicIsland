@@ -11,8 +11,9 @@ The session has already been removed from `sessions`, so a later `setGain`
 could open another tap for the same application without retrying that cleanup.
 A unity request could also return success without releasing the retained tap.
 
-The engine now retries that application's retained teardown before creating or
-updating its routing. A failed retry propagates through the existing error path.
+The engine now retries that application's retained teardown before creating
+replacement routing. Updating an existing working renderer creates no new HAL
+resources and remains available. A failed retry propagates through the existing error path.
 Unity requests retry retained resources even when there is no current session.
 Other applications remain independently controllable. The existing actor owns
 these synchronous HAL operations; no new task, timer, dependency or audio callback
@@ -74,3 +75,25 @@ Separately, PR #42 was restored to Draft under the user's explicit release
 gate; it remains open at the unchanged baseline SHA. No source push or merge
 occurred. The earlier no-PR-mutation statement describes the first engine-only
 implementation commit.
+
+
+## Independent review and correction
+
+Actual Claude CLI session `e066b2c7-03f3-4a70-96e0-42e6ff99acde`
+returned code APPROVE, release not approved for `1997c9f`, including `091ff6d`.
+Its actual public response is retained in
+`claude-audio-review-1997c9f.json`. It is a separate independent reviewer,
+not acknowledgement by the interactive Claude primary session.
+
+Codex addressed its low-severity finding: a working same-process renderer's
+level update no longer waits for failed teardown of an older tap, since it
+creates no HAL resources. A regression with a live replacement plus a retained
+old tap failed before this correction. It now verifies actual output amplitude
+changes and that a further rebuild still cannot create another tap. Logs:
+`/private/tmp/dynamicisland-audio-review-before-fix.log` and
+`/private/tmp/dynamicisland-audio-display-final-focused.log`.
+
+The interactive Claude primary subsequently hit its weekly quota at
+2026-10-16T06:04:22.908Z. Its reset is October 18 at 21:00 Asia/Nicosia.
+Later corrections and the final assembled SHA still need independent review;
+no Claude approval of later changes or final release is claimed.

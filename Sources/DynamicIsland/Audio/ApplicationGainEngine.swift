@@ -182,13 +182,13 @@ actor ApplicationGainEngine {
             try release(key)
             return
         }
-        // Failed teardown still owns HAL resources; do not create a tap over them.
-        try retryTeardown(for: key)
         let existing = sessions[key]
         if let existing, existing.processes == members {
             existing.renderer.setTarget(Float(gain))
             return
         }
+        // Failed teardown still owns HAL resources; do not create a tap over them.
+        try retryTeardown(for: key)
         let route = try hardware.defaultOutputRoute()
         guard !route.capturesMicrophone else { throw ApplicationGainError.routeHasInput }
         try open(key: key, processes: members, gain: Float(gain), route: route, replacing: existing)

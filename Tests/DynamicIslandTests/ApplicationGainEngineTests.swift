@@ -320,6 +320,28 @@ final class ApplicationGainEngineTests: XCTestCase {
         try await engine.releaseAll()
     }
 
+    func testRetainedOldTapDoesNotBlockLevelChangesOnTheWorkingSession() async throws {
+        let hardware = FakeGainHardware()
+        let engine = ApplicationGainEngine(hardware: hardware, watchdogInterval: .seconds(60))
+        try await engine.setGain(0.3, application: "app", processes: [7])
+        hardware.destroyTapStatus = -50
+        try await engine.setGain(0.2, application: "app", processes: [7, 8])
+        do { try await engine.setGain(0.5, application: "app", processes: [7, 8]) }
+        catch { XCTFail("A level update creates no resources and must preserve the working route: \(error)") }
+        let renderer = try XCTUnwrap(hardware.lastRenderer)
+        let input = Buffers(frames: 8, channelsPerBuffer: [2]) { _, _, _ in 1 }
+        let output = Buffers(frames: 8, channelsPerBuffer: [2])
+        renderer.render(input: input.list.unsafePointer, output: output.list.unsafeMutablePointer)
+        renderer.render(input: input.list.unsafePointer, output: output.list.unsafeMutablePointer)
+        XCTAssertEqual(output.sample(buffer: 0, frame: 0, channel: 0), 0.5, accuracy: 1e-6)
+        XCTAssertEqual(hardware.calls.filter { $0.hasPrefix("tap ") }.count, 2)
+        await XCTAssertThrowsAsync(try await engine.setGain(0.4, application: "app", processes: [7, 8, 9]))
+        XCTAssertEqual(hardware.calls.filter { $0.hasPrefix("tap ") }.count, 2,
+                       "another rebuild still must wait for the retained resource")
+        hardware.destroyTapStatus = noErr
+        try await engine.releaseAll()
+    }
+
     func testUnityRetriesTheApplicationsFailedTeardown() async throws {
         let hardware = FakeGainHardware()
         let engine = ApplicationGainEngine(hardware: hardware, watchdogInterval: .seconds(60))
