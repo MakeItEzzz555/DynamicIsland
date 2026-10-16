@@ -125,11 +125,13 @@ final class BasketPresenter: ObservableObject {
 
     /// Clipboard → Basket copies stable original files into a basket without
     /// mutating Shelf ownership. Missing/non-file URLs are rejected by the manager.
-    func addClipboardFilesToBasket(_ urls: [URL]) {
-        guard let basket = manager.visibleBaskets.last ?? manager.createBasket() else { return }
+    @discardableResult
+    func addClipboardFilesToBasket(_ urls: [URL]) -> Bool {
+        guard let basket = manager.visibleBaskets.last ?? manager.createBasket() else { return false }
         let accepted = manager.add(urls, to: basket.id)
-        guard !accepted.isEmpty else { return }
+        guard !accepted.isEmpty else { return false }
         present(basket, near: NSEvent.mouseLocation, atLastPosition: true)
+        return true
     }
 
     // MARK: Jiggle
@@ -473,6 +475,11 @@ final class BasketPresenter: ObservableObject {
         operations.append(NSMenuItem.closure("Compress\(suffix)", "archivebox") { [weak self] in
             self?.manager.compress(ids, in: id)
         })
+        if targets.contains(where: { $0.url.pathExtension.lowercased() == "zip" }) {
+            operations.append(NSMenuItem.closure("Extract Archive\(suffix)", "archivebox.circle") { [weak self] in
+                self?.manager.extract(ids, in: id)
+            })
+        }
         menu.addItem(.separator())
         operations.forEach(menu.addItem)
 

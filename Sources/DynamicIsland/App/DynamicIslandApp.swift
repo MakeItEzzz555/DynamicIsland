@@ -171,6 +171,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let rightWorkspace = RightWorkspaceStore()
     private let customization = WorkspaceCustomizationStore()
     private lazy var mediaAdvanced = MediaAdvancedController(media: media, spotify: workspaceServices.spotify)
+    /// Experimental lock-screen surfaces; idle (no observers, no space) until enabled.
+    private lazy var lockScreen = LockScreenCoordinator(settings: settings, media: media, timer: timer,
+                                                        keepAwake: keepAwakeController, systemHUD: systemHUDController,
+                                                        mediaAdvanced: mediaAdvanced)
     private lazy var workspaceServices = WorkspaceServices(
         appLibrary: AppLibraryStore(),
         calendar: CalendarEventsController(),
@@ -323,9 +327,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             self.navigation.applyConfiguration(configuration, using: self.settings)
         }.store(in: &cancellables)
+        fileDragSession.localActions = FileDragLocalActions(
+            addToBasket: .init(
+                isAvailable: { [weak self] in self?.settings.floatingBasketEnabled ?? false },
+                run: { [weak self] urls in
+                    self?.basketPresenter.addClipboardFilesToBasket(urls) == true
+                        ? .handedOff : .failed("Files could not be added to a Basket")
+                }
+            ),
+            compress: .init(
+                isAvailable: { true },
+                run: { [weak self] urls in
+                    guard let self else { return .unavailable("Compress is unavailable") }
+                    fileShelf.createZIP(urls, using: backgroundOperations)
+                    return .handedOff
+                }
+            )
+        )
         basketPresenter.start()
         fileShelf.startRetentionMonitoring()
         voiceTranscription.restoreRecordings()
+        lockScreen.start()
         agentProjects.observe(agentEvents.$sessions)
         installMessagingObservers()
         faceTime.onEnabledChanged = { UserDefaults.standard.set($0, forKey: FaceTimeAccessibilityProvider.enabledKey) }
@@ -480,6 +502,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         keepAwakeController.stop()
         terminalController.terminate()
         voiceTranscription.terminate()
+        lockScreen.terminate()
         cameraPreview.terminate()
         cameraNavigation.terminate()
         backgroundRemoval.terminate()
@@ -523,7 +546,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 capabilities: previewCapabilities,
                 addToShelf: { _ in }
             ),
-            customization: customization
+            customization: customization,
+            liveMedia: media
         )
     }
 

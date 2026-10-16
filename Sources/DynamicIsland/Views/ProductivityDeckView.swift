@@ -288,6 +288,13 @@ private struct ProductivityToolTile: View {
                         Label(target.displayName, systemImage: target.symbolName)
                     }
                 }
+                Divider()
+                Button {
+                    do { try productivity.windowSnap.moveToNextDisplay(); message = nil }
+                    catch { message = error.localizedDescription }
+                } label: {
+                    Label("Move to Next Display", systemImage: "display.2")
+                }
             } label: {
                 WorkspaceTileLabel(symbol: tool.symbolName, title: tool.title, status: message ?? snapshot?.statusText ?? "Snap the front window")
             }

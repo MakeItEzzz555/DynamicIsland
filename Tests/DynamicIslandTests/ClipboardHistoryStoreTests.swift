@@ -485,6 +485,34 @@ final class ClipboardHistoryStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testColorEntriesRoundTripAndLegacyArchiveStillDecodes() throws {
+        // Old-format archive (schema 1, no tags/favorite/color keys) written before color payloads existed.
+        let legacy = """
+        {"schemaVersion":1,"entries":[{"id":"11111111-1111-1111-1111-111111111111",
+        "createdAt":0,"payload":{"type":"text","text":{"plainText":"old"}},"fingerprint":"legacy"}]}
+        """
+        let archive = try JSONDecoder().decode(ClipboardHistoryArchive.self, from: Data(legacy.utf8))
+        XCTAssertEqual(archive.entries.map(\.payload), [text("old")])
+        XCTAssertTrue(archive.tags.isEmpty)
+
+        let color = ClipboardHistoryPayload.color(.init(red: 0.1, green: 0.2, blue: 0.3, alpha: 0.4))
+        let mixed = ClipboardHistoryArchive(schemaVersion: 2, entries: archive.entries + [
+            .init(id: UUID(), createdAt: Date(), payload: color, fingerprint: ClipboardHistoryFingerprint.make(for: color))
+        ])
+        let decoded = try JSONDecoder().decode(ClipboardHistoryArchive.self, from: JSONEncoder().encode(mixed))
+        XCTAssertEqual(decoded.entries.map(\.payload), [text("old"), color])
+
+        let settings = AppSettings(defaults: defaults)
+        settings.clipboardHistoryPersistenceEnabled = true
+        let store = makeStore(
+            settings: settings,
+            pasteboard: FakeClipboardPasteboardClient(),
+            persistence: MemoryClipboardPersistence(data: try JSONEncoder().encode(mixed))
+        )
+        XCTAssertEqual(Set(store.entries.map(\.fingerprint)), [ClipboardHistoryFingerprint.make(for: text("old")), ClipboardHistoryFingerprint.make(for: color)])
+    }
+
+    @MainActor
     func testOversizedPersistedImageIsDiscarded() throws {
         let settings = AppSettings(defaults: defaults)
         settings.clipboardHistoryPersistenceEnabled = true

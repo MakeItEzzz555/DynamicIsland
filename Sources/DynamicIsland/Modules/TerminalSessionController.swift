@@ -141,7 +141,7 @@ final class TerminalSessionController: ObservableObject, IslandCapabilityAdapter
             permission: .notRequired,
             availability: .available,
             health: lastError.map { .degraded(message: $0) } ?? .healthy,
-            supportedActions: [.start, .stop, .test, .openSettings, .configureShortcut],
+            supportedActions: [.stop, .test, .openSettings],
             isActive: isRunning,
             statusText: statusText
         )

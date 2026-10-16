@@ -201,14 +201,8 @@ struct IslandPointerGestureModifier: ViewModifier {
     private var swipeGesture: some Gesture {
         DragGesture(minimumDistance: 12, coordinateSpace: .named(IslandCanvasCoordinateSpace.name))
             .onEnded { value in
-                guard layoutStore?.containsNativeControlPoint(value.startLocation) != true,
-                      layoutStore?.transientInteractionOwners.contains(.workspaceEditor) != true else { return }
-                guard let gesture = IslandPointerGesture.detected(
-                    from: value.translation,
-                    sensitivity: swipeSensitivity
-                ) else {
-                    return
-                }
+                guard let gesture = Self.swipe(translation: value.translation, start: value.startLocation,
+                                               layoutStore: layoutStore, sensitivity: swipeSensitivity) else { return }
                 coordinator.handle(
                     gesture,
                     settings: settings,
@@ -216,6 +210,14 @@ struct IslandPointerGestureModifier: ViewModifier {
                     callbacks: callbacks
                 )
             }
+    }
+
+    /// A drag that starts inside a registered native control (slider, ruler) or while editing never navigates.
+    static func swipe(translation: CGSize, start: CGPoint, layoutStore: IslandLayoutStore?,
+                      sensitivity: Double) -> IslandPointerGesture? {
+        guard layoutStore?.containsNativeControlPoint(start) != true,
+              layoutStore?.transientInteractionOwners.contains(.workspaceEditor) != true else { return nil }
+        return IslandPointerGesture.detected(from: translation, sensitivity: sensitivity)
     }
 
     private var longPressGesture: some Gesture {
@@ -588,6 +590,7 @@ struct IslandRootView: View {
     @State private var compactMessageKey: String?
     @State private var compactMessageFocused = false
     @State private var isCollapsedHovering = false
+    @State private var fileDragShareAnchor = SharingAnchorHolder()
 
     /// Committed with the shell geometry (animated with it), never read
     /// ahead from navigation - see `IslandLayoutStore.expandedHeaderLayout`.
@@ -723,7 +726,13 @@ struct IslandRootView: View {
                 .id(layoutStore.overlayPresentationGeneration)
 
                 collapsedSidecarOverlay
+                SharingAnchorView(holder: fileDragShareAnchor)
+                    .frame(width: surfaceFrame.width, height: 1)
+                    .position(x: surfaceFrame.midX, y: layoutStore.canvasSize.height - surfaceFrame.minY)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
                 detachedNavigationOverlay
+                fileDragOrbitOverlay
                 CameraPointerOverlay(store: layoutStore.cameraPointerStore, canvasSize: layoutStore.canvasSize)
                     .zIndex(100)
                     .allowsHitTesting(false)
@@ -813,13 +822,18 @@ struct IslandRootView: View {
             .onAppear {
                 modules.navigation.ensureValidSelection(using: settings)
                 layoutStore.setExpandedAccessoryFrames([], owner: .trayQuickActions)
-                layoutStore.setExpandedAccessoryFrames([], owner: .fileDragOrbit)
+                // A newly mounted island must drop geometry left by a retired
+                // drag, without clearing an orbit belonging to an active drag.
+                if !fileDragSession.isActive {
+                    layoutStore.setExpandedAccessoryFrames([], owner: .fileDragOrbit)
+                }
                 synchronizePresentationForCurrentState()
                 updateCollapsedPreviewLayout()
                 synchronizeCollapsedSidecarGeometry()
                 handleCollapsedHover(layoutStore.collapsedPointerInside)
             }
             .onChange(of: layoutStore.overlayPresentationGeneration) { _, _ in
+                fileDragSession.cancel()
                 sequenceGeneration += 1
                 deactivateCollapsedPreview()
                 finalizeCompactPresentation()
@@ -828,6 +842,7 @@ struct IslandRootView: View {
                 synchronizeCollapsedSidecarGeometry()
             }
             .onChange(of: islandState.state) { _, newValue in
+                if newValue == .collapsed { fileDragSession.cancel() }
                 handleStateChange(newValue)
                 layoutStore.compactPermissionHovered = false
                 synchronizeCollapsedSidecarGeometry()
@@ -866,6 +881,9 @@ struct IslandRootView: View {
             .onChange(of: collapsedPreviewSurfaceFrame) { _, _ in
                 updateCollapsedPreviewLayout()
             }
+            .onChange(of: settings.overlayEnabled) { _, enabled in
+                if !enabled { fileDragSession.cancel() }
+            }
             .onChange(of: settings.collapsedHoverPreviewEnabled) { _, enabled in
                 if !enabled {
                     deactivateCollapsedPreview()
@@ -885,6 +903,7 @@ struct IslandRootView: View {
             }
             .onChange(of: layoutStore.isExpandedContentExiting) { _, newValue in
                 if newValue {
+                    fileDragSession.cancel()
                     driveChildExit()
                 } else if islandState.state == .expanded, contentPhase == .contentCollapsing {
                     // The pending collapse was cancelled by an expansion before
@@ -978,6 +997,24 @@ struct IslandRootView: View {
         }
     }
 
+    /// A hover preview can be wider than the compact shell. Agents' wing
+    /// icons must follow the hover surface's OUTER edges, not remain pinned to
+    /// the narrow, centered collapsed row beside the physical camera notch.
+    private var agentHoverWingLayout: AgentHoverWingLayout? {
+        guard isCollapsedPreviewActive, case .agent = collapsedContentMode else { return nil }
+        let original = CompactCollapsedSideSlotGeometry(
+            isNotchIntegrated: IslandShellNotchIntegration.resolve(
+                geometryHasHardwareNotch: layoutStore.hasHardwareNotch,
+                displayMetricsHaveHardwareNotch: layoutStore.displayMetrics.hasHardwareNotch),
+            leftRegionWidth: layoutStore.collapsedLeftRegionWidth,
+            notchCoreWidth: layoutStore.collapsedNotchCoreWidth,
+            rightRegionWidth: layoutStore.collapsedRightRegionWidth)
+        return AgentHoverWingLayout.resolve(
+            original: original,
+            collapsedFrame: layoutStore.collapsedSurfaceFrame,
+            hoverFrame: collapsedPreviewSurfaceFrame)
+    }
+
     private var collapsedCompactView: some View {
         CompactIslandView(
             settings: settings,
@@ -990,6 +1027,7 @@ struct IslandRootView: View {
             collapsedLeftRegionWidth: layoutStore.collapsedLeftRegionWidth,
             collapsedNotchCoreWidth: layoutStore.collapsedNotchCoreWidth,
             collapsedRightRegionWidth: layoutStore.collapsedRightRegionWidth,
+            agentHoverSlots: agentHoverWingLayout?.slots,
             isNotchIntegratedShell: IslandShellNotchIntegration.resolve(
                 geometryHasHardwareNotch: layoutStore.hasHardwareNotch,
                 displayMetricsHaveHardwareNotch: layoutStore.displayMetrics.hasHardwareNotch
@@ -1075,10 +1113,13 @@ struct IslandRootView: View {
                 // and made the preview collapse and reopen in a loop.
                 let preview = isCollapsedPreviewActive ? collapsedActivityPreview : nil
                 let base = layoutStore.collapsedSurfaceFrame
+                let hoverWings = preview == nil ? nil : agentHoverWingLayout
                 VStack(alignment: .leading, spacing: 0) {
                     collapsedCompactView
-                        .frame(width: preview == nil ? nil : base.width, height: preview == nil ? nil : base.height)
-                        .padding(.leading, preview == nil ? 0 : max(0, base.minX - collapsedPreviewSurfaceFrame.minX))
+                        .frame(width: hoverWings?.contentWidth ?? (preview == nil ? nil : base.width),
+                               height: preview == nil ? nil : base.height)
+                        .padding(.leading, hoverWings == nil && preview != nil
+                            ? max(0, base.minX - collapsedPreviewSurfaceFrame.minX) : 0)
                     if let preview {
                         CollapsedActivityPreviewView(preview: preview, reduceMotion: reduceMotion || settings.reduceExtraMotion)
                             .transition(.opacity.combined(with: .move(edge: .top)))
@@ -1115,8 +1156,8 @@ struct IslandRootView: View {
     /// reported to the layout store for hover, hit-test and passthrough.
     @ViewBuilder
     private var detachedNavigationOverlay: some View {
-        if settings.showNavigationControls, isExpanded, showsExpandedContent,
-           !layoutStore.isCollapseShellOnly {
+        if settings.showNavigationControls, !fileDragSession.isActive, isExpanded, showsExpandedContent,
+           !layoutStore.isCollapseShellOnly, !layoutStore.isExpandedContentExiting {
             let frame = DetachedIslandNavigationMetrics.frame(shell: layoutStore.expandedSurfaceFrame,
                 pageCount: navigation.availablePages(using: settings).count)
             DetachedIslandNavigationBar(settings: settings, navigation: navigation, pointerAnchor: layoutStore.tabPointerAnchor,
@@ -1131,6 +1172,24 @@ struct IslandRootView: View {
             .onAppear { layoutStore.setExpandedAccessoryFrames([frame], owner: .navigation) }
             .onChange(of: frame) { _, next in layoutStore.setExpandedAccessoryFrames([next], owner: .navigation) }
             .onDisappear { layoutStore.setExpandedAccessoryFrames([], owner: .navigation) }
+        }
+    }
+
+    @ViewBuilder
+    private var fileDragOrbitOverlay: some View {
+        if isExpanded, fileDragSession.isActive, !layoutStore.isCollapseShellOnly,
+           !layoutStore.isExpandedContentExiting {
+            let frame = FileDragOrbitMetrics.frame(shell: layoutStore.expandedSurfaceFrame,
+                actionCount: fileDragSession.orbitActions.count)
+            let presentationGeneration = layoutStore.overlayPresentationGeneration
+            FileDragOrbitView(session: fileDragSession, layoutStore: layoutStore, frame: frame,
+                reduceMotion: reduceMotion || settings.reduceExtraMotion, anchor: fileDragShareAnchor,
+                allowsDrop: {
+                    settings.overlayEnabled && islandState.state == .expanded && !layoutStore.isCollapseShellOnly &&
+                        !layoutStore.isExpandedContentExiting && layoutStore.overlayPresentationGeneration == presentationGeneration
+                })
+                .position(x: frame.midX, y: layoutStore.canvasSize.height - frame.midY)
+                .transition(.opacity)
         }
     }
 
@@ -2446,6 +2505,7 @@ struct CompactIslandView: View {
     let collapsedLeftRegionWidth: CGFloat
     let collapsedNotchCoreWidth: CGFloat
     let collapsedRightRegionWidth: CGFloat
+    var agentHoverSlots: CompactCollapsedSideSlotGeometry? = nil
     let isNotchIntegratedShell: Bool
     /// Reports pointer hover over the collapsed visualizer (pause/play target).
     var onVisualizerHover: ((Bool) -> Void)? = nil
@@ -2468,6 +2528,7 @@ struct CompactIslandView: View {
         collapsedLeftRegionWidth: CGFloat = 0,
         collapsedNotchCoreWidth: CGFloat = 0,
         collapsedRightRegionWidth: CGFloat = 0,
+        agentHoverSlots: CompactCollapsedSideSlotGeometry? = nil,
         isNotchIntegratedShell: Bool = false,
         onVisualizerHover: ((Bool) -> Void)? = nil
     ) {
@@ -2482,6 +2543,7 @@ struct CompactIslandView: View {
         self.collapsedLeftRegionWidth = collapsedLeftRegionWidth
         self.collapsedNotchCoreWidth = collapsedNotchCoreWidth
         self.collapsedRightRegionWidth = collapsedRightRegionWidth
+        self.agentHoverSlots = agentHoverSlots
         self.isNotchIntegratedShell = isNotchIntegratedShell
         media = modules.media
         liveActivities = modules.liveActivities
@@ -2717,7 +2779,8 @@ struct CompactIslandView: View {
     }
 
     private var sideSlotGeometry: CompactCollapsedSideSlotGeometry {
-        CompactCollapsedSideSlotGeometry(
+        if case .agent = contentMode, let agentHoverSlots { return agentHoverSlots }
+        return CompactCollapsedSideSlotGeometry(
             isNotchIntegrated: isNotchIntegratedShell,
             leftRegionWidth: collapsedLeftRegionWidth,
             notchCoreWidth: hardwareNotchWidth > 0 ? collapsedNotchCoreWidth : 0,
@@ -2814,6 +2877,34 @@ struct CompactCollapsedSideSlotGeometry {
 
     var usesPhysicalNotchRegions: Bool {
         isNotchIntegrated && notchCoreWidth > 0
+    }
+}
+
+/// In the hover state, keep the physical-notch gap fixed in screen coordinates
+/// while expanding BOTH wings out to the hover shell's real outer edges.
+/// Widths exclude the shell's unchanged 8pt horizontal content padding.
+struct AgentHoverWingLayout {
+    let slots: CompactCollapsedSideSlotGeometry
+    let contentWidth: CGFloat
+
+    static func resolve(
+        original: CompactCollapsedSideSlotGeometry,
+        collapsedFrame: CGRect,
+        hoverFrame: CGRect
+    ) -> Self {
+        let contentWidth = max(hoverFrame.width - 2 * IslandShellLayout.collapsedHorizontalPadding, 0)
+        guard original.usesPhysicalNotchRegions else {
+            return Self(slots: original, contentWidth: contentWidth)
+        }
+        let leading = max(original.leftRegionWidth + collapsedFrame.minX - hoverFrame.minX, 0)
+        let trailing = max(original.rightRegionWidth + hoverFrame.maxX - collapsedFrame.maxX, 0)
+        return Self(
+            slots: CompactCollapsedSideSlotGeometry(
+                isNotchIntegrated: true,
+                leftRegionWidth: leading,
+                notchCoreWidth: original.notchCoreWidth,
+                rightRegionWidth: trailing),
+            contentWidth: contentWidth)
     }
 }
 
@@ -4099,7 +4190,8 @@ struct ExpandedIslandView: View {
                 externalActions: ClipboardHistoryExternalActions(
                     addFilesToShelf: { urls in modules.fileShelf.add(urls) },
                     addFilesToBasket: { urls in modules.basketPresenter.addClipboardFilesToBasket(urls) }
-                )
+                ),
+                layoutStore: layoutStore
             )
             .frame(width: cardWidth, height: metrics.pageHeight)
             .innerBlurScaleClean(

@@ -22,6 +22,46 @@ final class AgentPresentationTests: XCTestCase {
         )
     }
 
+    func testCompactIdentityUsesLatestGenerationBeforeFilteringActivity() throws {
+        let old = session(provider: .claude, generation: 1, state: .working)
+        let resumed = session(provider: .claude, generation: 2, state: .thinking)
+        for values in [[old, resumed], [resumed, old], [old, resumed, resumed]] {
+            let presentation = try XCTUnwrap(AgentCompactPresentation.make(sessions: values))
+            XCTAssertEqual(presentation.sessions.map(\.id), [resumed.id])
+            XCTAssertEqual(presentation.overflowCount, 0)
+            XCTAssertEqual(presentation.summary, "Claude thinking")
+            XCTAssertEqual(AgentCompactOrbMetrics.trailingWidth(for: presentation), AgentCompactOrbMetrics.providerIcon)
+        }
+        for state in [AgentState.idle, .completed, .failed] {
+            let latest = session(provider: .claude, generation: 2, state: state)
+            XCTAssertNil(AgentCompactPresentation.make(sessions: [old, latest]),
+                         "Inactive current generations must never revive an older orb")
+        }
+    }
+
+    func testCompactIdentityPreservesDistinctAgentsIncludingSameProviderAndNativeIDAcrossProviders() throws {
+        let old = session(provider: .claude, nativeID: "shared", generation: 1)
+        let resumed = session(provider: .claude, nativeID: "shared", generation: 2)
+        let second = session(provider: .claude, nativeID: "second")
+        let codex = session(provider: .codex, nativeID: "shared")
+        let presentation = try XCTUnwrap(AgentCompactPresentation.make(sessions: [old, resumed, second, codex]))
+        XCTAssertEqual(Set(presentation.sessions.map(\.id)), [resumed.id, second.id, codex.id])
+        XCTAssertEqual(presentation.overflowCount, 0, "History does not inflate +N")
+        XCTAssertEqual(presentation.summary, "3 working")
+    }
+
+    func testCompactOverflowCountsDistinctAgentsRatherThanHistoricalGenerations() throws {
+        let values = (0..<4).flatMap { index in
+            [session(provider: .claude, nativeID: "agent-\(index)", generation: 1),
+             session(provider: .claude, nativeID: "agent-\(index)", generation: 2)]
+        }
+        let presentation = try XCTUnwrap(AgentCompactPresentation.make(sessions: values))
+        XCTAssertEqual(presentation.sessions.count, 3)
+        XCTAssertTrue(presentation.sessions.allSatisfy { $0.id.generation.rawValue == 2 })
+        XCTAssertEqual(presentation.overflowCount, 1)
+        XCTAssertEqual(presentation.summary, "4 working")
+    }
+
     func testMultipleSessionsUseRequiredPriorityAndBoundedOverflow() {
         let sessions = [
             session(provider: .codex, nativeID: "idle", state: .idle),

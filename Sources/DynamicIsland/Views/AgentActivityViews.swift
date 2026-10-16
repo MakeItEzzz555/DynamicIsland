@@ -2484,8 +2484,9 @@ struct AgentCompactRoutineTrailingView: View {
             }
             if presentation.overflowCount > 0 {
                 Text("+\(presentation.overflowCount)")
-                    .font(.system(size: 9.5, weight: .bold).monospacedDigit())
+                    .font(.system(size: 11, weight: .bold).monospacedDigit())
                     .foregroundStyle(.white.opacity(0.7))
+                    .frame(width: AgentCompactOrbMetrics.badge)
             }
     }
 }

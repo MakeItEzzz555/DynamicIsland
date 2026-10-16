@@ -289,6 +289,14 @@ public final class AppSettings: ObservableObject {
     /// Record Activities: explicit opt-in, local normalized events only.
     @Published public var agentActivityRecordingEnabled: Bool { didSet { save(agentActivityRecordingEnabled, for: Key.agentActivityRecordingEnabled) } }
     @Published public var agentPeekDurationSeconds: Double { didSet { save(agentPeekDurationSeconds, for: Key.agentPeekDurationSeconds) } }
+    /// Experimental lock-screen surfaces (off by default). One persisted Codable value.
+    @Published var lockScreenPreferences: LockScreenPreferences {
+        didSet {
+            let normalized = lockScreenPreferences.normalized()
+            if normalized != lockScreenPreferences { lockScreenPreferences = normalized; return }
+            if let data = try? JSONEncoder().encode(normalized) { save(data, for: Key.lockScreenPreferences) }
+        }
+    }
     @Published var agentVisualPreferences: AgentVisualPreferences {
         didSet { normalizeAgentVisualPreferences(oldValue: oldValue) }
     }
@@ -580,6 +588,7 @@ public final class AppSettings: ObservableObject {
         agentActivityRecordingEnabled = Self.bool(defaults, Key.agentActivityRecordingEnabled, false)
         agentPeekDurationSeconds = Self.double(defaults, Key.agentPeekDurationSeconds, 5.0)
         agentVisualPreferences = AgentVisualPreferences.decode(from: defaults, key: Key.agentVisualPreferences)
+        lockScreenPreferences = LockScreenPreferences.decode(from: defaults, key: Key.lockScreenPreferences)
         showActivitiesTab = Self.bool(defaults, Key.showActivitiesTab, false)
         showLiveActivitiesTab = Self.bool(defaults, Key.showLiveActivitiesTab, false)
         showGesturesTab = Self.bool(defaults, Key.showGesturesTab, false)
@@ -932,6 +941,7 @@ public final class AppSettings: ObservableObject {
         agentSoundsEnabled = Self.bool(defaults, Key.agentSoundsEnabled, true)
         agentCompletionSoundEnabled = Self.bool(defaults, Key.agentCompletionSoundEnabled, true)
         liveAudioVisualizerEnabled = Self.bool(defaults, Key.liveAudioVisualizerEnabled, false)
+        lockScreenPreferences = LockScreenPreferences.decode(from: defaults, key: Key.lockScreenPreferences)
         perAppVolumeEnabled = Self.bool(defaults, Key.perAppVolumeEnabled, false)
         agentUsageMetricsEnabled = Self.bool(defaults, Key.agentUsageMetricsEnabled, true)
         agentActivityRecordingEnabled = Self.bool(defaults, Key.agentActivityRecordingEnabled, false)
@@ -1549,6 +1559,7 @@ private enum Key {
     static let agentActivityRecordingEnabled = "agentActivityRecordingEnabled"
     static let agentPeekDurationSeconds = "agentPeekDurationSeconds"
     static let agentVisualPreferences = "agentVisualPreferences"
+    static let lockScreenPreferences = "lockScreenPreferences"
     static let showActivitiesTab = "showActivitiesTab"
     static let showLiveActivitiesTab = "showLiveActivitiesTab"
     static let showGesturesTab = "showGesturesTab"
@@ -1722,7 +1733,7 @@ private enum Key {
         showTimerTab, showStatsTab, showToolsTab, showAgentsTab, agentActivityEnabled,
         agentCompletionAlertsEnabled, agentApprovalAlertsEnabled, agentSoundsEnabled, agentCompletionSoundEnabled,
         liveAudioVisualizerEnabled, perAppVolumeEnabled, agentUsageMetricsEnabled, agentActivityRecordingEnabled, agentPeekDurationSeconds,
-        agentVisualPreferences, showActivitiesTab, showLiveActivitiesTab, showGesturesTab,
+        agentVisualPreferences, lockScreenPreferences, showActivitiesTab, showLiveActivitiesTab, showGesturesTab,
         rememberLastSelectedTab, defaultExpandedTab, mediaEnabled, showMediaWhenPaused,
         showMediaWhenNoSource, showAlbumArtwork, showMediaTitle, showMediaArtist, showMediaSourceName,
         showPlaybackControls, showProgressSlider, showVolumeSlider, showVisualizer,

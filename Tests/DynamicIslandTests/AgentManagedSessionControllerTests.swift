@@ -2326,6 +2326,9 @@ extension AgentManagedSessionControllerTests {
         guard case .failed(.allow, _)? = harness.approvals.deliveryState(for: pending.key) else {
             return XCTFail("expected failed delivery")
         }
+        // Delivery state and transcript projection are separate main-actor
+        // updates; assert eventual failure projection, not scheduler ordering.
+        try await settle { storeApproval(harness.store, session, "r1")?.state == .unknown }
         XCTAssertEqual(storeApproval(harness.store, session, "r1")?.state, .unknown)
         harness.controller.stop()
     }

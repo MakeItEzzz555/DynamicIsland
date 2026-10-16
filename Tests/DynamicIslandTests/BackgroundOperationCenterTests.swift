@@ -1,3 +1,6 @@
+import CoreGraphics
+import ImageIO
+import zlib
 import XCTest
 @testable import DynamicIsland
 
@@ -264,5 +267,369 @@ final class BackgroundOperationControllerTests: XCTestCase {
         func cleanup() {
             try? FileManager.default.removeItem(at: root)
         }
+    }
+}
+
+// MARK: - Extraction and conversion kinds
+
+/// Hand-built stored ZIPs so hostile entry names and symlinks can be tested
+/// without a tool that would sanitize them.
+enum TestZip {
+    struct Entry {
+        let name: String
+        let data: Data
+        var mode: UInt32 = 0o100644
+        /// Local-header name when it should differ from the central directory (parser-differential attack).
+        var localName: String? = nil
+    }
+
+    static func build(_ entries: [Entry]) -> Data {
+        var body = Data(), central = Data()
+        for entry in entries {
+            let name = Data(entry.name.utf8)
+            let local = Data((entry.localName ?? entry.name).utf8)
+            let size = UInt32(entry.data.count)
+            let crc = UInt32(entry.data.withUnsafeBytes { crc32(0, $0.bindMemory(to: UInt8.self).baseAddress, uInt(entry.data.count)) })
+            let offset = UInt32(body.count)
+            body.putLE(UInt32(0x04034b50)); body.putLE(UInt16(20)); body.putLE(UInt16(0)); body.putLE(UInt16(0)); body.putLE(UInt16(0)); body.putLE(UInt16(33))
+            body.putLE(crc); body.putLE(size); body.putLE(size); body.putLE(UInt16(local.count)); body.putLE(UInt16(0))
+            body.append(local); body.append(entry.data)
+            central.putLE(UInt32(0x02014b50)); central.putLE(UInt16(3 << 8 | 20)); central.putLE(UInt16(20)); central.putLE(UInt16(0))
+            central.putLE(UInt16(0)); central.putLE(UInt16(0)); central.putLE(UInt16(33))
+            central.putLE(crc); central.putLE(size); central.putLE(size); central.putLE(UInt16(name.count))
+            central.putLE(UInt16(0)); central.putLE(UInt16(0)); central.putLE(UInt16(0)); central.putLE(UInt16(0))
+            central.putLE(entry.mode << 16); central.putLE(offset)
+            central.append(name)
+        }
+        var end = Data()
+        end.putLE(UInt32(0x06054b50)); end.putLE(UInt16(0)); end.putLE(UInt16(0))
+        end.putLE(UInt16(entries.count)); end.putLE(UInt16(entries.count))
+        end.putLE(UInt32(central.count)); end.putLE(UInt32(body.count)); end.putLE(UInt16(0))
+        return body + central + end
+    }
+}
+
+extension Data {
+    mutating func putLE<T: FixedWidthInteger>(_ value: T) {
+        Swift.withUnsafeBytes(of: value.littleEndian) { append(contentsOf: $0) }
+    }
+}
+
+@MainActor
+final class BackgroundOperationExtractionTests: XCTestCase {
+    private var root: URL!
+    private var work: URL!   // archives live here; anything outside is "outside"
+
+    override func setUpWithError() throws {
+        root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BackgroundOperationExtractionTests-\(UUID().uuidString)", isDirectory: true)
+        work = root.appendingPathComponent("work", isDirectory: true)
+        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: root)
+    }
+
+    private func writeZip(_ name: String, _ entries: [TestZip.Entry]) throws -> URL {
+        let url = work.appendingPathComponent(name)
+        try TestZip.build(entries).write(to: url)
+        return url
+    }
+
+    private func names(in directory: URL) -> Set<String> {
+        Set((try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? [])
+    }
+
+    private func assertRefused(_ archive: URL, file: StaticString = #filePath, line: UInt = #line) async throws {
+        let before = names(in: root)
+        do {
+            _ = try await ZipCompressionExecutor().extract(operationID: UUID(), archive: archive)
+            XCTFail("Hostile archive was extracted", file: file, line: line)
+        } catch let error as ZipCompressionError {
+            guard case .unsafeArchive = error else { return XCTFail("Unexpected \(error)", file: file, line: line) }
+        }
+        XCTAssertTrue(names(in: work).allSatisfy { $0.hasSuffix(".zip") }, "No destination or staging left", file: file, line: line)
+        XCTAssertEqual(names(in: root), before, "Nothing written outside the work folder", file: file, line: line)
+    }
+
+    func testExtractionRoundTripUsesCollisionSafeFolderAndLeavesArchive() async throws {
+        let source = work.appendingPathComponent("Project", isDirectory: true)
+        try FileManager.default.createDirectory(at: source.appendingPathComponent("sub"), withIntermediateDirectories: true)
+        try Data("one".utf8).write(to: source.appendingPathComponent("a.txt"))
+        try Data("two".utf8).write(to: source.appendingPathComponent("sub/b.txt"))
+        let archive = try await ZipCompressionExecutor().compress(operationID: UUID(), sources: [source])
+        let archiveData = try Data(contentsOf: archive)
+        try FileManager.default.removeItem(at: source)
+
+        let first = try await ZipCompressionExecutor().extract(operationID: UUID(), archive: archive)
+        XCTAssertEqual(first.lastPathComponent, "Project")
+        XCTAssertEqual(try Data(contentsOf: first.appendingPathComponent("Project/sub/b.txt")), Data("two".utf8))
+        let second = try await ZipCompressionExecutor().extract(operationID: UUID(), archive: archive)
+        XCTAssertEqual(second.lastPathComponent, "Project 2")
+        XCTAssertEqual(try Data(contentsOf: archive), archiveData)
+        XCTAssertEqual(names(in: work), ["Project.zip", "Project", "Project 2"])
+    }
+
+    func testExtractionPreservesOrdinaryPayloadInMacOSXDirectory() async throws {
+        let payload = Data("A user report, not AppleDouble metadata".utf8)
+        let archive = try writeZip("payload.zip", [
+            .init(name: "__MACOSX/report.txt", data: payload),
+            .init(name: "ordinary.txt", data: Data("also keep".utf8)),
+        ])
+        let output = try await ZipCompressionExecutor().extract(operationID: UUID(), archive: archive)
+        XCTAssertEqual(try Data(contentsOf: output.appendingPathComponent("__MACOSX/report.txt")), payload)
+        XCTAssertEqual(try Data(contentsOf: output.appendingPathComponent("ordinary.txt")), Data("also keep".utf8))
+    }
+
+    func testEveryOperationRetainsTemporaryShelfInputBeforeQueuedWorkStarts() async throws {
+        let ledger = TemporaryFileOwnershipLedger(temporaryRoots: [work])
+        let suite = "OperationIntake-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let shelf = FileShelfStore(settings: AppSettings(defaults: defaults), defaults: defaults, ownership: ledger)
+        let controller = BackgroundOperationController(liveActivities: LiveActivityStore(), ownership: ledger)
+        let image = try writePNG()
+        let audio = work.appendingPathComponent("tone.wav")
+        try Self.makeWAV().write(to: audio)
+        let archive = try writeZip("input.zip", [.init(name: "f.txt", data: Data("kept".utf8))])
+        let text = work.appendingPathComponent("note.txt")
+        try Data("compress me".utf8).write(to: text)
+        for (source, kind) in [(image, BackgroundOperationKind.imageConversion), (audio, .audioConversion), (archive, .extraction), (text, .compression)] {
+            shelf.add([source])
+            let id: UUID?
+            switch kind {
+            case .imageConversion: id = controller.startImageConversion(source, to: .jpeg)
+            case .audioConversion: id = controller.startAudioConversion(source, to: .aiff)
+            case .extraction: id = controller.startExtraction(archive: source)
+            case .compression: id = controller.startCompression(sources: [source])
+            }
+            let operationID = try XCTUnwrap(id)
+            shelf.remove(source)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: source.path), "\(kind) owns input before the task gets its first turn")
+            let operation = try await waitForTerminal(controller, operationID)
+            XCTAssertEqual(operation.state, .completed, "\(kind): \(operation.failure?.message ?? "")")
+            if let output = operation.result?.outputURL {
+                XCTAssertTrue(FileManager.default.fileExists(atPath: output.path))
+            } else { XCTFail("\(kind) must return a readable output") }
+            XCTAssertFalse(FileManager.default.fileExists(atPath: source.path), "Last owner cleans the temporary input after work completes")
+            XCTAssertTrue(ledger.owners(of: source).isEmpty)
+        }
+    }
+
+    func testZipSlipRelativeTraversalIsRefusedWithNothingWritten() async throws {
+        let archive = try writeZip("slip.zip", [
+            .init(name: "ok.txt", data: Data("ok".utf8)),
+            .init(name: "../escaped.txt", data: Data("x".utf8)),
+        ])
+        try await assertRefused(archive)
+    }
+
+    func testAbsolutePathEntryIsRefusedWithNothingWritten() async throws {
+        let target = root.appendingPathComponent("abs.txt").path
+        let archive = try writeZip("abs.zip", [.init(name: target, data: Data("x".utf8))])
+        try await assertRefused(archive)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: target))
+    }
+
+    func testSymlinkEscapingDestinationIsRefusedAndEntriesUnderLinksAreRefused() async throws {
+        let link = UInt32(0o120777)
+        // Link pointing outside, nothing nested.
+        try await assertRefused(try writeZip("link-out.zip", [.init(name: "out", data: Data("../..".utf8), mode: link)]))
+        try await assertRefused(try writeZip("link-abs.zip", [.init(name: "etc", data: Data("/etc".utf8), mode: link)]))
+        // Write-through-link attack: link, then a file beneath it.
+        try await assertRefused(try writeZip("link-through.zip", [
+            .init(name: "dir", data: Data(root.path.utf8), mode: link),
+            .init(name: "dir/pwn.txt", data: Data("x".utf8)),
+        ]))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("pwn.txt").path))
+    }
+
+    /// The validator reads central-directory names; the extractor must write
+    /// exactly those, never a different local-header name.
+    func testLocalHeaderNameCannotDifferFromTheValidatedName() async throws {
+        let before = names(in: root)
+        let archive = try writeZip("differential.zip", [
+            .init(name: "ok.txt", data: Data("x".utf8), localName: "../evil.txt"),
+        ])
+        if let output = try? await ZipCompressionExecutor().extract(operationID: UUID(), archive: archive) {
+            XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: output.path), ["ok.txt"])
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: work.deletingLastPathComponent().appendingPathComponent("evil.txt").path))
+        XCTAssertEqual(names(in: root), before, "nothing named by the local header may be written outside")
+    }
+
+    func testSymlinkChainThatOnlyEscapesWhenResolvedIsRefused() async throws {
+        let link = UInt32(0o120777)
+        // Lexically "root/B/B/../.." == root, but B -> "." makes it root/../..
+        try await assertRefused(try writeZip("link-chain.zip", [
+            .init(name: "B", data: Data(".".utf8), mode: link),
+            .init(name: "A", data: Data("B/B/../..".utf8), mode: link),
+        ]))
+    }
+
+    func testInternalRelativeSymlinkIsAllowed() async throws {
+        let archive = try writeZip("inner.zip", [
+            .init(name: "real.txt", data: Data("r".utf8)),
+            .init(name: "alias", data: Data("real.txt".utf8), mode: 0o120777),
+        ])
+        let output = try await ZipCompressionExecutor().extract(operationID: UUID(), archive: archive)
+        XCTAssertEqual(try FileManager.default.destinationOfSymbolicLink(atPath: output.appendingPathComponent("alias").path), "real.txt")
+    }
+
+    func testUnsafeEntryClassifier() {
+        XCTAssertNil(ZipCompressionExecutor.unsafeEntry(names: ["a/", "a/b.txt", "..hidden", "a..b/c"], symlinks: ["a/l"]))
+        XCTAssertNotNil(ZipCompressionExecutor.unsafeEntry(names: ["a/../b"], symlinks: []))
+        XCTAssertNotNil(ZipCompressionExecutor.unsafeEntry(names: ["a\\..\\b"], symlinks: []))
+        XCTAssertNotNil(ZipCompressionExecutor.unsafeEntry(names: ["/etc/x"], symlinks: []))
+        XCTAssertNotNil(ZipCompressionExecutor.unsafeEntry(names: ["L", "l/x"], symlinks: ["L"]), "case-insensitive volumes")
+        XCTAssertNotNil(ZipCompressionExecutor.unsafeEntry(names: ["caf\u{E9}", "cafe\u{301}/x"], symlinks: ["caf\u{E9}"]),
+                        "normalization-insensitive volumes")
+    }
+
+    func testNonZipAndMissingArchivesFailClosed() async throws {
+        let text = work.appendingPathComponent("a.txt")
+        try Data("x".utf8).write(to: text)
+        do { _ = try await ZipCompressionExecutor().extract(operationID: UUID(), archive: text); XCTFail() }
+        catch let error as ZipCompressionError { XCTAssertEqual(error, .notAnArchive) }
+        do { _ = try await ZipCompressionExecutor().extract(operationID: UUID(), archive: work.appendingPathComponent("no.zip")); XCTFail() }
+        catch let error as ZipCompressionError { XCTAssertEqual(error, .missingSource("no.zip")) }
+        let corrupt = work.appendingPathComponent("bad.zip")
+        try Data("not a zip".utf8).write(to: corrupt)
+        do { _ = try await ZipCompressionExecutor().extract(operationID: UUID(), archive: corrupt); XCTFail() } catch {}
+        XCTAssertEqual(names(in: work), ["a.txt", "bad.zip"])
+    }
+
+    func testControllerExtractionReportsLifecycleAndLiveActivity() async throws {
+        let archive = try writeZip("job.zip", [.init(name: "f.txt", data: Data("f".utf8))])
+        let live = LiveActivityStore()
+        let controller = BackgroundOperationController(liveActivities: live)
+        let id = try XCTUnwrap(controller.startExtraction(archive: archive))
+        XCTAssertEqual(controller.operation(id)?.kind, .extraction)
+        let done = try await waitForTerminal(controller, id)
+        XCTAssertEqual(done.state, .completed)
+        XCTAssertEqual(done.result?.outputURL.lastPathComponent, "job")
+        XCTAssertTrue(live.activities.contains { $0.title == done.title && $0.kind == .backgroundOperation })
+    }
+
+    func testControllerRefusalSurfacesAsFailedOperation() async throws {
+        let archive = try writeZip("evil.zip", [.init(name: "../x", data: Data("x".utf8))])
+        let controller = BackgroundOperationController(liveActivities: LiveActivityStore())
+        let id = try XCTUnwrap(controller.startExtraction(archive: archive))
+        let done = try await waitForTerminal(controller, id)
+        XCTAssertEqual(done.state, .failed)
+        XCTAssertEqual(done.failure?.code, .unsupported)
+        XCTAssertEqual(names(in: work), ["evil.zip"])
+    }
+
+    func testCancelledExtractionRemovesPartialOutput() async throws {
+        // Large stored entry so ditto is still running when cancel lands.
+        let archive = try writeZip("big.zip", [.init(name: "big.bin", data: Data(count: 64 * 1024 * 1024))])
+        let executor = ZipCompressionExecutor()
+        let id = UUID()
+        let task = Task { try await executor.extract(operationID: id, archive: archive) }
+        // Cancel as soon as the hidden staging folder exists (extraction in flight).
+        while !names(in: work).contains(where: { $0.hasPrefix(".DynamicIsland-Extract-") }) { await Task.yield() }
+        executor.cancel(operationID: id)
+        do { _ = try await task.value; XCTFail("Expected cancellation") }
+        catch let error as ZipCompressionError { XCTAssertEqual(error, .cancelled) }
+        catch is CancellationError {}
+        XCTAssertEqual(names(in: work), ["big.zip"])
+    }
+
+    func testControllerCancelStopsExtractionAndLeavesNoOutput() async throws {
+        let archive = try writeZip("c.zip", [.init(name: "big.bin", data: Data(count: 32 * 1024 * 1024))])
+        let controller = BackgroundOperationController(liveActivities: LiveActivityStore())
+        let id = try XCTUnwrap(controller.startExtraction(archive: archive))
+        controller.cancel(id)
+        XCTAssertEqual(controller.operation(id)?.state, .cancelled)
+        try await Task.sleep(for: .milliseconds(600))
+        XCTAssertEqual(controller.operation(id)?.state, .cancelled)
+        XCTAssertEqual(names(in: work), ["c.zip"])
+    }
+
+    // MARK: Conversion kinds
+
+    func testImageConversionRunsAsOperationAndKeepsPublicConvertCompatible() async throws {
+        let png = try writePNG()
+        let live = LiveActivityStore()
+        let controller = BackgroundOperationController(liveActivities: live)
+        var completed: URL?
+        let id = try XCTUnwrap(controller.startImageConversion(png, to: .jpeg) { completed = $0 })
+        XCTAssertEqual(controller.operation(id)?.kind, .imageConversion)
+        let done = try await waitForTerminal(controller, id)
+        XCTAssertEqual(done.state, .completed)
+        XCTAssertEqual(completed?.lastPathComponent, "pic.jpg")
+        XCTAssertTrue(live.activities.contains { $0.title == done.title && $0.kind == .backgroundOperation })
+        // Unchanged entry point still works and stays collision safe.
+        let direct = try await FileConversionController.convert(png, to: .jpeg)
+        XCTAssertEqual(direct.lastPathComponent, "pic 2.jpg")
+    }
+
+    func testImageConversionFailureAndCancelAreReported() async throws {
+        let text = work.appendingPathComponent("t.png")
+        try Data("not an image".utf8).write(to: text)
+        let controller = BackgroundOperationController(liveActivities: LiveActivityStore())
+        var reason: String?
+        let bad = try XCTUnwrap(controller.startImageConversion(text, to: .jpeg, onFailed: { reason = $0 }))
+        let failed = try await waitForTerminal(controller, bad)
+        XCTAssertEqual(failed.state, .failed)
+        XCTAssertNotNil(reason)
+
+        let png = try writePNG()
+        let id = try XCTUnwrap(controller.startImageConversion(png, to: .tiff))
+        controller.cancel(id)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(controller.operation(id)?.state, .cancelled)
+        XCTAssertFalse(names(in: work).contains { $0.hasPrefix(".DynamicIsland") })
+    }
+
+    func testAudioConversionRunsAsOperation() async throws {
+        let wav = work.appendingPathComponent("tone.wav")
+        try Self.makeWAV().write(to: wav)
+        let controller = BackgroundOperationController(liveActivities: LiveActivityStore())
+        let id = try XCTUnwrap(controller.startAudioConversion(wav, to: .aiff))
+        XCTAssertEqual(controller.operation(id)?.kind, .audioConversion)
+        let done = try await waitForTerminal(controller, id)
+        XCTAssertEqual(done.state, .completed)
+        XCTAssertEqual(done.result?.outputURL.pathExtension, "aiff")
+
+        let cancelled = try XCTUnwrap(controller.startAudioConversion(wav, to: .aiff))
+        controller.cancel(cancelled)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(controller.operation(cancelled)?.state, .cancelled)
+    }
+
+    private func writePNG() throws -> URL {
+        let url = work.appendingPathComponent("pic.png")
+        let context = try XCTUnwrap(CGContext(data: nil, width: 8, height: 8, bitsPerComponent: 8, bytesPerRow: 0,
+                                              space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))
+        context.setFillColor(CGColor(red: 1, green: 0, blue: 0, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 8, height: 8))
+        let destination = try XCTUnwrap(CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, try XCTUnwrap(context.makeImage()), nil)
+        XCTAssertTrue(CGImageDestinationFinalize(destination))
+        return url
+    }
+
+    /// 0.5 s of 16-bit mono PCM.
+    private static func makeWAV() -> Data {
+        var samples = Data()
+        for index in 0..<4_000 { samples.putLE(Int16(8_000 * sin(Double(index) / 10))) }
+        var wav = Data("RIFF".utf8)
+        wav.putLE(UInt32(36 + samples.count)); wav.append(Data("WAVEfmt ".utf8))
+        wav.putLE(UInt32(16)); wav.putLE(UInt16(1)); wav.putLE(UInt16(1))
+        wav.putLE(UInt32(8_000)); wav.putLE(UInt32(16_000)); wav.putLE(UInt16(2)); wav.putLE(UInt16(16))
+        wav.append(Data("data".utf8)); wav.putLE(UInt32(samples.count)); wav.append(samples)
+        return wav
+    }
+
+    private func waitForTerminal(_ controller: BackgroundOperationController, _ id: UUID) async throws -> BackgroundOperation {
+        for _ in 0..<500 {
+            if let operation = controller.operation(id), operation.state.isTerminal { return operation }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTFail("Operation did not reach a terminal state")
+        throw CancellationError()
     }
 }

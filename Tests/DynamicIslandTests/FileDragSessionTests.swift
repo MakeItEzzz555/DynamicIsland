@@ -148,7 +148,49 @@ final class FileDragSessionTests: XCTestCase {
     }
 
     func testQuickActionOrderingMatchesSourceBackedOrbitAndNoQuicksharePlaceholder() {
-        XCTAssertEqual(FileDragQuickAction.allCases, [.airDrop, .messages, .mail, .share])
+        XCTAssertEqual(FileDragQuickAction.shareActions, [.airDrop, .messages, .mail, .share])
+        XCTAssertEqual(FileDragQuickAction.allCases, [.airDrop, .messages, .mail, .share, .addToBasket, .compress])
+    }
+
+    private func entry(_ available: Bool, _ ran: @escaping ([URL]) -> Void) -> FileDragLocalActions.Entry {
+        .init(isAvailable: { available }, run: { ran($0); return .handedOff })
+    }
+
+    func testUnavailableLocalServicesHideTheirTargets() {
+        XCTAssertEqual(FileDragQuickAction.orbitActions(local: .none), FileDragQuickAction.shareActions)
+        let basketOnly = FileDragLocalActions(addToBasket: entry(true) { _ in })
+        XCTAssertEqual(FileDragQuickAction.orbitActions(local: basketOnly), FileDragQuickAction.shareActions + [.addToBasket])
+        let disabled = FileDragLocalActions(addToBasket: entry(false) { _ in }, compress: entry(true) { _ in })
+        XCTAssertEqual(FileDragQuickAction.orbitActions(local: disabled), FileDragQuickAction.shareActions + [.compress])
+    }
+
+    func testOneDropRunsExactlyOneLocalActionAndNothingElse() throws {
+        var basketRuns: [[URL]] = [], zipRuns: [[URL]] = []
+        let controller = FileDragSessionController()
+        controller.localActions = FileDragLocalActions(
+            addToBasket: entry(true) { basketRuns.append($0) },
+            compress: entry(true) { zipRuns.append($0) })
+        XCTAssertEqual(controller.orbitActions.suffix(2), [.addToBasket, .compress])
+        let urls = [URL(fileURLWithPath: "/tmp/drag-a.txt")]
+        for action in [FileDragQuickAction.addToBasket, .compress] {
+            controller.setSourceTargeted(true)
+            let claim = try XCTUnwrap(controller.claimDrop(action))
+            XCTAssertNil(controller.claimDrop(.share), "second claim in one drop is rejected")
+            XCTAssertEqual(controller.completeDrop(claim: claim, action: action, urls: urls, anchor: nil), .handedOff)
+            XCTAssertNil(controller.completeDrop(claim: claim, action: action, urls: urls, anchor: nil), "claim is one-shot")
+        }
+        XCTAssertEqual(basketRuns, [urls])
+        XCTAssertEqual(zipRuns, [urls])
+    }
+
+    func testLocalActionWithoutExecutableServiceIsUnavailableNotRun() throws {
+        let controller = FileDragSessionController()
+        controller.localActions = FileDragLocalActions(compress: entry(false) { _ in XCTFail("must not run") })
+        controller.setSourceTargeted(true)
+        let claim = try XCTUnwrap(controller.claimDrop(.compress))
+        let outcome = controller.completeDrop(claim: claim, action: .compress,
+                                              urls: [URL(fileURLWithPath: "/tmp/a.txt")], anchor: nil)
+        XCTAssertEqual(outcome, .unavailable("Compress is unavailable"))
     }
 
     func testNativePasteboardNSURLMaterializesAsDirectFileURL() throws {
@@ -174,7 +216,7 @@ final class FileDragSessionTests: XCTestCase {
 
         XCTAssertTrue(storage.isOwned(promised))
         XCTAssertFalse(storage.isOwned(external))
-        storage.removeIfOwned([promised, external])
+        storage.removeIfOwned([promised, external], ownership: TemporaryFileOwnershipLedger(temporaryRoots: [root]))
         XCTAssertFalse(FileManager.default.fileExists(atPath: directory.path))
     }
 

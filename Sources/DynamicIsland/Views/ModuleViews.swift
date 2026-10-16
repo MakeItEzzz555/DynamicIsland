@@ -2282,11 +2282,11 @@ private struct FileTrayItemMenu: View {
                     Text(plural ? "No shared format for this selection" : "No conversions for this file type")
                 }
                 ForEach(imageFormats) { format in
-                    Button(format.displayName) { shelf.convertImages(targets, to: format) }
+                    Button(format.displayName) { shelf.convertImages(targets, to: format, using: tile.backgroundOperations) }
                 }
                 if let audioSource {
                     ForEach(FileAudioFormat.allCases.filter(\.canEncode)) { format in
-                        Button(format.rawValue) { shelf.convertAudio(audioSource, to: format) }
+                        Button(format.rawValue) { shelf.convertAudio(audioSource, to: format, using: tile.backgroundOperations) }
                     }
                 }
                 Divider()
@@ -2302,6 +2302,9 @@ private struct FileTrayItemMenu: View {
             }
             if let operations = tile.backgroundOperations {
                 Button("Create ZIP Archive") { shelf.createZIP(targets, using: operations) }
+                if targets.contains(where: { $0.pathExtension.lowercased() == "zip" }) {
+                    Button("Extract Archive") { shelf.extractArchives(targets, using: operations) }
+                }
             }
             Button(plural ? "New Folder with \(targets.count) Copies" : "New Folder with a Copy") {
                 shelf.makeFolder(withCopiesOf: targets)

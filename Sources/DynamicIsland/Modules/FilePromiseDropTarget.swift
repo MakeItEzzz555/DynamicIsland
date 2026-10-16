@@ -28,27 +28,37 @@ struct FileDragPromiseStorage: Sendable {
         return url.standardizedFileURL.path.hasPrefix(root)
     }
 
-    func removeIfOwned(_ urls: [URL]) {
-        let ownedDirectories = Set(urls.compactMap { url -> URL? in
-            guard isOwned(url) else { return nil }
-            return url.standardizedFileURL.deletingLastPathComponent()
-        })
-        for directory in ownedDirectories where isOwned(directory) {
+    @MainActor
+    func removeIfOwned(_ urls: [URL], ownership: TemporaryFileOwnershipLedger = .shared) {
+        ownership.discardIfUnowned(urls.filter(isOwned))
+    }
+
+    /// Native compose UIs may outlive the island. Recheck ownership at expiry:
+    /// a Basket, Shelf or operation can acquire the materialization meanwhile.
+    @MainActor
+    @discardableResult
+    func scheduleCleanup(_ urls: [URL], after seconds: TimeInterval = 3600,
+                         ownership: TemporaryFileOwnershipLedger = .shared) -> Task<Void, Never>? {
+        let owned = urls.filter(isOwned)
+        guard !owned.isEmpty else { return nil }
+        return Task { @MainActor in
+            let nanos = UInt64(max(seconds, 0) * 1_000_000_000)
+            if nanos > 0 { try? await Task.sleep(nanoseconds: nanos) }
+            guard !Task.isCancelled else { return }
+            removeIfOwned(owned, ownership: ownership)
+        }
+    }
+
+    @MainActor
+    fileprivate func discardMaterialization(at directory: URL, ownership: TemporaryFileOwnershipLedger) {
+        guard isOwned(directory) else { return }
+        let contents = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+        removeIfOwned(contents, ownership: ownership)
+        if let remaining = try? FileManager.default.contentsOfDirectory(atPath: directory.path), remaining.isEmpty {
             try? FileManager.default.removeItem(at: directory)
         }
     }
 
-    /// Native share/compose UIs can outlive our island. Keep materialized files
-    /// available long enough for those UIs, then remove only our own temp data.
-    func scheduleCleanup(_ urls: [URL], after seconds: TimeInterval = 3600) {
-        let owned = urls.filter(isOwned)
-        guard !owned.isEmpty else { return }
-        Task.detached(priority: .utility) { [self] in
-            let nanos = UInt64(max(seconds, 0) * 1_000_000_000)
-            if nanos > 0 { try? await Task.sleep(nanoseconds: nanos) }
-            removeIfOwned(owned)
-        }
-    }
 }
 
 /// AppKit-only bridge that recognizes both direct files and file promises but
@@ -202,6 +212,7 @@ final class FilePromiseDropNSView: NSView {
 
         do {
             let destination = try storage.makeDropDirectory()
+            let completion = promisedDropCompletion(claim: claim, destination: destination)
             let group = DispatchGroup()
             let lock = NSLock()
             var ordered: [(receiver: Int, callback: Int, url: URL)] = []
@@ -235,31 +246,40 @@ final class FilePromiseDropNSView: NSView {
                 }
             }
 
-            group.notify(queue: .main) { [weak self] in
-                guard let self else { return }
-                self.onTargetingChanged?(false)
+            group.notify(queue: .main) {
                 let snapshot = lock.withLock { (ordered, errors) }
                 let urls = snapshot.0
                     .sorted { lhs, rhs in
                         lhs.receiver == rhs.receiver ? lhs.callback < rhs.callback : lhs.receiver < rhs.receiver
                     }
                     .map(\.url)
-                // Multi-file drags are fail-closed: silently sharing only a
-                // successful subset would violate the user's exact payload.
-                if !snapshot.1.isEmpty || urls.isEmpty {
-                    self.storage.removeIfOwned(urls)
-                    try? FileManager.default.removeItem(at: destination)
-                    let detail = snapshot.1.first ?? "No promised files were produced"
-                    self.onMaterializationFailed?(claim, detail)
-                } else {
-                    self.onFilesReceived?(claim, urls)
-                }
+                completion(urls, snapshot.1)
             }
             return true
         } catch {
             onTargetingChanged?(false)
             onMaterializationFailed?(claim, error.localizedDescription)
             return false
+        }
+    }
+
+    /// The receiver can finish after its native destination retires. Retain only
+    /// this materialization's cleanup authority, never the destination view.
+    func promisedDropCompletion(claim: Int, destination: URL,
+                                ownership: TemporaryFileOwnershipLedger = .shared) -> ([URL], [String]) -> Void {
+        { [weak self, storage] urls, errors in
+            guard let self else {
+                storage.discardMaterialization(at: destination, ownership: ownership)
+                return
+            }
+            self.onTargetingChanged?(false)
+            // A partial payload must never silently become a successful share.
+            if !errors.isEmpty || urls.isEmpty {
+                storage.discardMaterialization(at: destination, ownership: ownership)
+                self.onMaterializationFailed?(claim, errors.first ?? "No promised files were produced")
+            } else {
+                self.onFilesReceived?(claim, urls)
+            }
         }
     }
 

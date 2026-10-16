@@ -557,6 +557,20 @@ final class OverlayWindowController {
             }
             .store(in: &cancellables)
 
+        modules.fileDragSession.$phase
+            .map { $0 != .idle }
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] active in
+                let generation = self?.presentationSession.generation
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.allowsOverlayWork(generation: generation),
+                          self.modules.fileDragSession.isActive == active else { return }
+                    self.reposition(animated: false, reason: "fileDragOrbit")
+                }
+            }
+            .store(in: &cancellables)
+
         modules.navigation.$selectedPage
             .removeDuplicates()
             .dropFirst()
@@ -1147,6 +1161,7 @@ final class OverlayWindowController {
             profile.accessoryHeight += DetachedIslandNavigationMetrics.accessoryHeight
             profile.accessoryWidth = DetachedIslandNavigationMetrics.width(pageCount: modules.navigation.availablePages(using: settings).count)
         }
+        FileDragOrbitMetrics.reserve(in: &profile, session: modules.fileDragSession)
         return profile
     }
 

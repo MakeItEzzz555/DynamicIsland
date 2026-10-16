@@ -144,21 +144,59 @@ extension SettingsView {
     }
 
     var lockScreenPage: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            SettingsGroup("Availability") {
-                Label("Lock Screen integration is not available", systemImage: "lock.shield")
-                Text("DynamicIsland does not replace or bypass macOS's secure Lock Screen. Lock/unlock sounds and widgets require a supported integration before they can be enabled.")
+        let prefs = Binding(get: { settings.lockScreenPreferences }, set: { settings.lockScreenPreferences = $0 })
+        let tested = SkyLightLockScreenSpace.isTestedOS()
+        return VStack(alignment: .leading, spacing: 24) {
+            SettingsGroup("General") {
+                Toggle("Lock Screen widgets (experimental)", isOn: prefs.enabled)
+                    .disabled(!tested && !settings.lockScreenPreferences.enabled)
+                Text(tested
+                     ? "Shows the widgets below over the macOS Lock Screen using private system interfaces. They never take keyboard focus from the password field, are hidden from screenshots, and show only what you allow here. A future macOS update may disable this."
+                     : "Unavailable on this macOS version. Lock Screen widgets are enabled only on tested versions (macOS 15.7).")
                     .font(.caption).foregroundStyle(.secondary)
+                Toggle("Keep widgets visible during the screensaver", isOn: prefs.keepVisibleDuringScreensaver)
             }
-            SettingsLockSoundPreview(defaults: navigation.defaults)
-            SettingsDemoPlayer()
-            SettingsGroup("Now Playing") {
-                SettingsNavigationRow(title: "Media", subtitle: "Configure the working island player", symbol: "music.note") {
-                    navigation.navigate(.section(.media))
+            SettingsGroup("Lock & Unlock") {
+                Toggle("Lock and unlock animation", isOn: prefs.hud)
+                lockSoundPicker("Lock sound", selection: prefs.lockSound)
+                lockSoundPicker("Unlock sound", selection: prefs.unlockSound)
+                LabeledContent("Sound volume") {
+                    Slider(value: prefs.soundVolume, in: 0...1).frame(maxWidth: 220)
                 }
-                Text("The sample above is interactive and stays offline. It does not display on the system Lock Screen.")
+            }
+            SettingsGroup("Layout") {
+                LockScreenSettingsPreview(settings: settings, liveMedia: previews?.liveMedia,
+                                          timer: previews?.timer, keepAwake: productivity.keepAwake)
+            }
+            SettingsGroup("Widgets") {
+                Toggle("Now Playing controls", isOn: prefs.nowPlaying)
+                Toggle("Show song title, artist and artwork", isOn: prefs.showTrackDetails)
+                    .disabled(!settings.lockScreenPreferences.nowPlaying)
+                Toggle("Battery ring", isOn: prefs.battery)
+                Toggle("Timer ring", isOn: prefs.timer)
+                Toggle("Keep Awake ring", isOn: prefs.keepAwake)
+                Toggle("Generic alerts (low battery, Keep Awake ending)", isOn: prefs.alerts)
+            }
+            SettingsGroup("Side controls") {
+                Toggle("Volume slider on the left edge", isOn: prefs.sideVolume)
+                Toggle("Brightness slider on the left edge", isOn: prefs.sideBrightness)
+            }
+            SettingsGroup("Privacy") {
+                Text("Never shown while locked: clipboard, files, agent messages or commands, messages, notification text, calendar details, people or account information. Song details appear only when you turn them on above.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+        }
+    }
+
+    private func lockSoundPicker(_ title: String, selection: Binding<String>) -> some View {
+        HStack {
+            Picker(title, selection: selection) {
+                ForEach(SettingsLockSoundModel.availableNames, id: \.self) { Text($0).tag($0) }
+            }
+            Button("Play") {
+                LockScreenCoordinator.playSystemSound(selection.wrappedValue, volume: settings.lockScreenPreferences.soundVolume)
+            }
+            .disabled(selection.wrappedValue == "None")
         }
     }
 

@@ -18,6 +18,73 @@ final class ClipboardPasteboardClientTests: XCTestCase {
     }
 
     @MainActor
+    func testColorIsCapturedAndWrittenBack() throws {
+        let pasteboard = NSPasteboard(name: .init("ClipboardTests-\(UUID())"))
+        pasteboard.clearContents()
+        XCTAssertTrue(pasteboard.writeObjects([NSColor(srgbRed: 0.25, green: 0.5, blue: 0.75, alpha: 1)]))
+        let client = SystemClipboardPasteboardClient(pasteboard: pasteboard)
+
+        guard case let .payload(.color(color)) = client.readSupportedPayload(limits: .standard, capturesImages: true)
+        else { return XCTFail("expected color payload") }
+        XCTAssertEqual(color.red, 0.25, accuracy: 0.001)
+        XCTAssertEqual(color.blue, 0.75, accuracy: 0.001)
+        XCTAssertEqual(color.hexString, "#4080BF")
+
+        let other = NSPasteboard(name: .init("ClipboardTests-\(UUID())"))
+        XCTAssertTrue(SystemClipboardPasteboardClient(pasteboard: other).write(.color(color)).succeeded)
+        let roundTrip = try XCTUnwrap(NSColor(from: other)?.usingColorSpace(.sRGB))
+        XCTAssertEqual(roundTrip.greenComponent, 0.5, accuracy: 0.001)
+    }
+
+    @MainActor
+    func testColorFlavorNextToTextStaysText() {
+        let pasteboard = NSPasteboard(name: .init("ClipboardTests-\(UUID())"))
+        pasteboard.clearContents()
+        let item = NSPasteboardItem()
+        item.setString("plain", forType: .string)
+        item.setData(Data([1]), forType: .color)
+        XCTAssertTrue(pasteboard.writeObjects([item]))
+        let result = SystemClipboardPasteboardClient(pasteboard: pasteboard)
+            .readSupportedPayload(limits: .standard, capturesImages: true)
+        guard case let .payload(payload) = result else { return XCTFail("expected payload") }
+        XCTAssertEqual(payload.kind, .text)
+    }
+
+    @MainActor
+    func testConcealedColorIsExcluded() {
+        let pasteboard = NSPasteboard(name: .init("ClipboardTests-\(UUID())"))
+        pasteboard.clearContents()
+        let item = NSPasteboardItem()
+        item.setData(Data([1]), forType: .color)
+        item.setData(Data(), forType: .init("org.nspasteboard.ConcealedType"))
+        XCTAssertTrue(pasteboard.writeObjects([item]))
+        XCTAssertEqual(SystemClipboardPasteboardClient(pasteboard: pasteboard)
+            .readSupportedPayload(limits: .standard, capturesImages: true), .sensitive)
+    }
+
+    func testExportShareItemsAndTemporaryFiles() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ClipExport-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let storage = FileShelfTemporaryStorage(rootURL: root)
+        let text = ClipboardHistoryPayload.text(.init(plainText: "hello", rtfData: nil, htmlData: nil))
+        let url = try XCTUnwrap(ClipboardEntryExport.writeTemporaryFile(for: text, storage: storage))
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "hello")
+        XCTAssertTrue(url.path.hasPrefix(root.standardizedFileURL.path))
+        XCTAssertEqual(url.pathExtension, "txt")
+        let png = try XCTUnwrap(ClipboardEntryExport.writeTemporaryFile(for: .imagePNG(Data([1, 2])), storage: storage))
+        XCTAssertEqual(png.pathExtension, "png")
+        XCTAssertNil(try ClipboardEntryExport.writeTemporaryFile(for: .url(URL(string: "https://a.b")!), storage: storage))
+        XCTAssertEqual(ClipboardEntryExport.shareItems(for: text).count, 1)
+        XCTAssertEqual(ClipboardEntryExport.shareItems(for: .files([URL(fileURLWithPath: "/nonexistent/x")])).count, 0)
+    }
+
+    func testColorFingerprintDiffersByValue() {
+        let a = ClipboardHistoryFingerprint.make(for: .color(.init(red: 1, green: 0, blue: 0, alpha: 1)))
+        let b = ClipboardHistoryFingerprint.make(for: .color(.init(red: 0, green: 1, blue: 0, alpha: 1)))
+        XCTAssertNotEqual(a, b)
+    }
+
+    @MainActor
     func testURLTakesPrecedenceOverText() {
         let pasteboard = NSPasteboard(name: .init("ClipboardTests-\(UUID())"))
         let item = NSPasteboardItem()

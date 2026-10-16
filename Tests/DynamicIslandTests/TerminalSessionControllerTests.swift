@@ -276,6 +276,19 @@ final class TerminalSessionControllerTests: XCTestCase {
         XCTAssertEqual(runner.handle.input, inputBefore)
     }
 
+    /// The capability registry must never advertise an action the adapter rejects.
+    func testAdvertisedActionsAreAllPerformable() async {
+        let fixture = makeFixture(runner: FakeTerminalProcessRunner())
+        let advertised = fixture.registry.snapshot(for: .terminal)?.supportedActions ?? []
+        for action in IslandCapabilityAction.allCases where action != .openSettings {
+            do {
+                try await fixture.controller.perform(action)
+            } catch TerminalSessionError.unsupportedAction {
+                XCTAssertFalse(advertised.contains(action), "\(action) is advertised but unsupported")
+            } catch {}
+        }
+    }
+
     private func makeFixture(
         runner: FakeTerminalProcessRunner
     ) -> (

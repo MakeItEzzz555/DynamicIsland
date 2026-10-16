@@ -3,6 +3,9 @@ import Foundation
 
 enum BackgroundOperationKind: String, Equatable, Sendable {
     case compression
+    case extraction
+    case imageConversion
+    case audioConversion
 }
 
 enum BackgroundOperationState: String, Equatable, Sendable {
@@ -91,6 +94,8 @@ enum ZipCompressionError: LocalizedError, Equatable, Sendable {
     case launchFailed(String)
     case processFailed(String)
     case invalidArchive
+    case notAnArchive
+    case unsafeArchive(String)
     case cancelled
 
     var errorDescription: String? {
@@ -107,8 +112,12 @@ enum ZipCompressionError: LocalizedError, Equatable, Sendable {
             "Compression failed: \(message)"
         case .invalidArchive:
             "The generated archive could not be verified."
+        case .notAnArchive:
+            "Only ZIP archives can be extracted."
+        case .unsafeArchive(let entry):
+            "The archive was refused because “\(entry)” would be written outside the destination."
         case .cancelled:
-            "Compression was cancelled."
+            "The operation was cancelled."
         }
     }
 }
@@ -250,14 +259,27 @@ final class ZipCompressionExecutor: @unchecked Sendable {
         return destination
     }
 
-    private func run(operationID: UUID, executable: URL, arguments: [String]) throws {
+    @discardableResult
+    func run(operationID: UUID, executable: URL, arguments: [String], captureOutput: Bool = false) throws -> Data {
         try checkCancelled(operationID)
 
         let process = Process()
-        let stderr = Pipe()
+        // A file cannot fill a pipe and stall the child while stdout is drained.
+        var diagnosticPath = Array(FileManager.default.temporaryDirectory
+            .appendingPathComponent("DynamicIsland-ArchiveDiagnostics-\(operationID.uuidString)-XXXXXX").path.utf8CString)
+        let descriptor = mkstemp(&diagnosticPath)
+        guard descriptor >= 0 else { throw ZipCompressionError.launchFailed("Could not create the archive diagnostic file.") }
+        let diagnosticURL = URL(fileURLWithPath: String(cString: diagnosticPath))
+        let stderr = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        defer {
+            try? stderr.close()
+            try? FileManager.default.removeItem(at: diagnosticURL)
+        }
         process.executableURL = executable
         process.arguments = arguments
         process.standardError = stderr
+        let stdout = Pipe()
+        if captureOutput { process.standardOutput = stdout }
 
         lock.lock()
         if cancelled.contains(operationID) {
@@ -280,22 +302,28 @@ final class ZipCompressionExecutor: @unchecked Sendable {
         } catch {
             throw ZipCompressionError.launchFailed(error.localizedDescription)
         }
+        // Cancellation may have arrived between registration and process.run().
+        if isCancelled(operationID), process.isRunning { process.terminate() }
+        // Drain before waiting so a full pipe cannot block the child.
+        let output = captureOutput ? stdout.fileHandleForReading.readDataToEndOfFile() : Data()
         process.waitUntilExit()
 
         if isCancelled(operationID) {
             throw ZipCompressionError.cancelled
         }
         guard process.terminationStatus == 0 else {
-            let data = stderr.fileHandleForReading.readDataToEndOfFile()
+            try stderr.seek(toOffset: 0)
+            let data = try stderr.read(upToCount: 64 * 1024) ?? Data()
             let message = String(data: data, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             throw ZipCompressionError.processFailed(
                 (message?.isEmpty == false ? message : nil) ?? "The archive process exited with status \(process.terminationStatus)."
             )
         }
+        return output
     }
 
-    private func checkCancelled(_ operationID: UUID) throws {
+    func checkCancelled(_ operationID: UUID) throws {
         if isCancelled(operationID) || Task.isCancelled {
             throw ZipCompressionError.cancelled
         }
@@ -307,7 +335,7 @@ final class ZipCompressionExecutor: @unchecked Sendable {
         return cancelled.contains(operationID)
     }
 
-    private func clearExecutionState(_ operationID: UUID) {
+    func clearExecutionState(_ operationID: UUID) {
         lock.lock()
         processes[operationID] = nil
         cancelled.remove(operationID)
@@ -321,17 +349,20 @@ final class BackgroundOperationController: ObservableObject {
 
     private let executor: ZipCompressionExecutor
     private let liveActivities: LiveActivityStore
+    private let ownership: TemporaryFileOwnershipLedger
     private var tasks: [UUID: Task<Void, Never>] = [:]
     private let recentLimit = 12
 
     init(
         liveActivities: LiveActivityStore,
         executor: ZipCompressionExecutor = ZipCompressionExecutor(),
-        initialOperations: [BackgroundOperation] = []
+        initialOperations: [BackgroundOperation] = [],
+        ownership: TemporaryFileOwnershipLedger = .shared
     ) {
         self.liveActivities = liveActivities
         self.executor = executor
         self.operations = initialOperations
+        self.ownership = ownership
     }
 
     var primaryOperation: BackgroundOperation? {
@@ -350,17 +381,78 @@ final class BackgroundOperationController: ObservableObject {
     func startCompression(sources: [URL], onCompleted: (@MainActor (URL) -> Void)? = nil, onFailed: (@MainActor (String) -> Void)? = nil) -> UUID? {
         let normalized = sources.map(\.standardizedFileURL)
         guard !normalized.isEmpty else { return nil }
-
-        let id = UUID()
         let destination = try? ZipCompressionExecutor.archiveDestination(for: normalized)
         let count = normalized.count
+        let executor = executor
+        return start(
+            kind: .compression,
+            title: count == 1 ? "Compressing \(normalized[0].lastPathComponent)" : "Compressing \(count) items",
+            sources: normalized,
+            destination: destination,
+            onCompleted: onCompleted,
+            onFailed: onFailed
+        ) { id in try await executor.compress(operationID: id, sources: normalized) }
+    }
+
+    /// Extracts a ZIP into a new collision-safe folder beside it.
+    @discardableResult
+    func startExtraction(archive: URL, onCompleted: (@MainActor (URL) -> Void)? = nil, onFailed: (@MainActor (String) -> Void)? = nil) -> UUID? {
+        let archive = archive.standardizedFileURL
+        let executor = executor
+        return start(
+            kind: .extraction,
+            title: "Extracting \(archive.lastPathComponent)",
+            sources: [archive],
+            destination: ZipCompressionExecutor.extractionDestination(for: archive),
+            onCompleted: onCompleted,
+            onFailed: onFailed
+        ) { id in try await executor.extract(operationID: id, archive: archive) }
+    }
+
+    /// Same conversion as `FileConversionController.convert`, observable and cancellable.
+    @discardableResult
+    func startImageConversion(_ source: URL, to format: FileConversionFormat, outputDirectory: URL? = nil, onCompleted: (@MainActor (URL) -> Void)? = nil, onFailed: (@MainActor (String) -> Void)? = nil) -> UUID? {
+        start(
+            kind: .imageConversion,
+            title: "Converting \(source.lastPathComponent) to \(format.displayName)",
+            sources: [source],
+            destination: nil,
+            onCompleted: onCompleted,
+            onFailed: onFailed
+        ) { _ in try await FileConversionController.convert(source, to: format, outputDirectory: outputDirectory) }
+    }
+
+    @discardableResult
+    func startAudioConversion(_ source: URL, to format: FileAudioFormat, outputDirectory: URL? = nil, onCompleted: (@MainActor (URL) -> Void)? = nil, onFailed: (@MainActor (String) -> Void)? = nil) -> UUID? {
+        start(
+            kind: .audioConversion,
+            title: "Converting \(source.lastPathComponent) to \(format.rawValue)",
+            sources: [source],
+            destination: nil,
+            onCompleted: onCompleted,
+            onFailed: onFailed
+        ) { _ in try await FileAudioConversion.convert(source, to: format, outputDirectory: outputDirectory) }
+    }
+
+    /// Shared lifecycle. Progress stays indeterminate: none of the backends
+    /// reports truthful fractions.
+    func start(
+        kind: BackgroundOperationKind,
+        title: String,
+        sources: [URL],
+        destination: URL?,
+        onCompleted: (@MainActor (URL) -> Void)?,
+        onFailed: (@MainActor (String) -> Void)?,
+        work: @escaping @Sendable (UUID) async throws -> URL
+    ) -> UUID? {
+        let id = UUID()
         let operation = BackgroundOperation(
             id: id,
             generation: UUID(),
-            kind: .compression,
-            title: count == 1 ? "Compressing \(normalized[0].lastPathComponent)" : "Compressing \(count) items",
+            kind: kind,
+            title: title,
             subtitle: destination?.lastPathComponent,
-            sources: normalized,
+            sources: sources,
             destination: destination,
             state: .queued,
             progress: .indeterminate,
@@ -371,12 +463,28 @@ final class BackgroundOperationController: ObservableObject {
             result: nil,
             supportsCancellation: true
         )
+        let ownership = ownership
+        // BasketManager may release its public-id hold at UI cancellation;
+        // this generation lease lasts until the backend actually unwinds.
+        let sourceOwner = FileSurfaceOwner.operation(operation.generation)
+        ownership.retain(sources, by: sourceOwner)
         operations.append(operation)
         trimRecentOperations()
         publish(operationID: id)
 
+        let executor = executor
         let task = Task { [weak self] in
+            defer {
+                ownership.release(sources, by: sourceOwner)
+                self?.tasks[id] = nil
+                executor.clearExecutionState(id)
+            }
             guard let self else { return }
+            guard !Task.isCancelled else {
+                finishCancelled(id)
+                onFailed?("Cancelled")
+                return
+            }
             update(id) {
                 $0.state = .preparing
                 $0.startedAt = Date()
@@ -384,7 +492,7 @@ final class BackgroundOperationController: ObservableObject {
             update(id) { $0.state = .running }
 
             do {
-                let output = try await executor.compress(operationID: id, sources: normalized)
+                let output = try await work(id)
                 guard !Task.isCancelled else {
                     finishCancelled(id)
                     onFailed?("Cancelled")
@@ -414,7 +522,6 @@ final class BackgroundOperationController: ObservableObject {
                 finishFailed(id, error: error)
                 onFailed?(error.localizedDescription)
             }
-            tasks[id] = nil
         }
         tasks[id] = task
         return id
@@ -422,7 +529,9 @@ final class BackgroundOperationController: ObservableObject {
 
     func cancel(_ id: UUID) {
         guard let operation = operation(id), operation.state.isActive, operation.supportsCancellation else { return }
-        executor.cancel(operationID: id)
+        if operation.kind == .compression || operation.kind == .extraction {
+            executor.cancel(operationID: id)
+        }
         tasks[id]?.cancel()
         finishCancelled(id)
     }
@@ -517,6 +626,7 @@ final class BackgroundOperationController: ObservableObject {
             case .noSources: .unsupported
             case .missingSource: .sourceUnavailable
             case .destinationExists: .collisionResolutionFailed
+            case .notAnArchive, .unsafeArchive: .unsupported
             case .launchFailed, .processFailed, .invalidArchive: .operationFailed
             case .cancelled: .operationFailed
             }
@@ -564,7 +674,7 @@ final class BackgroundOperationController: ObservableObject {
                 kind: .backgroundOperation,
                 title: operation.title,
                 subtitle: subtitle,
-                symbolName: operation.state == .completed ? "archivebox.fill" : "archivebox",
+                symbolName: Self.symbolName(for: operation),
                 priority: operation.state.isActive ? 95 : 64,
                 isActive: operation.state.isActive,
                 progress: LiveActivityStore.clampedProgress(progress),
@@ -579,6 +689,15 @@ final class BackgroundOperationController: ObservableObject {
                 )
             )
         )
+    }
+
+    private static func symbolName(for operation: BackgroundOperation) -> String {
+        let done = operation.state == .completed
+        switch operation.kind {
+        case .compression, .extraction: return done ? "archivebox.fill" : "archivebox"
+        case .imageConversion: return done ? "photo.fill" : "photo"
+        case .audioConversion: return "waveform"
+        }
     }
 
     private func liveActivityID(for id: UUID) -> String {

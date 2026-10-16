@@ -23,7 +23,9 @@ struct AgentCompactPresentation: Equatable, Sendable {
 
     static func make(sessions: [AgentSession], enabled: Bool = true) -> AgentCompactPresentation? {
         guard enabled, !sessions.isEmpty else { return nil }
-        let ordered = sessions
+        // History keeps old generations; only the current incarnation owns live presence.
+        let ordered = Dictionary(grouping: sessions, by: { $0.id.sessionID }).values
+            .compactMap { $0.max { $0.id.generation < $1.id.generation } }
             .filter {
                 $0.isActive && AgentSessionPresentation.priority(for: $0) != .idle
             }
@@ -61,13 +63,13 @@ struct AgentCompactPresentation: Equatable, Sendable {
 
 /// Fixed geometry of the orbs-only routine agent pill.
 enum AgentCompactOrbMetrics {
-    static let primaryOrb: CGFloat = 18
-    static let secondaryOrb: CGFloat = 13
+    static let primaryOrb: CGFloat = 22
+    static let secondaryOrb: CGFloat = 16
     static let spacing: CGFloat = 4
-    static let badge: CGFloat = 18
-    /// The provider icon takes the slot of the former 11 pt left glyph and its
-    /// gap (12 + 3 = 11 + 4), so multi-session widths never grow.
-    static let providerIcon: CGFloat = 12
+    static let badge: CGFloat = 20
+    /// Same optical size as the primary orb so both wings read equally; the
+    /// wings are content-sized, so the shell grows to fit (never clips).
+    static let providerIcon: CGFloat = 22
     static let providerIconGap: CGFloat = 3
     /// Left of the notch: the primary session's orb only.
     static let leadingWidth: CGFloat = primaryOrb

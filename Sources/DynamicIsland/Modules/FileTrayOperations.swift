@@ -51,13 +51,27 @@ extension FileShelfStore {
 
     // MARK: Convert
 
-    func convertImages(_ urls: [URL], to format: FileConversionFormat) {
+    func convertImages(_ urls: [URL], to format: FileConversionFormat, using operations: BackgroundOperationController? = nil) {
         let sources = urls.filter { FileConversionController.targetFormats(for: $0).contains(format) }
         guard !sources.isEmpty else {
             setOperationStatus(.failed("These files can’t be converted to \(format.displayName)."), clearAfter: .seconds(4))
             return
         }
         setOperationStatus(.working(sources.count == 1 ? "Converting to \(format.displayName)…" : "Converting \(sources.count) files…"))
+        if let operations {
+            var pending = sources.count
+            var outputs: [URL] = []
+            var failures = 0
+            let settle: @MainActor () -> Void = { [weak self] in
+                pending -= 1
+                if pending == 0 { self?.finish(outputs: outputs, failures: failures, noun: "converted file") }
+            }
+            for source in sources {
+                let started = operations.startImageConversion(source, to: format) { outputs.append($0); settle() } onFailed: { _ in failures += 1; settle() }
+                if started == nil { failures += 1; settle() }
+            }
+            return
+        }
         Task { @MainActor in
             var outputs: [URL] = []
             var failures = 0
@@ -69,8 +83,17 @@ extension FileShelfStore {
         }
     }
 
-    func convertAudio(_ url: URL, to format: FileAudioFormat) {
+    func convertAudio(_ url: URL, to format: FileAudioFormat, using operations: BackgroundOperationController? = nil) {
         setOperationStatus(.working("Converting to \(format.rawValue)…"))
+        if let operations {
+            let started = operations.startAudioConversion(url, to: format) { [weak self] in
+                self?.finish(outputs: [$0], failures: 0, noun: "converted file")
+            } onFailed: { [weak self] reason in
+                self?.setOperationStatus(.failed("Conversion failed: \(reason). Original preserved."), clearAfter: .seconds(5))
+            }
+            if started == nil { setOperationStatus(.failed("The conversion could not be started."), clearAfter: .seconds(4)) }
+            return
+        }
         Task { @MainActor in
             do { finish(outputs: [try await FileAudioConversion.convert(url, to: format)], failures: 0, noun: "converted file") }
             catch { setOperationStatus(.failed("Conversion failed: \(error.localizedDescription) Original preserved."), clearAfter: .seconds(5)) }
@@ -92,6 +115,22 @@ extension FileShelfStore {
             setOperationStatus(.failed("The archive could not be started."), clearAfter: .seconds(4))
         } else {
             setOperationStatus(.working(urls.count == 1 ? "Creating ZIP…" : "Creating ZIP of \(urls.count) items…"))
+        }
+    }
+
+    /// Extracts each ZIP into a new folder beside it; the folders join the Tray
+    /// when their operations complete. Originals are never modified.
+    func extractArchives(_ urls: [URL], using operations: BackgroundOperationController) {
+        let archives = urls.filter { $0.pathExtension.lowercased() == "zip" }
+        guard !archives.isEmpty else { return }
+        setOperationStatus(.working(archives.count == 1 ? "Extracting archive…" : "Extracting \(archives.count) archives…"))
+        for archive in archives {
+            let started = operations.startExtraction(archive: archive) { [weak self] folder in
+                self?.finish(outputs: [folder], failures: 0, noun: "folder")
+            } onFailed: { [weak self] reason in
+                self?.setOperationStatus(.failed("Not extracted: \(reason) Archive preserved."), clearAfter: .seconds(5))
+            }
+            if started == nil { setOperationStatus(.failed("The extraction could not be started."), clearAfter: .seconds(4)) }
         }
     }
 

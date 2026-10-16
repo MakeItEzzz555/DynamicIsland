@@ -1,52 +1,6 @@
 import SwiftUI
 import ServiceManagement
 
-/// Original, offline artwork and interaction; never controls the user's player.
-struct SettingsDemoPlayer: View {
-    @State private var playing = false
-    @State private var progress = 0.35
-    @State private var output = "This Mac"
-    var body: some View {
-        VStack(spacing: 16) {
-            HStack(spacing: 14) {
-                Image(systemName: "waveform").font(.system(size: 28))
-                    .frame(width: 62, height: 62)
-                    .background(.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Northern Lights").font(.headline)
-                    Text("DynamicIsland preview").font(.caption).opacity(0.7)
-                }
-                Spacer()
-            }
-            Slider(value: $progress, in: 0...1).controlSize(.small)
-                .accessibilityLabel("Preview playback position")
-                .accessibilityValue("\(Int(progress * 100)) percent")
-            HStack(spacing: 22) {
-                Button { progress = max(0, progress - 0.1) } label: { Image(systemName: "backward.fill") }
-                    .accessibilityLabel("Seek backward in preview")
-                Button { playing.toggle() } label: { Image(systemName: playing ? "pause.fill" : "play.fill") }
-                    .accessibilityLabel(playing ? "Pause preview" : "Play preview")
-                Button { progress = min(1, progress + 0.1) } label: { Image(systemName: "forward.fill") }
-                    .accessibilityLabel("Seek forward in preview")
-                Menu {
-                    Picker("Preview output", selection: $output) {
-                        Text("This Mac").tag("This Mac")
-                        Text("Preview headphones").tag("Preview headphones")
-                    }
-                } label: { Image(systemName: output == "This Mac" ? "laptopcomputer" : "headphones") }
-                    .accessibilityLabel("Preview output: \(output)")
-            }.buttonStyle(.borderless).font(.title3)
-            Text("Interactive sample · No live playback").font(.caption2).opacity(0.7)
-        }
-        .foregroundStyle(.white).tint(.white)
-        .padding(24).frame(maxWidth: .infinity)
-        .background(LinearGradient(colors: [Color.indigo, Color.blue.opacity(0.85)], startPoint: .topLeading, endPoint: .bottomTrailing),
-            in: RoundedRectangle(cornerRadius: 12))
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Offline Now Playing preview")
-    }
-}
-
 struct SettingsShortcutStrip: View {
     @ObservedObject var store: ShortcutsStore
     @State private var editing = false

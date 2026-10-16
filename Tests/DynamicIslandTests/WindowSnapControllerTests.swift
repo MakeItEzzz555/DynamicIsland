@@ -30,6 +30,65 @@ private final class FakeWindowSnapSystem: WindowSnapSystemProviding {
 
 @MainActor
 final class WindowSnapControllerTests: XCTestCase {
+    func testMoveToNextDisplayPreservesSizeAndOffsetAndWrapsAround() throws {
+        let system = FakeWindowSnapSystem()
+        system.availableScreens = [
+            .init(id: "left", visibleFrame: CGRect(x: -1440, y: 30, width: 1440, height: 870)),
+            .init(id: "main", visibleFrame: CGRect(x: 0, y: 24, width: 1920, height: 1056))
+        ]
+        system.windowFrame = CGRect(x: -1340, y: 130, width: 800, height: 600)
+        let fixture = makeFixture(system: system)
+        try fixture.controller.moveToNextDisplay()
+        XCTAssertEqual(system.windowFrame, CGRect(x: 100, y: 124, width: 800, height: 600))
+        try fixture.controller.moveToNextDisplay()
+        XCTAssertEqual(system.windowFrame, CGRect(x: -1340, y: 130, width: 800, height: 600))
+        XCTAssertNil(fixture.controller.lastError)
+    }
+
+    func testMoveToSmallerDisplayFitsWindowAndClearsPreviousSnapPreview() throws {
+        let system = FakeWindowSnapSystem()
+        system.availableScreens = [
+            .init(id: "main", visibleFrame: CGRect(x: 0, y: 24, width: 1920, height: 1056)),
+            .init(id: "small", visibleFrame: CGRect(x: 1920, y: 80, width: 1024, height: 700))
+        ]
+        let fixture = makeFixture(system: system)
+        try fixture.controller.snap(to: .bottomRight)
+        XCTAssertNotNil(fixture.activities.activities.first { $0.id == WindowSnapController.previewActivityID })
+        system.windowFrame = CGRect(x: 200, y: 100, width: 1500, height: 900)
+        try fixture.controller.moveToNextDisplay()
+        XCTAssertEqual(system.windowFrame, CGRect(x: 1920, y: 80, width: 1024, height: 700))
+        XCTAssertNil(fixture.controller.lastTarget)
+        XCTAssertFalse(fixture.activities.activities.contains { $0.id == WindowSnapController.previewActivityID })
+    }
+
+    func testMoveToNextDisplayRejectsSingleDisplayAndMissingPermissionWithoutMoving() {
+        let system = FakeWindowSnapSystem()
+        let fixture = makeFixture(system: system)
+        XCTAssertThrowsError(try fixture.controller.moveToNextDisplay()) {
+            XCTAssertEqual($0 as? WindowSnapControllerError, .noOtherDisplay)
+        }
+        XCTAssertNotNil(fixture.controller.lastError)
+        system.accessibilityGranted = false
+        XCTAssertThrowsError(try fixture.controller.moveToNextDisplay()) {
+            XCTAssertEqual($0 as? WindowSnapControllerError, .accessibilityPermissionRequired)
+        }
+        XCTAssertTrue(system.setFrames.isEmpty)
+        fixture.controller.setEnabled(false)
+        XCTAssertNoThrow(try fixture.controller.moveToNextDisplay())
+        XCTAssertTrue(system.setFrames.isEmpty)
+    }
+
+    func testMoveToNextDisplayClampsANormalWindowAtTheDestinationEdges() throws {
+        let system = FakeWindowSnapSystem()
+        system.availableScreens = [
+            .init(id: "main", visibleFrame: CGRect(x: 0, y: 24, width: 1920, height: 1056)),
+            .init(id: "small", visibleFrame: CGRect(x: 1920, y: 80, width: 1024, height: 700))
+        ]
+        system.windowFrame = CGRect(x: 1100, y: 500, width: 800, height: 600)
+        try makeFixture(system: system).controller.moveToNextDisplay()
+        XCTAssertEqual(system.windowFrame, CGRect(x: 2144, y: 180, width: 800, height: 600))
+    }
+
     func testAllSnapTargetsProduceExpectedFrames() {
         let frame = CGRect(x: 30, y: 20, width: 1200, height: 900)
         let expected: [WindowSnapTarget: CGRect] = [
@@ -129,6 +188,19 @@ final class WindowSnapControllerTests: XCTestCase {
 
         XCTAssertTrue(system.setFrames.isEmpty)
         XCTAssertEqual(fixture.registry.snapshot(for: .windowSnap)?.isEnabled, false)
+    }
+
+    /// The capability registry must never advertise an action the adapter rejects.
+    func testAdvertisedActionsAreAllPerformable() async {
+        let fixture = makeFixture(system: FakeWindowSnapSystem())
+        let advertised = fixture.registry.snapshot(for: .windowSnap)?.supportedActions ?? []
+        for action in IslandCapabilityAction.allCases where action != .openSettings {
+            do {
+                try await fixture.controller.perform(action)
+            } catch WindowSnapControllerError.unsupportedAction {
+                XCTAssertFalse(advertised.contains(action), "\(action) is advertised but unsupported")
+            } catch {}
+        }
     }
 
     private func makeFixture(
