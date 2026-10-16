@@ -822,6 +822,11 @@ struct IslandRootView: View {
             .onAppear {
                 modules.navigation.ensureValidSelection(using: settings)
                 layoutStore.setExpandedAccessoryFrames([], owner: .trayQuickActions)
+                // A newly mounted island must drop geometry left by a retired
+                // drag, without clearing an orbit belonging to an active drag.
+                if !fileDragSession.isActive {
+                    layoutStore.setExpandedAccessoryFrames([], owner: .fileDragOrbit)
+                }
                 synchronizePresentationForCurrentState()
                 updateCollapsedPreviewLayout()
                 synchronizeCollapsedSidecarGeometry()
