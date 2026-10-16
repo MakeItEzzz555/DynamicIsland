@@ -590,6 +590,7 @@ struct IslandRootView: View {
     @State private var compactMessageKey: String?
     @State private var compactMessageFocused = false
     @State private var isCollapsedHovering = false
+    @State private var fileDragShareAnchor = SharingAnchorHolder()
 
     /// Committed with the shell geometry (animated with it), never read
     /// ahead from navigation - see `IslandLayoutStore.expandedHeaderLayout`.
@@ -725,7 +726,13 @@ struct IslandRootView: View {
                 .id(layoutStore.overlayPresentationGeneration)
 
                 collapsedSidecarOverlay
+                SharingAnchorView(holder: fileDragShareAnchor)
+                    .frame(width: surfaceFrame.width, height: 1)
+                    .position(x: surfaceFrame.midX, y: layoutStore.canvasSize.height - surfaceFrame.minY)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
                 detachedNavigationOverlay
+                fileDragOrbitOverlay
                 CameraPointerOverlay(store: layoutStore.cameraPointerStore, canvasSize: layoutStore.canvasSize)
                     .zIndex(100)
                     .allowsHitTesting(false)
@@ -815,13 +822,13 @@ struct IslandRootView: View {
             .onAppear {
                 modules.navigation.ensureValidSelection(using: settings)
                 layoutStore.setExpandedAccessoryFrames([], owner: .trayQuickActions)
-                layoutStore.setExpandedAccessoryFrames([], owner: .fileDragOrbit)
                 synchronizePresentationForCurrentState()
                 updateCollapsedPreviewLayout()
                 synchronizeCollapsedSidecarGeometry()
                 handleCollapsedHover(layoutStore.collapsedPointerInside)
             }
             .onChange(of: layoutStore.overlayPresentationGeneration) { _, _ in
+                fileDragSession.cancel()
                 sequenceGeneration += 1
                 deactivateCollapsedPreview()
                 finalizeCompactPresentation()
@@ -830,6 +837,7 @@ struct IslandRootView: View {
                 synchronizeCollapsedSidecarGeometry()
             }
             .onChange(of: islandState.state) { _, newValue in
+                if newValue == .collapsed { fileDragSession.cancel() }
                 handleStateChange(newValue)
                 layoutStore.compactPermissionHovered = false
                 synchronizeCollapsedSidecarGeometry()
@@ -868,6 +876,9 @@ struct IslandRootView: View {
             .onChange(of: collapsedPreviewSurfaceFrame) { _, _ in
                 updateCollapsedPreviewLayout()
             }
+            .onChange(of: settings.overlayEnabled) { _, enabled in
+                if !enabled { fileDragSession.cancel() }
+            }
             .onChange(of: settings.collapsedHoverPreviewEnabled) { _, enabled in
                 if !enabled {
                     deactivateCollapsedPreview()
@@ -887,6 +898,7 @@ struct IslandRootView: View {
             }
             .onChange(of: layoutStore.isExpandedContentExiting) { _, newValue in
                 if newValue {
+                    fileDragSession.cancel()
                     driveChildExit()
                 } else if islandState.state == .expanded, contentPhase == .contentCollapsing {
                     // The pending collapse was cancelled by an expansion before
@@ -1139,8 +1151,8 @@ struct IslandRootView: View {
     /// reported to the layout store for hover, hit-test and passthrough.
     @ViewBuilder
     private var detachedNavigationOverlay: some View {
-        if settings.showNavigationControls, isExpanded, showsExpandedContent,
-           !layoutStore.isCollapseShellOnly {
+        if settings.showNavigationControls, !fileDragSession.isActive, isExpanded, showsExpandedContent,
+           !layoutStore.isCollapseShellOnly, !layoutStore.isExpandedContentExiting {
             let frame = DetachedIslandNavigationMetrics.frame(shell: layoutStore.expandedSurfaceFrame,
                 pageCount: navigation.availablePages(using: settings).count)
             DetachedIslandNavigationBar(settings: settings, navigation: navigation, pointerAnchor: layoutStore.tabPointerAnchor,
@@ -1155,6 +1167,24 @@ struct IslandRootView: View {
             .onAppear { layoutStore.setExpandedAccessoryFrames([frame], owner: .navigation) }
             .onChange(of: frame) { _, next in layoutStore.setExpandedAccessoryFrames([next], owner: .navigation) }
             .onDisappear { layoutStore.setExpandedAccessoryFrames([], owner: .navigation) }
+        }
+    }
+
+    @ViewBuilder
+    private var fileDragOrbitOverlay: some View {
+        if isExpanded, fileDragSession.isActive, !layoutStore.isCollapseShellOnly,
+           !layoutStore.isExpandedContentExiting {
+            let frame = FileDragOrbitMetrics.frame(shell: layoutStore.expandedSurfaceFrame,
+                actionCount: fileDragSession.orbitActions.count)
+            let presentationGeneration = layoutStore.overlayPresentationGeneration
+            FileDragOrbitView(session: fileDragSession, layoutStore: layoutStore, frame: frame,
+                reduceMotion: reduceMotion || settings.reduceExtraMotion, anchor: fileDragShareAnchor,
+                allowsDrop: {
+                    settings.overlayEnabled && islandState.state == .expanded && !layoutStore.isCollapseShellOnly &&
+                        !layoutStore.isExpandedContentExiting && layoutStore.overlayPresentationGeneration == presentationGeneration
+                })
+                .position(x: frame.midX, y: layoutStore.canvasSize.height - frame.midY)
+                .transition(.opacity)
         }
     }
 

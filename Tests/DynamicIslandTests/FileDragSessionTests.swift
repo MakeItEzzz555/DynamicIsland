@@ -216,7 +216,7 @@ final class FileDragSessionTests: XCTestCase {
 
         XCTAssertTrue(storage.isOwned(promised))
         XCTAssertFalse(storage.isOwned(external))
-        storage.removeIfOwned([promised, external])
+        storage.removeIfOwned([promised, external], ownership: TemporaryFileOwnershipLedger(temporaryRoots: [root]))
         XCTAssertFalse(FileManager.default.fileExists(atPath: directory.path))
     }
 
