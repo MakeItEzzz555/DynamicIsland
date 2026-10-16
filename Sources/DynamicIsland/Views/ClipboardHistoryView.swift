@@ -55,6 +55,8 @@ struct ClipboardHistoryRowPresentation: Equatable {
                 urls.count == 1 ? "1 file" : "\(urls.count) files",
                 false
             )
+        case let .color(color):
+            generated = ("paintpalette", color.hexString, "Color", false)
         case let .imagePNG(data):
             generated = (
                 "photo",
@@ -84,6 +86,11 @@ private final class ClipboardVisualCache: ObservableObject {
 
     func image(for fingerprint: String) -> NSImage? { images[fingerprint] }
     func appIcon(for bundleID: String) -> NSImage? { appIcons[bundleID] }
+
+    /// Row views the share picker anchors to (weak; not observed).
+    private let shareAnchors = NSMapTable<NSUUID, NSView>.strongToWeakObjects()
+    func registerShareAnchor(_ view: NSView, for id: UUID) { shareAnchors.setObject(view, forKey: id as NSUUID) }
+    func shareAnchor(for id: UUID) -> NSView? { shareAnchors.object(forKey: id as NSUUID) }
 
     func loadImageIfNeeded(fingerprint: String, data: Data) {
         guard images[fingerprint] == nil, let image = NSImage(data: data) else { return }
@@ -301,6 +308,35 @@ struct ClipboardHistoryView: View {
             .menuStyle(.borderlessButton)
             .fixedSize()
 
+            }
+
+            let sources = ClipboardHistoryQuery.sourceApplications(in: store.entries)
+            if sources.count > 1 {
+                Menu {
+                    Button { query.sourceBundleIdentifier = nil } label: {
+                        Label("All Apps", systemImage: query.sourceBundleIdentifier == nil ? "checkmark" : "app.dashed")
+                    }
+                    Divider()
+                    ForEach(sources, id: \.bundleIdentifier) { source in
+                        Button {
+                            query.sourceBundleIdentifier = source.bundleIdentifier
+                        } label: {
+                            if query.sourceBundleIdentifier == source.bundleIdentifier {
+                                Label(source.name, systemImage: "checkmark")
+                            } else {
+                                Text(source.name)
+                            }
+                        }
+                    }
+                } label: {
+                    Image(systemName: "app.badge")
+                        .symbolVariant(query.sourceBundleIdentifier == nil ? .none : .fill)
+                        .frame(width: 24, height: 24)
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("Filter by source app")
+                .accessibilityLabel("Filter by source app")
             }
 
             if store.tagsEnabled, !store.tags.isEmpty {
@@ -553,11 +589,13 @@ struct ClipboardHistoryView: View {
             RoundedRectangle(cornerRadius: 11 * metrics.cornerRadiusScale, style: .continuous)
                 .stroke(isSelected ? Color.white.opacity(0.17) : .clear, lineWidth: 1)
         }
+        .background(ClipboardShareAnchor { cache.registerShareAnchor($0, for: entry.id) })
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { copy(entry) }
         .onTapGesture { selectedEntryID = entry.id }
         .contextMenu { contextMenu(for: entry) }
         .accessibilityElement(children: .contain)
+        .accessibilityAction(named: "Share") { share(entry) }
     }
 
     @ViewBuilder
@@ -605,7 +643,16 @@ struct ClipboardHistoryView: View {
         presentation: ClipboardHistoryRowPresentation
     ) -> some View {
         let size = presentation.isImage ? CGSize(width: 68, height: 52) : CGSize(width: 38, height: 38)
-        if case let .imagePNG(data) = entry.payload {
+        if case let .color(color) = entry.payload {
+            RoundedRectangle(cornerRadius: 8 * metrics.cornerRadiusScale, style: .continuous)
+                .fill(Color(nsColor: color.nsColor))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8 * metrics.cornerRadiusScale, style: .continuous)
+                        .stroke(.white.opacity(0.22), lineWidth: 1)
+                }
+                .frame(width: size.width, height: size.height)
+                .accessibilityLabel("Color swatch \(color.hexString)")
+        } else if case let .imagePNG(data) = entry.payload {
             Group {
                 if let image = cache.image(for: entry.fingerprint) {
                     Image(nsImage: image).resizable().scaledToFill()
@@ -672,7 +719,15 @@ struct ClipboardHistoryView: View {
                 }
             }
         case .imagePNG, .text:
+            if let add = externalActions.addFilesToShelf {
+                Divider()
+                Button("Add to File Tray") { addToFileTray(entry, using: add) }
+            }
+        case .color:
             EmptyView()
+        }
+        if !ClipboardEntryExport.shareItems(for: entry.payload).isEmpty {
+            Button("Share…") { share(entry) }
         }
         }
 
@@ -681,6 +736,17 @@ struct ClipboardHistoryView: View {
             store.removeEntry(id: entry.id)
             if selectedEntryID == entry.id { selectedEntryID = nil }
         }
+    }
+
+    private func share(_ entry: ClipboardHistoryEntry) {
+        let items = ClipboardEntryExport.shareItems(for: entry.payload)
+        guard !items.isEmpty, let anchor = cache.shareAnchor(for: entry.id) else { return }
+        NSSharingServicePicker(items: items).show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
+    }
+
+    private func addToFileTray(_ entry: ClipboardHistoryEntry, using add: ([URL]) -> Void) {
+        guard let url = try? ClipboardEntryExport.writeTemporaryFile(for: entry.payload) else { return }
+        add([url])
     }
 
     private func beginRename(_ entry: ClipboardHistoryEntry) {
@@ -744,4 +810,17 @@ private extension ClipboardTagColor {
         case .gray: .gray
         }
     }
+}
+
+/// Invisible AppKit view a row hands to `NSSharingServicePicker` as its anchor.
+private struct ClipboardShareAnchor: NSViewRepresentable {
+    let register: (NSView) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async { register(view) }
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {}
 }

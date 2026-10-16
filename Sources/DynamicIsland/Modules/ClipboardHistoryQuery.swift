@@ -6,6 +6,7 @@ enum ClipboardHistoryFilter: String, CaseIterable, Identifiable, Sendable {
     case images = "Images"
     case links = "Links"
     case files = "Files"
+    case colors = "Colors"
     case favorites = "Favorites"
 
     var id: String { rawValue }
@@ -15,13 +16,32 @@ struct ClipboardHistoryQuery: Equatable, Sendable {
     var text = ""
     var filter: ClipboardHistoryFilter = .all
     var tagID: UUID?
+    /// Bundle identifier of the captured source application; nil shows every source.
+    var sourceBundleIdentifier: String?
+
+    /// Distinct source apps present in history, sorted by name (then bundle id).
+    static func sourceApplications(in entries: [ClipboardHistoryEntry]) -> [ClipboardSourceApplication] {
+        var byID: [String: ClipboardSourceApplication] = [:]
+        for case let source? in entries.map(\.sourceApplication) where byID[source.bundleIdentifier] == nil {
+            byID[source.bundleIdentifier] = source
+        }
+        return byID.values.sorted {
+            let order = $0.name.localizedCaseInsensitiveCompare($1.name)
+            return order == .orderedSame ? $0.bundleIdentifier < $1.bundleIdentifier : order == .orderedAscending
+        }
+    }
 
     func apply(entries: [ClipboardHistoryEntry], tags: [ClipboardTag]) -> [ClipboardHistoryEntry] {
         let normalized = Self.normalize(text)
         let tagsByID = Dictionary(uniqueKeysWithValues: tags.map { ($0.id, $0.name) })
+        // A source that left history (entries deleted) must not filter everything away.
+        let source = sourceBundleIdentifier.flatMap { id in
+            entries.contains { $0.sourceApplication?.bundleIdentifier == id } ? id : nil
+        }
 
         return entries.filter { entry in
             guard matchesFilter(entry), matchesTag(entry, tagsByID: tagsByID) else { return false }
+            if let source, entry.sourceApplication?.bundleIdentifier != source { return false }
             guard !normalized.isEmpty else { return true }
             return Self.searchText(for: entry, tagsByID: tagsByID).contains(normalized)
         }
@@ -34,6 +54,7 @@ struct ClipboardHistoryQuery: Equatable, Sendable {
         case .images: entry.payload.kind == .image
         case .links: entry.payload.kind == .url
         case .files: entry.payload.kind == .files
+        case .colors: entry.payload.kind == .color
         case .favorites: entry.isFavorite
         }
     }
@@ -64,6 +85,8 @@ struct ClipboardHistoryQuery: Equatable, Sendable {
             if let host = url.host(percentEncoded: false) { fields.append(host) }
         case let .files(urls):
             fields.append(contentsOf: urls.map(\.lastPathComponent))
+        case let .color(color):
+            fields.append(color.hexString)
         case .imagePNG:
             break
         }
