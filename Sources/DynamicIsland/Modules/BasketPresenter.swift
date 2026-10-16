@@ -125,11 +125,13 @@ final class BasketPresenter: ObservableObject {
 
     /// Clipboard → Basket copies stable original files into a basket without
     /// mutating Shelf ownership. Missing/non-file URLs are rejected by the manager.
-    func addClipboardFilesToBasket(_ urls: [URL]) {
-        guard let basket = manager.visibleBaskets.last ?? manager.createBasket() else { return }
+    @discardableResult
+    func addClipboardFilesToBasket(_ urls: [URL]) -> Bool {
+        guard let basket = manager.visibleBaskets.last ?? manager.createBasket() else { return false }
         let accepted = manager.add(urls, to: basket.id)
-        guard !accepted.isEmpty else { return }
+        guard !accepted.isEmpty else { return false }
         present(basket, near: NSEvent.mouseLocation, atLastPosition: true)
+        return true
     }
 
     // MARK: Jiggle

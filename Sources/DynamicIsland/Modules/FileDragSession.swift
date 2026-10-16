@@ -2,8 +2,11 @@ import AppKit
 import Foundation
 
 /// Real native actions exposed while an *external* file drag is active.
-/// Quickshare/Basket/Compress are intentionally absent until their production
-/// authorities exist and, for Quickshare, the user approves an upload host.
+/// Quickshare stays absent until the user approves an upload host. Add to
+/// Basket and Compress run through app-owned services (`FileDragLocalActions`)
+/// and are offered only when that service can execute them. Convert is
+/// deliberately absent: it needs a target-format choice, so a drop would not be
+/// one unambiguous action.
 enum FileDragSourceRegion: Hashable, Sendable {
     case collapsedIsland
     case trayShelf
@@ -17,6 +20,19 @@ enum FileDragQuickAction: String, CaseIterable, Identifiable, Sendable {
     case messages
     case mail
     case share
+    case addToBasket
+    case compress
+
+    /// The system-sharing targets; the only actions a basket's own bar shows
+    /// (adding to a basket from inside a basket is meaningless, and the basket
+    /// has its own compress).
+    static let shareActions: [FileDragQuickAction] = [.airDrop, .messages, .mail, .share]
+
+    /// Orbit targets in display order; app-owned ones only when executable.
+    @MainActor
+    static func orbitActions(local: FileDragLocalActions) -> [FileDragQuickAction] {
+        shareActions + [.addToBasket, .compress].filter(local.isAvailable)
+    }
 
     var id: String { rawValue }
 
@@ -26,6 +42,8 @@ enum FileDragQuickAction: String, CaseIterable, Identifiable, Sendable {
         case .messages: "Messages"
         case .mail: "Mail"
         case .share: "Share"
+        case .addToBasket: "Add to Basket"
+        case .compress: "Compress"
         }
     }
 
@@ -35,6 +53,8 @@ enum FileDragQuickAction: String, CaseIterable, Identifiable, Sendable {
         case .messages: "message.fill"
         case .mail: "envelope.fill"
         case .share: "square.and.arrow.up"
+        case .addToBasket: "tray.and.arrow.down.fill"
+        case .compress: "doc.zipper"
         }
     }
 
@@ -44,6 +64,8 @@ enum FileDragQuickAction: String, CaseIterable, Identifiable, Sendable {
         case .messages: "Drop to share in Messages"
         case .mail: "Drop to attach to an email"
         case .share: "Drop to choose a sharing service"
+        case .addToBasket: "Drop to add to a Basket"
+        case .compress: "Drop to create a ZIP archive"
         }
     }
 }
@@ -54,6 +76,31 @@ enum FileDragActionOutcome: Equatable, Sendable {
     case handedOff
     case unavailable(String)
     case failed(String)
+}
+
+/// App-owned services behind the non-sharing orbit targets. A missing entry
+/// means the target is hidden and cannot be executed.
+@MainActor
+struct FileDragLocalActions {
+    struct Entry {
+        let isAvailable: @MainActor () -> Bool
+        let run: @MainActor ([URL]) -> FileDragActionOutcome
+    }
+
+    var addToBasket: Entry?
+    var compress: Entry?
+
+    static let none = FileDragLocalActions()
+
+    func entry(for action: FileDragQuickAction) -> Entry? {
+        switch action {
+        case .addToBasket: addToBasket
+        case .compress: compress
+        case .airDrop, .messages, .mail, .share: nil
+        }
+    }
+
+    func isAvailable(_ action: FileDragQuickAction) -> Bool { entry(for: action)?.isAvailable() ?? false }
 }
 
 @MainActor
@@ -72,9 +119,16 @@ final class FileDragActionExecutor {
 
     private init() { handler = nil }
 
-    func perform(_ action: FileDragQuickAction, urls: [URL], anchor: NSView?, layoutStore: IslandLayoutStore? = nil) -> FileDragActionOutcome {
+    func perform(_ action: FileDragQuickAction, urls: [URL], anchor: NSView?, layoutStore: IslandLayoutStore? = nil,
+                 local: FileDragLocalActions = .none) -> FileDragActionOutcome {
         guard !urls.isEmpty else { return .failed("No files were materialized") }
         if let handler { return handler(action, urls, anchor) }
+        if !FileDragQuickAction.shareActions.contains(action) {
+            guard let entry = local.entry(for: action), entry.isAvailable() else {
+                return .unavailable("\(action.title) is unavailable")
+            }
+            return entry.run(urls)
+        }
         return NativeFileSharingSession.present(action, urls: urls, anchor: anchor, layoutStore: layoutStore)
     }
 
@@ -146,6 +200,10 @@ final class FileDragSessionController: ObservableObject {
     init(exitGraceNanoseconds: UInt64 = 180_000_000) {
         self.exitGraceNanoseconds = exitGraceNanoseconds
     }
+
+    /// Set once by the composition root; empty means share targets only.
+    var localActions = FileDragLocalActions.none
+    var orbitActions: [FileDragQuickAction] { FileDragQuickAction.orbitActions(local: localActions) }
 
     var isActive: Bool { phase != .idle }
     var isDropInFlight: Bool { dropClaimed }
@@ -231,7 +289,7 @@ final class FileDragSessionController: ObservableObject {
         }
 
         phase = .performing(action)
-        let outcome = executor.perform(action, urls: urls, anchor: anchor)
+        let outcome = executor.perform(action, urls: urls, anchor: anchor, local: localActions)
         lastOutcome = outcome
         reset(incrementGeneration: true, preserveOutcome: true)
         scheduleOutcomeClearIfNeeded()

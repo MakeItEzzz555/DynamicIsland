@@ -70,7 +70,7 @@ struct BasketMetrics: Equatable {
     }
 
     var expandedQuickBarWidth: CGFloat {
-        let count = CGFloat(BasketQuickAction.allCases.count)
+        let count = CGFloat(BasketQuickAction.shareActions.count)
         return quickAction * count + quickActionSpacing * (count - 1) + s(16)
     }
 
@@ -677,7 +677,7 @@ struct BasketQuickActionsBar: View {
     var body: some View {
         ZStack {
             HStack(spacing: metrics.quickActionSpacing) {
-                ForEach(BasketQuickAction.allCases) { action in
+                ForEach(BasketQuickAction.shareActions) { action in
                     target(action)
                 }
             }

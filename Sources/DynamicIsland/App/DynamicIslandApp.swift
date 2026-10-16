@@ -327,6 +327,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             self.navigation.applyConfiguration(configuration, using: self.settings)
         }.store(in: &cancellables)
+        fileDragSession.localActions = FileDragLocalActions(
+            addToBasket: .init(
+                isAvailable: { [weak self] in self?.settings.floatingBasketEnabled ?? false },
+                run: { [weak self] urls in
+                    self?.basketPresenter.addClipboardFilesToBasket(urls) == true
+                        ? .handedOff : .failed("Files could not be added to a Basket")
+                }
+            ),
+            compress: .init(
+                isAvailable: { true },
+                run: { [weak self] urls in
+                    guard let self else { return .unavailable("Compress is unavailable") }
+                    fileShelf.createZIP(urls, using: backgroundOperations)
+                    return .handedOff
+                }
+            )
+        )
         basketPresenter.start()
         fileShelf.startRetentionMonitoring()
         voiceTranscription.restoreRecordings()
