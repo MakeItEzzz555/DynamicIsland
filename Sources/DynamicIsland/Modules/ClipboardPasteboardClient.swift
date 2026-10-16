@@ -26,8 +26,36 @@ struct ClipboardTextPayload: Codable, Equatable, Sendable {
     let htmlData: Data?
 }
 
+/// sRGB components (0...1) captured from an `NSColor` pasteboard item.
+struct ClipboardColorPayload: Codable, Equatable, Sendable {
+    let red: Double
+    let green: Double
+    let blue: Double
+    let alpha: Double
+
+    var isValid: Bool { [red, green, blue, alpha].allSatisfy { $0.isFinite && (0...1).contains($0) } }
+
+    var hexString: String {
+        func byte(_ v: Double) -> Int { Int((v * 255).rounded()) }
+        let rgb = String(format: "#%02X%02X%02X", byte(red), byte(green), byte(blue))
+        return alpha < 1 ? rgb + String(format: "%02X", byte(alpha)) : rgb
+    }
+
+    init(red: Double, green: Double, blue: Double, alpha: Double) {
+        self.red = red; self.green = green; self.blue = blue; self.alpha = alpha
+    }
+
+    init?(_ color: NSColor) {
+        guard let rgb = color.usingColorSpace(.sRGB) else { return nil }
+        self.init(red: rgb.redComponent, green: rgb.greenComponent, blue: rgb.blueComponent, alpha: rgb.alphaComponent)
+    }
+
+    var nsColor: NSColor { NSColor(srgbRed: red, green: green, blue: blue, alpha: alpha) }
+}
+
 enum ClipboardHistoryPayload: Equatable, Sendable {
     case text(ClipboardTextPayload)
+    case color(ClipboardColorPayload)
     case url(URL)
     case files([URL])
     case imagePNG(Data)
@@ -35,6 +63,7 @@ enum ClipboardHistoryPayload: Equatable, Sendable {
     var kind: ClipboardHistoryEntryKind {
         switch self {
         case .text: .text
+        case .color: .color
         case .url: .url
         case .files: .files
         case .imagePNG: .image
@@ -53,6 +82,8 @@ enum ClipboardHistoryPayload: Equatable, Sendable {
             urls.reduce(into: 0) { $0 += $1.standardizedFileURL.absoluteString.utf8.count }
         case let .imagePNG(data):
             data.count
+        case .color:
+            4 * MemoryLayout<Double>.size
         }
     }
 }
@@ -64,6 +95,7 @@ extension ClipboardHistoryPayload: Codable {
         case url
         case files
         case imagePNG
+        case color
     }
 
     private enum Discriminator: String, Codable {
@@ -71,6 +103,7 @@ extension ClipboardHistoryPayload: Codable {
         case url
         case files
         case image
+        case color
     }
 
     init(from decoder: Decoder) throws {
@@ -84,6 +117,8 @@ extension ClipboardHistoryPayload: Codable {
             self = .files(try container.decode([URL].self, forKey: .files))
         case .image:
             self = .imagePNG(try container.decode(Data.self, forKey: .imagePNG))
+        case .color:
+            self = .color(try container.decode(ClipboardColorPayload.self, forKey: .color))
         }
     }
 
@@ -102,6 +137,9 @@ extension ClipboardHistoryPayload: Codable {
         case let .imagePNG(data):
             try container.encode(Discriminator.image, forKey: .type)
             try container.encode(data, forKey: .imagePNG)
+        case let .color(color):
+            try container.encode(Discriminator.color, forKey: .type)
+            try container.encode(color, forKey: .color)
         }
     }
 }
@@ -111,6 +149,7 @@ enum ClipboardHistoryEntryKind: String, Codable, Equatable, Sendable, CaseIterab
     case url
     case files
     case image
+    case color
 }
 
 /// Value snapshot taken at copy time. We intentionally persist only the app's
@@ -292,6 +331,7 @@ final class SystemClipboardPasteboardClient: ClipboardPasteboardClient {
             return .ready(.sensitive)
         }
         if let fileResult = readFiles(limits: limits) { return .ready(fileResult) }
+        if let color = readColor(items: items) { return .ready(.payload(.color(color))) }
         let representations = capturesImages ? readImageRepresentations(items: items) : []
         let fallback = readURL(items: items, limits: limits)
             ?? readText(items: items, limits: limits) ?? .unsupported
@@ -324,6 +364,8 @@ final class SystemClipboardPasteboardClient: ClipboardPasteboardClient {
             let item = NSPasteboardItem()
             item.setData(data, forType: .png)
             succeeded = pasteboard.writeObjects([item])
+        case let .color(color):
+            succeeded = pasteboard.writeObjects([color.nsColor])
         }
 
         return ClipboardPasteboardWriteResult(
@@ -360,6 +402,14 @@ final class SystemClipboardPasteboardClient: ClipboardPasteboardClient {
         guard !urls.isEmpty else { return nil }
         guard urls.count <= limits.maximumFilesPerEntry else { return .oversized }
         return .payload(.files(urls))
+    }
+
+    /// Only a pure color item counts; text or images that merely carry a color flavor stay text/images.
+    private func readColor(items: [NSPasteboardItem]) -> ClipboardColorPayload? {
+        guard items.count == 1, let types = items.first?.types, types.contains(.color),
+              !types.contains(.string), !types.contains(.png), !types.contains(.tiff),
+              let color = NSColor(from: pasteboard) else { return nil }
+        return ClipboardColorPayload(color)
     }
 
     private func readImageRepresentations(items: [NSPasteboardItem]) -> [ClipboardImageRepresentation] {
@@ -451,6 +501,11 @@ enum ClipboardHistoryFingerprint {
         case let .imagePNG(data):
             append("type:image", to: &input)
             append(data, to: &input)
+        case let .color(color):
+            append("type:color", to: &input)
+            for value in [color.red, color.green, color.blue, color.alpha] {
+                append(String(value.bitPattern), to: &input)
+            }
         }
         return SHA256.hash(data: input).map { String(format: "%02x", $0) }.joined()
     }

@@ -719,6 +719,8 @@ final class ClipboardHistoryStore: ObservableObject {
         case let .imagePNG(data):
             guard !data.isEmpty, data.count <= limits.maximumImageBytes else { return nil }
             return .imagePNG(data)
+        case let .color(color):
+            return color.isValid ? payload : nil
         }
     }
 

@@ -58,6 +58,32 @@ final class ClipboardHistoryQueryTests: XCTestCase {
         XCTAssertEqual(q.apply(entries: [item], tags: []).map(\.id), [item.id])
     }
 
+    func testSourceApplicationFilterAndDistinctSources() {
+        let code1 = entry(.text(.init(plainText: "a", rtfData: nil, htmlData: nil)), source: "Xcode")
+        let code2 = entry(.url(URL(string: "https://a.example")!), source: "Xcode")
+        let safari = entry(.text(.init(plainText: "b", rtfData: nil, htmlData: nil)), source: "Safari")
+        let none = entry(.text(.init(plainText: "c", rtfData: nil, htmlData: nil)))
+        let all = [code1, safari, code2, none]
+
+        XCTAssertEqual(ClipboardHistoryQuery.sourceApplications(in: all).map(\.name), ["Safari", "Xcode"])
+        var q = ClipboardHistoryQuery()
+        q.sourceBundleIdentifier = "test.Xcode"
+        XCTAssertEqual(q.apply(entries: all, tags: []).map(\.id), [code1.id, code2.id])
+        q.filter = .links
+        XCTAssertEqual(q.apply(entries: all, tags: []).map(\.id), [code2.id])
+        q.filter = .all
+        q.sourceBundleIdentifier = "test.Gone"
+        XCTAssertEqual(q.apply(entries: all, tags: []).count, 4)
+    }
+
+    func testColorFilterAndHexSearch() {
+        let color = entry(.color(.init(red: 1, green: 0, blue: 0, alpha: 1)))
+        let text = entry(.text(.init(plainText: "x", rtfData: nil, htmlData: nil)))
+        XCTAssertEqual(ClipboardHistoryQuery(text: "", filter: .colors, tagID: nil)
+            .apply(entries: [color, text], tags: []).map(\.id), [color.id])
+        XCTAssertEqual(query("ff0000").apply(entries: [color, text], tags: []).map(\.id), [color.id])
+    }
+
     private func query(_ text: String) -> ClipboardHistoryQuery {
         ClipboardHistoryQuery(text: text, filter: .all, tagID: nil)
     }
