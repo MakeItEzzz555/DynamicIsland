@@ -129,6 +129,7 @@ enum WindowSnapControllerError: LocalizedError, Equatable {
     case accessibilityPermissionRequired
     case noFocusedWindow
     case noDisplay
+    case noOtherDisplay
     case cannotReadWindowFrame
     case cannotSetWindowFrame(AXError)
     case unsupportedAction(IslandCapabilityAction)
@@ -141,6 +142,8 @@ enum WindowSnapControllerError: LocalizedError, Equatable {
             "No focused application window is available to snap."
         case .noDisplay:
             "No display could be resolved for the focused window."
+        case .noOtherDisplay:
+            "Connect another display to move the focused window."
         case .cannotReadWindowFrame:
             "The focused window's position or size could not be read."
         case .cannotSetWindowFrame(let error):
@@ -329,6 +332,40 @@ final class WindowSnapController: ObservableObject, IslandCapabilityAdapter {
             publishPreview(target: target)
             try system.setFocusedWindowFrame(targetFrame)
             lastTarget = target
+            lastError = nil
+            publishState()
+        } catch {
+            lastError = error.localizedDescription
+            liveActivities.remove(id: Self.previewActivityID)
+            publishState(failed: true)
+            throw error
+        }
+    }
+
+    func moveToNextDisplay() throws {
+        guard isEnabled else { return }
+        guard system.accessibilityGranted else {
+            lastError = WindowSnapControllerError.accessibilityPermissionRequired.localizedDescription
+            publishState(failed: true)
+            throw WindowSnapControllerError.accessibilityPermissionRequired
+        }
+        do {
+            let frame = try system.focusedWindowFrame()
+            let screens = system.screens().filter { !$0.visibleFrame.isEmpty && !$0.visibleFrame.isInfinite }
+            guard screens.count > 1 else { throw WindowSnapControllerError.noOtherDisplay }
+            guard let current = WindowSnapScreenResolver.targetScreen(for: frame, screens: screens),
+                  let index = screens.firstIndex(where: { $0.id == current.id }) else {
+                throw WindowSnapControllerError.noDisplay
+            }
+            let destination = screens[(index + 1) % screens.count].visibleFrame
+            let width = min(frame.width, destination.width), height = min(frame.height, destination.height)
+            let x = max(destination.minX, min(destination.maxX - width, destination.minX + frame.minX - current.visibleFrame.minX))
+            let y = max(destination.minY, min(destination.maxY - height, destination.minY + frame.minY - current.visibleFrame.minY))
+            try system.setFocusedWindowFrame(CGRect(x: x, y: y, width: width, height: height))
+            previewDismissWorkItem?.cancel()
+            previewDismissWorkItem = nil
+            liveActivities.remove(id: Self.previewActivityID)
+            lastTarget = nil
             lastError = nil
             publishState()
         } catch {
