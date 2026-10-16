@@ -273,6 +273,17 @@ final class BasketManager: ObservableObject {
         return operationID
     }
 
+    /// Extracts the selected ZIPs; each result folder returns to the same basket.
+    func extract(_ itemIDs: Set<UUID>, in id: UUID) {
+        guard let basket = basket(id), let operations else { return }
+        for source in basket.items.filter({ itemIDs.contains($0.id) }).map(\.url) where source.pathExtension.lowercased() == "zip" {
+            guard let operationID = operations.startExtraction(archive: source) else { continue }
+            ownership.retain([source], by: .operation(operationID))
+            pendingCompressions[operationID] = (id, [source])
+        }
+        reconcile(operations.operations)
+    }
+
     private func reconcile(_ operations: [BackgroundOperation]) {
         for (operationID, pending) in pendingCompressions {
             guard let operation = operations.first(where: { $0.id == operationID }) else {

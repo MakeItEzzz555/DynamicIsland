@@ -473,6 +473,11 @@ final class BasketPresenter: ObservableObject {
         operations.append(NSMenuItem.closure("Compress\(suffix)", "archivebox") { [weak self] in
             self?.manager.compress(ids, in: id)
         })
+        if targets.contains(where: { $0.url.pathExtension.lowercased() == "zip" }) {
+            operations.append(NSMenuItem.closure("Extract Archive\(suffix)", "archivebox.circle") { [weak self] in
+                self?.manager.extract(ids, in: id)
+            })
+        }
         menu.addItem(.separator())
         operations.forEach(menu.addItem)
 
