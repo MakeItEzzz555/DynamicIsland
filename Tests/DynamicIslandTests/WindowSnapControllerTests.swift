@@ -131,6 +131,19 @@ final class WindowSnapControllerTests: XCTestCase {
         XCTAssertEqual(fixture.registry.snapshot(for: .windowSnap)?.isEnabled, false)
     }
 
+    /// The capability registry must never advertise an action the adapter rejects.
+    func testAdvertisedActionsAreAllPerformable() async {
+        let fixture = makeFixture(system: FakeWindowSnapSystem())
+        let advertised = fixture.registry.snapshot(for: .windowSnap)?.supportedActions ?? []
+        for action in IslandCapabilityAction.allCases where action != .openSettings {
+            do {
+                try await fixture.controller.perform(action)
+            } catch WindowSnapControllerError.unsupportedAction {
+                XCTAssertFalse(advertised.contains(action), "\(action) is advertised but unsupported")
+            } catch {}
+        }
+    }
+
     private func makeFixture(
         system: FakeWindowSnapSystem
     ) -> (

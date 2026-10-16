@@ -102,6 +102,7 @@ final class DetachedIslandNavigationTests: XCTestCase {
         XCTAssertEqual(radii.bottom, 40)
     }
     func testSecretNotchMenuRetainsSettingsAndClipboardAuthority() throws {
+        _ = NSApplication.shared // NSApp.sendAction below; don't depend on another test creating it.
         var openedSettings = 0
         var openedClipboard = 0
         let geometry = IslandBackgroundInteractionGeometry(size: CGSize(width: 600, height: 240),

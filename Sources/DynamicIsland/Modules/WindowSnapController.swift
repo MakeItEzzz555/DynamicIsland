@@ -302,7 +302,7 @@ final class WindowSnapController: ObservableObject, IslandCapabilityAdapter {
             permission: permission,
             availability: .available,
             health: health,
-            supportedActions: [.test, .openSettings, .configureShortcut],
+            supportedActions: [.test, .openSettings],
             isActive: false,
             statusText: lastTarget?.displayName
         )
