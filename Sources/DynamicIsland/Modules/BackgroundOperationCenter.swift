@@ -264,7 +264,17 @@ final class ZipCompressionExecutor: @unchecked Sendable {
         try checkCancelled(operationID)
 
         let process = Process()
-        let stderr = Pipe()
+        // A file cannot fill a pipe and stall the child while stdout is drained.
+        var diagnosticPath = Array(FileManager.default.temporaryDirectory
+            .appendingPathComponent("DynamicIsland-ArchiveDiagnostics-\(operationID.uuidString)-XXXXXX").path.utf8CString)
+        let descriptor = mkstemp(&diagnosticPath)
+        guard descriptor >= 0 else { throw ZipCompressionError.launchFailed("Could not create the archive diagnostic file.") }
+        let diagnosticURL = URL(fileURLWithPath: String(cString: diagnosticPath))
+        let stderr = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        defer {
+            try? stderr.close()
+            try? FileManager.default.removeItem(at: diagnosticURL)
+        }
         process.executableURL = executable
         process.arguments = arguments
         process.standardError = stderr
@@ -292,6 +302,8 @@ final class ZipCompressionExecutor: @unchecked Sendable {
         } catch {
             throw ZipCompressionError.launchFailed(error.localizedDescription)
         }
+        // Cancellation may have arrived between registration and process.run().
+        if isCancelled(operationID), process.isRunning { process.terminate() }
         // Drain before waiting so a full pipe cannot block the child.
         let output = captureOutput ? stdout.fileHandleForReading.readDataToEndOfFile() : Data()
         process.waitUntilExit()
@@ -300,7 +312,8 @@ final class ZipCompressionExecutor: @unchecked Sendable {
             throw ZipCompressionError.cancelled
         }
         guard process.terminationStatus == 0 else {
-            let data = stderr.fileHandleForReading.readDataToEndOfFile()
+            try stderr.seek(toOffset: 0)
+            let data = try stderr.read(upToCount: 64 * 1024) ?? Data()
             let message = String(data: data, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             throw ZipCompressionError.processFailed(
@@ -336,17 +349,20 @@ final class BackgroundOperationController: ObservableObject {
 
     private let executor: ZipCompressionExecutor
     private let liveActivities: LiveActivityStore
+    private let ownership: TemporaryFileOwnershipLedger
     private var tasks: [UUID: Task<Void, Never>] = [:]
     private let recentLimit = 12
 
     init(
         liveActivities: LiveActivityStore,
         executor: ZipCompressionExecutor = ZipCompressionExecutor(),
-        initialOperations: [BackgroundOperation] = []
+        initialOperations: [BackgroundOperation] = [],
+        ownership: TemporaryFileOwnershipLedger = .shared
     ) {
         self.liveActivities = liveActivities
         self.executor = executor
         self.operations = initialOperations
+        self.ownership = ownership
     }
 
     var primaryOperation: BackgroundOperation? {
@@ -420,7 +436,7 @@ final class BackgroundOperationController: ObservableObject {
 
     /// Shared lifecycle. Progress stays indeterminate: none of the backends
     /// reports truthful fractions.
-    private func start(
+    func start(
         kind: BackgroundOperationKind,
         title: String,
         sources: [URL],
@@ -447,12 +463,28 @@ final class BackgroundOperationController: ObservableObject {
             result: nil,
             supportsCancellation: true
         )
+        let ownership = ownership
+        // BasketManager may release its public-id hold at UI cancellation;
+        // this generation lease lasts until the backend actually unwinds.
+        let sourceOwner = FileSurfaceOwner.operation(operation.generation)
+        ownership.retain(sources, by: sourceOwner)
         operations.append(operation)
         trimRecentOperations()
         publish(operationID: id)
 
+        let executor = executor
         let task = Task { [weak self] in
+            defer {
+                ownership.release(sources, by: sourceOwner)
+                self?.tasks[id] = nil
+                executor.clearExecutionState(id)
+            }
             guard let self else { return }
+            guard !Task.isCancelled else {
+                finishCancelled(id)
+                onFailed?("Cancelled")
+                return
+            }
             update(id) {
                 $0.state = .preparing
                 $0.startedAt = Date()
@@ -490,7 +522,6 @@ final class BackgroundOperationController: ObservableObject {
                 finishFailed(id, error: error)
                 onFailed?(error.localizedDescription)
             }
-            tasks[id] = nil
         }
         tasks[id] = task
         return id

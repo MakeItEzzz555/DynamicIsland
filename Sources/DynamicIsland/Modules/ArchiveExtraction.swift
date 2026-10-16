@@ -104,8 +104,6 @@ extension ZipCompressionExecutor {
         // -n never overwrites; Info-ZIP also strips "../" and leading "/" itself.
         try run(operationID: operationID, executable: Self.validatorURL, arguments: ["-q", "-n", archive.path, "-d", staging.path])
         try checkCancelled(operationID)
-        // Finder-made archives carry AppleDouble metadata that ditto used to fold in.
-        try? FileManager.default.removeItem(at: staging.appendingPathComponent("__MACOSX"))
         if let bad = Self.escapingItem(in: staging) { throw ZipCompressionError.unsafeArchive(bad) }
 
         let destination = Self.extractionDestination(for: archive)

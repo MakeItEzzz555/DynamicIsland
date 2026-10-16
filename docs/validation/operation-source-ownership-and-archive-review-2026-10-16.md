@@ -1,0 +1,33 @@
+# Operation source lifetime and archive review corrections
+
+Implementation owner: Codex operation worker. Branch: `fix/codex-operation-review-20261016`.
+Base: `3cc12000efe7be05122e80d967df59294b51ad46`.
+Only the shared operation controller/executor, extraction implementation, targeted tests and this report are included. Integration and independent final-commit review belong to the parent orchestrator.
+
+## Confirmed defects and corrections
+
+- **P1 — temporary input deleted while queued/running:** Shelf removal or retention expiry could release the last owner of a Photos/file-promise/clipboard materialization before a shared operation read it. `BackgroundOperationController.start` now retains sources synchronously, before publishing or scheduling. Its generation UUID identifies a private operation lease, distinct from BasketManager's public-operation-ID hold, which BasketManager can release when UI cancellation becomes terminal. A shared task `defer` releases the lease only after the backend unwinds, including failures, cancellation, pre-start cancellation and a disappeared weak controller; it also clears the task dictionary and executor state. Pre-start cancellation no longer invokes backend work. Existing public start signatures remain compatible; an ownership-ledger initializer argument defaults to `.shared`. The existing shared start helper is module-internal for deterministic suspension tests; no backend abstraction was added.
+- **P2 — valid `__MACOSX` payload deleted:** extraction no longer deletes an entire directory merely because its name resembles metadata. A real ZIP containing ordinary `__MACOSX/report.txt` data now preserves both that file and sibling payloads. The same-tool listing/extraction, local-header differential rejection, lexical and resolved symlink checks, staging cleanup and collision-safe publication remain in place.
+- **P2 — stderr pipe deadlock:** the executor previously drained stdout, waited for process exit, then drained stderr. A child blocked on a full stderr pipe could never exit. It now writes stderr to an exclusively created `mkstemp` file and reads at most 64 KiB for failure diagnostics. A `defer` closes and removes that file on normal exit, launch error and cancellation. A cancellation arriving between registration and launch is checked immediately after launch. Stdout capture behavior remains compatible.
+
+The engineering check applied MUSK-5 and Ponytail to the shared source of truth, consulted Awesome Swift's concurrency/testing catalog, and used existing Swift tasks, XCTest, Foundation process/file APIs and ownership ledger. Apple Design's applicable nonvisual guidance is immediate truthful status and interruptible cancellation; no motion/layout tokens or native controls changed.
+
+## Evidence
+
+All commands used isolated scratch `/private/tmp/di-operation-review-build-20261016` with `--jobs 4`. No full suite or competing build against that scratch was run.
+
+1. **Before behavior fix:** seven new regressions failed with 20 assertions, including one thrown missing-payload error, in 6.848 seconds. Only the ownership injection/test visibility seam existed at that point. The real shell child writing more than pipe capacity to both streams was canceled by its own three-second deadline, producing a bounded failure. Log: `/private/tmp/di-operation-review-before-20261016.log`.
+2. **After fix:** the same seven tests passed with zero failures in 0.454 seconds. Log: `/private/tmp/di-operation-review-fixed-20261016.log`.
+3. **Affected suites:** `swift test --scratch-path /private/tmp/di-operation-review-build-20261016 --jobs 4 --filter 'BackgroundOperation|FileTray|FileAudioConversion|FileShelf|TemporaryFileOwnership|BasketOwnership|BasketManager'` executed 115 tests, three existing opt-in skips, zero failures, in 4.061 seconds. It includes nine new tests. Log: `/private/tmp/di-operation-review-regression-20261016.log`.
+4. **Previously skipped real process checks enabled:** `DYNAMIC_ISLAND_REAL_COMPRESSION_STRESS=1` with `--filter BackgroundOperationRealWorldTests`: two passed, zero skips/failures, in 0.847 seconds. Concurrent real compression and cancellation preserved sources and removed owned partial artifacts. Log: `/private/tmp/di-operation-review-real-compression-20261016.log`.
+5. **Previously skipped native renderer enabled:** `DYNAMIC_ISLAND_BACKGROUND_OPERATION_SNAPSHOT_DIR=/private/tmp/di-operation-review-snapshots-20261016` with `--filter BackgroundOperationCenterSnapshotTests`: one passed, zero skips/failures, 11 native NSHostingView captures, in 0.154 seconds. Visually inspected cancelled and simultaneous-operation images: readable terminal status and independent active count/cancel action. These are synthetic native fixtures, not physical acceptance or the installed running application. Log: `/private/tmp/di-operation-review-snapshot-20261016.log`.
+
+Ownership tests exercise all four public operation kinds with actual Shelf removal before the queued task runs, a suspended reader after cancellation/clear/public-owner release, cancellation before scheduling, abandoned controller and backend failure. The resumed reader actually reads the retained file; all last-owner temporary inputs are deleted after unwinding. Process tests cover oversized stderr/stdout, bounded diagnostic text, success capture, missing-executable failure, actual running-child cancellation and per-operation diagnostic-file cleanup. No personal files, active sessions or permissions were used.
+
+`git diff --check` passed. `graphify update .` completed an AST-only refresh to 19,140 nodes / 55,931 edges; generated graph changes are excluded from delivery. Graphify reports partial parsing in three files (`ApplicationAudioOwnership.swift`, `MediaAdvancedControls.swift`, and the new ownership test at its trailing closure). Actual Swift compilation and the affected tests pass; graph extraction is not compiler validation. Log: `/private/tmp/di-operation-review-graphify-20261016.log`.
+
+## Review and remaining gates
+
+Ponytail self-review traced FileTrayOperations, BasketManager, FileActionPanel, image/audio converters and TemporaryFileOwnershipLedger. At the single-user native application's workload, source lifetime is now held by the controller rather than UI-terminal state. No confirmed finding remains in this packet. Independent reviewer acknowledgement on the resulting commit is pending with the parent; this report does not claim Claude agreement.
+
+The final integrated full suite, release packaging/signing and physical Mac acceptance remain parent-orchestrator gates. No push, merge, app launch, installed-app replacement, credential change or permission change was performed by this worker.

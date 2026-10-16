@@ -371,6 +371,52 @@ final class BackgroundOperationExtractionTests: XCTestCase {
         XCTAssertEqual(names(in: work), ["Project.zip", "Project", "Project 2"])
     }
 
+    func testExtractionPreservesOrdinaryPayloadInMacOSXDirectory() async throws {
+        let payload = Data("A user report, not AppleDouble metadata".utf8)
+        let archive = try writeZip("payload.zip", [
+            .init(name: "__MACOSX/report.txt", data: payload),
+            .init(name: "ordinary.txt", data: Data("also keep".utf8)),
+        ])
+        let output = try await ZipCompressionExecutor().extract(operationID: UUID(), archive: archive)
+        XCTAssertEqual(try Data(contentsOf: output.appendingPathComponent("__MACOSX/report.txt")), payload)
+        XCTAssertEqual(try Data(contentsOf: output.appendingPathComponent("ordinary.txt")), Data("also keep".utf8))
+    }
+
+    func testEveryOperationRetainsTemporaryShelfInputBeforeQueuedWorkStarts() async throws {
+        let ledger = TemporaryFileOwnershipLedger(temporaryRoots: [work])
+        let suite = "OperationIntake-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let shelf = FileShelfStore(settings: AppSettings(defaults: defaults), defaults: defaults, ownership: ledger)
+        let controller = BackgroundOperationController(liveActivities: LiveActivityStore(), ownership: ledger)
+        let image = try writePNG()
+        let audio = work.appendingPathComponent("tone.wav")
+        try Self.makeWAV().write(to: audio)
+        let archive = try writeZip("input.zip", [.init(name: "f.txt", data: Data("kept".utf8))])
+        let text = work.appendingPathComponent("note.txt")
+        try Data("compress me".utf8).write(to: text)
+        for (source, kind) in [(image, BackgroundOperationKind.imageConversion), (audio, .audioConversion), (archive, .extraction), (text, .compression)] {
+            shelf.add([source])
+            let id: UUID?
+            switch kind {
+            case .imageConversion: id = controller.startImageConversion(source, to: .jpeg)
+            case .audioConversion: id = controller.startAudioConversion(source, to: .aiff)
+            case .extraction: id = controller.startExtraction(archive: source)
+            case .compression: id = controller.startCompression(sources: [source])
+            }
+            let operationID = try XCTUnwrap(id)
+            shelf.remove(source)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: source.path), "\(kind) owns input before the task gets its first turn")
+            let operation = try await waitForTerminal(controller, operationID)
+            XCTAssertEqual(operation.state, .completed, "\(kind): \(operation.failure?.message ?? "")")
+            if let output = operation.result?.outputURL {
+                XCTAssertTrue(FileManager.default.fileExists(atPath: output.path))
+            } else { XCTFail("\(kind) must return a readable output") }
+            XCTAssertFalse(FileManager.default.fileExists(atPath: source.path), "Last owner cleans the temporary input after work completes")
+            XCTAssertTrue(ledger.owners(of: source).isEmpty)
+        }
+    }
+
     func testZipSlipRelativeTraversalIsRefusedWithNothingWritten() async throws {
         let archive = try writeZip("slip.zip", [
             .init(name: "ok.txt", data: Data("ok".utf8)),
