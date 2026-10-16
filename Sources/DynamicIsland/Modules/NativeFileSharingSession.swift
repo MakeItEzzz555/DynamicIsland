@@ -21,6 +21,20 @@ final class NativeFileSharingSession: NSObject, @preconcurrency NSSharingService
         }
     }
 
+    /// Keep the picker, selected sharing service and island hold alive for any
+    /// shareable clipboard/file payload until selection, completion or close.
+    @discardableResult
+    static func presentItems(_ items: [Any], anchor: NSView?, layoutStore: IslandLayoutStore?) -> Bool {
+        guard !items.isEmpty, let anchor, anchor.window != nil, !anchor.bounds.isEmpty else { return false }
+        let session = NativeFileSharingSession(layoutStore: layoutStore, anchor: anchor)
+        active[session.id] = session
+        let picker = NSSharingServicePicker(items: items)
+        session.picker = picker
+        picker.delegate = session
+        picker.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
+        return true
+    }
+
     static func present(_ action: FileDragQuickAction, urls: [URL], anchor: NSView?, layoutStore: IslandLayoutStore?) -> FileDragActionOutcome {
         let files = urls.map(\.standardizedFileURL)
         guard files.allSatisfy({ $0.isFileURL && FileManager.default.fileExists(atPath: $0.path) }) else {
@@ -30,13 +44,9 @@ final class NativeFileSharingSession: NSObject, @preconcurrency NSSharingService
             return AirDropService.share(urls: files, fallbackRevealInFinder: false) ? .handedOff : .unavailable("AirDrop is unavailable")
         }
         if action == .share {
-            guard let anchor, anchor.window != nil, !anchor.bounds.isEmpty else { return .failed("Share picker anchor is unavailable") }
-            let session = NativeFileSharingSession(layoutStore: layoutStore, anchor: anchor)
-            active[session.id] = session
-            let picker = NSSharingServicePicker(items: files)
-            session.picker = picker
-            picker.delegate = session
-            picker.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
+            guard presentItems(files, anchor: anchor, layoutStore: layoutStore) else {
+                return .failed("Share picker anchor is unavailable")
+            }
         } else {
             guard let service = NSSharingService(named: action == .messages ? .composeMessage : .composeEmail),
                   service.canPerform(withItems: files) else { return .unavailable("\(action.title) sharing is unavailable for these files") }

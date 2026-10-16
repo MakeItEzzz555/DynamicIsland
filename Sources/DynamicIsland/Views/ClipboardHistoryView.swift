@@ -113,6 +113,7 @@ struct ClipboardHistoryView: View {
     @ObservedObject var store: ClipboardHistoryStore
     let onClose: () -> Void
     var externalActions: ClipboardHistoryExternalActions = .inert
+    var layoutStore: IslandLayoutStore? = nil
     @Environment(\.isSettingsPreview) private var isSettingsPreview
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -741,7 +742,7 @@ struct ClipboardHistoryView: View {
     private func share(_ entry: ClipboardHistoryEntry) {
         let items = ClipboardEntryExport.shareItems(for: entry.payload)
         guard !items.isEmpty, let anchor = cache.shareAnchor(for: entry.id) else { return }
-        NSSharingServicePicker(items: items).show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
+        _ = NativeFileSharingSession.presentItems(items, anchor: anchor, layoutStore: layoutStore)
     }
 
     private func addToFileTray(_ entry: ClipboardHistoryEntry, using add: ([URL]) -> Void) {

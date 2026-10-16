@@ -4185,7 +4185,8 @@ struct ExpandedIslandView: View {
                 externalActions: ClipboardHistoryExternalActions(
                     addFilesToShelf: { urls in modules.fileShelf.add(urls) },
                     addFilesToBasket: { urls in modules.basketPresenter.addClipboardFilesToBasket(urls) }
-                )
+                ),
+                layoutStore: layoutStore
             )
             .frame(width: cardWidth, height: metrics.pageHeight)
             .innerBlurScaleClean(

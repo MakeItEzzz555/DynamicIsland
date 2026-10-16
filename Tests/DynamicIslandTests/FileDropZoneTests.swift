@@ -93,6 +93,16 @@ final class FileDropZoneTests: XCTestCase {
         XCTAssertEqual(layout.transientInteractionOwners, [.nativeMenu])
     }
 
+    func testClipboardShareRejectsMissingWindowOrEmptyPayloadWithoutLeakingAHold() {
+        let layout = IslandLayoutStore()
+        layout.setTransientInteraction(true, owner: .nativeMenu)
+        let anchor = NSView(frame: CGRect(x: 0, y: 0, width: 24, height: 24))
+        XCTAssertFalse(NativeFileSharingSession.presentItems(["clipboard text"], anchor: anchor, layoutStore: layout))
+        XCTAssertFalse(NativeFileSharingSession.presentItems([], anchor: anchor, layoutStore: layout))
+        XCTAssertEqual(layout.transientInteractionOwners, [.nativeMenu],
+                       "Failed clipboard share must preserve other island interaction owners")
+    }
+
     func testInvalidOrUnownedShareAnchorFailsWithoutAcquiringAHold() throws {
         let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try Data().write(to: file); defer { try? FileManager.default.removeItem(at: file) }
