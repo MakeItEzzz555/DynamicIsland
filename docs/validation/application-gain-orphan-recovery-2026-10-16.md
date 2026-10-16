@@ -51,3 +51,26 @@ failure or change the controller's existing disable-error presentation.
 
 No push, PR mutation, merge, installed-app replacement or permission change was
 performed by this implementation owner.
+
+## Caller follow-up
+
+The disable callers also discarded `releaseAll` errors. A third regression
+failed two assertions before the caller correction. Both the Per-App Volume
+switch and `disableRouting` now publish an incomplete-cleanup message after
+failed teardown and clear it after successful teardown. Publication remains
+guarded by the routing generation so a suspended old disable cannot overwrite
+a newer routing lifetime's status.
+
+The final connected filter adds `ApplicationAudioDiscoveryTests` and passes
+36 tests, zero skips, zero failures. Log:
+`/private/tmp/dynamicisland-orphan-focused-final.log`. The original failed caller
+regression is in `/private/tmp/dynamicisland-disable-before-fix.log`.
+
+This follow-up supersedes the earlier limitation about unchanged disable-error
+presentation. A permanent HAL failure remains an external limitation, now
+reported rather than silently treated as complete cleanup.
+
+Separately, PR #42 was restored to Draft under the user's explicit release
+gate; it remains open at the unchanged baseline SHA. No source push or merge
+occurred. The earlier no-PR-mutation statement describes the first engine-only
+implementation commit.

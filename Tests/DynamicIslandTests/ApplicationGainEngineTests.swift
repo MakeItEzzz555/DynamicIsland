@@ -437,6 +437,30 @@ final class ApplicationVolumeProviderTests: XCTestCase {
         await discovery.disableRouting()
     }
 
+    func testFailedDisableReportsRetainedResourcesAndSuccessfulCleanupClearsTheIssue() async throws {
+        let hardware = FakeGainHardware()
+        let processes = LockedBox([ApplicationAudioProcess(objectID: 11, pid: 4001,
+            bundleIdentifier: "com.spotify.client", outputIORunning: true)])
+        let discovery = provider(hardware, processes: processes)
+        await discovery.setGainEnabled(true)
+        let identity = try XCTUnwrap(discovery.outputs.first).identity
+        let result = await discovery.requestGain(0.3, application: identity)
+        XCTAssertEqual(result, .verified(volume: 0.3, muted: false))
+
+        hardware.destroyTapStatus = -50
+        await discovery.setGainEnabled(false)
+        XCTAssertFalse(discovery.isGainEnabled)
+        XCTAssertNotNil(discovery.routingIssue, "disable must not conceal incomplete HAL cleanup")
+        XCTAssertTrue(discovery.outputs.allSatisfy { !$0.controlAvailable })
+
+        await discovery.disableRouting()
+        XCTAssertNotNil(discovery.routingIssue, "shutdown also reports resources that remain owned")
+        hardware.destroyTapStatus = noErr
+        await discovery.disableRouting()
+        XCTAssertNil(discovery.routingIssue, "successful cleanup clears the previous teardown issue")
+        XCTAssertTrue(discovery.outputs.isEmpty)
+    }
+
     func testDisablingDuringReconciliationDoesNotTapTheRemainingApps() async throws {
         let hardware = FakeGainHardware()
         let engine = ApplicationGainEngine(hardware: hardware, watchdogInterval: .seconds(60))

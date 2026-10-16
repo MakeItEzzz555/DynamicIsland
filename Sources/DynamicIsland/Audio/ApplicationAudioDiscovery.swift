@@ -177,9 +177,9 @@ final class ApplicationAudioDiscovery: ObservableObject, ApplicationVolumeProvid
             try? await refresh()
         } else {
             stopObserving()
-            try? await engine.releaseAll()
+            let issue = await releaseRoutingResources()
             guard routingToken == routingGeneration else { return }
-            routingIssue = nil
+            routingIssue = issue
             apply(processes, generation: generation)
         }
     }
@@ -192,14 +192,20 @@ final class ApplicationAudioDiscovery: ObservableObject, ApplicationVolumeProvid
         applying.removeAll()
         stopObserving()
         isGainEnabled = false
-        try? await engine.releaseAll()
+        let issue = await releaseRoutingResources()
         guard routingToken == routingGeneration else { return }
+        routingIssue = issue
         processes = []
         groups = []
         outputs = []
     }
 
     // MARK: Private
+
+    private func releaseRoutingResources() async -> String? {
+        do { try await engine.releaseAll(); return nil }
+        catch { return "Per-app audio routing could not fully stop. Try turning Per-App Volume on and off again." }
+    }
 
     private func makeGroups(_ processes: [ApplicationAudioProcess]) -> [ApplicationAudioGroup] {
         let owners = resolveOwners(processes)
