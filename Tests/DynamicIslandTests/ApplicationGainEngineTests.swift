@@ -296,6 +296,46 @@ final class ApplicationGainEngineTests: XCTestCase {
         XCTAssertEqual(hardware.calls.filter { $0 == "destroyAggregate" }.count, 1, "objects already gone are not destroyed twice")
     }
 
+    func testFailedTeardownPreventsAnotherTapForTheSameApplicationUntilRecovery() async throws {
+        let hardware = FakeGainHardware()
+        let engine = ApplicationGainEngine(hardware: hardware, watchdogInterval: .seconds(60))
+        try await engine.setGain(0.3, application: "app", processes: [7])
+        hardware.destroyTapStatus = -50
+        await XCTAssertThrowsAsync(try await engine.releaseAll())
+
+        await XCTAssertThrowsAsync(try await engine.setGain(0.2, application: "app", processes: [8]))
+        XCTAssertEqual(hardware.calls.filter { $0.hasPrefix("tap ") }.count, 1,
+                       "failed teardown must not be covered by a second tap")
+        try await engine.setGain(0.4, application: "other", processes: [9])
+        let other = await engine.tappedProcesses(of: "other")
+        XCTAssertEqual(other, [9], "one application's cleanup must not block another")
+
+        hardware.destroyTapStatus = noErr
+        let recoveryStart = hardware.calls.count
+        try await engine.setGain(0.2, application: "app", processes: [8])
+        XCTAssertEqual(Array(hardware.calls.dropFirst(recoveryStart).prefix(2)), ["destroyTap", "tap [8]→speakers"],
+                       "the old resource must be gone before a replacement is created")
+        let recovered = await engine.tappedProcesses(of: "app")
+        XCTAssertEqual(recovered, [8])
+        try await engine.releaseAll()
+    }
+
+    func testUnityRetriesTheApplicationsFailedTeardown() async throws {
+        let hardware = FakeGainHardware()
+        let engine = ApplicationGainEngine(hardware: hardware, watchdogInterval: .seconds(60))
+        try await engine.setGain(0.3, application: "app", processes: [7])
+        hardware.destroyTapStatus = -50
+        await XCTAssertThrowsAsync(try await engine.setGain(1, application: "app", processes: [7]))
+        await XCTAssertThrowsAsync(try await engine.setGain(1, application: "app", processes: [7]))
+        hardware.destroyTapStatus = noErr
+        try await engine.setGain(1, application: "app", processes: [7])
+        XCTAssertEqual(hardware.calls.filter { $0 == "destroyTap" }.count, 3)
+        XCTAssertEqual(hardware.calls.filter { $0.hasPrefix("tap ") }.count, 1)
+        try await engine.releaseAll()
+        XCTAssertEqual(hardware.calls.filter { $0 == "destroyTap" }.count, 3,
+                       "successful recovery removes the retained resource")
+    }
+
     func testStalledRenderingReturnsTheAppToDirectOutput() async throws {
         let hardware = FakeGainHardware()
         let stalled = LockedBox<[String]>([])

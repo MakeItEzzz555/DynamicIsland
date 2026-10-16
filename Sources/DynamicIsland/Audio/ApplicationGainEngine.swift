@@ -182,6 +182,8 @@ actor ApplicationGainEngine {
             try release(key)
             return
         }
+        // Failed teardown still owns HAL resources; do not create a tap over them.
+        try retryTeardown(for: key)
         let existing = sessions[key]
         if let existing, existing.processes == members {
             existing.renderer.setTarget(Float(gain))
@@ -194,8 +196,13 @@ actor ApplicationGainEngine {
     }
 
     func release(_ key: String) throws {
-        guard let session = sessions.removeValue(forKey: key) else { return }
-        try close(session)
+        if let session = sessions.removeValue(forKey: key) { try close(session) }
+        try retryTeardown(for: key)
+    }
+
+    private func retryTeardown(for key: String) throws {
+        for session in orphaned where session.key == key { try close(session) }
+        orphaned.removeAll { $0.isClosed }
     }
 
     /// Device change, sleep, quit or disable: every app returns to direct output.
