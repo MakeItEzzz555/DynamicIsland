@@ -279,18 +279,21 @@ enum TestZip {
         let name: String
         let data: Data
         var mode: UInt32 = 0o100644
+        /// Local-header name when it should differ from the central directory (parser-differential attack).
+        var localName: String? = nil
     }
 
     static func build(_ entries: [Entry]) -> Data {
         var body = Data(), central = Data()
         for entry in entries {
             let name = Data(entry.name.utf8)
+            let local = Data((entry.localName ?? entry.name).utf8)
             let size = UInt32(entry.data.count)
             let crc = UInt32(entry.data.withUnsafeBytes { crc32(0, $0.bindMemory(to: UInt8.self).baseAddress, uInt(entry.data.count)) })
             let offset = UInt32(body.count)
             body.putLE(UInt32(0x04034b50)); body.putLE(UInt16(20)); body.putLE(UInt16(0)); body.putLE(UInt16(0)); body.putLE(UInt16(0)); body.putLE(UInt16(33))
-            body.putLE(crc); body.putLE(size); body.putLE(size); body.putLE(UInt16(name.count)); body.putLE(UInt16(0))
-            body.append(name); body.append(entry.data)
+            body.putLE(crc); body.putLE(size); body.putLE(size); body.putLE(UInt16(local.count)); body.putLE(UInt16(0))
+            body.append(local); body.append(entry.data)
             central.putLE(UInt32(0x02014b50)); central.putLE(UInt16(3 << 8 | 20)); central.putLE(UInt16(20)); central.putLE(UInt16(0))
             central.putLE(UInt16(0)); central.putLE(UInt16(0)); central.putLE(UInt16(33))
             central.putLE(crc); central.putLE(size); central.putLE(size); central.putLE(UInt16(name.count))
@@ -396,6 +399,29 @@ final class BackgroundOperationExtractionTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("pwn.txt").path))
     }
 
+    /// The validator reads central-directory names; the extractor must write
+    /// exactly those, never a different local-header name.
+    func testLocalHeaderNameCannotDifferFromTheValidatedName() async throws {
+        let before = names(in: root)
+        let archive = try writeZip("differential.zip", [
+            .init(name: "ok.txt", data: Data("x".utf8), localName: "../evil.txt"),
+        ])
+        if let output = try? await ZipCompressionExecutor().extract(operationID: UUID(), archive: archive) {
+            XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: output.path), ["ok.txt"])
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: work.deletingLastPathComponent().appendingPathComponent("evil.txt").path))
+        XCTAssertEqual(names(in: root), before, "nothing named by the local header may be written outside")
+    }
+
+    func testSymlinkChainThatOnlyEscapesWhenResolvedIsRefused() async throws {
+        let link = UInt32(0o120777)
+        // Lexically "root/B/B/../.." == root, but B -> "." makes it root/../..
+        try await assertRefused(try writeZip("link-chain.zip", [
+            .init(name: "B", data: Data(".".utf8), mode: link),
+            .init(name: "A", data: Data("B/B/../..".utf8), mode: link),
+        ]))
+    }
+
     func testInternalRelativeSymlinkIsAllowed() async throws {
         let archive = try writeZip("inner.zip", [
             .init(name: "real.txt", data: Data("r".utf8)),
@@ -411,6 +437,8 @@ final class BackgroundOperationExtractionTests: XCTestCase {
         XCTAssertNotNil(ZipCompressionExecutor.unsafeEntry(names: ["a\\..\\b"], symlinks: []))
         XCTAssertNotNil(ZipCompressionExecutor.unsafeEntry(names: ["/etc/x"], symlinks: []))
         XCTAssertNotNil(ZipCompressionExecutor.unsafeEntry(names: ["L", "l/x"], symlinks: ["L"]), "case-insensitive volumes")
+        XCTAssertNotNil(ZipCompressionExecutor.unsafeEntry(names: ["caf\u{E9}", "cafe\u{301}/x"], symlinks: ["caf\u{E9}"]),
+                        "normalization-insensitive volumes")
     }
 
     func testNonZipAndMissingArchivesFailClosed() async throws {

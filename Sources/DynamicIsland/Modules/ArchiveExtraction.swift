@@ -1,9 +1,11 @@
 import Foundation
 
-/// ZIP extraction on the shared ditto/unzip executor. Entries are vetted from
-/// the central directory before anything is written, extraction happens in a
-/// hidden staging folder beside the destination, and the staged tree is
-/// verified before it is published with one same-volume rename.
+/// ZIP extraction on the shared executor. Entries are vetted from the central
+/// directory before anything is written, and the SAME tool (`unzip`) that
+/// listed them extracts them, so a crafted archive cannot show the validator
+/// one name and the extractor another. Extraction happens in a hidden staging
+/// folder beside the destination, and the staged tree is verified before it
+/// is published with one same-volume rename.
 extension ZipCompressionExecutor {
     /// "Name.zip" -> "Name", "Name 2", ... beside the archive.
     static func extractionDestination(
@@ -33,25 +35,32 @@ extension ZipCompressionExecutor {
                 return name
             }
         }
-        let links = symlinks.map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased() }
+        // APFS/HFS+ are case- and normalization-insensitive: compare folded forms.
+        func folded(_ s: String) -> String { s.precomposedStringWithCanonicalMapping.lowercased() }
+        let links = symlinks.map { folded($0.trimmingCharacters(in: CharacterSet(charactersIn: "/"))) }
         for name in names {
-            let lowered = name.lowercased()
+            let lowered = folded(name)
             if links.contains(where: { lowered.hasPrefix($0 + "/") }) { return name }
         }
         return nil
     }
 
     /// First path (relative to `root`) that is a symlink resolving outside it, or nil.
+    /// Checks both the link's own target lexically and the kernel-style resolution
+    /// through every link: `B -> "."` plus `A -> "B/B/../.."` is lexically inside
+    /// but really points above the root.
     static func escapingItem(in root: URL) -> String? {
-        let rootPath = root.resolvingSymlinksInPath().standardizedFileURL.path
+        let lexicalRoot = root.standardizedFileURL.path
+        let resolvedRoot = root.resolvingSymlinksInPath().standardizedFileURL.path
+        func inside(_ path: String, _ root: String) -> Bool { path == root || path.hasPrefix(root + "/") }
         guard let walker = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil) else { return nil }
         for case let url as URL in walker {
             guard let target = try? FileManager.default.destinationOfSymbolicLink(atPath: url.path) else { continue }
-            let resolved = target.hasPrefix("/")
+            let lexical = target.hasPrefix("/")
                 ? URL(fileURLWithPath: target)
                 : url.deletingLastPathComponent().appendingPathComponent(target)
-            let path = resolved.standardizedFileURL.path
-            if !(path == rootPath || path.hasPrefix(rootPath + "/")) {
+            let resolved = url.resolvingSymlinksInPath().standardizedFileURL.path
+            if !inside(lexical.standardizedFileURL.path, lexicalRoot) || !inside(resolved, resolvedRoot) {
                 return String(url.path.dropFirst(root.path.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
             }
         }
@@ -92,8 +101,11 @@ extension ZipCompressionExecutor {
         defer { try? FileManager.default.removeItem(at: staging) }
 
         try checkCancelled(operationID)
-        try run(operationID: operationID, executable: Self.executableURL, arguments: ["-x", "-k", archive.path, staging.path])
+        // -n never overwrites; Info-ZIP also strips "../" and leading "/" itself.
+        try run(operationID: operationID, executable: Self.validatorURL, arguments: ["-q", "-n", archive.path, "-d", staging.path])
         try checkCancelled(operationID)
+        // Finder-made archives carry AppleDouble metadata that ditto used to fold in.
+        try? FileManager.default.removeItem(at: staging.appendingPathComponent("__MACOSX"))
         if let bad = Self.escapingItem(in: staging) { throw ZipCompressionError.unsafeArchive(bad) }
 
         let destination = Self.extractionDestination(for: archive)
