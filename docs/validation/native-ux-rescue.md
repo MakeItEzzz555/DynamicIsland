@@ -1,5 +1,7 @@
 # Native UX rescue checkpoint — 2026-10-14
 
+> 2026-10-17 reconciliation: Historical checkpoint: PR #43 contains newer key acquisition, native context-menu and single Metal glow fixes. The older configurable double-click/persistent Tray bar variants are preserved externally and superseded in current main. Source reconciliation and fresh validation authority: final-integration-reconciliation.md.
+
 Branch: `feature/camera-hand-navigation`. Starting HEAD: `1cd01b4d3a90b49f497176d0c9c19f91eda904a1`. This phase layers changes on the uncommitted Settings/camera/navigation tree. No commit, push, merge, branch change, preference reset or termination of another normal app instance.
 
 ## Implemented scope

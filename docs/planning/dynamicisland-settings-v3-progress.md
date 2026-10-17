@@ -1,5 +1,7 @@
 # Settings v3 implementation checkpoint
 
+> 2026-10-17 reconciliation: Historical execution record: PR #43 now contains experimental opt-in Lock Screen integration and retires the older notch picture-choice/double-click UI. Earlier unavailable/demo descriptions do not describe current main. Existing approval and physical acceptance gates remain authoritative; see ../validation/final-integration-reconciliation.md.
+
 > Historical checkpoint below: the reference package has since been restored. See the current restored-reference section at the end and `docs/settings-parity/v3-acceptance-matrix.md` for current scope and results. The original 2,275-test evidence remains intact.
 
 ## Authority and preserved work

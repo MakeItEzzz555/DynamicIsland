@@ -42,6 +42,7 @@ final class LockScreenCoordinator: ObservableObject {
     private var refreshTimer: Timer?
     private var screenObserver: NSObjectProtocol?
     private var transitionGeneration: UInt64 = 0
+    private var stateDeliveryGeneration: UInt64 = 0
     private var wasLocked = false
     /// Sounds belong to real lock/unlock transitions, not to wake or screensaver.
     private var lastState = LockState.unknown
@@ -71,7 +72,25 @@ final class LockScreenCoordinator: ObservableObject {
             .sink { [weak self] _ in Task { @MainActor in self?.refresh() } }
             .store(in: &cancellables)
         monitor.$state.removeDuplicates()
-            .sink { [weak self] state in Task { @MainActor in self?.handle(state) } }
+            .sink { [weak self] state in
+                guard let self else { return }
+                stateDeliveryGeneration &+= 1
+                let delivery = stateDeliveryGeneration
+                if state != .unlocked { cancelSourceOpen() }
+                if !state.isConfirmedLocked, state != .unlocked {
+                    transitionGeneration &+= 1
+                    wasLocked = false
+                    stopRefreshTimer()
+                    hudPhase = .hidden
+                    content = .empty
+                    surfaces?.update(state: state, requested: [])
+                }
+                // @Published delivers before assignment; validate the latest state after the hop.
+                Task { @MainActor [weak self] in
+                    guard let self, stateDeliveryGeneration == delivery, monitor.state == state else { return }
+                    handle(state)
+                }
+            }
             .store(in: &cancellables)
         Publishers.MergeMany(media.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
                              timer.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
@@ -83,6 +102,7 @@ final class LockScreenCoordinator: ObservableObject {
 
     /// Quit: hide and release every lock-screen window and the private space.
     func terminate() {
+        stateDeliveryGeneration &+= 1
         cancellables.removeAll()
         setEnabled(false)
     }

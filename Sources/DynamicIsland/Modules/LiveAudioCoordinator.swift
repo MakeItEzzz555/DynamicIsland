@@ -21,6 +21,8 @@ final class LiveAudioCoordinator: ObservableObject {
     private var leases: Set<UUID> = []
     private var isPlaying: Bool
     private var sessionActive = true
+    private var awake = true
+    private var screenUnlocked = true
     private var shutDown = false
     private var releaseWork: Task<Void, Never>?
     private var subscriptions: Set<AnyCancellable> = []
@@ -64,16 +66,23 @@ final class LiveAudioCoordinator: ObservableObject {
         #endif
         guard observeSystemEvents else { return }
         let workspace = NSWorkspace.shared.notificationCenter
-        for (name, active) in [(NSWorkspace.willSleepNotification, false), (NSWorkspace.didWakeNotification, true),
-                               (NSWorkspace.sessionDidResignActiveNotification, false), (NSWorkspace.sessionDidBecomeActiveNotification, true)] {
+        for (name, active) in [(NSWorkspace.sessionDidResignActiveNotification, false), (NSWorkspace.sessionDidBecomeActiveNotification, true)] {
             workspace.publisher(for: name).receive(on: DispatchQueue.main)
-                .sink { [weak self] _ in MainActor.assumeIsolated { self?.setSessionActive(active) } }
+                .sink { [weak self] _ in MainActor.assumeIsolated {
+                    if !active { self?.setScreenUnlocked(false) }
+                    self?.setSessionActive(active)
+                } }
+                .store(in: &subscriptions)
+        }
+        for (name, active) in [(NSWorkspace.willSleepNotification, false), (NSWorkspace.didWakeNotification, true)] {
+            workspace.publisher(for: name).receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in MainActor.assumeIsolated { self?.setAwake(active) } }
                 .store(in: &subscriptions)
         }
         let distributed = DistributedNotificationCenter.default()
         for (name, active) in [("com.apple.screenIsLocked", false), ("com.apple.screenIsUnlocked", true)] {
             distributed.publisher(for: Notification.Name(name)).receive(on: DispatchQueue.main)
-                .sink { [weak self] _ in MainActor.assumeIsolated { self?.setSessionActive(active) } }
+                .sink { [weak self] _ in MainActor.assumeIsolated { self?.setScreenUnlocked(active) } }
                 .store(in: &subscriptions)
         }
     }
@@ -86,6 +95,7 @@ final class LiveAudioCoordinator: ObservableObject {
         settings.liveAudioVisualizerEnabled = enabled
         desiredEnabled = enabled
         guard enabled else { controller.stop(); return }
+        guard sessionActive, awake, screenUnlocked, !shutDown else { reconcile(); return }
         permissionBlocked = false
         if controller.presentation.availability != .capturing { controller.startFromUserAction() }
         // Without a visible, playing visualizer the explicit start only
@@ -121,21 +131,37 @@ final class LiveAudioCoordinator: ObservableObject {
         reconcile()
     }
 
+    func setAwake(_ active: Bool) {
+        guard awake != active else { return }
+        awake = active
+        // Sleep can engage the lock before its distributed notification arrives.
+        if !active { screenUnlocked = false }
+        reconcile()
+    }
+
+    func setScreenUnlocked(_ unlocked: Bool) {
+        guard screenUnlocked != unlocked else { return }
+        screenUnlocked = unlocked
+        reconcile()
+    }
+
     /// Termination: no further automatic starts after the controller's shutdown.
     func prepareForShutdown() { shutDown = true; releaseWork?.cancel() }
 
     // MARK: Reconcile
 
-    var isEligible: Bool {
-        desiredEnabled && !leases.isEmpty && isPlaying && sessionActive && !permissionBlocked && !shutDown
+    private var captureAllowed: Bool {
+        desiredEnabled && isPlaying && sessionActive && awake && screenUnlocked && !permissionBlocked && !shutDown
     }
+
+    var isEligible: Bool { captureAllowed && !leases.isEmpty }
 
     func reconcile() {
         let availability = controller.presentation.availability
         let running = availability == .starting || availability == .capturing
         if isEligible, !running {
             controller.startFromUserAction()
-        } else if !isEligible, running, releaseWork == nil {
+        } else if !isEligible, running, !captureAllowed || releaseWork == nil {
             controller.stop()
         }
     }
