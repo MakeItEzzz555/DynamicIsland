@@ -1,5 +1,7 @@
 # Settings v3 acceptance ledger
 
+> 2026-10-17 reconciliation: Historical checkpoint: merged PR #43 supersedes the notch picture-choice/double-click claims and the statement that secure Lock Screen integration is unavailable. Current main retires those notch choices and provides experimental, default-off Lock Screen integration with privacy gates. Physical acceptance remains separate; see final-integration-reconciliation.md.
+
 This ledger distinguishes implemented behavior, deterministic/native fixture evidence, and physical or reference acceptance. A page title or passing model test does not establish parity. Work remains uncommitted on `feature/camera-hand-navigation`, HEAD `1cd01b4d3a90b49f497176d0c9c19f91eda904a1`.
 
 ## Reference authority
