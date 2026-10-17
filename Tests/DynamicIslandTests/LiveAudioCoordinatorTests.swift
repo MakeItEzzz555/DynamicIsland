@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import XCTest
 @testable import DynamicIsland
@@ -40,12 +41,12 @@ final class LiveAudioCoordinatorTests: XCTestCase {
         await controller.shutdown()
     }
 
-    private func makeCoordinator() {
+    private func makeCoordinator(releaseGrace: Duration = .milliseconds(40), observeSystemEvents: Bool = false) {
         backend = LifecycleBackend()
         controller = AudioSpectrumController(backend: backend, observeSystemEvents: false)
         playing = CurrentValueSubject(false)
         coordinator = LiveAudioCoordinator(controller: controller, settings: settings, playback: playing.eraseToAnyPublisher(),
-                                           releaseGrace: .milliseconds(40), resumeDelay: .milliseconds(30), observeSystemEvents: false)
+                                           releaseGrace: releaseGrace, resumeDelay: .milliseconds(30), observeSystemEvents: observeSystemEvents)
     }
 
     private func settle(_ ms: Int = 80) async { try? await Task.sleep(for: .milliseconds(ms)) }
@@ -128,6 +129,67 @@ final class LiveAudioCoordinatorTests: XCTestCase {
         coordinator.setSessionActive(true); await settle()
         XCTAssertTrue(running)
         XCTAssertEqual(backend.starts, 2)
+    }
+
+    func testWakeDoesNotClearAnInactiveSessionGate() async {
+        settings.liveAudioVisualizerEnabled = true
+        makeCoordinator(observeSystemEvents: true)
+        coordinator.acquire(UUID()); playing.send(true); await capture()
+        coordinator.setSessionActive(false)
+        await settle()
+        XCTAssertFalse(running)
+        let startsBeforeWake = backend.starts
+
+        // A process-local workspace event only: no distributed lock signal or
+        // actual desktop state is changed. Wake cannot establish user ownership.
+        NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.didWakeNotification, object: nil)
+        await settle()
+
+        XCTAssertFalse(running, "waking a still-inactive session must not restart capture")
+        XCTAssertEqual(backend.starts, startsBeforeWake)
+    }
+
+    func testInactiveSessionStopsImmediatelyDuringLeaseReleaseGrace() async {
+        settings.liveAudioVisualizerEnabled = true
+        makeCoordinator(releaseGrace: .seconds(30))
+        defer { coordinator.prepareForShutdown() }
+        let lease = UUID()
+        coordinator.acquire(lease); playing.send(true); await capture()
+        coordinator.release(lease)
+        XCTAssertTrue(running, "ordinary visualizer swaps retain their grace period")
+
+        coordinator.setSessionActive(false)
+
+        XCTAssertFalse(running, "privacy suspension must bypass the visualizer swap grace")
+        XCTAssertNil(controller.presentation.frame, "inactive capture clears the last frame immediately")
+    }
+
+    func testWakeAfterSleepRequiresAnExplicitUnlock() async {
+        settings.liveAudioVisualizerEnabled = true
+        makeCoordinator(observeSystemEvents: true)
+        coordinator.acquire(UUID()); playing.send(true); await capture()
+        NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.willSleepNotification, object: nil)
+        await settle()
+        XCTAssertFalse(running)
+        NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.didWakeNotification, object: nil)
+        await settle()
+        XCTAssertFalse(running, "wake alone cannot establish an unlocked desktop")
+        coordinator.setScreenUnlocked(true)
+        await capture()
+        XCTAssertTrue(running)
+    }
+
+    func testSessionActivationAndExplicitEnableCannotBypassLockGate() async {
+        coordinator.setScreenUnlocked(false)
+        coordinator.acquire(UUID()); playing.send(true)
+        coordinator.userSetEnabled(true)
+        coordinator.setSessionActive(false); coordinator.setSessionActive(true)
+        await settle()
+        XCTAssertFalse(running)
+        XCTAssertEqual(backend.starts, 0, "no capture or permission start while locked")
+        coordinator.setScreenUnlocked(true)
+        await capture()
+        XCTAssertTrue(running)
     }
 
     func testOutputDeviceSuspensionResumesOnceWhileEligible() async {
