@@ -748,7 +748,10 @@ private struct AgentConsoleComposer: View {
                 if session.id == submittedSession, draft == originalDraft {
                     draft = ""
                 }
-                saveDraft?("", submittedSession)
+                // A replacement composer may have saved a newer draft while awaiting acceptance.
+                if loadDraft?(submittedSession) == originalDraft {
+                    saveDraft?("", submittedSession)
+                }
             }
             submissionInFlight = false
         }
