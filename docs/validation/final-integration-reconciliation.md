@@ -29,6 +29,8 @@ The 28 decisions were reviewed against actual callers, not feature names. They p
 
 The four privacy regressions failed six assertions on unchanged production source. The first repaired connected module run passed 21 tests; additional sleep/enable negatives are included in the final source. An expanded 270-case check had 267 passes, two optional skips and one native Settings environment failure: app/key-window activation was declined after earlier native fixtures. The exact unchanged Settings assertion passed alone in a fresh process. Existing CI already requires that same fresh-process step; its assertion is neither weakened nor converted to a skip.
 
+Independent review of the first candidate caught an immediate uncertainty→relock edge: cleanup stopped the HUD/timer but retained the prior locked bookkeeping. A new regression reproduced hidden versus locked HUD state. Reset that bookkeeping with the immediate cleanup so the newest lock rebuilds its HUD/timer without duplicated sound. The repaired connected draft/audio/Lock Screen set passed **51 tests, zero failures/skips**. The earlier candidate package is superseded; rebuild and validate the corrected source before acceptance.
+
 ## Merged-main CI failure investigation
 
 Run [38878879396](https://github.com/MakeItEzzz555/DynamicIsland/actions/runs/38878879396) failed in `testA9RelocationPrefersExistingDatabaseOverAnObsoleteParentDirectory`: fixture INSERT returned SQLite status 10 rather than 101 (`extended=3850`, disk I/O error, `errno=9`), followed by the missing-row timeout. It was one failed case with two reported assertions in the 2,686-case bulk step; the subsequent fresh Settings step was not reached.

@@ -142,19 +142,24 @@ final class LockScreenPlayerTests: XCTestCase {
         try await assertQueuedUnlockDoesNotOpenArtwork(after: .screenLocked)
     }
 
-    private func assertQueuedUnlockDoesNotOpenArtwork(after nextSignal: LockSignal) async throws {
+    func testImmediateUncertaintyThenRelockRestoresLockedHUD() async throws {
+        try await assertQueuedUnlockDoesNotOpenArtwork(after: .sessionResigned, relockImmediately: true)
+    }
+
+    private func assertQueuedUnlockDoesNotOpenArtwork(after nextSignal: LockSignal, relockImmediately: Bool = false) async throws {
         _ = NSApplication.shared
         let defaults = UserDefaults(suiteName: "LockScreenPlayerRaceTests.\(UUID())")!
         let settings = AppSettings(defaults: defaults)
         settings.openSourceOnArtworkClick = true
         let signals = Signals(), activities = LiveActivityStore()
         var openedTargets: [MediaSourceOpenTarget] = []
+        var sounds = 0
         let coordinator = LockScreenCoordinator(
             settings: settings, media: MediaController.settingsPreview(), timer: TimerController(),
             keepAwake: KeepAwakeController(liveActivities: activities, capabilities: IslandCapabilityRegistry()),
             systemHUD: SystemHUDController(settings: settings, liveActivities: activities),
             monitor: LockStateMonitor(source: signals), makeSpace: { Space() }, readBattery: { nil },
-            playSound: { _, _ in }, unlockDuration: .milliseconds(10),
+            playSound: { _, _ in sounds += 1 }, unlockDuration: .milliseconds(10),
             openMediaSource: { target in openedTargets.append(target); return true })
         coordinator.start()
         defer { coordinator.terminate() }
@@ -167,17 +172,23 @@ final class LockScreenPlayerTests: XCTestCase {
         XCTAssertNotNil(coordinator.content.media)
         coordinator.requestSourceOpenAfterUnlock()
         XCTAssertTrue(coordinator.sourceOpenPending)
+        let soundsBeforeTransitions = sounds
 
         // Both state changes arrive synchronously before the queued unlock
         // handler can run; only the latest monitor state may authorize launch.
         signals.handler?(.screenUnlocked)
         signals.handler?(nextSignal)
+        if relockImmediately { signals.handler?(.screenLocked) }
         XCTAssertNotEqual(coordinator.monitor.state, .unlocked)
         for _ in 0..<10 { await Task.yield() }
         try await Task.sleep(for: .milliseconds(80))
 
         XCTAssertTrue(openedTargets.isEmpty, "an obsolete unlock must never launch the captured source")
         XCTAssertFalse(coordinator.sourceOpenPending, "uncertainty or relock cancels the original request")
+        if relockImmediately {
+            XCTAssertEqual(coordinator.hudPhase, .locked, "latest confirmed lock restores the HUD after immediate cleanup")
+            XCTAssertEqual(sounds, soundsBeforeTransitions, "uncertain relock must not duplicate lock sounds")
+        }
     }
 
     func testArtworkClickWhileLockedOpensOnlyAfterAConfirmedUnlock() async throws {

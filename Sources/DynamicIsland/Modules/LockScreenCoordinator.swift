@@ -79,6 +79,7 @@ final class LockScreenCoordinator: ObservableObject {
                 if state != .unlocked { cancelSourceOpen() }
                 if !state.isConfirmedLocked, state != .unlocked {
                     transitionGeneration &+= 1
+                    wasLocked = false
                     stopRefreshTimer()
                     hudPhase = .hidden
                     content = .empty
